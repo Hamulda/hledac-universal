@@ -5,7 +5,6 @@ msgspec.json.encode is faster than orjson for msgspec.Struct types.
 For plain dicts, falls back to msgspec.json.Encoder().encode().
 Supports incremental streaming write for large reports.
 """
-from __future__ import annotations
 
 import msgspec
 from typing import TYPE_CHECKING, Any

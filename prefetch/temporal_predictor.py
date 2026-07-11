@@ -15,7 +15,6 @@ M1 8GB invariants:
 - MAX_PREDICTIONS = 20 per call
 - Always-on, bounded, fail-safe
 """
-from __future__ import annotations
 
 
 

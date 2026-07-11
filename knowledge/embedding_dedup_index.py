@@ -30,7 +30,6 @@ Usage:
     idx = get_embedding_dedup_index()
     result = await idx.check_duplicate(finding_id, text)
 """
-from __future__ import annotations
 
 
 import asyncio

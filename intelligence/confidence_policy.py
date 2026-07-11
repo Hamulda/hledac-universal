@@ -15,7 +15,6 @@ Policy rules (deterministic, no MLX, no network):
   - model_score: used only if finite and in [0, 1], otherwise ignored
   - default: returned when no modifiers apply
 """
-from __future__ import annotations
 
 
 

@@ -17,7 +17,6 @@ Enhanced with stealth_osint integration:
 
 Historical content discovery across multiple archival sources.
 """
-from __future__ import annotations
 
 
 

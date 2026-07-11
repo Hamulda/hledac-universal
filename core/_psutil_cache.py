@@ -32,7 +32,6 @@ Invariant:
   - Fail-safe: if psutil is unavailable, returns None (not a blocking call).
   - 1-second TTL per entry; stale entries purged on next access.
 """
-from __future__ import annotations
 
 import threading
 import time as _time_module

@@ -24,7 +24,6 @@ INVARIANTS:
   - RFC1918/loopback IPs filtered before any lookup
   - Rate limiting enforced per request
 """
-from __future__ import annotations
 
 
 import asyncio

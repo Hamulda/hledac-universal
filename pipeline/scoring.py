@@ -6,7 +6,6 @@ and live_feed_pipeline.py into a single module. Both pipelines import from it.
 
 Invariant: scoring logic lives in ONE place. Tests for scoring live in one place.
 """
-from __future__ import annotations
 
 
 

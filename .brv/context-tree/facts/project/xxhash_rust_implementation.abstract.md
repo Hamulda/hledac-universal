@@ -1,0 +1,1 @@
+xxhash-rust v0.8 with xxh3, const_xxh3, and xxh64 features powers URL canonicalization and body hashing in rust_extensions, with NEON acceleration on M1 for optimized performance.

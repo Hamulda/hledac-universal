@@ -883,6 +883,21 @@ async def bounded_gather[T](
             f"(sample: {sample_preview}"
             f"{' +' + str(suppressed) + ' more' if suppressed else ''})"
         )
+    else:
+        suppressed = 0
+
+    # Sprint F360: Record stats to MetricsRegistry for unified dashboard
+    try:
+        from hledac.universal.metrics_registry import get_metrics_registry
+        get_metrics_registry().record_bounded_gather(
+            ctx=ctx or "unknown",
+            total_tasks=len(coros),
+            ok_count=len(ok),
+            error_count=len(errors),
+            suppressed_count=suppressed,
+        )
+    except Exception:  # noqa: BLE001
+        pass  # fail-soft: metrics never crash the gather
 
     if re_raise is not None:
         raise re_raise

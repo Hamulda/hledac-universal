@@ -24,7 +24,6 @@ CAPTCHA SOLVER OVERLAP NOTE (F360):
     See that module's docstring for a full comparison table.  The
     ``stealth_layer`` path is canonical when ``HLEDAC_ENABLE_STEALTH_LAYER=1``.
 """
-from __future__ import annotations
 
 
 

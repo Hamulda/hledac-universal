@@ -13,7 +13,6 @@ Key invariants:
 - Dynamic Metal cache: min(max(available*0.2, 512MiB), 1.5GiB)
 - Thread-safe via double-check locking
 """
-from __future__ import annotations
 
 import asyncio
 import gc

@@ -36,7 +36,6 @@ Python 3.14 compatible:
 
 Author: F320-EXT
 """
-from __future__ import annotations
 
 import asyncio
 import os

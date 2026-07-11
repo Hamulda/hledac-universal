@@ -30,7 +30,6 @@ USAGE
       logger.warning(f"[GRAPH] Lock denied: {mgr.denial_reason}")
       # graph will open read-only or skip writes
 """
-from __future__ import annotations
 
 
 

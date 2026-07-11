@@ -11,7 +11,6 @@ M1 8GB Optimization:
 - Ring buffer for recent snapshots
 - No raw strings or large payloads
 """
-from __future__ import annotations
 
 
 import json
@@ -22,6 +21,7 @@ from collections import deque
 # orjson is optional — faster serialization for metrics flush
 try:
     import orjson as _orjson
+
     _ORJSON_AVAILABLE = True
 except ImportError:
     _orjson = None  # type: ignore[assignment]
@@ -30,12 +30,12 @@ except ImportError:
 # psutil is optional — lazy import with fail-soft fallback
 try:
     import psutil
+
     _PSUTIL_AVAILABLE = True
 except ImportError:
     psutil = None  # type: ignore[assignment]
     _PSUTIL_AVAILABLE = False
 from dataclasses import dataclass
-import msgspec
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -44,65 +44,88 @@ logger = logging.getLogger(__name__)
 
 
 # Bounded metric names (no arbitrary labels)
-METRIC_NAMES = frozenset([
-    # Orchestrator metrics
-    "orchestrator_rss_mb",
-    "orchestrator_frontier_size",
-    "orchestrator_evidence_ring_len",
-    "orchestrator_tool_exec_events",
-    "orchestrator_budget_remaining_tokens",
-    "orchestrator_budget_remaining_time",
-    "orchestrator_budget_remaining_api_calls",
-    # Cache metrics
-    "cache_http_size",
-    "cache_snapshot_size",
-    "cache_frontier_size",
-    # Memory metrics
-    "memory_open_fds",
-    "memory_rss_mb",
-    "memory_vms_mb",
-    # MLX metrics
-    "mlx_cache_hits",
-    "mlx_cache_misses",
-    "mlx_cache_size_bytes",
-    "mlx_active_memory_bytes",
-    "mlx_peak_memory_bytes",
-    "mlx_cache_fragmentation_ratio",
-    "mlx_kernel_compilation_time_ms",
-    "mlx_kernel_cache_hit_rate",
-    "model_load_duration_ms",
-    "model_unload_count",
-    "model_load_failures",
-    "action_latency_ms",
-    "thermal_throttle_events",
-    "thermal_recovery_events",
-    "memory_zone_normal_seconds",
-    "memory_zone_high_seconds",
-    "circuit_breaker_state_transitions",
-    # Circuit breaker metrics (F228F)
-    "circuit_breaker_open_count",
-    "circuit_breaker_half_open_count",
-    "circuit_breaker_closed_count",
-    "circuit_breaker_recovery_success",
-    "circuit_breaker_open_duration_s",
-    "circuit_breaker_closed_duration_s",
-    # Crawl budget metrics
-    "memory_zone_critical_seconds",
-    # Dark surface pivot metrics (F214K)
-    "dark_surface_pivots_attempted",
-    "dark_surface_pivots_successful",
-    # Sprint F214Q: Cover traffic OPSEC noise
-    "cover_traffic_fired",
-    # Sprint F-2026-07-03: Additional runtime metrics (see sprint 8sa_1783086726853)
-    "alert_warning_circuit_breaker_open_over_30s",
-    "memory_pressure_vs_finding_yield",
-    "windup_entry_count",
-])
+METRIC_NAMES = frozenset(
+    [
+        # Orchestrator metrics
+        "orchestrator_rss_mb",
+        "orchestrator_frontier_size",
+        "orchestrator_evidence_ring_len",
+        "orchestrator_tool_exec_events",
+        "orchestrator_budget_remaining_tokens",
+        "orchestrator_budget_remaining_time",
+        "orchestrator_budget_remaining_api_calls",
+        # Cache metrics
+        "cache_http_size",
+        "cache_snapshot_size",
+        "cache_frontier_size",
+        # Memory metrics
+        "memory_open_fds",
+        "memory_rss_mb",
+        "memory_vms_mb",
+        # MLX metrics
+        "mlx_cache_hits",
+        "mlx_cache_misses",
+        "mlx_cache_size_bytes",
+        "mlx_active_memory_bytes",
+        "mlx_peak_memory_bytes",
+        "mlx_cache_fragmentation_ratio",
+        "mlx_kernel_compilation_time_ms",
+        "mlx_kernel_cache_hit_rate",
+        "model_load_duration_ms",
+        "model_unload_count",
+        "model_load_failures",
+        "action_latency_ms",
+        "thermal_throttle_events",
+        "thermal_recovery_events",
+        "memory_zone_normal_seconds",
+        "memory_zone_high_seconds",
+        "circuit_breaker_state_transitions",
+        # Circuit breaker metrics (F228F)
+        "circuit_breaker_open_count",
+        "circuit_breaker_half_open_count",
+        "circuit_breaker_closed_count",
+        "circuit_breaker_recovery_success",
+        "circuit_breaker_open_duration_s",
+        "circuit_breaker_closed_duration_s",
+        # Crawl budget metrics
+        "memory_zone_critical_seconds",
+        # Dark surface pivot metrics (F214K)
+        "dark_surface_pivots_attempted",
+        "dark_surface_pivots_successful",
+        # Sprint F214Q: Cover traffic OPSEC noise
+        "cover_traffic_fired",
+        # Sprint F-2026-07-03: Additional runtime metrics (see sprint 8sa_1783086726853)
+        "alert_warning_circuit_breaker_open_over_30s",
+        "memory_pressure_vs_finding_yield",
+        "windup_entry_count",
+        # Sprint F360: Unified metrics dashboard — sprint budget consumption
+        "sprint_budget_elapsed_ms",
+        "sprint_budget_remaining_ms",
+        "sprint_budget_phase",
+        "sprint_phase_duration_avg_ms",
+        "sprint_phase_duration_p50_ms",
+        "sprint_phase_duration_p95_ms",
+        # Sprint F360: DuckDB write latency
+        "duckdb_ingest_latency_ms",
+        "duckdb_query_latency_ms",
+        # Sprint F360: bounded_gather stats
+        "bounded_gather_tasks_gathered",
+        "bounded_gather_tasks_errors",
+        "bounded_gather_errors_suppressed",
+        # Sprint F360: Memory layer pressure
+        "memory_layer_pressure_pct",
+        # Sprint F360: Fetch coordinator telemetry
+        "fetch_coordinator_active",
+        "fetch_coordinator_blocked_domains",
+        "fetch_coordinator_circuit_open",
+    ]
+)
 
 
 @dataclass
 class MetricSnapshot:
     """A single metric snapshot"""
+
     ts: datetime
     name: str
     value: float
@@ -283,7 +306,7 @@ class MetricsRegistry:
             force: If True, always flush regardless of time/event thresholds.
         """
         # Post-close flush guard — force=True bypasses for close() semantics
-        if getattr(self, '_closed', False) and not force:
+        if getattr(self, "_closed", False) and not force:
             return
         now = datetime.now(UTC)
 
@@ -328,8 +351,8 @@ class MetricsRegistry:
                         line = _orjson.dumps(m, option=_orjson.OPT_APPEND_NEWLINE)
                         self._persist_file.write(line)
                     else:
-                        line = json.dumps(m, separators=(',', ':'))
-                        self._persist_file.write(line.encode('utf-8') + b'\n')
+                        line = json.dumps(m, separators=(",", ":"))
+                        self._persist_file.write(line.encode("utf-8") + b"\n")
                 self._persist_file.flush()
                 os.fsync(self._persist_file.fileno())
             except Exception as e:
@@ -352,9 +375,9 @@ class MetricsRegistry:
             # Lifecycle truth
             "closed": self._closed,
             # Persistence truth
-            "persist_available": getattr(self, '_persist_available', None),
-            "degraded_ram_only": getattr(self, '_persist_available', True) is False,
-            "last_persist_failure": getattr(self, '_last_persist_failure', None),
+            "persist_available": getattr(self, "_persist_available", None),
+            "degraded_ram_only": getattr(self, "_persist_available", True) is False,
+            "last_persist_failure": getattr(self, "_last_persist_failure", None),
             # Counts
             "counter_count": len(self._counters),
             "gauge_count": len(self._gauges),
@@ -372,6 +395,7 @@ class MetricsRegistry:
         """Get NymTransport nym_address if available."""
         try:
             from hledac.universal.transport.nym_transport import NymTransport
+
             nym = NymTransport()
             return getattr(nym, "nym_address", None)
         except Exception:
@@ -381,6 +405,7 @@ class MetricsRegistry:
         """Check if NymTransport circuit breaker is open."""
         try:
             from hledac.universal.transport.nym_transport import NymTransport
+
             nym = NymTransport()
             return getattr(nym, "circuit_breaker_open", False)
         except Exception:
@@ -404,6 +429,106 @@ class MetricsRegistry:
             if not required.issubset(event.keys()):
                 return
             self._sprint_events.append(event)
+        except Exception:
+            pass
+
+    # ── Sprint F360: bounded_gather stats recording ─────────────────────────
+
+    def record_bounded_gather(
+        self,
+        ctx: str,
+        total_tasks: int,
+        ok_count: int,
+        error_count: int,
+        suppressed_count: int,
+    ) -> None:
+        """
+        Record bounded_gather execution stats.
+
+        Aggregates per-context stats into global counters for dashboard visibility.
+        Fail-soft: all errors swallowed.
+
+        Args:
+            ctx: Context label (e.g. "discovery.sources", "pattern.scan")
+            total_tasks: Total number of tasks submitted
+            ok_count: Successful results count
+            error_count: Exception count (not suppressed)
+            suppressed_count: Suppressed exception count (logged to DEBUG)
+        """
+        try:
+            if self._closed:
+                return
+            # Increment global counters
+            self._counters["bounded_gather_tasks_gathered"] = (
+                self._counters.get("bounded_gather_tasks_gathered", 0) + ok_count
+            )
+            self._counters["bounded_gather_tasks_errors"] = (
+                self._counters.get("bounded_gather_tasks_errors", 0) + error_count
+            )
+            self._counters["bounded_gather_errors_suppressed"] = (
+                self._counters.get("bounded_gather_errors_suppressed", 0) + suppressed_count
+            )
+            self._event_count += 3
+            self._maybe_flush()
+        except Exception:
+            pass
+
+    def record_fetch_telemetry(
+        self,
+        blocked_domains: int,
+        circuit_open: bool,
+    ) -> None:
+        """
+        Record fetch coordinator telemetry.
+
+        Args:
+            blocked_domains: Number of currently blocked domains
+            circuit_open: True if any circuit breaker is open
+        """
+        try:
+            if self._closed:
+                return
+            self._gauges["fetch_coordinator_blocked_domains"] = float(blocked_domains)
+            self._gauges["fetch_coordinator_circuit_open"] = 1.0 if circuit_open else 0.0
+            self._event_count += 2
+            self._maybe_flush()
+        except Exception:
+            pass
+
+    def record_sprint_budget(
+        self,
+        elapsed_ms: float,
+        remaining_ms: float,
+        phase: str,
+        phase_avg_ms: float | None = None,
+        phase_p50_ms: float | None = None,
+        phase_p95_ms: float | None = None,
+    ) -> None:
+        """
+        Record sprint budget consumption metrics.
+
+        Args:
+            elapsed_ms: Sprint elapsed time in milliseconds
+            remaining_ms: Remaining sprint time in milliseconds
+            phase: Current sprint phase name
+            phase_avg_ms: Average phase duration
+            phase_p50_ms: Median phase duration
+            phase_p95_ms: 95th percentile phase duration
+        """
+        try:
+            if self._closed:
+                return
+            self._gauges["sprint_budget_elapsed_ms"] = elapsed_ms
+            self._gauges["sprint_budget_remaining_ms"] = remaining_ms
+            self._gauges["sprint_budget_phase"] = float(hash(phase) % 1000)  # categorical as float
+            if phase_avg_ms is not None:
+                self._gauges["sprint_phase_duration_avg_ms"] = phase_avg_ms
+            if phase_p50_ms is not None:
+                self._gauges["sprint_phase_duration_p50_ms"] = phase_p50_ms
+            if phase_p95_ms is not None:
+                self._gauges["sprint_phase_duration_p95_ms"] = phase_p95_ms
+            self._event_count += 1
+            self._maybe_flush()
         except Exception:
             pass
 
@@ -431,10 +556,7 @@ class MetricsRegistry:
 
 
 # Convenience function
-def create_metrics_registry(
-    run_dir: Path,
-    run_id: str = "default"
-) -> MetricsRegistry:
+def create_metrics_registry(run_dir: Path, run_id: str = "default") -> MetricsRegistry:
     """Create a MetricsRegistry instance"""
     return MetricsRegistry(run_dir=run_dir, run_id=run_id)
 

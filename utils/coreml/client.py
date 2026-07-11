@@ -2,7 +2,6 @@
 CoreML service HTTP client — imported from py3.14 main process.
 Provides async CoreMLClient with retry logic and sync wrapper.
 """
-from __future__ import annotations
 
 
 import asyncio

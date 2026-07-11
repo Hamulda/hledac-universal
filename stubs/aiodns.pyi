@@ -1,5 +1,4 @@
 """Stub for aiodns — c-ares backed async DNS resolver."""
-from __future__ import annotations
 
 import asyncio
 from typing import Any

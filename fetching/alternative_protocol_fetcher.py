@@ -14,7 +14,6 @@ Gating:
 
 Returns list[CanonicalFinding] with appropriate source_type per protocol.
 """
-from __future__ import annotations
 
 
 import asyncio

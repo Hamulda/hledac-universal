@@ -19,10 +19,8 @@ Usage:
     async with TaskContext.current() as ctx:
         ctx.set_tag("sprint_id", sprint_id)
 """
-from __future__ import annotations
 
 
-from __future__ import annotations
 
 import asyncio
 import contextvars

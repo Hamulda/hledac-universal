@@ -19,7 +19,6 @@ Output per finding:
 Architecture: async-native, compatible with source_finding_bridge.py lane pattern.
 Rate limiting and deduplication are built-in. No external API keys required.
 """
-from __future__ import annotations
 
 
 

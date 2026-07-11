@@ -14,7 +14,6 @@ Refactor:
 CI threshold: fail if violations > 10 in production code
 Acceptance: try/except Exception: pass < 5 in production code
 """
-from __future__ import annotations
 
 import ast
 import sys

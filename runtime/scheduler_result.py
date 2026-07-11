@@ -6,7 +6,6 @@ F350M-R / Issue #P2.
 ~380 fields — frozen dataclass with SoA int-counter layout.
 """
 
-from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any

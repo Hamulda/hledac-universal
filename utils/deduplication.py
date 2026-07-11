@@ -8,7 +8,6 @@ Multi-strategy deduplication combining:
 
 Optimized for M1 Mac with memory-efficient implementations.
 """
-from __future__ import annotations
 
 
 

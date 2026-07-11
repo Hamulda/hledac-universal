@@ -16,7 +16,6 @@ DEPENDENCIES (passed in, not imported):
 CANONICAL WRITE PATH: Remains in DuckDBShadowStore.async_ingest_findings_batch().
 This module provides quality decision helpers that DuckDBShadowStore delegates to.
 """
-from __future__ import annotations
 
 
 

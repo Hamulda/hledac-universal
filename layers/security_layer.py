@@ -33,7 +33,6 @@ VERDICT (F260 SecurityLayer / MissionAudit audit, 2026-06-02):
     log_action(action, data, metadata) signature and the chained hash links.
   - See SECURITY_MEMORY_LAYER_AUDIT.md (F260) for full evidence.
 """
-from __future__ import annotations
 
 
 

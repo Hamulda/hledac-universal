@@ -1,4 +1,5 @@
 """
+from __future__ import annotations
 runtime/evidence_corroboration.py
 
 Evidence Corroboration Graph Scorer — Sprint F223D
@@ -6,6 +7,7 @@ Evidence Corroboration Graph Scorer — Sprint F223D
 Ranks findings/seeds by cross-source corroboration, not feed volume.
 No model imports, no network calls, no LLM for scoring.
 """
+from __future__ import annotations
 
 
 

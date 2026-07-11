@@ -8,7 +8,6 @@ Pure: no runtime/scheduler/core/network/MLX imports.
 Imports only from benchmarks/ live_measurement_schema, live_measurement_next_action,
 live_measurement_quality, and tools/research_quality_score.
 """
-from __future__ import annotations
 
 
 

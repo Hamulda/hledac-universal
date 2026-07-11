@@ -19,7 +19,6 @@ Architecture seam:
 
 M1 8GB: all data is tuples (immutable) — no RAM growth under load.
 """
-from __future__ import annotations
 
 
 import random

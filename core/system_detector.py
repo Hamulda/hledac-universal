@@ -32,7 +32,6 @@ Usage:
     print(f"Max concurrent tools: {detector.max_concurrent_tools}")  # adaptive
     print(f"Is M1 8GB: {detector.is_m1_8gb}")      # True on M1 MacBook Air 8GB
 """
-from __future__ import annotations
 
 import os
 import platform

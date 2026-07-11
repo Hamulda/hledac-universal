@@ -10,7 +10,6 @@ Funkce:
 
 Migrated from networkx to native Python DAG (Issue #28).
 """
-from __future__ import annotations
 
 
 import asyncio

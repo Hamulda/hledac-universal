@@ -1,4 +1,5 @@
 """
+from __future__ import annotations
 runtime/sidecar_protocol.py — F350M-R: Protocol-Based Sidecar Registry
 ======================================================================
 
@@ -15,6 +16,7 @@ GHOST_INVARIANTS:
 - Bounded: ram_budget_mb is always checked before run
 - No blocking ops in async context
 """
+from __future__ import annotations
 
 
 

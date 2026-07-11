@@ -1,94 +1,9 @@
 {
-  "curationsSinceDream": 12,
-  "lastDreamAt": null,
-  "lastDreamLogId": null,
+  "curationsSinceDream": 0,
+  "lastDreamAt": "2026-07-11T20:24:17.704Z",
+  "lastDreamLogId": "drm-1783801362519",
   "pendingMerges": [],
-  "staleSummaryPaths": [
-    {
-      "enqueuedAt": 1783781371248,
-      "path": "testing/exit_codes/context.md"
-    },
-    {
-      "enqueuedAt": 1783781371248,
-      "path": "testing/exit_codes/sprint_f350m_r_exit_code_tests.md"
-    },
-    {
-      "enqueuedAt": 1783781386228,
-      "path": "facts/project/technology_stack.md"
-    },
-    {
-      "enqueuedAt": 1783781447546,
-      "path": "data/duckdb_store/context.md"
-    },
-    {
-      "enqueuedAt": 1783781447546,
-      "path": "data/duckdb_store/duckdb_shadow_store.md"
-    },
-    {
-      "enqueuedAt": 1783781447546,
-      "path": "facts/project/configuration_constants.md"
-    },
-    {
-      "enqueuedAt": 1783781447546,
-      "path": "memory/resource_governor/context.md"
-    },
-    {
-      "enqueuedAt": 1783781447546,
-      "path": "memory/resource_governor/uma_memory_management.md"
-    },
-    {
-      "enqueuedAt": 1783781486482,
-      "path": "architecture/hledac_universal/hledac_universal_architecture.md"
-    },
-    {
-      "enqueuedAt": 1783781653117,
-      "path": "architecture/hledac_universal/context.md"
-    },
-    {
-      "enqueuedAt": 1783781653117,
-      "path": "architecture/hledac_universal/http_3_lane_and_public_fetcher.md"
-    },
-    {
-      "enqueuedAt": 1783781653117,
-      "path": "architecture/hledac_universal/sprint_lifecycle_pipeline.md"
-    },
-    {
-      "enqueuedAt": 1783781653117,
-      "path": "data/duckdb_store/query_cache_ioc_extraction.md"
-    },
-    {
-      "enqueuedAt": 1783781771820,
-      "path": "knowledge_base/context.md"
-    },
-    {
-      "enqueuedAt": 1783781771820,
-      "path": "knowledge_base/audit/context.md"
-    },
-    {
-      "enqueuedAt": 1783781771820,
-      "path": "knowledge_base/audit/kb_audit_2026_07_11.md"
-    },
-    {
-      "enqueuedAt": 1783782299766,
-      "path": "testing/exit_codes/exit_code_testing.md"
-    },
-    {
-      "enqueuedAt": 1783782417346,
-      "path": "architecture/hledac_universal/project_documentation.md"
-    },
-    {
-      "enqueuedAt": 1783782475397,
-      "path": "architecture/hledac_universal/critical_invariants.md"
-    },
-    {
-      "enqueuedAt": 1783782475397,
-      "path": "knowledge_base/feature_flags/feature_flags_reference.md"
-    },
-    {
-      "enqueuedAt": 1783782475397,
-      "path": "facts/project/hledac_universal_claude_md.md"
-    }
-  ],
-  "totalDreams": 0,
+  "staleSummaryPaths": [],
+  "totalDreams": 1,
   "version": 1
 }

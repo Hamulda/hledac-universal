@@ -25,7 +25,6 @@ Publisher domains (feed aggregators — excluded as seeds unless real indicators
     welivesecurity.com, sans.edu, darkreading.com, zdnet.com,
     theregister.com, arstechnica.com, securityweek.com
 """
-from __future__ import annotations
 
 
 

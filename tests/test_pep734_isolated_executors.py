@@ -13,7 +13,6 @@ Invariant tests:
 5. close_all_pools() cleans up without raising
 """
 
-from __future__ import annotations
 
 import sys
 

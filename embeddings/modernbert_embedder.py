@@ -11,7 +11,6 @@ Provides:
 Canonical import path: from hledac.universal.embeddings.modernbert_embedder import ModernBERTEmbedder
 Replaces: utils/semantic.py ModernBERTEmbedding (DEPRECATED)
 """
-from __future__ import annotations
 
 
 

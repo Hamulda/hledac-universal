@@ -19,7 +19,6 @@ Usage:
     # Graceful shutdown
     await manager.shutdown_all()
 """
-from __future__ import annotations
 
 
 

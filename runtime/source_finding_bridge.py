@@ -26,7 +26,6 @@ Verify:
     python -m pytest tests/probe_f207j_nonfeed_finding_bridge/ -v
     python -m pytest tests/probe_f207k_nonfeed_accepted_path/ -v
 """
-from __future__ import annotations
 
 
 import hashlib

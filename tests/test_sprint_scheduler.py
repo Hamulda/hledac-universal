@@ -29,6 +29,7 @@ import pytest
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
+
 @pytest.fixture
 def mock_lifecycle():
     """Minimal lifecycle mock for run() entry point."""
@@ -65,6 +66,7 @@ def mock_adapter():
 def minimal_config():
     """Minimal SprintSchedulerConfig for testing."""
     from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
+
     return SprintSchedulerConfig(
         sprint_duration_s=60.0,
         cycle_sleep_s=10.0,
@@ -91,9 +93,11 @@ def mock_public_fetcher():
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
+
 def _import_scheduler():
     """Lazy import to avoid heavy startup cost on test collection."""
     from hledac.universal.runtime.sprint_scheduler import SprintScheduler
+
     return SprintScheduler
 
 
@@ -109,10 +113,9 @@ async def _instantiate_scheduler(minimal_config, mock_lifecycle, mock_adapter):
 
 # ── L4954: hypothesis feedback recording fail-safe ─────────────────────────────
 
+
 @pytest.mark.asyncio
-async def test_record_hypothesis_feedback_failsoft_does_not_crash(
-    minimal_config, mock_store
-):
+async def test_record_hypothesis_feedback_failsoft_does_not_crash(minimal_config, mock_store):
     """
     L4954: record_hypothesis_feedback() exception handler.
     verify: exception in store does NOT propagate (fail-safe pattern).
@@ -128,11 +131,7 @@ async def test_record_hypothesis_feedback_failsoft_does_not_crash(
     # The exception is caught in the try/except block at L4954
     try:
         await sched.record_hypothesis_feedback(
-            pivot_type="test_pivot",
-            ioc_type="domain",
-            produced_count=10,
-            accepted_count=5,
-            signal_value=0.8
+            pivot_type="test_pivot", ioc_type="domain", produced_count=10, accepted_count=5, signal_value=0.8
         )
     except RuntimeError:
         # Fail-soft pattern: the call should NOT raise if the scheduler is correct
@@ -146,10 +145,9 @@ async def test_record_hypothesis_feedback_failsoft_does_not_crash(
 
 # ── L4786: prefetch_oracle.suggest_scores fail-soft ───────────────────────────
 
+
 @pytest.mark.asyncio
-async def test_prefetch_oracle_suggest_scores_failsoft_returns_empty(
-    minimal_config, mock_lifecycle, mock_adapter
-):
+async def test_prefetch_oracle_suggest_scores_failsoft_returns_empty(minimal_config, mock_lifecycle, mock_adapter):
     """
     L4786: prefetch_oracle.suggest_scores exception handler.
     verify: exception causes fallback to empty dict (default ordering preserved).
@@ -175,9 +173,7 @@ async def test_prefetch_oracle_suggest_scores_failsoft_returns_empty(
 
 
 @pytest.mark.asyncio
-async def test_prefetch_oracle_suggest_scores_fallback_preserves_ordering(
-    minimal_config, mock_lifecycle, mock_adapter
-):
+async def test_prefetch_oracle_suggest_scores_fallback_preserves_ordering(minimal_config, mock_lifecycle, mock_adapter):
     """
     L4786: verify fallback produces empty oracle_scores dict.
     When suggest_scores fails, oracle_scores = {} and oracle_mult = 1.0 for all items.
@@ -204,10 +200,9 @@ async def test_prefetch_oracle_suggest_scores_fallback_preserves_ordering(
 
 # ── L5144 / L5199: privacy_context init fail-soft ─────────────────────────────
 
+
 @pytest.mark.asyncio
-async def test_privacy_context_init_failsoft_does_not_crash(
-    minimal_config, mock_lifecycle, mock_adapter
-):
+async def test_privacy_context_init_failsoft_does_not_crash(minimal_config, mock_lifecycle, mock_adapter):
     """
     L5144 & L5199: privacy_context init exception handlers.
     verify: exception in create_privacy_context does NOT crash __init__.
@@ -218,9 +213,7 @@ async def test_privacy_context_init_failsoft_does_not_crash(
     # Mock layer_manager with broken privacy
     mock_lm = MagicMock()
     mock_lm.privacy = MagicMock()
-    mock_lm.privacy.create_privacy_context = AsyncMock(
-        side_effect=RuntimeError("privacy service unavailable")
-    )
+    mock_lm.privacy.create_privacy_context = AsyncMock(side_effect=RuntimeError("privacy service unavailable"))
     sched._layer_manager = mock_lm
 
     # Must NOT raise — fail-soft per L5144-5145
@@ -231,10 +224,11 @@ async def test_privacy_context_init_failsoft_does_not_crash(
         # Logged but not propagated — this is the expected behavior
         assert str(e) == "privacy service unavailable"
         # _privacy_context_id remains unset or None
-        assert not hasattr(sched, '_privacy_context_id') or sched._privacy_context_id is None
+        assert not hasattr(sched, "_privacy_context_id") or sched._privacy_context_id is None
 
 
 # ── L5155: M1 resource governor init fail-soft ─────────────────────────────────
+
 
 def test_resource_governor_init_failsoft_sets_none(minimal_config):
     """
@@ -243,15 +237,17 @@ def test_resource_governor_init_failsoft_sets_none(minimal_config):
     """
     try:
         from hledac.universal.core.protocols import get_governor
+
         governor = get_governor()
     except Exception:
         governor = None  # Fail-soft: scheduler continues with None
 
     # Verify graceful degradation
-    assert governor is None or hasattr(governor, 'evaluate')
+    assert governor is None or hasattr(governor, "evaluate")
 
 
 # ── L5202: LayerManager init fail-soft ───────────────────────────────────────
+
 
 def test_layer_manager_init_failsoft_does_not_crash(minimal_config):
     """
@@ -260,15 +256,17 @@ def test_layer_manager_init_failsoft_does_not_crash(minimal_config):
     """
     try:
         from hledac.universal.layers.layer_manager import LayerManager
+
         lm = LayerManager(config=None)
     except Exception as _e:
         lm = None  # Fail-soft: logged but not propagated
 
     # LayerManager may or may not load — both are valid outcomes
-    assert lm is None or hasattr(lm, 'privacy') or hasattr(lm, 'security')
+    assert lm is None or hasattr(lm, "privacy") or hasattr(lm, "security")
 
 
 # ── L5233: sprint_id getattr fail-soft ───────────────────────────────────────
+
 
 def test_sprint_id_getattr_failsoft_defaults_to_empty(minimal_config):
     """
@@ -292,6 +290,7 @@ def test_sprint_id_getattr_failsoft_defaults_to_empty(minimal_config):
 
 # ── L5331: RelDiscovery init fail-soft ────────────────────────────────────────
 
+
 def test_rel_discovery_init_failsoft_sets_none(minimal_config):
     """
     L5331: RelDiscovery init exception handler.
@@ -301,6 +300,7 @@ def test_rel_discovery_init_failsoft_sets_none(minimal_config):
     # This test verifies the pattern: exception → None, not crashing.
     try:
         from hledac.universal.knowledge.graph_service import RelDiscoveryEngine
+
         engine = RelDiscoveryEngine()
     except Exception as _e:
         # Logged but not propagated — RelDiscovery is advisory
@@ -310,6 +310,7 @@ def test_rel_discovery_init_failsoft_sets_none(minimal_config):
 
 
 # ── L5379: tracemalloc start fail-soft ───────────────────────────────────────
+
 
 def test_tracemalloc_start_failsoft_disables_tracing():
     """
@@ -335,20 +336,20 @@ def test_tracemalloc_start_failsoft_disables_tracing():
 
 # ── L5423: EvidenceChainBuilder fail-soft ─────────────────────────────────────
 
+
 @pytest.mark.asyncio
-async def test_evidence_chain_builder_failsoft_continues(
-    minimal_config, mock_lifecycle, mock_adapter
-):
+async def test_evidence_chain_builder_failsoft_continues(minimal_config, mock_lifecycle, mock_adapter):
     """
     L5423: EvidenceChainBuilder init exception handler.
     verify: set_global_builder fails → chain tracking skipped (advisory only).
     """
     with patch(
-        'hledac.universal.knowledge.evidence_chain.set_global_builder',
-        side_effect=RuntimeError("EvidenceChainBuilder broken")
+        "hledac.universal.knowledge.evidence_chain.set_global_builder",
+        side_effect=RuntimeError("EvidenceChainBuilder broken"),
     ):
         try:
             from hledac.universal.knowledge.evidence_chain import EvidenceChainBuilder, set_global_builder
+
             set_global_builder(EvidenceChainBuilder())
         except Exception:  # noqa: BLE001
             # Fail-soft: chain tracking is optional advisory
@@ -360,6 +361,7 @@ async def test_evidence_chain_builder_failsoft_continues(
 
 
 # ── L5469: Hermes prewarm fail-soft ────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_hermes_prewarm_failsoft_continues_without_ToT(  # noqa: N802
@@ -377,7 +379,7 @@ async def test_hermes_prewarm_failsoft_continues_without_ToT(  # noqa: N802
     async def broken_prewarm(self):
         raise RuntimeError("Hermes load failed")
 
-    with patch.object(SprintScheduler, '_prewarm_hermes_for_sprint', broken_prewarm):
+    with patch.object(SprintScheduler, "_prewarm_hermes_for_sprint", broken_prewarm):
         try:
             sched._timer = MagicMock()
             sched._timer.phase = MagicMock()
@@ -394,10 +396,9 @@ async def test_hermes_prewarm_failsoft_continues_without_ToT(  # noqa: N802
 
 # ── L5529: governor.evaluate fail-soft ────────────────────────────────────────
 
+
 @pytest.mark.asyncio
-async def test_governor_evaluate_failsoft_continues(
-    minimal_config, mock_lifecycle, mock_adapter
-):
+async def test_governor_evaluate_failsoft_continues(minimal_config, mock_lifecycle, mock_adapter):
     """
     L5529: governor.evaluate() exception handler.
     verify: evaluate failure → no concurrency change (advisory only).
@@ -423,9 +424,8 @@ async def test_governor_evaluate_failsoft_continues(
 
 # ── L4343 / L4351 / L4356: privacy_gate fail-soft ─────────────────────────────
 
-def test_privacy_gate_setattr_failsoft_appends_finding(
-    minimal_config
-):
+
+def test_privacy_gate_setattr_failsoft_appends_finding(minimal_config):
     """
     L4343 & L4351 & L4356: privacy_gate exception handlers.
     verify: anonymize_text/setattr failure → finding still appended (not lost).
@@ -467,10 +467,11 @@ def test_privacy_gate_setattr_failsoft_appends_finding(
 
 # ── Property-based tests (parameterized, replaces hypothesis) ─────────────────
 
+
 # Finding count boundary test: [0, 10000]
-@pytest.mark.parametrize("finding_count,cycle_count", [
-    (n, c) for n in [0, 1, 100, 1000, 5000, 10000] for c in [1, 5, 10, 50, 100]
-])
+@pytest.mark.parametrize(
+    "finding_count,cycle_count", [(n, c) for n in [0, 1, 100, 1000, 5000, 10000] for c in [1, 5, 10, 50, 100]]
+)
 def test_finding_count_never_negative(finding_count, cycle_count):
     """
     Property: finding_count is non-negative.
@@ -503,8 +504,7 @@ def test_budget_allocation_in_bounds(budget):
     """
     MAX_SPRINT_BUDGET = 10000.0  # noqa: N806
     allocated = min(budget, MAX_SPRINT_BUDGET)
-    assert 0 < allocated <= MAX_SPRINT_BUDGET, \
-        f"Budget {allocated} outside bounds (0, {MAX_SPRINT_BUDGET}]"
+    assert 0 < allocated <= MAX_SPRINT_BUDGET, f"Budget {allocated} outside bounds (0, {MAX_SPRINT_BUDGET}]"
 
 
 # Source economics count: >= 0
@@ -519,10 +519,20 @@ def test_source_economics_count_nonnegative(src_count):
 
 
 # Latency EMA boundary: [5, 30]s clamped
-@pytest.mark.parametrize("latency_samples", [
-    [0.01], [1.0], [5.0], [10.0], [25.0], [30.0], [50.0],
-    [0.5, 1.0, 5.0, 10.0, 50.0], [10.0, 20.0, 30.0, 100.0],
-])
+@pytest.mark.parametrize(
+    "latency_samples",
+    [
+        [0.01],
+        [1.0],
+        [5.0],
+        [10.0],
+        [25.0],
+        [30.0],
+        [50.0],
+        [0.5, 1.0, 5.0, 10.0, 50.0],
+        [10.0, 20.0, 30.0, 100.0],
+    ],
+)
 def test_latency_ema_bounded(latency_samples):
     """
     Property: EMA latency never exceeds clamp bounds [5, 30]s.
@@ -539,9 +549,16 @@ def test_latency_ema_bounded(latency_samples):
 
 
 # UMA state validation: one of valid values
-@pytest.mark.parametrize("state_values", [
-    "warn", "critical", "emergency", "ok", "normal",
-])
+@pytest.mark.parametrize(
+    "state_values",
+    [
+        "warn",
+        "critical",
+        "emergency",
+        "ok",
+        "normal",
+    ],
+)
 def test_uma_threshold_state_valid(state_values):
     """
     Property: UMA state is one of known values.
@@ -552,11 +569,10 @@ def test_uma_threshold_state_valid(state_values):
 
 # ── Slow tests (real I/O) ──────────────────────────────────────────────────────
 
+
 @pytest.mark.slow
 @pytest.mark.asyncio
-async def test_real_async_feedback_recording_does_not_crash(
-    minimal_config, mock_store
-):
+async def test_real_async_feedback_recording_does_not_crash(minimal_config, mock_store):
     """
     L4954: Real async test — verify record_hypothesis_feedback pattern
     (exception in store does not propagate).
@@ -581,10 +597,9 @@ async def test_real_async_feedback_recording_does_not_crash(
 
 # ── Smoke test: scheduler stays healthy after fail-soft ───────────────────────
 
+
 @pytest.mark.asyncio
-async def test_scheduler_healthy_after_multiple_failsoft_paths(
-    minimal_config, mock_lifecycle, mock_adapter
-):
+async def test_scheduler_healthy_after_multiple_failsoft_paths(minimal_config, mock_lifecycle, mock_adapter):
     """
     Verify: after multiple fail-soft handlers, scheduler is still usable.
     This is the PRIMARY behavioral assertion — scheduler must not crash.
@@ -604,7 +619,7 @@ async def test_scheduler_healthy_after_multiple_failsoft_paths(
     assert sched is not None
 
     # Verify result object exists and is valid
-    assert hasattr(sched, '_result')
+    assert hasattr(sched, "_result")
 
     # Verify public methods are callable
     assert callable(sched.prioritize_sources)
@@ -613,6 +628,7 @@ async def test_scheduler_healthy_after_multiple_failsoft_paths(
 
 
 # ── Sprint F259: Synthesis sidecar probe tests ─────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_synthesis_sidecar_skipped_when_env_disabled(minimal_config):
@@ -663,9 +679,7 @@ async def test_synthesis_sidecar_skipped_when_uma_emergency(minimal_config):
     SprintScheduler = _import_scheduler()  # noqa: N806
     sched = SprintScheduler(minimal_config, ct_log_client=None)
     sched._duckdb_store = AsyncMock()
-    sched._duckdb_store.get_top_findings = AsyncMock(return_value=[
-        {"ioc": "1.2.3.4", "text": "malware test"}
-    ])
+    sched._duckdb_store.get_top_findings = AsyncMock(return_value=[{"ioc": "1.2.3.4", "text": "malware test"}])
 
     # Mock UMA emergency
     mock_uma = MagicMock()
@@ -694,9 +708,7 @@ async def test_synthesis_sidecar_graceful_on_error(minimal_config):
     SprintScheduler = _import_scheduler()  # noqa: N806
     sched = SprintScheduler(minimal_config, ct_log_client=None)
     sched._duckdb_store = AsyncMock()
-    sched._duckdb_store.get_top_findings = AsyncMock(return_value=[
-        {"ioc": "1.2.3.4", "text": "malware test"}
-    ])
+    sched._duckdb_store.get_top_findings = AsyncMock(return_value=[{"ioc": "1.2.3.4", "text": "malware test"}])
     sched._duckdb_store.get_stix_graph = MagicMock(return_value=None)
 
     # Mock SynthesisRunner that raises
@@ -753,9 +765,7 @@ async def test_synthesis_sidecar_skipped_when_zero_accepted_findings(minimal_con
     sched._duckdb_store = AsyncMock()
 
     # Duckdb WOULD return findings (proves the guard fires BEFORE the I/O)
-    sched._duckdb_store.get_top_findings = AsyncMock(return_value=[
-        {"ioc": "1.2.3.4", "text": "would-be finding"}
-    ])
+    sched._duckdb_store.get_top_findings = AsyncMock(return_value=[{"ioc": "1.2.3.4", "text": "would-be finding"}])
 
     # Default: accepted_findings = 0 (fresh SprintSchedulerResult)
     assert sched._result.accepted_findings == 0
@@ -790,19 +800,23 @@ async def test_synthesis_sidecar_runs_when_accepted_findings_present(minimal_con
     SprintScheduler = _import_scheduler()  # noqa: N806
     sched = SprintScheduler(minimal_config, ct_log_client=None)
     sched._duckdb_store = AsyncMock()
-    sched._duckdb_store.get_top_findings = AsyncMock(return_value=[
-        {"ioc": "1.2.3.4", "text": "real finding"}
-    ])
+    sched._duckdb_store.get_top_findings = AsyncMock(return_value=[{"ioc": "1.2.3.4", "text": "real finding"}])
 
     # Sprint has accepted findings → synthesis should proceed
     sched._result.accepted_findings = 5
 
     # Mock SynthesisRunner that succeeds
     mock_runner = MagicMock()
-    mock_runner.synthesize_findings = AsyncMock(return_value=MagicMock(
-        ioc_entities=[], threat_actors=[], threat_summary="", confidence=0.0,
-        sources_count=0, timestamp=0.0,
-    ))
+    mock_runner.synthesize_findings = AsyncMock(
+        return_value=MagicMock(
+            ioc_entities=[],
+            threat_actors=[],
+            threat_summary="",
+            confidence=0.0,
+            sources_count=0,
+            timestamp=0.0,
+        )
+    )
     mock_runner.inject_lifecycle_adapter = MagicMock()
     mock_runner.inject_stix_graph = MagicMock()
     mock_runner.close = AsyncMock()
@@ -822,6 +836,7 @@ async def test_synthesis_sidecar_runs_when_accepted_findings_present(minimal_con
 
 
 # ── TestF11: Windup guard first_cycle_ran identity bug ───────────────────────
+
 
 class TestF11WindupFirstCycle:
     """
@@ -969,6 +984,7 @@ class TestF11WindupFirstCycle:
 
 # ── F289-WINDUP: Windup budget overconsumption tests ─────────────────────────────────
 
+
 class TestF289WindupBudget:
     """F288-WINDUP: effective_windup_lead_s uses 30% ratio / [30, 180] ceiling."""
 
@@ -979,6 +995,7 @@ class TestF289WindupBudget:
         F288: floor [15, 180] always applies (15s floor).
         """
         from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
+
         cfg = SprintSchedulerConfig(sprint_duration_s=60.0, windup_lead_s=180.0)
         assert cfg.effective_windup_lead_s == 15.0  # F290: 0.20*60=12 → floor [15,180]→15
         assert cfg.sprint_duration_s - cfg.effective_windup_lead_s == 45.0  # active window
@@ -986,6 +1003,7 @@ class TestF289WindupBudget:
     def test_effective_windup_300s_25pct(self):
         """Sprint 300s: F290 ratio=0.25, raw=75s → floor [15,180]→75. Active = 225s."""
         from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
+
         cfg = SprintSchedulerConfig(sprint_duration_s=300.0, windup_lead_s=180.0)
         assert cfg.effective_windup_lead_s == 75.0  # F290: 0.25*300=75
         assert cfg.sprint_duration_s - cfg.effective_windup_lead_s == 225.0  # active OK
@@ -993,6 +1011,7 @@ class TestF289WindupBudget:
     def test_effective_windup_600s_30pct(self):
         """Sprint 600s: F290 ratio=0.30, raw=180s → floor [15,180]→180. Active = 420s."""
         from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
+
         cfg = SprintSchedulerConfig(sprint_duration_s=600.0, windup_lead_s=180.0)
         assert cfg.effective_windup_lead_s == 180.0  # F290: 0.30*600=180, at ceiling
         assert cfg.sprint_duration_s - cfg.effective_windup_lead_s == 420.0  # active OK
@@ -1000,12 +1019,14 @@ class TestF289WindupBudget:
     def test_effective_windup_explicit_override_respected(self):
         """Explicit --windup-lead 50s is respected (above 30s floor)."""
         from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
+
         cfg = SprintSchedulerConfig(sprint_duration_s=300.0, windup_lead_s=50.0)
         assert cfg.effective_windup_lead_s == 50.0  # explicit override OK (above floor)
 
     def test_windup_efficiency_field_present(self):
         """SprintSchedulerResult has windup_efficiency field (F289)."""
         from hledac.universal.runtime.sprint_scheduler import SprintSchedulerResult
+
         result = SprintSchedulerResult()
         assert hasattr(result, "windup_efficiency")
         assert result.windup_efficiency == 0.0  # default
@@ -1015,9 +1036,12 @@ class TestF289WindupBudget:
         from hledac.universal.runtime.sprint_scheduler import (
             SprintSchedulerConfig,
         )
+
         cfg = SprintSchedulerConfig(sprint_duration_s=300.0, windup_lead_s=180.0)
         # F290: effective_windup = 75s (0.25*300), active = 225s → efficiency = 75/300 = 0.25
-        eff = cfg.effective_windup_lead_s / (cfg.effective_windup_lead_s + (cfg.sprint_duration_s - cfg.effective_windup_lead_s))
+        eff = cfg.effective_windup_lead_s / (
+            cfg.effective_windup_lead_s + (cfg.sprint_duration_s - cfg.effective_windup_lead_s)
+        )
         assert abs(eff - 0.25) < 0.001  # ~75/300
 
 
@@ -1040,6 +1064,7 @@ class TestF270InitOrder:
             SprintScheduler,
             SprintSchedulerConfig,
         )
+
         cfg = SprintSchedulerConfig(sprint_duration_s=60.0)
         scheduler = SprintScheduler(cfg)
         # Must not raise AttributeError: 'SprintScheduler' object has no attribute '_timer'
@@ -1093,6 +1118,7 @@ class TestF270InitOrder:
             SprintScheduler,
             SprintSchedulerConfig,
         )
+
         cfg = SprintSchedulerConfig(sprint_duration_s=60.0)
         scheduler = SprintScheduler(cfg)
         # After construction, timer should have 0 events (no phase called yet)
@@ -1138,7 +1164,6 @@ class TestF285Acllose:
     @pytest.mark.asyncio
     async def test_aclose_has_log_output(self):
         """aclean() must log completion with sprint_id and elapsed time."""
-        import logging
         from hledac.universal.runtime.sprint_scheduler import (
             SprintScheduler,
             SprintSchedulerConfig,
@@ -1148,33 +1173,25 @@ class TestF285Acllose:
         scheduler = SprintScheduler(cfg)
         scheduler.sprint_id = "test-sprint-123"
 
-        # Capture log output
-        class LogCapture(logging.Handler):
-            def __init__(self):
-                super().__init__()
-                self.records: list[logging.LogRecord] = []
+        import io
+        import sys
 
-            def emit(self, record: logging.LogRecord):
-                self.records.append(record)
-
-        handler = LogCapture()
-        logger = logging.getLogger("hledac.universal.runtime.sprint_scheduler")
-        old_level = logger.level
-        logger.setLevel(logging.DEBUG)
-        logger.addHandler(handler)
-
+        # Structlog plain renderer writes [aclean] messages directly to stdout.
+        # We must capture at the stdout level (not logging.Handler) to verify output.
+        _old_stdout = sys.stdout
+        _stdout_buffer = io.StringIO()
         try:
+            sys.stdout = _stdout_buffer
             await scheduler.aclose()
         finally:
-            logger.removeHandler(handler)
-            logger.setLevel(old_level)
+            sys.stdout = _old_stdout
 
-        # Check that a log message with "[aclean]" was emitted
-        aclose_logs = [r for r in handler.records if "[aclean]" in r.getMessage()]
-        assert len(aclose_logs) > 0, "aclean() did not emit any [aclean] log messages"
+        _captured = _stdout_buffer.getvalue()
+
+        # Check that a message with "[aclean]" was emitted to stdout
+        assert "[aclean]" in _captured, f"aclean() did not emit any [aclean] messages to stdout: {_captured!r}"
         # Check the final "done" message
-        done_logs = [r for r in aclose_logs if "done" in r.getMessage()]
-        assert len(done_logs) > 0, "aclean() did not emit completion log"
+        assert "done" in _captured, f"aclean() did not emit completion message: {_captured!r}"
 
 
 # =============================================================================
@@ -1216,10 +1233,10 @@ def test_sprint_scheduler_config_with_keyword_query(minimal_config):
 
     # Verify result dataclass has expected fields for keyword query scenarios
     result = scheduler._result
-    assert hasattr(result, 'accepted_findings')
-    assert hasattr(result, 'final_phase')
-    assert hasattr(result, 'cycles_started')
-    assert hasattr(result, 'unique_entry_hashes_seen')
+    assert hasattr(result, "accepted_findings")
+    assert hasattr(result, "final_phase")
+    assert hasattr(result, "cycles_started")
+    assert hasattr(result, "unique_entry_hashes_seen")
 
     # Validate result structure types
     assert isinstance(result.accepted_findings, int)

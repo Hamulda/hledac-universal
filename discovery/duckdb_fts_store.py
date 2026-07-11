@@ -18,7 +18,6 @@ Search:
     Hybrid: RRF fusion s LanceDB ANN pres rrf_fuse()
 """
 
-from __future__ import annotations
 
 import asyncio
 import hashlib

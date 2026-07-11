@@ -1,0 +1,4 @@
+- xxhash-rust v0.8 crate with xxh3, const_xxh3, and xxh64 features configured in rust_extensions/Cargo.toml
+- xxHash used for canonical_url_batch (rayon 2-thread parallel execution) and URL fingerprinting
+- M1 body hashing leverages NEON acceleration via BLAKE3-64 for performance optimization
+- Dependencies: Requires rust_extensions PyO3 bindings for Python integration

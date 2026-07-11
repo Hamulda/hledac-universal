@@ -13,7 +13,6 @@ methods return []. Fixed by delegating to forensics/ioc_extractor Python fallbac
 which uses the same combined regex but bypasses broken Rust path.
 """
 
-from __future__ import annotations
 
 import concurrent.futures
 import os

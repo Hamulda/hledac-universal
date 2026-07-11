@@ -12,7 +12,6 @@ In Python 3.14+ the internal _waiters deque means direct _value mutation can cau
 deadlocks or race conditions. AtomicAdaptiveSemaphore uses asyncio.Lock + Condition
 to provide a thread-safe, event-loop-safe adaptive semaphore with O(1) resize.
 """
-from __future__ import annotations
 
 
 import asyncio

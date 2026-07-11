@@ -24,7 +24,6 @@ Anti-patterns:
 - No PyTorch: uses MLX only
 - No model swaps mid-pipeline: singleton ensures single model
 """
-from __future__ import annotations
 
 
 

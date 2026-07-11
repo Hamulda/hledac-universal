@@ -1,0 +1,1 @@
+DuckDB Shadow Store uses a 3-tier facts hierarchy (Sprint Facts, Shadow Findings, Cross-Sprint), with 3-tier IOC extraction featuring zero-copy Python paths, a two-tier L1/L2 query cache backed by LMDB, and Arrow ingest for 1.5-2x faster performance.

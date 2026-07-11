@@ -1,4 +1,5 @@
 """
+from __future__ import annotations
 Sprint Context — ContextVar-based sprint metadata for Hledac.
 
 Provides thread-safe, async-safe sprint context propagation using msgspec.Struct
@@ -16,6 +17,7 @@ Usage:
         pass
     # context is reset
 """
+from __future__ import annotations
 
 
 

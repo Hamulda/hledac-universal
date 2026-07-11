@@ -15,7 +15,6 @@ Detects and neutralizes:
 Integration point: Hermes3Engine.generate() after adaptive context preflight,
 before _sanitize_for_llm callback or fallback_sanitize.
 """
-from __future__ import annotations
 
 
 

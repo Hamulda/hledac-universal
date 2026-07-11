@@ -1,6 +1,36 @@
 {
   "active_context": [
     {
+      "order": 3,
+      "path": "_index.md",
+      "tokens": 411,
+      "type": "summary"
+    },
+    {
+      "order": 2,
+      "path": "testing/_index.md",
+      "tokens": 431,
+      "type": "summary"
+    },
+    {
+      "order": 1,
+      "path": "data/duckdb_store/_index.md",
+      "tokens": 923,
+      "type": "summary"
+    },
+    {
+      "order": 1,
+      "path": "knowledge_base/audit/_index.md",
+      "tokens": 187,
+      "type": "summary"
+    },
+    {
+      "importance": 50,
+      "path": "architecture/context.md",
+      "tokens": 86,
+      "type": "context"
+    },
+    {
       "importance": 50,
       "path": "architecture/hledac_universal/context.md",
       "tokens": 117,
@@ -39,11 +69,33 @@
       "type": "context"
     },
     {
+      "abstractPath": "architecture/hledac_universal/rust_extensions_code_review.abstract.md",
+      "abstractTokens": 49,
+      "importance": 50,
+      "path": "architecture/hledac_universal/rust_extensions_code_review.md",
+      "tokens": 49,
+      "type": "context"
+    },
+    {
       "abstractPath": "architecture/hledac_universal/sprint_lifecycle_pipeline.abstract.md",
       "abstractTokens": 48,
       "importance": 50,
       "path": "architecture/hledac_universal/sprint_lifecycle_pipeline.md",
       "tokens": 48,
+      "type": "context"
+    },
+    {
+      "importance": 50,
+      "path": "architecture/transport_layers/context.md",
+      "tokens": 93,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/transport_layers/http_3_lane_implementation.abstract.md",
+      "abstractTokens": 64,
+      "importance": 50,
+      "path": "architecture/transport_layers/http_3_lane_implementation.md",
+      "tokens": 64,
       "type": "context"
     },
     {
@@ -58,6 +110,22 @@
       "importance": 50,
       "path": "data/duckdb_store/duckdb_shadow_store.md",
       "tokens": 61,
+      "type": "context"
+    },
+    {
+      "abstractPath": "data/duckdb_store/duckdb_shadow_store_extended.abstract.md",
+      "abstractTokens": 63,
+      "importance": 50,
+      "path": "data/duckdb_store/duckdb_shadow_store_extended.md",
+      "tokens": 63,
+      "type": "context"
+    },
+    {
+      "abstractPath": "data/duckdb_store/duckdb_thread_count_and_settings.abstract.md",
+      "abstractTokens": 59,
+      "importance": 50,
+      "path": "data/duckdb_store/duckdb_thread_count_and_settings.md",
+      "tokens": 59,
       "type": "context"
     },
     {
@@ -93,9 +161,25 @@
       "type": "context"
     },
     {
+      "abstractPath": "facts/project/xxhash_rust_implementation.abstract.md",
+      "abstractTokens": 45,
+      "importance": 50,
+      "path": "facts/project/xxhash_rust_implementation.md",
+      "tokens": 45,
+      "type": "context"
+    },
+    {
+      "abstractPath": "infrastructure/external_services/external_service_integrations.abstract.md",
+      "abstractTokens": 72,
+      "importance": 50,
+      "path": "infrastructure/external_services/external_service_integrations.md",
+      "tokens": 72,
+      "type": "context"
+    },
+    {
       "importance": 50,
       "path": "knowledge_base/audit/context.md",
-      "tokens": 99,
+      "tokens": 115,
       "type": "context"
     },
     {
@@ -137,7 +221,7 @@
     {
       "importance": 50,
       "path": "testing/exit_codes/context.md",
-      "tokens": 77,
+      "tokens": 92,
       "type": "context"
     },
     {
@@ -149,21 +233,27 @@
       "type": "context"
     },
     {
-      "abstractPath": "testing/exit_codes/sprint_f350m_r_exit_code_tests.abstract.md",
-      "abstractTokens": 68,
       "importance": 50,
-      "path": "testing/exit_codes/sprint_f350m_r_exit_code_tests.md",
-      "tokens": 68,
+      "path": "testing/memory_leaks/context.md",
+      "tokens": 107,
+      "type": "context"
+    },
+    {
+      "abstractPath": "testing/memory_leaks/f350m_r_memory_leak_fixes.abstract.md",
+      "abstractTokens": 54,
+      "importance": 50,
+      "path": "testing/memory_leaks/f350m_r_memory_leak_fixes.md",
+      "tokens": 54,
       "type": "context"
     }
   ],
-  "generated_at": "2026-07-11T15:07:55.410Z",
+  "generated_at": "2026-07-11T20:24:16.907Z",
   "lane_tokens": {
-    "contexts": 1265,
+    "contexts": 1920,
     "stubs": 0,
-    "summaries": 0
+    "summaries": 1952
   },
-  "source_fingerprint": "fd462c6af3a72625d63c7e318a0d9b9fb0071c7ae31fe8f36384cb4786f5076e",
-  "total_tokens": 1265,
+  "source_fingerprint": "5fe3129d0f7d663320ef16d8ea0bc4efa93c582dec743569794e28a136a24be8",
+  "total_tokens": 3872,
   "version": 1
 }

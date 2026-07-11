@@ -1,5 +1,4 @@
 # rolling_hash.py — Rolling hash domain
-from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 

@@ -1,0 +1,7 @@
+- DuckDB uses 3-tier facts hierarchy: TIER1=Sprint Facts (sprint_delta, sprint_scorecard, source_hit_log), TIER2=Shadow Findings (canonical_findings, shadow_runs), TIER3=Cross-Sprint (temporal_events)
+- IOC extraction has 3 tiers with zero-copy Python path via PyList::append, rayon Vec return with PyO3 auto-convert, and pure Python fallback
+- Two-tier query cache: L1=500-entry LRU with 300s TTL (in-memory), L2=5000-entry LMDB with 300s TTL and 16MB map; defaults to OFF (HLEDAC_DUCKDB_QUERY_CACHE)
+- ParquetHistoryReader enables 100GB+ IOC history lazy reads without OOM using 100k rows per batch with zero-copy Arrow
+- F272 removed DuckDB ioc_graph table; IOC storage now via DuckPGQGraph in graph/quantum_pathfinder.py
+- Arrow ingest is 1.5-2x faster than executemany on M1 8GB (break-even at N=5-10), defaults to ON (HLEDAC_ARROW_INGEST)
+- M1 Air 8GB configuration: 600MB memory limit (reduced from 2GB in Phase4), 4 threads (4P cores)

@@ -22,7 +22,6 @@ Usage:
     ) as t:
         await t
 """
-from __future__ import annotations
 
 
 

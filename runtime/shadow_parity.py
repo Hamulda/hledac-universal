@@ -66,7 +66,6 @@ Canonical facts owners:
 - branch_decision_facts → types.py (BranchDecision)
 - provider_precursor → capabilities.py (future)
 """
-from __future__ import annotations
 
 
 

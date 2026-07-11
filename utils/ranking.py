@@ -13,7 +13,6 @@ References:
 
 M1-Optimized: O(n) complexity, minimal memory footprint
 """
-from __future__ import annotations
 
 
 

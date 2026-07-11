@@ -12,7 +12,6 @@ Features:
 - Unified embedding generation
 - Modality-specific processing pipelines
 """
-from __future__ import annotations
 
 
 

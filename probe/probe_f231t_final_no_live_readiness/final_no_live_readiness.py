@@ -13,7 +13,6 @@ Verdicts:
   BLOCKED_BY_MEMORY
   BLOCKED_BY_ARTIFACTS
 """
-from __future__ import annotations
 
 
 

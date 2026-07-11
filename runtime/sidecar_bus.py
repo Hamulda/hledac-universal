@@ -27,7 +27,6 @@ GHOST_INVARIANTS enforced:
 - Fail-soft: sidecar error never crashes the sprint
 - Stage N failure does not stop stage N+1
 """
-from __future__ import annotations
 
 import asyncio
 import json

@@ -24,7 +24,6 @@ Design:
 - generate_report() delegates to summarize() with the query as a prefix.
 - synthesize() likewise wraps summarize() into a simple "context: X" format.
 """
-from __future__ import annotations
 
 
 

@@ -6,7 +6,6 @@ Owns: NextActionInput, _derive_next_action, all _rule_* helpers, _was_family_att
 Pure: no runtime/scheduler/core/network/MLX imports.
 Only imports MeasurementStatus from live_measurement_schema.
 """
-from __future__ import annotations
 
 
 

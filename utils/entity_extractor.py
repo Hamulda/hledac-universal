@@ -25,7 +25,6 @@ Example:
     >>> print(entities[0].pattern_type)
     PatternType.EMAIL
 """
-from __future__ import annotations
 
 
 

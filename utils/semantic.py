@@ -24,7 +24,6 @@ Usage:
     else:
         # Skip, save tokens
 """
-from __future__ import annotations
 
 
 

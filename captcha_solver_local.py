@@ -14,7 +14,6 @@ This module exists for environments where:
 - 2captcha API is not acceptable (cost/privacy)
 - Users explicitly opt-in with HLEDAC_ENABLE_CAPTCHA_LOCAL=1
 """
-from __future__ import annotations
 
 
 import asyncio

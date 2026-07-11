@@ -21,7 +21,6 @@ Safety invariants:
   - Fail-soft: missing DB or schema → no crash, skip reason recorded
   - DuckDB only accessed when duckdb_store is available and initialized
 """
-from __future__ import annotations
 
 
 

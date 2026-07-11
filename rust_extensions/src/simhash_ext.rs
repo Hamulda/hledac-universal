@@ -280,7 +280,7 @@ pub fn is_near_duplicate(text_a: &str, text_b: &str, threshold: u32, ngram_size:
 /// is_new, dup_id = store.add_document("Article content", "doc-1")
 /// print(f"New: {is_new}, Duplicate of: {dup_id}")
 /// ```
-#[pyclass(frozen)]
+#[pyclass]
 pub struct SimHashStore {
     fingerprints: Vec<(u64, String)>, // (fingerprint, document_id)
     threshold: u32,

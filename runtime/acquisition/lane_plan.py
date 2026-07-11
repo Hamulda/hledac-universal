@@ -1,4 +1,5 @@
 """
+from __future__ import annotations
 runtime/acquisition/lane_plan.py
 
 Acquisition lane plan structures — AcquisitionLanePlan, LaneSpec, LaneRule.
@@ -9,6 +10,7 @@ MODERNIZATION (Issue #18):
   - AcquisitionContext stays as @dataclass (has field(default=...) which msgspec doesn't support)
   - All helper functions (_lc, _lane_rule, _disabled_reason) isolated here
 """
+from __future__ import annotations
 
 
 import logging

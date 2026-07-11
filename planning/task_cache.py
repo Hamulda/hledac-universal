@@ -2,7 +2,6 @@
 LMDB cache pro rozklady úkolů.
 Ukládá výsledky SLM decomposeru s verzí modelu.
 """
-from __future__ import annotations
 
 
 import asyncio

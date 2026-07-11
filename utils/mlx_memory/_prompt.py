@@ -4,7 +4,6 @@ utils/mlx_memory/_prompt.py — MLX Prompt KV Cache (F330-MLX-DUP-007)
 LRU cache for MLX prompt cache states with explicit size tracking.
 Bounded entries and total size. Async-safe with asyncio.Lock.
 """
-from __future__ import annotations
 
 import asyncio
 import logging

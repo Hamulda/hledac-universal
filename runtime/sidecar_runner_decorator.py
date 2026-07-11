@@ -36,7 +36,6 @@ GHOST_INVARIANTS enforced:
 - Lazy import: module loaded only on first use
 - RAM guard: skipped by bus if governor reports critical/emergency
 """
-from __future__ import annotations
 
 import importlib
 import logging

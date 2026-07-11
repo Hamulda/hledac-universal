@@ -36,7 +36,6 @@ Backward compatibility:
     rust.quality.batch_entropy(...) # still works
 """
 
-from __future__ import annotations
 
 import logging
 import os

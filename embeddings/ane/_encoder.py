@@ -7,7 +7,6 @@ Pre-converted .mlpackage model → ANE → embeddings.
 Tento modul obsahuje low-level CoreML encoder.
 Vysokoúrovňový unified embedder je v `embeddings/ane/__init__.py`.
 """
-from __future__ import annotations
 
 import logging
 from pathlib import Path

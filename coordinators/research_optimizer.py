@@ -10,7 +10,6 @@ Optimizes research workflows through:
 
 Based on crypto_optimization_engine concept from integration files.
 """
-from __future__ import annotations
 
 
 

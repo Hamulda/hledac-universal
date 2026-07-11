@@ -10,7 +10,6 @@ Rules:
     - None/non-numeric -> default
     - sqs_to_confidence maps 0–90 → 0.0–1.0 safely
 """
-from __future__ import annotations
 
 
 from typing import Any, cast

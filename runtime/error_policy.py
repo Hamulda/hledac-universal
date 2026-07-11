@@ -26,7 +26,6 @@ Invariant table:
 
 Author: Issue 9
 """
-from __future__ import annotations
 
 import asyncio
 import logging

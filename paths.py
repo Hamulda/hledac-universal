@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 # hledac/universal/paths.py - Single Source of Truth for Runtime Paths
 # SPRINT F500I: CANONICAL PATH AUTHORITY + BOOT HYGIENE + IMPORT TRUTH

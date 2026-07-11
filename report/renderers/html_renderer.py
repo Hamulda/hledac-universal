@@ -6,7 +6,6 @@ Uses markdown-it-py (pure Python, no external binary).
 Can use mistune as faster alternative.
 Falls back to basic regex-based conversion.
 """
-from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 

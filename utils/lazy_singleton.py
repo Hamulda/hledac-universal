@@ -10,7 +10,6 @@ to ensure visibility across all CPUs on M1.
 
 M1 8GB: lock object ~64 bytes, negligible overhead.
 """
-from __future__ import annotations
 
 import threading
 from typing import Callable, Generic, TypeVar, cast

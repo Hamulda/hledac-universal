@@ -18,7 +18,6 @@ Invariants:
   - [DSPY-4] close_all() clears tracking + closes transport sessions at teardown
   - [DSPY-5] No bare except; always except Exception
 """
-from __future__ import annotations
 
 
 

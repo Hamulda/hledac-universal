@@ -18,7 +18,6 @@ WIRE: runtime/sprint_scheduler.py → CrossSprintMemory.get_related_entities()
 
 M1 8GB: bounded queries (max_hops=2, limit=50), fail-soft on graph errors.
 """
-from __future__ import annotations
 
 
 

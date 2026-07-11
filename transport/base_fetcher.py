@@ -13,7 +13,6 @@ Architecture:
 
 No circular deps: this module is independent of fetching/public_fetcher.py.
 """
-from __future__ import annotations
 
 
 import asyncio

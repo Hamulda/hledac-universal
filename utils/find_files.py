@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """File search utility created by Claude Code agent simulation."""
-from __future__ import annotations
 
 
 import fnmatch

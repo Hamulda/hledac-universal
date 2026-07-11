@@ -11,7 +11,6 @@ Provides unified stealth interface for research operations.
 
 Migrated from: hledac/stealth_toolkit/
 """
-from __future__ import annotations
 
 
 

@@ -15,7 +15,6 @@ pressure response across all advisory layers.
 
 This module is stdlib-first with optional psutil support.
 """
-from __future__ import annotations
 
 
 

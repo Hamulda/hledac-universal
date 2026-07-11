@@ -11,7 +11,6 @@ Integrates all privacy protection modules:
 Provides unified API for privacy operations with automatic
 fallbacks and M1 memory optimization.
 """
-from __future__ import annotations
 
 
 

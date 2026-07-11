@@ -16,7 +16,6 @@ Seed servers:
   gopher.floodgap.com  (port 70)
   gopher.quux.org      (port 70)
 """
-from __future__ import annotations
 
 
 

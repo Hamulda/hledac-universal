@@ -43,7 +43,6 @@ Invariants (P0-3):
 Always-on, no feature flag, no env var.
 M1 8GB safe.
 """
-from __future__ import annotations
 
 
 

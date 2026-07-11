@@ -1,0 +1,1 @@
+The HTTP/3 lane provides dual-strategy transport via curl_cffi_opportunistic (default LRU-cached) or aioquic_stealth (opt-in QUIC), with concurrency capped at 3, memory guard at 5.5 GiB, and automatic Alt-Svc probing, while dark web URLs always skip HTTP/3.

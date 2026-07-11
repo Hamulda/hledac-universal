@@ -128,7 +128,7 @@ pub fn double_hash_64(item: &str) -> (u64, u64) {
 
 /// Streaming hasher for large documents (chunk-by-chunk processing).
 /// Thread-safe for use in async Python contexts.
-#[pyclass(frozen)]
+#[pyclass]
 pub struct StreamHasher64 {
     inner: Xxh3,
 }

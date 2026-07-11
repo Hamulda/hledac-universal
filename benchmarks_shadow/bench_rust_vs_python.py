@@ -25,7 +25,6 @@ Usage:
     uv run python benchmarks/bench_rust_vs_python.py
     python -m benchmarks.bench_rust_vs_python
 """
-from __future__ import annotations
 
 
 import statistics

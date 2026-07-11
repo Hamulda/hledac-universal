@@ -14,7 +14,6 @@ Integrates GhostDirector with:
 This is a thin wrapper that imports existing GhostDirector
 and adds integration logic without duplicating code.
 """
-from __future__ import annotations
 
 
 

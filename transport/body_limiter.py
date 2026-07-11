@@ -1,4 +1,5 @@
 """
+from __future__ import annotations
 Pure async helper for reading chunk streams with a hard byte cap.
 
 No transport layer coupling. No router involvement. No network I/O.
@@ -12,6 +13,7 @@ Invariants:
 - Bounded chunks counter (CHUNKS_BUDGET=8192) defends against pathological
   sources that emit millions of tiny chunks.
 """
+from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator

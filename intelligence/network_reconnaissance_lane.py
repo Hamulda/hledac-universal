@@ -8,7 +8,6 @@ LaneSpec:
     concurrent_queries=4 (DNS is parallelizable, moderate cost)
     cost_estimate_per_query=1 (lightweight per-query cost)
 """
-from __future__ import annotations
 
 
 import asyncio

@@ -7,7 +7,6 @@ Interface expected by research_coordinator.py:
 
 Returns dict with: url, content, title, links, status, js_rendered
 """
-from __future__ import annotations
 
 
 

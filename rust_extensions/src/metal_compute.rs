@@ -368,16 +368,16 @@ impl GpuDevice {
     }
 }
 
-/// Singleton GPU device
+/// Singleton GPU device — caches None on Metal unavailability (fail-soft, no panic).
 #[cfg(target_os = "macos")]
-static GPU_DEVICE: std::sync::OnceLock<GpuDevice> = std::sync::OnceLock::new();
+static GPU_DEVICE: std::sync::OnceLock<Option<GpuDevice>> = std::sync::OnceLock::new();
 
 #[cfg(target_os = "macos")]
 pub fn get_gpu_device() -> Option<&'static GpuDevice> {
-    GPU_DEVICE.get_or_init(|| match GpuDevice::new() {
-        Some(d) => d,
-        None => panic!("Metal GPU not available"),
-    }).into()
+    match GPU_DEVICE.get_or_init(GpuDevice::new) {
+        Some(d) => Some(d),
+        None => None,
+    }
 }
 
 #[cfg(target_os = "macos")]

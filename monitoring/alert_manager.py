@@ -10,7 +10,6 @@ Monitors 4 critical anti-patterns:
 
 Always-on, bounded, fail-safe. M1 8GB UMA safe.
 """
-from __future__ import annotations
 
 
 import asyncio

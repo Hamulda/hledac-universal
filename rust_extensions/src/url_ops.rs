@@ -388,7 +388,7 @@ impl UrlClassifyCache {
 ///
 /// Single GIL transition per batch call (vs N transitions for N cache lookups
 /// in the Python PyCacheDict approach).
-#[pyclass(frozen)]
+#[pyclass]
 pub struct UrlClassifyCachePy {
     inner: std::sync::Mutex<UrlClassifyCache>,
 }

@@ -23,7 +23,6 @@ M1 8GB budget:
 
 GHOST_INVARIANT: M1 Metal cache limit 1.5 GiB ceiling on 8GB machines.
 """
-from __future__ import annotations
 
 import asyncio
 import functools

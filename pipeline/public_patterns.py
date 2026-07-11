@@ -7,7 +7,6 @@ Handles: IOC extraction (rust backend), pattern context, quality scoring,
 
 Pure functions, no I/O, no async. Heavy I/O (rust backend) is fail-safe.
 """
-from __future__ import annotations
 
 
 import hashlib

@@ -1,4 +1,5 @@
 """
+from __future__ import annotations
 Common Crawl adapter — thin archival URL discovery seam.
 
 AUTHORITY: This adapter is a discovery-shaped seam ONLY.
@@ -12,6 +13,7 @@ INVARIANTS (F192E):
 - M1-safe: no heavy in-memory processing
 - StealthManager for HTTP (same as wayback_adapter pattern)
 """
+from __future__ import annotations
 
 
 import logging

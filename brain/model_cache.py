@@ -4,7 +4,6 @@ brain/model_cache.py — Centralized HuggingFace model cache for M1 8GB
 Single cache directory: ~/.cache/hledac/models/{model_id}
 Size monitoring via uma_budget.py
 """
-from __future__ import annotations
 
 
 import asyncio

@@ -503,7 +503,7 @@ impl DistributedBloomFilter {
 }
 
 // Python bindings
-#[pyclass(frozen)]
+#[pyclass]
 pub struct PyDistributedBloomFilter {
     filter: DistributedBloomFilter,
     cache_dir: PathBuf,

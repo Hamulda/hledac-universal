@@ -5,7 +5,6 @@ Moved from knowledge/ioc_graph.py (F300-GRAPH) to decouple IOC extraction
 from the Kuzu-backed graph. These functions are used by DuckDB canonical
 write path (duckdb_store.py) and must remain Kuzu-free.
 """
-from __future__ import annotations
 
 
 from concurrent.futures import ThreadPoolExecutor, as_completed

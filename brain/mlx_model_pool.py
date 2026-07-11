@@ -8,7 +8,6 @@ Zajišťuje:
 - Async-safe (asyncio.Lock)
 - mx.eval([]) + clear_cache() po každém eviction
 """
-from __future__ import annotations
 
 import asyncio
 import gc

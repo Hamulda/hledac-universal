@@ -54,7 +54,6 @@ ADMISSION BLOCKERS (před F11 připojením):
 
 M1 8GB Optimized: Lazy loading, chunked processing, aggressive memory management
 """
-from __future__ import annotations
 
 import asyncio
 import gc

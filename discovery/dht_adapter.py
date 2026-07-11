@@ -8,7 +8,6 @@ Requires: HLEDAC_ENABLE_DHT=1
 Timeout: 30s max (DHT is slow)
 Tier: 3 (experimental)
 """
-from __future__ import annotations
 
 
 

@@ -22,7 +22,6 @@ M1 8GB notes:
 - interpreters share file descriptors (reduced FD pressure vs subprocess)
 """
 
-from __future__ import annotations
 
 import asyncio
 import concurrent.futures

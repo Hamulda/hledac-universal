@@ -7,7 +7,6 @@ Funkce:
 - Quality validation
 - Memory profiling
 """
-from __future__ import annotations
 
 from hledac.universal.utils.async_helpers import safe_create_task, stop_task
 

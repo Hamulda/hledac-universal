@@ -21,7 +21,6 @@ Features:
 This module is designed for OSINT research to discover non-obvious connections
 in knowledge graphs through quantum-inspired algorithms.
 """
-from __future__ import annotations
 
 
 

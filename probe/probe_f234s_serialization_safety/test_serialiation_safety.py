@@ -38,7 +38,6 @@ OWNED FILES:
   - tests/probe_f234s_serialization_safety/
   - probe_f234s_serialization_safety/
 """
-from __future__ import annotations
 
 
 

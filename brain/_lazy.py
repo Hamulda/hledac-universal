@@ -30,7 +30,6 @@ provides a SECOND, independent lazy loading path for non-Hermes models that
 don't go through ModelManager. Do NOT route Hermes/GLINER/ModernBERT through
 this module — use ModelManager instead.
 """
-from __future__ import annotations
 
 from hledac.universal.utils.async_helpers import safe_create_task
 

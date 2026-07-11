@@ -1,0 +1,1 @@
+Memory leak fixes for F350M-R test suite using autouse cleanup fixtures that resolve M1 8GB crashes by reducing memory usage from 5-16GB to ~1-2GB through proper asyncio scope configuration and MLX cache management.

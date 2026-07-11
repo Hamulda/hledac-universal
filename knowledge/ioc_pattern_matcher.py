@@ -31,7 +31,6 @@ Usage:
     matches = matcher.match("payment to 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa BTC")
     # → [IOCMatch(pattern_name="btc_address", matched_value="1A1zP1eP5QGefi...", start=12, end=46)]
 """
-from __future__ import annotations
 
 
 import logging

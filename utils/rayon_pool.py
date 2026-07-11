@@ -88,7 +88,6 @@ TESTING
   Tests in: tests/test_rayon_pool.py
   Run with: pytest tests/test_rayon_pool.py -v
 """
-from __future__ import annotations
 
 
 

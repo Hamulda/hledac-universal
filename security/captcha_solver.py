@@ -35,7 +35,6 @@ ARCHITECTURAL NOTE (F360):
     ``HLEDAC_ENABLE_STEALTH_LAYER=1``; this module is a specialised
     fallback for M1 hardware that benefits from ANE acceleration.
 """
-from __future__ import annotations
 
 
 

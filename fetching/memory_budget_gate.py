@@ -1,8 +1,10 @@
 # fetching/memory_budget_gate.py
 """
+from __future__ import annotations
 Memory budget gate for M1 MacBook Air 8GB unified memory.
 Single target: darwin-arm64 (Apple Silicon). psutil is the sole RSS backend.
 """
+from __future__ import annotations
 
 import asyncio
 import logging

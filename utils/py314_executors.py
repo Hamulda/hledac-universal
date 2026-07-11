@@ -83,7 +83,6 @@ USAGE
   with executor as ex:
       results = list(ex.map(fn, items))
 """
-from __future__ import annotations
 
 
 

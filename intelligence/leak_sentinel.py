@@ -28,7 +28,6 @@ Evidence envelope (stored in payload_text):
   - signal_facets: dict[str, float]
   - suggested_pivots: list[dict]
 """
-from __future__ import annotations
 
 
 

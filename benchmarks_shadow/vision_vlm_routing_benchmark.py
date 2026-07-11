@@ -17,7 +17,6 @@ Usage:
   python benchmarks/vision_vlm_routing_benchmark.py --audit-only --json /tmp/vision_vlm_audit.json
   python benchmarks/vision_vlm_routing_benchmark.py --list-routes
 """
-from __future__ import annotations
 
 
 import argparse

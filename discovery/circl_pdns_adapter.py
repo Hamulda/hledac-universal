@@ -14,7 +14,6 @@ CIRCL returns: plain text, one JSON object per line (not JSON array)
 No API key required — CIRCL PDNS community tier is keyless.
 Fail-soft throughout.
 """
-from __future__ import annotations
 
 
 import asyncio

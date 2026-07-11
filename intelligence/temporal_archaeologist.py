@@ -27,7 +27,6 @@ M1 8GB Optimized:
 - Incremental timeline building
 - Memory-efficient diff algorithms
 """
-from __future__ import annotations
 
 
 

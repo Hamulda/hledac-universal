@@ -48,13 +48,17 @@ static CPU_SATURATION: AtomicU8 = AtomicU8::new(0);
 ///
 /// Initialized once per process via OnceLock; the bound is stored as
 /// `Option<Bound<'static, PyModule>>` to allow None on failure.
-static MLX_CACHE_MODULE: OnceLock<Option<Bound<'static, PyModule>>> = OnceLock::new();
+static MLX_CACHE_MODULE_PATH: std::sync::OnceLock<&'static str> =
+    std::sync::OnceLock::new();
 
-/// Returns the cached mlx_cache module, or None if import failed.
+/// Import mlx_cache module by name — avoids stale Bound<'static, PyModule> references
+/// and sidesteps Sync/Send issues with OnceLock<Bound<...>>.
+/// Uses lazy OnceLock to import only once per process.
 #[inline]
-fn get_mlx_cache_module(py: Python<'_>) -> Option<&'py Bound<'py, PyModule>> {
-    MLX_CACHE_MODULE.get_or_init(|| py.import("hledac.universal.utils.mlx_cache").ok());
-    MLX_CACHE_MODULE.get().unwrap().as_ref()
+fn get_mlx_cache_module<'py>(py: Python<'py>) -> Option<Bound<'py, PyModule>> {
+    let module_name =
+        MLX_CACHE_MODULE_PATH.get_or_init(|| "hledac.universal.utils.mlx_cache");
+    py.import(*module_name).ok()
 }
 
 /// Probes Python `utils.mlx_cache.get_dynamic_metal_cache_limit()` via GIL.

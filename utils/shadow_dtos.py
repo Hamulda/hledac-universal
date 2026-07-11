@@ -1,4 +1,5 @@
 """
+from __future__ import annotations
 Shadow msgspec twins for AdmissionResult and BacklogCandidate.
 
 SHADOW-ONLY PILOT (Sprint 8AQ) — NOT part of production boot path.
@@ -11,6 +12,7 @@ Live DTO source: autonomous_orchestrator.py lines 285-306
 - AdmissionResult: lines 285-292
 - BacklogCandidate: lines 295-306
 """
+from __future__ import annotations
 
 
 

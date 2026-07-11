@@ -32,7 +32,6 @@ M1 8GB CEILING (HARD):
 
 PROMOTION GATE: requires production call site evidence beyond legacy path.
 """
-from __future__ import annotations
 
 
 

@@ -29,7 +29,6 @@ Extended from evidence_network_analyzer.py comments:
     - Network metrics
     - Key path analysis
 """
-from __future__ import annotations
 
 
 import asyncio  # noqa: E402

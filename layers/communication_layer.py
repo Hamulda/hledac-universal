@@ -10,7 +10,6 @@ Unified communication system integrating:
 
 Provides unified API for agent-to-agent and agent-to-model communication.
 """
-from __future__ import annotations
 
 
 

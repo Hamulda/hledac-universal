@@ -14,7 +14,6 @@ Design:
     - Lazy imports avoid M1 Metal init at import time
 """
 
-from __future__ import annotations
 
 import asyncio
 import time as _time

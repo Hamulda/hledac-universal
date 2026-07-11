@@ -21,7 +21,6 @@ were correctly implemented.
 
 Artifact: probe_f231g_quality_sanity_bundle_smoke/quality_sanity_bundle_smoke.py
 """
-from __future__ import annotations
 
 
 import sys

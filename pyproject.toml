@@ -197,6 +197,7 @@ dependencies = [
     "opentelemetry-instrumentation-asyncpg[observability]>=0.47b0",
     "cachetools>=7.1.4",
     "pydantic-settings>=2.14.2",
+    "roampal>=0.5.7",
 ]
 
 [project.optional-dependencies]
@@ -840,7 +841,8 @@ markers = [
 # M1 4-performance-cores: -n 4 with loadscope distribution
 # --dist=loadscope: tests grouped by class/module, workers keep same module loaded
 # -ra: show summary of all test results
-addopts = "-ra --tb=short -n 4 --dist=loadscope --timeout=30 -m \"not parity\""
+addopts = "-ra --tb=short -n 2 --dist=loadscope --timeout=30 -m \"not parity\""
 asyncio_mode = "auto"
 # Session-scoped event loop for pytest-asyncio (M1 8GB: reuse loop, avoid recreate)
-asyncio_default_fixture_loop_scope = "module"
+# CRITICAL FIX F350M-R: must match session_event_loop fixture scope below
+asyncio_default_fixture_loop_scope = "session"

@@ -31,7 +31,6 @@ PHASE ROTATION STRATEGY:
   - Tor: rotate on phase boundary instead of after N requests
   - Nym: circuit_breaker already uses timeout-based reset
 """
-from __future__ import annotations
 
 
 import asyncio

@@ -1,0 +1,1 @@
+DuckDB thread count conflict resolved: settings.py (2 threads) overrides duckdb_store.py default (4), with optimal M1 configuration including in_process=True, arrow_ingest=1.5-2× faster, 2GB memory limit, and 3-tier query cache L1/L2.

@@ -36,7 +36,6 @@ Usage:
                            "is_valid_url", "filter_valid", "extract_domain",
                            "classify_url", "batch_classify", "extract_host")
 """
-from __future__ import annotations
 
 
 import importlib

@@ -16,7 +16,6 @@ Usage:
 
 Fallback: if module is not installed, returns a stub that raises on use.
 """
-from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 

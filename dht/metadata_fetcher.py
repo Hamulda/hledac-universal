@@ -6,7 +6,6 @@ Protocol: TCP connection to peer → handshake with extension protocol →
 
 M1 constraint: Max 5 concurrent metadata fetches.
 """
-from __future__ import annotations
 
 
 import asyncio

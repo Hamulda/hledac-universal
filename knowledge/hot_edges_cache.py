@@ -51,7 +51,6 @@ ENV GATE
 HLEDAC_HOT_EDGES=1   opt-out (default ON — unset or any value ≠ "0" enables)
 HLEDAC_HOT_EDGES_MAP_SIZE_MB   override 32 MB default
 """
-from __future__ import annotations
 
 
 import logging

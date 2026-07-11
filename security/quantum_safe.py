@@ -1,5 +1,4 @@
 """Quantum-safe cryptography (PQ only — neuromorphic crypto moved to brain/experimental_neuro_crypto.py)."""
-from __future__ import annotations
 
 
 import base64

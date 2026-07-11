@@ -13,7 +13,6 @@ Key invariants:
 - asyncio.Lock for thread-safety in async context
 - M1 8GB: ~512MB max = ~340k embeddings @ 256d float16
 """
-from __future__ import annotations
 
 # Import shared utilities to eliminate duplication with pool.py
 from ._shared import get_cache_lock_async as _get_cache_lock_async

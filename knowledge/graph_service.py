@@ -23,7 +23,6 @@ ARCHITECTURE (F226):
 - Existing module-level API (reset_session) is preserved for
   backward compatibility and remains wired to the default facade instance.
 """
-from __future__ import annotations
 
 
 

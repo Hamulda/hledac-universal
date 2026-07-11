@@ -9,7 +9,6 @@ Sprint F202G — Pivot type mapping added
 Sprint F229 — SourceEntry dataclass with tier + acquisition_lane
 Sprint P1-12 — PEP 810 lazy loading: adapters loaded on first use, not at import.
 """
-from __future__ import annotations
 
 import importlib
 from collections.abc import Callable

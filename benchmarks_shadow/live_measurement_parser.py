@@ -5,7 +5,6 @@ Pure module: no live sprint, no scheduler import, no MLX, no network.
 F227C extraction from benchmarks/live_sprint_measurement.py.
 F228D: terminality predicates delegated to live_measurement_terminality.py.
 """
-from __future__ import annotations
 
 
 

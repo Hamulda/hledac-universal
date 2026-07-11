@@ -54,7 +54,6 @@ Example:
     # Or use the convenience spawn_task:
     t = await spawn_task(my_coro(), name="batch:item", maxsize=128)
 """
-from __future__ import annotations
 
 import asyncio
 import logging

@@ -16,7 +16,6 @@ Usage in sprint path:
   3. Store signature in telemetry/sidecar
   4. Return chunks unchanged (chunks are NOT mutated)
 """
-from __future__ import annotations
 
 
 import hashlib

@@ -138,7 +138,11 @@ fn pattern_to_ioc_type(pattern_id: usize) -> &'static str {
         4 => "sha256",
         5 => "email",
         6 => "cve",
-        _ => unreachable!("IOC_META_REGEX has exactly 7 patterns"),
+        // DEFENSIVE: _ => "unknown" instead of unreachable!().
+        // If a new IOC_META_REGEX variant is added without updating this match,
+        // we return "unknown" rather than panicking. A new variant without a
+        // pattern should not crash the process — the extraction still works.
+        _ => "unknown",
     }
 }
 

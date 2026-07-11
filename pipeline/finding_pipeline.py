@@ -1,4 +1,5 @@
 """
+from __future__ import annotations
 P4-1: Finding Pipeline — Producer-Consumer for fetch→enrich→store
 =================================================================
 
@@ -38,6 +39,7 @@ P4-1 changes vs original:
 - _flush_store_batch: DuckDB write + graph upsert parallelized via asyncio.gather
 - store_stats added to PipelineStats (per-worker tracking)
 """
+from __future__ import annotations
 
 
 import asyncio

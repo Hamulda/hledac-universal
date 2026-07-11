@@ -5,7 +5,6 @@ Shared Memory Manager with Apache Arrow
 Zero-copy data transfer between phases using Apache Arrow.
 Provides ArrowSharedMemory for efficient serialization/deserialization.
 """
-from __future__ import annotations
 
 
 import logging

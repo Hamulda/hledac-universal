@@ -15,7 +15,6 @@ NOT AUTHORITY FOR:
   - Runtime fetch truth (FetchCoordinator._fetch_url())
   - Tor session pool management
 """
-from __future__ import annotations
 
 
 import logging

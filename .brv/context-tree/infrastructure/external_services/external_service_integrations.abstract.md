@@ -1,0 +1,1 @@
+Hledac integrates external anonymity services including Tor SOCKS (port 9050, circuit renewal every 10 requests), I2P SOCKS (port 7654), IPFS gateways via IPFSDSidecarAdapter, and threat intelligence from Shodan/Censys/GreyNoise APIs, with BGP enrichment through a sidecar architecture.

@@ -18,7 +18,6 @@ from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
 
 env = open_lmdb_with_guard(path, map_size=...)
 """
-from __future__ import annotations
 
 
 

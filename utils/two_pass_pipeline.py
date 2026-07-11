@@ -24,7 +24,6 @@ Usage:
     )
     results = await pipeline.run()
 """
-from __future__ import annotations
 
 
 import asyncio

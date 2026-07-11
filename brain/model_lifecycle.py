@@ -55,7 +55,6 @@ F186D CONTRACT HARDENING:
   - class ModelLifecycle (windup-local) must NEVER be loaded in the runtime-wide plane
   - load_model() / unload_model() are IDEMPOTENT HELPERS, not load/unload owners
 """
-from __future__ import annotations
 
 
 # Transitional Czech prose follows after blank line below.

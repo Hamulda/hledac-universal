@@ -26,6 +26,7 @@ Usage:
   hub.record_transition("PRELUDE", "ACQUISITION")
   health = hub.get_sprint_health()  # dict with all metrics
 """
+
 from __future__ import annotations
 
 import logging
@@ -55,6 +56,7 @@ import msgspec  # noqa: E402
 @dataclass(slots=True)
 class _PhaseSample:
     """A single phase duration sample."""
+
     phase: str
     component: str | None
     duration_ms: float
@@ -64,6 +66,7 @@ class _PhaseSample:
 @dataclass(slots=True)
 class _TransitionSample:
     """A single phase transition record."""
+
     from_phase: str
     to_phase: str
     component: str | None
@@ -74,6 +77,7 @@ class _TransitionSample:
 @dataclass(slots=True)
 class _SourceStats:
     """Per-source finding statistics."""
+
     source_type: str
     findings_count: int
     ioc_count: int
@@ -91,9 +95,10 @@ class SprintHealth(msgspec.Struct):
     Complete sprint health snapshot — single source of truth for sprint status.
 
     Aggregates: phase timings, transition counts, source stats, memory pressure,
-    DuckDB stats, OTel trace summary.
+    DuckDB stats, OTel trace summary, circuit breaker state, fetch telemetry.
     Frozen=True because health snapshots are immutable after construction.
     """
+
     session_id: str
     phase: str
     elapsed_ms: float
@@ -101,14 +106,37 @@ class SprintHealth(msgspec.Struct):
     phases_recorded: int
     transitions_recorded: int
     sources_recorded: int
+    # Memory pressure (M1ResourceGovernor)
     memory_pressure_pct: float | None  # RSS / max_rss if available
+    # Memory layer pressure
+    memory_layer_pressure_pct: float | None  # from MemoryLayer
+    # DuckDB stats
     duckdb_pending: int | None  # pending ingest markers
     duckdb_deadletter: int | None  # deadletter markers
     duckdb_rejected: int | None  # quality rejections
     duckdb_accepted: int | None  # quality acceptances
+    duckdb_ingest_latency_ms: float | None  # avg ingest latency
+    duckdb_query_latency_ms: float | None  # avg query latency
+    # Phase percentile latencies
     avg_phase_ms: float | None  # average phase duration
     p50_phase_ms: float | None  # median phase duration
     p95_phase_ms: float | None  # 95th percentile phase duration
+    # Circuit breaker state (F228F)
+    cb_open_count: int | None
+    cb_half_open_count: int | None
+    cb_closed_count: int | None
+    cb_open_duration_s: float | None
+    # Fetch coordinator telemetry (F360)
+    fetch_blocked_domains: int | None
+    fetch_circuit_open: bool | None
+    # bounded_gather aggregated stats (F360)
+    gather_tasks_gathered: int | None
+    gather_tasks_errors: int | None
+    gather_errors_suppressed: int | None
+    # Sprint budget (F360)
+    sprint_budget_elapsed_ms: float | None
+    sprint_budget_remaining_ms: float | None
+    # OTel
     otel_traces: int | None  # OTel trace count if available
     otel_spans: int | None  # OTel span count if available
     ts: str = field(default="")
@@ -186,9 +214,7 @@ class ObservabilityHub:
             pass
         try:
             if self._telemetry_logger is not None:
-                self._telemetry_logger.log_phase_transition(
-                    from_phase=self._phase, to_phase=phase, component=component
-                )
+                self._telemetry_logger.log_phase_transition(from_phase=self._phase, to_phase=phase, component=component)
         except Exception:
             pass
 
@@ -246,16 +272,12 @@ class ObservabilityHub:
 
         try:
             if self._sprint_metrics is not None:
-                self._sprint_metrics.record_event(
-                    phase or self._phase, component, event
-                )
+                self._sprint_metrics.record_event(phase or self._phase, component, event)
         except Exception:
             pass
         try:
             if self._telemetry_logger is not None:
-                self._telemetry_logger.log_event(
-                    phase or self._phase, component, event, elapsed_ms
-                )
+                self._telemetry_logger.log_event(phase or self._phase, component, event, elapsed_ms)
         except Exception:
             pass
 
@@ -353,14 +375,36 @@ class ObservabilityHub:
             "phases_recorded": len(self._phase_samples),
             "transitions_recorded": len(self._transition_samples),
             "sources_recorded": len(self._source_stats),
+            # Memory pressure (M1ResourceGovernor + MemoryLayer)
             "memory_pressure_pct": memory_pressure_pct,
+            "memory_layer_pressure_pct": self._get_memory_layer_pressure(),
+            # DuckDB stats
             "duckdb_pending": duckdb_pending,
             "duckdb_deadletter": duckdb_deadletter,
             "duckdb_rejected": duckdb_rejected,
             "duckdb_accepted": duckdb_accepted,
+            "duckdb_ingest_latency_ms": self._get_duckdb_ingest_latency(),
+            "duckdb_query_latency_ms": self._get_duckdb_query_latency(),
+            # Phase latencies
             "avg_phase_ms": avg_phase_ms,
             "p50_phase_ms": p50_phase_ms,
             "p95_phase_ms": p95_phase_ms,
+            # Circuit breaker state (F228F)
+            "cb_open_count": self._get_cb_open_count(),
+            "cb_half_open_count": self._get_cb_half_open_count(),
+            "cb_closed_count": self._get_cb_closed_count(),
+            "cb_open_duration_s": self._get_cb_open_duration(),
+            # Fetch coordinator telemetry (F360)
+            "fetch_blocked_domains": self._get_fetch_blocked_domains(),
+            "fetch_circuit_open": self._get_fetch_circuit_open(),
+            # bounded_gather stats (F360)
+            "gather_tasks_gathered": self._get_gather_tasks_gathered(),
+            "gather_tasks_errors": self._get_gather_tasks_errors(),
+            "gather_errors_suppressed": self._get_gather_errors_suppressed(),
+            # Sprint budget (F360)
+            "sprint_budget_elapsed_ms": elapsed_ms,
+            "sprint_budget_remaining_ms": self._get_sprint_budget_remaining(),
+            # OTel
             "otel_traces": otel_traces,
             "otel_spans": otel_spans,
             "ts": datetime.now(UTC).isoformat(),
@@ -392,6 +436,141 @@ class ObservabilityHub:
         except Exception:
             return None, None, None
 
+    # ── Sprint F360: Circuit breaker state helpers ───────────────────────────
+
+    def _get_cb_open_count(self) -> int | None:
+        """Get circuit breaker open count from MetricsRegistry."""
+        try:
+            from hledac.universal.metrics_registry import get_metrics_registry
+            reg = get_metrics_registry()
+            return reg._counters.get("circuit_breaker_open_count", 0)
+        except Exception:
+            return None
+
+    def _get_cb_half_open_count(self) -> int | None:
+        """Get circuit breaker half-open count."""
+        try:
+            from hledac.universal.metrics_registry import get_metrics_registry
+            reg = get_metrics_registry()
+            return reg._counters.get("circuit_breaker_half_open_count", 0)
+        except Exception:
+            return None
+
+    def _get_cb_closed_count(self) -> int | None:
+        """Get circuit breaker closed count."""
+        try:
+            from hledac.universal.metrics_registry import get_metrics_registry
+            reg = get_metrics_registry()
+            return reg._counters.get("circuit_breaker_closed_count", 0)
+        except Exception:
+            return None
+
+    def _get_cb_open_duration(self) -> float | None:
+        """Get circuit breaker total open duration in seconds."""
+        try:
+            from hledac.universal.metrics_registry import get_metrics_registry
+            reg = get_metrics_registry()
+            return float(reg._counters.get("circuit_breaker_open_duration_s", 0))
+        except Exception:
+            return None
+
+    # ── Sprint F360: Fetch coordinator telemetry helpers ────────────────────
+
+    def _get_fetch_blocked_domains(self) -> int | None:
+        """Get number of currently blocked domains from FetchCoordinator."""
+        try:
+            from hledac.universal.metrics_registry import get_metrics_registry
+            reg = get_metrics_registry()
+            val = reg._gauges.get("fetch_coordinator_blocked_domains")
+            return int(val) if val is not None else None
+        except Exception:
+            return None
+
+    def _get_fetch_circuit_open(self) -> bool | None:
+        """Check if any circuit breaker is open."""
+        try:
+            from hledac.universal.metrics_registry import get_metrics_registry
+            reg = get_metrics_registry()
+            val = reg._gauges.get("fetch_coordinator_circuit_open")
+            return bool(val) if val is not None else None
+        except Exception:
+            return None
+
+    # ── Sprint F360: Memory layer pressure helper ──────────────────────────
+
+    def _get_memory_layer_pressure(self) -> float | None:
+        """Get memory layer pressure from MemoryLayer."""
+        try:
+            from hledac.universal.metrics_registry import get_metrics_registry
+            reg = get_metrics_registry()
+            val = reg._gauges.get("memory_layer_pressure_pct")
+            return float(val) if val is not None else None
+        except Exception:
+            return None
+
+    # ── Sprint F360: DuckDB latency helpers ────────────────────────────────
+
+    def _get_duckdb_ingest_latency(self) -> float | None:
+        """Get average DuckDB ingest latency."""
+        try:
+            from hledac.universal.metrics_registry import get_metrics_registry
+            reg = get_metrics_registry()
+            val = reg._gauges.get("duckdb_ingest_latency_ms")
+            return float(val) if val is not None else None
+        except Exception:
+            return None
+
+    def _get_duckdb_query_latency(self) -> float | None:
+        """Get average DuckDB query latency."""
+        try:
+            from hledac.universal.metrics_registry import get_metrics_registry
+            reg = get_metrics_registry()
+            val = reg._gauges.get("duckdb_query_latency_ms")
+            return float(val) if val is not None else None
+        except Exception:
+            return None
+
+    # ── Sprint F360: bounded_gather stats helpers ──────────────────────────
+
+    def _get_gather_tasks_gathered(self) -> int | None:
+        """Get total tasks gathered via bounded_gather."""
+        try:
+            from hledac.universal.metrics_registry import get_metrics_registry
+            reg = get_metrics_registry()
+            return reg._counters.get("bounded_gather_tasks_gathered", 0)
+        except Exception:
+            return None
+
+    def _get_gather_tasks_errors(self) -> int | None:
+        """Get total errors from bounded_gather."""
+        try:
+            from hledac.universal.metrics_registry import get_metrics_registry
+            reg = get_metrics_registry()
+            return reg._counters.get("bounded_gather_tasks_errors", 0)
+        except Exception:
+            return None
+
+    def _get_gather_errors_suppressed(self) -> int | None:
+        """Get total suppressed errors from bounded_gather."""
+        try:
+            from hledac.universal.metrics_registry import get_metrics_registry
+            reg = get_metrics_registry()
+            return reg._counters.get("bounded_gather_errors_suppressed", 0)
+        except Exception:
+            return None
+
+    # ── Sprint F360: Sprint budget helper ──────────────────────────────────
+
+    def _get_sprint_budget_remaining(self) -> float | None:
+        """Get remaining sprint budget from MetricsRegistry."""
+        try:
+            from hledac.universal.metrics_registry import get_metrics_registry
+            reg = get_metrics_registry()
+            val = reg._gauges.get("sprint_budget_remaining_ms")
+            return float(val) if val is not None else None
+        except Exception:
+            return None
+
     # -------------------------------------------------------------------------
     # Event history accessors
     # -------------------------------------------------------------------------
@@ -408,9 +587,16 @@ class ObservabilityHub:
 
     def get_source_stats(self) -> list[dict]:
         """Return per-source finding statistics."""
-        return [{"source_type": s.source_type, "findings_count": s.findings_count,
-                 "ioc_count": s.ioc_count, "hit_rate": s.hit_rate, "ts": s.ts}
-                for s in self._source_stats]
+        return [
+            {
+                "source_type": s.source_type,
+                "findings_count": s.findings_count,
+                "ioc_count": s.ioc_count,
+                "hit_rate": s.hit_rate,
+                "ts": s.ts,
+            }
+            for s in self._source_stats
+        ]
 
     # -------------------------------------------------------------------------
     # OTel integration (lazy)
@@ -423,7 +609,7 @@ class ObservabilityHub:
             return _OTEL_AVAILABLE
         try:
             from opentelemetry import trace
-            from opentelemetry.sdk.trace import TracerProvider
+
             self._otel_tracer = trace.get_tracer("hledac.observability")
             _OTEL_AVAILABLE = True
             return True
@@ -447,7 +633,6 @@ class ObservabilityHub:
         if not self._ensure_otel():
             return None
         try:
-            from opentelemetry import trace
             from opentelemetry.trace import Status, StatusCode
 
             span = self._otel_tracer.start_span(name)

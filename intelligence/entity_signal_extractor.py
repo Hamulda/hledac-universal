@@ -18,7 +18,6 @@ Bounded for M1 8GB:
 Role: feeds identity_stitching_canonical.py adapter which produces
 derived identity findings for async_ingest_findings_batch().
 """
-from __future__ import annotations
 
 
 

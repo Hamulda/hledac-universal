@@ -19,7 +19,6 @@ Použití:
     if is_afm_available():
         # Použij AFM / ANE akceleraci
 """
-from __future__ import annotations
 
 
 

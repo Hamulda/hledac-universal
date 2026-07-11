@@ -25,7 +25,6 @@ M1 8GB invariants:
 - Fail-safe: operational errors logged (network, cache), critical errors raise RuntimeError
 - Pattern: raise on critical failures (broken oracle, pool unavailable), fail-soft on transient errors
 """
-from __future__ import annotations
 
 
 

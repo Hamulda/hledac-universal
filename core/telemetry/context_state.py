@@ -13,7 +13,6 @@ structlog integrace: structlog.contextvars.merge_contextvars processor
 (viz runtime/_telemetry_setup.py) automaticky začleňuje všechny
 ContextVar do log outputu — žádná další konfigurace není potřeba.
 """
-from __future__ import annotations
 
 
 import contextvars

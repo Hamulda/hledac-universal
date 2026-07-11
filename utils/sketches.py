@@ -9,7 +9,6 @@ MLX-accelerated streaming sketches for bounded-memory frequency estimation:
 
 M1 8GB optimized: GPU-speed sketch ops, zero-copy LMDB I/O.
 """
-from __future__ import annotations
 
 
 

@@ -396,10 +396,15 @@ def _get_content_hasher() -> object | None:
 def _compute_body_hash(body: bytes) -> str:
     """Return 16-char hex fingerprint of a response body.
 
-    Rust path (BLAKE3-64, NEON-accelerated on M1) is preferred; xxHash3
-    (xxh64) is the fail-soft fallback. Returns empty string for
-    empty/None body. Never raises.
+    Priority chain (fail-soft, never raises):
+    1. Rust blake3_64  — BLAKE3, NEON-accelerated on M1 (~5 GB/s)
+    2. Rust xxh3_64_hex — xxh3-64, native Rust, no Python wheel needed
+    3. hashlib.sha256   — stdlib, guaranteed available, ~500 MB/s on M1
+
+    Returns empty string only if body is empty/None.
     """
+    import hashlib
+
     if not body:
         return ""
     rh = _get_content_hasher()
@@ -407,11 +412,23 @@ def _compute_body_hash(body: bytes) -> str:
         try:
             return cast(Any, rh).blake3_64(body)
         except Exception:  # noqa: BLE001
-            pass  # noqa: BLE001  # fall through to xxhash
+            pass  # noqa: BLE001  # fall through to Rust xxh3-64
+    # Rust xxh3-64: uses xxhash_rust::xxh3 (native Rust, no Python wheel)
+    if rh is not None:
+        try:
+            return cast(Any, rh).xxh3_64_hex(body)
+        except Exception:  # noqa: BLE001
+            pass  # noqa: BLE001  # fall through to hashlib
+    # Python xxhash: skip import if Rust is available (Python wheel may not exist for Python 3.14)
     try:
         import xxhash
 
         return xxhash.xxh3_64(body).hexdigest()
+    except Exception:
+        pass  # noqa: BLE001  # fall through to hashlib
+    # Ultimate fallback: hashlib (stdlib, always available)
+    try:
+        return hashlib.sha256(body).hexdigest()[:16]
     except Exception:
         return ""
 

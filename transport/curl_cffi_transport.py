@@ -17,7 +17,6 @@ Policy rules (in evaluation order):
 
 Tor/I2P/JS are protected from accidental curl routing.
 """
-from __future__ import annotations
 
 from core.env_config import ENV  # noqa: E402
 

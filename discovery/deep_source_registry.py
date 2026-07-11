@@ -33,7 +33,6 @@ WIRE-UP:
     - enhanced_research.py: UnifiedResearchEngine._task_source_discovery() (Phase 2.7)
     - core/__main__.py: --list-sources [--tier ...] CLI flag
 """
-from __future__ import annotations
 
 
 import asyncio

@@ -11,7 +11,6 @@ Rules:
 - fail-soft
 - returns DiscoveryHit objects
 """
-from __future__ import annotations
 
 
 

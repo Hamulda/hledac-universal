@@ -15,7 +15,6 @@ GHOST_INVARIANTS:
   - Rate limiting via TokenBucket (not sleep)
   - Always returns CanonicalFinding list (empty on failure)
 """
-from __future__ import annotations
 
 
 

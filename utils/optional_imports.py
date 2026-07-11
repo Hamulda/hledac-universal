@@ -34,7 +34,6 @@ Usage:
 M1 8GB: minimal RAM (1× reference per resolver), no eager imports.
 Python 3.14+: attribute assignment is GIL-atomic, lock-free fast path.
 """
-from __future__ import annotations
 
 import importlib
 from typing import Any

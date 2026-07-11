@@ -13,38 +13,32 @@ Invariants enforced:
   Export: always runs on teardown, including zero-signal exits.
   Concurrency: TaskGroup for owned tasks; no background threads.
 """
+
 from __future__ import annotations
-
-
-
-
 
 import asyncio
 import contextvars
 import gc
 import logging
-import os
-
-from runtime.logging_setup import get_logger  # Issue #33: structlog hot-path
 import struct
 import time as _time
 from collections import deque
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import TracebackType
 from typing import TYPE_CHECKING, Any, Final, Generic, Protocol, TypeVar, cast
 
+from runtime.logging_setup import get_logger  # Issue #33: structlog hot-path
+
 T = TypeVar("T")  # For ResourceLease Generic type
-import msgspec
 import uuid
 from datetime import UTC
 from enum import Enum, auto
-from functools import lru_cache
+
+import msgspec
 
 from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
 from hledac.universal.utils.optional_imports import lazy_decorator, optional
-
 
 # ── B3: GraphServiceLifecycle Protocol ─────────────────────────────────────────
 # Replaces weakref-based approach with explicit lifecycle management.
@@ -125,9 +119,7 @@ class ResourceRegistry:
         self._max_size = max_size
         self._tokens: deque[str] = deque(maxlen=max_size)
 
-    def acquire(
-        self, obj: Any, cleanup: Callable[[], None] | None = None
-    ) -> ResourceLease:
+    def acquire(self, obj: Any, cleanup: Callable[[], None] | None = None) -> ResourceLease:
         """Acquire a resource lease. Auto-evicts oldest if at capacity."""
         # Evict oldest if full (deque auto-evicts on overflow)
         while len(self._tokens) >= self._max_size:
@@ -209,36 +201,37 @@ class _SprintCleanupHandle:
             except Exception:
                 pass  # Fail-safe: suppress cleanup errors
 
+
 # F821-Fix: missing module-level imports
+from core.env_config import ENV  # noqa: E402
 from hledac.universal.knowledge.graph_service import _DEFAULT_GRAPH_SERVICE  # noqa: E402
 from hledac.universal.layers.ghost_layer import StagnationError  # noqa: E402
-from hledac.universal.runtime.sprint_timer import SprintTimer  # noqa: E402
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok, gather_taskgroup  # noqa: E402
-from core.env_config import ENV  # noqa: E402
 
 # F-Alert: Alerting infrastructure for anti-pattern detection
 from hledac.universal.monitoring.alert_manager import (  # noqa: E402
-    get_alert_manager,
     check_zero_findings_alert,
     get_memory_delta_tracker,
 )
+from hledac.universal.runtime.sprint_timer import SprintTimer  # noqa: E402
+from hledac.universal.utils.async_helpers import gather_taskgroup, safe_create_task, safe_gather_ok  # noqa: E402
 from hledac.universal.utils.batch_dns import get_batch_dns_resolver  # noqa: E402
 
 # Sprint T1: OpenTelemetry instrumentation (always-on, M1 8GB safe, fail-soft)
-_otel_instrumented = lazy_decorator("otel:instrumented",
-    default=lazy_decorator("hledac.universal.otel._instrumentation:instrumented"))
+_otel_instrumented = lazy_decorator(
+    "otel:instrumented", default=lazy_decorator("hledac.universal.otel._instrumentation:instrumented")
+)
 
 # Sprint P0-1 / P1-5: SoA overlay for hot-path integer counters in SprintSchedulerResult
 # (see runtime/int_counter_layout.py). Lazy import pattern preserved.
 # Sprint P1-5: IntCounterLayoutRust preferred when Rust backend is available.
-_IntCounterLayout = optional("runtime.int_counter_layout",
-    default=optional("hledac.universal.runtime.int_counter_layout"))
+_IntCounterLayout = optional(
+    "runtime.int_counter_layout", default=optional("hledac.universal.runtime.int_counter_layout")
+)
 # Resolve at first use — unpack module attrs for hot-path inline usage
 _IntCounterLayout_mod = _IntCounterLayout()
-IntCounterLayout: type | None = getattr(_IntCounterLayout_mod, 'IntCounterLayout', None)
-IntCounterLayoutRust: type | None = getattr(_IntCounterLayout_mod, 'IntCounterLayoutRust', None)
-batch_compute_scores: Any = getattr(_IntCounterLayout_mod, 'batch_compute_scores', None)
-
+IntCounterLayout: type | None = getattr(_IntCounterLayout_mod, "IntCounterLayout", None)
+IntCounterLayoutRust: type | None = getattr(_IntCounterLayout_mod, "IntCounterLayoutRust", None)
+batch_compute_scores: Any = getattr(_IntCounterLayout_mod, "batch_compute_scores", None)
 
 
 # ── Sprint Opt: msgspec.Struct pro hot-path DTO (M1 8GB UMA friendly) ────────
@@ -252,7 +245,7 @@ import msgspec  # noqa: E402
 
 # F270-4.3: Module-level psutil via centralized shim.
 # Re-uses core.psutil_shim for consistent availability flag across codebase.
-from core.psutil_shim import psutil as _psutil, PSUTIL_AVAILABLE
+from core.psutil_shim import psutil as _psutil
 
 # ── Sprint F265B: orjson with TYPE_CHECKING pattern ─────────────────────────
 # Type checker sees orjson via TYPE_CHECKING import; runtime uses lazy import.
@@ -277,7 +270,10 @@ _NONFEED_DIAGNOSTIC_FALLBACK_LANES = ("CT", "WAYBACK", "PASSIVE_DNS", "PIVOT_EXE
 # M1 8GB: no heap allocation on each health_check call.
 class _Sentinel:
     __slots__ = ()
-    def __repr__(self): return "<unset>"
+
+    def __repr__(self):
+        return "<unset>"
+
 
 _UNSET = _Sentinel()
 
@@ -304,19 +300,13 @@ def _safe_getattr(obj: Any, attr: str, default: Any = _UNSET) -> Any:
     return result
 
 
-
-
-
-
-
-
 def canonical_lane_name(lane: object) -> str:
-
     """Normalize lane to UPPERCASE string -- handles Enum values and plain strings."""
 
     value = getattr(lane, "value", lane)
 
     return str(value).upper()
+
 
 # F267: MLX prewarm -- shared state with deephermes3_engine.unload()
 # WARNING: Cannot import at module level due to Python 3.14 import lock deadlock.
@@ -327,8 +317,6 @@ def canonical_lane_name(lane: object) -> str:
 # Importing at module level would create a circular import (acquisition_strategy
 # imports from runtime). Import inline below before the call site.
 # build_acquisition_plan lives at: hledac.universal.runtime.acquisition_strategy
-
-
 
 
 # ── Sprint F272D: Bounded LRU(16) advisory log dedup ─────────────────────────
@@ -357,6 +345,7 @@ class _AdvisoryLogLRU(msgspec.Struct, gc=False):
 
     No-promote on hit: deque order is never modified on cache hit — only on insert/evict.
     """
+
     counts: dict[str, int]
     order: deque[str]
 
@@ -419,9 +408,7 @@ def get_sprint_ctx() -> SprintRunContext:
     """Get current sprint context. Raise if not established."""
     ctx = _sprint_run_ctx.get()
     if ctx is None:
-        raise RuntimeError(
-            "SprintRunContext not established — call within sprint run()"
-        )
+        raise RuntimeError("SprintRunContext not established — call within sprint run()")
     return ctx
 
 
@@ -432,9 +419,7 @@ def reset_sprint_ctx() -> None:
 
 def _reset_advisory_log_dedup() -> None:
     """Clear the LRU dedup state. Call between test runs or sprint cycles."""
-    _advisory_log_lru_var.set(
-        _AdvisoryLogLRU(counts={}, order=deque(maxlen=_ADVISORY_LOG_LRU_MAX))
-    )
+    _advisory_log_lru_var.set(_AdvisoryLogLRU(counts={}, order=deque(maxlen=_ADVISORY_LOG_LRU_MAX)))
     _advisory_log_suppressed_total_var.set(0)
 
 
@@ -503,42 +488,36 @@ def _build_deep_security_config(sprint_mode: str) -> DeepSecurityConfig:
 
     if sprint_mode == "aggressive":
         return DeepSecurityConfig(
-            privacy_level="medium",       # obfuscation ON, no forced heavy crypto
-            enable_quantum_safe=False,    # ML-KEM overhead not worth it on M1 8GB
-            enable_steganography=False,   # image stego not needed in sprint context
-            enable_obfuscation=True,      # chaff queries OK for aggressive
-            enable_destruction=True,      # secure cleanup always
-            enable_audit=True,            # audit trail always
-            chaff_enabled=True,           # fake traffic in aggressive mode
-            chaff_ratio=0.2,              # 20% chaff — enough cover, not overwhelming
+            privacy_level="medium",  # obfuscation ON, no forced heavy crypto
+            enable_quantum_safe=False,  # ML-KEM overhead not worth it on M1 8GB
+            enable_steganography=False,  # image stego not needed in sprint context
+            enable_obfuscation=True,  # chaff queries OK for aggressive
+            enable_destruction=True,  # secure cleanup always
+            enable_audit=True,  # audit trail always
+            chaff_enabled=True,  # fake traffic in aggressive mode
+            chaff_ratio=0.2,  # 20% chaff — enough cover, not overwhelming
             auto_cleanup=True,
         )
     else:  # research (default)
         return DeepSecurityConfig(
-            privacy_level="low",          # audit only, no heavy crypto
-            enable_quantum_safe=False,    # no ML-KEM overhead
-            enable_steganography=False,   # no image processing
-            enable_obfuscation=False,     # no chaff noise in research
-            enable_destruction=True,      # secure cleanup always
-            enable_audit=True,            # audit trail always
-            chaff_enabled=False,          # no fake traffic in research
+            privacy_level="low",  # audit only, no heavy crypto
+            enable_quantum_safe=False,  # no ML-KEM overhead
+            enable_steganography=False,  # no image processing
+            enable_obfuscation=False,  # no chaff noise in research
+            enable_destruction=True,  # secure cleanup always
+            enable_audit=True,  # audit trail always
+            chaff_enabled=False,  # no fake traffic in research
             chaff_ratio=0.0,
             auto_cleanup=True,
         )
 
 
 def resolve_nonfeed_expected_lanes(
-
     result_expected: tuple[str, ...],
-
     local_expected: list[str],
-
     plan_debug_expected: list[str],
-
     acquisition_profile: str,
-
 ) -> tuple[str, ...]:
-
     """
 
     Sprint F228F: Resolve effective nonfeed expected lanes with explicit fallback chain.
@@ -560,39 +539,28 @@ def resolve_nonfeed_expected_lanes(
     """
 
     if result_expected:
-
         return result_expected
 
     if local_expected:
-
         return tuple(local_expected)
 
     if plan_debug_expected:
-
         return tuple(plan_debug_expected)
 
     if acquisition_profile == "nonfeed_diagnostic":
-
         return _NONFEED_DIAGNOSTIC_FALLBACK_LANES
 
     return ()
 
 
-
-
-
 # ── End F228F helpers ────────────────────────────────────────────────────────
-
-
-
 
 
 from hledac.universal.runtime.graph_accumulator import SprintGraphAccumulator  # noqa: E402
 from hledac.universal.utils.async_helpers import (  # noqa: E402
     safe_gather,
-    safe_gather_ok,
     safe_gather_fire_and_forget,
-    safe_gather_return_exceptions,
+    safe_gather_ok,
 )
 from hledac.universal.utils.lmdb_bulk import putmulti_bounded  # noqa: E402
 
@@ -608,11 +576,12 @@ from hledac.universal.transport.circuit_breaker import (  # noqa: E402
 )
 
 # F266: Chunk-level parallelism (M1 8GB safe)
-_MAX_CHUNK_SIZE: int = 500  # DuckDB optimal INSERT batch (500-1000 rows), aligned with DEFAULT_BULK_BATCH=2500 for LMDB WAL
+_MAX_CHUNK_SIZE: int = (
+    500  # DuckDB optimal INSERT batch (500-1000 rows), aligned with DEFAULT_BULK_BATCH=2500 for LMDB WAL
+)
 _MAX_CHUNK_CONCURRENCY: int = 2  # M1 8GB: 2 chunks in parallel
 
 MAX_LANE_REJECTIONS: int = 1000
-
 
 
 # E4: GC callback sentinel — B3: now uses _SprintCleanupHandle for deterministic cleanup
@@ -630,14 +599,14 @@ MAX_GC_STATS: int = 1000  # Sprint F219M: bound GC telemetry
 _gc_sprint_stats: deque[dict] = deque(maxlen=MAX_GC_STATS)
 
 
-
-
 def _gc_sprint_callback(phase: str, info: dict) -> None:
     """E4: GC per-collection callback -- records generation and collection counts."""
-    _gc_sprint_stats.append({
-        'gen': info.get('generation', -1),
-        'collected': info.get('collected', -1),
-    })
+    _gc_sprint_stats.append(
+        {
+            "gen": info.get("generation", -1),
+            "collected": info.get("collected", -1),
+        }
+    )
 
 
 def _gc_sprint_sentinel(_phase: object, _info: object) -> None:
@@ -652,9 +621,6 @@ def _gc_sprint_sentinel(_phase: object, _info: object) -> None:
     if not _gc_callback_registered and _gc_sprint_callback not in gc.callbacks:
         gc.callbacks.append(_gc_sprint_callback)
         _gc_callback_registered = True
-
-
-
 
 
 # Sprint F204D: Target memory integration
@@ -739,18 +705,13 @@ if TYPE_CHECKING:
         def bump(self, name: str, n: int) -> int: ...
 
 
-
 import lmdb  # noqa: E402
 import xxhash  # noqa: E402
 
 logger = get_logger(__name__)
 
 
-
 log = get_logger(__name__)
-
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -759,8 +720,8 @@ log = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 
-def _sanitize_debug_text(value: object, *, max_chars: int = 500) -> str:
 
+def _sanitize_debug_text(value: object, *, max_chars: int = 500) -> str:
     """Strip raw HTML/script from debug strings -- do not expose page content."""
 
     text = str(value or "")
@@ -783,12 +744,7 @@ def _seed_ctx_has_any_items(seed_ctx: Any) -> bool:
     """
     if seed_ctx is None:
         return False
-    return bool(
-        getattr(seed_ctx, "domains", ()) or getattr(seed_ctx, "urls", ())
-    )
-
-
-
+    return bool(getattr(seed_ctx, "domains", ()) or getattr(seed_ctx, "urls", ()))
 
 
 # ---------------------------------------------------------------------------
@@ -806,11 +762,10 @@ def _seed_ctx_has_any_items(seed_ctx: Any) -> bool:
 # ---------------------------------------------------------------------------
 
 
-
 # PUBLIC stage names
 
-class _PublicStage:
 
+class _PublicStage:
     NOT_SCHEDULED = "NOT_SCHEDULED"
 
     SCHEDULED = "SCHEDULED"
@@ -860,11 +815,7 @@ class _PublicStage:
     TERMINAL = "TERMINAL"
 
 
-
-
-
 def _compute_public_stage(outcome: dict | None, public_result: Any | None = None) -> tuple[str, dict]:
-
     """
 
     Compute public_terminal_stage and public_stage_counters from _public_outcome.
@@ -884,32 +835,18 @@ def _compute_public_stage(outcome: dict | None, public_result: Any | None = None
     # NOT_SCHEDULED: _public_outcome never set (branch never ran)
 
     if outcome is None:
-
         return _PublicStage.NOT_SCHEDULED, {
-
             "discovered_urls": 0,
-
             "fetch_attempted": 0,
-
             "fetch_success": 0,
-
             "fetch_timeout": 0,
-
             "fetch_error": 0,
-
             "parse_attempted": 0,
-
             "parse_success": 0,
-
             "quality_rejected": 0,
-
             "storage_rejected": 0,
-
             "accepted_findings": 0,
-
         }
-
-
 
     error = outcome.get("error", "") or ""
 
@@ -927,8 +864,6 @@ def _compute_public_stage(outcome: dict | None, public_result: Any | None = None
 
     skipped = outcome.get("skipped", False)
 
-
-
     # Build stage_counters from PipelineRunResult if available
 
     # Sprint F223C: Use public_result.discovered as discovered_urls -- this is the
@@ -942,12 +877,11 @@ def _compute_public_stage(outcome: dict | None, public_result: Any | None = None
     # but public_result.discovered correctly reflects what was discovered.
 
     if public_result is not None:
-
         pr = public_result
 
         # Sprint F223C: Canonical discovered count from the pipeline result
 
-        _discovered_count = getattr(pr, 'discovered', 0) or 0
+        _discovered_count = getattr(pr, "discovered", 0) or 0
 
         # Sprint F223C: Determine raw_count_source for diagnosability
 
@@ -963,91 +897,65 @@ def _compute_public_stage(outcome: dict | None, public_result: Any | None = None
 
         # otherwise -> unknown
 
-        _bootstrap_cand = getattr(pr, 'public_bootstrap_candidates_count', 0) or 0
+        _bootstrap_cand = getattr(pr, "public_bootstrap_candidates_count", 0) or 0
 
-        _pub_discovery_raw = getattr(pr, 'public_discovery_raw_count', 0) or 0
+        _pub_discovery_raw = getattr(pr, "public_discovery_raw_count", 0) or 0
 
         if _pub_discovery_raw > 0:
-
             _raw_count_source = "discovery"
 
         elif _bootstrap_cand > 0 and _discovered_count == _bootstrap_cand:
-
             _raw_count_source = "bootstrap"
 
         elif _bootstrap_cand > 0 and _discovered_count > _bootstrap_cand:
-
             _raw_count_source = "mixed"
 
         else:
-
             _raw_count_source = "unknown"
 
         stage_counters = {
-
             "discovered_urls": _discovered_count,
-
             "raw_count_source": _raw_count_source,
-
-            "fetch_attempted": getattr(pr, 'public_fetch_attempted', 0) or 0,
-
-            "fetch_success": getattr(pr, 'public_fetch_success', 0) or 0,
-
-            "fetch_timeout": getattr(pr, 'public_skipped_timeout', 0) or 0,
-
-            "fetch_error": getattr(pr, 'public_skipped_fetch_error', 0) or 0,
-
-            "parse_attempted": getattr(pr, 'public_fetch_success', 0) or 0,
-
-            "parse_success": getattr(pr, 'public_fetch_success', 0) or 0,
-
-            "quality_rejected": getattr(pr, 'public_acceptance_rejected', 0) or 0,
-
-            "storage_rejected": getattr(pr, 'public_rejected_storage_rejected', 0) or 0,
-
-            "accepted_findings": getattr(pr, 'public_findings_accepted', 0) or 0,
-
+            "fetch_attempted": getattr(pr, "public_fetch_attempted", 0) or 0,
+            "fetch_success": getattr(pr, "public_fetch_success", 0) or 0,
+            "fetch_timeout": getattr(pr, "public_skipped_timeout", 0) or 0,
+            "fetch_error": getattr(pr, "public_skipped_fetch_error", 0) or 0,
+            "parse_attempted": getattr(pr, "public_fetch_success", 0) or 0,
+            "parse_success": getattr(pr, "public_fetch_success", 0) or 0,
+            "quality_rejected": getattr(pr, "public_acceptance_rejected", 0) or 0,
+            "storage_rejected": getattr(pr, "public_rejected_storage_rejected", 0) or 0,
+            "accepted_findings": getattr(pr, "public_findings_accepted", 0) or 0,
         }
 
         # Bounded samples (max 5 each) -- already capped in PipelineRunResult
 
         stage_counters["rejection_reasons"] = list(
-
-            (getattr(pr, 'public_acceptance_reject_reasons', None) or {}).items()
-
+            (getattr(pr, "public_acceptance_reject_reasons", None) or {}).items()
         )[:5]
 
-        stage_counters["error_samples"] = list(
+        stage_counters["error_samples"] = list((getattr(pr, "public_skipped_url_sample", None) or ())[:5])
 
-            (getattr(pr, 'public_skipped_url_sample', None) or ())[:5]
-
-        )
-
-        stage_counters["rejected_url_samples"] = list(
-
-            (getattr(pr, 'public_rejected_url_samples', None) or ())[:5]
-
-        )
+        stage_counters["rejected_url_samples"] = list((getattr(pr, "public_rejected_url_samples", None) or ())[:5])
 
         # Sprint F217C: Deterministic bootstrap stage counters
 
-        stage_counters["bootstrap_candidates"] = getattr(pr, 'public_bootstrap_candidates_count', 0) or 0
+        stage_counters["bootstrap_candidates"] = getattr(pr, "public_bootstrap_candidates_count", 0) or 0
 
-        stage_counters["bootstrap_fetch_attempted"] = getattr(pr, 'public_bootstrap_fetch_attempted', 0) or 0
+        stage_counters["bootstrap_fetch_attempted"] = getattr(pr, "public_bootstrap_fetch_attempted", 0) or 0
 
-        stage_counters["bootstrap_fetch_success"] = getattr(pr, 'public_bootstrap_fetch_success', 0) or 0
+        stage_counters["bootstrap_fetch_success"] = getattr(pr, "public_bootstrap_fetch_success", 0) or 0
 
-        stage_counters["bootstrap_accepted_findings"] = getattr(pr, 'public_bootstrap_accepted_findings', 0) or 0
+        stage_counters["bootstrap_accepted_findings"] = getattr(pr, "public_bootstrap_accepted_findings", 0) or 0
 
-        stage_counters["bootstrap_errors"] = getattr(pr, 'public_bootstrap_errors', 0) or 0
+        stage_counters["bootstrap_errors"] = getattr(pr, "public_bootstrap_errors", 0) or 0
 
         # Bootstrap-enabled flag for stage derivation
 
-        bootstrap_enabled = getattr(pr, 'public_bootstrap_enabled', False)
+        bootstrap_enabled = getattr(pr, "public_bootstrap_enabled", False)
 
         # public_stage_failure from PipelineRunResult if available
 
-        psf = getattr(pr, 'public_stage_failure', None)
+        psf = getattr(pr, "public_stage_failure", None)
 
         # Sprint F221C: Bootstrap-aware stage derivation.
 
@@ -1066,231 +974,147 @@ def _compute_public_stage(outcome: dict | None, public_result: Any | None = None
         # BOOTSTRAP_ACCEPTED: bootstrap produced candidates and at least one was accepted.
 
         if bootstrap_enabled and raw_count > 0:
-
             # raw_count > 0 means bootstrap produced URL candidates
 
             if accepted_count > 0:
-
                 terminal_stage = _PublicStage.BOOTSTRAP_ACCEPTED
 
             elif timeout:
-
                 # Branch timed out with bootstrap candidates pending -- distinct from zero-success
 
                 terminal_stage = _PublicStage.BOOTSTRAP_ATTEMPTED_TIMEOUT
 
             else:
-
                 terminal_stage = _PublicStage.BOOTSTRAP_ZERO_SUCCESS
 
         elif bootstrap_enabled and raw_count == 0 and timeout:
-
             # Bootstrap enabled but produced no candidates AND timed out
 
             terminal_stage = _PublicStage.BOOTSTRAP_ZERO_CANDIDATES_TIMEOUT
 
         elif psf == "fetch_zero" and accepted_count == 0:
-
             terminal_stage = _PublicStage.FETCH_ZERO_SUCCESS
 
         else:
-
             terminal_stage = _derive_terminal_stage(
-
                 error=error,
-
                 timeout=timeout,
-
                 skip_reason=skip_reason,
-
                 raw_count=raw_count,
-
                 built_count=built_count,
-
                 accepted_count=accepted_count,
-
                 attempted=attempted,
-
                 skipped=skipped,
-
                 public_stage_failure=psf,
-
             )
 
     else:
-
         # No PipelineRunResult -- use only _public_outcome dict fields
 
         stage_counters = {
-
             "discovered_urls": raw_count,
-
             "fetch_attempted": 0,
-
             "fetch_success": 0,
-
             "fetch_timeout": 0,
-
             "fetch_error": 0,
-
             "parse_attempted": built_count,
-
             "parse_success": built_count,
-
             "quality_rejected": 0,
-
             "storage_rejected": 0,
-
             "accepted_findings": accepted_count,
-
         }
 
         terminal_stage = _derive_terminal_stage(
-
             error=error,
-
             timeout=timeout,
-
             skip_reason=skip_reason,
-
             raw_count=raw_count,
-
             built_count=built_count,
-
             accepted_count=accepted_count,
-
             attempted=attempted,
-
             skipped=skipped,
-
             public_stage_failure=None,
-
         )
-
-
 
     return terminal_stage, stage_counters
 
 
-
-
-
 def _derive_terminal_stage(
-
     error: str,
-
     timeout: bool,
-
     skip_reason: str,
-
     raw_count: int,
-
     built_count: int,
-
     accepted_count: int,
-
     attempted: bool,
-
     skipped: bool,
-
     public_stage_failure: str | None,
-
 ) -> str:
-
     """Derive terminal stage from outcome fields."""
 
     # NOT_SCHEDULED: never attempted
 
     if not attempted:
-
         return _PublicStage.NOT_SCHEDULED
-
-
 
     # SCHEDULED: attempted but skipped before discovery
 
     if skipped and skip_reason:
-
         if "remaining_too_low" in skip_reason:
-
             return _PublicStage.DISCOVERY_TIMEOUT
 
         return _PublicStage.DISCOVERY_ERROR
 
-
-
     # Discovery failure classification
 
     if raw_count == 0:
-
         if timeout or "timeout" in error.lower() or "timeout" in skip_reason.lower():
-
             return _PublicStage.DISCOVERY_TIMEOUT
 
         if error and error not in ("null", ""):
-
             return _PublicStage.DISCOVERY_ERROR
 
         return _PublicStage.DISCOVERY_ZERO_RESULTS
 
-
-
     # Discovery succeeded but fetch never produced anything
 
     if built_count == 0:
-
         if timeout or "timeout" in error.lower():
-
             return _PublicStage.FETCH_TIMEOUT
 
         if error and error not in ("null", ""):
-
             return _PublicStage.FETCH_ERROR
 
         return _PublicStage.FETCH_ZERO_SUCCESS
 
-
-
     # Discovery and fetch succeeded but no findings accepted
 
     if accepted_count == 0:
-
         # Use PipelineRunResult public_stage_failure if available
 
         if public_stage_failure == "fetch_zero":
-
             return _PublicStage.FETCH_ZERO_SUCCESS
 
         if public_stage_failure == "discovery_empty":
-
             return _PublicStage.DISCOVERY_ZERO_RESULTS
 
         # Infer from built_count vs accepted_count gap
 
         if built_count > 0:
-
             # Fetch produced pages but no findings accepted
 
             return _PublicStage.QUALITY_REJECTED
 
         return _PublicStage.PARSE_ZERO_TEXT
 
-
-
     # Some findings accepted -- correct terminal state regardless of public_stage_failure
 
     if accepted_count > 0:
-
         return _PublicStage.ACCEPTED
-
-
 
     # Fallback
 
     return _PublicStage.TERMINAL
-
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -1322,9 +1146,7 @@ def _derive_terminal_stage(
 # ---------------------------------------------------------------------------
 
 
-
 class _LifecycleAdapter:
-
     """
 
     Normalizes lifecycle API differences between runtime/ and utils/ versions.
@@ -1344,8 +1166,6 @@ class _LifecycleAdapter:
     for runtime objects, and bridges property vs method access patterns.
 
     """
-
-
 
     __slots__ = (
         "_lc",
@@ -1370,7 +1190,6 @@ class _LifecycleAdapter:
         "_phase_transition_callback",
         "_prev_phase",
     )
-
 
     def __init__(
         self,
@@ -1397,16 +1216,14 @@ class _LifecycleAdapter:
         self._cached_set_first_cycle_ran_attr = None
         self._cached_set_deadline_expired_attr = None
         # F320: phase transition callback
-        self._phase_transition_callback: Callable[[str, str], None] | None = (
-            phase_transition_callback
-        )
+        self._phase_transition_callback: Callable[[str, str], None] | None = phase_transition_callback
         self._prev_phase: str = "BOOT"
-
 
     def _notify_phase_transition(self, new_phase: str) -> None:
         """F320: Call phase_transition_callback if phase actually changed."""
         # Issue 8.4: propagate phase to ContextVar for TaskGroup child task visibility
         from core.telemetry.context_state import set_sprint_phase as _set_phase
+
         _set_phase(new_phase)
         if self._phase_transition_callback is None:
             return
@@ -1419,13 +1236,9 @@ class _LifecycleAdapter:
             pass  # best-effort
         self._prev_phase = new_phase
 
-
     # ── start / begin_sprint ───────────────────────────────────────────────
 
-
-
     def start(self) -> None:
-
         """runtime: start() -- transitions BOOT->WARMUP."""
 
         cached = self._cached_start_attr
@@ -1442,14 +1255,9 @@ class _LifecycleAdapter:
         # F320: notify phase transition BOOT → WARMUP
         self._notify_phase_transition("WARMUP")
 
-
-
     # ── tick ──────────────────────────────────────────────────────────────
 
-
-
     def tick(self, now_monotonic: float | None = None):
-
         """runtime: tick() returns SprintPhase. Fallback: 'UNKNOWN' phase string."""
 
         cached = self._cached_tick_attr
@@ -1462,14 +1270,9 @@ class _LifecycleAdapter:
 
         return "UNKNOWN"
 
-
-
     # ── remaining_time ───────────────────────────────────────────────────
 
-
-
     def remaining_time(self, now_monotonic: float | None = None) -> float:
-
         """runtime: remaining_time(). utils: remaining_time property."""
 
         cached = self._cached_remaining_time_attr
@@ -1484,14 +1287,9 @@ class _LifecycleAdapter:
 
         return 0.0
 
-
-
     # ── is_terminal ──────────────────────────────────────────────────────
 
-
-
     def is_terminal(self) -> bool:
-
         """runtime: is_terminal(). Returns True when phase is TEARDOWN."""
 
         cached = self._cached_is_terminal_attr
@@ -1510,14 +1308,9 @@ class _LifecycleAdapter:
 
         return phase == "TEARDOWN"
 
-
-
     # ── should_enter_windup ──────────────────────────────────────────────
 
-
-
     def should_enter_windup(self, now_monotonic: float | None = None) -> bool:
-
         """runtime: should_enter_windup(). utils: is_windup_phase()."""
 
         cached = self._cached_should_enter_windup_attr
@@ -1586,12 +1379,8 @@ class _LifecycleAdapter:
 
     # ── _current_phase ───────────────────────────────────────────────────
 
-
-
     @property
-
     def _current_phase(self) -> str:
-
         """runtime: _current_phase (SprintPhase enum). utils: state (SprintLifecycleState)."""
 
         # Cached lookup: resolve attribute name once, then O(1) getattr
@@ -1610,18 +1399,13 @@ class _LifecycleAdapter:
 
         return "UNKNOWN"
 
-
-
     # ── mark_warmup_done ─────────────────────────────────────────────────
 
     # F184A: Canonical public API for WARMUP->ACTIVE transition.
 
     # F184A: Replaces direct adapter._lc.mark_warmup_done() bypass in run().
 
-
-
     def mark_warmup_done(self) -> None:
-
         """runtime: mark_warmup_done() -- transitions WARMUP->ACTIVE."""
 
         cached = self._cached_mark_warmup_done_attr
@@ -1635,18 +1419,14 @@ class _LifecycleAdapter:
         elif hasattr(self._lc, "transition_to"):
             self._cached_mark_warmup_done_attr = "transition_to"
             from hledac.universal.runtime.sprint_lifecycle import SprintPhase
+
             self._lc.transition_to(SprintPhase.ACTIVE)
         # F320: notify phase transition WARMUP → ACTIVE
         self._notify_phase_transition("ACTIVE")
 
-
-
     # ── recommended_tool_mode ────────────────────────────────────────────
 
-
-
     def recommended_tool_mode(self, now_monotonic: float | None = None) -> str:
-
         """runtime: recommended_tool_mode(). Returns 'normal'/'prune'/'panic'."""
 
         cached = self._cached_recommended_tool_mode_attr
@@ -1661,14 +1441,9 @@ class _LifecycleAdapter:
 
         return "normal"
 
-
-
     # ── request_abort ────────────────────────────────────────────────────
 
-
-
     def request_abort(self, reason: str = "") -> None:
-
         """runtime: request_abort(reason)."""
 
         cached = self._cached_request_abort_attr
@@ -1686,14 +1461,9 @@ class _LifecycleAdapter:
                 self._cached_abort_reason_attr = "_abort_reason"
                 self._lc._abort_reason = reason
 
-
-
     # ── _abort_requested ─────────────────────────────────────────────────
 
-
-
     @property
-
     def _abort_requested(self) -> bool:
 
         cached = self._cached_abort_requested_attr
@@ -1708,10 +1478,7 @@ class _LifecycleAdapter:
 
         return False
 
-
-
     @property
-
     def _abort_reason(self) -> str:
 
         cached = self._cached_abort_reason_attr
@@ -1727,9 +1494,6 @@ class _LifecycleAdapter:
         return ""
 
 
-
-
-
 # ---------------------------------------------------------------------------
 
 # Source tier
@@ -1737,39 +1501,27 @@ class _LifecycleAdapter:
 # ---------------------------------------------------------------------------
 
 
-
 class SourceTier(Enum):
-
     """Feed source priority tier."""
 
-    SURFACE = auto()       # high-value real-time feeds (news, alerts)
+    SURFACE = auto()  # high-value real-time feeds (news, alerts)
 
-    STRUCTURED_TI = auto() # structured threat intel feeds
+    STRUCTURED_TI = auto()  # structured threat intel feeds
 
-    DEEP = auto()          # deep/dark web, archive feeds
+    DEEP = auto()  # deep/dark web, archive feeds
 
-    ARCHIVE = auto()        # historical/wayback/archive feeds
+    ARCHIVE = auto()  # historical/wayback/archive feeds
 
-    OTHER = auto()         # everything else -- processed only if time allows
-
-
-
+    OTHER = auto()  # everything else -- processed only if time allows
 
 
 _TIER_ORDER = [
-
     SourceTier.SURFACE,
-
     SourceTier.STRUCTURED_TI,
-
     SourceTier.DEEP,
-
     SourceTier.ARCHIVE,
-
     SourceTier.OTHER,
-
 ]
-
 
 
 # Sprint F228G: Default tier mapping for the fallback _DEFAULT_SOURCE_TYPES.
@@ -1784,21 +1536,12 @@ _TIER_ORDER = [
 # sources -- they belong in STRUCTURED_TI, not OTHER. Mapping them here
 # guarantees they survive both normal and prune mode.
 _DEFAULT_SOURCE_TIER_MAP: dict[str, SourceTier] = {
-
     "cisa_kev": SourceTier.STRUCTURED_TI,
-
     "threatfox_ioc": SourceTier.STRUCTURED_TI,
-
     "urlhaus_recent": SourceTier.STRUCTURED_TI,
-
     "feodo_ip": SourceTier.STRUCTURED_TI,
-
     "openphish_feed": SourceTier.STRUCTURED_TI,
-
 }
-
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -1808,11 +1551,7 @@ _DEFAULT_SOURCE_TIER_MAP: dict[str, SourceTier] = {
 # ---------------------------------------------------------------------------
 
 
-
-
-
 class CTLossStage(Enum):
-
     """Enum describing where CT raw evidence is lost in the live bridge path.
 
 
@@ -1827,8 +1566,6 @@ class CTLossStage(Enum):
 
     """
 
-
-
     NO_RAW = "no_raw"  # CT adapter returned 0 hits
 
     BRIDGE_NOT_INVOKED = "bridge_not_invoked"  # CT adapter returned 0 raw and bridge was never called
@@ -1839,7 +1576,9 @@ class CTLossStage(Enum):
 
     ALL_REJECTED_BY_BRIDGE = "all_rejected_by_bridge"  # hits existed but all candidates rejected
 
-    CANDIDATES_BUILT_NOT_ACCUMULATED = "candidates_built_not_accumulated"  # bridge returned candidates but scheduler dropped them  # noqa: E501
+    CANDIDATES_BUILT_NOT_ACCUMULATED = (
+        "candidates_built_not_accumulated"  # bridge returned candidates but scheduler dropped them  # noqa: E501
+    )
 
     ACCUMULATED_NOT_STORED = "accumulated_not_stored"  # candidates accumulated but storage rejected
 
@@ -1870,9 +1609,6 @@ class CTLossStage(Enum):
     STALE_CACHE_USED = "stale_cache_used"
 
 
-
-
-
 # ---------------------------------------------------------------------------
 
 # Config
@@ -1880,16 +1616,14 @@ class CTLossStage(Enum):
 # ---------------------------------------------------------------------------
 
 
-
 class SprintSchedulerConfig(msgspec.Struct, frozen=True, gc=False):
-
     """Configuration for one sprint run."""
 
-    sprint_duration_s: float = 1800.0          # 30 min
+    sprint_duration_s: float = 1800.0  # 30 min
 
-    windup_lead_s: float = 180.0              # enter wind-down 3 min before end
+    windup_lead_s: float = 180.0  # enter wind-down 3 min before end
 
-    cycle_sleep_s: float = 5.0                 # sleep between cycles
+    cycle_sleep_s: float = 5.0  # sleep between cycles
 
     # Sprint F-A3: per-cycle hard deadline. Wraps `_run_one_cycle` in
     # `asyncio.timeout(cycle_budget_s)`. If a cycle exceeds this budget
@@ -1899,39 +1633,39 @@ class SprintSchedulerConfig(msgspec.Struct, frozen=True, gc=False):
     # consecutive-empty-cycles guard eventually forces windup. 60s =
     # 4x the typical 15s branch timeout — generous headroom for the
     # concurrent aggressive-mode feed/public/CT trio.
-    cycle_budget_s: float = 60.0                # hard per-cycle deadline
+    cycle_budget_s: float = 60.0  # hard per-cycle deadline
 
-    max_cycles: int = 100                      # safety cap
+    max_cycles: int = 100  # safety cap
 
-    max_parallel_sources: int = 4              # concurrent source fetches
+    max_parallel_sources: int = 4  # concurrent source fetches
 
-    stop_on_first_accepted: bool = False       # early exit on first accepted
+    stop_on_first_accepted: bool = False  # early exit on first accepted
 
     export_enabled: bool = True
 
     export_dir: str = ""
 
-    max_entries_per_cycle: int = 50             # per-source cap
+    max_entries_per_cycle: int = 50  # per-source cap
 
     # Sprint F193B: Hypothesis -> finding feedback loop caps
 
-    max_hypothesis_depth: int = 3              # max iteration depth for hypothesis-driven pivots
+    max_hypothesis_depth: int = 3  # max iteration depth for hypothesis-driven pivots
 
-    max_hypothesis_queries: int = 10           # max total hypothesis-driven pivot queries
+    max_hypothesis_queries: int = 10  # max total hypothesis-driven pivot queries
 
     # Aggressive mode: fans out feed/public/CT branches concurrently per cycle
 
-    aggressive_mode: bool = False              # if True, run branches in parallel
+    aggressive_mode: bool = False  # if True, run branches in parallel
 
     aggressive_branch_timeout_s: float = 45.0  # per-branch timeout in aggressive mode
 
     # Sprint F195B: Per-branch timeout budget in seconds (aggressive mode uses 8.0)
 
-    branch_timeout_budget_s: float = 0.0       # 0 = use aggressive_branch_timeout_s
+    branch_timeout_budget_s: float = 0.0  # 0 = use aggressive_branch_timeout_s
 
     # Sprint F212-B: Branch timeout envelope caps
 
-    _MAX_BRANCH_TIMEOUT_CAP: float = 300.0    # absolute per-branch cap
+    _MAX_BRANCH_TIMEOUT_CAP: float = 300.0  # absolute per-branch cap
 
     # F273A: Dynamic branch-remaining floor. The 5.0s static floor was the root
     # cause of `terminal:remaining_too_low` killing PUBLIC + CT branches during
@@ -1943,11 +1677,11 @@ class SprintSchedulerConfig(msgspec.Struct, frozen=True, gc=False):
     # F285: M1 Air 8GB optimization — reduced from 5.0 to 2.0 to prevent
     # branch timeout truncation when remaining time is tight during windup.
     _MIN_BRANCH_REMAINING_S_DEFAULT: float = 2.0  # base floor (no cycles seen yet)
-    _MIN_BRANCH_REMAINING_S_CAP: float = 5.0     # max floor -- F273A standard
+    _MIN_BRANCH_REMAINING_S_CAP: float = 5.0  # max floor -- F273A standard
 
     # Sprint F273A kept the legacy constant name as an alias for back-compat
     # (some tests + sidecar adapters read this attribute directly).
-    _MIN_BRANCH_REMAINING_S: float = 2.0          # back-compat alias; runtime uses _min_branch_remaining_s()
+    _MIN_BRANCH_REMAINING_S: float = 2.0  # back-compat alias; runtime uses _min_branch_remaining_s()
 
     # Partial export interval -- every N findings in aggressive mode (recovery artifact)
 
@@ -2115,13 +1849,9 @@ class SprintSchedulerConfig(msgspec.Struct, frozen=True, gc=False):
 
     sensitive_query_transport: str = "auto"
 
-
-
     # F233C: Optional predecessor sprint_id for next_sprint_seeds consumption
 
     predecessor_sprint_id: str | None = None
-
-
 
     # F11: Deep research advisory (post-WINDUP, fire-and-forget)
 
@@ -2129,20 +1859,13 @@ class SprintSchedulerConfig(msgspec.Struct, frozen=True, gc=False):
 
     extreme_mode: bool = False
 
-
-
     def tier_of(self, source: str) -> SourceTier:
 
         return self.source_tier_map.get(source, SourceTier.OTHER)
 
-
-
     def sorted_tiers(self) -> list[SourceTier]:
 
         return _TIER_ORDER.copy()
-
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -2152,9 +1875,7 @@ class SprintSchedulerConfig(msgspec.Struct, frozen=True, gc=False):
 # ---------------------------------------------------------------------------
 
 
-
 class EarlyExitClass:
-
     """
 
     Sprint F215D: Canonical early exit classification for sprint runs.
@@ -2189,8 +1910,6 @@ class EarlyExitClass:
 
     """
 
-
-
     COMPLETED_FULL_DURATION = "completed_full_duration"
 
     EARLY_COMPLETE_NO_WORK_REMAINING = "early_complete_no_work_remaining"
@@ -2214,9 +1933,6 @@ class EarlyExitClass:
     ABORTED_BY_ERROR = "aborted_by_error"
 
 
-
-
-
 # ---------------------------------------------------------------------------
 
 # F214: Feed Dominance Guard -- reporting + optional strict policy
@@ -2224,22 +1940,19 @@ class EarlyExitClass:
 # ---------------------------------------------------------------------------
 
 
-
 # ── Sprint Opt: FeedDominanceGuardResult jako msgspec.Struct ─────────────────
 # Pure-data verdict struct, finalizovany po guard.compute(). Frozen + gc=False
 # pro nulovy GC tlak (F214 guard bezi ~10×/cyklus).
 
 
-
 class FeedDominanceGuardResult(msgspec.Struct, frozen=True, gc=False):
-
     """F214: Result of FeedDominanceGuard.compute()."""
 
     feed_dominance_ratio: float
 
     nonfeed_accepted_findings: int
 
-    feed_dominance_class: str          # "balanced" | "feed_dominant" | "feed_only_like"
+    feed_dominance_class: str  # "balanced" | "feed_dominant" | "feed_only_like"
 
     should_recommend_nonfeed_diagnostic: bool
 
@@ -2250,15 +1963,11 @@ class FeedDominanceGuardResult(msgspec.Struct, frozen=True, gc=False):
     reason: str
 
 
-
-
-
 # D6: Lane Budget Pool for per-lane timeout accounting
 # ── Sprint Opt: LaneBudgetAllocation jako msgspec.Struct (frozen, gc=False) ──
 # Pure-data budget slot, mutuje se v LaneBudgetPool.allocate()/release() --
 # proto msgspec.Struct (ne frozen) umoznuje runtime update. gc=False snizuje
 # GC tlak v cyklu s 8+ lanes.
-
 
 
 class LaneBudgetAllocation(msgspec.Struct, gc=False):
@@ -2300,13 +2009,18 @@ class LaneBudgetPool(msgspec.Struct, gc=False):
         return min(total / self._total_budget_s, 1.0)
 
     def get_lane_stats(self) -> dict:
-        return {n: {"allocated_s": a.allocated_s, "consumed_s": a.consumed_s,
-                        "released_s": a.released_s, "timeout_count": a.timeout_count}
-                for n, a in self._allocations.items()}
+        return {
+            n: {
+                "allocated_s": a.allocated_s,
+                "consumed_s": a.consumed_s,
+                "released_s": a.released_s,
+                "timeout_count": a.timeout_count,
+            }
+            for n, a in self._allocations.items()
+        }
 
 
 class FeedDominanceGuard(msgspec.Struct, gc=False):
-
     """
 
     F214: Canonical feed dominance guard policy.
@@ -2339,22 +2053,13 @@ class FeedDominanceGuard(msgspec.Struct, gc=False):
 
     strict: bool = False
 
-
-
     def compute(
-
         self,
-
         total_accepted: int,
-
         feed_accepted: int,
-
         nonfeed_accepted: int,
-
         eligible_nonfeed_lanes_terminal: bool = False,
-
         nonfeed_diagnostic_timed_out: bool = False,
-
     ) -> FeedDominanceGuardResult:
 
         # Sprint Opt: structural pattern matching (PEP 634, 3.10+).
@@ -2363,55 +2068,34 @@ class FeedDominanceGuard(msgspec.Struct, gc=False):
         #          eligible_terminal, diagnostic_timed_out) tuple.
         # Equivalent to the original if/elif chain, but exhaustive and branch-free.
         if total_accepted == 0:
-
             return FeedDominanceGuardResult(
-
                 feed_dominance_ratio=0.0,
-
                 nonfeed_accepted_findings=0,
-
                 feed_dominance_class="balanced",
-
                 should_recommend_nonfeed_diagnostic=False,
-
                 guard_triggered=False,
-
                 block_early_exit=False,
-
                 reason="no findings",
-
             )
-
-
 
         ratio = feed_accepted / total_accepted
 
         nonfeed = nonfeed_accepted
 
-
-
         # Step 1: dominance classification (3 bands).
         match ratio:
-
             case r if r >= 0.999:
-
                 dom_class = "feed_only_like"
 
             case r if r > self.dominance_ratio_threshold:
-
                 dom_class = "feed_dominant"
 
             case _:
-
                 dom_class = "balanced"
-
-
 
         should_recommend = ratio > self.dominance_ratio_threshold and nonfeed < 5
 
         guard_triggered = ratio > self.dominance_ratio_threshold
-
-
 
         # Step 2: block-early-exit decision via match/case on the (strict, guard,
         # threshold, terminal, timeout) state tuple. Each case maps to a single
@@ -2419,71 +2103,45 @@ class FeedDominanceGuard(msgspec.Struct, gc=False):
         block_early_exit = False
 
         match (self.strict, guard_triggered, nonfeed, eligible_nonfeed_lanes_terminal, nonfeed_diagnostic_timed_out):
-
             case (False, _, _, _, _):
-
                 # Non-strict mode: never block, regardless of dominance.
 
                 block_early_exit = False
 
             case (True, False, _, _, _):
-
                 # Guard didn't trigger: no need to block.
 
                 block_early_exit = False
 
             case (True, True, n, _, _) if n >= self.min_nonfeed_findings:
-
                 # Sufficient nonfeed findings: early exit is safe.
 
                 block_early_exit = False
 
             case (True, True, _, True, _):
-
                 # All eligible nonfeed lanes reached terminal state.
 
                 block_early_exit = False
 
             case (True, True, _, _, True):
-
                 # Nonfeed diagnostic timed out: respect the operator's timeout.
 
                 block_early_exit = False
 
             case (True, True, _, _, _):
-
                 # Strict mode + guard triggered + no escape hatch → block.
 
                 block_early_exit = True
 
-
-
         return FeedDominanceGuardResult(
-
             feed_dominance_ratio=ratio,
-
             nonfeed_accepted_findings=nonfeed,
-
             feed_dominance_class=dom_class,
-
             should_recommend_nonfeed_diagnostic=should_recommend,
-
             guard_triggered=guard_triggered,
-
             block_early_exit=block_early_exit,
-
-            reason=(
-
-                f"feed_dominance={dom_class}:{ratio:.3f}:"
-
-                f"feed={feed_accepted}:nonfeed={nonfeed}"
-
-            ),
-
+            reason=(f"feed_dominance={dom_class}:{ratio:.3f}:feed={feed_accepted}:nonfeed={nonfeed}"),
         )
-
-
-
 
 
 # ── Sprint S2: HealthReport jako msgspec.Struct (frozen, gc=False) ────────────
@@ -2496,9 +2154,7 @@ class FeedDominanceGuard(msgspec.Struct, gc=False):
 # Metoda `summary()` zustava — msgspec.Struct plne podporuje metody.
 
 
-
 class HealthReport(msgspec.Struct, frozen=True, gc=False):
-
     """
 
     F228F: Pre-run health check result for critical dependencies.
@@ -2535,30 +2191,17 @@ class HealthReport(msgspec.Struct, frozen=True, gc=False):
 
     errors: list[str] = msgspec.field(default_factory=list)
 
-
-
     def summary(self) -> str:
 
         return (
-
             f"duckdb={'OK' if self.duckdb_ok else 'FAIL'} "
-
             f"hermes={'OK' if self.hermes_ok else 'FAIL'} "
-
             f"fetch={'OK' if self.fetch_coordinator_ok else 'not_initialized'} "
-
             f"graph={'OK' if self.graph_service_ok else 'not_initialized'} "
-
             f"elog={'OK' if self.evidence_log_ok else 'FAIL'} "
-
             f"mem={'OK' if self.memory_pressure_ok else 'CRITICAL'} "
-
             f"overall={'OK' if self.overall_ok else 'DEGRADED'}"
-
         )
-
-
-
 
 
 @dataclass
@@ -2836,9 +2479,9 @@ class SprintSchedulerResult:
 
     ct_terminal_stage: str = ""  # Final stage reached: planned|scheduled|provider_selected|
 
-                                  #   request_attempted|request_timeout|bridge_invoked|
+    #   request_attempted|request_timeout|bridge_invoked|
 
-                                  #   candidates_built|storage_attempted|storage_accepted|skipped|error
+    #   candidates_built|storage_attempted|storage_accepted|skipped|error
 
     ct_prelude_missing_but_final_attempted: bool = False  # CT missing at prelude but ran later
 
@@ -2874,41 +2517,41 @@ class SprintSchedulerResult:
 
     # Set to True when corresponding signal_stage/zero_signal_reason appears in any feed cycle
 
-    feed_zero_yield_detected: bool = False        # zero_signal_reason was set
+    feed_zero_yield_detected: bool = False  # zero_signal_reason was set
 
-    feed_inaccessible_detected: bool = False      # empty_fetch in any feed source
+    feed_inaccessible_detected: bool = False  # empty_fetch in any feed source
 
-    feed_content_empty_detected: bool = False     # content_empty in any feed source
+    feed_content_empty_detected: bool = False  # content_empty in any feed source
 
-    feed_no_pattern_with_content: bool = False   # no_pattern_hits_with_content in any feed
+    feed_no_pattern_with_content: bool = False  # no_pattern_hits_with_content in any feed
 
-    findings_build_loss_detected: bool = False   # findings_build_loss in any feed
+    findings_build_loss_detected: bool = False  # findings_build_loss in any feed
 
     feed_no_signal_sources: list[str] = field(default_factory=list)  # source URLs with zero_signal_reason
 
     # Sprint F228A: Policy quality feedback telemetry -- populated by update_with_quality_decisions calls
 
-    policy_quality_feedback_calls: int = 0          # total calls to update_with_quality_decisions
+    policy_quality_feedback_calls: int = 0  # total calls to update_with_quality_decisions
 
-    policy_quality_feedback_decisions: int = 0      # total decisions processed across all calls
+    policy_quality_feedback_decisions: int = 0  # total decisions processed across all calls
 
-    policy_quality_feedback_sources: int = 0        # unique sources fed to policy
+    policy_quality_feedback_sources: int = 0  # unique sources fed to policy
 
-    policy_quality_feedback_errors: int = 0         # exceptions caught during policy calls
+    policy_quality_feedback_errors: int = 0  # exceptions caught during policy calls
 
     # Sprint F169E: Public branch blocker aggregation
 
-    public_backend_degraded: bool = False         # backend_degraded was True in any public cycle
+    public_backend_degraded: bool = False  # backend_degraded was True in any public cycle
 
     # Sprint F169E: Dominant blocker summary (first non-empty wins per category)
 
-    dominant_public_blocker: str = ""            # "backend_degraded" | "public_error:{msg}"
+    dominant_public_blocker: str = ""  # "backend_degraded" | "public_error:{msg}"
 
-    dominant_feed_blocker: str = ""              # one of feed blocker type names above
+    dominant_feed_blocker: str = ""  # one of feed blocker type names above
 
-    dominant_branch_blocker: str = ""            # "public" or "feed" -- whichever first had non-empty blocker
+    dominant_branch_blocker: str = ""  # "public" or "feed" -- whichever first had non-empty blocker
 
-    branch_degradation_summary: str = ""         # e.g. "public_degraded_feed_zero"
+    branch_degradation_summary: str = ""  # e.g. "public_degraded_feed_zero"
 
     # Sprint F195B: Branch timeout tracking for aggressive mode
 
@@ -2932,9 +2575,9 @@ class SprintSchedulerResult:
     # Hermes3 model-load diagnostic — verifies model is resident after lazy gate resolves.
     # `model_loaded` flag surfaced to JSON via result export.
     hermes_model_loaded: bool = False
-    hermes_load_attempted: bool = False   # True once _load_hermes_for_sprint was called
-    hermes_load_reason: str = ""          # "ok" | "disabled_env" | "force_overrode" | "rss_headroom_skip" | "load_error:{type}"
-    hermes_load_elapsed_s: float = 0.0    # wall-clock for the load attempt
+    hermes_load_attempted: bool = False  # True once _load_hermes_for_sprint was called
+    hermes_load_reason: str = ""  # "ok" | "disabled_env" | "force_overrode" | "rss_headroom_skip" | "load_error:{type}"
+    hermes_load_elapsed_s: float = 0.0  # wall-clock for the load attempt
 
     # F285: MLXBatchedExecutor telemetry — batcher stats collected from the
     # Hermes3Engine instance after synthesis (P0-2 wiring verification).
@@ -2957,7 +2600,7 @@ class SprintSchedulerResult:
     malloc_pressure_relief_last_at_s: float = 0.0
 
     # F273A: Dynamic branch floor telemetry (audit-friendly).
-    dynamic_branch_floor_s: float = 0.0    # last computed floor from _min_branch_remaining_s()
+    dynamic_branch_floor_s: float = 0.0  # last computed floor from _min_branch_remaining_s()
 
     # F273B: Effective windup lead used by the most recent windup decision.
     effective_windup_lead_used_s: float = 0.0
@@ -3232,9 +2875,9 @@ class SprintSchedulerResult:
 
     prewindup_guard_async_bridge_used: bool = False  # True when running loop detected
 
-    prewindup_guard_async_error: str = ""            # last async/bridge error
+    prewindup_guard_async_error: str = ""  # last async/bridge error
 
-    prewindup_guard_fail_closed: bool = False         # True when windup blocked by error
+    prewindup_guard_fail_closed: bool = False  # True when windup blocked by error
 
     # Sprint F207T-A: Return guard for mandatory nonfeed terminal state
 
@@ -3385,23 +3028,23 @@ class SprintSchedulerResult:
 
     # Populated by _check_feed_dominance_budget() called per-cycle and at teardown
 
-    feed_budget_active: bool = False                    # True when budget policy is configured
+    feed_budget_active: bool = False  # True when budget policy is configured
 
-    feed_budget_reason: str = ""                       # Human-readable cap activation reason
+    feed_budget_reason: str = ""  # Human-readable cap activation reason
 
-    feed_accepted_before_cap: int = 0                 # Feed accepted count when cap first triggered
+    feed_accepted_before_cap: int = 0  # Feed accepted count when cap first triggered
 
-    feed_suppressed_by_budget: int = 0                 # Feed findings suppressed due to cap
+    feed_suppressed_by_budget: int = 0  # Feed findings suppressed due to cap
 
     feed_budget_per_source: dict[str, int] = field(default_factory=dict)  # per-source counts at cap trigger
 
     top_feed_source_counts: tuple[tuple[str, int], ...] = ()  # top-N (source, count) pairs at cap trigger
 
-    max_per_source_applied: str = ""                   # Source URL that hit per-source cap first
+    max_per_source_applied: str = ""  # Source URL that hit per-source cap first
 
     # Sprint F230D: Nonfeed budget telemetry -- for nonfeed_diagnostic profile
 
-    nonfeed_budget_active: bool = False                # True when nonfeed budget policy is active
+    nonfeed_budget_active: bool = False  # True when nonfeed budget policy is active
 
     nonfeed_budget_expected_lanes: tuple[str, ...] = ()  # Expected nonfeed lanes from nonfeed_plan_debug
 
@@ -3409,11 +3052,11 @@ class SprintSchedulerResult:
 
     nonfeed_budget_unresolved_lanes: tuple[str, ...] = ()  # Nonfeed lanes still unresolved
 
-    feed_suppressed_by_nonfeed_budget: int = 0         # Feed findings suppressed by nonfeed budget
+    feed_suppressed_by_nonfeed_budget: int = 0  # Feed findings suppressed by nonfeed budget
 
-    feed_suppression_count: int = 0                    # Number of feed sources suppressed by nonfeed budget
+    feed_suppression_count: int = 0  # Number of feed sources suppressed by nonfeed budget
 
-    feed_suppression_reason: str = ""                  # Reason for nonfeed budget suppression
+    feed_suppression_reason: str = ""  # Reason for nonfeed budget suppression
 
     # Sprint F233D: Nonfeed Prelude Coverage Engine
 
@@ -3421,7 +3064,7 @@ class SprintSchedulerResult:
 
     # Covers: PUBLIC, CT, WAYBACK, PASSIVE_DNS, PIVOT_EXECUTOR lanes.
 
-    nonfeed_prelude_enabled: bool = False               # True when nonfeed_diagnostic profile active
+    nonfeed_prelude_enabled: bool = False  # True when nonfeed_diagnostic profile active
 
     nonfeed_prelude_expected_lanes: tuple[str, ...] = ()  # Expected lanes from nonfeed_plan_debug
 
@@ -3487,13 +3130,13 @@ class SprintSchedulerResult:
 
     # Populated by _compute_early_exit_class() called in _finalize_result_truth()
 
-    requested_duration_s: float = 0.0      # planned sprint duration at run() entry
+    requested_duration_s: float = 0.0  # planned sprint duration at run() entry
 
-    actual_duration_s: float = 0.0        # wall-clock seconds from run() entry to return
+    actual_duration_s: float = 0.0  # wall-clock seconds from run() entry to return
 
-    elapsed_pct: float = 0.0              # actual_duration_s / requested_duration_s (0.0 if requested=0)
+    elapsed_pct: float = 0.0  # actual_duration_s / requested_duration_s (0.0 if requested=0)
 
-    active_window_budget_s: float = 0.0    # sprint_duration_s minus windup lead
+    active_window_budget_s: float = 0.0  # sprint_duration_s minus windup lead
 
     active_window_elapsed_s: float = 0.0  # wall-clock spent in ACTIVE phase
 
@@ -3501,9 +3144,9 @@ class SprintSchedulerResult:
     # Logged as WARNING when > 0.40 — signals windup budget overconsumption.
     windup_efficiency: float = 0.0
 
-    early_exit_class: str = ""             # EarlyExitClass value or "" if not yet computed
+    early_exit_class: str = ""  # EarlyExitClass value or "" if not yet computed
 
-    early_exit_reason: str = ""            # Human-readable reason for early_exit_class
+    early_exit_reason: str = ""  # Human-readable reason for early_exit_class
 
     # Sprint F216A: Minimal event-sourced lane truth seed
 
@@ -3515,13 +3158,13 @@ class SprintSchedulerResult:
 
     source_family_events: list[dict] = field(default_factory=list)
 
-    MAX_SOURCE_FAMILY_EVENTS: int = 200   # class-level cap constant
+    MAX_SOURCE_FAMILY_EVENTS: int = 200  # class-level cap constant
 
     # Sprint F214: Feed dominance guard -- populated by _compute_early_exit_class()
 
     feed_dominance_ratio: float = 0.0
 
-    feed_dominance_class: str = ""       # "balanced" | "feed_dominant" | "feed_only_like"
+    feed_dominance_class: str = ""  # "balanced" | "feed_dominant" | "feed_only_like"
 
     feed_dominance_guard_triggered: bool = False
 
@@ -3593,7 +3236,6 @@ class SprintSchedulerResult:
 
     nonfeed_passive_dns_candidates: list[str] = field(default_factory=list)
 
-
     # F265C: ResearchContext for epistemic bonus in RL policy
     research_context: ResearchContext | None = None
 
@@ -3616,8 +3258,6 @@ class SprintSchedulerResult:
     # can hold it. Allocated lazily in __post_init__; left as None on import
     # failure or MemoryError (property delegations return 0 in that case).
     _int_counter_layout: IntCounterLayoutProto | None = None
-
-
 
     # F226A: Seed context telemetry
 
@@ -3650,8 +3290,6 @@ class SprintSchedulerResult:
     pivot_seed_hashes: tuple[str, ...] = ()
 
     pivot_seed_cves: tuple[str, ...] = ()
-
-
 
     # F233C: IOC values from ioc_followup seeds (wired into NonfeedSeedContext)
 
@@ -3965,7 +3603,6 @@ INT_COUNTER_LAYOUT_NAMES: tuple[str, ...] = (
 )
 
 
-
 # ---------------------------------------------------------------------------
 # Sprint F240A: Type-safe result variants
 # ---------------------------------------------------------------------------
@@ -3985,16 +3622,13 @@ INT_COUNTER_LAYOUT_NAMES: tuple[str, ...] = (
 # ---------------------------------------------------------------------------
 
 
-
-
-
 class SprintResultBuilder:
     """
     Fluent builder for SprintSchedulerResult (Issue #6).
-    
+
     Uses __dataclass_fields__ reflection — no code generation step needed.
     All 100+ fields are supported automatically.
-    
+
     Usage:
         result = (SprintResultBuilder()
             .with_cycles_started(5)
@@ -4003,158 +3637,158 @@ class SprintResultBuilder:
             .with_abort_reason("timeout")
             .build())
     """
-    
-    __slots__ = ('_result',)
-    
+
+    __slots__ = ("_result",)
+
     def __init__(self, base: SprintSchedulerResult | None = None) -> None:
-        object.__setattr__(self, '_result', base or SprintSchedulerResult())
-    
+        object.__setattr__(self, "_result", base or SprintSchedulerResult())
+
     def build(self) -> SprintSchedulerResult:
         """Return the constructed SprintSchedulerResult."""
         return self._result  # type: ignore[return-value]
-    
+
     @classmethod
     def _field_names(cls) -> list[str]:
         """Reflect field names from SprintSchedulerResult at runtime."""
         return list(SprintSchedulerResult.__dataclass_fields__.keys())
-    
-    def _set(self, name: str, value: object) -> 'SprintResultBuilder':
+
+    def _set(self, name: str, value: object) -> "SprintResultBuilder":
         """Internal setter — bypasses __setattr__ for speed."""
         object.__setattr__(self._result, name, value)
         return self
-    
+
     def __getattr__(self, name: str) -> object:
         # Forward field reads to underlying result
-        if name.startswith('_') or name == 'build':
+        if name.startswith("_") or name == "build":
             return object.__getattribute__(self, name)
         return getattr(self._result, name)
-    
+
     def __setattr__(self, name: str, value: object) -> None:
-        if name.startswith('_') or name == 'build':
+        if name.startswith("_") or name == "build":
             object.__setattr__(self, name, value)
         else:
             self._set(name, value)
-    
+
     # ── Hot-path field shortcuts (most assigned fields) ────────────────────────
     # These cover ~60% of all assignments in sprint_scheduler.py
-    
-    def with_cycles_started(self, v: int) -> 'SprintResultBuilder':
-        return self._set('cycles_started', v) or self
-    
-    def with_cycles_completed(self, v: int) -> 'SprintResultBuilder':
-        return self._set('cycles_completed', v) or self
-    
-    def with_aborted(self, v: bool) -> 'SprintResultBuilder':
-        return self._set('aborted', v) or self
-    
-    def with_abort_reason(self, v: str) -> 'SprintResultBuilder':
-        return self._set('abort_reason', v) or self
-    
-    def with_final_phase(self, v: str) -> 'SprintResultBuilder':
-        return self._set('final_phase', v) or self
-    
-    def with_accepted_findings(self, v: int) -> 'SprintResultBuilder':
-        return self._set('accepted_findings', v) or self
-    
-    def with_total_pattern_hits(self, v: int) -> 'SprintResultBuilder':
-        return self._set('total_pattern_hits', v) or self
-    
-    def with_unique_entry_hashes_seen(self, v: int) -> 'SprintResultBuilder':
-        return self._set('unique_entry_hashes_seen', v) or self
-    
-    def with_duplicate_entry_hashes_skipped(self, v: int) -> 'SprintResultBuilder':
-        return self._set('duplicate_entry_hashes_skipped', v) or self
-    
-    def with_consecutive_empty_cycles(self, v: int) -> 'SprintResultBuilder':
-        return self._set('consecutive_empty_cycles', v) or self
-    
-    def with_max_consecutive_empty_cycles(self, v: int) -> 'SprintResultBuilder':
-        return self._set('max_consecutive_empty_cycles', v) or self
-    
-    def with_entries_per_source(self, v: dict[str, int]) -> 'SprintResultBuilder':
-        return self._set('entries_per_source', v) or self
-    
-    def with_hits_per_source(self, v: dict[str, int]) -> 'SprintResultBuilder':
-        return self._set('hits_per_source', v) or self
-    
-    def with_export_paths(self, v: list[str]) -> 'SprintResultBuilder':
-        return self._set('export_paths', v) or self
-    
-    def with_stop_requested(self, v: bool) -> 'SprintResultBuilder':
-        return self._set('stop_requested', v) or self
-    
+
+    def with_cycles_started(self, v: int) -> "SprintResultBuilder":
+        return self._set("cycles_started", v) or self
+
+    def with_cycles_completed(self, v: int) -> "SprintResultBuilder":
+        return self._set("cycles_completed", v) or self
+
+    def with_aborted(self, v: bool) -> "SprintResultBuilder":
+        return self._set("aborted", v) or self
+
+    def with_abort_reason(self, v: str) -> "SprintResultBuilder":
+        return self._set("abort_reason", v) or self
+
+    def with_final_phase(self, v: str) -> "SprintResultBuilder":
+        return self._set("final_phase", v) or self
+
+    def with_accepted_findings(self, v: int) -> "SprintResultBuilder":
+        return self._set("accepted_findings", v) or self
+
+    def with_total_pattern_hits(self, v: int) -> "SprintResultBuilder":
+        return self._set("total_pattern_hits", v) or self
+
+    def with_unique_entry_hashes_seen(self, v: int) -> "SprintResultBuilder":
+        return self._set("unique_entry_hashes_seen", v) or self
+
+    def with_duplicate_entry_hashes_skipped(self, v: int) -> "SprintResultBuilder":
+        return self._set("duplicate_entry_hashes_skipped", v) or self
+
+    def with_consecutive_empty_cycles(self, v: int) -> "SprintResultBuilder":
+        return self._set("consecutive_empty_cycles", v) or self
+
+    def with_max_consecutive_empty_cycles(self, v: int) -> "SprintResultBuilder":
+        return self._set("max_consecutive_empty_cycles", v) or self
+
+    def with_entries_per_source(self, v: dict[str, int]) -> "SprintResultBuilder":
+        return self._set("entries_per_source", v) or self
+
+    def with_hits_per_source(self, v: dict[str, int]) -> "SprintResultBuilder":
+        return self._set("hits_per_source", v) or self
+
+    def with_export_paths(self, v: list[str]) -> "SprintResultBuilder":
+        return self._set("export_paths", v) or self
+
+    def with_stop_requested(self, v: bool) -> "SprintResultBuilder":
+        return self._set("stop_requested", v) or self
+
     # ── Synthesis fields ────────────────────────────────────────────────────
-    
-    def with_synthesis_success(self, v: bool) -> 'SprintResultBuilder':
-        return self._set('synthesis_success', v) or self
-    
-    def with_synthesis_engine(self, v: str) -> 'SprintResultBuilder':
-        return self._set('synthesis_engine', v) or self
-    
-    def with_synthesis_findings_count(self, v: int) -> 'SprintResultBuilder':
-        return self._set('synthesis_findings_count', v) or self
-    
-    def with_synthesis_text(self, v: str) -> 'SprintResultBuilder':
-        return self._set('synthesis_text', v) or self
-    
-    def with_hypotheses_generated(self, v: int) -> 'SprintResultBuilder':
-        return self._set('hypotheses_generated', v) or self
-    
+
+    def with_synthesis_success(self, v: bool) -> "SprintResultBuilder":
+        return self._set("synthesis_success", v) or self
+
+    def with_synthesis_engine(self, v: str) -> "SprintResultBuilder":
+        return self._set("synthesis_engine", v) or self
+
+    def with_synthesis_findings_count(self, v: int) -> "SprintResultBuilder":
+        return self._set("synthesis_findings_count", v) or self
+
+    def with_synthesis_text(self, v: str) -> "SprintResultBuilder":
+        return self._set("synthesis_text", v) or self
+
+    def with_hypotheses_generated(self, v: int) -> "SprintResultBuilder":
+        return self._set("hypotheses_generated", v) or self
+
     # ── Public pipeline fields ────────────────────────────────────────────────
-    
-    def with_public_discovered(self, v: int) -> 'SprintResultBuilder':
-        return self._set('public_discovered', v) or self
-    
-    def with_public_fetched(self, v: int) -> 'SprintResultBuilder':
-        return self._set('public_fetched', v) or self
-    
-    def with_public_matched_patterns(self, v: int) -> 'SprintResultBuilder':
-        return self._set('public_matched_patterns', v) or self
-    
-    def with_public_accepted_findings(self, v: int) -> 'SprintResultBuilder':
-        return self._set('public_accepted_findings', v) or self
-    
-    def with_public_stored_findings(self, v: int) -> 'SprintResultBuilder':
-        return self._set('public_stored_findings', v) or self
-    
-    def with_public_error(self, v: str) -> 'SprintResultBuilder':
-        return self._set('public_error', v) or self
-    
+
+    def with_public_discovered(self, v: int) -> "SprintResultBuilder":
+        return self._set("public_discovered", v) or self
+
+    def with_public_fetched(self, v: int) -> "SprintResultBuilder":
+        return self._set("public_fetched", v) or self
+
+    def with_public_matched_patterns(self, v: int) -> "SprintResultBuilder":
+        return self._set("public_matched_patterns", v) or self
+
+    def with_public_accepted_findings(self, v: int) -> "SprintResultBuilder":
+        return self._set("public_accepted_findings", v) or self
+
+    def with_public_stored_findings(self, v: int) -> "SprintResultBuilder":
+        return self._set("public_stored_findings", v) or self
+
+    def with_public_error(self, v: str) -> "SprintResultBuilder":
+        return self._set("public_error", v) or self
+
     # ── CT log fields ───────────────────────────────────────────────────────
-    
-    def with_ct_log_discovered(self, v: int) -> 'SprintResultBuilder':
-        return self._set('ct_log_discovered', v) or self
-    
-    def with_ct_log_stored(self, v: int) -> 'SprintResultBuilder':
-        return self._set('ct_log_stored', v) or self
-    
-    def with_ct_log_accepted_findings(self, v: int) -> 'SprintResultBuilder':
-        return self._set('ct_log_accepted_findings', v) or self
-    
-    def with_ct_log_error(self, v: str) -> 'SprintResultBuilder':
-        return self._set('ct_log_error', v) or self
-    
+
+    def with_ct_log_discovered(self, v: int) -> "SprintResultBuilder":
+        return self._set("ct_log_discovered", v) or self
+
+    def with_ct_log_stored(self, v: int) -> "SprintResultBuilder":
+        return self._set("ct_log_stored", v) or self
+
+    def with_ct_log_accepted_findings(self, v: int) -> "SprintResultBuilder":
+        return self._set("ct_log_accepted_findings", v) or self
+
+    def with_ct_log_error(self, v: str) -> "SprintResultBuilder":
+        return self._set("ct_log_error", v) or self
+
     # ── Timing fields ────────────────────────────────────────────────────────
-    
-    def with_entered_active_at_monotonic(self, v: float) -> 'SprintResultBuilder':
-        return self._set('entered_active_at_monotonic', v) or self
-    
-    def with_pre_loop_elapsed_s(self, v: float) -> 'SprintResultBuilder':
-        return self._set('pre_loop_elapsed_s', v) or self
-    
-    def with_first_cycle_started_at_monotonic(self, v: float) -> 'SprintResultBuilder':
-        return self._set('first_cycle_started_at_monotonic', v) or self
-    
-    def with_pre_active_starved(self, v: bool) -> 'SprintResultBuilder':
-        return self._set('pre_active_starved', v) or self
-    
+
+    def with_entered_active_at_monotonic(self, v: float) -> "SprintResultBuilder":
+        return self._set("entered_active_at_monotonic", v) or self
+
+    def with_pre_loop_elapsed_s(self, v: float) -> "SprintResultBuilder":
+        return self._set("pre_loop_elapsed_s", v) or self
+
+    def with_first_cycle_started_at_monotonic(self, v: float) -> "SprintResultBuilder":
+        return self._set("first_cycle_started_at_monotonic", v) or self
+
+    def with_pre_active_starved(self, v: bool) -> "SprintResultBuilder":
+        return self._set("pre_active_starved", v) or self
+
     # ── Generic field setter (for fields without dedicated with_ methods) ──────
-    
-    def with_(self, field: str, value: object) -> 'SprintResultBuilder':
+
+    def with_(self, field: str, value: object) -> "SprintResultBuilder":
         """
         Generic setter for any field by name.
         Use for fields without dedicated with_ methods.
-        
+
         Example:
             builder.with_('quantum_path_seeds', ['seed1', 'seed2'])
         """
@@ -4162,13 +3796,13 @@ class SprintResultBuilder:
             raise AttributeError(f"Unknown field: {field}")
         self._set(field, value)
         return self
-    
+
     # ── Batch update ────────────────────────────────────────────────────────
-    
-    def update(self, **kwargs: object) -> 'SprintResultBuilder':
+
+    def update(self, **kwargs: object) -> "SprintResultBuilder":
         """
         Batch update multiple fields at once.
-        
+
         Example:
             builder.update(
                 cycles_started=5,
@@ -4181,10 +3815,7 @@ class SprintResultBuilder:
         return self
 
 
-
-
 class SprintResult:
-
     """
 
     Universal fields -- always populated regardless of sprint mode.
@@ -4206,8 +3837,6 @@ class SprintResult:
     gradual migration away from the monolithic SprintSchedulerResult.
 
     """
-
-
 
     # Core cycle metrics (always populated)
 
@@ -4243,8 +3872,6 @@ class SprintResult:
     abort_reason: str = ""
 
     stop_requested: bool = False
-
-
 
     # Timing fields
 
@@ -4292,7 +3919,6 @@ class SprintResult:
 
     rir_correlation_produced: int = 0
 
-
     # General telemetry
 
     sidecars_skipped: tuple[str, ...] = ()
@@ -4306,7 +3932,6 @@ class SprintResult:
     # F265B: Transport lane efficiency (HTTP/3, conditional cache, prewarm)
     transport_efficiency: dict[str, int] = field(default_factory=dict)
 
-
     # Branch timeout tracking
 
     branch_timeout_count: int = 0
@@ -4315,15 +3940,11 @@ class SprintResult:
 
     ct_branch_timed_out: bool = False
 
-
-
     # CommonCrawl + academic
 
     cc_archive_injected: int = 0
 
     academic_findings_count: int = 0
-
-
 
     # Exit path telemetry
 
@@ -4343,8 +3964,6 @@ class SprintResult:
 
     scheduler_exit_guard_satisfied: bool | None = None
 
-
-
     # Hard deadline
 
     hard_deadline_monotonic: float | None = None
@@ -4357,8 +3976,6 @@ class SprintResult:
 
     hard_deadline_remaining_s_at_exit: float | None = None
 
-
-
     # Acquisition terminality
 
     acquisition_terminality_checked: bool = False
@@ -4369,8 +3986,6 @@ class SprintResult:
 
     acquisition_terminality_report: dict = field(default_factory=dict)
 
-
-
     # Nonfeed predispatch telemetry
 
     nonfeed_predispatch_checked: bool = False
@@ -4380,8 +3995,6 @@ class SprintResult:
     nonfeed_predispatch_reason: str | None = None
 
     nonfeed_predispatch_outcomes_count: int = 0
-
-
 
     # Acquisition prelude telemetry
 
@@ -4411,8 +4024,6 @@ class SprintResult:
 
     acquisition_prelude_domain_detection_error: str = ""
 
-
-
     # Pre-windup barrier telemetry
 
     windup_delayed_for_nonfeed: bool = False
@@ -4432,8 +4043,6 @@ class SprintResult:
     prewindup_barrier_duration_s: float = 0.0
 
     prewindup_barrier_delayed_cycle: bool = False
-
-
 
     # Windup guard telemetry
 
@@ -4457,8 +4066,6 @@ class SprintResult:
 
     prewindup_guard_fail_closed: bool = False
 
-
-
     # Return guard telemetry
 
     return_guard_checked: bool = False
@@ -4477,8 +4084,6 @@ class SprintResult:
 
     return_guard_errors: dict[str, str] = field(default_factory=dict)
 
-
-
     # Nonfeed predispatch
 
     nonfeed_predispatch_attempted: bool = False
@@ -4490,8 +4095,6 @@ class SprintResult:
     nonfeed_predispatch_duration_s: float = 0.0
 
     windup_blocked_until_nonfeed_attempted: bool = False
-
-
 
     # Lane verdict accumulators
 
@@ -4534,8 +4137,6 @@ class SprintResult:
 
     doh_seed_source: str = ""  # Sprint F220J
 
-
-
     # Policy quality feedback
 
     policy_quality_feedback_calls: int = 0
@@ -4545,8 +4146,6 @@ class SprintResult:
     policy_quality_feedback_sources: int = 0
 
     policy_quality_feedback_errors: int = 0
-
-
 
     # Feed dominance budget
 
@@ -4564,8 +4163,6 @@ class SprintResult:
 
     max_per_source_applied: str = ""
 
-
-
     # Nonfeed budget
 
     nonfeed_budget_active: bool = False
@@ -4582,8 +4179,6 @@ class SprintResult:
 
     feed_suppression_reason: str = ""
 
-
-
     # Branch blockers
 
     dominant_feed_blocker: str = ""
@@ -4592,15 +4187,11 @@ class SprintResult:
 
     branch_degradation_summary: str = ""
 
-
-
     # Dedup preload
 
     dedup_preload_count: int | None = None
 
     dedup_preload_elapsed_s: float | None = None
-
-
 
     # Feed blockers
 
@@ -4616,8 +4207,6 @@ class SprintResult:
 
     feed_no_signal_sources: list[str] = field(default_factory=list)
 
-
-
     # Arrow batch telemetry
 
     arrow_batch_hard_cap: int = 0
@@ -4625,8 +4214,6 @@ class SprintResult:
     arrow_batch_dropped_after_flush_failure: int = 0
 
     arrow_last_flush_error: str = ""
-
-
 
     # Early exit
 
@@ -4647,15 +4234,11 @@ class SprintResult:
 
     early_exit_reason: str = ""
 
-
-
     # Source family events
 
     source_family_events: list[dict] = field(default_factory=list)
 
     MAX_SOURCE_FAMILY_EVENTS: int = 200
-
-
 
     # Nonfeed mission controller
 
@@ -4691,8 +4274,6 @@ class SprintResult:
 
     nonfeed_passive_dns_candidates: list[str] = field(default_factory=list)
 
-
-
     # Sprint F220G: Feed -> pivot integration telemetry
 
     pivot_seed_count: int = 0
@@ -4725,7 +4306,6 @@ class SprintResult:
     seed_quality_dropped_sample: list = field(default_factory=list)
     seed_quality_bypass_reason: str = ""
 
-
     # F226A: Seed context telemetry
 
     seed_context_available: bool = False
@@ -4735,8 +4315,6 @@ class SprintResult:
     lanes_unlocked_by_seed_context: list[str] = field(default_factory=list)
 
     seed_context_skip_reason: str = ""
-
-
 
     # F233C: next_sprint_seeds consumption telemetry
 
@@ -4764,8 +4342,6 @@ class SprintResult:
 
     next_seeds_ioc_cves: tuple[str, ...] = ()
 
-
-
     # F237B: planner_actions consumption telemetry (from investigation_packet)
 
     planner_actions_consumed_count: int = 0
@@ -4775,8 +4351,6 @@ class SprintResult:
     planner_action_seed_source: str = ""
 
     planner_action_skip_reason: str | None = None
-
-
 
     # Nonfeed prelude
 
@@ -4796,8 +4370,6 @@ class SprintResult:
 
     nonfeed_prelude_feed_blocked_until_complete: bool = False
 
-
-
     # F238D: Pivot graph stats proof fields
 
     pivot_graph_stats_used: bool = False  # True when graph_stats was non-empty
@@ -4807,12 +4379,8 @@ class SprintResult:
     graph_aware_pivot_count: int = 0  # Pivots scored with graph-aware degree penalty
 
 
-
-
-
 @dataclass(slots=True)
 class FeedSprintResult(SprintResult):
-
     """
 
     FEED mode result -- feed-specific telemetry fields guaranteed populated.
@@ -4823,17 +4391,11 @@ class FeedSprintResult(SprintResult):
 
     """
 
-
-
     pass  # All feed-specific fields are in base SprintResult for now
-
-
-
 
 
 @dataclass(slots=True)
 class PublicSprintResult(SprintResult):
-
     """
 
     PUBLIC mode result -- public discovery pipeline fields guaranteed populated.
@@ -4843,8 +4405,6 @@ class PublicSprintResult(SprintResult):
     Populated when PUBLIC acquisition lane runs (discovery->fetch->parse->quality->storage).
 
     """
-
-
 
     public_discovered: int = 0
 
@@ -4876,8 +4436,6 @@ class PublicSprintResult(SprintResult):
 
     public_provider_selection_debug: dict = field(default_factory=dict)
 
-
-
     # Wayback telemetry
 
     wayback_attempted: bool = False
@@ -4901,8 +4459,6 @@ class PublicSprintResult(SprintResult):
 
     wayback_unchanged_rejected: int = 0
 
-
-
     # PassiveDNS telemetry
 
     passive_dns_attempted: bool = False
@@ -4920,12 +4476,8 @@ class PublicSprintResult(SprintResult):
     passive_dns_empty_ip_rejected: int = 0
 
 
-
-
-
 @dataclass(slots=True)
 class CtSprintResult(SprintResult):
-
     """
 
     CT mode result -- certificate transparency log pipeline fields guaranteed populated.
@@ -4936,8 +4488,6 @@ class CtSprintResult(SprintResult):
 
     """
 
-
-
     ct_log_discovered: int = 0
 
     ct_log_stored: int = 0
@@ -4945,8 +4495,6 @@ class CtSprintResult(SprintResult):
     ct_log_accepted_findings: int = 0
 
     ct_log_error: str = ""
-
-
 
     # CT bridge telemetry
 
@@ -4972,8 +4520,6 @@ class CtSprintResult(SprintResult):
 
     ct_cache_age_s: float = 0.0
 
-
-
     # CT loss stage telemetry
 
     ct_planned: bool = False
@@ -4994,8 +4540,6 @@ class CtSprintResult(SprintResult):
 
     ct_prelude_missing_but_final_attempted: bool = False
 
-
-
     # CT expansion telemetry
 
     ct_raw_domains_seen: int = 0
@@ -5013,8 +4557,6 @@ class CtSprintResult(SprintResult):
     ct_expansion_clues_count: int = 0
 
     ct_candidate_examples: tuple[str, ...] = ()
-
-
 
     # CT bridge diagnostics
 
@@ -5040,8 +4582,6 @@ class CtSprintResult(SprintResult):
 
     ct_candidates_stored: int = 0
 
-
-
     # Quality rejection ledger
 
     quality_rejection_ledger: tuple = ()
@@ -5053,12 +4593,8 @@ class CtSprintResult(SprintResult):
     low_information_by_family: dict = field(default_factory=dict)
 
 
-
-
-
 @dataclass(slots=True)
 class NonfeedSprintResult(SprintResult):
-
     """
 
     Nonfeed mode result -- nonfeed lane fields (CT, WAYBACK, PASSIVE_DNS, BLOCKCHAIN, PIVOT).
@@ -5071,14 +4607,9 @@ class NonfeedSprintResult(SprintResult):
 
     """
 
-
-
     # NonfeedPlanDebug is a large object; type as Any to avoid circular imports
 
     nonfeed_plan_debug: Any = None
-
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -5088,16 +4619,11 @@ class NonfeedSprintResult(SprintResult):
 # ---------------------------------------------------------------------------
 
 
-
-
-
 # ── Sprint Opt: PreWindupBarrierResult jako msgspec.Struct (frozen, gc=False) ─
 # Frozen verdict struktura pro barrier check pred windup. Immutable snapshot.
 
 
-
 class PreWindupBarrierResult(msgspec.Struct, frozen=True, gc=False):
-
     """
 
     Result of a pre-windup barrier check.
@@ -5123,15 +4649,11 @@ class PreWindupBarrierResult(msgspec.Struct, frozen=True, gc=False):
     duration_s: float = 0.0
 
 
-
-
-
 # ---------------------------------------------------------------------------
 
 # Sprint F160C: Source Economics -- per-sprint bounded local economics layer
 
 # ---------------------------------------------------------------------------
-
 
 
 # ── Sprint Opt: SourceEconomics jako msgspec.Struct (mutable, gc=False) ───────
@@ -5140,9 +4662,7 @@ class PreWindupBarrierResult(msgspec.Struct, frozen=True, gc=False):
 # per-source dict (~50-200 instanci/cyklus).
 
 
-
 class SourceEconomics(msgspec.Struct, gc=False):
-
     """
 
     Per-source economics state for one sprint.
@@ -5167,16 +4687,13 @@ class SourceEconomics(msgspec.Struct, gc=False):
 
     source: str
 
-    silent_streak: int = 0                          # consecutive cold/lukewarm cycles
+    silent_streak: int = 0  # consecutive cold/lukewarm cycles
 
-    last_signal_cycle: int = -1                      # last cycle with hot/warm signal
+    last_signal_cycle: int = -1  # last cycle with hot/warm signal
 
-    cooldown_until_cycle: int | None = None          # None = no cooldown active
+    cooldown_until_cycle: int | None = None  # None = no cooldown active
 
-    recent_health_posture: str = "unknown"           # hot | warm | lukewarm | marginal | cold | unknown
-
-
-
+    recent_health_posture: str = "unknown"  # hot | warm | lukewarm | marginal | cold | unknown
 
 
 # ---------------------------------------------------------------------------
@@ -5184,7 +4701,6 @@ class SourceEconomics(msgspec.Struct, gc=False):
 # Source work item
 
 # ---------------------------------------------------------------------------
-
 
 
 # ── Sprint Opt: SourceWork jako msgspec.Struct (cutting-edge M1 optimalizace) ────
@@ -5200,9 +4716,7 @@ class SourceEconomics(msgspec.Struct, gc=False):
 # SourceWork splnuje stejny pattern: read-only po konstrukci.
 
 
-
 class SourceWork(msgspec.Struct, frozen=True, gc=False):
-
     """A single source fetch unit."""
 
     feed_url: str
@@ -5214,15 +4728,11 @@ class SourceWork(msgspec.Struct, frozen=True, gc=False):
     max_entries: int = 50
 
 
-
-
-
 # ---------------------------------------------------------------------------
 
 # Live-feed pipeline seam (lazy import to avoid heavy cold-import cost)
 
 # ---------------------------------------------------------------------------
-
 
 
 def _import_live_feed_pipeline():
@@ -5235,15 +4745,11 @@ def _import_live_feed_pipeline():
     return async_run_live_feed_pipeline, FeedPipelineRunResult
 
 
-
-
-
 # ---------------------------------------------------------------------------
 
 # Live-public pipeline seam (lazy import -- Sprint 8XE canonical parity)
 
 # ---------------------------------------------------------------------------
-
 
 
 def _import_live_public_pipeline():
@@ -5256,15 +4762,11 @@ def _import_live_public_pipeline():
     return async_run_live_public_pipeline, PipelineRunResult
 
 
-
-
-
 # ---------------------------------------------------------------------------
 
 # Exporter seam (lazy import)
 
 # ---------------------------------------------------------------------------
-
 
 
 def _import_exporters():
@@ -5278,21 +4780,12 @@ def _import_exporters():
     from hledac.universal.export.stix_exporter import collect_cti_export_inputs
 
     return (
-
         render_diagnostic_markdown_to_path,
-
         render_jsonld_to_path,
-
         render_stix_bundle_to_path,
-
         render_cti_stix_bundle_to_path,
-
         collect_cti_export_inputs,
-
     )
-
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -5302,15 +4795,11 @@ def _import_exporters():
 # ---------------------------------------------------------------------------
 
 
-
 def _import_correlate_findings():
 
     from hledac.universal.intelligence.workflow_orchestrator import correlate_findings
 
     return correlate_findings
-
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -5320,7 +4809,6 @@ def _import_correlate_findings():
 # ---------------------------------------------------------------------------
 
 
-
 def _import_hypothesis_engine():
 
     from hledac.universal.brain.research_hypothesis_engine import HypothesisEngine
@@ -5328,15 +4816,11 @@ def _import_hypothesis_engine():
     return HypothesisEngine
 
 
-
-
-
 # ---------------------------------------------------------------------------
 
 # Sprint Scheduler
 
 # ---------------------------------------------------------------------------
-
 
 
 # Sprint 8TB: Agentic Pivot Loop
@@ -5352,19 +4836,16 @@ def _import_hypothesis_engine():
 # M1 8GB friendly: frozen + gc=False = nulovy GC tlak, zadne __dict__.
 
 
-
 class PivotTask(msgspec.Struct, frozen=True, gc=False):
-
     """Pivot task pro agentic pivot loop -- prioritizován podle confidence * degree."""
 
-    priority: float                    # negace -> max-heap: -(confidence * degree)
+    priority: float  # negace -> max-heap: -(confidence * degree)
 
     ioc_type: str
 
     ioc_value: str
 
     task_type: str  # "cve_to_github" | "ip_to_ct" | "domain_to_dns" | "hash_to_mb"
-
 
 
 # Sprint 8RA: Persistent cross-sprint dedup via LMDB
@@ -5376,15 +4857,11 @@ _FORENSICS_LMDB_NAME = "forensics_enrichment.lmdb"
 _MULTIMODAL_LMDB_NAME = "multimodal_enrichment.lmdb"
 
 
-
 def _get_dedup_lmdb_path() -> Path:
 
     from hledac.universal.paths import LMDB_ROOT
 
     return LMDB_ROOT / _DEDUP_LMDB_NAME
-
-
-
 
 
 def _get_forensics_lmdb_path() -> Path:
@@ -5394,9 +4871,6 @@ def _get_forensics_lmdb_path() -> Path:
     return LMDB_ROOT / _FORENSICS_LMDB_NAME
 
 
-
-
-
 def _get_multimodal_lmdb_path() -> Path:
 
     from hledac.universal.paths import LMDB_ROOT
@@ -5404,77 +4878,183 @@ def _get_multimodal_lmdb_path() -> Path:
     return LMDB_ROOT / _MULTIMODAL_LMDB_NAME
 
 
-
-
-
 class SprintScheduler:
-
     # MEM-1: __slots__ for memory optimization on M1 8GB (Python 3.14+)
     # All 93 instance attributes declared - ~3.2 KB per-instance savings vs __dict__
     __slots__ = (
         # Core config/state (from __init__ and _reset_result)
-        '_config', '_result', '_stop_requested', '_lane_budget_pool', '_lifecycle',
-        '_flags', '_governor', '_backpressure_monitor', '_fetch_coordinator', '_graph_accumulator',
+        "_config",
+        "_result",
+        "_stop_requested",
+        "_lane_budget_pool",
+        "_lifecycle",
+        "_flags",
+        "_governor",
+        "_backpressure_monitor",
+        "_fetch_coordinator",
+        "_graph_accumulator",
         # DuckDB/ingestion
-        '_duckdb_store', '_duckdb_can_ingest', '_duckdb_read_con',
-        '_duckdb_writer_task', '_duckdb_writer_shutdown', '_duckdb_write_queue',
-        '_writer_wakeup',  # event-driven wakeup for _duckdb_background_writer
-        '_enrichment_services', '_evidence_log',
-        '_memory_delta_tracker',  # F-Alert: memory leak detection
+        "_duckdb_store",
+        "_duckdb_can_ingest",
+        "_duckdb_read_con",
+        "_duckdb_writer_task",
+        "_duckdb_writer_shutdown",
+        "_duckdb_write_queue",
+        "_writer_wakeup",  # event-driven wakeup for _duckdb_background_writer
+        "_enrichment_services",
+        "_evidence_log",
+        "_memory_delta_tracker",  # F-Alert: memory leak detection
         # Lane/finding tracking
-        '_lane_rejections', '_lane_rejections_dropped', '_lane_rejections_total_seen',
-        '_feed_budget_triggered', '_public_outcome', '_public_pipeline_result',
-        '_public_consecutive_timeouts', '_public_bootstrap_enabled_at_timeout',
-        '_ct_consecutive_timeouts', '_ct_pdns_active_done', '_ct_log_client',
-        '_lane_outcomes', '_source_economics', '_shadow_pd_summary',
+        "_lane_rejections",
+        "_lane_rejections_dropped",
+        "_lane_rejections_total_seen",
+        "_feed_budget_triggered",
+        "_public_outcome",
+        "_public_pipeline_result",
+        "_public_consecutive_timeouts",
+        "_public_bootstrap_enabled_at_timeout",
+        "_ct_consecutive_timeouts",
+        "_ct_pdns_active_done",
+        "_ct_log_client",
+        "_lane_outcomes",
+        "_source_economics",
+        "_shadow_pd_summary",
         # Hypothesis/pivot
-        '_hypothesis_pack_cache', '_pivot_planner', '_pivot_ioc_graph',
-        '_injected_ioc_graph',
-        '_planner_seed_iocs', '_planner_lanes', '_acquisition_plan',
-        '_hypothesis_depth', '_hypothesis_query_count', '_enqueue_pivot',
+        "_hypothesis_pack_cache",
+        "_pivot_planner",
+        "_pivot_ioc_graph",
+        "_injected_ioc_graph",
+        "_planner_seed_iocs",
+        "_planner_lanes",
+        "_acquisition_plan",
+        "_hypothesis_depth",
+        "_hypothesis_query_count",
+        "_enqueue_pivot",
         # Inject sidecars
-        '_policy_manager', '_stealth_layer', '_ghost_layer', '_prefetch_oracle',
-        '_prefetch_pipeline', '_temporal_predictor', '_security_coordinator',
-        '_privacy_layer', '_forensics_enricher', '_forensics_lmdb_env',
-        '_multimodal_enricher', '_multimodal_lmdb_env',
-        '_analyst_workbench', '_communication_layer', '_ioc_scorer',
-        '_ioc_cooccurrence_miner',
-        '_ioc_cooccurrence_miner',  # Issue 4.1: Rust+ProcessPool co-occurrence engine
+        "_policy_manager",
+        "_stealth_layer",
+        "_ghost_layer",
+        "_prefetch_oracle",
+        "_prefetch_pipeline",
+        "_temporal_predictor",
+        "_security_coordinator",
+        "_privacy_layer",
+        "_forensics_enricher",
+        "_forensics_lmdb_env",
+        "_multimodal_enricher",
+        "_multimodal_lmdb_env",
+        "_analyst_workbench",
+        "_communication_layer",
+        "_ioc_scorer",
+        "_ioc_cooccurrence_miner",
+        "_ioc_cooccurrence_miner",  # Issue 4.1: Rust+ProcessPool co-occurrence engine
         # Transport
-        '_tor_transport', '_i2p_transport', '_nym_transport', '_dht_node',
+        "_tor_transport",
+        "_i2p_transport",
+        "_nym_transport",
+        "_dht_node",
         # Metrics/scheduler state
-        '_advisory_gate_snapshot', '_arrow_last_flush',
-        '_branch_value_summary', '_correlation_cache', '_dedup_dirty',
-        '_dedup_env', '_dedup_seen', '_dedup_loading_task', '_seen_hashes', '_recent_iocs',
-        '_dedup_rust', '_dedup_python_fallback', '_dedup_mode',
-        '_prewindup_barrier_delayed', '_barrier_retry_count', '_nonfeed_predispatch_done',
-        '_nonfeed_ledger', '_synth_windup_task',
+        "_advisory_gate_snapshot",
+        "_arrow_last_flush",
+        "_branch_value_summary",
+        "_correlation_cache",
+        "_dedup_dirty",
+        "_dedup_env",
+        "_dedup_seen",
+        "_dedup_loading_task",
+        "_seen_hashes",
+        "_recent_iocs",
+        "_dedup_rust",
+        "_dedup_python_fallback",
+        "_dedup_mode",
+        "_prewindup_barrier_delayed",
+        "_barrier_retry_count",
+        "_nonfeed_predispatch_done",
+        "_nonfeed_ledger",
+        "_synth_windup_task",
         # Background/tasks
-        '_bg_tasks', '_sidecar_tasks', '_sidecars_skipped',
-        '_sidecar_orchestrator',
+        "_bg_tasks",
+        "_sidecar_tasks",
+        "_sidecars_skipped",
+        "_sidecar_orchestrator",
         # Memory/UMA
-        '_memory_manager', '_layer_manager', '_target_memory_service',
+        "_memory_manager",
+        "_layer_manager",
+        "_target_memory_service",
         # Metrics
-        '_metrics_registry', '_metrics_initialized',
+        "_metrics_registry",
+        "_metrics_initialized",
         # Hermite/prewarm
-        '_hermes_engine', '_wall_clock_start', '_last_cycle_start',
-        '_last_ooda', '_last_sources', '_last_partial_finding_count', '_last_speculative',
-        '_cycle_time_ema', '_effective_max_cycles', '_hard_deadline_monotonic',
-        '_prev_chain_hash', '_rel_discovery_engine', '_run_exit_path_override',
-        '_runner', '_lc_adapter', '_run_started_at',
-        '_hermes_prewarm_task', '_hermes_prewarm_exception', '_barrier_import_done',
+        "_hermes_engine",
+        "_wall_clock_start",
+        "_last_cycle_start",
+        "_last_ooda",
+        "_last_sources",
+        "_last_partial_finding_count",
+        "_last_speculative",
+        "_cycle_time_ema",
+        "_effective_max_cycles",
+        "_hard_deadline_monotonic",
+        "_prev_chain_hash",
+        "_rel_discovery_engine",
+        "_run_exit_path_override",
+        "_runner",
+        "_lc_adapter",
+        "_run_started_at",
+        "_hermes_prewarm_task",
+        "_hermes_prewarm_exception",
+        "_barrier_import_done",
         # NOTE: _prewarm_hermes_for_sprint deliberately ABSENT from __slots__
         # — test_hermes_prewarm_failsoft_continues_without_ToT monkeypatches it
         # Other runtime state
-        '_doh_adapter', '_fetch_semaphore', '_query', '_privacy_context_id',
-        '_sprint_id', '_sprint_depth', '_entries_per_source', '_hits_per_source',
-        '_cycle_timeout_count', '_source_weights', '_novelty_bonuses',
-        '_source_quality_feedback', '_feed_accepted_per_source', '_pending_extractions',
-        '_extraction_drain_count', '_extraction_drain_deadline_s', '_pivot_queue', '_pivot_stats', '_speculative_results', '_speculative_dns_cache', '_ooda_interval', '_fetch_latency_ema', '_fetch_latency_ema_order', '_MAX_FETCH_LATENCY_EMA', '_hard_deadline_checked_count', '_ARROW_FLUSH_N', '_ARROW_FLUSH_S', '_ARROW_BATCH_HARD_CAP', '_MAX_FINDINGS_PER_SPRINT', '_arrow_batch_dropped_after_flush_failure', '_arrow_last_flush_error', '_finding_count', '_synthesis_engine', '_synthesis_runner', '_pivot_rewards', '_ioc_graph', '_all_findings', '_lane_verdicts', '_feed_verdicts', '_public_verdicts', '_planned_pivots', '_analyst_brief', '_peak_rss_gib', '_timer',
+        "_doh_adapter",
+        "_fetch_semaphore",
+        "_query",
+        "_privacy_context_id",
+        "_sprint_id",
+        "_sprint_depth",
+        "_entries_per_source",
+        "_hits_per_source",
+        "_cycle_timeout_count",
+        "_source_weights",
+        "_novelty_bonuses",
+        "_source_quality_feedback",
+        "_feed_accepted_per_source",
+        "_pending_extractions",
+        "_extraction_drain_count",
+        "_extraction_drain_deadline_s",
+        "_pivot_queue",
+        "_pivot_stats",
+        "_speculative_results",
+        "_speculative_dns_cache",
+        "_ooda_interval",
+        "_fetch_latency_ema",
+        "_fetch_latency_ema_order",
+        "_MAX_FETCH_LATENCY_EMA",
+        "_hard_deadline_checked_count",
+        "_ARROW_FLUSH_N",
+        "_ARROW_FLUSH_S",
+        "_ARROW_BATCH_HARD_CAP",
+        "_MAX_FINDINGS_PER_SPRINT",
+        "_arrow_batch_dropped_after_flush_failure",
+        "_arrow_last_flush_error",
+        "_finding_count",
+        "_synthesis_engine",
+        "_synthesis_runner",
+        "_pivot_rewards",
+        "_ioc_graph",
+        "_all_findings",
+        "_lane_verdicts",
+        "_feed_verdicts",
+        "_public_verdicts",
+        "_planned_pivots",
+        "_analyst_brief",
+        "_peak_rss_gib",
+        "_timer",
         # F270-4.3: Health check cache
-        '_health_cache',
+        "_health_cache",
         # Public property (defined as slot to allow class-level access)
-        'sprint_id',
+        "sprint_id",
     )
 
     """
@@ -5525,9 +5105,9 @@ class SprintScheduler:
 
     """
 
-
-
-    def __init__(self, config: SprintSchedulerConfig, ct_log_client: Any = None, flags: Any = None, *, ioc_graph: Any = None) -> None:
+    def __init__(
+        self, config: SprintSchedulerConfig, ct_log_client: Any = None, flags: Any = None, *, ioc_graph: Any = None
+    ) -> None:
         # F270 Phase 3: Replaced 520-line __init__ with 17 _init_* helper calls.
         # No behavior change — all 80+ attributes still on self.
 
@@ -5591,7 +5171,6 @@ class SprintScheduler:
         prevents subsequent steps from running.
         """
         import asyncio
-        import logging
         import time as _time
 
         _log = get_logger(__name__)
@@ -5613,14 +5192,14 @@ class SprintScheduler:
             if _writer_wakeup is not None:
                 _writer_wakeup.set()
             _writer_shutdown_set = True
-            _log.debug("[aclean] DuckDB writer shutdown signalled")
+            _log.info("[aclean] DuckDB writer shutdown signalled")
 
         if _writer_task is not None and not _writer_task.done():
             try:
                 await safe_wait_for(_writer_task, timeout=5.0, label="_writer_task")
-                _log.debug("[aclean] DuckDB writer task completed gracefully")
+                _log.info("[aclean] DuckDB writer task completed gracefully")
             except TimeoutError:
-                _log.debug("[aclean] DuckDB writer task did not complete in 5s — cancelling")
+                _log.info("[aclean] DuckDB writer task did not complete in 5s — cancelling")
                 _writer_task.cancel()
                 try:
                     await _writer_task
@@ -5629,7 +5208,7 @@ class SprintScheduler:
             except asyncio.CancelledError:
                 pass  # noqa: BLE001  # cleanup race
             except Exception as _e:
-                _log.debug("[aclean] DuckDB writer task error: %s", _e)
+                _log.info("[aclean] DuckDB writer task error: %s", _e)
 
         # 2. Flush and close LMDB environments
         _lmdb_close_errors: list[str] = []
@@ -5641,10 +5220,10 @@ class SprintScheduler:
                 if hasattr(_env, "flush"):
                     _env.flush()
                 _env.close()
-                _log.debug("[aclean] %s closed", _attr)
+                _log.info("[aclean] %s closed", _attr)
             except Exception as _e:
                 _lmdb_close_errors.append(f"{_attr}: {_e}")
-                _log.debug("[aclean] %s close error: %s", _attr, _e)
+                _log.info("[aclean] %s close error: %s", _attr, _e)
             finally:
                 setattr(self, _attr, None)
 
@@ -5653,9 +5232,9 @@ class SprintScheduler:
         if _db_con is not None:
             try:
                 _db_con.close()
-                _log.debug("[aclean] DuckDB read connection closed")
+                _log.info("[aclean] DuckDB read connection closed")
             except Exception as _e:
-                _log.debug("[aclean] DuckDB read connection close error: %s", _e)
+                _log.info("[aclean] DuckDB read connection close error: %s", _e)
             finally:
                 self._duckdb_read_con = None
 
@@ -5664,11 +5243,11 @@ class SprintScheduler:
         if _store is not None and hasattr(_store, "aclose"):
             try:
                 await safe_wait_for(_store.aclose(), timeout=10.0, label="_store")
-                _log.debug("[aclean] DuckDB store closed")
+                _log.info("[aclean] DuckDB store closed")
             except TimeoutError:
-                _log.debug("[aclean] DuckDB store aclose() timed out")
+                _log.info("[aclean] DuckDB store aclose() timed out")
             except Exception as _e:
-                _log.debug("[aclean] DuckDB store aclose() error: %s", _e)
+                _log.info("[aclean] DuckDB store aclose() error: %s", _e)
 
         # 5. Close Hermes engine / release Metal cache
         _hermes = getattr(self, "_hermes_engine", None)
@@ -5676,14 +5255,14 @@ class SprintScheduler:
             try:
                 if hasattr(_hermes, "aclose"):
                     await safe_wait_for(_hermes.aclose(), timeout=10.0, label="_hermes")
-                    _log.debug("[aclean] Hermes engine closed")
+                    _log.info("[aclean] Hermes engine closed")
                 elif hasattr(_hermes, "unload"):
                     _hermes.unload()
-                    _log.debug("[aclean] Hermes engine unloaded")
+                    _log.info("[aclean] Hermes engine unloaded")
             except TimeoutError:
-                _log.debug("[aclean] Hermes engine close timed out")
+                _log.info("[aclean] Hermes engine close timed out")
             except Exception as _e:
-                _log.debug("[aclean] Hermes engine close error: %s", _e)
+                _log.info("[aclean] Hermes engine close error: %s", _e)
             finally:
                 self._hermes_engine = None
 
@@ -5695,9 +5274,9 @@ class SprintScheduler:
                     _metrics.flush()
                 if hasattr(_metrics, "close"):
                     _metrics.close()
-                _log.debug("[aclean] metrics registry flushed/closed")
+                _log.info("[aclean] metrics registry flushed/closed")
             except Exception as _e:
-                _log.debug("[aclean] metrics registry error: %s", _e)
+                _log.info("[aclean] metrics registry error: %s", _e)
 
         # 7. Close transport adapters (Tor, I2P, Nym, DHT, Gopher)
         for _attr, _stop_attr in (
@@ -5714,13 +5293,13 @@ class SprintScheduler:
                     await safe_wait_for(_transport.stop(), timeout=5.0, label="_transport_stop")
                 elif hasattr(_transport, "aclose"):
                     await safe_wait_for(_transport.aclose(), timeout=5.0, label="_transport_aclose")
-                _log.debug("[aclean] %s stopped", _attr)
+                _log.info("[aclean] %s stopped", _attr)
             except TimeoutError:
-                _log.debug("[aclean] %s stop timed out", _attr)
+                _log.info("[aclean] %s stop timed out", _attr)
             except asyncio.CancelledError:
                 pass  # noqa: BLE001  # cleanup race
             except Exception as _e:
-                _log.debug("[aclean] %s stop error: %s", _attr, _e)
+                _log.info("[aclean] %s stop error: %s", _attr, _e)
             finally:
                 setattr(self, _attr, None)
 
@@ -5805,6 +5384,7 @@ class SprintScheduler:
         """Phase B: Persistent dedup, lifecycle adapter, IOC-aware scoring (7 attrs)."""
         # F1.1: Wire Rust BloomFilter for fast O(1) negative dedup pre-check
         from core.rust_backend import rust
+
         self._dedup_rust = rust.bloom.BloomFilter(capacity=10_000_000)  # 10 M URLs
         self._dedup_python_fallback: set[str] = set()
         self._dedup_mode: str = "rust" if rust.is_available else "python"
@@ -5841,6 +5421,7 @@ class SprintScheduler:
     def _init_pending_extractions(self) -> None:
         """Phase E: In-flight pattern-extraction tracker — F273C bounded ring (3 attrs)."""
         from collections import deque as _deque_f273
+
         self._pending_extractions: _deque_f273 = _deque_f273(maxlen=512)
         self._extraction_drain_count: int = 0
         self._extraction_drain_deadline_s: float = 30.0
@@ -5916,6 +5497,7 @@ class SprintScheduler:
         from hledac.universal.coordinators.fetch_coordinator import (
             FetchCoordinator as _FC,  # noqa: N814
         )
+
         self._fetch_coordinator = _FC(
             max_concurrent=20,  # BUG-17 FIX: wire to _fetch_semaphore limit (was using default 3)
             pivot_queue_provider=lambda: getattr(self, "_pivot_queue", None),
@@ -5927,7 +5509,9 @@ class SprintScheduler:
             sprint_config_provider=lambda: self._config,
             adaptive_priority_provider=lambda tt, base: self._get_adaptive_priority(tt, base),
             enqueue_pivot_provider=lambda **kw: self.enqueue_pivot(**kw),
-            concurrency_provider=lambda _mon=getattr(self, "_backpressure_monitor", None): _mon.backpressure_provider() if _mon is not None else None,
+            concurrency_provider=lambda _mon=getattr(self, "_backpressure_monitor", None): (
+                _mon.backpressure_provider() if _mon is not None else None
+            ),
         )
         try:
             resolver = get_batch_dns_resolver()
@@ -5943,6 +5527,7 @@ class SprintScheduler:
                 # No running loop in __init__ context — defer via a thread-local loop.
                 # This is fail-safe: prewarm is best-effort, non-critical.
                 import threading
+
                 _ev = threading.Event()
 
                 def _run_prewarm() -> None:
@@ -6026,20 +5611,12 @@ class SprintScheduler:
 
     # ── Sprint F160C: Source Economics ─────────────────────────────────
 
-
-
     def _update_source_economics(
-
         self,
-
         feed_url: str,
-
         result: Any,
-
         current_cycle: int,
-
     ) -> None:
-
         """
 
         Update per-source economics from pipeline result signals.
@@ -6063,23 +5640,16 @@ class SprintScheduler:
         """
 
         econ = self._source_economics.setdefault(
-
             feed_url,
-
             SourceEconomics(source=feed_url),
-
         )
-
-
 
         # ── Derive health posture from signal_stage ─────────────────────
         # Issue #2: telemetry moved to FeedSignalTelemetry sidecar (2026-07-04)
-        _tel = getattr(result, 'telemetry', None)
+        _tel = getattr(result, "telemetry", None)
         signal_stage = getattr(_tel, "signal_stage", "unknown") or "unknown" if _tel else "unknown"
         feed_conf = getattr(_tel, "feed_confidence_score", 0) or 0 if _tel else 0
         winning = getattr(_tel, "winning_source_breakdown", {}) or {} if _tel else {}
-
-
 
         # Cold verdict: signal_stage indicating no usable signal
 
@@ -6087,14 +5657,10 @@ class SprintScheduler:
 
         is_cold = signal_stage in cold_stages or feed_conf == 0
 
-
-
         # Sprint posture derived from pipeline signals
 
         match ():
-
             case _ if signal_stage == "prestore_findings_present":
-
                 econ.recent_health_posture = "hot"
 
                 econ.last_signal_cycle = current_cycle
@@ -6104,7 +5670,6 @@ class SprintScheduler:
                 econ.cooldown_until_cycle = None
 
             case _ if feed_conf >= 60:
-
                 econ.recent_health_posture = "warm"
 
                 econ.last_signal_cycle = current_cycle
@@ -6114,34 +5679,26 @@ class SprintScheduler:
                 econ.cooldown_until_cycle = None
 
             case _ if feed_conf >= 20:
-
                 econ.recent_health_posture = "lukewarm"
 
                 econ.silent_streak = (econ.silent_streak + 1) if econ.silent_streak > 0 else 1
 
                 if econ.cooldown_until_cycle is None and econ.silent_streak >= 2:
-
                     econ.cooldown_until_cycle = current_cycle + 3
 
             case _ if is_cold:
-
                 econ.recent_health_posture = "cold"
 
                 if econ.cooldown_until_cycle is None:
-
                     econ.silent_streak += 1
 
                     if econ.silent_streak >= 2:
-
                         econ.cooldown_until_cycle = current_cycle + 3
 
             case _:
-
                 econ.recent_health_posture = "marginal"
 
                 econ.silent_streak = (econ.silent_streak + 1) if econ.silent_streak > 0 else 1
-
-
 
         # Winning source analysis -- if feed_native dominates, source is self-sufficient
 
@@ -6150,39 +5707,27 @@ class SprintScheduler:
         fallback_hits = winning.get("fallback", 0)
 
         if feed_native_hits > fallback_hits * 2 and feed_native_hits > 0:
-
             econ.recent_health_posture = "hot"  # feed-native signal is strong
 
-
-
     def _get_source_economics(self, feed_url: str) -> SourceEconomics | None:
-
         """Return economics state for a source, or None if not yet seen."""
 
         return self._source_economics.get(feed_url)
 
-
-
     def _is_source_in_cooldown(self, feed_url: str, current_cycle: int) -> bool:
-
         """True if source is in bounded cooldown and cycle hasn't exceeded it."""
 
         econ = self._source_economics.get(feed_url)
 
         if econ is None:
-
             return False
 
         if econ.cooldown_until_cycle is None:
-
             return False
 
         return current_cycle < econ.cooldown_until_cycle
 
-
-
     def _should_deprioritize_source(self, feed_url: str, current_cycle: int) -> bool:
-
         """
 
         Return True if source should be deprioritized this cycle.
@@ -6200,31 +5745,21 @@ class SprintScheduler:
         econ = self._source_economics.get(feed_url)
 
         if econ is None:
-
             return False
 
         if self._is_source_in_cooldown(feed_url, current_cycle):
-
             return True
 
         if econ.silent_streak >= 4:
-
             return True
 
         return False
 
-
-
     def _sort_work_items_by_economics(
-
         self,
-
         items: list[SourceWork],
-
         current_cycle: int,
-
     ) -> list[SourceWork]:
-
         """
 
         Re-sort work items by source economics.
@@ -6259,63 +5794,44 @@ class SprintScheduler:
 
             tier_order = _TIER_ORDER.index(item.tier)
 
-
-
             if econ is None:
-
                 # Never-seen sources: neutral (0)
 
                 return (0, tier_order, 0, item.feed_url)
-
-
 
             in_cooldown = self._is_source_in_cooldown(item.feed_url, current_cycle)
 
             streak = econ.silent_streak
 
             posture_score = {
-
                 "hot": 0,
-
                 "warm": 1,
-
                 "lukewarm": 2,
-
                 "marginal": 3,
-
                 "cold": 4,
-
             }.get(econ.recent_health_posture, 5)
 
-
-
             if in_cooldown:
-
                 # In cooldown: pushed to end of its tier band (tier primary, cooldown posture=5)
 
                 return (tier_order, 5, streak, item.feed_url)
 
             return (tier_order, posture_score, streak, item.feed_url)
 
-
-
         # F200A: Get advisory oracle scores (fail-soft)
 
         oracle_scores: dict[str, float] = {}
 
         if self._prefetch_oracle is not None:
-
             try:
-
                 oracle_scores = self._prefetch_oracle.suggest_scores(items, current_cycle)
 
             except Exception as _exc:
-
-                log.debug("prefetch_oracle.suggest_scores failed: %s", _exc)  # Advisory only -- fall back to default ordering  # noqa: E501
+                log.debug(
+                    "prefetch_oracle.suggest_scores failed: %s", _exc
+                )  # Advisory only -- fall back to default ordering  # noqa: E501
 
                 oracle_scores = {}
-
-
 
         # Sort with oracle advisory (oracle score affects effective priority)
 
@@ -6337,22 +5853,11 @@ class SprintScheduler:
 
             return (base_key[0], base_key[1], base_key[2] - oracle_shift, base_key[3])
 
-
-
         return sorted(items, key=oracle_sort_key)
-
-
 
     # ── Sprint 8VI §B: RL Adaptive Pivot ────────────────────────────────
 
-
-
-    def record_pivot_outcome(
-
-        self, task_type: str, found_count: int, elapsed_s: float
-
-    ) -> None:
-
+    def record_pivot_outcome(self, task_type: str, found_count: int, elapsed_s: float) -> None:
         """
 
         Zaznamenej výsledek pivot tasku jako reward signal pro RL.
@@ -6364,7 +5869,6 @@ class SprintScheduler:
         import math
 
         if elapsed_s <= 0:
-
             return
 
         fps = found_count / elapsed_s
@@ -6380,31 +5884,18 @@ class SprintScheduler:
         # Udržuj pouze posledních 20 epizod
 
         if len(history) > 20:
-
             self._pivot_rewards[task_type] = history[-20:]
-
-
 
     # ── Sprint F203G: Hypothesis Feedback ─────────────────────────────────
 
-
-
     async def record_hypothesis_feedback(
-
         self,
-
         pivot_type: str,
-
         ioc_type: str,
-
         produced_count: int,
-
         accepted_count: int,
-
         signal_value: float,
-
     ) -> None:
-
         """
 
         F203G: Record hypothesis feedback to DuckDB for future pivot planning.
@@ -6438,11 +5929,9 @@ class SprintScheduler:
         store = getattr(self, "_duckdb_store", None)
 
         if store is None:
-
             return
 
         try:
-
             import time as _time
             import uuid
 
@@ -6450,42 +5939,25 @@ class SprintScheduler:
                 HypothesisFeedbackRecord,
             )
 
-
-
             record = HypothesisFeedbackRecord(
-
                 id=str(uuid.uuid4()),
-
                 target_id=getattr(self, "sprint_id", "") or "default",
-
                 pivot_type=pivot_type,
-
                 ioc_type=ioc_type,
-
                 produced_count=produced_count,
-
                 accepted_count=accepted_count,
-
                 signal_value=signal_value,
-
                 ts=_time.time(),
-
             )
 
             await store.async_record_hypothesis_feedback(record)
 
         except Exception:  # noqa: BLE001
-
             pass  # noqa: BLE001  # Fail-safe: feedback recording must never crash sprint
-
-
 
     # ── Sprint F212A: Hard deadline authority ───────────────────────────────
 
-
-
     def _check_hard_deadline(self) -> bool:
-
         """
 
         Check if the hard monotonic deadline has been exceeded.
@@ -6509,27 +5981,16 @@ class SprintScheduler:
         """
 
         if self._hard_deadline_monotonic is None:
-
             return True  # No deadline set -- always allowed
-
-
 
         self._result.hard_deadline_checked_count += 1
 
-
-
         if self._result.hard_deadline_exceeded:
-
             return False  # Already exceeded -- stay stopped
-
-
 
         elapsed = _time.monotonic() - self._hard_deadline_monotonic
 
-
-
         if elapsed >= 0.0:
-
             # Deadline exceeded -- record state once
 
             self._result.hard_deadline_exceeded = True
@@ -6539,11 +6000,8 @@ class SprintScheduler:
             self._result.hard_deadline_remaining_s_at_exit = 0.0
 
             log.warning(
-
                 f"[F212A] Hard deadline exceeded at cycle {self._result.cycles_started}. "
-
                 f"Elapsed={elapsed:.1f}s. Stopping new work."
-
             )
 
             # F290-Deadline: If deadline expired before first cycle, signal lifecycle
@@ -6559,18 +6017,9 @@ class SprintScheduler:
 
             return False
 
-
-
         return True
 
-
-
-    def _get_adaptive_priority(
-
-        self, task_type: str, base_priority: float = 0.5
-
-    ) -> float:
-
+    def _get_adaptive_priority(self, task_type: str, base_priority: float = 0.5) -> float:
         """
 
         Vrátí EMA reward jako priority modifikátor.
@@ -6582,7 +6031,6 @@ class SprintScheduler:
         history = self._pivot_rewards.get(task_type, [])
 
         if not history:
-
             return base_priority
 
         # EMA with alpha=0.3 (recent weighted)
@@ -6590,14 +6038,11 @@ class SprintScheduler:
         ema = history[0]
 
         for r in history[1:]:
-
             ema = 0.3 * r + 0.7 * ema
 
         # Mix: 70% EMA reward + 30% base priority
 
         return round(0.7 * ema + 0.3 * base_priority, 4)
-
-
 
     # ── Public API ─────────────────────────────────────────────────────────
 
@@ -6618,6 +6063,7 @@ class SprintScheduler:
         # Sprint F202J: Initialize M1 resource governor
         try:
             from hledac.universal.core.protocols import get_governor
+
             self._governor = get_governor()
         except Exception as _exc:
             log.warning("failed to initialize M1 resource governor: %s", _exc)
@@ -6631,15 +6077,13 @@ class SprintScheduler:
         if self._governor is not None:
             try:
                 from hledac.universal.coordinators.backpressure import BackpressureMonitor
+
                 self._backpressure_monitor = BackpressureMonitor(
                     self._governor,
                     min_clearnet=1,
                     max_clearnet=25,  # AIMD_MAX_CONCURRENCY in fetch_coordinator.py
                 )
-                log.info(
-                    "[BACKPRESSURE] monitor initialized "
-                    "(clearnet_max=25, min=1)"
-                )
+                log.info("[BACKPRESSURE] monitor initialized (clearnet_max=25, min=1)")
             except Exception as _exc:
                 log.warning("failed to initialize backpressure monitor: %s", _exc)
 
@@ -6658,30 +6102,30 @@ class SprintScheduler:
             try:
                 # F320: Skip if global prewarm daemon already did the work
                 from hledac.universal.runtime.prewarm_daemon import is_prewarm_done
+
                 if is_prewarm_done():
                     log.debug("[mlx_embed_prewarm] skipped — prewarm_daemon already loaded")
                     return
 
                 import asyncio
+
                 from core.result import try_op
                 from hledac.universal.compat.core_mlx_embeddings import get_embedding_manager
+
                 mgr = get_embedding_manager()
                 if mgr is not None and not mgr._is_loaded:
                     # GHOST_INVARIANT fix: asyncio.run() inside ThreadPoolExecutor worker =
                     # M1 crash vector. Use asyncio.Runner with a fresh loop instead.
                     with asyncio.Runner() as _runner:
                         result = try_op(
-                            lambda: _runner.get_loop().run_until_complete(mgr._load_model()),
-                            label="mlx_embed_prewarm"
+                            lambda: _runner.get_loop().run_until_complete(mgr._load_model()), label="mlx_embed_prewarm"
                         )
                         if result.is_err():
                             log.debug("[mlx_embed_prewarm] skipped: %s", getattr(result, "error", result))
             except Exception:  # noqa: BLE001
                 pass
 
-        safe_create_task(
-            asyncio.to_thread(_prewarm_mlx_sync), name="mlx_embed_prewarm"
-        )
+        safe_create_task(asyncio.to_thread(_prewarm_mlx_sync), name="mlx_embed_prewarm")
 
         # P0-1: Hermes async prewarm during Phase 1 windup -- runs parallel to
         # DuckDB/LMDB init so model is ready BEFORE OODA loop starts.
@@ -6696,6 +6140,7 @@ class SprintScheduler:
             try:
                 # F320: Skip if global prewarm daemon already did the work
                 from hledac.universal.runtime.prewarm_daemon import is_prewarm_done
+
                 if is_prewarm_done():
                     log.debug("[hermes_prewarm] skipped — prewarm_daemon already loaded")
                     return
@@ -6716,29 +6161,32 @@ class SprintScheduler:
         def _prewarm_patterns_sync() -> None:
             try:
                 from hledac.universal.utils.patterns.pattern_matcher import prewarm
+
                 prewarm()
             except Exception:  # noqa: BLE001
                 pass
 
-        safe_create_task(
-            asyncio.to_thread(_prewarm_patterns_sync), name="pattern_prewarm"
-        )
+        safe_create_task(asyncio.to_thread(_prewarm_patterns_sync), name="pattern_prewarm")
 
         # Sprint F205F: Sidecar orchestration
         from hledac.universal.runtime.sidecar_orchestrator import SidecarOrchestrator
+
         self._sidecar_orchestrator = SidecarOrchestrator(
-            self._result, governor=self._governor, scheduler=self,
+            self._result,
+            governor=self._governor,
+            scheduler=self,
         )
 
         # Sprint F250: LayerManager init (opt-in)
         if ENV.get_bool("HLEDAC_ENABLE_LAYERS"):
             try:
                 from hledac.universal.layers.layer_manager import LayerManager
+
                 self._layer_manager = LayerManager(config=None)
                 log.info("layers LayerManager initialized")
                 try:
-                    _privacy = (self._privacy_layer or getattr(self._layer_manager, "privacy", None))
-                    if _privacy and hasattr(_privacy, 'create_privacy_context'):
+                    _privacy = self._privacy_layer or getattr(self._layer_manager, "privacy", None)
+                    if _privacy and hasattr(_privacy, "create_privacy_context"):
                         self._privacy_context_id = await _privacy.create_privacy_context()
                         log.info("layers privacy_context created: %s", self._privacy_context_id)
                 except Exception as _e:
@@ -6758,6 +6206,7 @@ class SprintScheduler:
 
         # Issue #046: propagate sprint_id to ContextVar for TaskGroup child task visibility
         from core.telemetry.context_state import set_current_sprint_id
+
         set_current_sprint_id(self.sprint_id)
 
         # Sprint 8RA: Store lifecycle refs
@@ -6779,17 +6228,20 @@ class SprintScheduler:
         _effective_windup = self._config.effective_windup_lead_s
         _final_windup = self._config.final_windup_lead_s
         _active_window_budget = max(30.0, self._config.sprint_duration_s - _effective_windup)
-        logger.info("[WINDUP] effective_windup_lead_s=%.1fs final_windup_lead_s=%.1fs active_window_budget=%.1fs sprint_duration=%.1fs",
-                    _effective_windup, _final_windup, _active_window_budget, self._config.sprint_duration_s)
+        logger.info(
+            "[WINDUP] effective_windup_lead_s=%.1fs final_windup_lead_s=%.1fs active_window_budget=%.1fs sprint_duration=%.1fs",
+            _effective_windup,
+            _final_windup,
+            _active_window_budget,
+            self._config.sprint_duration_s,
+        )
         self._hard_deadline_monotonic = self._wall_clock_start + _active_window_budget
         self._result.hard_deadline_monotonic = self._hard_deadline_monotonic
         self._result.arrow_batch_hard_cap = self._ARROW_BATCH_HARD_CAP
 
         # Sprint F195: Store duckdb_store
         self._duckdb_store = duckdb_store
-        self._duckdb_can_ingest = duckdb_store is not None and hasattr(
-            duckdb_store, "async_ingest_findings_batch"
-        )
+        self._duckdb_can_ingest = duckdb_store is not None and hasattr(duckdb_store, "async_ingest_findings_batch")
 
         # Sprint F278B-2: Lazy dedup — fire-and-forget during windup, not blocking pre-loop.
         # _load_dedup() takes ~2s (LMDB I/O). For 60s sprints (30s active window), blocking
@@ -6806,6 +6258,7 @@ class SprintScheduler:
                 self.inject_ioc_graph(self._injected_ioc_graph)
             else:
                 from hledac.universal.knowledge.graph_service import _get_graph
+
                 self.inject_ioc_graph(_get_graph())
         except Exception as _e:
             logger.debug(f"[OODA] graph injection failed: {_e}")
@@ -6847,17 +6300,22 @@ class SprintScheduler:
             try:
                 from hledac.universal.intelligence.relationship_discovery import RelationshipDiscoveryEngine
                 from hledac.universal.paths import LMDB_ROOT
+
                 self._rel_discovery_engine = RelationshipDiscoveryEngine(use_sparse=True, max_memory_mb=512)
                 _rel_graph_path = LMDB_ROOT / "rel_discovery_graph.pkl"
                 if _rel_graph_path.exists():
                     self._rel_discovery_engine.load_graph(_rel_graph_path)
                     log.debug(f"[RelDiscovery] Loaded graph: {_rel_graph_path}")
                 from hledac.universal.knowledge.graph_service import _DEFAULT_GRAPH_SERVICE
+
                 def _cb(src: str, dst: str, rel_type: str, weight: float) -> None:
                     try:
-                        _DEFAULT_GRAPH_SERVICE.upsert_relation(src, dst, rel_type, weight=weight, evidence="rel_discovery_callback")
+                        _DEFAULT_GRAPH_SERVICE.upsert_relation(
+                            src, dst, rel_type, weight=weight, evidence="rel_discovery_callback"
+                        )
                     except Exception as _cb_e:
                         log.debug(f"[RelDiscovery] callback upsert failed: {_cb_e}")
+
                 _DEFAULT_GRAPH_SERVICE.register_relationship_callback(_cb)
                 log.debug("[RelDiscovery] Registered callback on GraphService")
             except Exception as _e:
@@ -6885,6 +6343,7 @@ class SprintScheduler:
         if _trace_enabled:
             try:
                 import tracemalloc
+
                 # 16 frames provides richer stack traces with acceptable overhead
                 tracemalloc.start(16)
                 _trace_snap_before = tracemalloc.take_snapshot()
@@ -6899,9 +6358,11 @@ class SprintScheduler:
         def _init_evidence_chain() -> None:
             try:
                 from hledac.universal.knowledge.evidence_chain import EvidenceChainBuilder, set_global_builder
+
                 set_global_builder(EvidenceChainBuilder())
             except Exception:  # noqa: BLE001
                 pass
+
         safe_create_task(asyncio.to_thread(_init_evidence_chain), name="evidence_chain_init")
 
         # Initial tick to enter ACTIVE — synchronous (~1ms)
@@ -6958,11 +6419,10 @@ class SprintScheduler:
             _tor_t = safe_create_task(self._init_tor_background(), name="sprint:tor_init")
             self._bg_tasks.add(_tor_t)
             _tor_t.add_done_callback(self._bg_tasks.discard)
+
     # NOTE: _prewarm_hermes is defined in _initialize_sprint_run (line ~6130).
     # This is the single fire-and-forget entry point - do NOT duplicate here.
     # _run_synthesis_sidecar awaits self._hermes_engine when model is ready.
-
-
 
     async def _teardown_sprint(self, _trace_enabled: bool, _trace_snap_before: Any) -> None:
         """Phase D: Teardown - cleanup resources at sprint end (tracemalloc, GC, privacy context)."""
@@ -6979,6 +6439,7 @@ class SprintScheduler:
         if _trace_enabled:
             try:
                 import tracemalloc
+
                 _trace_snap_after = tracemalloc.take_snapshot()
                 _trace_diff = _trace_snap_after.compare_to(_trace_snap_before, "lineno")
                 log.info("[E2] tracemalloc top 10 allocations:")
@@ -7003,7 +6464,7 @@ class SprintScheduler:
 
         # Sprint F250F: Close privacy context at TEARDOWN
         try:
-            _privacy = (self._privacy_layer or getattr(self._layer_manager, "privacy", None))
+            _privacy = self._privacy_layer or getattr(self._layer_manager, "privacy", None)
             if _privacy and hasattr(_privacy, "close_privacy_context"):
                 await _privacy.close_privacy_context(self._privacy_context_id)
                 log.debug("privacy_context closed: %s", self._privacy_context_id)
@@ -7017,33 +6478,21 @@ class SprintScheduler:
                 log.debug("[P3-3] Prefetch pipeline stopped")
             except Exception as _e:
                 log.debug("[P3-3] Prefetch pipeline stop failed: %s", _e)
+
     # ── Public API ─────────────────────────────────────────────────────────
-
-
 
     @_otel_instrumented("sprint.scheduler.run", component="scheduler")
     async def run(
-
         self,
-
         lifecycle: Any,
-
         sources: Sequence[str],
-
         now_monotonic: float | None = None,
-
         query: str = "",
-
         duckdb_store: Any = None,
-
         ct_log_client: Any = None,
-
         policy_manager: Any = None,
-
         progress_callback: Any | None = None,
-
     ) -> SprintSchedulerResult:
-
         """
 
         Recursion guard + thin wrapper around _run_internal().
@@ -7080,23 +6529,14 @@ class SprintScheduler:
             self._memory_pressure_shutdown = asyncio.Event()
 
             return await self._run_internal(
-
                 lifecycle,
-
                 sources,
-
                 now_monotonic=now_monotonic,
-
                 query=query,
-
                 duckdb_store=duckdb_store,
-
                 ct_log_client=ct_log_client,
-
                 policy_manager=policy_manager,
-
                 progress_callback=progress_callback,
-
             )
 
         finally:
@@ -7104,30 +6544,17 @@ class SprintScheduler:
             _sprint_run_ctx.reset(_token)
             self._sprint_depth -= 1
 
-
-
     async def _run_internal(
-
         self,
-
         lifecycle: Any,
-
         sources: Sequence[str],
-
         now_monotonic: float | None = None,
-
         query: str = "",
-
         duckdb_store: Any = None,
-
         ct_log_client: Any = None,
-
         policy_manager: Any = None,
-
         progress_callback: Any | None = None,
-
     ) -> SprintSchedulerResult:
-
         """
 
         Run the sprint to completion.
@@ -7184,6 +6611,7 @@ class SprintScheduler:
             """
             # F320: Fast path — skip all model loading if already prewarmed
             from hledac.universal.runtime.prewarm_daemon import is_prewarm_done
+
             if is_prewarm_done():
                 log.debug("[_prewarm_all_models] skipped — prewarm_daemon already loaded")
                 return
@@ -7199,6 +6627,7 @@ class SprintScheduler:
             async def _prewarm_modernbert() -> None:
                 try:
                     from hledac.universal.brain.modernbert_engine import ModernBertEngine
+
                     engine = ModernBertEngine()
                     await engine.load()
                 except Exception:  # noqa: BLE001
@@ -7208,6 +6637,7 @@ class SprintScheduler:
                 """F275-5: Persistent prewarm with marker-based cache detection."""
                 try:
                     from hledac.universal.compat.core_mlx_embeddings import get_embedding_manager
+
                     mgr = get_embedding_manager()
                     if mgr is not None and not mgr._is_loaded:
                         # CPU-bound: run in executor to avoid blocking loop
@@ -7232,6 +6662,7 @@ class SprintScheduler:
             # F320: Wire phase_transition_callback to TransportSupervisor
             def _on_phase_transition(old: str, new: str) -> None:
                 from transport.transport_supervisor import get_transport_supervisor
+
                 sup = get_transport_supervisor()
                 safe_create_task(sup.on_phase_boundary(old, new))
 
@@ -7280,7 +6711,12 @@ class SprintScheduler:
             _t0_prelude = _time.monotonic()
             _t_phase1 = _time.monotonic()
             _dedup_elapsed, _trace_enabled, _trace_snap_before = await self._initialize_sprint_run(
-                adapter, lifecycle, ct_log_client, policy_manager, duckdb_store, now_monotonic,
+                adapter,
+                lifecycle,
+                ct_log_client,
+                policy_manager,
+                duckdb_store,
+                now_monotonic,
                 query=query,
             )
             _t_phase2 = _time.monotonic()
@@ -7289,8 +6725,6 @@ class SprintScheduler:
             # _hermes_prewarm_task is created there via safe_create_task + asyncio.to_thread.
             # It runs in parallel with Phase 1 DuckDB/LMDB init (60-90s load, fire-and-forget).
             # _run_synthesis_sidecar awaits self._hermes_engine when needed (not the task).
-
-
 
             # ── Part D: DSPy Query Expansion at Sprint Start (Sprint HERMES3_WIRING)
             # Gate: HLEDAC_ENABLE_DSPY=1 -> expand original query -> add to next_seeds
@@ -7304,8 +6738,9 @@ class SprintScheduler:
                     if expanded and expanded:
                         # Add expanded queries to sprint seeds (cap at 3)
                         _expanded_capped = expanded[:3]
-                        log.debug("[HERMES3_WIRING] DSPy expanded %d queries for '%s...'",
-                                  len(_expanded_capped), query[:30])
+                        log.debug(
+                            "[HERMES3_WIRING] DSPy expanded %d queries for '%s...'", len(_expanded_capped), query[:30]
+                        )
                         # Store for acquisition plan: these become additional sub-queries
                         self._result.next_seeds_query_suggestions = tuple(_expanded_capped)
                 except Exception as _exc:
@@ -7316,22 +6751,16 @@ class SprintScheduler:
             # Sprint 8SA: Source scoring -- order sources by priority at start of ACTIVE
 
             _DEFAULT_SOURCE_TYPES = [  # noqa: N806
-
-                "cisa_kev", "threatfox_ioc", "urlhaus_recent",
-
-                "feodo_ip", "openphish_feed",
-
+                "cisa_kev",
+                "threatfox_ioc",
+                "urlhaus_recent",
+                "feodo_ip",
+                "openphish_feed",
             ]
 
             _graph_stats: dict[str, int] = {"nodes": 0, "edges": 0}
 
-            ordered_sources = self.prioritize_sources(
-
-                list(sources) if sources else _DEFAULT_SOURCE_TYPES, _graph_stats
-
-            )
-
-
+            ordered_sources = self.prioritize_sources(list(sources) if sources else _DEFAULT_SOURCE_TYPES, _graph_stats)
 
             _t_phase4 = _time.monotonic()
 
@@ -7351,9 +6780,7 @@ class SprintScheduler:
             # window is truly the time available for acquisition cycles.
             _active_window_budget = max(
                 30.0,
-                self._config.sprint_duration_s
-                - self._config.effective_windup_lead_s
-                - _pre_loop_elapsed,
+                self._config.sprint_duration_s - self._config.effective_windup_lead_s - _pre_loop_elapsed,
             )
             self._hard_deadline_monotonic = self._wall_clock_start + _active_window_budget
             self._result.hard_deadline_monotonic = self._hard_deadline_monotonic
@@ -7397,9 +6824,7 @@ class SprintScheduler:
                     f"active_window_budget={_active_window_budget:.1f}s. "
                     f"Skipping to windup."
                 )
-                await self._ensure_nonfeed_predispatch_before_finalization(
-                    query, "pre_loop_deadline_exceeded"
-                )
+                await self._ensure_nonfeed_predispatch_before_finalization(query, "pre_loop_deadline_exceeded")
                 self._capture_timing_fields()
                 await self._finalize_result_truth(
                     "pre_loop_deadline_exceeded",
@@ -7413,14 +6838,11 @@ class SprintScheduler:
                 lifecycle.request_windup()
                 return self._result
 
-
-
             _t_plan_start = _time.monotonic()
 
             # Sprint F206BG: Build acquisition strategy plan at sprint start
 
             try:
-
                 # Sprint Opt: Run governor.evaluate() (~50ms) and next_seeds (~10ms)
                 # in parallel. Governor must complete first (_uma_state required for
                 # build_acquisition_plan); next_seeds finishes during governor wait.
@@ -7439,6 +6861,7 @@ class SprintScheduler:
                     if _gov_dec is not None:
                         return _gov_dec.uma_state, getattr(_gov_dec, "swap_detected", False)
                     from hledac.universal.core.resource_governor import sample_uma_status
+
                     uma = sample_uma_status()
                     return (uma.state if uma.state else "ok"), uma.swap_detected
 
@@ -7447,6 +6870,7 @@ class SprintScheduler:
                         return [], None, ""
                     try:
                         from hledac.universal.runtime.next_seeds_consumption import consume_next_sprint_seeds
+
                         iocs, diags, suggestions, skip = consume_next_sprint_seeds(self._config.predecessor_sprint_id)
                         return iocs, diags, skip
                     except Exception as _e:
@@ -7467,20 +6891,22 @@ class SprintScheduler:
 
                 self._result.next_seeds_provider_yield = (
                     bool(getattr(_next_seeds_diagnostics, "provider_yield_active", False))
-                    if _next_seeds_diagnostics else False
+                    if _next_seeds_diagnostics
+                    else False
                 )
                 self._result.next_seeds_pivot_deepening = (
                     bool(getattr(_next_seeds_diagnostics, "pivot_deepening_active", False))
-                    if _next_seeds_diagnostics else False
+                    if _next_seeds_diagnostics
+                    else False
                 )
                 self._result.next_seeds_query_suggestions = (
-                    getattr(_next_seeds_diagnostics, "query_suggestions", ())
-                    if _next_seeds_diagnostics else ()
+                    getattr(_next_seeds_diagnostics, "query_suggestions", ()) if _next_seeds_diagnostics else ()
                 )
                 self._result.next_seeds_consumed_count = len(_next_seeds_ioc_seeds)
                 self._result.next_seeds_seed_source = (
                     f"predecessor:{self._config.predecessor_sprint_id}"
-                    if self._config.predecessor_sprint_id else "none"
+                    if self._config.predecessor_sprint_id
+                    else "none"
                 )
 
                 self._timer.phase("acquisition_plan_build_start")
@@ -7526,7 +6952,7 @@ class SprintScheduler:
 
                 # [F207L] Capture nonfeed_plan_debug from acquisition plan for KPI telemetry
 
-                self._result.nonfeed_plan_debug = getattr(self._acquisition_plan, 'nonfeed_plan_debug', None)
+                self._result.nonfeed_plan_debug = getattr(self._acquisition_plan, "nonfeed_plan_debug", None)
 
                 # F216F: Generate pivot candidates from query and fill telemetry
 
@@ -7535,21 +6961,15 @@ class SprintScheduler:
                 # F238D: Pass graph_stats for degree-penalty and novelty scoring
 
                 if self._result.nonfeed_plan_debug is not None:
-
                     try:
-
                         _nd = self._result.nonfeed_plan_debug
 
                         _graph_stats = self._get_pivot_graph_stats_for_planning()
 
                         _pivot_candidates = generate_pivot_candidates_from_query(
-
                             query,
-
                             mission_intent=_nd.mission_intent,
-
                             graph_stats=_graph_stats,
-
                         )
 
                         _nd.pivot_candidates_count = len(_pivot_candidates)
@@ -7565,7 +6985,6 @@ class SprintScheduler:
                         # F238D: populate proof fields
 
                         if _graph_stats and _graph_stats.get("nodes", 0) > 0:
-
                             self._result.pivot_graph_stats_used = True
 
                             self._result.pivot_graph_stats_keys = tuple(_graph_stats.keys())
@@ -7573,7 +6992,6 @@ class SprintScheduler:
                             self._result.graph_aware_pivot_count = len(_pivot_candidates)
 
                     except Exception:  # noqa: BLE001
-
                         pass  # noqa: BLE001  # Fail-soft
 
                 # [F224B] Capture sticky fields from nonfeed_plan_debug so final report
@@ -7581,7 +6999,6 @@ class SprintScheduler:
                 # can read them even if nonfeed_plan_debug is None (snapshot lost in some exit paths)
 
                 if self._result.nonfeed_plan_debug is not None:
-
                     _nd = self._result.nonfeed_plan_debug
 
                     self._result.nonfeed_priority_enabled = getattr(_nd, "nonfeed_priority_enabled", False)
@@ -7593,15 +7010,13 @@ class SprintScheduler:
                     # lanes from heterogeneous sources (Enum + raw string + Literal).
                     # Bounded: O(N) where N is the lane tuple length (typically <10).
                     self._result.nonfeed_profile_expected_lanes = tuple(
-                        canonical_lane_name(x)
-                        for x in (getattr(_nd, "nonfeed_profile_expected_lanes", ()) or ())
+                        canonical_lane_name(x) for x in (getattr(_nd, "nonfeed_profile_expected_lanes", ()) or ())
                     )
 
                     # F224B: nonfeed_expected_lanes = scheduled_nonfeed_lanes (canonical source)
 
                     self._result.nonfeed_expected_lanes = tuple(
-                        canonical_lane_name(x)
-                        for x in (getattr(_nd, "scheduled_nonfeed_lanes", ()) or ())
+                        canonical_lane_name(x) for x in (getattr(_nd, "scheduled_nonfeed_lanes", ()) or ())
                     )
 
                     self._result.nonfeed_expected_lanes_source = "build_acquisition_plan.nonfeed_plan_debug"
@@ -7622,8 +7037,6 @@ class SprintScheduler:
                 self._result.acquisition_plan_build_error_type = type(_exc).__name__
 
                 self._result.acquisition_plan_build_error = str(_exc)[:500]
-
-
 
             # Sprint F245A: Run Mandatory Acquisition Prelude and first cycle concurrently.
 
@@ -7679,9 +7092,7 @@ class SprintScheduler:
                     log.debug("[P0-1] Hermes prewarm await failed: %s", _e)
             _t_hermes_wait_done = _time.monotonic()
 
-
             try:
-
                 self._timer.phase("prelude_start")
 
                 # Sprint F228G: use safe_create_task -- uvloop 0.22.x on M1
@@ -7697,27 +7108,24 @@ class SprintScheduler:
                 # F350M-R: eager_start=True for critical startup path — saves 50-200µs
                 # per task on Python 3.12+. safe_create_task probes loop capability.
                 prelude_task = safe_create_task(
-                    self._run_mandatory_acquisition_prelude(
-                        self._result, query, duckdb_store, self._ct_log_client
-                    ),
+                    self._run_mandatory_acquisition_prelude(self._result, query, duckdb_store, self._ct_log_client),
                     name="sprint:prelude",
                     eager_start=True,
                 )
 
             finally:
-
                 self._timer.phase("prelude_end")
             _t_work_items = _time.monotonic()
 
             # Sprint F245A: Build first-cycle work items from ordered feed sources
             self._build_work_items(ordered_sources)
             first_cycle_task = safe_create_task(
-                self._run_one_cycle(lifecycle, ordered_sources, now_monotonic=None, query=query, duckdb_store=duckdb_store),  # noqa: E501
+                self._run_one_cycle(
+                    lifecycle, ordered_sources, now_monotonic=None, query=query, duckdb_store=duckdb_store
+                ),  # noqa: E501
                 name="sprint:first_cycle",
                 eager_start=True,
             )
-
-
 
             # P4.3-PRELOOP: Time gather branch independently to identify slow path
             _t_branch_start = _time.monotonic()
@@ -7750,26 +7158,27 @@ class SprintScheduler:
                 "[P4.3][pre-loop-cost] init=%.1fs dspy=%.1fs src_prioritize=%.1fs "
                 "pre_loop_capture=%.1fs plan_parallel=%.1fs plan_build=%.1fs plan_total=%.1fs "
                 "hermes_wait=%.1fs work_items=%.1fs branch=%.1fs prelude_dispatch=%.1fs total=%.1fs",
-                _phase1_dur, _phase3_dur, _phase4_dur,
+                _phase1_dur,
+                _phase3_dur,
+                _phase4_dur,
                 (_t_phase4 - _t_phase3),
-                _plan_parallel_dur, _plan_build_dur, _plan_total_dur,
-                _hermes_wait_dur, _work_items_dur, _branch_dur, _prelude_dispatch_dur, _pre_loop_total,
+                _plan_parallel_dur,
+                _plan_build_dur,
+                _plan_total_dur,
+                _hermes_wait_dur,
+                _work_items_dur,
+                _branch_dur,
+                _prelude_dispatch_dur,
+                _pre_loop_total,
             )
 
-
             if isinstance(_prelude_exc, BaseException) and not isinstance(_prelude_exc, asyncio.CancelledError):
-
                 log.warning("[sprint] prelude raised: %s: %s", type(_prelude_exc).__name__, _prelude_exc)
 
             if isinstance(_cycle_exc, BaseException) and not isinstance(_cycle_exc, asyncio.CancelledError):
-
                 log.warning("[sprint] first cycle raised: %s: %s", type(_cycle_exc).__name__, _cycle_exc)
 
-
-
             self._result.cycles_completed += 1
-
-
 
             # P1-4: Update hermes engine active_iteration_count after first cycle.
             # Force-enable batching when cycles_started >= 2.
@@ -7779,65 +7188,40 @@ class SprintScheduler:
             # Sprint F214: Only record prelude_complete if prelude actually ran.
 
             if getattr(self._result, "acquisition_prelude_ran", False):
-
                 await self._finalize_result_truth(
-
                     "prelude_complete",
-
                     "acquisition prelude finished",
-
                     "ACTIVE",
-
                     query,
-
                 )
-
-
 
             # Propagate CancelledError from either task
 
             if isinstance(_prelude_exc, asyncio.CancelledError):
-
                 raise _prelude_exc
 
             if isinstance(_cycle_exc, asyncio.CancelledError):
-
                 raise _cycle_exc
-
-
 
             # F214: Check deadline after gather -- prevents deadline cascade into advisory lanes
 
             if not self._check_hard_deadline():
-
-                await self._ensure_nonfeed_predispatch_before_finalization(
-
-                    query, "hard_deadline_exceeded"
-
-                )
+                await self._ensure_nonfeed_predispatch_before_finalization(query, "hard_deadline_exceeded")
 
                 self._capture_timing_fields()
 
                 await self._finalize_result_truth(
-
                     "hard_deadline_exceeded",
-
                     "hard deadline exceeded after first_cycle_gather",
-
                     "GATHER",
-
                     query,
-
                 )
 
                 return self._result  # type: ignore[return-value]
 
-
-
             # Sprint 8VD §C: Outer try-except wraps the main cycle loop
 
             try:
-
                 while not self._runner.is_terminal():
                     # Sprint F228G: Update now_monotonic each iteration so
                     # post_sleep_gate and should_enter_windup use correct elapsed time.
@@ -7849,27 +7233,17 @@ class SprintScheduler:
                     # is always enforced regardless of windup_guard or 8BK guard state.
 
                     if not self._check_hard_deadline():
-
                         # Deadline exceeded -- stop starting new work
 
-                        await self._ensure_nonfeed_predispatch_before_finalization(
-
-                            query, "hard_deadline_exceeded"
-
-                        )
+                        await self._ensure_nonfeed_predispatch_before_finalization(query, "hard_deadline_exceeded")
 
                         self._capture_timing_fields()
 
                         await self._finalize_result_truth(
-
                             "hard_deadline_exceeded",
-
                             f"hard deadline exceeded at cycle {self._result.cycles_started}",
-
                             "GATHER",
-
                             query,
-
                         )
 
                         lifecycle.request_windup()
@@ -7877,24 +7251,16 @@ class SprintScheduler:
                         break
 
                     if self._stop_requested:
-
                         # Sprint F207T-A: Return guard -- ensure mandatory nonfeed terminal state
 
-                        if await self._ensure_mandatory_nonfeed_before_return(
-
-                            query, duckdb_store, "stop_requested"
-
-                        ):
-
-                            await self._ensure_nonfeed_predispatch_before_finalization(
-
-                                query, "stop_requested_break"
-
-                            )
+                        if await self._ensure_mandatory_nonfeed_before_return(query, duckdb_store, "stop_requested"):
+                            await self._ensure_nonfeed_predispatch_before_finalization(query, "stop_requested_break")
 
                             self._capture_timing_fields()
 
-                            await self._finalize_result_truth("stop_requested_break", "stop_requested guard passed", "GATHER", query)  # noqa: E501
+                            await self._finalize_result_truth(
+                                "stop_requested_break", "stop_requested guard passed", "GATHER", query
+                            )  # noqa: E501
                             lifecycle.request_windup()
                             break
 
@@ -7905,7 +7271,6 @@ class SprintScheduler:
                     # Detect abort requested via lifecycle flag
 
                     if self._runner.abort_requested:
-
                         self._result.aborted = True
 
                         self._result.abort_reason = self._runner.abort_reason or "lifecycle_abort"
@@ -7918,31 +7283,21 @@ class SprintScheduler:
 
                         # Abort is terminal; attempt guard but do not block abort
 
-                        await self._ensure_mandatory_nonfeed_before_return(
+                        await self._ensure_mandatory_nonfeed_before_return(query, duckdb_store, "lifecycle_abort")
 
-                            query, duckdb_store, "lifecycle_abort"
-
-                        )
-
-                        await self._ensure_nonfeed_predispatch_before_finalization(
-
-                            query, "lifecycle_abort_break"
-
-                        )
+                        await self._ensure_nonfeed_predispatch_before_finalization(query, "lifecycle_abort_break")
 
                         self._capture_timing_fields()
 
-                        await self._finalize_result_truth("lifecycle_abort_break", "abort_requested from lifecycle", "GATHER", query)  # noqa: E501
+                        await self._finalize_result_truth(
+                            "lifecycle_abort_break", "abort_requested from lifecycle", "GATHER", query
+                        )  # noqa: E501
                         lifecycle.request_windup()
                         break
-
-
 
                     # Periodic tick
 
                     self._runner.tick(now_monotonic)
-
-
 
                     # ── Sprint F207M-A: Nonfeed pre-dispatch checkpoint ───────────
 
@@ -7951,8 +7306,6 @@ class SprintScheduler:
                     # Called once per sprint; subsequent calls are no-ops.
 
                     await self._maybe_dispatch_nonfeed_probe_lanes(query, duckdb_store)
-
-
 
                     # ── Sprint F207S-B: Scheduler-owned prewindup barrier ───────
 
@@ -7978,12 +7331,8 @@ class SprintScheduler:
 
                     self._result.windup_guard_call_count += 1
 
-
-
                     _barrier_result = await self._ensure_pre_windup_lane_terminal_states(
-
                         query, self._acquisition_plan, "ok"
-
                     )
 
                     _barrier_satisfied = getattr(_barrier_result, "satisfied", False)
@@ -7992,11 +7341,9 @@ class SprintScheduler:
 
                     _barrier_delayed = self._prewindup_barrier_delayed
 
-
-
                     if _barrier_required and not _barrier_satisfied:
                         # P1.3: Add hard timeout + retry count to prewindup barrier
-                        _barrier_retry_count = getattr(self, '_barrier_retry_count', 0) + 1
+                        _barrier_retry_count = getattr(self, "_barrier_retry_count", 0) + 1
                         _barrier_max_retries = 3
                         _barrier_hard_timeout_s = 30.0
                         self._barrier_retry_count = _barrier_retry_count
@@ -8043,30 +7390,19 @@ class SprintScheduler:
                     # windup phase starting with a clean allocator state.
                     self._maybe_call_pressure_relief()
 
-
-
                     # Barrier satisfied or already delayed once -- delegate to runner
 
                     _guard_result = self._runner.windup_guard(
-
                         now_monotonic,
-
-                        pre_windup_barrier=lambda: self._check_prewindup_barrier_sync(
-
-                            query, duckdb_store
-
-                        ),
-
+                        pre_windup_barrier=lambda: self._check_prewindup_barrier_sync(query, duckdb_store),
                     )
 
                     _obs = self._runner.last_guard_observation
 
                     if _obs:
-
                         # F208M-B: Only increment supplied when callback was actually reached
 
                         if _obs.get("callback_supplied"):
-
                             self._result.windup_guard_callback_supplied_count += 1
 
                         self._result.windup_guard_callback_executed_count += 1 if _obs.get("callback_executed") else 0
@@ -8077,21 +7413,19 @@ class SprintScheduler:
 
                         self._result.windup_guard_last_allowed = _obs.get("allowed")
 
-                        self._result.windup_guard_last_callback_not_executed_reason = _obs.get("callback_not_executed_reason", "")  # noqa: E501
+                        self._result.windup_guard_last_callback_not_executed_reason = _obs.get(
+                            "callback_not_executed_reason", ""
+                        )  # noqa: E501
 
                     if _guard_result:
-
                         # If nonfeed pre-dispatch hasn't run yet, yield to it first
 
                         if not self._nonfeed_predispatch_done:
-
                             log.debug("[F207M-A] Windup signalled but pre-dispatch not done -- yielding")
 
                             # Give pre-dispatch a chance before entering windup
 
                             await self._maybe_dispatch_nonfeed_probe_lanes(query, duckdb_store)
-
-
 
                         # Phase already advanced via tick(); let scheduler handle pre-windup ops
 
@@ -8122,7 +7456,6 @@ class SprintScheduler:
                         # Sprint F195C: Flush forensics at WINDUP entry
 
                         if self._enrichment_services:
-
                             await self._enrichment_services.flush()
 
                         # Sprint 8VQ: Evaluate advisory gate at WINDUP entry (diagnostic only)
@@ -8137,45 +7470,33 @@ class SprintScheduler:
 
                         # mandatory nonfeed lanes before breaking out of work loop
 
-                        if await self._ensure_mandatory_nonfeed_before_return(
-
-                            query, duckdb_store, "windup_barrier"
-
-                        ):
-
-                            await self._ensure_nonfeed_predispatch_before_finalization(
-
-                                query, "windup_barrier_passed"
-
-                            )
+                        if await self._ensure_mandatory_nonfeed_before_return(query, duckdb_store, "windup_barrier"):
+                            await self._ensure_nonfeed_predispatch_before_finalization(query, "windup_barrier_passed")
 
                             self._capture_timing_fields()
 
-                            await self._finalize_result_truth("windup_barrier_passed", "pre-windup barrier satisfied, entered windup", "WINDUP", query)  # noqa: E501
+                            await self._finalize_result_truth(
+                                "windup_barrier_passed", "pre-windup barrier satisfied, entered windup", "WINDUP", query
+                            )  # noqa: E501
 
                             break  # exit work loop -> teardown
 
                         # Guard blocked -- force one bounded terminalization pass then break
 
-                        await self._ensure_mandatory_nonfeed_before_return(
+                        await self._ensure_mandatory_nonfeed_before_return(query, duckdb_store, "windup_barrier_forced")
 
-                            query, duckdb_store, "windup_barrier_forced"
-
-                        )
-
-                        await self._ensure_nonfeed_predispatch_before_finalization(
-
-                            query, "windup_barrier_break"
-
-                        )
+                        await self._ensure_nonfeed_predispatch_before_finalization(query, "windup_barrier_break")
 
                         self._capture_timing_fields()
 
-                        await self._finalize_result_truth("windup_barrier_break", "pre-windup barrier unsatisfied, forced terminalization", "WINDUP", query)  # noqa: E501
+                        await self._finalize_result_truth(
+                            "windup_barrier_break",
+                            "pre-windup barrier unsatisfied, forced terminalization",
+                            "WINDUP",
+                            query,
+                        )  # noqa: E501
 
                         break  # exit work loop -> teardown
-
-
 
                     # ── Sprint 8SA: Source scoring re-ordering ───────────────────
 
@@ -8184,14 +7505,7 @@ class SprintScheduler:
                     current_phase_str = self._runner.current_phase
 
                     if current_phase_str == "ACTIVE":
-
-                        ordered_sources = self.prioritize_sources(
-
-                            ordered_sources, _graph_stats
-
-                        )
-
-
+                        ordered_sources = self.prioritize_sources(ordered_sources, _graph_stats)
 
                     # ── Run one cycle ───────────────────────────────────────────
 
@@ -8210,7 +7524,6 @@ class SprintScheduler:
                     # (matches F228G default cycle_sleep), converges in ~10 cycles.
 
                     if not hasattr(self, "_cycle_time_ema"):
-
                         self._cycle_time_ema = 1.0  # conservative; F228G default
 
                         self._last_cycle_start: float | None = None
@@ -8218,7 +7531,6 @@ class SprintScheduler:
                         self._effective_max_cycles = self._config.max_cycles  # bootstrap
 
                     if self._last_cycle_start is not None:
-
                         _elapsed = _time.monotonic() - self._last_cycle_start
 
                         # Bounded clamp: reject pathological outliers (>10s) so a
@@ -8234,43 +7546,34 @@ class SprintScheduler:
                         _active = max(0.0, self._config.sprint_duration_s - self._config.final_windup_lead_s)
 
                         if _active > 0 and self._cycle_time_ema > 0:
-
                             self._effective_max_cycles = max(50, min(300, int(_active / self._cycle_time_ema)))
 
                     # Enforce max_cycles BEFORE starting new work
 
                     if self._result.cycles_started >= self._effective_max_cycles:
-
                         # Sprint F207T-A: Return guard -- max cycles is terminal, force one final
 
                         # barrier dispatch to satisfy mandatory lanes, then break
 
-                        await self._ensure_mandatory_nonfeed_before_return(
+                        await self._ensure_mandatory_nonfeed_before_return(query, duckdb_store, "max_cycles")
 
-                            query, duckdb_store, "max_cycles"
-
-                        )
-
-                        await self._ensure_nonfeed_predispatch_before_finalization(
-
-                            query, "max_cycles_break"
-
-                        )
+                        await self._ensure_nonfeed_predispatch_before_finalization(query, "max_cycles_break")
 
                         self._capture_timing_fields()
 
-                        await self._finalize_result_truth("max_cycles_break", "cycles >= max_cycles reached", "GATHER", query)  # noqa: E501
+                        await self._finalize_result_truth(
+                            "max_cycles_break", "cycles >= max_cycles reached", "GATHER", query
+                        )  # noqa: E501
 
                         break
-
-
 
                     # F288: log prelude duration before first cycle
                     if self._result.cycles_started == 0:
                         _elapsed = _time.monotonic() - _t0_prelude
                         logger.info(
                             "[prelude] completed in %.1fs (budget=%.0fs)",
-                            _elapsed, self._config.effective_windup_lead_s
+                            _elapsed,
+                            self._config.effective_windup_lead_s,
                         )
                     self._result.cycles_started += 1
 
@@ -8285,7 +7588,6 @@ class SprintScheduler:
                     # Sprint F166B: Capture first_cycle_started at cycles_started += 1
 
                     if self._result.first_cycle_started_at_monotonic is None:
-
                         self._result.first_cycle_started_at_monotonic = _time.monotonic() - self._wall_clock_start
 
                         # Sprint F166B: Check starvation -- gap > 30s = pre-active starvation
@@ -8293,11 +7595,9 @@ class SprintScheduler:
                         gap = self._result.first_cycle_started_at_monotonic - self._result.entered_active_at_monotonic
 
                         if gap > 30.0:
-
                             self._result.pre_active_starved = True
 
                             if not self._result.pre_loop_blocker_reason:
-
                                 self._result.pre_loop_blocker_reason = "pre_loop_slow"
 
                         # F288: Feed measured pre-loop cost to lifecycle so
@@ -8333,36 +7633,25 @@ class SprintScheduler:
                     elapsed_wall = _time.monotonic() - self._wall_clock_start
 
                     if elapsed_wall > self._config.sprint_duration_s + self._config.cycle_sleep_s:
-
                         log.warning(
-
                             f"[8BK] Duration budget exceeded: {elapsed_wall:.1f}s "
-
                             f"> {self._config.sprint_duration_s + self._config.cycle_sleep_s:.1f}s "
-
                             f"(grace={self._config.cycle_sleep_s:.1f}s). Forcing windup."
-
                         )
 
                         # Sprint F207T-A: Return guard -- duration budget is terminal urgency,
 
                         # force one final barrier dispatch, then proceed to windup
 
-                        await self._ensure_mandatory_nonfeed_before_return(
+                        await self._ensure_mandatory_nonfeed_before_return(query, duckdb_store, "duration_budget")
 
-                            query, duckdb_store, "duration_budget"
-
-                        )
-
-                        await self._ensure_nonfeed_predispatch_before_finalization(
-
-                            query, "duration_budget_break"
-
-                        )
+                        await self._ensure_nonfeed_predispatch_before_finalization(query, "duration_budget_break")
 
                         self._capture_timing_fields()
 
-                        await self._finalize_result_truth("duration_budget_break", "duration_budget exhausted", "GATHER", query)  # noqa: E501
+                        await self._finalize_result_truth(
+                            "duration_budget_break", "duration_budget exhausted", "GATHER", query
+                        )  # noqa: E501
                         lifecycle.request_windup()
                         break
 
@@ -8424,9 +7713,7 @@ class SprintScheduler:
                             )
                         except Exception:  # noqa: BLE001
                             pass
-                        await self._ensure_nonfeed_predispatch_before_finalization(
-                            query, "early_windup_empty_cycles"
-                        )
+                        await self._ensure_nonfeed_predispatch_before_finalization(query, "early_windup_empty_cycles")
                         self._capture_timing_fields()
                         await self._finalize_result_truth(
                             "early_windup_empty_cycles",
@@ -8440,26 +7727,24 @@ class SprintScheduler:
                     try:
                         async with asyncio.timeout(_cycle_budget_s):
                             cycle_ok = await self._run_one_cycle(
-                                lifecycle, ordered_sources, now_monotonic,
-                                query, duckdb_store,
+                                lifecycle,
+                                ordered_sources,
+                                now_monotonic,
+                                query,
+                                duckdb_store,
                             )
                     except TimeoutError:
                         self._cycle_timeout_count += 1
                         log.warning(
-                            "[F-A3] cycle exceeded %.1fs budget (count=%d) "
-                            "-- counting as empty",
-                            _cycle_budget_s, self._cycle_timeout_count,
+                            "[F-A3] cycle exceeded %.1fs budget (count=%d) -- counting as empty",
+                            _cycle_budget_s,
+                            self._cycle_timeout_count,
                         )
                         # Treat as empty cycle so F228G guard eventually
                         # forces windup after the consecutive-empty limit.
                         self._result.consecutive_empty_cycles += 1
-                        if (
-                            self._result.consecutive_empty_cycles
-                            > self._result.max_consecutive_empty_cycles
-                        ):
-                            self._result.max_consecutive_empty_cycles = (
-                                self._result.consecutive_empty_cycles
-                            )
+                        if self._result.consecutive_empty_cycles > self._result.max_consecutive_empty_cycles:
+                            self._result.max_consecutive_empty_cycles = self._result.consecutive_empty_cycles
                         # Return True so the loop continues; F228G guard
                         # in the surrounding code is responsible for forcing
                         # windup once the limit is hit.
@@ -8481,98 +7766,65 @@ class SprintScheduler:
                     _empty_cycle_limit = max(4, min(8, int(self._config.sprint_duration_s / 30.0)))
 
                     if self._result.consecutive_empty_cycles >= _empty_cycle_limit:
-
                         log.warning(
-
                             "[F228G] %d consecutive empty cycles >= limit %d -- forcing windup",
-
-                            self._result.consecutive_empty_cycles, _empty_cycle_limit,
-
+                            self._result.consecutive_empty_cycles,
+                            _empty_cycle_limit,
                         )
 
-                        await self._ensure_nonfeed_predispatch_before_finalization(
-
-                            query, "empty_cycle_break"
-
-                        )
+                        await self._ensure_nonfeed_predispatch_before_finalization(query, "empty_cycle_break")
 
                         self._capture_timing_fields()
 
                         await self._finalize_result_truth(
-
                             "empty_cycle_break",
-
                             f"empty cycles {self._result.consecutive_empty_cycles} >= limit {_empty_cycle_limit}",
-
-                            "GATHER", query,
-
+                            "GATHER",
+                            query,
                         )
 
                         break
 
                     self._result.cycles_completed += 1
 
-
-
                     # Sprint F205H: Tick metrics at cycle completion (bounded, fail-soft)
 
                     self._tick_metrics_on_cycle_end()
 
-
-
                     # Sprint F195C: Progress callback for dashboard / observability
 
                     if progress_callback is not None:
-
                         elapsed_s = _time.monotonic() - self._wall_clock_start
 
                         try:
-
                             progress_callback(self._result, current_phase_str, elapsed_s)
 
                         except Exception:  # noqa: BLE001
-
                             pass  # noqa: BLE001  # fail-safe: dashboard must never affect sprint
-
-
 
                     # Sprint F195B: Partial export every N findings in aggressive mode
 
                     await self._maybe_export_partial(lifecycle)
 
-
-
                     # Sprint 8TB: Drain pivot queue after each ACTIVE cycle
 
                     if current_phase_str == "ACTIVE":
-
                         pivot_n = await self._drain_pivot_queue()
 
                         if pivot_n:
-
                             log.debug(f"Pivot queue drained: {pivot_n} tasks, stats={self._pivot_stats}")
 
-
-
                     if not cycle_ok:
-
                         # Sprint F207T-A: Return guard -- cycle failed, check nonfeed terminal
 
-                        if await self._ensure_mandatory_nonfeed_before_return(
-
-                            query, duckdb_store, "cycle_ok_false"
-
-                        ):
-
-                            await self._ensure_nonfeed_predispatch_before_finalization(
-
-                                query, "cycle_ok_false_break"
-
-                            )
+                        if await self._ensure_mandatory_nonfeed_before_return(query, duckdb_store, "cycle_ok_false"):
+                            await self._ensure_nonfeed_predispatch_before_finalization(query, "cycle_ok_false_break")
 
                             self._capture_timing_fields()
 
-                            await self._finalize_result_truth("cycle_ok_false_break", "cycle returned False, guard passed", "GATHER", query)  # noqa: E501
+                            await self._finalize_result_truth(
+                                "cycle_ok_false_break", "cycle returned False, guard passed", "GATHER", query
+                            )  # noqa: E501
 
                             break
 
@@ -8580,45 +7832,31 @@ class SprintScheduler:
 
                         continue
 
-
-
                     # Early exit check
 
-                    if (
-
-                        self._config.stop_on_first_accepted
-
-                        and self._result.accepted_findings > 0
-
-                    ):
-
+                    if self._config.stop_on_first_accepted and self._result.accepted_findings > 0:
                         self._result.stop_requested = True
 
                         # Sprint F207T-A: Return guard -- ensure mandatory nonfeed terminal
 
                         if await self._ensure_mandatory_nonfeed_before_return(
-
                             query, duckdb_store, "stop_on_first_accepted"
-
                         ):
-
                             await self._ensure_nonfeed_predispatch_before_finalization(
-
                                 query, "stop_on_first_accepted_break"
-
                             )
 
                             self._capture_timing_fields()
 
-                            await self._finalize_result_truth("stop_on_first_accepted_break", "first accepted finding, stop", "GATHER", query)  # noqa: E501
+                            await self._finalize_result_truth(
+                                "stop_on_first_accepted_break", "first accepted finding, stop", "GATHER", query
+                            )  # noqa: E501
 
                             break
 
                         # Guard blocked: continue loop to satisfy nonfeed lanes
 
                         continue
-
-
 
                     # Sleep between cycles (short interval, not one long sleep)
 
@@ -8650,14 +7888,14 @@ class SprintScheduler:
                         # Check if nonfeed lanes are still disabled (query had no domain)
                         _plan_dict = {p.lane: p for p in self._acquisition_plan.plans}
                         _nonfeed_disabled = not any(
-                            _plan_dict.get(lane_name.lower()) is not None
-                            for lane_name in ("ct", "doh", "wayback")
+                            _plan_dict.get(lane_name.lower()) is not None for lane_name in ("ct", "doh", "wayback")
                         )
                         if _nonfeed_disabled:
                             try:
                                 from hledac.universal.runtime.acquisition_strategy import (
                                     build_acquisition_plan,
                                 )
+
                                 _uma_state = "ok"
                                 if self._governor is not None:
                                     try:
@@ -8680,8 +7918,7 @@ class SprintScheduler:
                                     synthetic_domains=(),
                                 )
                                 log.debug(
-                                    "[P5] Mid-sprint re-plan: %d feed_domain_seeds enabled "
-                                    "CT/DOH/WAYBACK lanes",
+                                    "[P5] Mid-sprint re-plan: %d feed_domain_seeds enabled CT/DOH/WAYBACK lanes",
                                     len(_fd),
                                 )
                             except Exception:  # noqa: BLE001
@@ -8692,7 +7929,6 @@ class SprintScheduler:
                     # Sprint F206C: Delegated to runner.post_sleep_gate()
 
                     if self._runner.post_sleep_gate(now_monotonic):
-
                         # Sprint F195B: write partial on windup so latest state survives
 
                         await self._maybe_export_partial(lifecycle)
@@ -8717,17 +7953,10 @@ class SprintScheduler:
                         _MIN_LANES_FOR_EARLY_WINDUP: int = 2  # noqa: N806
                         _lanes_with_evidence = len(self._result.entries_per_source)
                         if (
-                            await self._ensure_mandatory_nonfeed_before_return(
-                                query, duckdb_store, "post_sleep_windup"
-                            )
+                            await self._ensure_mandatory_nonfeed_before_return(query, duckdb_store, "post_sleep_windup")
                             and _lanes_with_evidence >= _MIN_LANES_FOR_EARLY_WINDUP
                         ):
-
-                            await self._ensure_nonfeed_predispatch_before_finalization(
-
-                                query, "post_sleep_windup_break"
-
-                            )
+                            await self._ensure_nonfeed_predispatch_before_finalization(query, "post_sleep_windup_break")
 
                             # Sprint F220D: Feed dominance nonfeed rescue window
 
@@ -8738,89 +7967,56 @@ class SprintScheduler:
                         _rescue_triggered = False
 
                         if (
-
                             self._result.accepted_findings >= 1000
-
                             and self._result.lane_ct_accepted_findings == 0
-
                             and self._result.lane_wayback_accepted_findings == 0
-
                             and self._result.lane_pdns_accepted_findings == 0
-
                             and self._result.lane_blockchain_accepted_findings == 0
-
                             and self._result.lane_ipfs_accepted_findings == 0
-
                             and self._result.lane_doh_accepted_findings == 0
-
                             and self._result.requested_duration_s >= 180
-
                         ):
-
                             _rescue_elapsed = await self._run_feed_dominance_nonfeed_rescue_window(query, duckdb_store)
 
                             if _rescue_elapsed is not None and _rescue_elapsed > 0:
-
                                 _rescue_triggered = True
 
                                 log.info(
-
                                     f"[F220D] Feed dominance rescue window completed in {_rescue_elapsed:.1f}s, "
-
                                     f"nonfeed findings: ct={self._result.lane_ct_accepted_findings} "
-
                                     f"public={self._result.public_accepted_findings}"
-
                                 )
 
                             else:
-
                                 log.debug("[F220D] Feed dominance rescue window returned no candidates")
-
-
 
                         self._capture_timing_fields()
 
                         if _rescue_triggered:
-
                             await self._finalize_result_truth(
-
                                 "post_sleep_windup_break",
-
                                 "feed dominant nonfeed rescue attempted",
-
                                 "WINDUP",
-
                                 query,
-
                             )
 
                             break
 
                         else:
-
                             await self._finalize_result_truth(
-
                                 "post_sleep_windup_break",
-
                                 "post_sleep gate windup, guard passed",
-
                                 "WINDUP",
-
                                 query,
-
                             )
 
                             break
-
-
 
                     # Sprint 8UC B.4: Speculative prefetch every 15s
 
                     now_mono = _time.monotonic()
 
                     if (now_mono - self._last_speculative) >= 15.0:
-
                         _t = safe_create_task(self._speculative_prefetch(n=3), name="sprint:speculative_prefetch")
 
                         self._bg_tasks.add(_t)
@@ -8829,12 +8025,9 @@ class SprintScheduler:
 
                         self._last_speculative = now_mono
 
-
-
                     # Sprint 8UC B.5: OODA cycle every 60s
 
                     if (now_mono - self._last_ooda) >= self._ooda_interval:
-
                         _t = safe_create_task(self._run_ooda_cycle(self._pivot_ioc_graph), name="sprint:ooda_cycle")
 
                         self._bg_tasks.add(_t)
@@ -8843,10 +8036,7 @@ class SprintScheduler:
 
                         self._last_ooda = now_mono
 
-
-
             except Exception as exc:
-
                 self._runner.abort(f"scheduler_exception:{type(exc).__name__}")
 
                 self._result.aborted = True
@@ -8857,10 +8047,7 @@ class SprintScheduler:
 
                 self._run_exit_path_override = "aborted_by_error"
 
-
-
             finally:
-
                 # E4: Detach GC finalizer and log stats
 
                 global _gc_sprint_callback_handle, _gc_callback_registered
@@ -8874,51 +8061,40 @@ class SprintScheduler:
                     if _gc_sprint_stats:
                         log.debug(f"[E4] GC sprint stats: {len(_gc_sprint_stats)} collections")
 
-
-
                 # E2: Opt-in tracemalloc snapshot diff
 
                 if _trace_snap_before is not None and _trace_enabled:
-
                     try:
-
                         import tracemalloc
 
                         tracemalloc.stop()
 
                         snap_after = tracemalloc.take_snapshot()
 
-                        diff = snap_after.compare_to(_trace_snap_before, 'lineno')
+                        diff = snap_after.compare_to(_trace_snap_before, "lineno")
 
                         for stat in diff[:10]:
-
                             log.info(f"[E2] Alloc delta: {stat}")
 
                     except Exception as _e:
-
                         log.warning(f"[E2] tracemalloc compare failed: {_e}")
 
                     finally:
-
                         # Sprint F219M: delete snapshot refs so they cannot survive beyond sprint
 
                         # Use try/except since snap_after/diff may not be defined if tracemalloc.stop() raised
 
                         try:
-
                             del snap_after
 
                         except NameError:
                             pass  # noqa: BLE001  # snap_after may not exist if tracemalloc.stop() already ran
 
                         try:
-
                             del diff
 
                         except NameError:
                             pass  # noqa: BLE001  # diff may not exist if tracemalloc.stop() already ran
-
-
 
             # ── Teardown / Export ───────────────────────────────────────────────
 
@@ -8939,6 +8115,7 @@ class SprintScheduler:
                     reset_extractor_stats,
                     shutdown_executor,
                 )
+
                 shutdown_executor()
                 reset_extractor_stats()
             except Exception:  # noqa: BLE001
@@ -8948,26 +8125,22 @@ class SprintScheduler:
             if ENV.get_bool("HLEDAC_ENABLE_NODRIVER"):
                 try:
                     from fetching.public_fetcher import _teardown_browser_pool
+
                     await _teardown_browser_pool()
                     logger.debug("[winddown] browser pool torn down")
                 except Exception as _e:
                     logger.debug("[winddown] browser pool teardown skipped: %s", _e)
 
             if self._config.export_enabled:
-
                 # F238E Phase A: Timer instrumentation -- fail-soft, time.monotonic() only
 
                 try:
-
                     self._timer.phase("export_start")
 
                     await self._run_export(lifecycle)
 
                 finally:
-
                     self._timer.phase("export_end")
-
-
 
             # P0 overlap: join synthesis task that was launched concurrently with export.
             # If synthesis is still running, we wait here. If it finished before export,
@@ -8993,10 +8166,11 @@ class SprintScheduler:
             # IntCounterLayout snapshot hashed into evidence chain provides tamper-evident
             # cross-sprint audit log of counter state. Fail-soft: no exception propagates.
             # [FIX BUG 1] Use getattr guard to handle _int_counter_layout=None on teardown crash.
-            _layout = getattr(self._result, '_int_counter_layout', None)
+            _layout = getattr(self._result, "_int_counter_layout", None)
             if self._evidence_log is not None and _layout is not None:
                 try:
                     from hledac_rust_extensions import chain_hash_snapshot  # type: ignore[import-not-found, misc]
+
                     _snap = _layout.snapshot()
                     _prev = self._prev_chain_hash or ""
                     _event_id = f"sprint_end_{getattr(self, '_sprint_id', 'unknown')}"
@@ -9010,7 +8184,7 @@ class SprintScheduler:
                             "blake3_hex": _blake3_hex,
                             "sha256_hex": _sha256_hex,
                             "counter_snapshot": _snap,
-                            "sprint_id": getattr(self, '_sprint_id', ""),
+                            "sprint_id": getattr(self, "_sprint_id", ""),
                         },
                         confidence=1.0,
                     )
@@ -9033,9 +8207,7 @@ class SprintScheduler:
             # Wave 2: Save RelationshipDiscoveryEngine graph at teardown
 
             if self._rel_discovery_engine is not None:
-
                 try:
-
                     from hledac.universal.paths import LMDB_ROOT
 
                     self._rel_discovery_engine.save_graph(LMDB_ROOT / "rel_discovery_graph.pkl")
@@ -9047,21 +8219,18 @@ class SprintScheduler:
                     self._sync_latent_relationships_to_graph()
 
                 except Exception as _e:
-
                     log.warning(f"[RelDiscovery] save/sync failed: {_e}")
 
             # Sprint F195C: Close forensics enricher and LMDB at TEARDOWN
 
             if self._enrichment_services:
-
                 await self._enrichment_services.close()
-
 
                 # Sprint F250F: Close privacy context at TEARDOWN (fail-soft)
                 if ENV.get_bool("HLEDAC_ENABLE_PRIVACY_LAYER"):
                     try:
-                        _privacy = (self._privacy_layer or getattr(self._layer_manager, "privacy", None))
-                        if _privacy and hasattr(self, '_privacy_context_id') and self._privacy_context_id:
+                        _privacy = self._privacy_layer or getattr(self._layer_manager, "privacy", None)
+                        if _privacy and hasattr(self, "_privacy_context_id") and self._privacy_context_id:
                             await _privacy.close_privacy_context(self._privacy_context_id)
                     except Exception as _e:
                         logger.debug("privacy_context close failed: %s", _e)
@@ -9071,11 +8240,11 @@ class SprintScheduler:
             # concurrent s PUBLIC a FEED branch v _run_one_cycle). To umožňuje
             # feedback loop: sidecar findings → PUBLIC lane v témže sprintu.
             # Windown volání je fail-soft no-op pokud už byly spuštěny.
-            _sidecar_task = safe_create_task(
-                self._sidecar_orchestrator.run_advisory_runner()
-            )
+            _sidecar_task = safe_create_task(self._sidecar_orchestrator.run_advisory_runner())
             _sidecar_task.add_done_callback(
-                lambda t: log.debug("[F290] advisory_runner done: %s", t.exception() if t.done() and t.exception() else "ok")
+                lambda t: log.debug(
+                    "[F290] advisory_runner done: %s", t.exception() if t.done() and t.exception() else "ok"
+                )
             )
 
             # Sprint F265B-III: ANE semantic dedup advisory — catch near-duplicates
@@ -9088,13 +8257,9 @@ class SprintScheduler:
 
             self._maybe_launch_enhanced_research()
 
-
-
             # P12: hermes_engine teardown via ModelManager (bounded M1 8GB lifecycle)
 
             await self._unload_hermes_at_teardown()
-
-
 
             # F2 Audit: Release all lazy models (NER, GNN, ANE, MoE) via brain._lazy
 
@@ -9102,16 +8267,12 @@ class SprintScheduler:
 
             lazy_module.unload_all()
 
-
-
             # Sprint 8UC B.4: Cancel all background speculative tasks
 
             for t in list(self._bg_tasks):
-
                 t.cancel()
 
             if self._bg_tasks:
-
                 await safe_gather_fire_and_forget(*self._bg_tasks, label="sprint_scheduler:7141")
 
             self._bg_tasks.clear()
@@ -9123,117 +8284,83 @@ class SprintScheduler:
             # Steganography, TI-Feed) are tracked in _sidecar_tasks separately
             # from speculative _bg_tasks so they get graceful shutdown first.
             if self._sidecar_tasks:
-
                 _pending = list(self._sidecar_tasks)
 
                 try:
-
                     async with asyncio.timeout(15.0):
-
-                        await safe_gather_fire_and_forget(
-                            *_pending, label="sprint_scheduler:sidecar_tasks"
-                        )
+                        await safe_gather_fire_and_forget(*_pending, label="sprint_scheduler:sidecar_tasks")
 
                 except TimeoutError:
-
                     log.debug("[F265C] Sidecar tasks did not complete in 15s, cancelling")
 
                     for t in _pending:
-
                         if not t.done():
-
                             t.cancel()
 
                 finally:
-
                     self._sidecar_tasks.clear()
-
-
 
             # Sprint F214: Stop DHT node singleton at teardown
 
             if self._dht_node is not None:
-
                 try:
-
                     await self._dht_node.stop()
 
                 except Exception:  # noqa: BLE001
-
                     pass
 
                 self._dht_node = None
 
-
-
             # Sprint F250: Stop I2PTransport singleton at teardown
 
             if self._i2p_transport is not None:
-
                 try:
-
                     await self._i2p_transport.stop()
 
                 except Exception:  # noqa: BLE001
-
                     pass
 
                 self._i2p_transport = None
 
-
-
             # Sprint F250: Stop NymTransport singleton at teardown
 
             if self._nym_transport is not None:
-
                 try:
-
                     await self._nym_transport.stop()
 
                 except Exception:  # noqa: BLE001
-
                     pass
 
                 self._nym_transport = None
 
-
-
             # Sprint F214Q B.3: Stop TorTransport singleton at teardown
 
             if self._tor_transport is not None:
-
                 try:
-
                     await self._tor_transport.stop()
 
                 except Exception:  # noqa: BLE001
-
                     pass
 
                 self._tor_transport = None
-
-
 
             # Sprint F205H: Close metrics registry at teardown (flush + non-tail-loss)
 
             await self._close_metrics_registry()
 
             # F214Q: Reset cover traffic counter per sprint
-            if hasattr(self._fetch_coordinator, 'reset_cover_count'):
+            if hasattr(self._fetch_coordinator, "reset_cover_count"):
                 self._fetch_coordinator.reset_cover_count()
 
             # K14-FIX: MLXWorkerThread.prewarm_all() handles cleanup via weakref.finalize
             # + atexit — no explicit stop() needed here. Local _mlx_prewarm_worker is
             # scoped to _run_internal; its finalizer fires at interpreter exit if needed.
 
-
-
             # Sprint F215G: Close aiohttp sessions for Tor/I2P (session leak fix)
 
             # F215G: These are local singletons in public_fetcher, not shared with session_runtime
 
             try:
-
                 from hledac.universal.fetching import public_fetcher
 
                 await public_fetcher._close_tor_session()
@@ -9241,34 +8368,25 @@ class SprintScheduler:
                 await public_fetcher._close_i2p_session()
 
             except Exception:  # noqa: BLE001
-
                 pass  # noqa: BLE001  # fail-safe: session close must not crash teardown
-
-
 
             # WARN 14: Close GopherTransport and OpenSourceCollectors at teardown
 
             try:
-
                 from hledac.universal.transport import get_gopher_transport
 
                 await get_gopher_transport().stop()
 
             except Exception:  # noqa: BLE001
-
                 pass  # noqa: BLE001  # fail-safe: transport stop must not crash teardown
 
             try:
-
                 from hledac.universal.intelligence import get_open_source_collectors
 
                 await get_open_source_collectors().close()
 
             except Exception:  # noqa: BLE001
-
                 pass  # noqa: BLE001  # fail-safe: collector close must not crash teardown
-
-
 
             # Sprint F169E: Compute dominant branch blocker summary (additive, first-non-empty wins)
 
@@ -9277,65 +8395,49 @@ class SprintScheduler:
             # dominant_public_blocker: backend_degraded takes priority, else error string
 
             match ():
-
                 case _ if _r.public_backend_degraded:
-
                     _r.dominant_public_blocker = "backend_degraded"
 
                 case _ if _r.public_error and _r.public_error not in ("", "null"):
-
                     _r.dominant_public_blocker = _r.public_error[:80]
 
                 case _:
-
                     pass
 
             # dominant_feed_blocker: first non-empty feed blocker type
 
             match ():
-
                 case _ if _r.feed_inaccessible_detected:
-
                     _r.dominant_feed_blocker = "feed_inaccessible"
 
                 case _ if _r.feed_content_empty_detected:
-
                     _r.dominant_feed_blocker = "feed_content_empty"
 
                 case _ if _r.feed_no_pattern_with_content:
-
                     _r.dominant_feed_blocker = "feed_no_pattern_with_content"
 
                 case _ if _r.findings_build_loss_detected:
-
                     _r.dominant_feed_blocker = "findings_build_loss"
 
                 case _ if _r.feed_zero_yield_detected:
-
                     _r.dominant_feed_blocker = "feed_zero_yield"
 
                 case _:
-
                     pass
 
             # dominant_branch_blocker: whichever branch had a non-empty blocker first
 
             match ():
-
                 case _ if _r.dominant_public_blocker and not _r.dominant_feed_blocker:
-
                     _r.dominant_branch_blocker = "public"
 
                 case _ if _r.dominant_feed_blocker and not _r.dominant_public_blocker:
-
                     _r.dominant_branch_blocker = "feed"
 
                 case _ if _r.dominant_public_blocker and _r.dominant_feed_blocker:
-
                     _r.dominant_branch_blocker = "both"
 
                 case _:
-
                     pass
 
             # branch_degradation_summary: descriptive tag combining all detected conditions
@@ -9343,34 +8445,25 @@ class SprintScheduler:
             _tags: list[str] = []
 
             if _r.public_backend_degraded:
-
                 _tags.append("public_degraded")
 
             if _r.feed_inaccessible_detected:
-
                 _tags.append("feed_inaccessible")
 
             if _r.feed_content_empty_detected:
-
                 _tags.append("feed_content_empty")
 
             if _r.feed_no_pattern_with_content:
-
                 _tags.append("feed_no_pattern")
 
             if _r.findings_build_loss_detected:
-
                 _tags.append("findings_build_loss")
 
             if _r.feed_zero_yield_detected:
-
                 _tags.append("feed_zero_yield")
 
             if _tags:
-
                 _r.branch_degradation_summary = "_".join(_tags)
-
-
 
             # Sprint F195C: Update RL policy with sprint result (opt-in, fail-safe)
             _rl_lane_combo: frozenset[str] = frozenset()
@@ -9385,6 +8478,7 @@ class SprintScheduler:
                     _action = self._policy_manager.get_action()
                     if _action is not None and _action >= 10:
                         from rl.actions import LANE_COMBINATIONS, lane_combo_from_action
+
                         _combo_idx = lane_combo_from_action(_action)
                         if _combo_idx is not None and _combo_idx < len(LANE_COMBINATIONS):
                             _rl_lane_combo = LANE_COMBINATIONS[_combo_idx]
@@ -9397,9 +8491,7 @@ class SprintScheduler:
             _pivot_policy_suggestions: list[dict] = []
             if self._policy_manager is not None:
                 try:
-                    _pivot_policy_suggestions = self._policy_manager.suggest_next_pivot(
-                        [], None
-                    )
+                    _pivot_policy_suggestions = self._policy_manager.suggest_next_pivot([], None)
                     # F235: Log + persist RL pivot decision
                     if _pivot_policy_suggestions:
                         first = _pivot_policy_suggestions[0]
@@ -9420,19 +8512,13 @@ class SprintScheduler:
                 except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001  # fail-safe: telemetry is read-only snapshot
 
-
-
             # Sprint F199A: Adapt source weights from per-source quality feedback (fail-soft)
 
             try:
-
                 self._adapt_source_weights_from_feedback()
 
             except Exception as e:
-
                 log.debug(f"[F199A] _adapt_source_weights_from_feedback() failed: {e}")
-
-
 
             # Sprint F228A: Call policy_manager.update_with_quality_decisions if enabled and decisions exist.
 
@@ -9443,7 +8529,6 @@ class SprintScheduler:
             # Telemetry: policy_quality_feedback_calls, _decisions, _sources, _errors.
 
             if self._policy_manager is not None and self._policy_manager.enabled:
-
                 _decisions: list = []
 
                 _feed_url = "feed"
@@ -9453,63 +8538,54 @@ class SprintScheduler:
                 # Each decision dict has accepted (bool) and source_family (str) keys.
 
                 try:
-
                     # Reconstruct FindingQualityDecision-style dicts from accumulated feedback
 
                     for _feed, _fb in self._source_quality_feedback.items():
-
                         _total = _fb.get("fetched", 0)
 
                         _accepted = _fb.get("accepted", 0)
 
                         if _total == 0:
-
                             continue
 
                         # One decision per feed_url: accepted is True if ratio >= 0.15 (same threshold as _adapt)
 
                         _ratio = _accepted / _total if _total > 0 else 0.0
 
-                        _decisions.append({
-
-                            "accepted": _ratio >= 0.15,
-
-                            "source_family": _feed,
-
-                        })
+                        _decisions.append(
+                            {
+                                "accepted": _ratio >= 0.15,
+                                "source_family": _feed,
+                            }
+                        )
 
                     if _decisions:
-
                         try:
-
                             self._policy_manager.update_with_quality_decisions(_decisions, feed_url=_feed_url)
 
                             self._result.policy_quality_feedback_calls += 1
 
                             self._result.policy_quality_feedback_decisions += len(_decisions)
 
-                            self._result.policy_quality_feedback_sources += len({d.get("source_family") for d in _decisions})  # noqa: E501
+                            self._result.policy_quality_feedback_sources += len(
+                                {d.get("source_family") for d in _decisions}
+                            )  # noqa: E501
 
                         except asyncio.CancelledError:
-
                             raise  # CancelledError must propagate -- do not catch here
 
                         except Exception as _e:
-
                             self._result.policy_quality_feedback_errors += 1
 
                             log.debug(f"[F228A] policy_quality_feedback update failed: {_e}")
 
                 except asyncio.CancelledError:
-
                     raise
 
                 except Exception as _e:
-
                     self._result.policy_quality_feedback_errors += 1
 
                     log.debug(f"[F228A] policy_quality_feedback decision collection failed: {_e}")
-
 
             # Sprint F208I-B: Finalize result ONCE before returning.
 
@@ -9519,11 +8595,7 @@ class SprintScheduler:
 
             # _finalize_result_truth with correct exit_path before setting timing fields here).
 
-            await self._ensure_nonfeed_predispatch_before_finalization(
-
-                query, "run_complete"
-
-            )
+            await self._ensure_nonfeed_predispatch_before_finalization(query, "run_complete")
 
             # Sprint F215D: Capture timing fields -- needed for all paths (early + normal).
 
@@ -9536,38 +8608,30 @@ class SprintScheduler:
             # here with the correct exit_path -- we must NOT overwrite with "run_complete".
 
             if not self._result.early_exit_class:
-
                 await self._finalize_result_truth(
-
                     exit_path="run_complete",
-
                     exit_reason="run() finished normally",
-
                     exit_phase="TEARDOWN",
-
                     query=query,
-
                 )
 
             # F238E Phase A: Attach timer events to result before returning (fail-soft)
 
             try:
-
                 self._result.timer_events = self._timer.events
 
             except Exception:
-
                 self._result.timer_events = None
 
             # Sprint F265C: Attach Arrow ingest metrics snapshot to result
             try:
                 from hledac.universal.knowledge.duckdb_store import get_arrow_metrics
+
                 self._result.arrow_metrics = get_arrow_metrics()
             except Exception:
                 self._result.arrow_metrics = {}
 
         except Exception as _run_err:
-
             # Sprint F228F: Classify body exceptions before re-raising.
 
             # SprintScheduler must NEVER silently fail -- classify every error.
@@ -9615,9 +8679,6 @@ class SprintScheduler:
 
             raise
 
-
-
-
         # Sprint F26X-3: CommunicationLayer advisory post-sprint result broadcast.
         # Publish the final SprintSchedulerResult summary so external subscribers
         # (privacy gate, LMDB ingest, forensic fan-out) can flush buffers. Fail-soft.
@@ -9627,7 +8688,11 @@ class SprintScheduler:
                     _broadcast = getattr(self._communication_layer, "broadcast_message", None)
                     if _broadcast is not None:
                         _result_findings = getattr(self._result, "findings", []) if self._result is not None else []
-                        _summary = {"event": "sprint_end", "sprint_id": self.sprint_id, "findings": len(_result_findings)}
+                        _summary = {
+                            "event": "sprint_end",
+                            "sprint_id": self.sprint_id,
+                            "findings": len(_result_findings),
+                        }
                         if asyncio.iscoroutine(_broadcast(_summary)):
                             await _broadcast(_summary)
                 except Exception:  # noqa: BLE001
@@ -9676,20 +8741,12 @@ class SprintScheduler:
 
         return self._result
 
-
-
     async def _record_scheduler_exit(
-
         self,
-
         path: str,
-
         reason: str,
-
         phase: str | None = None,
-
     ) -> None:
-
         """
 
         Sprint F207V-A: Record the exact exit path taken by the scheduler.
@@ -9719,23 +8776,16 @@ class SprintScheduler:
         # capture reflects reality rather than a stale False default.
 
         if not getattr(self._result, "return_guard_checked", False):
-
             # Attempting the guard for capture is fail-safe (sets True or leaves False)
 
             try:
-
                 await self._ensure_mandatory_nonfeed_before_return(
-
                     getattr(self, "_query", "") or "",
-
                     None,
-
                     f"scheduler_exit_capture({path})",
-
                 )
 
             except Exception:  # noqa: BLE001
-
                 pass  # noqa: BLE001  # fail-soft: scheduler exit guard advisory only
 
         self._result.scheduler_exit_guard_checked = self._result.return_guard_checked
@@ -9744,10 +8794,7 @@ class SprintScheduler:
 
         self._result.scheduler_exit_guard_satisfied = self._result.return_guard_satisfied
 
-
-
     def _capture_timing_fields(self) -> None:
-
         """
 
         Sprint F215D: Capture wall-clock timing fields for early-exit classification.
@@ -9767,13 +8814,9 @@ class SprintScheduler:
         self._result.actual_duration_s = _time.monotonic() - self._wall_clock_start
 
         self._result.elapsed_pct = (
-
             self._result.actual_duration_s / self._result.requested_duration_s
-
             if self._result.requested_duration_s > 0
-
             else 0.0
-
         )
 
         # F291 FIX: active_window_budget must account for pre-loop correction.
@@ -9781,19 +8824,13 @@ class SprintScheduler:
         # The correct budget is: sprint_duration - effective_windup_lead - pre_loop_cost.
         # This matches _active_window_budget computed at line ~6886 in _run_internal.
         _windup = self._config.effective_windup_lead_s
-        _pre_loop = getattr(self._result, 'pre_loop_elapsed_s', 0.0) or 0.0
-        self._result.active_window_budget_s = max(
-            30.0,
-            self._config.sprint_duration_s - _windup - _pre_loop
-        )
+        _pre_loop = getattr(self._result, "pre_loop_elapsed_s", 0.0) or 0.0
+        self._result.active_window_budget_s = max(30.0, self._config.sprint_duration_s - _windup - _pre_loop)
 
         # F289-WINDUP: windup_efficiency = ratio of windup to total budget window.
         # If > 0.40 (40%), log a WARNING so operators can see the overconsumption.
         _total_window = self._config.effective_windup_lead_s + self._result.active_window_budget_s
-        _windup_eff = (
-            self._config.effective_windup_lead_s / _total_window
-            if _total_window > 0 else 0.0
-        )
+        _windup_eff = self._config.effective_windup_lead_s / _total_window if _total_window > 0 else 0.0
         self._result.windup_efficiency = _windup_eff
         if _windup_eff > 0.40:
             logger.warning(
@@ -9811,20 +8848,14 @@ class SprintScheduler:
         # Formula: active_elapsed = total_elapsed - windup_actual - pre_loop_cost
         # The active window starts after: setup + windup + pre_loop phases complete.
         _windup_actual = self._config.effective_windup_lead_s
-        _pre_loop_cost = getattr(self._result, 'pre_loop_elapsed_s', 0.0) or 0.0
+        _pre_loop_cost = getattr(self._result, "pre_loop_elapsed_s", 0.0) or 0.0
         _active_elapsed = max(0.0, self._result.actual_duration_s - _windup_actual - _pre_loop_cost)
         self._result.active_window_elapsed_s = _active_elapsed
 
-
-
     def _compute_early_exit_class(
-
         self,
-
         exit_path: str,
-
     ) -> tuple[str, str]:
-
         """
 
         Sprint F215D: Compute canonical early exit classification.
@@ -9849,42 +8880,42 @@ class SprintScheduler:
             # Sprint F4: Track windup_entry_count for early_exit_rate metric
             try:
                 from metrics_registry import get_metrics_registry
+
                 get_metrics_registry().inc("windup_entry_count")
             except Exception:  # noqa: BLE001
                 pass
 
             r = self._result
 
-            _exit_override = getattr(self, '_run_exit_path_override', None)
+            _exit_override = getattr(self, "_run_exit_path_override", None)
             if _exit_override:
                 exit_path = _exit_override
 
             # Sprint F4: Track windup_early_exit_count when early exit detected
-            _is_early_exit = exit_path in (
-                "early_complete_return_guard_satisfied",
-                "early_complete_feed_only",
-                "early_complete_prelude_complete",
-                "early_complete_no_work_remaining",
-            ) or r.elapsed_pct < 0.5
+            _is_early_exit = (
+                exit_path
+                in (
+                    "early_complete_return_guard_satisfied",
+                    "early_complete_feed_only",
+                    "early_complete_prelude_complete",
+                    "early_complete_no_work_remaining",
+                )
+                or r.elapsed_pct < 0.5
+            )
 
             if _is_early_exit:
                 try:
                     from metrics_registry import get_metrics_registry
+
                     get_metrics_registry().inc("windup_early_exit_count")
                 except Exception:  # noqa: BLE001
                     pass
 
             if r.hard_deadline_exceeded or exit_path == "hard_deadline_exceeded":
-
                 return (
-
                     EarlyExitClass.ABORTED_BY_DEADLINE,
-
                     "hard deadline exceeded before planned duration",
-
                 )
-
-
 
             # [F300S-P1] domain_detected but no seeds -- distinct from generic error abort
             if r.aborted and r.abort_reason == "domain_detected_no_seeds":
@@ -9894,57 +8925,31 @@ class SprintScheduler:
                 )
 
             if r.aborted or exit_path == "aborted_by_error":
-
                 return (
-
                     EarlyExitClass.ABORTED_BY_ERROR,
-
                     r.abort_reason or "scheduler exception",
-
                 )
-
-
 
             if hasattr(r, "peak_rss_gib") and r.peak_rss_gib > 0:
-
                 if r.elapsed_pct < 0.5 and r.budget_violations > 0:
-
                     return (
-
                         EarlyExitClass.ABORTED_BY_MEMORY,
-
                         f"memory pressure ({r.budget_violations} budget violations)",
-
                     )
 
-
-
             if r.elapsed_pct >= 0.9:
-
                 return (
-
                     EarlyExitClass.COMPLETED_FULL_DURATION,
-
                     f"ran to planned duration ({r.actual_duration_s:.1f}s / {r.requested_duration_s:.1f}s)",
-
                 )
 
-
-
             nonfeed_accepted = (
-
                 r.lane_ct_accepted_findings
-
                 + r.lane_wayback_accepted_findings
-
                 + r.lane_pdns_accepted_findings
-
                 + r.lane_blockchain_accepted_findings
-
                 + r.lane_ipfs_accepted_findings
-
                 + r.lane_doh_accepted_findings
-
             )
 
             # F214: Compute feed dominance guard -- enriches early_exit_reason
@@ -9952,17 +8957,11 @@ class SprintScheduler:
             feed_accepted = r.accepted_findings - nonfeed_accepted
 
             _guard = FeedDominanceGuard(
-
                 strict=self._config.require_nonfeed_corrob_for_early_exit,
-
             ).compute(
-
                 total_accepted=r.accepted_findings,
-
                 feed_accepted=feed_accepted,
-
                 nonfeed_accepted=nonfeed_accepted,
-
             )
 
             r.feed_dominance_ratio = _guard.feed_dominance_ratio
@@ -9974,123 +8973,70 @@ class SprintScheduler:
             r.should_recommend_nonfeed_diagnostic = _guard.should_recommend_nonfeed_diagnostic
 
             if r.accepted_findings > 0 and nonfeed_accepted == 0:
-
                 _base_reason = f"feed-only early exit ({r.accepted_findings} accepted findings, no nonfeed)"
 
                 if _guard.guard_triggered:
-
                     _base_reason += (
-
-                        f" | feed-dominant:ratio={_guard.feed_dominance_ratio:.3f}"
-
-                        f":recommend nonfeed_diagnostic"
-
+                        f" | feed-dominant:ratio={_guard.feed_dominance_ratio:.3f}:recommend nonfeed_diagnostic"
                     )
 
                 return (
-
                     EarlyExitClass.EARLY_COMPLETE_FEED_ONLY,
-
                     _base_reason,
-
                 )
-
-
 
             if r.return_guard_satisfied and exit_path in (
-
                 "windup_barrier_passed",
-
                 "windup_barrier_break",
-
                 "post_sleep_windup_break",
-
             ):
-
                 return (
-
                     EarlyExitClass.EARLY_COMPLETE_RETURN_GUARD_SATISFIED,
-
                     f"return guard satisfied, early windup ({exit_path})",
-
                 )
-
-
 
             if exit_path in (
-
                 "stop_requested_break",
-
                 "stop_on_first_accepted_break",
-
                 "cycles_limit_reached",
-
                 "max_cycles_break",
-
             ):
-
                 return (
-
                     EarlyExitClass.EARLY_COMPLETE_NO_WORK_REMAINING,
-
                     f"no work remaining ({exit_path})",
-
                 )
-
-
 
             # Sprint F221B: prelude_complete at <90% is a distinct early-exit class
 
             if exit_path == "prelude_complete" and r.elapsed_pct < 0.9:
-
                 pct = r.elapsed_pct * 100
 
                 return (
-
                     EarlyExitClass.EARLY_COMPLETE_PRELUDE_COMPLETE,
-
                     f"prelude early exit ({pct:.0f}% of planned duration, exit_path={exit_path})",
-
                 )
-
-
 
             pct = r.elapsed_pct * 100
 
             return (
-
                 EarlyExitClass.EARLY_COMPLETE_NO_WORK_REMAINING,
-
                 f"early exit ({pct:.0f}% of planned duration, exit_path={exit_path})",
-
             )
 
         except Exception as _exc:
-
             log.warning("_finalize_result_truth failed: %s", _exc)
 
             return (EarlyExitClass.COMPLETED_FULL_DURATION, "")
 
-
-
     # ── Sprint F208I-B: Result finalization ──────────────────────────────────
 
-
-
     async def _finalize_result_truth(
-
         self,
-
         exit_path: str,
-
         exit_reason: str,
-
         exit_phase: str,
-
         query: str = "",
-
     ) -> None:
-
         """
 
         Sprint F208I-B: Finalize SprintSchedulerResult before run() returns.
@@ -10122,15 +9068,12 @@ class SprintScheduler:
         # Compute acquisition terminality first
 
         try:
-
             uma_state = "ok"
 
             swap_detected = False
 
             if self._governor is not None:
-
                 try:
-
                     _snap = await self._governor.evaluate()
 
                     uma_state = getattr(_snap, "uma_state", "ok")
@@ -10138,22 +9081,24 @@ class SprintScheduler:
                     swap_detected = getattr(_snap, "swap_detected", False)
 
                 except Exception:  # noqa: BLE001
-
                     pass  # noqa: BLE001  # fail-soft: governor evaluation advisory only
 
             # Sprint F4: Track memory_pressure_vs_finding_yield correlation
             try:
                 from metrics_registry import get_metrics_registry
+
                 _reg = get_metrics_registry()
-                _total_findings = sum([
-                    self._result.lane_ct_accepted_findings,
-                    self._result.lane_public_accepted_findings,
-                    self._result.lane_wayback_accepted_findings,
-                    self._result.lane_pdns_accepted_findings,
-                    self._result.lane_blockchain_accepted_findings,
-                    self._result.lane_ipfs_accepted_findings,
-                    self._result.lane_doh_accepted_findings,
-                ])
+                _total_findings = sum(
+                    [
+                        self._result.lane_ct_accepted_findings,
+                        self._result.lane_public_accepted_findings,
+                        self._result.lane_wayback_accepted_findings,
+                        self._result.lane_pdns_accepted_findings,
+                        self._result.lane_blockchain_accepted_findings,
+                        self._result.lane_ipfs_accepted_findings,
+                        self._result.lane_doh_accepted_findings,
+                    ]
+                )
                 _yield = _total_findings / max(self._result.actual_duration_s, 1.0)
                 _encoded = f"{uma_state}|{_yield:.4f}|{getattr(self._result, 'elapsed_pct', 0.0):.2f}"
                 _reg.set_gauge("memory_pressure_vs_finding_yield", float(hash(_encoded) % 10000) / 100.0)
@@ -10161,15 +9106,10 @@ class SprintScheduler:
                 pass  # fail-safe
 
             _mlt_required = required_terminal_lanes(
-
                 snapshot=self._acquisition_plan,
-
                 query=query,
-
                 uma_state=uma_state,
-
                 swap_detected=swap_detected,
-
             )
 
             # Build observed outcomes from live scheduler state
@@ -10179,13 +9119,11 @@ class SprintScheduler:
             _seen_outcome_lanes: set[str] = set()
 
             if self._public_outcome is not None:
-
                 _observed_outcomes.append(self._public_outcome)
 
                 _seen_outcome_lanes.add("PUBLIC")
 
             else:
-
                 # [F222A] PUBLIC was required but _public_outcome is None -- emit explicit
 
                 # skipped outcome so PUBLIC always appears in source_family_outcomes as
@@ -10197,52 +9135,35 @@ class SprintScheduler:
                 # skipped outcome wasn't captured in _public_outcome.
 
                 for _mlt in _mlt_required:
-
                     if _mlt.lane == AcquisitionLane.PUBLIC and _mlt.required:
-
                         _skip_reason = "public_branch_not_run"
 
                         if self._acquisition_plan is not None:
-
-                            for _plan in (self._acquisition_plan.plans or ()):
-
+                            for _plan in self._acquisition_plan.plans or ():
                                 if hasattr(_plan, "lane") and _plan.lane == AcquisitionLane.PUBLIC:
-
                                     _reason = getattr(_plan, "reason", "") or ""
 
                                     if _reason:
-
                                         _skip_reason = _reason
 
                                     break
 
-                        _observed_outcomes.append({
-
-                            "lane": "PUBLIC",
-
-                            "family": "PUBLIC",
-
-                            "attempted": False,
-
-                            "skipped": True,
-
-                            "terminal_state": "skipped",
-
-                            "skip_reason": _skip_reason,
-
-                            "raw_count": 0,
-
-                            "built_count": 0,
-
-                            "accepted_count": 0,
-
-                            "error": None,
-
-                            "timeout": False,
-
-                            "duration_s": None,
-
-                        })
+                        _observed_outcomes.append(
+                            {
+                                "lane": "PUBLIC",
+                                "family": "PUBLIC",
+                                "attempted": False,
+                                "skipped": True,
+                                "terminal_state": "skipped",
+                                "skip_reason": _skip_reason,
+                                "raw_count": 0,
+                                "built_count": 0,
+                                "accepted_count": 0,
+                                "error": None,
+                                "timeout": False,
+                                "duration_s": None,
+                            }
+                        )
 
                         _seen_outcome_lanes.add("PUBLIC")
 
@@ -10261,13 +9182,11 @@ class SprintScheduler:
             _ct_outcome = self._collect_ct_terminal_outcome()
 
             if _ct_outcome is not None:
-
                 _observed_outcomes.append(_ct_outcome)
 
                 _seen_outcome_lanes.add("CT")
 
             else:
-
                 # [F221B] CT was required but not attempted -- emit explicit skipped outcome
 
                 # so CT always appears in source_family_outcomes as a terminal state.
@@ -10277,55 +9196,39 @@ class SprintScheduler:
                 # skipped silently; it must NOT disappear from terminal outcomes.
 
                 for _mlt in _mlt_required:
-
                     if _mlt.lane == AcquisitionLane.CT and _mlt.required:
-
                         # Derive skip reason from acquisition plan
 
                         # Default: be specific rather than generic "hardware_critical"
                         _skip_reason = "ct_required_not_attempted"
 
                         if self._acquisition_plan is not None:
-
-                            for _plan in (self._acquisition_plan.plans or ()):
-
+                            for _plan in self._acquisition_plan.plans or ():
                                 if hasattr(_plan, "lane") and _plan.lane == AcquisitionLane.CT:
-
                                     _reason = getattr(_plan, "reason", "") or ""
 
                                     if "swap" in _reason or "hardware_critical" in _reason:
-
                                         _skip_reason = _reason
 
                                     elif not getattr(_plan, "enabled", True):
-
                                         _skip_reason = _reason or "lane_disabled"
 
                                     break
 
-                        _observed_outcomes.append({
-
-                            "lane": "CT",
-
-                            "family": "CT",
-
-                            "attempted": False,
-
-                            "skipped": True,
-
-                            "terminal_state": "skipped",
-
-                            "skip_reason": _skip_reason,
-
-                            "raw_count": 0,
-
-                            "accepted_count": 0,
-
-                            "error": None,
-
-                            "timeout": False,
-
-                        })
+                        _observed_outcomes.append(
+                            {
+                                "lane": "CT",
+                                "family": "CT",
+                                "attempted": False,
+                                "skipped": True,
+                                "terminal_state": "skipped",
+                                "skip_reason": _skip_reason,
+                                "raw_count": 0,
+                                "accepted_count": 0,
+                                "error": None,
+                                "timeout": False,
+                            }
+                        )
 
                         _seen_outcome_lanes.add("CT")
 
@@ -10336,51 +9239,30 @@ class SprintScheduler:
             # lanes already represented via _public_outcome or CT check above
 
             for _o in self._result.acquisition_lane_outcomes or ():
-
                 _lane_name: str | None = getattr(_o, "lane", None)
 
                 if _lane_name is None and isinstance(_o, dict):
-
                     _lane_name = _o.get("lane")
 
                 if _lane_name and _lane_name not in _seen_outcome_lanes:
-
-                    _observed_outcomes.append(
-
-                        _o.to_dict() if hasattr(_o, "to_dict") else dict(_o)
-
-                    )
+                    _observed_outcomes.append(_o.to_dict() if hasattr(_o, "to_dict") else dict(_o))
 
                     _seen_outcome_lanes.add(_lane_name)
 
-
-
             _term_report = terminality_report(
-
                 required_lanes=_mlt_required,
-
                 observed_outcomes=tuple(_observed_outcomes),
-
             )
 
             self._result.acquisition_terminality_checked = True
 
-            self._result.acquisition_terminality_satisfied = (
+            self._result.acquisition_terminality_satisfied = len(_term_report.get("missing_lanes", [])) == 0
 
-                len(_term_report.get("missing_lanes", [])) == 0
-
-            )
-
-            self._result.acquisition_terminality_missing_lanes = tuple(
-
-                _term_report.get("missing_lanes", [])
-
-            )
+            self._result.acquisition_terminality_missing_lanes = tuple(_term_report.get("missing_lanes", []))
 
             self._result.acquisition_terminality_report = _term_report
 
         except Exception as exc:
-
             # Fail-soft: terminality errors don't block return
 
             log.debug("[F208I-B] acquisition_terminality check failed: %s", exc)
@@ -10393,8 +9275,6 @@ class SprintScheduler:
 
             self._result.acquisition_terminality_report = {"error": str(exc)}
 
-
-
         # Sprint F215D: Compute and record early exit classification
 
         _exit_class, _exit_reason = self._compute_early_exit_class(exit_path)
@@ -10403,13 +9283,9 @@ class SprintScheduler:
 
         self._result.early_exit_reason = _exit_reason
 
-
-
         # Record scheduler exit path
 
         await self._record_scheduler_exit(exit_path, exit_reason, exit_phase)
-
-
 
         # Sprint F216C: Compute PUBLIC stage machine -- must happen after all _public_outcome
 
@@ -10417,11 +9293,7 @@ class SprintScheduler:
 
         # _attempt_public_prewindup_barrier and all error/timeout branches)
 
-        _pub_stage, _pub_counters = _compute_public_stage(
-
-            self._public_outcome, self._public_pipeline_result
-
-        )
+        _pub_stage, _pub_counters = _compute_public_stage(self._public_outcome, self._public_pipeline_result)
 
         self._result.public_terminal_stage = _pub_stage
 
@@ -10432,14 +9304,9 @@ class SprintScheduler:
         # so acquisition_report can surface why DISCOVERY_ERROR occurred
 
         if self._public_pipeline_result is not None:
-
-            self._result.public_discovery_empty_reason = getattr(
-
-                self._public_pipeline_result, "public_discovery_empty_reason", ""
-
-            ) or ""
-
-
+            self._result.public_discovery_empty_reason = (
+                getattr(self._public_pipeline_result, "public_discovery_empty_reason", "") or ""
+            )
 
         # Sprint F217B: Compute nonfeed mission telemetry
 
@@ -10450,21 +9317,13 @@ class SprintScheduler:
         _acq_profile = getattr(self._config, "acquisition_profile", "default")
 
         if NonfeedMissionController.is_mission_profile(_acq_profile):
-
             try:
-
                 _mission_snapshot = NonfeedMissionController.build_snapshot(
-
                     acquisition_profile=_acq_profile,
-
                     acquisition_lane_outcomes=self._result.acquisition_lane_outcomes or (),
-
                     public_outcome=self._public_outcome,
-
                     ct_quarantine_count=self._result.ct_quarantine_count,
-
                     quality_rejection_ledger=self._result.quality_rejection_ledger or (),
-
                 )
 
                 self._result.nonfeed_mission_active = _mission_snapshot.mission_active
@@ -10488,17 +9347,12 @@ class SprintScheduler:
                 # Sprint F217E: Record ledger summary at teardown
 
                 if hasattr(self, "_nonfeed_ledger") and self._nonfeed_ledger is not None:
-
                     self._result.nonfeed_candidate_ledger_summary = self._nonfeed_ledger.summary()
 
             except Exception as _exc:
-
                 log.debug("[F217B] NonfeedMissionController snapshot failed: %s", _exc)
 
                 # Fail-soft: telemetry errors don't block return
-
-
-
 
         # ── F265B: Transport lane efficiency telemetry ──────────────────────────
         try:
@@ -10527,18 +9381,11 @@ class SprintScheduler:
 
     # ── Sprint F208M-A: Nonfeed predispatch before final terminality ──────────
 
-
-
     async def _ensure_nonfeed_predispatch_before_finalization(
-
         self,
-
         query: str,
-
         reason: str,
-
     ) -> None:
-
         """
 
         Sprint F208M-A: Ensure nonfeed predispatch has run before final terminality.
@@ -10582,19 +9429,13 @@ class SprintScheduler:
         """
 
         if self._result.nonfeed_predispatch_checked:
-
             return
-
-
 
         self._result.nonfeed_predispatch_checked = True
 
         self._result.nonfeed_predispatch_reason = reason
 
-
-
         try:
-
             # Run bounded nonfeed predispatch using the existing probe lane helper.
 
             # This uses the same seams as _maybe_dispatch_nonfeed_probe_lanes:
@@ -10616,13 +9457,11 @@ class SprintScheduler:
             self._result.nonfeed_predispatch_outcomes_count = _count
 
         except asyncio.CancelledError:
-
             # Propagate cancellation -- do not catch
 
             raise
 
         except Exception as exc:
-
             # Record terminal error outcome -- terminality will be computed with
 
             # whatever state is available; fail-safe prevents crash
@@ -10633,14 +9472,9 @@ class SprintScheduler:
 
             self._result.nonfeed_predispatch_outcomes_count = 0
 
-
-
     # ── Sprint F208L-A: CT outcome SSOT ────────────────────────────────────────
 
-
-
     def _collect_ct_terminal_outcome(self) -> dict | None:
-
         """
 
         Sprint F208L-A: Collect canonical CT terminal outcome from all CT surfaces.
@@ -10681,26 +9515,20 @@ class SprintScheduler:
 
         _ct_outcome: dict | None = None
 
-
-
         # Surface 1: acquisition_lane_outcomes (canonical lane runner result)
 
-        for _o in (self._result.acquisition_lane_outcomes or ()):
-
+        for _o in self._result.acquisition_lane_outcomes or ():
             _lane_name = getattr(_o, "lane", None)
 
             if _lane_name is None and isinstance(_o, dict):
-
                 _lane_name = _o.get("lane")
 
             if _lane_name == "CT":
-
                 _d = _o.to_dict() if hasattr(_o, "to_dict") else dict(_o)
 
                 _attempted = _d.get("attempted", False)
 
                 if not _attempted:
-
                     continue  # skip non-attempted CT entries
 
                 _raw = _d.get("raw_count", 0) or _d.get("ct_results_raw", 0) or 0
@@ -10713,82 +9541,55 @@ class SprintScheduler:
 
                 _skipped = _d.get("skipped", False)
 
-
-
                 # Derive terminal_state
 
                 if _error is not None:
-
                     _ts = "error"
 
                 elif _timeout:
-
                     _ts = "timeout"
 
                 elif _skipped:
-
                     _ts = "skipped"
 
                 elif _raw > 0 and _accepted == 0:
-
                     _ts = "success_empty"
 
                 elif _raw == 0 and _attempted and _error is None:
-
                     _ts = "empty"
 
                 else:
-
                     _ts = "success"
 
-
-
                 _ct_outcome = {
-
                     "lane": "CT",
-
                     "family": "CT",
-
                     "attempted": True,
-
                     "terminal_state": _ts,
-
                     "raw_count": _raw,
-
                     "accepted_count": _accepted,
-
                     "error": _error,
-
                     "timeout": _timeout,
-
                     "skipped": _skipped,
-
                 }
 
                 break
 
-
-
         # Surface 2: _lane_outcomes (in-memory lane outcomes, may overlap with surface 1)
 
         if _ct_outcome is None:
-
             for _o in getattr(self, "_lane_outcomes", None) or ():
-
                 _lane_name = getattr(_o, "lane", None)
 
                 if _lane_name is None and isinstance(_o, dict):
-
                     _lane_name = _o.get("lane")
 
                 if _lane_name == "CT":
-
                     _d = _o.to_dict() if hasattr(_o, "to_dict") else dict(_o)
 
                     _attempted = _d.get("attempted", False)
 
                     if not _attempted:
-
                         continue
 
                     _raw = _d.get("raw_count", 0) or _d.get("ct_results_raw", 0) or 0
@@ -10801,66 +9602,43 @@ class SprintScheduler:
 
                     _skipped = _d.get("skipped", False)
 
-
-
                     if _error is not None:
-
                         _ts = "error"
 
                     elif _timeout:
-
                         _ts = "timeout"
 
                     elif _skipped:
-
                         _ts = "skipped"
 
                     elif _raw > 0 and _accepted == 0:
-
                         _ts = "success_empty"
 
                     elif _raw == 0 and _attempted and _error is None:
-
                         _ts = "empty"
 
                     else:
-
                         _ts = "success"
 
-
-
                     _ct_outcome = {
-
                         "lane": "CT",
-
                         "family": "CT",
-
                         "attempted": True,
-
                         "terminal_state": _ts,
-
                         "raw_count": _raw,
-
                         "accepted_count": _accepted,
-
                         "error": _error,
-
                         "timeout": _timeout,
-
                         "skipped": _skipped,
-
                     }
 
                     break
-
-
 
         # Surface 3: ct_log_discovered / lane_ct_accepted_findings counters
 
         # (set by source_finding_bridge even when lane outcome was not recorded)
 
         if _ct_outcome is None:
-
             _disc = getattr(self._result, "ct_log_discovered", 0) or 0
 
             _acc = getattr(self._result, "lane_ct_accepted_findings", 0) or 0
@@ -10868,55 +9646,34 @@ class SprintScheduler:
             _ct_adapter_called = getattr(self._ct_log_client, "_called", False)
 
             if _disc > 0 or _acc > 0 or _ct_adapter_called:
-
                 _raw = _disc
 
                 if _raw > 0 and _acc == 0:
-
                     _ts = "success_empty"
 
                 elif _raw == 0 and _ct_adapter_called and _acc == 0:
-
                     _ts = "empty"
 
                 else:
-
                     _ts = "success"
 
                 _ct_outcome = {
-
                     "lane": "CT",
-
                     "family": "CT",
-
                     "attempted": True,
-
                     "terminal_state": _ts,
-
                     "raw_count": _raw,
-
                     "accepted_count": _acc,
-
                     "error": None,
-
                     "timeout": False,
-
                     "skipped": False,
-
                 }
-
-
 
         return _ct_outcome
 
-
-
     # ── Sprint F210A: Source family outcomes terminality SSOT ────────────────
 
-
-
     def _final_source_family_outcomes_for_terminality(self) -> tuple[dict, ...]:
-
         """
 
         Sprint F210A: Canonical source family outcomes for terminality SSOT.
@@ -10953,19 +9710,14 @@ class SprintScheduler:
 
         _seen: set[str] = set()
 
-
-
         # PUBLIC: mirrors _build_diagnostic_report lines 6233-6235
 
         # _public_outcome is already a normalized dict (see line 3371)
 
         if self._public_outcome is not None:
-
             _outcomes.append(self._public_outcome)
 
             _seen.add("PUBLIC")
-
-
 
         # CT: use _collect_ct_terminal_outcome for canonical CT terminal outcome
 
@@ -10974,49 +9726,33 @@ class SprintScheduler:
         _ct_outcome = self._collect_ct_terminal_outcome()
 
         if _ct_outcome is not None:
-
             _outcomes.append(_ct_outcome)
 
             _seen.add("CT")
-
-
 
         # Other lanes: mirror the EXACT same family/lane loop as _build_diagnostic_report
 
         # lines 6222-6243 (normalize_source_family_outcome for each family)
 
         for _fam, _lane in [
-
             ("ct", AcquisitionLane.CT),
-
             ("wayback", AcquisitionLane.WAYBACK),
-
             ("passive_dns", AcquisitionLane.PASSIVE_DNS),
-
             ("blockchain", AcquisitionLane.BLOCKCHAIN),
-
             ("feed", "FEED"),
-
             ("public", AcquisitionLane.PUBLIC),
-
         ]:
-
             # Skip families already covered above
 
             if _lane == "PUBLIC":
-
                 continue  # handled above via _public_outcome
 
             if _lane == AcquisitionLane.CT:
-
                 continue  # handled above via _collect_ct_terminal_outcome
-
-
 
             _raw: dict | list | None = None
 
             if _lane == "FEED":
-
                 _raw = getattr(self, "_feed_verdicts", []) or None
 
                 # F221A: FEED accepted_count must come from result-level counts, not _feed_verdicts
@@ -11026,48 +9762,31 @@ class SprintScheduler:
                 # Net FEED = total - public - CT_log
 
                 if _raw is not None:
-
                     _feed_accepted = (
-
                         (self._result.accepted_findings or 0)
-
                         - (self._result.public_accepted_findings or 0)
-
                         - (self._result.ct_log_accepted_findings or 0)
-
                     )
 
                     _feed_accepted = max(0, _feed_accepted)
 
                     if isinstance(_raw, list) and _raw:
-
                         _first = _raw[0]
 
                         if isinstance(_first, tuple):
-
                             _raw = {
-
                                 "verdict": _first,
-
                                 "accepted_count": _feed_accepted,
-
                                 "raw_count": _first[1] if len(_first) > 1 else 0,
-
                                 "attempted": True,
-
                             }
 
             elif self._lane_outcomes:
-
                 for _o in self._lane_outcomes:
-
                     if hasattr(_o, "lane") and _o.lane == _lane:
-
                         _raw = _o
 
                         break
-
-
 
             _normalized = normalize_source_family_outcome(_fam, _raw if isinstance(_raw, dict) else {})
 
@@ -11076,12 +9795,9 @@ class SprintScheduler:
             _normalized["lane"] = _lane_name
 
             if _lane_name not in _seen:
-
                 _outcomes.append(_normalized)
 
                 _seen.add(_lane_name)
-
-
 
         # F235D: Canonicalize before returning -- dedup merged families so
 
@@ -11089,22 +9805,13 @@ class SprintScheduler:
 
         return tuple(canonicalize_source_family_outcomes(_outcomes))
 
-
-
     # ── Sprint F207M-A: Nonfeed Pre-dispatch ────────────────────────────────
 
-
-
     async def _maybe_dispatch_nonfeed_probe_lanes(
-
         self,
-
         query: str,
-
         duckdb_store: Any,
-
     ) -> None:
-
         """
 
         Sprint F207M-A: Bounded nonfeed pre-dispatch checkpoint.
@@ -11145,67 +9852,44 @@ class SprintScheduler:
 
         import time as _time
 
-
-
         if self._nonfeed_predispatch_done:
-
             return
-
-
 
         if self._acquisition_plan is None:
-
             return
-
-
 
         # Check if CT is enabled in the acquisition plan
 
         ct_plan = get_lane_plan(self._acquisition_plan, AcquisitionLane.CT)
 
         if ct_plan is None or not ct_plan.enabled:
-
             self._nonfeed_predispatch_done = True
 
             return
 
-
-
         # Check if this is a domain query (CT pre-dispatch is only meaningful for domains)
 
         if not is_lane_enabled(self._acquisition_plan, AcquisitionLane.CT):
-
             # CT not enabled -- nothing to pre-dispatch
 
             self._nonfeed_predispatch_done = True
 
             return
 
-
-
         # Sprint F207M-A: Check whether CT was already attempted via aggressive branch
 
         _ct_already_run = (
-
             self._result.ct_log_discovered > 0
-
             or self._result.lane_ct_accepted_findings > 0
-
             or getattr(self._ct_log_client, "_called", False)
-
         )
-
-
 
         # Windup blocking: if domain query + CT enabled + not yet run, block windup
 
         if _ct_already_run:
-
             self._nonfeed_predispatch_done = True
 
             return
-
-
 
         # Windup will be blocked until pre-dispatch runs
 
@@ -11213,37 +9897,26 @@ class SprintScheduler:
 
         log.debug("[F207M-A] Nonfeed pre-dispatch: blocking windup until CT attempted")
 
-
-
         # Determine memory state for optional lane gating
 
         _uma = "ok"
 
         if self._governor is not None:
-
             try:
-
                 _snap = await self._governor.evaluate()
 
                 _uma = getattr(_snap, "uma_state", "ok")
 
             except Exception:  # noqa: BLE001
-
                 pass
 
-
-
         _memory_ok = _uma in ("ok", "warn")
-
-
 
         # Build a minimal CT plan with tiny bounds
 
         from hledac.universal.runtime.acquisition_strategy import (
             AcquisitionLaneOutcome,
         )
-
-
 
         _t0 = _time.monotonic()
 
@@ -11253,10 +9926,7 @@ class SprintScheduler:
 
         _outcome: AcquisitionLaneOutcome | None = None
 
-
-
         async def _run_ct_predispatch() -> AcquisitionLaneOutcome:
-
             """CT pre-dispatch with max_items=5, timeout=15s."""
 
             _start = _time.monotonic()
@@ -11276,9 +9946,7 @@ class SprintScheduler:
             _candidates: tuple = ()  # initialized; set by ct_results_to_findings on success
 
             try:
-
                 async with asyncio.timeout(15.0):
-
                     _ct_call = _get_ct_adapter()
 
                     # Build lane query for CT
@@ -11288,29 +9956,20 @@ class SprintScheduler:
                     _shaped = build_lane_query(query, AcquisitionLane.CT)
 
                     if isinstance(_shaped, dict) or not _shaped:
-
                         raise ValueError("empty_ct_query")
 
                     result, ct_outcome = await _ct_call(
-
                         query=_shaped,
-
                         max_results=5,
-
                         timeout_s=15.0,
-
                     )
 
                     _ct_results_raw = ct_outcome.raw_count
 
-
-
                     # Bridge conversion
 
                     candidates, rejections, _ct_telemetry = ct_results_to_findings(
-
                         result, ct_outcome, query, sprint_id=f"predispatch-{int(_time.time())}"
-
                     )
 
                     _candidate_findings = tuple(candidates)
@@ -11321,50 +9980,37 @@ class SprintScheduler:
 
                     _sample_rejections = tuple(rejections[:3])
 
-
-
                     accepted = 0
 
                     if _candidate_findings and duckdb_store is not None:
-
                         if self._duckdb_can_ingest:
-
                             try:
-
                                 ingest_results = await self._gate_then_ingest_and_accumulate(
-
                                     duckdb_store, list(_candidate_findings)
-
                                 )
                                 # Sprint F11C: Wire EvidenceLog — decision event
                                 if self._evidence_log is not None:
                                     try:
                                         self._evidence_log.create_event(
                                             "decision",
-                                            {"gate": "ingest", "findings_count": len(_candidate_findings), "accepted": True},
+                                            {
+                                                "gate": "ingest",
+                                                "findings_count": len(_candidate_findings),
+                                                "accepted": True,
+                                            },
                                             source_ids=[],
                                             confidence=1.0,
                                         )
                                     except Exception:  # noqa: BLE001
                                         pass
-                                accepted = sum(
-
-                                    1 for r in ingest_results
-
-                                    if isinstance(r, dict) and r.get("accepted")
-
-                                )
+                                accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
 
                             except Exception as _exc:
-
                                 log.warning(
-
                                     "sprint %s: quality gate ingest failed -- %s: %s",
-
                                     getattr(self._result, "sprint_id", "?"),
-
-                                    type(_exc).__name__, _exc,
-
+                                    type(_exc).__name__,
+                                    _exc,
                                 )
 
                                 # NOTE S1: DuckDB ingest failure -- findings not lost, only
@@ -11374,7 +10020,6 @@ class SprintScheduler:
                                 ingest_results = []
 
                             else:
-
                                 # Sprint F214A: Update CT telemetry with actual storage results
 
                                 # Only called when ingest succeeded -- ingest_results is guaranteed
@@ -11386,10 +10031,7 @@ class SprintScheduler:
                             # Sprint F216G: Record quality gate rejections from this ingest
 
                     if ct_outcome.error:
-
                         _ct_error = ct_outcome.error
-
-
 
                     # ── Sprint F214D: CT Bridge Loss Audit ───────────────────────────
 
@@ -11403,40 +10045,30 @@ class SprintScheduler:
 
                     _bridge_candidates = len(candidates) if candidates else 0
 
-
-
                     # Sanitized sample keys from raw hits (capped at 3 -- no raw data exposed)
 
                     _raw_keys: tuple[str, ...] = ()
 
                     if _bridge_raw > 0 and hasattr(result, "hits") and result.hits:
-
                         _sample_hits = list(result.hits)[:3]
 
-                        _raw_keys = tuple(sorted({
-
-                            k for hit in _sample_hits
-
-                            for k in (getattr(hit, "url", None), getattr(hit, "ct_name_value", None))
-
-                            if k
-
-                        }))
-
-
+                        _raw_keys = tuple(
+                            sorted(
+                                {
+                                    k
+                                    for hit in _sample_hits
+                                    for k in (getattr(hit, "url", None), getattr(hit, "ct_name_value", None))
+                                    if k
+                                }
+                            )
+                        )
 
                     # Derive ct_loss_stage -- each branch is mutually exclusive
 
                     # Track whether storage was actually attempted (vs candidates built but not accumulated)
 
                     _storage_attempted = (
-
-                        bool(_candidate_findings)
-
-                        and duckdb_store is not None
-
-                        and self._duckdb_can_ingest
-
+                        bool(_candidate_findings) and duckdb_store is not None and self._duckdb_can_ingest
                     )
 
                     # F217D: Check for stale cache before provider-failure derivation
@@ -11448,7 +10080,6 @@ class SprintScheduler:
                     _ct_cache_used = getattr(ct_outcome, "ct_cache_used", False)
 
                     if _ct_cache_used:
-
                         # F230C: Cache was used as provider fallback -- stale cache is the
 
                         # terminal outcome regardless of raw count
@@ -11458,7 +10089,6 @@ class SprintScheduler:
                         self._result.ct_bridge_invoked = False
 
                     elif _ct_results_raw == 0:
-
                         # F217D: raw=0 and no stale cache -- explicit provider failure
 
                         _ct_loss_stage = CTLossStage.PROVIDER_FAILURE.value
@@ -11466,17 +10096,11 @@ class SprintScheduler:
                         self._result.ct_bridge_invoked = False
 
                     elif (
-
                         _bridge_raw == 0
-
                         and _ct_results_raw > 0
-
                         and _bridge_candidates == 0
-
                         and REJECTION_UNSUPPORTED_SHAPE in _rejection_reasons
-
                     ):
-
                         _ct_loss_stage = CTLossStage.UNSUPPORTED_RAW_SHAPE.value
 
                         self._result.ct_bridge_invoked = True
@@ -11486,25 +10110,21 @@ class SprintScheduler:
                     # and telemetry recorded raw entries (hits were processed by bridge).
 
                     elif _bridge_candidates == 0 and _bridge_raw > 0:
-
                         _ct_loss_stage = CTLossStage.ALL_REJECTED_BY_BRIDGE.value
 
                         self._result.ct_bridge_invoked = True
 
                     elif _bridge_candidates > 0 and not _storage_attempted:
-
                         _ct_loss_stage = CTLossStage.CANDIDATES_BUILT_NOT_ACCUMULATED.value
 
                         self._result.ct_bridge_invoked = True
 
                     elif _bridge_candidates > 0 and accepted == 0:
-
                         _ct_loss_stage = CTLossStage.ACCUMULATED_NOT_STORED.value
 
                         self._result.ct_bridge_invoked = True
 
                     elif _bridge_candidates > 0 and accepted > 0:
-
                         # F215C: no_loss requires ALL: raw>0, candidates>0, stored>0, accepted>0
 
                         _ct_loss_stage = CTLossStage.NO_LOSS.value
@@ -11512,7 +10132,6 @@ class SprintScheduler:
                         self._result.ct_bridge_invoked = True
 
                     elif _ct_results_raw > 0 and _bridge_candidates == 0 and _bridge_raw == 0:
-
                         # F215C: bridge was called but returned no telemetry entries (early-return path).
 
                         # Hits were presented but all were rejected at the raw-entry level.
@@ -11522,7 +10141,6 @@ class SprintScheduler:
                         self._result.ct_bridge_invoked = True
 
                     else:
-
                         # F228E: Bridge was NOT called despite raw entries existing (e.g., _needs_ct=False).
 
                         # This is RAW_NOT_BRIDGED -- distinct from BRIDGE_NOT_INVOKED (no raw at all).
@@ -11530,8 +10148,6 @@ class SprintScheduler:
                         _ct_loss_stage = CTLossStage.RAW_NOT_BRIDGED.value
 
                         self._result.ct_bridge_invoked = False
-
-
 
                     # Persist CT bridge loss telemetry onto the canonical result
 
@@ -11542,27 +10158,17 @@ class SprintScheduler:
                     _ct_raw = _ct_results_raw
 
                     if _ct_raw > 0:
-
                         self._emit_source_family_event(
-
                             family="CT",
-
                             event="raw_received",
-
                             count=_ct_raw,
-
                         )
 
                     self._emit_source_family_event(
-
                         family="CT",
-
                         event="terminal",
-
                         reason="bridge_invoked",
-
                         terminal_state="success",
-
                     )
 
                     self._result.ct_raw_sample_keys = _raw_keys
@@ -11586,14 +10192,17 @@ class SprintScheduler:
                     # Sprint F226C: CT bridge acceptance diagnostics
 
                     if isinstance(_ct_telemetry, dict):
-
                         self._result.ct_candidate_count = _ct_telemetry.get("ct_bridge_candidate_count", 0)
 
                         self._result.ct_valid_domain_count = _ct_telemetry.get("ct_bridge_valid_domain_count", 0)
 
-                        self._result.ct_bridge_build_success_count = _ct_telemetry.get("ct_bridge_build_success_count", 0)  # noqa: E501
+                        self._result.ct_bridge_build_success_count = _ct_telemetry.get(
+                            "ct_bridge_build_success_count", 0
+                        )  # noqa: E501
 
-                        self._result.ct_bridge_quality_rejected_count = _ct_telemetry.get("ct_bridge_quality_rejected_count", 0)  # noqa: E501
+                        self._result.ct_bridge_quality_rejected_count = _ct_telemetry.get(
+                            "ct_bridge_quality_rejected_count", 0
+                        )  # noqa: E501
 
                         # F231B: CT expansion clue summary -- domain expansion evidence visible even when accepted=0
 
@@ -11616,45 +10225,41 @@ class SprintScheduler:
                         _ct_examples = _ct_telemetry.get("ct_candidate_examples", []) or []
 
                         if _ct_examples:
-
                             # Sprint Opt: orjson (5-8× rychlejší než stdlib json, C + SIMD)
                             _ex_samples: list[str] = []
 
                             for _ex in _ct_examples[:5]:
-
                                 try:
-
                                     _ex_samples.append(_msgspec_encode(_ex).decode())
 
                                 except Exception:  # noqa: BLE001
-
                                     pass
 
                             self._result.ct_candidate_examples = tuple(_ex_samples)
 
                     # Sprint F216D: CT quarantine evidence for raw hits rejected by bridge
 
-                    _ct_quarantine_count = _ct_telemetry.get("ct_quarantine_count", 0) if isinstance(_ct_telemetry, dict) else 0  # noqa: E501
+                    _ct_quarantine_count = (
+                        _ct_telemetry.get("ct_quarantine_count", 0) if isinstance(_ct_telemetry, dict) else 0
+                    )  # noqa: E501
 
-                    _ct_quarantine_entries = _ct_telemetry.get("ct_quarantine_entries", []) if isinstance(_ct_telemetry, dict) else []  # noqa: E501
+                    _ct_quarantine_entries = (
+                        _ct_telemetry.get("ct_quarantine_entries", []) if isinstance(_ct_telemetry, dict) else []
+                    )  # noqa: E501
 
                     self._result.ct_quarantine_count = _ct_quarantine_count
 
                     # Bounded samples: cap at 10, store as JSON strings for report persistence
 
                     if _ct_quarantine_entries:
-
                         # Sprint Opt: orjson (5-8× rychlejší, eager bytes)
                         _samples: list[str] = []
 
                         for _entry in _ct_quarantine_entries[:10]:
-
                             try:
-
                                 _samples.append(_msgspec_encode(_entry).decode())
 
                             except Exception:  # noqa: BLE001
-
                                 pass
 
                         self._result.ct_quarantine_samples = tuple(_samples)
@@ -11664,23 +10269,15 @@ class SprintScheduler:
                     # Sprint F217E: Record CT quarantine events in ledger
 
                     for _entry in _ct_quarantine_entries:
-
                         try:
-
                             self._nonfeed_ledger.add_ct_quarantine(
-
                                 domain=_entry.get("raw_value", ""),
-
                                 reject_reason=_entry.get("reject_reason", "unknown"),
-
                                 source_url=_entry.get("source_url", ""),
-
                                 query=_entry.get("normalized_query", ""),
-
                             )
 
                         except Exception:  # noqa: BLE001
-
                             pass  # noqa: BLE001  # fail-soft: ledger must never block sprint
 
                     # Sprint F217D: CT provider resilience telemetry
@@ -11695,196 +10292,134 @@ class SprintScheduler:
 
                     # ── End F217D ────────────────────────────────────────────────
 
-
-
                     return AcquisitionLaneOutcome(
-
                         lane=AcquisitionLane.CT,
-
                         enabled=True,
-
                         attempted=True,
-
                         accepted_findings=accepted,
-
                         produced_items=_ct_results_raw,
-
                         duration_s=_time.monotonic() - _start,
-
                         source_family="ct",
-
                         ct_query=_shaped,
-
                         ct_results_raw=_ct_results_raw,
-
                         error=_ct_error,
-
                         candidate_findings=_candidate_findings,
-
                         rejection_reasons=_rejection_reasons,
-
                         rejected_count=_rejected_count,
-
                         sample_rejections=_sample_rejections,
-
                     )
 
             except TimeoutError:
-
                 return AcquisitionLaneOutcome(
-
                     lane=AcquisitionLane.CT,
-
                     enabled=True,
-
                     attempted=True,
-
                     timeout=True,
-
                     duration_s=_time.monotonic() - _start,
-
                     error="predispatch_timeout",
-
                     source_family="ct",
-
-                    ct_query=str(_shaped) if '_shaped' in dir() else "",
-
+                    ct_query=str(_shaped) if "_shaped" in dir() else "",
                     ct_results_raw=_ct_results_raw,
-
                     candidate_findings=_candidate_findings,
-
                     rejection_reasons=_rejection_reasons,
-
                     rejected_count=_rejected_count,
-
                     sample_rejections=_sample_rejections,
-
                 )
 
             except Exception as exc:
-
                 return AcquisitionLaneOutcome(
-
                     lane=AcquisitionLane.CT,
-
                     enabled=True,
-
                     attempted=True,
-
                     error=f"predispatch_error:{type(exc).__name__}:{exc}",
-
                     duration_s=_time.monotonic() - _start,
-
                     source_family="ct",
-
-                    ct_query=str(_shaped) if '_shaped' in dir() else "",
-
+                    ct_query=str(_shaped) if "_shaped" in dir() else "",
                     ct_results_raw=_ct_results_raw,
-
                     candidate_findings=_candidate_findings,
-
                     rejection_reasons=_rejection_reasons,
-
                     rejected_count=_rejected_count,
-
                     sample_rejections=_sample_rejections,
-
                 )
-
-
 
         # Actually run CT predispatch
 
         try:
-
             _outcome = await _run_ct_predispatch()
 
             _attempted_lanes.append("ct")
 
         except Exception as exc:
-
             log.debug("[F207M-A] CT pre-dispatch failed: %s", exc)
 
             _skipped["ct"] = f"predispatch_exception:{type(exc).__name__}"
 
-
-
         # Optional: WAYBACK only if memory ok and domain present
 
         if _memory_ok and _outcome and not _outcome.timeout:
-
             from hledac.universal.runtime.acquisition_strategy import build_lane_query
 
             _wayback_shaped = build_lane_query(query, AcquisitionLane.WAYBACK)
 
             if _wayback_shaped and not isinstance(_wayback_shaped, dict):
-
                 try:
-
                     from hledac.universal.intelligence.wayback_diff_miner import WaybackDiffMiner
 
                     miner = WaybackDiffMiner()
 
                     try:
-
                         result = await miner.mine([str(_wayback_shaped)])
 
                     finally:
-
                         await miner.close()
 
                     candidates, rejections, wayback_telemetry = wayback_results_to_findings(
-
-                        result, query,
-
-                        sprint_id=f"predispatch-wb-{int(_time.time())}"
-
+                        result, query, sprint_id=f"predispatch-wb-{int(_time.time())}"
                     )
 
                     # Sprint F231C: Populate wayback advisory fields from bridge telemetry
 
                     if wayback_telemetry:
-
                         self._result.wayback_advisory_clues_count += wayback_telemetry.get("wayback_changed_count", 0)
 
                         self._result.wayback_changed_url_count += wayback_telemetry.get("wayback_changed_url_count", 0)
 
                         self._result.wayback_added_url_count += wayback_telemetry.get("wayback_added_count", 0)
 
-                        self._result.wayback_digest_changed_count += wayback_telemetry.get("wayback_digest_changed_count", 0)  # noqa: E501
+                        self._result.wayback_digest_changed_count += wayback_telemetry.get(
+                            "wayback_digest_changed_count", 0
+                        )  # noqa: E501
 
-                        self._result.wayback_unchanged_rejected += wayback_telemetry.get("wayback_unchanged_rejected", 0)  # noqa: E501
+                        self._result.wayback_unchanged_rejected += wayback_telemetry.get(
+                            "wayback_unchanged_rejected", 0
+                        )  # noqa: E501
 
                     _attempted_lanes.append("wayback")
 
                 except Exception as exc:
-
                     _skipped["wayback"] = f"{type(exc).__name__}:{exc}"
 
             else:
-
                 _skipped["wayback"] = "empty_query_or_disabled"
 
         else:
-
-            _skip_reason = "memory_critical" if not _memory_ok else ("ct_timeout" if _outcome and _outcome.timeout else "ct_failed")  # noqa: E501
+            _skip_reason = (
+                "memory_critical"
+                if not _memory_ok
+                else ("ct_timeout" if _outcome and _outcome.timeout else "ct_failed")
+            )  # noqa: E501
 
             _skipped["wayback"] = _skip_reason
-
-
 
         # Optional: PASSIVE_DNS only if memory ok
 
         if _memory_ok:
-
             from hledac.universal.runtime.acquisition_strategy import build_lane_query
 
             _pdns_shaped = build_lane_query(query, AcquisitionLane.PASSIVE_DNS)
 
             if _pdns_shaped and not isinstance(_pdns_shaped, dict):
-
                 try:
-
                     from hledac.universal.security.passive_dns import call_lookup_passive_dns
 
                     ips, pdns_outcome = await call_lookup_passive_dns(str(_pdns_shaped))
@@ -11892,13 +10427,10 @@ class SprintScheduler:
                     # Sprint F231C: Capture PassiveDNS advisory telemetry from bridge
 
                     pdns_findings, pdns_rejections, pdns_telemetry = passive_dns_results_to_findings(
-
                         ips, pdns_outcome, query, sprint_id=f"predispatch-pdns-{int(_time.time())}"
-
                     )
 
                     if pdns_telemetry:
-
                         self._result.passive_dns_advisory_clues_count += pdns_telemetry.get("pdns_public_accepted", 0)
 
                         self._result.passive_dns_private_ip_rejected += pdns_telemetry.get("pdns_private_rejected", 0)
@@ -11908,22 +10440,15 @@ class SprintScheduler:
                     _attempted_lanes.append("passive_dns")
 
                 except Exception as exc:
-
                     _skipped["passive_dns"] = f"{type(exc).__name__}:{exc}"
 
             else:
-
                 _skipped["passive_dns"] = "empty_query_or_disabled"
 
         else:
-
             _skipped["passive_dns"] = "memory_critical"
 
-
-
         _duration = _time.monotonic() - _t0
-
-
 
         # Record telemetry
 
@@ -11935,12 +10460,9 @@ class SprintScheduler:
 
         self._result.nonfeed_predispatch_duration_s = _duration
 
-
-
         # Accumulate CT outcome into scheduler truth if we got one
 
         if _outcome is not None:
-
             _outcomes = (_outcome,)
 
             self._lane_outcomes = _outcomes
@@ -11949,36 +10471,23 @@ class SprintScheduler:
 
             self._accumulate_lane_findings(_outcomes, query)
 
-
-
         self._nonfeed_predispatch_done = True
 
         log.debug(
-
             "[F207M-A] Nonfeed pre-dispatch done: lanes=%s, skipped=%s, dur=%.2fs",
-
-            _attempted_lanes, _skipped, _duration,
-
+            _attempted_lanes,
+            _skipped,
+            _duration,
         )
-
-
 
     # ── Sprint F207Q-A: Pre-windup barrier helpers ─────────────────────────────
 
-
-
     async def _required_pre_windup_lanes(
-
         self,
-
         query: str,
-
         acquisition_plan: Any,
-
         memory_state: str,
-
     ) -> tuple[str, ...]:
-
         """
 
         Sprint F208B: Determine required lanes before windup.
@@ -11996,10 +10505,7 @@ class SprintScheduler:
         """
 
         if acquisition_plan is None:
-
             return ()
-
-
 
         # Derive uma_state and swap_detected from governor if available
 
@@ -12008,9 +10514,7 @@ class SprintScheduler:
         swap_detected = False
 
         if self._governor is not None:
-
             try:
-
                 _snap = await self._governor.evaluate()
 
                 uma_state = getattr(_snap, "uma_state", memory_state)
@@ -12018,41 +10522,25 @@ class SprintScheduler:
                 swap_detected = getattr(_snap, "swap_detected", False)
 
             except Exception:  # noqa: BLE001
-
                 pass
-
-
 
         # Delegate to acquisition strategy -- it owns the terminality policy
 
         mlt_tuples = required_terminal_lanes(
-
             snapshot=acquisition_plan,
-
             query=query,
-
             uma_state=uma_state,
-
             swap_detected=swap_detected,
-
         )
 
         return tuple(mlt.lane.lower() for mlt in mlt_tuples)
 
-
-
     async def _ensure_pre_windup_lane_terminal_states(
-
         self,
-
         query: str,
-
         acquisition_plan: Any,
-
         memory_state: str,
-
     ) -> PreWindupBarrierResult:
-
         """
 
         Sprint F207Q-A: Ensure required lanes have terminal state before windup.
@@ -12099,8 +10587,6 @@ class SprintScheduler:
 
         import time as _time
 
-
-
         required = await self._required_pre_windup_lanes(query, acquisition_plan, memory_state)
 
         # F214WINDUP: ALWAYS record barrier checked=True, even when no lanes required.
@@ -12118,7 +10604,6 @@ class SprintScheduler:
         self._result.prewindup_barrier_required_lanes = required
 
         if not required:
-
             self._result.prewindup_barrier_satisfied = True
 
             self._result.prewindup_barrier_attempted_lanes = ()
@@ -12131,8 +10616,6 @@ class SprintScheduler:
 
             return PreWindupBarrierResult(satisfied=True, required_lanes=())
 
-
-
         t0 = _time.monotonic()
 
         attempted: list[str] = []
@@ -12141,29 +10624,19 @@ class SprintScheduler:
 
         errors: dict[str, str] = {}
 
-
-
         # [F228C] CT terminal: findings OR timeout OR explicit terminal stage
 
         # [F250B] provider_cooldown/provider_unavailable count as terminal
 
         _ct_done = (
-
             self._result.ct_log_discovered > 0
-
             or self._result.lane_ct_accepted_findings > 0
-
             or self._result.ct_request_timeout
-
             or self._result.ct_terminal_stage
-
             in ("error", "skipped", "request_timeout", "no_candidates", "provider_cooldown", "provider_unavailable")
-
         )
 
         _public_done = self._public_outcome is not None
-
-
 
         # F407: Parallel prewindup barriers — public and ct lanes are independent,
         # run them concurrently instead of sequentially to save ~10-15s in windup.
@@ -12238,14 +10711,9 @@ class SprintScheduler:
         # We check only the lanes this barrier can actually retry: public and ct.
         _barrier_scope = {"public", "ct"}
         _handled = {r for r in required if r in _barrier_scope}
-        satisfied = (
-            len(attempted) >= len(_handled)
-            or all(r in skipped or r in attempted for r in _handled)
-        ) and all(r in skipped or r in attempted for r in _handled)
-
-
-
-
+        satisfied = (len(attempted) >= len(_handled) or all(r in skipped or r in attempted for r in _handled)) and all(
+            r in skipped or r in attempted for r in _handled
+        )
 
         # Record telemetry
 
@@ -12263,28 +10731,16 @@ class SprintScheduler:
 
         self._result.prewindup_barrier_duration_s = duration
 
-
-
         return PreWindupBarrierResult(
-
             required_lanes=required,
-
             satisfied=satisfied,
-
             attempted_lanes=tuple(attempted),
-
             skipped_lanes=tuple(skipped.keys()),
-
             error_lanes=tuple(errors.keys()),
-
             duration_s=duration,
-
         )
 
-
-
     async def _attempt_public_prewindup_barrier(self, query: str) -> dict | None:
-
         """
 
         Sprint F207Q-A: Attempt PUBLIC lane as part of pre-windup barrier.
@@ -12304,7 +10760,6 @@ class SprintScheduler:
         """
 
         try:
-
             from hledac.universal.pipeline.live_public_pipeline import (
                 async_run_live_public_pipeline,
             )
@@ -12313,62 +10768,38 @@ class SprintScheduler:
                 build_lane_query,
             )
 
-
-
             shaped = build_lane_query(query, AcquisitionLane.PUBLIC)
 
             if isinstance(shaped, dict) or not shaped:
-
                 return {"error": "empty_public_query"}
-
-
 
             # Run with tiny bounds - no store, no engine (barrier is read-only)
 
             try:
-
                 async with asyncio.timeout(10.0):
-
                     result = await async_run_live_public_pipeline(
-
                         query=shaped,
-
                         store=None,  # barrier doesn't write to DB
-
                         max_results=3,
-
                         fetch_timeout_s=10.0,
-
                         fetch_concurrency=2,
-
                         hermes_engine=None,
-
                         memory_manager=None,
-
                         enqueue_hypothesis_pivot=None,
-
                     )
 
                 return {
-
                     "attempted": True,
-
                     "accepted": getattr(result, "accepted_findings", 0),
-
                 }
 
             except TimeoutError:
-
                 return {"attempted": True, "timeout": True}
 
         except Exception as exc:
-
             return {"attempted": False, "error": f"{type(exc).__name__}:{exc}"}
 
-
-
     async def _attempt_ct_prewindup_barrier(self, query: str) -> dict | None:
-
         """
 
         Sprint F207Q-A: Attempt CT lane as part of pre-windup barrier.
@@ -12388,21 +10819,15 @@ class SprintScheduler:
         """
 
         try:
-
             from hledac.universal.runtime.acquisition_strategy import (
                 AcquisitionLane,
                 build_lane_query,
             )
 
-
-
             shaped = build_lane_query(query, AcquisitionLane.CT)
 
             if isinstance(shaped, dict) or not shaped:
-
                 return {"error": "empty_ct_query"}
-
-
 
             # GAP-3/1: Reset CT domain breakers at prewindup start.
             # Previous sprint may have left CT breakers OPEN (e.g. crt.sh 5xx),
@@ -12427,51 +10852,31 @@ class SprintScheduler:
             _ct_call = _get_ct_adapter()
 
             try:
-
                 async with asyncio.timeout(15.0):
-
                     ct_result, ct_outcome = await _ct_call(
-
                         query=shaped,
-
                         max_results=5,
-
                         timeout_s=15.0,
-
                     )
 
                 return {
-
                     "attempted": True,
-
                     "raw_count": getattr(ct_outcome, "raw_count", 0),
-
                 }
 
             except TimeoutError:
-
                 return {"attempted": True, "timeout": True}
 
         except Exception as exc:
-
             return {"attempted": False, "error": f"{type(exc).__name__}:{exc}"}
-
-
 
     # ── Sprint F220D: Feed Dominance Nonfeed Rescue Window ─────────────────
 
-
-
     async def _run_feed_dominance_nonfeed_rescue_window(
-
         self,
-
         query: str,
-
         duckdb_store: Any,
-
     ) -> float | None:
-
         """
 
         Sprint F220D: Feed Dominance Nonfeed Rescue Window.
@@ -12506,24 +10911,17 @@ class SprintScheduler:
 
         import time as _time
 
-
-
         _t0 = _time.monotonic()
 
         _hard_deadline = _t0 + 60.0  # 60s max rescue window
 
-
-
         try:
-
             # Guard: check hard deadline before starting
 
             if self._hard_deadline_monotonic is not None:
-
                 _remaining = self._hard_deadline_monotonic - _time.monotonic()
 
                 if _remaining <= 0:
-
                     log.debug("[F220D] Rescue window skipped: hard deadline already exceeded")
 
                     return None
@@ -12531,55 +10929,32 @@ class SprintScheduler:
                 # If less than 15s remain, skip rescue (not enough time)
 
                 if _remaining < 15.0:
-
                     log.debug(f"[F220D] Rescue window skipped: only {_remaining:.1f}s remaining")
 
                     return None
 
-
-
             _rescue_findings = 0
-
-
 
             # Sprint F220G: Extract pivot seeds from recent feed findings and plan lanes
 
             try:
-
                 _findings = await duckdb_store.async_get_recent_findings(limit=1000)
 
                 if not _findings:
-
                     self._result.pivot_integration_reason = "pivot_no_findings"
 
                 else:
-
-                    _texts = [
-
-                        f.payload_text
-
-                        for f in _findings
-
-                        if getattr(f, "payload_text", None)
-
-                    ]
+                    _texts = [f.payload_text for f in _findings if getattr(f, "payload_text", None)]
 
                     if not _texts:
-
                         self._result.pivot_integration_reason = "pivot_no_payload_text"
 
                     else:
-
                         _extraction = extract_pivot_seeds_from_texts(
-
                             _texts,
-
                             source_family="feed",
-
                             max_texts=1000,
-
                             max_seeds=256,
-
                         )
 
                         _seed_count = len(_extraction.seeds)
@@ -12591,7 +10966,6 @@ class SprintScheduler:
                         _type_counts: dict[str, int] = {}
 
                         for _s in _extraction.seeds:
-
                             _t = getattr(_s, "seed_type", "") or ""
 
                             _type_counts[_t] = _type_counts.get(_t, 0) + 1
@@ -12600,53 +10974,25 @@ class SprintScheduler:
 
                         # Sample (max 10, no raw payload text)
 
-                        _sample = tuple(sorted({
-
-                            getattr(_s, "value", "") or ""
-
-                            for _s in _extraction.seeds
-
-                        })[:10])
+                        _sample = tuple(sorted({getattr(_s, "value", "") or "" for _s in _extraction.seeds})[:10])
 
                         self._result.pivot_seed_sample = _sample
 
                         if _seed_count == 0:
-
                             self._result.pivot_integration_reason = "pivot_no_seeds"
 
                         else:
-
                             # [F226A] Populate seed tuples for NonfeedSeedContext propagation
 
-                            _domains = tuple(sorted({
+                            _domains = tuple(sorted({s.value for s in _extraction.seeds if s.seed_type == "domain"}))
 
-                                s.value for s in _extraction.seeds if s.seed_type == "domain"
+                            _ips = tuple(sorted({s.value for s in _extraction.seeds if s.seed_type in ("ip", "ipv4")}))
 
-                            }))
+                            _urls = tuple(sorted({s.value for s in _extraction.seeds if s.seed_type == "url"}))
 
-                            _ips = tuple(sorted({
+                            _hashes = tuple(sorted({s.value for s in _extraction.seeds if s.seed_type == "hash"}))
 
-                                s.value for s in _extraction.seeds if s.seed_type in ("ip", "ipv4")
-
-                            }))
-
-                            _urls = tuple(sorted({
-
-                                s.value for s in _extraction.seeds if s.seed_type == "url"
-
-                            }))
-
-                            _hashes = tuple(sorted({
-
-                                s.value for s in _extraction.seeds if s.seed_type == "hash"
-
-                            }))
-
-                            _cves = tuple(sorted({
-
-                                s.value for s in _extraction.seeds if s.seed_type == "cve"
-
-                            }))
+                            _cves = tuple(sorted({s.value for s in _extraction.seeds if s.seed_type == "cve"}))
 
                             self._result.pivot_seed_domains = _domains
 
@@ -12659,34 +11005,24 @@ class SprintScheduler:
                             self._result.pivot_seed_cves = _cves
 
                             _plan = plan_lanes_for_pivot_seeds(
-
                                 _extraction.seeds,  # type: ignore[arg-type]
-
                                 max_items=128,
-
                             )
 
                             self._result.pivot_lane_plan_count = len(_plan.items)  # type: ignore[unresolved-attribute]
 
                             self._result.planned_pivot_lanes = tuple(  # type: ignore[unresolved-attribute]
-
                                 sorted({item.lane.upper() for item in _plan.items})
-
                             )
 
                             self._result.pivot_integration_reason = (
-
                                 "pivot_planned" if _plan.items else "pivot_planner_empty"
-
                             )
 
             except Exception as _exc:
-
                 log.debug(f"[F220G] Pivot extraction error: {_exc}")
 
                 self._result.pivot_integration_reason = "pivot_error"
-
-
 
             # F220D-II: Parallel rescue — PUBLIC and CT are independent, run concurrently.
             # Deadline check before CT is preserved: if exceeded after PUBLIC, CT never launches.
@@ -12730,34 +11066,20 @@ class SprintScheduler:
             log.debug(f"[F220D] Rescue window completed in {_elapsed:.1f}s, findings={_rescue_findings}")
             return _elapsed
 
-
-
         except Exception as _exc:
-
             log.debug(f"[F220D] Rescue window exception: {_exc}")
 
             return None
 
-
-
     # ── Sprint F209A: Mandatory Acquisition Prelude ───────────────────────────
 
-
-
     async def _run_mandatory_acquisition_prelude(
-
         self,
-
         result: SprintSchedulerResult,
-
         query: str,
-
         duckdb_store: Any,
-
         ct_log_client: Any,
-
     ) -> None:
-
         """
 
         Sprint F209A: Mandatory Acquisition Prelude.
@@ -12808,13 +11130,9 @@ class SprintScheduler:
 
         import time as _time
 
-
-
         _t0 = _time.monotonic()
 
         self._result.acquisition_prelude_checked = True
-
-
 
         # Sprint F233D: Detect nonfeed_diagnostic and deep_osint_m1 profiles
 
@@ -12825,7 +11143,6 @@ class SprintScheduler:
         # Fallback: check config directly when acquisition_plan failed to build (FIX-06b)
 
         if not _is_nonfeed_diagnostic and self._config.acquisition_profile == "nonfeed_diagnostic":
-
             _is_nonfeed_diagnostic = True
 
         # F233D: deep_osint_m1 profile detection (from NonfeedPlanDebug.acquisition_profile)
@@ -12833,34 +11150,25 @@ class SprintScheduler:
         _is_deep_osint_m1 = False
 
         if _nd_debug:
-
             _profile = getattr(_nd_debug, "acquisition_profile", "") or ""
 
             _is_deep_osint_m1 = _profile == "deep_osint_m1"
 
         if not _is_deep_osint_m1 and self._config.acquisition_profile == "deep_osint_m1":
-
             _is_deep_osint_m1 = True
-
-
 
         # Determine memory state
 
         _uma = "ok"
 
         if self._governor is not None:
-
             try:
-
                 _snap = await self._governor.evaluate()
 
                 _uma = getattr(_snap, "uma_state", "ok")
 
             except Exception:  # noqa: BLE001
-
                 pass  # noqa: BLE001  # fail-soft: governor evaluation advisory only
-
-
 
         _nonfeed_prelude_done = False
 
@@ -12876,25 +11184,19 @@ class SprintScheduler:
 
         _nonfeed_prelude_expected: list[str] = []
 
-
-
         _has_domain = False
 
         _domain_error = ""
 
         try:
-
             from hledac.universal.runtime.acquisition_strategy import _has_domain_or_ip
 
             _has_domain = _has_domain_or_ip(query)
 
         except Exception as _exc:
-
             _domain_error = f"{type(_exc).__name__}:{_exc}"
 
             _has_domain = False
-
-
 
         self._result.acquisition_prelude_domain_detected = _has_domain
 
@@ -12902,22 +11204,17 @@ class SprintScheduler:
 
         self._result.acquisition_prelude_domain_detection_error = _domain_error
 
-
-
         # If not a domain query AND not nonfeed_diagnostic, skip prelude (CT not required)
 
         # Sprint F233D-FIX: nonfeed_diagnostic profile must run nonfeed lanes even for non-domain queries
 
         if not _has_domain and not _is_nonfeed_diagnostic:
-
             self._result.acquisition_prelude_ran = False
 
             if _domain_error:
-
                 self._result.acquisition_prelude_reason = f"domain_detection_error:{_domain_error}"
 
             else:
-
                 self._result.acquisition_prelude_reason = "non_domain_query"
 
             self._result.acquisition_prelude_required_lanes = ()
@@ -12925,8 +11222,6 @@ class SprintScheduler:
             self._result.acquisition_prelude_duration_s = _time.monotonic() - _t0
 
             return
-
-
 
         # Derive required lanes
 
@@ -12939,52 +11234,38 @@ class SprintScheduler:
         _rtl = None
 
         if self._acquisition_plan is not None:
-
             try:
-
-                from hledac.universal.runtime.acquisition_strategy import (
-                    AcquisitionLane,
-                )
                 from hledac.universal.runtime.acquisition_strategy import (
                     required_terminal_lanes as _rtl,
                 )
 
                 _mlt_tuples = _rtl(
-
                     snapshot=self._acquisition_plan,
-
                     query=query,
-
                     uma_state=_uma,
-
                     swap_detected=False,
-
                 )
 
                 _required: tuple[str, ...] = cast(
                     tuple[str, ...],
                     tuple(
-                        mlt.lane.value if hasattr(mlt.lane, 'value')
-                        else str(mlt.lane).upper()
+                        mlt.lane.value if hasattr(mlt.lane, "value") else str(mlt.lane).upper()
                         for mlt in _mlt_tuples
-                        if getattr(mlt, 'required', False)
+                        if getattr(mlt, "required", False)
                     ),
                 )
 
             except Exception as _exc:
-
                 log.warning("required_terminal_lanes failed, using default: %s", _exc)
 
                 _required = ("PUBLIC", "CT")
 
         else:
-
             # Sprint F228B: no acquisition plan but domain query detected
 
             # Build minimal plan so required_terminal_lanes can derive correct lanes
 
             try:
-
                 from hledac.universal.runtime.acquisition_strategy import (
                     build_acquisition_plan,
                 )
@@ -12997,81 +11278,52 @@ class SprintScheduler:
                 # F228B: Also pass aggressive_mode so lane enablement mirrors the main path.
 
                 _minimal = build_acquisition_plan(
-
                     query=query,
-
                     duration_s=60.0,
-
                     aggressive_mode=self._config.aggressive_mode,
-
                     uma_state=_uma,
-
                     swap_detected=False,
-
                     acquisition_profile=(
-
-                        self._config.acquisition_profile
-
-                        if self._config.acquisition_profile is not None
-
-                        else "default"
-
+                        self._config.acquisition_profile if self._config.acquisition_profile is not None else "default"
                     ),
-
                     # F228A: Source quality weights from policy_manager for adaptive lane budget
                     source_quality_weights=(
-
                         self._policy_manager.get_src_quality_weights()
-
                         if self._policy_manager is not None and self._policy_manager.enabled
-
                         else None
-
                     ),
-
                 )
 
                 if _minimal is not None:
-
                     self._acquisition_plan = _minimal
 
                     _plan_built = True
 
                     _mlt_tuples = _rtl(
-
                         snapshot=_minimal,
-
                         query=query,
-
                         uma_state=_uma,
-
                         swap_detected=False,
-
                     )
 
                     _required: tuple[str, ...] = cast(
                         tuple[str, ...],
                         tuple(
-                            mlt.lane.value if hasattr(mlt.lane, 'value')
-                            else str(mlt.lane).upper()
+                            mlt.lane.value if hasattr(mlt.lane, "value") else str(mlt.lane).upper()
                             for mlt in _mlt_tuples
-                            if getattr(mlt, 'required', False)
+                            if getattr(mlt, "required", False)
                         ),
                     )
 
                 else:
-
                     _required = ("PUBLIC", "CT")
 
             except Exception as _exc:
-
                 log.debug("Minimal plan build failed, using PUBLIC/CT: %s", _exc)
 
                 _required = ("PUBLIC", "CT")
 
                 self._result.acquisition_plan_build_error_for_prelude = str(_exc)[:200]
-
-
 
         # F226C: Record canonical acquisition plan telemetry for prelude
 
@@ -13082,30 +11334,21 @@ class SprintScheduler:
         _enabled_lanes: list[str] = []
 
         if self._acquisition_plan is not None:
-
             for _plan in getattr(self._acquisition_plan, "plans", []):
-
                 _ln = getattr(_plan.lane, "value", str(_plan.lane))
 
                 _all_lanes.append(_ln)
 
                 if getattr(_plan, "enabled", False):
-
                     _enabled_lanes.append(_ln)
 
             _nd = getattr(self._acquisition_plan, "nonfeed_plan_debug", None)
 
-            self._result.acquisition_plan_profile_for_prelude = (
-
-                getattr(_nd, "acquisition_profile", "") if _nd else ""
-
-            )
+            self._result.acquisition_plan_profile_for_prelude = getattr(_nd, "acquisition_profile", "") if _nd else ""
 
         self._result.acquisition_plan_lanes_for_prelude = tuple(_all_lanes)
 
         self._result.acquisition_plan_enabled_lanes_for_prelude = tuple(_enabled_lanes)
-
-
 
         self._result.acquisition_prelude_plan_built_for_prelude = _plan_built
 
@@ -13113,13 +11356,9 @@ class SprintScheduler:
 
         _needs_ct = "CT" in _required or "ct" in [r.lower() for r in _required]
 
-
-
         self._result.acquisition_prelude_required_lanes = _required
 
         self._result.acquisition_prelude_reason = "domain_query_requires_prelude"
-
-
 
         _attempted_lanes: list[str] = []
 
@@ -13203,35 +11442,61 @@ class SprintScheduler:
         if _ct_outcome_from_gather is not None:
             _ct_outcome_prelude = _ct_outcome_from_gather
             _prelude_outcomes.append(_ct_outcome_prelude)
-            self._result.ct_log_discovered = getattr(_ct_outcome_prelude, 'ct_results_raw', 0) or 0
-            _ct_results_raw = getattr(_ct_outcome_prelude, 'ct_results_raw', 0) or 0
-            _ct_error = getattr(_ct_outcome_prelude, 'error', None)
+            self._result.ct_log_discovered = getattr(_ct_outcome_prelude, "ct_results_raw", 0) or 0
+            _ct_results_raw = getattr(_ct_outcome_prelude, "ct_results_raw", 0) or 0
+            _ct_error = getattr(_ct_outcome_prelude, "error", None)
             _accepted = 0
             _attempted_lanes.append("CT")
             if _ct_results_raw > 0 and _accepted == 0:
                 _terminal_lanes.append("CT")
             elif _ct_results_raw == 0 and _ct_error is None:
                 _terminal_lanes.append("CT")
-            self._result.ct_loss_stage = _ct_telemetry_from_gather.get("loss_stage", "") if isinstance(_ct_telemetry_from_gather, dict) else ""
-            self._result.ct_bridge_invoked = _ct_telemetry_from_gather.get("bridge_invoked", False) if isinstance(_ct_telemetry_from_gather, dict) else False
-            _prelude_keys = _ct_telemetry_from_gather.get("prelude_keys", ()) if isinstance(_ct_telemetry_from_gather, dict) else ()
+            self._result.ct_loss_stage = (
+                _ct_telemetry_from_gather.get("loss_stage", "") if isinstance(_ct_telemetry_from_gather, dict) else ""
+            )
+            self._result.ct_bridge_invoked = (
+                _ct_telemetry_from_gather.get("bridge_invoked", False)
+                if isinstance(_ct_telemetry_from_gather, dict)
+                else False
+            )
+            _prelude_keys = (
+                _ct_telemetry_from_gather.get("prelude_keys", ()) if isinstance(_ct_telemetry_from_gather, dict) else ()
+            )
             self._result.ct_raw_sample_keys = _prelude_keys
             self._result.ct_raw_sample_count = _ct_results_raw
             self._result.ct_raw_count = _ct_results_raw
-            self._result.ct_candidates_built = _ct_telemetry_from_gather.get("candidates_count", 0) if isinstance(_ct_telemetry_from_gather, dict) else 0
-            _rejections_prelude = getattr(_ct_outcome_prelude, 'rejection_reasons', ()) or ()
+            self._result.ct_candidates_built = (
+                _ct_telemetry_from_gather.get("candidates_count", 0)
+                if isinstance(_ct_telemetry_from_gather, dict)
+                else 0
+            )
+            _rejections_prelude = getattr(_ct_outcome_prelude, "rejection_reasons", ()) or ()
             self._result.ct_bridge_rejections_count = len(_rejections_prelude)
-            self._result.ct_bridge_rejection_reasons = tuple(str(r) for r in (_rejections_prelude[:3] if _rejections_prelude else []))
+            self._result.ct_bridge_rejection_reasons = tuple(
+                str(r) for r in (_rejections_prelude[:3] if _rejections_prelude else [])
+            )
             self._result.ct_candidates_accumulated = 0
             self._result.ct_candidates_stored = 0
             self._result.ct_storage_rejected = 0
             if isinstance(_ct_telemetry_from_gather, dict):
                 self._result.ct_candidate_count = _ct_telemetry_from_gather.get("ct_bridge_candidate_count", 0)
                 self._result.ct_valid_domain_count = _ct_telemetry_from_gather.get("ct_bridge_valid_domain_count", 0)
-                self._result.ct_bridge_build_success_count = _ct_telemetry_from_gather.get("ct_bridge_build_success_count", 0)
-                self._result.ct_bridge_quality_rejected_count = _ct_telemetry_from_gather.get("ct_bridge_quality_rejected_count", 0)
-            _ct_quarantine_count = _ct_telemetry_from_gather.get("ct_quarantine_count", 0) if isinstance(_ct_telemetry_from_gather, dict) else 0
-            _ct_quarantine_entries = _ct_telemetry_from_gather.get("ct_quarantine_entries", []) if isinstance(_ct_telemetry_from_gather, dict) else []
+                self._result.ct_bridge_build_success_count = _ct_telemetry_from_gather.get(
+                    "ct_bridge_build_success_count", 0
+                )
+                self._result.ct_bridge_quality_rejected_count = _ct_telemetry_from_gather.get(
+                    "ct_bridge_quality_rejected_count", 0
+                )
+            _ct_quarantine_count = (
+                _ct_telemetry_from_gather.get("ct_quarantine_count", 0)
+                if isinstance(_ct_telemetry_from_gather, dict)
+                else 0
+            )
+            _ct_quarantine_entries = (
+                _ct_telemetry_from_gather.get("ct_quarantine_entries", [])
+                if isinstance(_ct_telemetry_from_gather, dict)
+                else []
+            )
             self._result.ct_quarantine_count = _ct_quarantine_count
             if _ct_quarantine_entries:
                 _samples: list[str] = []
@@ -13252,7 +11517,6 @@ class SprintScheduler:
                 except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001
 
-
         # F285: Old PUBLIC prelude block removed - now runs in parallel via _run_public_prelude_lane
         pass  # if _needs_public handled by parallel gather above
 
@@ -13268,7 +11532,6 @@ class SprintScheduler:
         # F233D-FIX-06c: removed _has_domain check -- nonfeed_diagnostic runs even for CVE queries
 
         if _is_nonfeed_diagnostic and not _nonfeed_prelude_done:
-
             _hardware_critical = _uma in ("critical", "emergency")
 
             # Use acquisition plan to determine which nonfeed lanes are enabled
@@ -13277,14 +11540,8 @@ class SprintScheduler:
 
             _nonfeed_lanes_to_run: list[tuple[str, bool, float, int]] = []  # (lane, enabled, timeout_s, max_items)
 
-
-
             if self._acquisition_plan is not None:
-
-                from hledac.universal.runtime.acquisition_strategy import AcquisitionLane
-
                 for _plan in getattr(self._acquisition_plan, "plans", []):
-
                     _lane_name = getattr(_plan.lane, "value", str(_plan.lane))
 
                     _enabled = getattr(_plan, "enabled", False)
@@ -13294,18 +11551,13 @@ class SprintScheduler:
                     _max_items = getattr(_plan, "max_items", 5)
 
                     if _lane_name in ("WAYBACK", "PASSIVE_DNS", "PIVOT_EXECUTOR", "DOH"):
-
                         if _enabled:
-
                             _nonfeed_lanes_to_run.append((_lane_name, True, _timeout, _max_items))
 
                         else:
-
                             _nonfeed_prelude_skipped[_lane_name] = "plan_disabled"
 
                         _nonfeed_expected.append(_lane_name)
-
-
 
             # P1-2: Adaptive prelude budget — 30% of active window, cap at 45s
             # Active window = duration - effective_windup_lead (typically 30-180s)
@@ -13320,16 +11572,12 @@ class SprintScheduler:
 
             _nonfeed_prelude_expected = _nonfeed_expected
 
-
-
             # F220J: Compute pivot lane plan once for DOH prelude seed routing
 
             _pivot_lanes: Any = None
 
             if self._pivot_planner is not None:
-
                 try:
-
                     from hledac.universal.pipeline.pivot_lane_planner import plan_lanes_for_pivot_seeds
                     from hledac.universal.runtime.pivot_planner import (
                         generate_pivot_candidates_from_query as _gen_pivots,
@@ -13338,28 +11586,19 @@ class SprintScheduler:
                     _pivot_seeds = _gen_pivots(query)
 
                     if _pivot_seeds:
-
                         _seed_dicts = [
-
                             {"value": p.ioc_value, "seed_type": p.ioc_type}
-
                             for p in _pivot_seeds
-
                             if p.ioc_value and p.ioc_type
-
                         ]
 
                         if _seed_dicts:
-
                             _pivot_plan = plan_lanes_for_pivot_seeds(_seed_dicts)
 
                             _pivot_lanes = getattr(_pivot_plan, "items", None)
 
                 except Exception:
-
                     _pivot_lanes = None  # fail-soft: pivot planning is advisory
-
-
 
             # P0-1: Speculative Domain Extraction -- extract domain seeds from raw query
             # BEFORE run_runtime_pivot_prelude so that if domains are found, the expensive
@@ -13378,23 +11617,29 @@ class SprintScheduler:
                     r")\b",
                     _re.IGNORECASE,
                 )
-                _speculative_noise = frozenset({  # noqa: N806
-                    "example", "test", "localhost", "invalid", "sample",
-                    "foo", "bar", "baz", "qux", "demo", "placeholder",
-                    "domain",
-                })
+                _speculative_noise = frozenset(
+                    {  # noqa: N806
+                        "example",
+                        "test",
+                        "localhost",
+                        "invalid",
+                        "sample",
+                        "foo",
+                        "bar",
+                        "baz",
+                        "qux",
+                        "demo",
+                        "placeholder",
+                        "domain",
+                    }
+                )
                 _raw_domains = _speculative_domain_re.findall(query.lower())
-                _cleaned_domains = [
-                    d for d in _raw_domains
-                    if d not in _speculative_noise and len(d) > 4
-                ]
+                _cleaned_domains = [d for d in _raw_domains if d not in _speculative_noise and len(d) > 4]
                 if _cleaned_domains:
                     self._result.pivot_seed_domains = tuple(_cleaned_domains[:10])
                     self._result.seed_context_available = True
                     self._result.seed_context_propagated = True
-                    self._result.lanes_unlocked_by_seed_context = [
-                        "CT", "DOH", "WAYBACK", "PASSIVE_DNS"
-                    ]
+                    self._result.lanes_unlocked_by_seed_context = ["CT", "DOH", "WAYBACK", "PASSIVE_DNS"]
                     self._result.seed_context_skip_reason = ""
                     self._result.seed_context_source = "speculative_query_extract"
                     log.debug(
@@ -13411,6 +11656,7 @@ class SprintScheduler:
                     from hledac.universal.runtime.nonfeed_candidate_ledger import (
                         generate_conceptual_domain_candidates,
                     )
+
                     _mlx_candidates = await generate_conceptual_domain_candidates(query)
                     if _mlx_candidates:
                         _mlx_domains = [c.domain for c in _mlx_candidates[:10] if c.domain]
@@ -13426,10 +11672,10 @@ class SprintScheduler:
             # Tier 3 (P2-4): If MLX also found nothing, try DuckDB historical seeds
             if not _cleaned_domains and duckdb_store is not None:
                 try:
-                    if hasattr(duckdb_store, '_conn'):
-                        _kw_clause = ' OR '.join(
-                            f"LOWER(query_text) LIKE '%{kw}%'" for kw in
-                            [w for w in query.lower().split() if len(w) >= 4][:5]
+                    if hasattr(duckdb_store, "_conn"):
+                        _kw_clause = " OR ".join(
+                            f"LOWER(query_text) LIKE '%{kw}%'"
+                            for kw in [w for w in query.lower().split() if len(w) >= 4][:5]
                         )
                         if _kw_clause:
                             _hist_sql = f"""
@@ -13437,7 +11683,7 @@ class SprintScheduler:
                                 FROM canonical_findings,
                                      LATERAL (SELECT json_each_text(payload_text::JSON) WHERE key = 'domain') AS j
                                 WHERE ({_kw_clause})
-                                  AND sprint_id != '{getattr(self, '_sprint_id', 'current')}'
+                                  AND sprint_id != '{getattr(self, "_sprint_id", "current")}'
                                 ORDER BY discovered_at DESC
                                 LIMIT 10
                             """
@@ -13465,33 +11711,24 @@ class SprintScheduler:
                 run_runtime_pivot_prelude as _run_runtime_pivot_prelude,
             )
 
-
-
             # F233D: Activate runtime pivot prelude for both nonfeed_diagnostic and deep_osint_m1
             # P0-1: Skip the expensive DuckDB scan if speculative extraction already found domains.
             _pivot_profile_active = _is_nonfeed_diagnostic or _is_deep_osint_m1
 
             _speculative_had_seeds = (
-                getattr(self._result, 'seed_context_available', False)
-                and getattr(self._result, 'seed_context_source', '') == 'speculative_query_extract'
+                getattr(self._result, "seed_context_available", False)
+                and getattr(self._result, "seed_context_source", "") == "speculative_query_extract"
             )
 
             # P0-1: Skip expensive DuckDB scan if speculative extraction already found seeds
             if not _speculative_had_seeds:
                 try:
-
                     _pivot_result = await _run_runtime_pivot_prelude(
-
                         query=query,
-
                         duckdb_store=duckdb_store,
-
                         nonfeed_diagnostic_active=_pivot_profile_active,
-
                         existing_findings=None,  # prelude phase: no accepted findings yet
-
                         acquisition_profile=self._config.acquisition_profile or "default",
-
                     )
 
                     self._result.pivot_seed_domains = _pivot_result.get("pivot_seed_domains", ())
@@ -13522,8 +11759,6 @@ class SprintScheduler:
                 self._result.seed_quality_dropped_sample = _pivot_result.get("seed_quality_dropped_sample", [])
                 self._result.seed_quality_bypass_reason = _pivot_result.get("seed_quality_bypass_reason", "")
 
-
-
             # but query is a direct domain, inject the domain as a seed directly so DOH/WAYBACK/
 
             # PASSIVE_DNS can run against it. This fixes the case where nonfeed_diagnostic
@@ -13535,19 +11770,13 @@ class SprintScheduler:
             # Condition: seed_context not available AND (no skip reason OR skip was "no_seeds_extracted")
 
             if not self._result.seed_context_available:
-
                 import re as _re
 
                 _is_domain_query = bool(
-
                     _re.search(
-
-                        r'\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b',
-
+                        r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b",
                         query,
-
                     )
-
                 )
 
                 # F228H2: unconditional direct domain fallback -- seed_context_available is
@@ -13557,7 +11786,6 @@ class SprintScheduler:
                 # F241B: quality gate for deep_osint_m1 -- classify the domain before injecting
 
                 if _is_domain_query and not self._result.seed_context_available:
-
                     from hledac.universal.runtime.nonfeed_seed_runtime import (
                         _should_allow_low_quality_seed_for_profile,
                         classify_seed_quality,
@@ -13565,102 +11793,66 @@ class SprintScheduler:
 
                     _domain = query.strip().lower()
 
-                    _is_low_quality = (
-
-                        not _should_allow_low_quality_seed_for_profile()
-
-                    )
+                    _is_low_quality = not _should_allow_low_quality_seed_for_profile()
 
                     if _is_low_quality:
-
                         # Classify the domain -- if DROP, do NOT inject it for deep_osint_m1
 
                         from hledac.universal.runtime.nonfeed_seed_extractor import NonfeedSeed
 
                         _fake_seed = NonfeedSeed(
-
                             value=_domain,
-
                             kind="domain",
-
                             source="query",
-
                             confidence=1.0,
-
                             reason="domain_query_fallback",
-
                         )
 
                         _quality = classify_seed_quality(_fake_seed, query=query, context="")
 
                         if _quality.decision == "drop":
-
                             # F241B: quality gate blocks domain fallback for deep_osint_m1
 
                             log.debug(
-
-                                "[F241B] domain fallback blocked by quality gate: "
-
-                                "domain=%s reason=%s",
-
+                                "[F241B] domain fallback blocked by quality gate: domain=%s reason=%s",
                                 _domain,
-
                                 _quality.reason,
-
                             )
 
                             self._result.seed_quality_drop_count = (
-
                                 getattr(self._result, "seed_quality_drop_count", 0) + 1
-
                             )
 
-                            _existing_drop_reasons = getattr(
-
-                                self._result, "seed_quality_drop_reasons", {}
-
-                            )
+                            _existing_drop_reasons = getattr(self._result, "seed_quality_drop_reasons", {})
 
                             _reason_key = _quality.reason or "domain_fallback_dropped"
 
-                            _existing_drop_reasons[_reason_key] = (
-
-                                _existing_drop_reasons.get(_reason_key, 0) + 1
-
-                            )
+                            _existing_drop_reasons[_reason_key] = _existing_drop_reasons.get(_reason_key, 0) + 1
 
                             self._result.seed_quality_drop_reasons = _existing_drop_reasons
 
                             self._result.seed_quality_bypass_reason = ""
 
                         else:
-
                             self._result.pivot_seed_domains = (_domain,)
 
                             self._result.seed_context_available = True
 
                             self._result.seed_context_propagated = True
 
-                            self._result.lanes_unlocked_by_seed_context = [
-
-                                "CT", "DOH", "WAYBACK", "PASSIVE_DNS"
-
-                            ]
+                            self._result.lanes_unlocked_by_seed_context = ["CT", "DOH", "WAYBACK", "PASSIVE_DNS"]
 
                             self._result.seed_context_skip_reason = ""
 
                             self._result.seed_context_source = "domain_query_fallback"
 
                             self._result.seed_quality_keep_count = (
-
                                 getattr(self._result, "seed_quality_keep_count", 0) + 1
-
                             )
 
                             self._result.seed_quality_checked = True
 
                     else:
-
                         # nonfeed_diagnostic: bypass quality gate, inject domain
 
                         self._result.pivot_seed_domains = (_domain,)
@@ -13669,11 +11861,7 @@ class SprintScheduler:
 
                         self._result.seed_context_propagated = True
 
-                        self._result.lanes_unlocked_by_seed_context = [
-
-                            "CT", "DOH", "WAYBACK", "PASSIVE_DNS"
-
-                        ]
+                        self._result.lanes_unlocked_by_seed_context = ["CT", "DOH", "WAYBACK", "PASSIVE_DNS"]
 
                         self._result.seed_context_skip_reason = ""
 
@@ -13690,11 +11878,46 @@ class SprintScheduler:
                         import re as _re
 
                         # Split query into tokens, filter noise words, extract significant terms
-                        _noise = {"the", "a", "an", "of", "for", "in", "on", "at", "to", "and", "or",
-                                  "is", "are", "was", "were", "be", "been", "being", "have", "has",
-                                  "had", "do", "does", "did", "will", "would", "could", "should",
-                                  "may", "might", "must", "can", "with", "by", "from", "that", "this"}
-                        _tokens = _re.findall(r'\b[a-zA-Z]{3,}\b', query.lower())
+                        _noise = {
+                            "the",
+                            "a",
+                            "an",
+                            "of",
+                            "for",
+                            "in",
+                            "on",
+                            "at",
+                            "to",
+                            "and",
+                            "or",
+                            "is",
+                            "are",
+                            "was",
+                            "were",
+                            "be",
+                            "been",
+                            "being",
+                            "have",
+                            "has",
+                            "had",
+                            "do",
+                            "does",
+                            "did",
+                            "will",
+                            "would",
+                            "could",
+                            "should",
+                            "may",
+                            "might",
+                            "must",
+                            "can",
+                            "with",
+                            "by",
+                            "from",
+                            "that",
+                            "this",
+                        }
+                        _tokens = _re.findall(r"\b[a-zA-Z]{3,}\b", query.lower())
                         _significant = [t for t in _tokens if t not in _noise]
                         if _significant:
                             # Use top 5 significant terms as pseudo-domain seeds for discovery
@@ -13718,7 +11941,6 @@ class SprintScheduler:
             _planner_seed_iocs: dict = getattr(self, "_planner_seed_iocs", {}) or {}
 
             if _planner_seed_iocs and self._result.planner_action_skip_reason in ("", "no_iocs_extracted", None):
-
                 _pa_doms: tuple = _planner_seed_iocs.get("domains", ())
 
                 _pa_ips: tuple = _planner_seed_iocs.get("ips", ())
@@ -13726,7 +11948,6 @@ class SprintScheduler:
                 _pa_urls: tuple = _planner_seed_iocs.get("urls", ())
 
                 if _pa_doms or _pa_ips or _pa_urls:
-
                     # Merge with existing pivot seeds
 
                     _existing_doms = getattr(self._result, "pivot_seed_domains", ()) or ()
@@ -13752,14 +11973,11 @@ class SprintScheduler:
                     self._result.seed_context_propagated = True
 
                     log.debug(
-
                         "[F237B] planner_action seeds merged: domains=%s, ips=%s, urls=%s",
-
-                        _pa_doms, _pa_ips, _pa_urls,
-
+                        _pa_doms,
+                        _pa_ips,
+                        _pa_urls,
                     )
-
-
 
             # F227B: Seed-Unlocked Lanes Bridge -- after domain fallback, before prelude gather.
 
@@ -13767,7 +11985,9 @@ class SprintScheduler:
 
             # run in the current sprint instead of waiting for the next query-derived run.
 
-            self._result.nonfeed_profile_expected_lanes = getattr(self._result, "nonfeed_profile_expected_lanes", ()) or ()  # noqa: E501
+            self._result.nonfeed_profile_expected_lanes = (
+                getattr(self._result, "nonfeed_profile_expected_lanes", ()) or ()
+            )  # noqa: E501
 
             _unlocked: list[str] = getattr(self._result, "lanes_unlocked_by_seed_context", []) or []
 
@@ -13776,13 +11996,10 @@ class SprintScheduler:
             _planner_lanes_result: list[str] = getattr(self._result, "planner_action_lanes_requested", []) or []
 
             for _pl in _planner_lanes_result:
-
                 if _pl not in _unlocked:
-
                     _unlocked.append(_pl)
 
             if _unlocked and self._result.seed_context_available:
-
                 _existing: set[str] = {lane for lane, *_ in _nonfeed_lanes_to_run}
 
                 _expected: set[str] = set(self._result.nonfeed_profile_expected_lanes)
@@ -13790,29 +12007,20 @@ class SprintScheduler:
                 # Conservative timeouts/max_items for seed-unlocked lanes
 
                 _seed_lane_defaults: dict[str, tuple[float, int]] = {
-
                     "DOH": (12.0, 8),
-
                     "CT": (18.0, 10),
-
                     "WAYBACK": (18.0, 8),
-
                     "PASSIVE_DNS": (12.0, 8),
-
                 }
 
                 for _lane in ("CT", "DOH", "WAYBACK", "PASSIVE_DNS"):
-
                     if _lane not in _unlocked:
-
                         continue
 
                     if _lane in _existing:
-
                         continue  # deduplication -- already scheduled
 
                     if _lane not in _expected:
-
                         continue  # not in profile expected lanes
 
                     _timeout_s, _max_items = _seed_lane_defaults.get(_lane, (20.0, 5))
@@ -13830,8 +12038,6 @@ class SprintScheduler:
                     _nonfeed_lanes_to_run.append((_lane, True, _timeout_s, _max_items))
 
                     _nonfeed_expected.append(_lane)
-
-
 
             # B4: ALWAYS define _query_domain_candidates before use (NameError guard)
             # [FIX] _query_domain_candidates is referenced inside `if _pivot_has_seeds`
@@ -13852,6 +12058,7 @@ class SprintScheduler:
                     from hledac.universal.runtime.nonfeed_candidate_ledger import (
                         generate_conceptual_domain_candidates,
                     )
+
                     _mlx_candidates = await generate_conceptual_domain_candidates(query)
                     _query_domain_candidates = [c.domain for c in _mlx_candidates if c.domain]
                 except Exception:  # noqa: BLE001
@@ -13865,6 +12072,7 @@ class SprintScheduler:
                 from hledac.universal.runtime.nonfeed_seed_runtime import (
                     _decompose_query_keywords_to_seeds,
                 )
+
                 _rule_seeds: list[str] = _decompose_query_keywords_to_seeds(query)
                 if _rule_seeds:
                     _query_domain_candidates = _rule_seeds
@@ -13878,11 +12086,12 @@ class SprintScheduler:
                 try:
                     from hledac.universal.discovery.duckduckgo_adapter import async_search_public_web
                     from hledac.universal.tools.url_dedup import extract_domain as extract_domain_from_url
+
                     _serp_result = await async_search_public_web(query, max_results=10, timeout_s=15.0)
                     if _serp_result and _serp_result.hits:
                         _serp_domains: list[str] = []
                         for _hit in _serp_result.hits[:10]:
-                            if getattr(_hit, 'url', None):
+                            if getattr(_hit, "url", None):
                                 _d = extract_domain_from_url(_hit.url)
                                 if _d:
                                     _serp_domains.append(_d)
@@ -13900,18 +12109,20 @@ class SprintScheduler:
             # BEFORE build_acquisition_plan() so lanes are enabled correctly.
             # Uses extract_domain_candidates_from_text() which handles defanged markers.
 
-
             # F228A / F235C: Build NonfeedSeedContext from pivot seeds + next_seeds_ioc values.
 
             _seed_ctx: NonfeedSeedContext | None = None
 
-            _pivot_has_seeds = (self._result.pivot_seed_domains or self._result.pivot_seed_ips
+            _pivot_has_seeds = (
+                self._result.pivot_seed_domains or self._result.pivot_seed_ips or self._result.pivot_seed_urls
+            )
 
-                                or self._result.pivot_seed_urls)
-
-            _next_seeds_has_iocs = (self._result.next_seeds_ioc_domains or self._result.next_seeds_ioc_ips
-
-                                    or self._result.next_seeds_ioc_urls or self._result.next_seeds_ioc_hashes)
+            _next_seeds_has_iocs = (
+                self._result.next_seeds_ioc_domains
+                or self._result.next_seeds_ioc_ips
+                or self._result.next_seeds_ioc_urls
+                or self._result.next_seeds_ioc_hashes
+            )
 
             if _pivot_has_seeds or _next_seeds_has_iocs:
                 # F280: Collect DuckPGQ cross-sprint entity neighbors for seed entities
@@ -13938,10 +12149,12 @@ class SprintScheduler:
                     # [P0-2] Prepend synthetic domains (from MLX/heuristic expansion)
                     # so build_lane_query() returns them first for CT/DOH/WAYBACK shaping.
                     # [P0-1] Prepend query-extracted domains so build_lane_query() returns them first
-                    domains=tuple((_synthetic_domains or ())
-                                  + tuple(_query_domain_candidates or [])
-                                  + (self._result.pivot_seed_domains or ())
-                                  + (self._result.next_seeds_ioc_domains or ())),  # noqa: E501
+                    domains=tuple(
+                        (_synthetic_domains or ())
+                        + tuple(_query_domain_candidates or [])
+                        + (self._result.pivot_seed_domains or ())
+                        + (self._result.next_seeds_ioc_domains or ())
+                    ),  # noqa: E501
                     ips=tuple((self._result.pivot_seed_ips or ()) + (self._result.next_seeds_ioc_ips or ())),
                     urls=tuple((self._result.pivot_seed_urls or ()) + (self._result.next_seeds_ioc_urls or ())),
                     hashes=tuple((self._result.pivot_seed_hashes or ()) + (self._result.next_seeds_ioc_hashes or ())),
@@ -13949,43 +12162,23 @@ class SprintScheduler:
                     duckpgq_entities=_duckpgq_seeds,
                 )
 
-
-
             await self._run_nonfeed_prelude_gather(
-
                 query=query,
-
                 duckdb_store=duckdb_store,
-
                 ct_log_client=ct_log_client,
-
                 nonfeed_lanes_to_run=_nonfeed_lanes_to_run,
-
                 hardware_critical=_hardware_critical,
-
                 t0=_t0,
-
                 time_module=_time,
-
                 prelude_budget_s=_prelude_budget_s,
-
                 nonfeed_prelude_attempted=_nonfeed_prelude_attempted,
-
                 nonfeed_prelude_terminal=_nonfeed_prelude_terminal,
-
                 nonfeed_prelude_skipped=_nonfeed_prelude_skipped,
-
                 nonfeed_prelude_accepted=_nonfeed_prelude_accepted,
-
                 nonfeed_prelude_errors=_nonfeed_prelude_errors,
-
                 pivot_lanes=_pivot_lanes,
-
                 seed_context=_seed_ctx,
-
             )
-
-
 
             # Mark nonfeed prelude complete so it runs exactly once per sprint
 
@@ -13996,11 +12189,7 @@ class SprintScheduler:
             # CT/DOH/WAYBACK/PASSIVE_DNS lanes have no targets and will immediately timeout.
             # This wastes 90-180s of windup. Instead, skip windup and exit with a
             # diagnostic finding so the operator gets immediate feedback.
-            if (
-                _has_domain
-                and not self._result.seed_context_available
-                and _is_nonfeed_diagnostic
-            ):
+            if _has_domain and not self._result.seed_context_available and _is_nonfeed_diagnostic:
                 log.critical(
                     "[F300S-P1] domain_detected=True but seed_context_available=False "
                     "(acquisition_profile=%s, query=%r) -- skipping windup, entering early-exit",
@@ -14013,11 +12202,9 @@ class SprintScheduler:
                 self._runner.abort("domain_detected_no_seeds")
                 return
 
-
         # Accumulate outcomes
 
         if _prelude_outcomes:
-
             self._lane_outcomes = tuple(_prelude_outcomes)
 
             self._result.acquisition_lane_outcomes = tuple(_prelude_outcomes)
@@ -14025,8 +12212,6 @@ class SprintScheduler:
             # Sprint F268: Populate telemetry for nonfeed prelude lanes that bypass
             # run_enabled_acquisition_lanes / _accumulate_lane_findings.
             self._accumulate_lane_findings(tuple(_prelude_outcomes), query)
-
-
 
         # Record telemetry
 
@@ -14040,8 +12225,6 @@ class SprintScheduler:
 
         self._result.acquisition_prelude_duration_s = _time.monotonic() - _t0
 
-
-
         # Missing lanes = required but not in terminal_lanes
 
         _missing = [r for r in _required if r not in _terminal_lanes]
@@ -14051,21 +12234,13 @@ class SprintScheduler:
         # F232: ct_prelude_missing_but_final_attempted -- CT missing at prelude but ran later
 
         if "CT" in _missing:
-
-            self._result.ct_prelude_missing_but_final_attempted = getattr(
-
-                self._result, "ct_scheduled", False
-
-            )
-
-
+            self._result.ct_prelude_missing_but_final_attempted = getattr(self._result, "ct_scheduled", False)
 
         # Sprint F233D: Populate nonfeed_prelude telemetry
 
         # nonfeed_prelude extends the existing acquisition_prelude for nonfeed_diagnostic missions
 
         if _is_nonfeed_diagnostic:
-
             self._result.nonfeed_prelude_enabled = True
 
             self._result.nonfeed_prelude_expected_lanes = tuple(_nonfeed_prelude_expected)
@@ -14075,13 +12250,9 @@ class SprintScheduler:
             self._result.nonfeed_prelude_terminal_lanes = tuple(_nonfeed_prelude_terminal)
 
             self._result.nonfeed_prelude_missing_lanes = tuple(
-
-                k for k in _nonfeed_prelude_expected
-
-                if k not in _nonfeed_prelude_terminal
-
-                and k not in _nonfeed_prelude_skipped
-
+                k
+                for k in _nonfeed_prelude_expected
+                if k not in _nonfeed_prelude_terminal and k not in _nonfeed_prelude_skipped
             )
 
             self._result.nonfeed_prelude_accepted_by_lane = dict(_nonfeed_prelude_accepted)
@@ -14102,16 +12273,14 @@ class SprintScheduler:
                 from hledac.universal.runtime.nonfeed_candidate_ledger import (
                     extract_domain_candidates_from_text,
                 )
+
                 _h3_prewarm_candidates = extract_domain_candidates_from_text(
                     query,
                     source_url=None,
                     source_family="query",
                     min_confidence=0.3,
                 )
-                _h3_prewarm_domains = [
-                    c.domain for c in _h3_prewarm_candidates
-                    if c.confidence >= 0.3
-                ][:5]
+                _h3_prewarm_domains = [c.domain for c in _h3_prewarm_candidates if c.confidence >= 0.3][:5]
                 for _domain in _h3_prewarm_domains:
                     try:
                         probe_altsvc_speculative(f"https://{_domain}")
@@ -14121,17 +12290,14 @@ class SprintScheduler:
                 pass
 
         log.debug(
-            "[F209A] Acquisition prelude done: required=%s, terminal=%s, missing=%s, "
-
-            "skipped=%s, errors=%s, dur=%.2fs",
-
-            _required, _terminal_lanes, _missing, _skipped, _errors,
-
+            "[F209A] Acquisition prelude done: required=%s, terminal=%s, missing=%s, skipped=%s, errors=%s, dur=%.2fs",
+            _required,
+            _terminal_lanes,
+            _missing,
+            _skipped,
+            _errors,
             self._result.acquisition_prelude_duration_s,
-
         )
-
-
 
     # ── Sprint F233D: Nonfeed Prelude Lane Extractors ──────────────────────────
 
@@ -14141,44 +12307,24 @@ class SprintScheduler:
 
     # M1 8GB safe: all lanes use Semaphore(3) via _run_nonfeed_prelude_gather.
 
-
-
     async def _run_nonfeed_prelude_gather(
-
         self,
-
         query: str,
-
         duckdb_store: Any,
-
         ct_log_client: Any,
-
         nonfeed_lanes_to_run: list[tuple[str, bool, float, int]],
-
         hardware_critical: bool,
-
         t0: float,
-
         time_module: Any,
-
         prelude_budget_s: float,
-
         nonfeed_prelude_attempted: list[str],
-
         nonfeed_prelude_terminal: list[str],
-
         nonfeed_prelude_skipped: dict[str, str],
-
         nonfeed_prelude_accepted: dict[str, int],
-
         nonfeed_prelude_errors: dict[str, str],
-
         pivot_lanes: (Sequence[Any] | None) = None,
-
         seed_context: NonfeedSeedContext | None = None,
-
     ) -> None:
-
         """
 
         Sprint F233D / F228A: Run nonfeed prelude lanes concurrently (Semaphore(3) for M1 8GB).
@@ -14199,68 +12345,53 @@ class SprintScheduler:
 
         _sem = asyncio.Semaphore(3)
 
-
-
         async def _run_lane(
-
-            _lane_name: str, _lane_timeout: float, _lane_max_items: int,
-
+            _lane_name: str,
+            _lane_timeout: float,
+            _lane_max_items: int,
         ) -> tuple[str, int]:
 
             async with _sem:
-
                 if time_module.monotonic() - t0 >= prelude_budget_s:
-
                     nonfeed_prelude_skipped[_lane_name] = "prelude_budget_exceeded"
 
                     return (_lane_name, 0)
 
                 try:
-
                     async with asyncio.timeout(min(_lane_timeout, 20.0)):
-
                         if _lane_name == "WAYBACK":
-
                             return await self._run_wayback_prelude_lane(
-
-                                query, duckdb_store, time_module,
-
-                                nonfeed_prelude_attempted, nonfeed_prelude_terminal,
-
-                                nonfeed_prelude_accepted, nonfeed_prelude_skipped,
-
+                                query,
+                                duckdb_store,
+                                time_module,
+                                nonfeed_prelude_attempted,
+                                nonfeed_prelude_terminal,
+                                nonfeed_prelude_accepted,
+                                nonfeed_prelude_skipped,
                                 seed_context=seed_context,
-
                             )
 
                         elif _lane_name == "PASSIVE_DNS":
-
                             return await self._run_pdns_prelude_lane(
-
-                                query, duckdb_store, time_module,
-
-                                nonfeed_prelude_attempted, nonfeed_prelude_terminal,
-
+                                query,
+                                duckdb_store,
+                                time_module,
+                                nonfeed_prelude_attempted,
+                                nonfeed_prelude_terminal,
                                 nonfeed_prelude_accepted,
-
                                 seed_context=seed_context,
-
                             )
 
                         elif _lane_name == "DOH":
-
                             return await self._run_doh_prelude_lane(
-
-                                query, duckdb_store, time_module,
-
-                                nonfeed_prelude_attempted, nonfeed_prelude_terminal,
-
+                                query,
+                                duckdb_store,
+                                time_module,
+                                nonfeed_prelude_attempted,
+                                nonfeed_prelude_terminal,
                                 nonfeed_prelude_accepted,
-
                                 pivot_doh_items=pivot_lanes,
-
                                 seed_context=seed_context,
-
                             )
 
                         elif _lane_name == "CT":
@@ -14270,8 +12401,11 @@ class SprintScheduler:
                                 AcquisitionLane,
                                 build_lane_query,
                             )
+
                             _ct_shaped = build_lane_query(
-                                query, AcquisitionLane.CT, seed_context=seed_context,
+                                query,
+                                AcquisitionLane.CT,
+                                seed_context=seed_context,
                             )
                             if isinstance(_ct_shaped, dict) or not _ct_shaped:
                                 nonfeed_prelude_skipped["CT"] = "empty_ct_query"
@@ -14299,7 +12433,6 @@ class SprintScheduler:
                                 return ("CT", 0)
 
                         elif _lane_name == "PIVOT_EXECUTOR":
-
                             # PIVOT_EXECUTOR: inline (already structured)
 
                             # F238D: Pass graph_stats for degree-penalty and novelty scoring
@@ -14311,7 +12444,6 @@ class SprintScheduler:
                             _pivots = generate_pivot_candidates_from_query(query, graph_stats=_gs)
 
                             if _pivots:
-
                                 nonfeed_prelude_attempted.append("PIVOT_EXECUTOR")
 
                                 nonfeed_prelude_terminal.append("PIVOT_EXECUTOR")
@@ -14319,17 +12451,14 @@ class SprintScheduler:
                                 return ("PIVOT_EXECUTOR", 0)
 
                             else:
-
                                 nonfeed_prelude_skipped["PIVOT_EXECUTOR"] = "no_candidates"
 
                                 return ("PIVOT_EXECUTOR", 0)
 
                         else:
-
                             return (_lane_name, 0)
 
                 except TimeoutError:
-
                     nonfeed_prelude_errors[_lane_name] = "prelude_timeout"
 
                     nonfeed_prelude_skipped[_lane_name] = "prelude_timeout"
@@ -14337,50 +12466,36 @@ class SprintScheduler:
                     return (_lane_name, 0)
 
                 except Exception as _exc:
-
                     nonfeed_prelude_errors[_lane_name] = f"{type(_exc).__name__}:{_exc}"
 
                     nonfeed_prelude_skipped[_lane_name] = f"prelude_error:{type(_exc).__name__}"
 
                     return (_lane_name, 0)
 
-
-
         _tasks = [
-
-            _run_lane(_name, _timeout, _max_items)
-
-            for _name, _enabled, _timeout, _max_items in nonfeed_lanes_to_run
-
+            _run_lane(_name, _timeout, _max_items) for _name, _enabled, _timeout, _max_items in nonfeed_lanes_to_run
         ]
 
         if _tasks:
-
             _lane_results = await safe_gather_ok(*_tasks, label="sprint_scheduler:12263")
 
             for _result in _lane_results:
-
                 if isinstance(_result, BaseException):
-
                     if isinstance(_result, asyncio.CancelledError):
-
                         raise _result  # Propagate cancellation -- do not silently swallow
 
                     log.warning("nonfeed prelude gather exception: %s", _result)
 
                 elif isinstance(_result, tuple):
-
                     _ln, _la = _result
 
                     nonfeed_prelude_accepted[_ln] = _la
-
-
-
 
     # F285: PUBLIC prelude helper - extracted for parallel execution with CT
     async def _run_public_prelude_lane(self, query: str) -> dict:
         """Run PUBLIC prelude lane. Returns result dict, never raises."""
         import asyncio
+
         from hledac.universal.pipeline.live_public_pipeline import (
             async_run_live_public_pipeline,
         )
@@ -14388,6 +12503,7 @@ class SprintScheduler:
             AcquisitionLane,
             build_lane_query,
         )
+
         try:
             _shaped = build_lane_query(query, AcquisitionLane.PUBLIC)
             if isinstance(_shaped, dict) or not _shaped:
@@ -14419,12 +12535,12 @@ class SprintScheduler:
                 "attempted": True,
                 "skipped": False,
                 "skip_reason": None,
-                "raw_count": getattr(_pipeline_result, 'discovered', 0) or 0,
-                "built_count": getattr(_pipeline_result, 'fetched', 0) or 0,
-                "accepted_count": getattr(_pipeline_result, 'accepted_findings', 0) or 0,
-                "error": getattr(_pipeline_result, 'error', None),
-                "timeout": getattr(_pipeline_result, 'timed_out', False),
-                "duration_s": getattr(_pipeline_result, 'elapsed_s', None),
+                "raw_count": getattr(_pipeline_result, "discovered", 0) or 0,
+                "built_count": getattr(_pipeline_result, "fetched", 0) or 0,
+                "accepted_count": getattr(_pipeline_result, "accepted_findings", 0) or 0,
+                "error": getattr(_pipeline_result, "error", None),
+                "timeout": getattr(_pipeline_result, "timed_out", False),
+                "duration_s": getattr(_pipeline_result, "elapsed_s", None),
             }
         except TimeoutError:
             return {
@@ -14450,6 +12566,7 @@ class SprintScheduler:
         """Run CT prelude lane. Returns (AcquisitionLaneOutcome, ct_result, ct_telemetry)."""
         import asyncio
         import time as _time
+
         from hledac.universal.runtime.acquisition_strategy import (
             AcquisitionLane,
             AcquisitionLaneOutcome,
@@ -14458,6 +12575,7 @@ class SprintScheduler:
         from hledac.universal.runtime.source_finding_bridge import (
             ct_results_to_findings,
         )
+
         _ct_outcome_prelude: Any = None
         _ct_result: Any = None
         _candidates_prelude: tuple = ()
@@ -14474,8 +12592,8 @@ class SprintScheduler:
                     max_results=5,
                     timeout_s=15.0,
                 )
-            _ct_results_raw = getattr(_ct_outcome_obj, 'raw_count', 0) or 0
-            _ct_error = getattr(_ct_outcome_obj, 'error', None)
+            _ct_results_raw = getattr(_ct_outcome_obj, "raw_count", 0) or 0
+            _ct_error = getattr(_ct_outcome_obj, "error", None)
             _candidates_prelude, _rejections_prelude, _ct_telemetry_prelude = ct_results_to_findings(
                 _ct_result, _ct_outcome_obj, query, sprint_id=f"prelude-{int(_time.time())}"
             )
@@ -14505,7 +12623,7 @@ class SprintScheduler:
                 duration_s=15.0,
                 error="prelude_timeout",
                 source_family="ct",
-                ct_query=str(_shaped) if '_shaped' in dir() else "",
+                ct_query=str(_shaped) if "_shaped" in dir() else "",
                 ct_results_raw=0,
             )
         except Exception:
@@ -14514,28 +12632,29 @@ class SprintScheduler:
         _prelude_candidates = len(_candidates_prelude) if _candidates_prelude else 0
         # Compute loss_stage from same logic as original merge section
         if _ct_results_raw == 0:
-            _loss_stage = 'NO_RAW'
+            _loss_stage = "NO_RAW"
             _bridge_invoked = False
-        elif (
-            _prelude_candidates == 0
-            and _ct_results_raw > 0
-            and REJECTION_UNSUPPORTED_SHAPE in _rejections_prelude
-        ):
-            _loss_stage = 'UNSUPPORTED_RAW_SHAPE'
+        elif _prelude_candidates == 0 and _ct_results_raw > 0 and REJECTION_UNSUPPORTED_SHAPE in _rejections_prelude:
+            _loss_stage = "UNSUPPORTED_RAW_SHAPE"
             _bridge_invoked = True
         elif _prelude_candidates == 0 and _ct_results_raw > 0:
-            _loss_stage = 'ALL_REJECTED_BY_BRIDGE'
+            _loss_stage = "ALL_REJECTED_BY_BRIDGE"
             _bridge_invoked = True
         else:
-            _loss_stage = 'CANDIDATES_BUILT_NOT_ACCUMULATED'
+            _loss_stage = "CANDIDATES_BUILT_NOT_ACCUMULATED"
             _bridge_invoked = True
         _prelude_keys: tuple = ()
-        if _ct_results_raw > 0 and hasattr(_ct_result, 'hits') and _ct_result.hits:
-            _prelude_keys = tuple(sorted({
-                k for hit in list(_ct_result.hits)[:3]
-                for k in (getattr(hit, "url", None), getattr(hit, "ct_name_value", None))
-                if k
-            }))
+        if _ct_results_raw > 0 and hasattr(_ct_result, "hits") and _ct_result.hits:
+            _prelude_keys = tuple(
+                sorted(
+                    {
+                        k
+                        for hit in list(_ct_result.hits)[:3]
+                        for k in (getattr(hit, "url", None), getattr(hit, "ct_name_value", None))
+                        if k
+                    }
+                )
+            )
         _ct_quarantine_count = 0
         _ct_quarantine_entries: list = []
         if isinstance(_ct_telemetry_prelude, dict):
@@ -14550,38 +12669,29 @@ class SprintScheduler:
             "ct_quarantine_entries": _ct_quarantine_entries,
         }
         if isinstance(_ct_telemetry_prelude, dict):
-            _telemetry.update({
-                "ct_bridge_candidate_count": _ct_telemetry_prelude.get("ct_bridge_candidate_count", 0),
-                "ct_bridge_valid_domain_count": _ct_telemetry_prelude.get("ct_bridge_valid_domain_count", 0),
-                "ct_bridge_build_success_count": _ct_telemetry_prelude.get("ct_bridge_build_success_count", 0),
-                "ct_bridge_quality_rejected_count": _ct_telemetry_prelude.get("ct_bridge_quality_rejected_count", 0),
-            })
+            _telemetry.update(
+                {
+                    "ct_bridge_candidate_count": _ct_telemetry_prelude.get("ct_bridge_candidate_count", 0),
+                    "ct_bridge_valid_domain_count": _ct_telemetry_prelude.get("ct_bridge_valid_domain_count", 0),
+                    "ct_bridge_build_success_count": _ct_telemetry_prelude.get("ct_bridge_build_success_count", 0),
+                    "ct_bridge_quality_rejected_count": _ct_telemetry_prelude.get(
+                        "ct_bridge_quality_rejected_count", 0
+                    ),
+                }
+            )
         return (_ct_outcome_prelude, _ct_result, _telemetry)
 
-
-
     async def _run_wayback_prelude_lane(
-
         self,
-
         query: str,
-
         duckdb_store: Any,
-
         time_module: Any,
-
         nonfeed_prelude_attempted: list[str],
-
         nonfeed_prelude_terminal: list[str],
-
         nonfeed_prelude_accepted: dict[str, int],
-
         nonfeed_prelude_skipped: dict[str, str],
-
         seed_context: NonfeedSeedContext | None = None,
-
     ) -> tuple[str, int]:
-
         """Sprint F233D / F228A: WAYBACK prelude lane -- archive replay for pivot discovery.
 
 
@@ -14594,32 +12704,22 @@ class SprintScheduler:
         from hledac.universal.runtime.acquisition_strategy import AcquisitionLane
         from hledac.universal.runtime.source_finding_bridge import wayback_results_to_findings
 
-
-
         _wb_query = build_lane_query(query, AcquisitionLane.WAYBACK, seed_context=seed_context)
 
         if _wb_query and not isinstance(_wb_query, dict):
-
             _wb_miner = WaybackDiffMiner()
 
             try:
-
                 _wb_result = await _wb_miner.mine([str(_wb_query)])
 
             finally:
-
                 await _wb_miner.close()
 
             _wb_cands, _wb_rejs, _wb_tel = wayback_results_to_findings(
-
-                _wb_result, query,
-
-                sprint_id=f"prelude-wb-{int(time_module.time())}"
-
+                _wb_result, query, sprint_id=f"prelude-wb-{int(time_module.time())}"
             )
 
             if _wb_tel:
-
                 self._result.wayback_advisory_clues_count += _wb_tel.get("wayback_changed_count", 0)
 
             nonfeed_prelude_attempted.append("WAYBACK")
@@ -14629,7 +12729,6 @@ class SprintScheduler:
             _wb_acc = 0
 
             if _wb_cands and duckdb_store and hasattr(duckdb_store, "async_ingest_findings_batch"):
-
                 _ing = None
                 try:
                     # F285: Enqueue for background write -- overlaps with next cycle.
@@ -14638,7 +12737,9 @@ class SprintScheduler:
                         # BUG-15 FIX: fire-and-forget via create_task instead of blocking await.
                         # This prevents serialising the cycle's nonfeed lane with DuckDB write.
                         _t = safe_create_task(
-                            self._gate_then_ingest_and_accumulate(duckdb_store, list(_wb_cands), sprint_id=self.sprint_id or "")
+                            self._gate_then_ingest_and_accumulate(
+                                duckdb_store, list(_wb_cands), sprint_id=self.sprint_id or ""
+                            )
                         )
                         self._bg_tasks.add(_t)
                         _t.add_done_callback(self._bg_tasks.discard)
@@ -14648,10 +12749,10 @@ class SprintScheduler:
                     log.warning(
                         "sprint %s: wayback ledger write failed -- %s: %s",
                         getattr(self._result, "sprint_id", "?"),
-                        type(_exc).__name__, _exc,
+                        type(_exc).__name__,
+                        _exc,
                     )
                     _wb_acc = 0
-
 
             nonfeed_prelude_accepted["WAYBACK"] = _wb_acc
 
@@ -14659,36 +12760,20 @@ class SprintScheduler:
 
         # F226C: Explicit skip when query shaping returned empty/disabled -- never leave blank
 
-        nonfeed_prelude_skipped["WAYBACK"] = (
-
-            "empty_shaped_query" if not _wb_query else "lane_disabled"
-
-        )
+        nonfeed_prelude_skipped["WAYBACK"] = "empty_shaped_query" if not _wb_query else "lane_disabled"
 
         return ("WAYBACK", 0)
 
-
-
     async def _run_pdns_prelude_lane(
-
         self,
-
         query: str,
-
         duckdb_store: Any,
-
         time_module: Any,
-
         nonfeed_prelude_attempted: list[str],
-
         nonfeed_prelude_terminal: list[str],
-
         nonfeed_prelude_accepted: dict[str, int],
-
         seed_context: NonfeedSeedContext | None = None,
-
     ) -> tuple[str, int]:
-
         """Sprint F233D / F228A: PASSIVE_DNS prelude lane -- passive DNS recon.
 
 
@@ -14701,24 +12786,16 @@ class SprintScheduler:
         from hledac.universal.runtime.source_finding_bridge import passive_dns_results_to_findings
         from hledac.universal.security.passive_dns import call_lookup_passive_dns
 
-
-
         _pdns_query = build_lane_query(query, AcquisitionLane.PASSIVE_DNS, seed_context=seed_context)
 
         if _pdns_query and not isinstance(_pdns_query, dict):
-
             _pdns_ips, _pdns_outcome = await call_lookup_passive_dns(str(_pdns_query))
 
             _pdns_cands, _pdns_rejs, _pdns_tel = passive_dns_results_to_findings(
-
-                _pdns_ips, _pdns_outcome, query,
-
-                sprint_id=f"prelude-pdns-{int(time_module.time())}"
-
+                _pdns_ips, _pdns_outcome, query, sprint_id=f"prelude-pdns-{int(time_module.time())}"
             )
 
             if _pdns_tel:
-
                 self._result.passive_dns_advisory_clues_count += _pdns_tel.get("pdns_public_accepted", 0)
 
             nonfeed_prelude_attempted.append("PASSIVE_DNS")
@@ -14728,13 +12805,14 @@ class SprintScheduler:
             _pdns_acc = 0
 
             if _pdns_cands and duckdb_store and hasattr(duckdb_store, "async_ingest_findings_batch"):
-
                 try:
                     # F285: Enqueue for background write -- overlaps with next cycle.
                     if not self._enqueue_duckdb_write(duckdb_store, list(_pdns_cands), self.sprint_id or ""):
                         # BUG-15 FIX: fire-and-forget via create_task instead of blocking await.
                         _t = safe_create_task(
-                            self._gate_then_ingest_and_accumulate(duckdb_store, list(_pdns_cands), sprint_id=self.sprint_id or "")
+                            self._gate_then_ingest_and_accumulate(
+                                duckdb_store, list(_pdns_cands), sprint_id=self.sprint_id or ""
+                            )
                         )
                         self._bg_tasks.add(_t)
                         _t.add_done_callback(self._bg_tasks.discard)
@@ -14747,38 +12825,21 @@ class SprintScheduler:
 
         # F226C: Explicit skip when query shaping returned empty/disabled -- never leave blank
 
-        nonfeed_prelude_skipped["PASSIVE_DNS"] = (
-
-            "empty_shaped_query" if not _pdns_query else "lane_disabled"
-
-        )
+        nonfeed_prelude_skipped["PASSIVE_DNS"] = "empty_shaped_query" if not _pdns_query else "lane_disabled"
 
         return ("PASSIVE_DNS", 0)
 
-
-
     async def _run_doh_prelude_lane(
-
         self,
-
         query: str,
-
         duckdb_store: Any,
-
         time_module: Any,
-
         nonfeed_prelude_attempted: list[str],
-
         nonfeed_prelude_terminal: list[str],
-
         nonfeed_prelude_accepted: dict[str, int],
-
         pivot_doh_items: (Sequence[Any] | None) = None,
-
         seed_context: NonfeedSeedContext | None = None,
-
     ) -> tuple[str, int]:
-
         """Sprint F234A / F214 / F228A: DOH prelude lane -- DNS-over-HTTPS passive DNS recon.
 
 
@@ -14812,15 +12873,11 @@ class SprintScheduler:
         from hledac.universal.runtime.acquisition_strategy import AcquisitionLane, is_lane_enabled
         from hledac.universal.runtime.source_finding_bridge import doh_results_to_findings
 
-
-
         # F214: Mark DOH as planned and scheduled
 
         self._result.doh_planned = is_lane_enabled(self._acquisition_plan, AcquisitionLane.DOH)
 
         self._result.doh_scheduled = True
-
-
 
         # F220J: Prefer domain seed from pivot plan over raw query extraction.
 
@@ -14829,9 +12886,7 @@ class SprintScheduler:
         _doh_domain: str | None = None
 
         if pivot_doh_items:
-
             for _item in pivot_doh_items:
-
                 _lane = getattr(_item, "lane", None) or ""
 
                 _seed_type = getattr(_item, "seed_type", None) or ""
@@ -14839,25 +12894,20 @@ class SprintScheduler:
                 _seed_val = getattr(_item, "seed_value", None) or ""
 
                 if _lane == "DOH" and _seed_type == "domain" and _seed_val:
-
                     _doh_domain = _seed_val
 
                     break
-
-
 
         # F220J: Use pivot domain if found; otherwise fall back to raw query extraction.
 
         # Raw query extraction is the legacy path -- it may return _disabled or None.
 
         if _doh_domain:
-
             _doh_query: Any = _doh_domain
 
             self._result.doh_seed_source = "pivot_plan"
 
         else:
-
             # F228A: Use seed_context for domain/IP shaping when pivot_doh_items has no explicit domain.
 
             _doh_query = build_lane_query(query, AcquisitionLane.DOH, seed_context=seed_context)
@@ -14869,7 +12919,6 @@ class SprintScheduler:
             # build_lane_query already returns _disabled dict for non-domain queries.
 
             if _doh_query is None or (isinstance(_doh_query, dict) and _doh_query.get("_disabled")):
-
                 self._result.doh_terminal_stage = "no_candidates"
 
                 self._result.doh_seed_source = "no_domain_seed"
@@ -14878,22 +12927,17 @@ class SprintScheduler:
 
                 return ("DOH", 0)
 
-
-
         # F226F: Lazy init -- attempt to create adapter if not yet initialized.
 
         # Never report doh_adapter_not_initialized just because the field starts as None.
 
         if self._doh_adapter is None:
-
             try:
-
                 from hledac.universal.intelligence.doh_lane import DOHAdapter
 
                 self._doh_adapter = DOHAdapter()
 
             except Exception as _init_exc:
-
                 self._result.doh_terminal_stage = "dependency_missing"
 
                 self._result.doh_provider_errors = (f"doh_adapter_init_failed:{type(_init_exc).__name__}:{_init_exc}",)
@@ -14902,36 +12946,25 @@ class SprintScheduler:
 
                 return ("DOH", 0)
 
-
-
         _doh_session = None
 
         try:
-
             from hledac.universal.transport.session_pool import session_pool
 
             _doh_session = await session_pool.httpx()
-
 
             # F214: Track domain being attempted
 
             self._result.doh_domains_attempted = 1
 
-
-
             _doh_findings = await self._doh_adapter.run(
-
                 domain=str(_doh_query),
-
                 session=_doh_session,
-
             )
 
             # F214: Mark request as attempted (adapter.run() was called)
 
             self._result.doh_request_attempted = True
-
-
 
             # Check adapter cache usage (via _cache access on adapter)
 
@@ -14939,75 +12972,56 @@ class SprintScheduler:
 
             self._result.doh_cache_used = bool(_cache_used)
 
-
-
             if _doh_findings:
-
                 _doh_cands, _doh_rejs, _doh_tel = doh_results_to_findings(
-
                     _doh_findings,
-
                     None,
-
                     query,
-
                     f"prelude-doh-{int(time_module.time())}",
-
                 )
 
                 nonfeed_prelude_attempted.append("DOH")
 
                 nonfeed_prelude_terminal.append("DOH")
 
-
-
                 # F214: Populate raw count from bridge telemetry
 
                 self._result.doh_raw_count = _doh_tel.get("doh_total", len(_doh_findings))
 
-
-
                 _doh_acc = 0
 
                 if _doh_cands and duckdb_store and hasattr(duckdb_store, "async_ingest_findings_batch"):
-
                     try:
                         # F285: Enqueue for background write -- overlaps with next cycle.
                         if not self._enqueue_duckdb_write(duckdb_store, list(_doh_cands), self.sprint_id or ""):
                             # BUG-15 FIX: fire-and-forget via create_task instead of blocking await.
                             _t = safe_create_task(
-                                self._gate_then_ingest_and_accumulate(duckdb_store, list(_doh_cands), sprint_id=self.sprint_id or "")
+                                self._gate_then_ingest_and_accumulate(
+                                    duckdb_store, list(_doh_cands), sprint_id=self.sprint_id or ""
+                                )
                             )
                             self._bg_tasks.add(_t)
                             _t.add_done_callback(self._bg_tasks.discard)
                     except Exception:  # noqa: BLE001
                         pass
 
-
                 self._result.lane_doh_accepted_findings = _doh_acc
 
                 self._result.doh_accepted_findings = _doh_acc
 
-
-
                 # F214: Terminal stage
 
                 if _doh_acc > 0:
-
                     self._result.doh_terminal_stage = "attempted_accepted"
 
                 else:
-
                     self._result.doh_terminal_stage = "attempted_empty"
-
-
 
                 nonfeed_prelude_accepted["DOH"] = _doh_acc
 
                 return ("DOH", _doh_acc)
 
             else:
-
                 # F214: No findings returned -- empty but attempted
 
                 self._result.doh_raw_count = 0
@@ -15018,10 +13032,7 @@ class SprintScheduler:
 
                 return ("DOH", 0)
 
-
-
         except TimeoutError:
-
             self._result.doh_terminal_stage = "timeout"
 
             self._result.doh_provider_errors = ("doh_timeout",)
@@ -15031,7 +13042,6 @@ class SprintScheduler:
             return ("DOH", 0)
 
         except Exception as _exc:
-
             self._result.doh_terminal_stage = "provider_error"
 
             self._result.doh_provider_errors = (f"{type(_exc).__name__}:{_exc}",)
@@ -15041,31 +13051,19 @@ class SprintScheduler:
             return ("DOH", 0)
 
         finally:
-
             if _doh_session:
-
                 await _doh_session.close()
-
-
 
     # ── Sprint F207T-A: Return Guard for Mandatory Nonfeed Terminal State ────
 
     # ---------------------------------------------------------------------------
 
-
-
     async def _ensure_mandatory_nonfeed_before_return(
-
         self,
-
         query: str,
-
         duckdb_store: Any,
-
         reason: str,
-
     ) -> bool:
-
         """
 
         Sprint F207T-A: Ensure mandatory nonfeed lanes have terminal state before
@@ -15122,52 +13120,36 @@ class SprintScheduler:
 
         """
 
-
-
-
         # Record that we checked the return guard
 
         self._result.return_guard_checked = True
-
-
 
         # Determine memory state for skipping rules
 
         _uma = "ok"
 
         if self._governor is not None:
-
             try:
-
                 _snap = await self._governor.evaluate()
 
                 _uma = getattr(_snap, "uma_state", "ok")
 
             except Exception:  # noqa: BLE001
-
                 pass  # noqa: BLE001  # fail-soft: governor evaluation advisory only
-
-
 
         _memory_state = _uma if _uma in ("ok", "warn", "critical", "emergency") else "ok"
 
         _memory_critical = _memory_state in ("critical", "emergency")
-
-
 
         # Check if this is a domain query
 
         _is_domain = False
 
         if self._acquisition_plan is not None:
-
             _debug = getattr(self._acquisition_plan, "nonfeed_plan_debug", None)
 
             if _debug is not None:
-
                 _is_domain = getattr(_debug, "domain_detected", False)
-
-
 
         if not _is_domain:
             # P1.4: nonfeed_diagnostic profile — allow empty findings
@@ -15181,9 +13163,7 @@ class SprintScheduler:
             # Non-domain keyword query: return guard lze splnit POUZE pokud
             # PUBLIC lane alespoň zahájila fetch (discovered_urls > 0)
             # nebo pokud vypršel maximální čas PUBLIC branch.
-            _pub_discovered = self._result.public_stage_counters.get(
-                "discovered_urls", 0
-            )
+            _pub_discovered = self._result.public_stage_counters.get("discovered_urls", 0)
             _pub_error = getattr(self._result, "public_error", None)
             _pub_timed_out = _pub_error == "terminal:remaining_too_low"
 
@@ -15207,9 +13187,7 @@ class SprintScheduler:
                     self._result.accepted_findings,
                 )
                 self._result.return_guard_satisfied = False
-                self._result.return_guard_block_reason = (
-                    "non_domain_no_accepted_findings"
-                )
+                self._result.return_guard_block_reason = "non_domain_no_accepted_findings"
                 return False
 
         # Domain query: check required lanes via acquisition strategy terminality contract
@@ -15223,9 +13201,7 @@ class SprintScheduler:
         swap_detected = False
 
         if self._governor is not None:
-
             try:
-
                 _snap = await self._governor.evaluate()
 
                 uma_state = getattr(_snap, "uma_state", _memory_state)
@@ -15233,30 +13209,18 @@ class SprintScheduler:
                 swap_detected = getattr(_snap, "swap_detected", False)
 
             except Exception:  # noqa: BLE001
-
                 pass
 
-
-
         _mlt_required = required_terminal_lanes(
-
             snapshot=self._acquisition_plan,
-
             query=query,
-
             uma_state=uma_state,
-
             swap_detected=swap_detected,
-
         )
 
         _required = [mlt.lane.lower() for mlt in _mlt_required if mlt.required]
 
-
-
         self._result.return_guard_required_lanes = tuple(_required)
-
-
 
         # [F228C] CT terminal if: ct_log_discovered > 0 or lane_ct_accepted_findings > 0,
 
@@ -15267,20 +13231,12 @@ class SprintScheduler:
         # [F250B] provider_cooldown/provider_unavailable count as terminal even without findings.
 
         _ct_done = (
-
             self._result.ct_log_discovered > 0
-
             or self._result.lane_ct_accepted_findings > 0
-
             or self._result.ct_request_timeout
-
             or self._result.ct_terminal_stage
-
             in ("error", "skipped", "request_timeout", "no_candidates", "provider_cooldown", "provider_unavailable")
-
         )
-
-
 
         # Check terminal state for each required lane using lane_is_terminal()
 
@@ -15288,50 +13244,32 @@ class SprintScheduler:
 
         _public_done = self._public_outcome is not None
 
-
-
         # Build observed outcomes dict for terminality_report
 
         _observed: dict[str, dict] = {}
 
         if _public_done and self._public_outcome is not None:
-
             _observed["PUBLIC"] = self._public_outcome
 
         if _ct_done:
-
             _observed["CT"] = {
-
                 "attempted": True,
-
                 "skipped": False,
-
                 "error": None,
-
                 "timeout": False,
-
                 "lane": "CT",
-
             }
-
-
 
         _unsatisfied: list[str] = []
 
         for lane in _required:
-
             if lane == "public" and not _public_done:
-
                 _unsatisfied.append("public")
 
             elif lane == "ct" and not _ct_done:
-
                 _unsatisfied.append("ct")
 
-
-
         if not _unsatisfied:
-
             # All required lanes have terminal state
             # [P5 FIX] Require at least one accepted finding before claiming guard satisfied.
             # Lanes can reach terminal state (timeout/error) with zero findings, which is
@@ -15350,8 +13288,6 @@ class SprintScheduler:
                 self._result.return_guard_block_reason = "domain_no_accepted_findings"
                 return False
 
-
-
         # Not all lanes are terminal -- try to satisfy them
 
         _attempted: list[str] = []
@@ -15359,8 +13295,6 @@ class SprintScheduler:
         _skipped: dict[str, str] = {}
 
         _errors: dict[str, str] = {}
-
-
 
         # Sprint P1-1: Run PUBLIC and CT in parallel (was sequential: PUBLIC→CT).
         # Each helper captures outcome and any exception, returned as (lane, outcome|exc).
@@ -15447,46 +13381,28 @@ class SprintScheduler:
         # [F250B] provider_cooldown/provider_unavailable count as terminal
 
         _ct_done = (
-
             self._result.ct_log_discovered > 0
-
             or self._result.lane_ct_accepted_findings > 0
-
             or self._result.ct_request_timeout
-
             or self._result.ct_terminal_stage
-
             in ("error", "skipped", "request_timeout", "no_candidates", "provider_cooldown", "provider_unavailable")
-
         )
-
-
 
         _still_unsatisfied: list[str] = []
 
         for lane in _required:
-
             if lane == "public" and not _public_done:
-
                 _still_unsatisfied.append("public")
 
             elif lane == "ct" and not _ct_done:
-
                 _still_unsatisfied.append("ct")
 
-
-
         if _still_unsatisfied:
-
             # Cannot return -- set block telemetry and return False
 
             self._result.return_guard_delayed_for_nonfeed = True
 
-            self._result.return_guard_block_reason = (
-
-                f"nonfeed_not_terminal:{','.join(_still_unsatisfied)}"
-
-            )
+            self._result.return_guard_block_reason = f"nonfeed_not_terminal:{','.join(_still_unsatisfied)}"
 
             self._result.return_guard_attempted_lanes = tuple(_attempted)
 
@@ -15495,8 +13411,6 @@ class SprintScheduler:
             self._result.return_guard_errors = dict(_errors)
 
             return False
-
-
 
         # All required lanes now terminal
 
@@ -15512,11 +13426,7 @@ class SprintScheduler:
 
         return True
 
-
-
     # ── Cycle logic ────────────────────────────────────────────────────────
-
-
 
     # ---------------------------------------------------------------------------
 
@@ -15524,18 +13434,11 @@ class SprintScheduler:
 
     # ---------------------------------------------------------------------------
 
-
-
     def _check_prewindup_barrier_sync(
-
         self,
-
         query: str,
-
         duckdb_store: Any,
-
     ) -> bool:
-
         """
 
         Sprint F207R-A: Synchronous pre-windup barrier check (read-only).
@@ -15592,15 +13495,17 @@ class SprintScheduler:
         skipped_lanes = getattr(self._result, "prewindup_barrier_skipped_lanes", {})
         barrier_errors = getattr(self._result, "prewindup_barrier_errors", {})
 
-        self._result.windup_guard_last_reason = (
-            "barrier_satisfied" if satisfied else "barrier_blocked"
-        )
+        self._result.windup_guard_last_reason = "barrier_satisfied" if satisfied else "barrier_blocked"
 
         if required_lanes and not satisfied:
             self._result.windup_delayed_for_nonfeed = True
             log.debug(
                 "[P1-B] Windup blocked: required=%s satisfied=%s attempted=%s skipped=%s errors=%s",
-                required_lanes, satisfied, attempted_lanes, skipped_lanes, barrier_errors,
+                required_lanes,
+                satisfied,
+                attempted_lanes,
+                skipped_lanes,
+                barrier_errors,
             )
             return False
 
@@ -15608,19 +13513,12 @@ class SprintScheduler:
         # P1-B-FIX-END
 
     async def _run_one_cycle(
-
         self,
-
         lifecycle,
-
         sources: Sequence[str],
-
         now_monotonic: float | None = None,
-
         query: str = "",
-
         duckdb_store: Any = None,
-
     ) -> bool:
         # Sprint F278B-2: Ensure lazy dedup loaded before first cycle.
         # Windup (30-180s) gives dedup ~2s load plenty of time; this is just a safety await.
@@ -15647,8 +13545,6 @@ class SprintScheduler:
 
         work_items = self._build_work_items(sources)
 
-
-
         # Sprint F160C: Apply source economics re-sorting within the current cycle
 
         # Uses signal_stage, feed_confidence_score, winning_source_breakdown from prior cycles
@@ -15664,13 +13560,8 @@ class SprintScheduler:
         # empty cycle iterations. Resets counter when real work is performed.
         if not work_items:
             self._result.consecutive_empty_cycles += 1
-            if (
-                self._result.consecutive_empty_cycles
-                > self._result.max_consecutive_empty_cycles
-            ):
-                self._result.max_consecutive_empty_cycles = (
-                    self._result.consecutive_empty_cycles
-                )
+            if self._result.consecutive_empty_cycles > self._result.max_consecutive_empty_cycles:
+                self._result.max_consecutive_empty_cycles = self._result.consecutive_empty_cycles
             log.debug(
                 "[P1-1] Empty work_items cycle %d (consecutive=%d)",
                 current_cycle + 1,
@@ -15694,10 +13585,10 @@ class SprintScheduler:
         # should_enter_windup to ALWAYS block windup until deadline expired pre-cycle.
         # This prevented windup from ever being entered through the normal path.
         self._result.cycles_started += 1
-        _lc_adapter = getattr(self, '_lc_adapter', None)
+        _lc_adapter = getattr(self, "_lc_adapter", None)
         if _lc_adapter is not None:
             _lc_adapter.set_first_cycle_ran()
-        elif hasattr(lifecycle, 'first_cycle_ran'):
+        elif hasattr(lifecycle, "first_cycle_ran"):
             lifecycle.first_cycle_ran = True
 
         # Reset counter when real work is available
@@ -15710,29 +13601,18 @@ class SprintScheduler:
         # dispatch prevents the F228G empty-cycle guard from firing and
         # blocking PUBLIC when lifecycle enters WINDUP during the cycle.
         if self._config.aggressive_mode:
-            return await self._run_one_cycle_aggressive(
-                lifecycle, work_items, query, duckdb_store
-            )
+            return await self._run_one_cycle_aggressive(lifecycle, work_items, query, duckdb_store)
         else:
-            return await self._run_one_cycle_stable(
-                lifecycle, work_items, query, duckdb_store
-            )
+            return await self._run_one_cycle_stable(lifecycle, work_items, query, duckdb_store)
         # ── Lifecycle pruning applied AFTER cycle dispatch ───────────────────
 
     async def _run_one_cycle_stable(
-
         self,
-
         lifecycle,
-
         work_items: list,
-
         query: str,
-
         duckdb_store: Any,
-
     ) -> bool:
-
         """
 
         Stable mode: feed sources run first, then public discovery runs after.
@@ -15787,149 +13667,102 @@ class SprintScheduler:
         # Remaining-time diagnostic at stable cycle entry
         _wall_elapsed = _time.monotonic() - self._wall_clock_start
         logger.debug(
-            "[PUBLIC_BRANCH_ENTRY] wall_elapsed=%.2f sprint_duration=%.2f "
-            "windup_lead=%.2f remaining_s=%.2f",
-            _wall_elapsed, self._config.sprint_duration_s,
+            "[PUBLIC_BRANCH_ENTRY] wall_elapsed=%.2f sprint_duration=%.2f windup_lead=%.2f remaining_s=%.2f",
+            _wall_elapsed,
+            self._config.sprint_duration_s,
             self._config.effective_windup_lead_s,
             lifecycle.remaining_time(),
         )
 
         remaining_s = lifecycle.remaining_time()
 
-
-
         # F216E: Determine nonfeed terminality before feed cycle
 
         # If nonfeed is terminal, feed budget does not apply
 
         _nonfeed_terminal = bool(
-
             self._result.lane_ct_accepted_findings > 0
-
             or self._result.lane_wayback_accepted_findings > 0
-
             or self._result.lane_pdns_accepted_findings > 0
-
             or self._result.lane_blockchain_accepted_findings > 0
-
             or self._result.lane_ipfs_accepted_findings > 0
-
             or self._result.lane_doh_accepted_findings > 0
-
         )
-
-
 
         # Run sources under TaskGroup (bounded concurrency)
 
         semaphore = asyncio.Semaphore(self._config.max_parallel_sources)
 
-
-
         async def fetch_one(work) -> tuple[str, FeedPipelineRunResult]:
 
             async with semaphore:
-
                 # F216E: Feed dominance budget check before calling async_run_live_feed
 
                 should_fetch, budget_reason = self._feed_dominance_should_fetch(work, _nonfeed_terminal)
 
                 if not should_fetch:
-
                     log.debug(
-
                         "[F216E] Feed source skipped by budget cap: url=%s reason=%s",
-
-                        work.feed_url, budget_reason,
-
+                        work.feed_url,
+                        budget_reason,
                     )
 
                     return work.feed_url, FeedPipelineRunResult(
-
                         feed_url=work.feed_url,
-
                         fetched_entries=0,
-
                         accepted_findings=0,
-
                         stored_findings=0,
-
                         patterns_configured=0,
-
                         matched_patterns=0,
-
                         pages=(),
-
                         error="feed_budget_cap_suppressed",
-
                     )
 
                 try:
-
                     async with asyncio.timeout(30.0):
                         from hledac.universal.pipeline.live_feed_pipeline import FeedIngestContext
 
                         result = await async_run_live_feed(
-                                feed_url=work.feed_url,
-                                max_entries=work.max_entries,
-                                sprint_id=self.sprint_id or "",
-                                store=duckdb_store,
-                                ingest_ctx=FeedIngestContext(
-                                    privacy_layer=self._privacy_layer,
-                                    evidence_log=self._evidence_log,
-                                    graph_accumulator=self._graph_accumulator,
-                                    temporal_predictor=self._temporal_predictor,
-                                    layer_manager=getattr(self, "_layer_manager", None),
-                                ) if duckdb_store is not None else None,
+                            feed_url=work.feed_url,
+                            max_entries=work.max_entries,
+                            sprint_id=self.sprint_id or "",
+                            store=duckdb_store,
+                            ingest_ctx=FeedIngestContext(
+                                privacy_layer=self._privacy_layer,
+                                evidence_log=self._evidence_log,
+                                graph_accumulator=self._graph_accumulator,
+                                temporal_predictor=self._temporal_predictor,
+                                layer_manager=getattr(self, "_layer_manager", None),
                             )
+                            if duckdb_store is not None
+                            else None,
+                        )
 
                     return work.feed_url, result
 
                 except TimeoutError:
-
                     return work.feed_url, FeedPipelineRunResult(
-
                         feed_url=work.feed_url,
-
                         fetched_entries=0,
-
                         accepted_findings=0,
-
                         stored_findings=0,
-
                         patterns_configured=0,
-
                         matched_patterns=0,
-
                         pages=(),
-
                         error="timeout",
-
                     )
 
                 except Exception as exc:
-
                     return work.feed_url, FeedPipelineRunResult(
-
                         feed_url=work.feed_url,
-
                         fetched_entries=0,
-
                         accepted_findings=0,
-
                         stored_findings=0,
-
                         patterns_configured=0,
-
                         matched_patterns=0,
-
                         pages=(),
-
                         error=f"exception:{type(exc).__name__}:{exc}",
-
                     )
-
-
 
         # ── P0-1: Run FEED and PUBLIC concurrently ─────────────────────────────────
         # Stable mode was sequential: FEED completes → then PUBLIC starts.
@@ -15993,7 +13826,9 @@ class SprintScheduler:
                                     graph_accumulator=self._graph_accumulator,
                                     temporal_predictor=self._temporal_predictor,
                                     layer_manager=getattr(self, "_layer_manager", None),
-                                ) if duckdb_store is not None else None,
+                                )
+                                if duckdb_store is not None
+                                else None,
                             )
                         return work.feed_url, result
                     except TimeoutError:
@@ -16031,6 +13866,7 @@ class SprintScheduler:
                     if url and "://" in url:
                         try:
                             from urllib.parse import urlparse
+
                             netloc = urlparse(url).netloc
                             if netloc:
                                 domains.append(netloc.split(":")[0])
@@ -16143,18 +13979,27 @@ class SprintScheduler:
             try:
                 async with asyncio.timeout(lanes_timeout):
                     _seed_ctx = None
-                    _pivot_has_seeds = (self._result.pivot_seed_domains or self._result.pivot_seed_ips
-                                        or self._result.pivot_seed_urls)
-                    _next_seeds_has_iocs = (self._result.next_seeds_ioc_domains or self._result.next_seeds_ioc_ips
-                                             or self._result.next_seeds_ioc_urls or self._result.next_seeds_ioc_hashes)
+                    _pivot_has_seeds = (
+                        self._result.pivot_seed_domains or self._result.pivot_seed_ips or self._result.pivot_seed_urls
+                    )
+                    _next_seeds_has_iocs = (
+                        self._result.next_seeds_ioc_domains
+                        or self._result.next_seeds_ioc_ips
+                        or self._result.next_seeds_ioc_urls
+                        or self._result.next_seeds_ioc_hashes
+                    )
                     if _pivot_has_seeds or _next_seeds_has_iocs:
                         _seed_ctx = NonfeedSeedContext(
-                            domains=tuple(_query_domain_candidates
-                                          + (self._result.pivot_seed_domains or ())
-                                          + (self._result.next_seeds_ioc_domains or ())),
+                            domains=tuple(
+                                _query_domain_candidates
+                                + (self._result.pivot_seed_domains or ())
+                                + (self._result.next_seeds_ioc_domains or ())
+                            ),
                             ips=tuple((self._result.pivot_seed_ips or ()) + (self._result.next_seeds_ioc_ips or ())),
                             urls=tuple((self._result.pivot_seed_urls or ()) + (self._result.next_seeds_ioc_urls or ())),
-                            hashes=tuple((self._result.pivot_seed_hashes or ()) + (self._result.next_seeds_ioc_hashes or ())),
+                            hashes=tuple(
+                                (self._result.pivot_seed_hashes or ()) + (self._result.next_seeds_ioc_hashes or ())
+                            ),
                             cves=tuple((self._result.pivot_seed_cves or ()) + (self._result.next_seeds_ioc_cves or ())),
                         )
 
@@ -16227,9 +14072,11 @@ class SprintScheduler:
                 raise
             except Exception as _exc:
                 _log_advisory_dedup(
-                    log, f"stable_advisory_lane_fail:{type(_exc).__name__}",
+                    log,
+                    f"stable_advisory_lane_fail:{type(_exc).__name__}",
                     "[stable] ADVISORY lane runner exception: %s: %s",
-                    type(_exc).__name__, _exc,
+                    type(_exc).__name__,
+                    _exc,
                 )
 
         # Launch all three branches concurrently (P0: FEED ∥ PUBLIC ∥ ADVISORY)
@@ -16251,6 +14098,7 @@ class SprintScheduler:
         # _maybe_call_pressure_relief: malloc_zone_pressure_relief for RSS trim.
         try:
             from hledac.universal.core.memory_cycle import gc_cycle_maintain
+
             gc_cycle_maintain(force=False)
         except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # fail-soft
@@ -16261,10 +14109,7 @@ class SprintScheduler:
 
         return True
 
-
     # ── F212-B: Branch Timeout Envelope ───────────────────────────────────
-
-
 
     def _min_branch_remaining_s(self, remaining_s: float | None = None) -> float:
         """
@@ -16334,6 +14179,7 @@ class SprintScheduler:
           - effective_windup_lead_used_s  (actual windup lead applied)
         """
         import time as _t_f273c_drain
+
         _t0 = _t_f273c_drain.monotonic()
         # Import lazily to avoid circular dep at module load
         try:
@@ -16363,15 +14209,17 @@ class SprintScheduler:
         # Cumulative telemetry
         self._result.pattern_extraction_drain_completed += completed
         self._result.pattern_extraction_drain_timed_out += timed_out
-        self._result.pattern_extraction_drain_elapsed_s = round(
-            _t_f273c_drain.monotonic() - _t0, 4
-        )
+        self._result.pattern_extraction_drain_elapsed_s = round(_t_f273c_drain.monotonic() - _t0, 4)
         if completed or timed_out:
             log.debug(
                 "[F273C] pattern-extraction drain: completed=%d timed_out=%d "
                 "elapsed=%.2fs adaptive_deadline=%.2fs registry_pre=%d registry_post=%d",
-                completed, timed_out, _elapsed, _adaptive_deadline_s,
-                pre["registry_size"], post["registry_size"],
+                completed,
+                timed_out,
+                _elapsed,
+                _adaptive_deadline_s,
+                pre["registry_size"],
+                post["registry_size"],
             )
 
     def _maybe_call_pressure_relief(self) -> None:
@@ -16398,24 +14246,24 @@ class SprintScheduler:
             from hledac.universal.core.memory_cycle import (
                 malloc_zone_pressure_relief as _f273g_relief,
             )
+
             rc = _f273g_relief()
         except Exception as exc:  # noqa: BLE001
             log.debug("[F273G] malloc_zone_pressure_relief unavailable: %s", exc)
             return
         import time as _t_f273g
+
         self._result.malloc_pressure_relief_count += 1
         self._result.malloc_pressure_relief_last_rc = int(rc)
-        self._result.malloc_pressure_relief_last_at_s = round(
-            _t_f273g.monotonic(), 3
-        )
+        self._result.malloc_pressure_relief_last_at_s = round(_t_f273g.monotonic(), 3)
         if rc > 0:
             log.debug(
                 "[F273G] malloc pressure relief released %d bytes (rc=%d)",
-                rc, rc,
+                rc,
+                rc,
             )
 
     def _branch_timeout_s(self, branch_name: str, remaining_s: float) -> float:
-
         """
 
         F212-B: Compute remaining-time-aware timeout for a named branch.
@@ -16446,35 +14294,37 @@ class SprintScheduler:
             from hledac.universal.core.resource_governor import (
                 sample_uma_status as _sample_uma,
             )
+
             _uma = _sample_uma()
-            _uma_state = getattr(_uma, 'state', 'ok')
-            _uma_gib = getattr(_uma, 'system_used_gib', 0.0)
+            _uma_state = getattr(_uma, "state", "ok")
+            _uma_gib = getattr(_uma, "system_used_gib", 0.0)
         except Exception:  # noqa: BLE001
             pass
 
         logger.debug(
-            "[BRANCH_TIMEOUT] branch=%s remaining_s=%.2f floor=%.2f "
-            "uma_state=%s uma_gib=%.2f",
-            branch_name, remaining_s, floor, _uma_state, _uma_gib,
+            "[BRANCH_TIMEOUT] branch=%s remaining_s=%.2f floor=%.2f uma_state=%s uma_gib=%.2f",
+            branch_name,
+            remaining_s,
+            floor,
+            _uma_state,
+            _uma_gib,
         )
 
         if remaining_s < floor:
             # P0.3: Explicit skip logging — tells operators why branch was skipped
             logger.debug(
-                "[BRANCH_TIMEOUT] branch=%s SKIPPED remaining_s=%.2f < floor=%.2f "
-                "(uma_state=%s)",
-                branch_name, remaining_s, floor, _uma_state,
+                "[BRANCH_TIMEOUT] branch=%s SKIPPED remaining_s=%.2f < floor=%.2f (uma_state=%s)",
+                branch_name,
+                remaining_s,
+                floor,
+                _uma_state,
             )
             return 0.0
 
         base = (
-
             self._config.branch_timeout_budget_s
-
             if self._config.branch_timeout_budget_s > 0
-
             else self._config.aggressive_branch_timeout_s
-
         )
 
         # F273G + F265H-EXT: UMA-aware timeout clamp — scale branch budget by
@@ -16486,8 +14336,8 @@ class SprintScheduler:
             )
 
             uma = _sample_uma()
-            uma_state = getattr(uma, 'state', 'ok')
-            system_used_gib = getattr(uma, 'system_used_gib', 0.0)
+            uma_state = getattr(uma, "state", "ok")
+            system_used_gib = getattr(uma, "system_used_gib", 0.0)
 
             if uma_state == "emergency":
                 # Emergency: 1 branch max → give it breathing room
@@ -16529,9 +14379,10 @@ class SprintScheduler:
                 # More branches = more contention = tighter time budget.
                 try:
                     from hledac.universal.core.protocols import get_governor
+
                     gov = get_governor()
                     snap = gov.snapshot()
-                    conc = getattr(snap, 'branch_concurrency', 4)
+                    conc = getattr(snap, "branch_concurrency", 4)
                     if conc <= 2:
                         base = min(base, 25.0)
                     elif conc <= 3:
@@ -16545,11 +14396,11 @@ class SprintScheduler:
         bounded = min(base, remaining_s * 0.5, self._config._MAX_BRANCH_TIMEOUT_CAP)
 
         log.debug(
-
             "[F212-B] %s branch timeout: base=%.1fs remaining=%.1fs capped=%.1fs",
-
-            branch_name, base, remaining_s, bounded,
-
+            branch_name,
+            base,
+            remaining_s,
+            bounded,
         )
 
         return bounded
@@ -16578,22 +14429,13 @@ class SprintScheduler:
 
     # ── Aggressive Cycle ──────────────────────────────────────────────────
 
-
-
     async def _run_one_cycle_aggressive(
-
         self,
-
         lifecycle,
-
         work_items: list,
-
         query: str,
-
         duckdb_store: Any,
-
     ) -> bool:
-
         """
 
         Aggressive mode: feed, public discovery, and CT branches fire concurrently.
@@ -16617,29 +14459,24 @@ class SprintScheduler:
         # Remaining-time diagnostic at aggressive cycle entry
         _wall_elapsed = _time.monotonic() - self._wall_clock_start
         logger.debug(
-            "[PUBLIC_BRANCH_ENTRY:AGGRESSIVE] wall_elapsed=%.2f sprint_duration=%.2f "
-            "windup_lead=%.2f remaining_s=%.2f",
-            _wall_elapsed, self._config.sprint_duration_s,
+            "[PUBLIC_BRANCH_ENTRY:AGGRESSIVE] wall_elapsed=%.2f sprint_duration=%.2f windup_lead=%.2f remaining_s=%.2f",
+            _wall_elapsed,
+            self._config.sprint_duration_s,
             self._config.effective_windup_lead_s,
             lifecycle.remaining_time(),
         )
 
         remaining_s = lifecycle.remaining_time()
 
-
-
         # F212-B + F273B: Safety floor -- skip entire aggressive cycle if time too low
 
         floor = self._min_branch_remaining_s(remaining_s)
 
         if remaining_s < floor:
-
             log.debug(
-
                 "[F212-B] Aggressive cycle skipped: remaining=%.1fs < floor=%.1fs",
-
-                remaining_s, floor,
-
+                remaining_s,
+                floor,
             )
 
             self._result.public_branch_timed_out = True
@@ -16674,27 +14511,17 @@ class SprintScheduler:
             # Sprint F216A: Emit PUBLIC and CT timeout events
 
             self._emit_source_family_event(
-
                 family="PUBLIC",
-
                 event="timeout",
-
                 reason="terminal:remaining_too_low",
-
                 terminal_state="terminal",
-
             )
 
             self._emit_source_family_event(
-
                 family="CT",
-
                 event="timeout",
-
                 reason="terminal:remaining_too_low",
-
                 terminal_state="terminal",
-
             )
 
             # F2-2: Two branches timed out
@@ -16703,30 +14530,18 @@ class SprintScheduler:
 
             return True
 
-
-
         # F216E: nonfeed terminality for aggressive mode budget gate
 
         _nonfeed_terminal = bool(
-
             self._result.lane_ct_accepted_findings > 0
-
             or self._result.lane_wayback_accepted_findings > 0
-
             or self._result.lane_pdns_accepted_findings > 0
-
             or self._result.lane_blockchain_accepted_findings > 0
-
             or self._result.lane_ipfs_accepted_findings > 0
-
             or self._result.lane_doh_accepted_findings > 0
-
         )
 
-
-
         async def _run_feed_branch() -> None:
-
             """Feed branch: fetches all sources concurrently."""
 
             async_run_live_feed, FeedPipelineRunResult = _import_live_feed_pipeline()  # noqa: N806
@@ -16734,20 +14549,15 @@ class SprintScheduler:
             branch_concurrency = 4
 
             if self._governor is not None:
-
                 try:
-
                     decision = await self._governor.evaluate()
 
                     branch_concurrency = decision.branch_concurrency
 
                 except Exception:  # noqa: BLE001
-
                     pass
 
             semaphore = asyncio.Semaphore(min(branch_concurrency, self._config.max_parallel_sources))
-
-
 
             async def fetch_one(work) -> tuple[str, FeedPipelineRunResult]:
 
@@ -16756,93 +14566,61 @@ class SprintScheduler:
                 should_fetch, budget_reason = self._feed_dominance_should_fetch(work, _nonfeed_terminal)
 
                 if not should_fetch:
-
                     return work.feed_url, FeedPipelineRunResult(
-
                         feed_url=work.feed_url,
-
                         fetched_entries=0,
-
                         accepted_findings=0,
-
                         stored_findings=0,
-
                         patterns_configured=0,
-
                         matched_patterns=0,
-
                         pages=(),
-
                         error="feed_budget_cap_suppressed",
-
                     )
 
                 async with semaphore:
-
                     try:
-
                         async with asyncio.timeout(30.0):
                             result = await async_run_live_feed(
-                                    feed_url=work.feed_url,
-                                    max_entries=work.max_entries,
-                                    sprint_id=self.sprint_id or "",
-                                    store=duckdb_store,
-                                    ingest_ctx=FeedIngestContext(
-                                        privacy_layer=self._privacy_layer,
-                                        evidence_log=self._evidence_log,
-                                        graph_accumulator=self._graph_accumulator,
-                                        temporal_predictor=self._temporal_predictor,
-                                        layer_manager=getattr(self, "_layer_manager", None),
-                                    ) if duckdb_store is not None else None,
+                                feed_url=work.feed_url,
+                                max_entries=work.max_entries,
+                                sprint_id=self.sprint_id or "",
+                                store=duckdb_store,
+                                ingest_ctx=FeedIngestContext(
+                                    privacy_layer=self._privacy_layer,
+                                    evidence_log=self._evidence_log,
+                                    graph_accumulator=self._graph_accumulator,
+                                    temporal_predictor=self._temporal_predictor,
+                                    layer_manager=getattr(self, "_layer_manager", None),
                                 )
+                                if duckdb_store is not None
+                                else None,
+                            )
 
                         return work.feed_url, result
 
                     except TimeoutError:
-
                         return work.feed_url, FeedPipelineRunResult(
-
                             feed_url=work.feed_url,
-
                             fetched_entries=0,
-
                             accepted_findings=0,
-
                             stored_findings=0,
-
                             patterns_configured=0,
-
                             matched_patterns=0,
-
                             pages=(),
-
                             error="timeout",
-
                         )
 
                     except Exception as exc:
-
                         return work.feed_url, FeedPipelineRunResult(
-
                             feed_url=work.feed_url,
-
                             fetched_entries=0,
-
                             accepted_findings=0,
-
                             stored_findings=0,
-
                             patterns_configured=0,
-
                             matched_patterns=0,
-
                             pages=(),
-
                             error=f"exception:{type(exc).__name__}:{exc}",
-
                         )
-
-
 
             tasks = [fetch_one(w) for w in work_items]
 
@@ -16852,7 +14630,6 @@ class SprintScheduler:
             )
 
             for feed_url, result in results:
-
                 self._process_result(feed_url, result)
 
             # Sprint 8UC B.4-II: DNS prefetch for aggressive mode
@@ -16883,21 +14660,14 @@ class SprintScheduler:
             _accepted = sum(getattr(r, "accepted_findings", 0) or 0 for _, r in results)
 
             if _accepted:
-
                 _log = get_logger(__name__)
 
                 _log.debug(
-
                     "[F205C] Aggressive feed accepted findings not in scope for sidecar dispatch. accepted=%d",
-
                     _accepted,
-
                 )
 
-
-
         async def _run_public_branch() -> None:
-
             """Public discovery branch with remaining-time-aware asyncio.timeout."""
 
             branch_timeout = self._branch_timeout_s("PUBLIC", remaining_s)
@@ -16907,7 +14677,6 @@ class SprintScheduler:
                 self._lane_budget_pool.allocate("PUBLIC", branch_timeout)
 
             if branch_timeout <= 0:
-
                 log.debug("[F212-B] PUBLIC branch skipped: remaining=%.1fs", remaining_s)
 
                 self._result.branch_skipped_remaining_too_low += 1  # P0.3
@@ -16917,27 +14686,16 @@ class SprintScheduler:
                 # F214-E: Always emit PUBLIC outcome so Lane Execution Truth never loses PUBLIC
 
                 self._public_outcome = {
-
                     "lane": "PUBLIC",
-
                     "attempted": True,
-
                     "skipped": True,
-
                     "skip_reason": "terminal:remaining_too_low",
-
                     "raw_count": 0,
-
                     "built_count": 0,
-
                     "accepted_count": 0,
-
                     "error": "terminal:remaining_too_low",
-
                     "timeout": False,
-
                     "duration_s": None,
-
                 }
 
                 return
@@ -16961,7 +14719,6 @@ class SprintScheduler:
                 return
 
             try:
-
                 # P1.5-fix 2026-06-07: initialize _seed_ctx to None for the public
                 # branch scope. Mirrors the init in nonfeed prelude (lines
                 # 11943, 13960). Without this, if the public bootstrap path
@@ -16972,7 +14729,6 @@ class SprintScheduler:
                 _seed_ctx = None
 
                 async with asyncio.timeout(branch_timeout):
-
                     # P0-3: Use snapshot.bootstrap_enabled (True for threat queries even without
                     # domain). Fallback to opt-out profile check.
                     _bootstrap_en = getattr(self._acquisition_plan, "bootstrap_enabled", False)
@@ -16985,23 +14741,15 @@ class SprintScheduler:
                     self._public_bootstrap_enabled_at_timeout = _bootstrap_en
 
                     await self._run_public_discovery_in_cycle(
-
                         query=query,
-
                         duckdb_store=duckdb_store,
-
                         hermes_engine=self._hermes_engine,
-
                         memory_manager=self._memory_manager,
-
                         public_bootstrap_enabled=_bootstrap_en,
-
                         seed_context=_seed_ctx,  # Sprint F223C: bounded seed_context bootstrap
-
                     )
 
             except TimeoutError:
-
                 log.debug("[aggressive] Public branch timed out after %ss", branch_timeout)
 
                 self._result.public_branch_timed_out = True
@@ -17014,26 +14762,23 @@ class SprintScheduler:
 
                 # Capture bootstrap state at timeout for precise stage classification.
 
-                _existing_outcome = getattr(self, '_public_outcome', None) or {}
+                _existing_outcome = getattr(self, "_public_outcome", None) or {}
 
                 _existing_raw = _existing_outcome.get("raw_count", 0) or 0
 
                 _existing_accepted = _existing_outcome.get("accepted_count", 0) or 0
 
-                _bootstrap_was_enabled = getattr(self, '_public_bootstrap_enabled_at_timeout', _bootstrap_enabled)
+                _bootstrap_was_enabled = getattr(self, "_public_bootstrap_enabled_at_timeout", _bootstrap_enabled)
 
                 # Derive precise stage for the error field (used by delta/sanity tools)
 
                 if _bootstrap_was_enabled and _existing_raw > 0:
-
                     _precise_stage = _PublicStage.BOOTSTRAP_ATTEMPTED_TIMEOUT
 
                 elif _bootstrap_was_enabled and _existing_raw == 0:
-
                     _precise_stage = _PublicStage.BOOTSTRAP_ZERO_CANDIDATES_TIMEOUT
 
                 else:
-
                     _precise_stage = "terminal:timeout"
 
                 self._result.public_error = _precise_stage
@@ -17041,15 +14786,10 @@ class SprintScheduler:
                 # Sprint F216A: Emit PUBLIC timeout event
 
                 self._emit_source_family_event(
-
                     family="PUBLIC",
-
                     event="timeout",
-
                     reason=_precise_stage,
-
                     terminal_state="terminal",
-
                 )
 
                 # Sprint F26X-E: Increment consecutive timeout counter for circuit breaker
@@ -17058,37 +14798,24 @@ class SprintScheduler:
                 # F214-E: Always emit PUBLIC outcome so Lane Execution Truth never loses PUBLIC
 
                 self._public_outcome = {
-
                     "lane": "PUBLIC",
-
                     "attempted": True,
-
                     "skipped": False,
-
                     "skip_reason": None,
-
                     "raw_count": _existing_raw,
-
                     "built_count": 0,
-
                     "accepted_count": _existing_accepted,
-
                     "error": _precise_stage,
-
                     "timeout": True,
-
                     "duration_s": branch_timeout,
-
                 }
 
             except asyncio.CancelledError:
-
                 log.debug("[aggressive] Public branch cancelled")
 
                 raise  # [I6] propagate CancelledError
 
             except Exception as exc:
-
                 log.debug("[aggressive] Public branch error: %s", exc)
 
                 self._result.public_error = f"{type(exc).__name__}:{exc}"
@@ -17096,27 +14823,16 @@ class SprintScheduler:
                 # F214-E: Always emit PUBLIC outcome so Lane Execution Truth never loses PUBLIC
 
                 self._public_outcome = {
-
                     "lane": "PUBLIC",
-
                     "attempted": True,
-
                     "skipped": False,
-
                     "skip_reason": None,
-
                     "raw_count": self._result.public_discovered,
-
                     "built_count": 0,
-
                     "accepted_count": self._result.public_accepted_findings,
-
                     "error": f"{type(exc).__name__}:{exc}",
-
                     "timeout": False,
-
                     "duration_s": branch_timeout,
-
                 }
 
             else:
@@ -17124,33 +14840,19 @@ class SprintScheduler:
                 self._public_consecutive_timeouts = 0
 
                 self._public_outcome = {
-
                     "lane": "PUBLIC",
-
                     "attempted": True,
-
                     "skipped": False,
-
                     "skip_reason": None,
-
                     "raw_count": self._result.public_discovered,
-
                     "built_count": 0,
-
                     "accepted_count": self._result.public_accepted_findings,
-
                     "error": f"{type(exc).__name__}:{exc}",
-
                     "timeout": False,
-
                     "duration_s": branch_timeout,
-
                 }
 
-
-
         async def _run_ct_branch() -> None:
-
             """CT log discovery branch with remaining-time-aware asyncio.timeout."""
 
             # F232: CT loss-stage telemetry -- mark CT as scheduled when branch is invoked
@@ -17158,7 +14860,6 @@ class SprintScheduler:
             self._result.ct_scheduled = True
 
             if self._ct_log_client is None or duckdb_store is None:
-
                 # F232: ct_terminal_stage -- skipped because provider/store unavailable
 
                 self._result.ct_terminal_stage = "skipped"
@@ -17168,7 +14869,6 @@ class SprintScheduler:
             branch_timeout = self._branch_timeout_s("CT", remaining_s)
 
             if branch_timeout <= 0:
-
                 log.debug("[F212-B] CT branch skipped: remaining=%.1fs", remaining_s)
 
                 self._result.ct_branch_timed_out = True
@@ -17189,17 +14889,14 @@ class SprintScheduler:
                 return
 
             try:
-
                 # F232: ct_request_attempted -- HTTP request was made
 
                 self._result.ct_request_attempted = True
 
                 async with asyncio.timeout(branch_timeout):
-
                     await self._run_ct_log_discovery_in_cycle(query=query, store=duckdb_store)
 
             except TimeoutError:
-
                 log.debug("[aggressive] CT branch timed out after %ss", branch_timeout)
 
                 self._result.ct_branch_timed_out = True
@@ -17214,13 +14911,11 @@ class SprintScheduler:
                 self._ct_consecutive_timeouts += 1
 
             except asyncio.CancelledError:
-
                 log.debug("[aggressive] CT branch cancelled")
 
                 raise  # [I6] propagate CancelledError
 
             except Exception as exc:
-
                 log.debug("[aggressive] CT branch error: %s", exc)
 
                 self._result.ct_log_error = f"{type(exc).__name__}:{exc}"
@@ -17234,8 +14929,6 @@ class SprintScheduler:
             else:
                 # Sprint F26X-E: Reset consecutive timeout counter on success
                 self._ct_consecutive_timeouts = 0
-
-
 
                 # Launch all branches concurrently
 
@@ -17296,10 +14989,11 @@ class SprintScheduler:
                 if any(isinstance(e, asyncio.CancelledError) for e in eg.exceptions):
                     raise  # [F314-3-fix] propagate abort cleanly
                 log.debug("[aggressive] Aggressive cycle cancelled: %s", eg)
-# F266-U3 P1: Per-cycle memory hygiene after aggressive cycle branches.
+        # F266-U3 P1: Per-cycle memory hygiene after aggressive cycle branches.
         # Same hygiene as stable path: gc_cycle_maintain + malloc_zone_pressure_relief.
         try:
             from hledac.universal.core.memory_cycle import gc_cycle_maintain
+
             gc_cycle_maintain(force=False)
         except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # fail-soft
@@ -17308,8 +15002,6 @@ class SprintScheduler:
         except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # fail-soft
 
-
-
         # D6: Recheck hard deadline after branch envelope timeout -- if exceeded,
 
         # skip advisory lanes so branch timeout burn cannot cascade into a
@@ -17317,27 +15009,20 @@ class SprintScheduler:
         # deadline-exceeded advisory lane run.
 
         if not self._check_hard_deadline():
-
             log.debug(
-
                 "[D6] Hard deadline exceeded after aggressive branch envelope timeout -- "
-
                 "skipping advisory lanes. outer_timeout=%.1fs remaining_s=%.1fs",
-
-                outer_timeout, remaining_s,
-
+                outer_timeout,
+                remaining_s,
             )
 
             return True
 
         else:
-
             log.debug(
-
                 "[F212-B] Aggressive gather skipped: outer_timeout=%.1fs (remaining=%.1fs)",
-
-                outer_timeout, remaining_s,
-
+                outer_timeout,
+                remaining_s,
             )
 
             # Record skipped terminals without double-counting
@@ -17374,56 +15059,33 @@ class SprintScheduler:
             # Sprint F216A: Emit PUBLIC and CT timeout events
 
             self._emit_source_family_event(
-
                 family="PUBLIC",
-
                 event="timeout",
-
                 reason="terminal:remaining_too_low",
-
                 terminal_state="terminal",
-
             )
 
             self._emit_source_family_event(
-
                 family="CT",
-
                 event="timeout",
-
                 reason="terminal:remaining_too_low",
-
                 terminal_state="terminal",
-
             )
 
             # F214-E: Always emit PUBLIC outcome so Lane Execution Truth never loses PUBLIC
 
             self._public_outcome = {
-
                 "lane": "PUBLIC",
-
                 "attempted": True,
-
                 "skipped": True,
-
                 "skip_reason": "terminal:remaining_too_low",
-
                 "raw_count": 0,
-
                 "built_count": 0,
-
                 "accepted_count": 0,
-
                 "error": "terminal:remaining_too_low",
-
                 "timeout": False,
-
                 "duration_s": None,
-
             }
-
-
 
         # Sprint F207A: Run enabled multi-source acquisition lanes (CT/WAYBACK/PASSIVE_DNS/BLOCKCHAIN)
 
@@ -17436,11 +15098,8 @@ class SprintScheduler:
         _uma = getattr(self._governor, "_uma_state", "ok") if self._governor else "ok"
 
         if lanes_timeout > 0:
-
             try:
-
                 async with asyncio.timeout(lanes_timeout):
-
                     # F265C: Lazy-init graph_accumulator before passing to lane runners
                     if self._graph_accumulator is None:
                         self._graph_accumulator = SprintGraphAccumulator()
@@ -17496,93 +15155,62 @@ class SprintScheduler:
                         ct_findings: list = []
 
                         for _oc in _outcomes:
-
                             if getattr(_oc, "source_family", None) == "ct":
-
                                 _cands = getattr(_oc, "candidate_findings", ()) or ()
 
                                 if _cands:
-
                                     ct_findings.extend(_cands)
 
                         if ct_findings:
-
                             await self._run_ct_to_passivedns_active_pivot(
-
                                 ct_findings=ct_findings,
-
                                 duckdb_store=duckdb_store,
-
                                 remaining_s=remaining_s,
-
                             )
 
                         # Sprint F217E: Mirror quality rejections in ledger (aggressive advisory)
 
                         for _rec in self._result.quality_rejection_ledger or ():
-
                             try:
-
                                 self._nonfeed_ledger.add_quality_rejection(
-
                                     source_family=_rec.source_family or "unknown",
-
                                     reason=_rec.reason or "unknown",
-
                                     sample_url=getattr(_rec, "url_sample", "") or "",
-
                                     sample_value=getattr(_rec, "finding_id", "")[:16],
-
                                 )
 
                             except Exception:  # noqa: BLE001
-
                                 pass  # noqa: BLE001  # fail-soft
 
             except TimeoutError:
-
                 log.debug("[aggressive] ADVISORY lanes timed out after %ss", lanes_timeout)
 
             except asyncio.CancelledError:
-
                 raise  # [I6] propagate CancelledError
 
             except Exception as _exc:
-
                 _log_advisory_dedup(
-                    log, f"aggressive_advisory_lane_fail:{type(_exc).__name__}",
+                    log,
+                    f"aggressive_advisory_lane_fail:{type(_exc).__name__}",
                     "[aggressive] ADVISORY lane runner exception: %s: %s",
-                    type(_exc).__name__, _exc,
+                    type(_exc).__name__,
+                    _exc,
                 )
 
         else:
-
             log.debug("[F212-B] ADVISORY lanes skipped in aggressive: remaining=%.1fs", remaining_s)
-
-
 
         return True
 
-
-
     async def _run_public_discovery_in_cycle(
-
         self,
-
         query: str = "",
-
         duckdb_store: Any = None,
-
         hermes_engine: Any | None = None,
-
         memory_manager: Any | None = None,
-
         public_bootstrap_enabled: bool = False,  # Sprint F217C: deterministic bootstrap
-
         seed_context: Any | None = None,  # Sprint F223C: NonfeedSeedContext for bounded bootstrap
-
     ) -> None:
-
         """
 
         Sprint 8XE: Run public discovery pipeline in the current cycle.
@@ -17613,11 +15241,9 @@ class SprintScheduler:
         """
 
         try:
-
             async_run_public, PipelineRunResult = _import_live_public_pipeline()  # noqa: N806
 
         except Exception as exc:
-
             log.debug(f"[8XE] Public pipeline import failed: {exc}")
 
             self._result.public_error = f"import:{type(exc).__name__}"
@@ -17625,27 +15251,16 @@ class SprintScheduler:
             # F214-E: Always emit PUBLIC outcome so Lane Execution Truth never loses PUBLIC
 
             self._public_outcome = {
-
                 "lane": "PUBLIC",
-
                 "attempted": True,
-
                 "skipped": False,
-
                 "skip_reason": None,
-
                 "raw_count": self._result.public_discovered,
-
                 "built_count": 0,
-
                 "accepted_count": self._result.public_accepted_findings,
-
                 "error": f"import:{type(exc).__name__}",
-
                 "timeout": False,
-
                 "duration_s": None,
-
             }
 
             # Sprint F216C: Clear stale PipelineRunResult on early exit
@@ -17654,13 +15269,9 @@ class SprintScheduler:
 
             return
 
-
-
         # Build query hint: real sprint query from __main__.py takes priority
 
         query_hint = query or "OSINT passive discovery"
-
-
 
         # F265C: Direct await for single-task case. safe_gather_strict wrapping 1 task
         # = pure overhead (no sibling cancellation possible with one task).
@@ -17738,13 +15349,9 @@ class SprintScheduler:
         # Task succeeded - accumulate results
         # (public_result was captured from direct await above)
 
-
-
         # Sprint F216C: Store PipelineRunResult for stage machine computation
 
         self._public_pipeline_result = public_result
-
-
 
         # Accumulate into result -- fail-soft aggregation
 
@@ -17759,10 +15366,7 @@ class SprintScheduler:
         self._result.public_stored_findings += public_result.stored_findings
 
         if public_result.error:
-
             self._result.public_error = public_result.error
-
-
 
         # Sprint 8VD §F: Track public findings in scorecard count
 
@@ -17770,19 +15374,15 @@ class SprintScheduler:
 
         # Sprint 8VN §C: Accumulate public branch verdict (additive, fail-soft)
 
-        pbv = getattr(public_result, 'public_branch_verdict', None)
+        pbv = getattr(public_result, "public_branch_verdict", None)
 
         if pbv and isinstance(pbv, dict) and len(self._public_verdicts) < 10:
-
             self._public_verdicts.append(pbv)
 
         # Sprint F169E: Public branch blocker aggregation -- fail-soft
 
-        if getattr(public_result, 'backend_degraded', False):
-
+        if getattr(public_result, "backend_degraded", False):
             self._result.public_backend_degraded = True
-
-
 
         # Sprint F207H: Populate _public_outcome for source_family_outcomes consumption
 
@@ -17792,173 +15392,126 @@ class SprintScheduler:
 
         # precise bootstrap terminal stage at the point of timeout (not at exception time).
 
-        _pub_bootstrap_en = getattr(public_result, 'public_bootstrap_enabled', False)
+        _pub_bootstrap_en = getattr(public_result, "public_bootstrap_enabled", False)
 
-        _pub_bootstrap_ord = getattr(public_result, 'public_bootstrap_order', 'disabled')
+        _pub_bootstrap_ord = getattr(public_result, "public_bootstrap_order", "disabled")
         # F1-3: keyword_seed_fallback telemetry
-        _keyword_seed_fallback = getattr(public_result, 'keyword_seed_fallback_triggered', False)
+        _keyword_seed_fallback = getattr(public_result, "keyword_seed_fallback_triggered", False)
 
-        _pub_bootstrap_prevented = getattr(public_result, 'public_bootstrap_prevented_discovery_timeout', False)
+        _pub_bootstrap_prevented = getattr(public_result, "public_bootstrap_prevented_discovery_timeout", False)
 
-        _pub_bootstrap_fetch_att = getattr(public_result, 'public_bootstrap_first_fetch_attempted', False)
+        _pub_bootstrap_fetch_att = getattr(public_result, "public_bootstrap_first_fetch_attempted", False)
 
         # F208G-A: Collect all public_* telemetry into _public_outcome for propagation
 
-        _pub_discovered = getattr(public_result, 'public_discovered', 0) or 0
+        _pub_discovered = getattr(public_result, "public_discovered", 0) or 0
 
-        _pub_fetch_candidate = getattr(public_result, 'public_fetch_candidate_count', 0) or 0
+        _pub_fetch_candidate = getattr(public_result, "public_fetch_candidate_count", 0) or 0
 
-        _pub_fetch_attempted = getattr(public_result, 'public_fetch_attempted', 0) or 0
+        _pub_fetch_attempted = getattr(public_result, "public_fetch_attempted", 0) or 0
 
-        _pub_fetch_success = getattr(public_result, 'public_fetch_success', 0) or 0
+        _pub_fetch_success = getattr(public_result, "public_fetch_success", 0) or 0
 
-        _pub_fetch_failed = getattr(public_result, 'public_fetch_failed', 0) or 0
+        _pub_fetch_failed = getattr(public_result, "public_fetch_failed", 0) or 0
 
-        _pub_acceptance_attempted = getattr(public_result, 'public_acceptance_attempted', 0) or 0
+        _pub_acceptance_attempted = getattr(public_result, "public_acceptance_attempted", 0) or 0
 
-        _pub_acceptance_accepted = getattr(public_result, 'public_acceptance_accepted', 0) or 0
+        _pub_acceptance_accepted = getattr(public_result, "public_acceptance_accepted", 0) or 0
 
-        _pub_acceptance_rejected = getattr(public_result, 'public_acceptance_rejected', 0) or 0
+        _pub_acceptance_rejected = getattr(public_result, "public_acceptance_rejected", 0) or 0
 
-        _pub_acceptance_reject_reasons = getattr(public_result, 'public_acceptance_reject_reasons', {}) or {}
+        _pub_acceptance_reject_reasons = getattr(public_result, "public_acceptance_reject_reasons", {}) or {}
 
-        _pub_terminal_classified = getattr(public_result, 'public_terminal_classified_count', 0) or 0
+        _pub_terminal_classified = getattr(public_result, "public_terminal_classified_count", 0) or 0
 
-        _pub_unclassified = getattr(public_result, 'public_unclassified_count', 0) or 0
+        _pub_unclassified = getattr(public_result, "public_unclassified_count", 0) or 0
 
-        _pub_terminal_reason_counts = getattr(public_result, 'public_terminal_reason_counts', {}) or {}
+        _pub_terminal_reason_counts = getattr(public_result, "public_terminal_reason_counts", {}) or {}
 
-        _pub_skipped_duplicate = getattr(public_result, 'public_skipped_duplicate', 0) or 0
+        _pub_skipped_duplicate = getattr(public_result, "public_skipped_duplicate", 0) or 0
 
-        _pub_skipped_scheme = getattr(public_result, 'public_skipped_unsupported_scheme', 0) or 0
+        _pub_skipped_scheme = getattr(public_result, "public_skipped_unsupported_scheme", 0) or 0
 
-        _pub_skipped_mem = getattr(public_result, 'public_skipped_memory_gate', 0) or 0
+        _pub_skipped_mem = getattr(public_result, "public_skipped_memory_gate", 0) or 0
 
-        _pub_skipped_quality = getattr(public_result, 'public_skipped_quality_gate', 0) or 0
+        _pub_skipped_quality = getattr(public_result, "public_skipped_quality_gate", 0) or 0
 
-        _security_rejected = getattr(self._result, 'security_rejected_count', 0) or 0
+        _security_rejected = getattr(self._result, "security_rejected_count", 0) or 0
 
-        _pii_redacted = getattr(self._result, 'pii_redacted_count', 0) or 0
+        _pii_redacted = getattr(self._result, "pii_redacted_count", 0) or 0
 
-        _pub_skipped_browser = getattr(public_result, 'public_skipped_browser_unavailable', 0) or 0
+        _pub_skipped_browser = getattr(public_result, "public_skipped_browser_unavailable", 0) or 0
 
-        _pub_skipped_xml = getattr(public_result, 'public_skipped_xml_or_feed', 0) or 0
+        _pub_skipped_xml = getattr(public_result, "public_skipped_xml_or_feed", 0) or 0
 
-        _pub_skipped_timeout = getattr(public_result, 'public_skipped_timeout', 0) or 0
+        _pub_skipped_timeout = getattr(public_result, "public_skipped_timeout", 0) or 0
 
-        _pub_skipped_fetch_err = getattr(public_result, 'public_skipped_fetch_error', 0) or 0
+        _pub_skipped_fetch_err = getattr(public_result, "public_skipped_fetch_error", 0) or 0
 
-        _pub_skipped_url_sample = getattr(public_result, 'public_skipped_url_sample', ()) or ()
+        _pub_skipped_url_sample = getattr(public_result, "public_skipped_url_sample", ()) or ()
 
-        _pub_rejected_no_pattern = getattr(public_result, 'public_rejected_no_pattern_match', 0) or 0
+        _pub_rejected_no_pattern = getattr(public_result, "public_rejected_no_pattern_match", 0) or 0
 
-        _pub_rejected_low_info = getattr(public_result, 'public_rejected_low_information', 0) or 0
+        _pub_rejected_low_info = getattr(public_result, "public_rejected_low_information", 0) or 0
 
-        _pub_rejected_duplicate = getattr(public_result, 'public_rejected_duplicate', 0) or 0
+        _pub_rejected_duplicate = getattr(public_result, "public_rejected_duplicate", 0) or 0
 
-        _pub_rejected_storage = getattr(public_result, 'public_rejected_storage_rejected', 0) or 0
+        _pub_rejected_storage = getattr(public_result, "public_rejected_storage_rejected", 0) or 0
 
-        _pub_rejected_url_sample = getattr(public_result, 'public_rejected_url_samples', ()) or ()
+        _pub_rejected_url_sample = getattr(public_result, "public_rejected_url_samples", ()) or ()
 
-        _pub_accepted_url_sample = getattr(public_result, 'public_accepted_url_sample', ()) or ()
+        _pub_accepted_url_sample = getattr(public_result, "public_accepted_url_sample", ()) or ()
 
         self._public_outcome = {
-
             "lane": "PUBLIC",
-
             "attempted": True,
-
             "skipped": False,
-
             "skip_reason": None,
-
-            "raw_count": getattr(public_result, 'discovered', 0) or 0,
-
-            "built_count": getattr(public_result, 'fetched', 0) or 0,
-
-            "accepted_count": getattr(public_result, 'accepted_findings', 0) or 0,
-
-            "error": getattr(public_result, 'error', None),
-
-            "timeout": getattr(public_result, 'timed_out', False),
-
-            "duration_s": getattr(public_result, 'elapsed_s', None),
-
+            "raw_count": getattr(public_result, "discovered", 0) or 0,
+            "built_count": getattr(public_result, "fetched", 0) or 0,
+            "accepted_count": getattr(public_result, "accepted_findings", 0) or 0,
+            "error": getattr(public_result, "error", None),
+            "timeout": getattr(public_result, "timed_out", False),
+            "duration_s": getattr(public_result, "elapsed_s", None),
             "public_bootstrap_enabled": _pub_bootstrap_en,
-
             # Sprint F229A: Bootstrap ordering telemetry
-
             "public_bootstrap_order": _pub_bootstrap_ord,
             # F1-3: keyword_seed_fallback telemetry
             "keyword_seed_fallback_triggered": _keyword_seed_fallback,
             "public_bootstrap_prevented_discovery_timeout": _pub_bootstrap_prevented,
-
             "public_bootstrap_first_fetch_attempted": _pub_bootstrap_fetch_att,
-
             # F208G-A: PUBLIC Yield Taxonomy -- full telemetry propagation
-
             "public_discovered": _pub_discovered,
-
             "public_fetch_candidate_count": _pub_fetch_candidate,
-
             "public_fetch_attempted": _pub_fetch_attempted,
-
             "public_fetch_success": _pub_fetch_success,
-
             "public_fetch_failed": _pub_fetch_failed,
-
             "public_acceptance_attempted": _pub_acceptance_attempted,
-
             "public_acceptance_accepted": _pub_acceptance_accepted,
-
             "public_acceptance_rejected": _pub_acceptance_rejected,
-
             "public_acceptance_reject_reasons": _pub_acceptance_reject_reasons,
-
             "public_terminal_classified_count": _pub_terminal_classified,
-
             "public_unclassified_count": _pub_unclassified,
-
             "public_terminal_reason_counts": _pub_terminal_reason_counts,
-
             "public_skipped_duplicate": _pub_skipped_duplicate,
-
             "public_skipped_unsupported_scheme": _pub_skipped_scheme,
-
             "public_skipped_memory_gate": _pub_skipped_mem,
-
             "public_skipped_quality_gate": _pub_skipped_quality,
-
             "security_rejected_count": _security_rejected,
-
             "pii_redacted_count": _pii_redacted,
-
             "public_skipped_browser_unavailable": _pub_skipped_browser,
-
             "public_skipped_xml_or_feed": _pub_skipped_xml,
-
             "public_skipped_timeout": _pub_skipped_timeout,
-
             "public_skipped_fetch_error": _pub_skipped_fetch_err,
-
             "public_skipped_url_sample": _pub_skipped_url_sample,
-
             "public_rejected_no_pattern_match": _pub_rejected_no_pattern,
-
             "public_rejected_low_information": _pub_rejected_low_info,
-
             "public_rejected_duplicate": _pub_rejected_duplicate,
-
             "public_rejected_storage_rejected": _pub_rejected_storage,
-
             "public_rejected_url_samples": _pub_rejected_url_sample,
-
             "public_accepted_url_sample": _pub_accepted_url_sample,
-
         }
-        self._result.lane_public_accepted_findings = getattr(public_result, 'accepted_findings', 0) or 0
-
-
+        self._result.lane_public_accepted_findings = getattr(public_result, "accepted_findings", 0) or 0
 
         # F214-ACQ: Build public_provider_selection_debug -- reporting-only struct
 
@@ -17967,124 +15520,72 @@ class SprintScheduler:
         # Does NOT change acquisition behavior.
 
         _psd = {
-
-            "candidate_providers": list(getattr(public_result, 'public_provider_selected', []) or []),
-
+            "candidate_providers": list(getattr(public_result, "public_provider_selected", []) or []),
             "selected_provider": (
-
-                list(getattr(public_result, 'public_provider_selected', []) or [])[0]
-
-                if getattr(public_result, 'public_provider_selected', None) else None
-
+                list(getattr(public_result, "public_provider_selected", []) or [])[0]
+                if getattr(public_result, "public_provider_selected", None)
+                else None
             ),
-
             "rejected_providers": [
-
-                p.get("provider", "?") for p in getattr(public_result, 'public_provider_skipped', []) or []
-
+                p.get("provider", "?") for p in getattr(public_result, "public_provider_skipped", []) or []
             ],
-
             "rejection_reasons": {
-
                 p.get("provider", "?"): _sanitize_debug_text(p.get("reason", ""))
-
-                for p in getattr(public_result, 'public_provider_skipped', []) or []
-
+                for p in getattr(public_result, "public_provider_skipped", []) or []
             },
-
             "provider_errors": [
-
-                {"provider": _sanitize_debug_text(e.get("provider", "?") if isinstance(e, dict) else str(e)),
-
-                 "error": _sanitize_debug_text(e.get("error", "") if isinstance(e, dict) else str(e)),
-
-                 "error_type": e.get("error_type", "?") if isinstance(e, dict) else "?"}
-
-                for e in (getattr(public_result, 'public_provider_errors', []) or [])
-
+                {
+                    "provider": _sanitize_debug_text(e.get("provider", "?") if isinstance(e, dict) else str(e)),
+                    "error": _sanitize_debug_text(e.get("error", "") if isinstance(e, dict) else str(e)),
+                    "error_type": e.get("error_type", "?") if isinstance(e, dict) else "?",
+                }
+                for e in (getattr(public_result, "public_provider_errors", []) or [])
             ],
-
             "missing_dependencies": [],
-
             "policy_flags": {
-
                 "bootstrap_enabled": _pub_bootstrap_en,
-
                 "bootstrap_order": _pub_bootstrap_ord,
-
                 "bootstrap_prevented_discovery_timeout": _pub_bootstrap_prevented,
-
                 "bootstrap_first_fetch_attempted": _pub_bootstrap_fetch_att,
-
                 "public_bootstrap_enabled_at_result": _pub_bootstrap_en,
-
             },
-
             "bootstrap_enabled": _pub_bootstrap_en,
-
             "bootstrap_disabled_reason": (
-
                 "nonfeed_diagnostic_profile_required"
-
                 if not _pub_bootstrap_en and _pub_bootstrap_ord == "disabled"
-
                 else ""
-
             ),
-
             # Sprint F223C: Seed context bootstrap debug fields.
             # F271D: helper handles None + duck-typed domains/urls check.
             "seed_context_available": _seed_ctx_has_any_items(seed_context),
-
             "bootstrap_eligible": (
-                _pub_bootstrap_en
-                and _pub_bootstrap_ord != "disabled"
-                and _seed_ctx_has_any_items(seed_context)
+                _pub_bootstrap_en and _pub_bootstrap_ord != "disabled" and _seed_ctx_has_any_items(seed_context)
             ),
-
-            "bootstrap_used": getattr(public_result, 'public_bootstrap_candidates_count', 0) > 0,
-
-            "bootstrap_candidate_count": getattr(public_result, 'public_bootstrap_candidates_count', 0) or 0,
-
+            "bootstrap_used": getattr(public_result, "public_bootstrap_candidates_count", 0) > 0,
+            "bootstrap_candidate_count": getattr(public_result, "public_bootstrap_candidates_count", 0) or 0,
             # F265C+P0-C: Discovery telemetry — error classification and elapsed time
-            "discovery_error_type": getattr(public_result, 'discovery_error_type', '') or '',
-
-            "discovery_elapsed_s": getattr(public_result, 'discovery_elapsed_s', None),
-
+            "discovery_error_type": getattr(public_result, "discovery_error_type", "") or "",
+            "discovery_elapsed_s": getattr(public_result, "discovery_elapsed_s", None),
         }
 
         self._result.public_provider_selection_debug = _psd
 
-
-
         log.debug(
-
             f"[8XE] Public discovery: discovered={public_result.discovered} "
-
             f"matched={public_result.matched_patterns} "
-
             f"accepted={public_result.accepted_findings}"
-
         )
-
-
 
         # F205C: Public findings are scoped inside async_run_live_public_pipeline and not
 
         # exposed to the scheduler. Fall back to diagnostic log.
 
         if public_result.accepted_findings > 0 or public_result.stored_findings > 0:
-
             log.debug(
-
                 "[F205C] Public accepted findings not in scheduler scope for sidecar dispatch "
-
                 "(pipeline-internal storage). accepted=%d stored=%d",
-
                 public_result.accepted_findings,
-
                 public_result.stored_findings,
-
             )
 
         # Sprint F11E: QueryRouter DHT augmentation (opt-in via HLEDAC_ENABLE_QUERY_ROUTER=1)
@@ -18106,26 +15607,15 @@ class SprintScheduler:
             except Exception as _qr_err:
                 log.debug("[F11E] QueryRouter failed (non-fatal): %s", _qr_err)
 
-
-
     # ── F205C/F205F: Unified Sidecar Dispatch ────────────────────────────────
 
-
-
     async def _dispatch_accepted_findings_sidecars(
-
         self,
-
         source_branch: str,
-
         findings: list,
-
         store: Any,
-
         query: str,
-
     ) -> None:
-
         """
 
         F205C/F205F: Route accepted findings from any branch through SidecarOrchestrator.
@@ -18153,41 +15643,25 @@ class SprintScheduler:
         """
 
         if self._sidecar_orchestrator is None:
-
             return
 
         # CancelledError re-raised by dispatcher; all other exceptions fail-soft
 
         await self._sidecar_orchestrator.dispatch_findings(
-
             source_branch=source_branch,
-
             findings=findings,
-
             store=store,
-
             query=query,
-
             sprint_id=self.sprint_id or "",
-
         )
-
-
 
     # ── F193A: CT Log Discovery ─────────────────────────────────────────────
 
-
-
     async def _run_ct_log_discovery_in_cycle(
-
         self,
-
         query: str,
-
         store: Any,
-
     ) -> None:
-
         """
 
         Sprint F193A: Run CT log canonical discovery in the current cycle.
@@ -18205,31 +15679,21 @@ class SprintScheduler:
         """
 
         if self._ct_log_client is None or store is None:
-
             # F232: ct_terminal_stage -- provider unavailable
 
             self._result.ct_terminal_stage = "provider_unavailable"
 
             return
 
-
-
         # F232: ct_provider_selected -- provider is available
 
         self._result.ct_provider_selected = "crtsh"
 
-
-
         import re
 
-
-
         matches = re.findall(
-
-            r'[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z]{2,})+',
-
+            r"[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z]{2,})+",
             query,
-
         )
 
         if not matches:
@@ -18244,12 +15708,9 @@ class SprintScheduler:
 
         self._result.ct_terminal_stage = "request_attempted"
 
-
-
         session = None
 
         try:
-
             from hledac.universal.transport.session_pool import session_pool
 
             session = await session_pool.httpx()
@@ -18269,17 +15730,14 @@ class SprintScheduler:
             # F232: ct_terminal_stage -- bridge produced candidates
 
             if findings:
-
                 self._result.ct_terminal_stage = "candidates_built"
 
             else:
-
                 self._result.ct_terminal_stage = "no_candidates"
 
             self._result.ct_log_discovered = len(findings)
 
             if findings:
-
                 # Sprint F195C: Enrich findings before storage (fail-safe -- never crashes)
 
                 if self._enrichment_services:
@@ -18300,7 +15758,6 @@ class SprintScheduler:
                 # CONC-SEQ-006: Run graph accumulation in thread to avoid blocking event loop.
                 # _accumulate_findings_to_graph is sync (DuckDB I/O). Non-blocking via to_thread.
                 try:
-
                     self._timer.phase("graph_accum_start")
 
                     await asyncio.to_thread(
@@ -18310,28 +15767,21 @@ class SprintScheduler:
                     )
 
                 finally:
-
                     self._timer.phase("graph_accum_end")
 
                 # Sprint F214Q: Quantum Path Analysis -- find undiscovered connected IOCs
 
                 try:
-
                     self._timer.phase("quantum_path_start")
 
                     # F265B-FIX: findings are CanonicalFinding msgspec.Struct objects,
                     # not dicts. CanonicalFinding has no .value — use .finding_id
                     # (the stable cross-sprint node identifier in DuckPGQ graph).
-                    new_ioc_values = [
-                        f.finding_id
-                        for f in findings
-                        if hasattr(f, "finding_id") and f.finding_id
-                    ] or []
+                    new_ioc_values = [f.finding_id for f in findings if hasattr(f, "finding_id") and f.finding_id] or []
 
                     quantum_seeds = await self._run_quantum_path_analysis(new_ioc_values)
 
                     if quantum_seeds:
-
                         self._result.quantum_path_seeds = quantum_seeds
 
                         from hledac.universal.knowledge.sprint_seeds_store import sync_save_sprint_seeds
@@ -18339,11 +15789,9 @@ class SprintScheduler:
                         sync_save_sprint_seeds(self.sprint_id or "", quantum_seeds)
 
                 except Exception as e:
-
                     logger.debug(f"[SPRINT] quantum_path analysis failed: {e}")
 
                 finally:
-
                     self._timer.phase("quantum_path_end")
 
                 # F232: ct_storage_attempted -- storage was attempted
@@ -18363,45 +15811,29 @@ class SprintScheduler:
                 # F232: ct_terminal_stage -- final stage
 
                 if stored > 0:
-
                     self._result.ct_terminal_stage = "storage_accepted"
 
                 else:
-
                     self._result.ct_terminal_stage = "storage_rejected"
 
                     # Sprint F216G: Capture quality gate rejection reasons from ledger
 
                     if hasattr(store, "get_quality_rejection_ledger"):
-
                         _ledger = store.get_quality_rejection_ledger()
 
-                        _ct_reasons = tuple(
-
-                            r.reason
-
-                            for r in _ledger
-
-                            if getattr(r, "source_family", "") == "ct_log"
-
-                        )[-10:]
+                        _ct_reasons = tuple(r.reason for r in _ledger if getattr(r, "source_family", "") == "ct_log")[
+                            -10:
+                        ]
 
                         if _ct_reasons:
-
                             self._result.ct_storage_rejection_reasons = _ct_reasons
 
                             log.warning(
-
                                 "ct_storage_rejected: candidates=%d stored=%d top_reason=%s reasons=%s",
-
                                 len(findings),
-
                                 stored,
-
                                 _ct_reasons[0] if _ct_reasons else "unknown",
-
                                 _ct_reasons,
-
                             )
 
                 # Sprint F194A: ct_log_accepted_findings tracks accepted CT findings
@@ -18412,40 +15844,29 @@ class SprintScheduler:
 
                 # Sprint F204A: Route all accepted CT findings through FindingSidecarBus
 
-                accepted_findings = [f for f, r in zip(findings, results, strict=False)
-
-                                     if isinstance(r, dict) and r.get("accepted")]
+                accepted_findings = [
+                    f for f, r in zip(findings, results, strict=False) if isinstance(r, dict) and r.get("accepted")
+                ]
 
                 await self._dispatch_accepted_findings_sidecars(
-
                     source_branch="ct",
-
                     findings=accepted_findings,
-
                     store=store,
-
                     query=query,
-
                 )
-
-
 
                 # Sprint F250E: Security gate -- filter findings before layer hooks and storage
 
                 # Gate: HLEDAC_ENABLE_LAYERS=1 AND security layer initialized
 
                 if ENV.get_bool("HLEDAC_ENABLE_LAYERS") and accepted_findings:
-
                     try:
-
                         security = getattr(self._layer_manager, "security", None)
 
                     except Exception:
-
                         security = None
 
                     if security is not None and hasattr(security, "validate_finding"):
-
                         _sec_accepted: list = []
 
                         _sec_rejected = 0
@@ -18453,35 +15874,26 @@ class SprintScheduler:
                         _sec_pii_redacted = 0
 
                         for f in accepted_findings:
-
                             try:
-
                                 _ok, _reason = security.validate_finding(f)
 
                                 if not _ok:
-
                                     _sec_rejected += 1
 
                                     logger.debug(
-
                                         "[security_gate] rejected finding %s: %s",
-
                                         getattr(f, "finding_id", ""),
-
                                         _reason,
-
                                     )
 
                                     continue
 
                                 if _reason == "pii_redacted":
-
                                     _sec_pii_redacted += 1
 
                                 _sec_accepted.append(f)
 
                             except Exception:
-
                                 # Fail-soft: accept on error
 
                                 _sec_accepted.append(f)
@@ -18489,28 +15901,24 @@ class SprintScheduler:
                         accepted_findings = _sec_accepted
 
                         self._result.security_rejected_count = (
-
                             getattr(self._result, "security_rejected_count", 0) + _sec_rejected
-
                         )
 
                         self._result.pii_redacted_count = (
-
                             getattr(self._result, "pii_redacted_count", 0) + _sec_pii_redacted
-
                         )
 
                     # Sprint F250F: Privacy gate -- run BEFORE all storage paths
                     if ENV.get_bool("HLEDAC_ENABLE_PRIVACY_LAYER"):
                         try:
-                            _privacy = (self._privacy_layer or getattr(self._layer_manager, "privacy", None))
+                            _privacy = self._privacy_layer or getattr(self._layer_manager, "privacy", None)
                             if _privacy and accepted_findings:
                                 accepted_findings, _pii_count = await self._run_privacy_gate_async(
                                     accepted_findings, _privacy
                                 )
                                 if _pii_count > 0:
                                     self._result.pii_findings_anonymized = (
-                                        getattr(self._result, 'pii_findings_anonymized', 0) + _pii_count
+                                        getattr(self._result, "pii_findings_anonymized", 0) + _pii_count
                                     )
                         except Exception as _e:
                             logger.debug("privacy_gate call failed: %s", _e)
@@ -18521,9 +15929,7 @@ class SprintScheduler:
                 # Sprint F250: Post-ingest layer hooks -- Ghost/Temporal/Security (opt-in advisory)
 
                 if ENV.get_bool("HLEDAC_ENABLE_LAYERS") and accepted_findings:
-
                     try:
-
                         from hledac.universal.layers import get_temporal_signal_layer
                         from hledac.universal.layers.temporal_signal_layer import event_from_finding_like
                         from hledac.universal.project_types import ActionType
@@ -18535,97 +15941,65 @@ class SprintScheduler:
                         security = getattr(self._layer_manager, "security", None)
 
                     except Exception:
-
                         ghost = None
 
                         temporal = None
 
                         security = None
 
-
-
                     for f in accepted_findings:
-
                         # GhostLayer: audit scan action (re-raise StagnationError as CRITICAL)
 
                         if ghost is not None:
-
                             try:
-
                                 await ghost.execute_action(
-
                                     ActionType.SCAN,
-
                                     {"finding_id": getattr(f, "finding_id", "") or "", "query": query},
-
                                     store_in_vault=True,
-
                                 )
 
                             except StagnationError:
-
                                 log.critical("[layers] GhostLayer stagnation -- re-raising")
 
                                 raise
 
                             except Exception as _e:
-
                                 log.warning("layers GhostLayer.execute_action failed: %s", _e)
 
                         # TemporalSignalLayer: observe finding as temporal event
 
                         if temporal is not None:
-
                             try:
-
                                 te = event_from_finding_like(f)
 
                                 if te:
-
                                     temporal.observe(te)
 
                             except Exception as _e:
-
                                 log.warning("layers TemporalSignalLayer.observe failed: %s", _e)
 
                         # SecurityLayer: log finding_accepted audit
 
                         if security is not None:
-
                             try:
-
                                 audit = getattr(security, "_mission_audit", None)
 
                                 if audit is not None and hasattr(audit, "log_action"):
-
                                     audit.log_action(
-
                                         "finding_accepted",
-
                                         b"",
-
                                         {"finding_id": getattr(f, "finding_id", "") or "", "query": query},
-
                                     )
 
                             except Exception as _e:
-
                                 log.warning("layers SecurityLayer._mission_audit.log_action failed: %s", _e)
-
-
 
                 # F204D: Update cross-sprint target memory via SidecarOrchestrator
 
                 if accepted_findings:
-
-                    await self._sidecar_orchestrator.run_target_memory_update(
-
-                        accepted_findings, store, query
-
-                    )
+                    await self._sidecar_orchestrator.run_target_memory_update(accepted_findings, store, query)
 
         except Exception as exc:
-
             self._result.ct_log_error = str(exc)[:200]
 
             self._result.ct_terminal_stage = "error"
@@ -18633,19 +16007,12 @@ class SprintScheduler:
             log.warning("CT log discovery failed: {exc}", exc=exc)
 
         finally:
-
             if session is not None:
-
                 await session.close()
-
-
 
     # ── F251: Onion Discovery Sidecar ────────────────────────────────────────
 
-
-
     async def _run_onion_discovery_sidecar(self) -> None:
-
         """
 
         Sprint F251: Dark web .onion discovery via Tor.
@@ -18676,124 +16043,88 @@ class SprintScheduler:
 
         """
 
-
         import asyncio as asyncio
-
-
 
         # Guard: HLEDAC_ENABLE_TOR gate
 
         if not ENV.get_bool("HLEDAC_ENABLE_TOR"):
-
             return
-
-
 
         # Guard: memory pressure < 0.70 (M1 8GB safety)
 
         try:
-
             governor = getattr(self, "_governor", None)
 
             if governor is not None:
-
                 snap = await governor.evaluate()
 
                 uma_state = getattr(snap, "uma_state", "ok") or "ok"
 
                 if uma_state in ("critical", "emergency"):
-
                     log.debug("[F251] Onion sidecar skipped: uma_state=%s", uma_state)
 
                     return
 
         except Exception:  # noqa: BLE001
-
             pass  # noqa: BLE001  # fail-soft: governor check is advisory
-
-
 
         # Guard: Tor circuit established
 
         try:
-
             from hledac.universal.transport.tor_transport import TorTransport
 
             tor = TorTransport()
 
             if not tor.available:
-
                 log.debug("[F251] TorTransport unavailable (deps missing)")
 
                 return
 
             if not await tor.is_circuit_established():
-
                 log.debug("[F251] Tor circuit not established -- skipping onion discovery")
 
                 return
 
         except Exception as e:
-
             log.debug("[F251] Tor availability check failed: %s", e)
 
             return
 
-
-
         # Build seed list from OnionSeedManager (Ahmia expansion + curated seeds)
 
         try:
-
             from hledac.universal.intelligence.onion_seed_manager import OnionSeedManager
 
             seed_mgr = OnionSeedManager()
 
         except Exception as e:
-
             log.debug("[F251] OnionSeedManager init failed: %s", e)
 
             return
-
-
 
         # F251: Discover additional .onion seeds via Ahmia for domains in query
 
         # (Ahmia search expands seed set for related .onion addresses)
 
         try:
-
-            ahmia_query = " ".join([
-
-                word for word in query.split()
-
-                if len(word) > 2 and not word.startswith("http")
-
-            ][:5])
+            ahmia_query = " ".join(
+                [word for word in query.split() if len(word) > 2 and not word.startswith("http")][:5]
+            )
 
             if ahmia_query:
-
                 await seed_mgr.discover_from_ahmia(ahmia_query, session=None)
 
         except Exception:  # noqa: BLE001
-
             pass  # noqa: BLE001  # fail-soft: Ahmia discovery is best-effort
-
-
 
         seeds = seed_mgr.get_seeds(limit=20)
 
         if not seeds:
-
             log.debug("[F251] No onion seeds available")
 
             return
 
-
-
         log.debug("[F251] Onion discovery: %d seeds, memory pressure ok, Tor ready", len(seeds))
-
-
 
         # Crawl seeds bounded by Semaphore(3), 45s per crawl, 120s total
 
@@ -18801,109 +16132,79 @@ class SprintScheduler:
 
         asyncio.Semaphore(3)
 
-
-
         async def crawl_seed(seed: str) -> list:
-
             """Crawl single .onion seed, convert to CanonicalFinding list."""
 
             inner_findings: list = []
 
             try:
-
                 from hledac.universal.intelligence.dark_web_intelligence import (
                     DarkWebCrawler,
                     darkweb_content_to_canonical,
                 )
 
-
-
                 async with asyncio.timeout(45.0):
-
                     crawler = DarkWebCrawler(tor_proxy=None)
 
                     try:
-
                         await crawler.initialize()
 
                         query_for_finding = f"onion_discovery:{seed}"
 
                         async for content in crawler.crawl_onion(seed, depth=0):
-
                             try:
-
                                 cf = darkweb_content_to_canonical(content, query=query_for_finding)
 
                                 inner_findings.append(cf)
 
                             except Exception:  # noqa: BLE001
-
                                 pass  # noqa: BLE001  # fail-soft: individual conversion error
 
                     finally:
-
                         await crawler.close()  # F251: prevent session/connector leak
 
             except TimeoutError:
-
                 log.debug("[F251] Seed %s timed out after 45s", seed)
 
             except Exception as e:
-
                 log.debug("[F251] Seed %s crawl failed: %s", seed, e)
 
             return inner_findings
 
-
-
         try:
-
             async with asyncio.timeout(120.0):
-
                 tasks = [crawl_seed(seed) for seed in seeds]
 
                 results = await safe_gather_ok(*tasks, label="sprint_scheduler:16327")
 
                 for result in results:
-
                     if isinstance(result, list):
-
                         findings.extend(result)
 
         except TimeoutError:
-
             log.debug("[F251] Onion sidecar timed out after 120s")
 
-
-
         if not findings:
-
             log.debug("[F251] No findings from onion discovery")
 
             return
 
-
-
         # Ingest findings through canonical write path
 
         try:
-
             duckdb = getattr(self, "_duckdb_store", None)
 
             if duckdb is not None:
-
                 _ = await self._gate_then_ingest_and_accumulate(duckdb, findings, sprint_id=self.sprint_id or "")
 
                 log.debug("[F251] Ingested %d onion findings", len(findings))
 
         except Exception as e:
-            _log_advisory_dedup(log, f"onion_ingest_fail:{type(e).__name__}",
-                                "[F251] Onion findings ingest failed: %s", e)
-
-
+            _log_advisory_dedup(
+                log, f"onion_ingest_fail:{type(e).__name__}", "[F251] Onion findings ingest failed: %s", e
+            )
 
     async def _run_i2p_discovery_sidecar(self) -> None:
-
         """
 
         I2P discovery: crawl .i2p addresses found in sprint IOCs.
@@ -18932,52 +16233,38 @@ class SprintScheduler:
 
         """
 
-
         import asyncio as asyncio
-
-
 
         # Guard: HLEDAC_ENABLE_I2P gate
 
         if not ENV.get_bool("HLEDAC_ENABLE_I2P"):
-
             return
-
-
 
         # Guard: memory pressure < 0.70 (M1 8GB safety)
 
         try:
-
             governor = getattr(self, "_governor", None)
 
             if governor is not None:
-
                 snap = await governor.evaluate()
 
                 uma_state = getattr(snap, "state", "normal") if snap else "normal"
 
                 if uma_state in ("critical", "emergency"):
-
                     return
 
         except Exception:  # noqa: BLE001
-
             pass  # noqa: BLE001  # fail-soft: governor check is advisory
-
-
 
         # Guard: I2P transport running -- use singleton if available
 
         try:
-
             from hledac.universal.transport.i2p_transport import I2PTransport
             from hledac.universal.transport.transport_resolver import get_i2p_transport_singleton
 
             singleton = get_i2p_transport_singleton()
 
             if singleton is not None and await singleton.is_running():
-
                 return
 
             # Fallback: instantiate to check is_running()
@@ -18985,18 +16272,14 @@ class SprintScheduler:
             i2p = I2PTransport()
 
             if not await i2p.is_running():
-
                 log.debug("[F2P] I2PTransport not running (is_running=False)")
 
                 return
 
         except Exception as e:
-
             log.debug("[F2P] I2PTransport init/check failed: %s", e)
 
             return
-
-
 
         # Extract .i2p addresses from sprint IOCs via DuckDB
 
@@ -19005,32 +16288,20 @@ class SprintScheduler:
         duckdb = getattr(self, "_duckdb_store", None)
 
         if duckdb is not None:
-
             try:
-
                 con = getattr(duckdb, "_con", None) or getattr(duckdb, "con", None)
 
                 if con is not None:
-
-                    rows = con.execute(
-
-                        "SELECT val FROM ioc_nodes WHERE val LIKE '%.i2p' LIMIT 20"
-
-                    ).fetchmany(20)
+                    rows = con.execute("SELECT val FROM ioc_nodes WHERE val LIKE '%.i2p' LIMIT 20").fetchmany(20)
 
                     for row in rows:
-
                         val = row[0] if row else ""
 
                         if val:
-
                             i2p_addresses.append(val)
 
             except Exception:  # noqa: BLE001
-
                 pass  # noqa: BLE001  # fail-soft: DuckDB read error
-
-
 
         # Deduplicate and limit
 
@@ -19039,39 +16310,25 @@ class SprintScheduler:
         unique_i2p: list[str] = []
 
         for addr in i2p_addresses:
-
             if addr not in seen:
-
                 seen.add(addr)
 
                 unique_i2p.append(addr)
 
         i2p_addresses = unique_i2p[:5]  # max 5 addresses
 
-
-
         if not i2p_addresses:
-
             log.debug("[F2P] No .i2p addresses found in sprint IOCs")
 
             return
 
-
-
         log.debug("[F2P] Starting I2P discovery for %d addresses", len(i2p_addresses))
-
-
 
         from hledac.universal.transport.base import TransportConfig
 
-
-
         findings: list = []
 
-
-
         async def fetch_i2p_address(addr: str) -> list:
-
             """Fetch single .i2p address and convert to CanonicalFinding list."""
 
             inner: list = []
@@ -19082,48 +16339,32 @@ class SprintScheduler:
             except Exception:
                 return inner
 
-
-
             try:
-
                 config = TransportConfig(url=f"http://{addr}")
 
                 result = await i2p.fetch(config)
 
                 if result.error:
-
                     log.debug("[F2P] Fetch %s failed: %s", addr, result.error)
 
                     return inner
 
-
-
                 content = result.content or ""
 
                 if content:
-
                     from datetime import datetime
 
                     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
                     finding = CanonicalFinding(
-
                         finding_id=f"i2p-{addr}-{int(datetime.now(UTC).timestamp() * 1000)}",  # noqa: DTZ005
-
                         query="i2p_discovery",
-
                         source_type=SourceType.I2P_DISCOVERY,
-
                         confidence=0.5,
-
                         ts=datetime.now(UTC).isoformat(),  # noqa: DTZ005
-
                         provenance=["i2p_transport"],
-
                         payload_text=content[:4096] if len(content) > 4096 else content,
-
                     )
-
 
                     # Sprint F11C: Wire EvidenceLog — observation event
                     if self._evidence_log is not None:
@@ -19140,63 +16381,42 @@ class SprintScheduler:
                     inner.append(finding)
 
             except Exception as e:
-
                 log.debug("[F2P] I2P fetch %s failed: %s", addr, e)
 
             return inner
 
-
-
         try:
-
             async with asyncio.timeout(120.0):
-
                 tasks = [fetch_i2p_address(addr) for addr in i2p_addresses]
 
                 results = await safe_gather_ok(*tasks, label="sprint_scheduler:16607")
 
                 for result in results:
-
                     if isinstance(result, list):
-
                         findings.extend(result)
 
         except TimeoutError:
-
             log.debug("[F2P] I2P sidecar timed out after 120s")
 
-
-
         if not findings:
-
             log.debug("[F2P] No findings from I2P discovery")
 
             return
 
-
-
         # Ingest findings through canonical write path
 
         try:
-
             if duckdb is not None:
-
                 _ = await self._gate_then_ingest_and_accumulate(duckdb, findings, sprint_id=self.sprint_id or "")
 
                 log.debug("[F2P] Ingested %d I2P findings", len(findings))
 
         except Exception as e:
-            _log_advisory_dedup(log, f"i2p_ingest_fail:{type(e).__name__}",
-                                "[F2P] I2P findings ingest failed: %s", e)
-
-
+            _log_advisory_dedup(log, f"i2p_ingest_fail:{type(e).__name__}", "[F2P] I2P findings ingest failed: %s", e)
 
     # ── F214Q: DHT Discovery Sidecar ───────────────────────────────────────
 
-
-
     async def _run_dht_sidecar(self) -> None:
-
         """
 
         Sprint F214Q: DHT torrent discovery via BitTorrent DHT network.
@@ -19213,244 +16433,159 @@ class SprintScheduler:
 
         import asyncio as asyncio
 
-
-
         # Guard: HLEDAC_ENABLE_DHT gate
 
         if not ENV.get_bool("HLEDAC_ENABLE_DHT"):
-
             return
-
-
 
         # Guard: memory pressure < 0.75 (M1 8GB safety)
 
         try:
-
             governor = getattr(self, "_governor", None)
 
             if governor is not None:
-
                 snap = await governor.evaluate()
 
                 uma_state = getattr(snap, "state", "normal") if snap else "normal"
 
                 if uma_state in ("critical", "emergency"):
-
                     return
 
         except Exception:  # noqa: BLE001
-
             pass
-
-
 
         log.debug("[F214Q] Starting DHT discovery sidecar")
 
-
-
         try:
-
             from hledac.universal.dht.kademlia_node import DHT_REAL_UDP
             from hledac.universal.intelligence.dark_web_intelligence import (
                 DHTFinding,
                 dht_content_to_canonical,
             )
 
-
-
             # DHT only works in real UDP mode
 
             if not DHT_REAL_UDP:
-
                 log.debug("[F214Q] DHT simulated mode -- skipping sidecar")
 
                 return
 
-
-
             # Get DuckDB store for canonical write path
 
             duckdb = getattr(self, "_duckdb_store", None)
-
-
 
             # Extract info_hash seeds from prior CT findings in this sprint
 
             info_hash_seeds: list[str] = []
 
             try:
-
                 if duckdb is not None:
-
                     # Query accepted CT findings for info_hash patterns
 
                     from hledac.universal.knowledge.duckdb_store import duckdb_pool
 
                     async with duckdb_pool.connection() as conn:
-
                         rows = await conn.execute(
-
                             "SELECT DISTINCT provenance FROM findings "
-
                             f"WHERE source_type = '{SourceType.CT_LOG}' "
-
                             "AND provenance LIKE '%info_hash%' "
-
                             "LIMIT 20"
-
                         ).fetch()
 
                     for row in rows:
-
                         prov = row[0] if row else ""
 
                         if "info_hash:" in prov:
-
                             ih = prov.split("info_hash:")[1].split(",")[0].strip()
 
                             if ih:
-
                                 info_hash_seeds.append(ih)
 
             except Exception:  # noqa: BLE001
-
                 pass  # noqa: BLE001  # fail-soft: DuckDB read err
 
-
-
             if not info_hash_seeds:
-
                 log.debug("[F214Q] No info_hash seeds from CT findings")
 
                 return
-
-
 
             # Sprint F214 Step 5: Use singleton DHT node if ready, else fallback
 
             node = self._dht_node
 
             if node is None:
-
                 # Fallback: standalone crawl (simulated or real UDP without singleton)
 
                 log.debug("[F214Q] DHT node not ready -- using standalone crawl")
 
                 try:
-
                     from hledac.universal.dht.kademlia_node import crawl_dht_for_keyword
 
                     results = await crawl_dht_for_keyword(
-
                         self._query,
-
                         max_results=5,
-
                         duration_s=30.0,
-
                     )
 
                     for r in results:
-
                         if r.get("info_hash"):
-
                             findings.append(
-
                                 dht_content_to_canonical(
-
                                     DHTFinding(
-
                                         info_hash=r["info_hash"],
-
                                         name=r.get("name", ""),
-
                                         files=r.get("files", []),
-
                                         size_bytes=r.get("size_bytes", 0),
-
                                         peers=r.get("peers", 0),
-
                                         source="dht_fallback",
-
                                     ),
-
                                     query=self._query[:128],
-
                                 )
-
                             )
 
                 except Exception as e:
-
                     log.debug("[F214Q] fallback crawl failed: %s", e)
 
                 return
-
-
 
             findings: list = []
 
             semaphore = asyncio.Semaphore(2)  # M1: max 2 concurrent DHT ops
 
-
-
             async def dht_lookup(info_hash: str) -> list:
-
                 """Lookup single info_hash via DHT singleton."""
 
                 async with semaphore:
-
                     try:
-
                         result = await node.lookup_info_hash_metadata(info_hash, timeout_s=30.0)
 
                         if result and isinstance(result, dict) and result.get("info_hash"):
-
                             return [result]
 
                     except Exception:  # noqa: BLE001
-
                         pass
 
                     return []
-
-
 
             # Execute DHT lookups with timeout (asyncio.timeout 3.11+)
             tasks = [dht_lookup(ih) for ih in info_hash_seeds[:5]]
 
             async with asyncio.timeout(60.0):
-                results = await safe_gather_ok(
-                    *tasks, label="sprint_scheduler:16881"
-                )
-
-
+                results = await safe_gather_ok(*tasks, label="sprint_scheduler:16881")
 
             # Convert DHT results to CanonicalFinding
 
             for batch in results:
-
                 if isinstance(batch, list):
-
                     for item in batch:
-
                         try:
-
                             dht_finding = DHTFinding(
-
                                 info_hash=item.get("info_hash", ""),
-
                                 name=item.get("name", ""),
-
                                 files=item.get("files", []),
-
                                 size_bytes=item.get("size_bytes", 0),
-
                                 peers=item.get("peers", 0),
-
                                 source="dht",
-
                             )
 
                             cf = dht_content_to_canonical(dht_finding, query=self._query[:128])
@@ -19458,38 +16593,25 @@ class SprintScheduler:
                             findings.append(cf)
 
                         except Exception:  # noqa: BLE001
-
                             pass  # noqa: BLE001  # fail-soft: individual conversion err
 
-
-
             if not findings:
-
                 log.debug("[F214Q] No DHT findings produced")
 
                 return
 
-
-
             # Ingest findings through canonical write path
 
             if duckdb is not None:
-
                 _ = await self._gate_then_ingest_and_accumulate(duckdb, findings, sprint_id=self.sprint_id or "")
 
                 log.debug("[F214Q] Ingested %d DHT findings", len(findings))
 
-
-
-
         except TimeoutError:
-
             log.debug("[F214Q] DHT sidecar timed out after 60s")
 
         except Exception as e:
-
-            _log_advisory_dedup(log, f"dht_sidecar_fail:{type(e).__name__}",
-                                "[F214Q] DHT sidecar failed: %s", e)
+            _log_advisory_dedup(log, f"dht_sidecar_fail:{type(e).__name__}", "[F214Q] DHT sidecar failed: %s", e)
 
     # ── F214R: Gopher Discovery Sidecar ─────────────────────────────────────────
 
@@ -19548,31 +16670,24 @@ class SprintScheduler:
 
             # Ingest findings through canonical write path
             if findings and self._duckdb_store is not None:
-                _ = await self._gate_then_ingest_and_accumulate(self._duckdb_store, findings, sprint_id=self.sprint_id or "")
+                _ = await self._gate_then_ingest_and_accumulate(
+                    self._duckdb_store, findings, sprint_id=self.sprint_id or ""
+                )
                 log.debug("[F214R] Ingested %d Gopher findings", len(findings))
 
         except Exception as e:
-            _log_advisory_dedup(log, f"gopher_sidecar_fail:{type(e).__name__}",
-                                "[F214R] Gopher sidecar failed: %s", e)
+            _log_advisory_dedup(log, f"gopher_sidecar_fail:{type(e).__name__}", "[F214R] Gopher sidecar failed: %s", e)
 
         self._result.gopher_findings_ingested = len(findings)
         return findings
 
-
     # ── F218Z: IPFS Discovery Sidecar ─────────────────────────────────────────
 
-
-
     async def _run_ipfs_discovery_sidecar(
-
         self,
-
         cids: list[str] | None = None,
-
         query_context: str = "",
-
     ) -> list:
-
         """
 
         F218Z: IPFS CID resolution and content fetch via Tor transport.
@@ -19599,90 +16714,63 @@ class SprintScheduler:
 
         """
 
-
-
-
         # Guard: IPFS gate
 
         if not ENV.get_bool("HLEDAC_ENABLE_IPFS"):
-
             return []
-
-
 
         # Guard: Tor transport required (invariant) -- check circuit per Onion pattern
 
         try:
-
             from hledac.universal.transport.tor_transport import TorTransport
 
             tor = TorTransport()
 
             if not tor.available:
-
                 log.debug("[F218Z] TorTransport unavailable (deps missing)")
 
                 return []
 
             if not await tor.is_circuit_established():
-
                 log.debug("[F218Z] Tor circuit not established -- skipping IPFS discovery")
 
                 return []
 
         except Exception as e:
-
             log.debug("[F218Z] Tor availability check failed: %s", e)
 
             return []
 
-
-
         # Guard: memory pressure < 0.75 (M1 8GB safety)
 
         try:
-
             governor = getattr(self, "_governor", None)
 
             if governor is not None:
-
                 snap = await governor.evaluate()
 
                 uma_state = getattr(snap, "state", "normal") if snap else "normal"
 
                 if uma_state in ("critical", "emergency"):
-
                     return []
 
         except Exception:  # noqa: BLE001
-
             pass
-
-
 
         log.debug("[F218Z] Starting IPFS discovery sidecar")
 
-
-
         try:
-
             from hledac.universal.network.ipfs_client import (
                 ipfs_fetch_as_findings,
                 ipfs_search_as_findings,
             )
 
-
-
             findings: list = []
 
-
-
             if cids:
-
                 # Fetch specified CIDs via Tor transport
                 # F265B: Parallel fetch with bounded semaphore — was sequential (20×120s = 2400s worst case)
                 self._result.ipfs_cids_attempted = len(cids)
-
 
                 async def _fetch_cid(cid: str) -> list:
                     try:
@@ -19698,51 +16786,34 @@ class SprintScheduler:
                         findings.extend(_r)
 
             elif query_context:
-
                 # Search-based discovery fallback
 
                 self._result.ipfs_cids_attempted += 1
 
                 try:
-
                     search_results = await ipfs_search_as_findings(query_context, timeout_per_result=120)
 
                     if search_results:
-
                         findings.extend(search_results)
 
                 except Exception as e:
-
                     log.debug("[F218Z] IPFS search failed: %s", e)
-
-
 
             # Ingest through canonical write path
 
             if findings and self._duckdb_store is not None:
-
-                _ = await self._gate_then_ingest_and_accumulate(self._duckdb_store, findings, sprint_id=self.sprint_id or "")
+                _ = await self._gate_then_ingest_and_accumulate(
+                    self._duckdb_store, findings, sprint_id=self.sprint_id or ""
+                )
 
                 log.debug("[F218Z] Ingested %d IPFS findings", len(findings))
 
-
-
-
             return findings
 
-
-
         except Exception as e:
-
-            _log_advisory_dedup(log, f"ipfs_sidecar_fail:{type(e).__name__}",
-                                "[F218Z] IPFS sidecar failed: %s", e)
+            _log_advisory_dedup(log, f"ipfs_sidecar_fail:{type(e).__name__}", "[F218Z] IPFS sidecar failed: %s", e)
 
             return []
-
-
-
-
-
 
     # ── F3FORENSICS: Digital Ghost Detection Sidecar ────────────────────────
 
@@ -19796,6 +16867,7 @@ class SprintScheduler:
                     return None
                 try:
                     import asyncio
+
                     result = await asyncio.to_thread(analyze_file_ghosts, path)
                     return result
                 except Exception as e:
@@ -19803,10 +16875,7 @@ class SprintScheduler:
                     return None
 
             # F262D: migrated asyncio.gather -> safe_gather_ok (fail-soft invariant preserved)
-            results = await safe_gather_ok(
-                *[analyze_one(fp) for fp in file_paths],
-                label="sprint_scheduler:17269"
-            )
+            results = await safe_gather_ok(*[analyze_one(fp) for fp in file_paths], label="sprint_scheduler:17269")
 
             from core.findings import CanonicalFinding
 
@@ -19814,19 +16883,22 @@ class SprintScheduler:
                 if r is None or isinstance(r, Exception):
                     continue
                 try:
-                    if hasattr(r, 'ghost_signals') and r.ghost_signals:
+                    if hasattr(r, "ghost_signals") and r.ghost_signals:
                         from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
                         finding = CanonicalFinding(
                             source_type=SourceType.DIGITAL_GHOST_DETECTION,
                             ioc_type="file",
-                            ioc_value=getattr(r, 'file_path', ""),
-                            confidence=getattr(r, 'overall_confidence', 0.5),
+                            ioc_value=getattr(r, "file_path", ""),
+                            confidence=getattr(r, "overall_confidence", 0.5),
                             payload={
-                                "ghost_signals_count": len(getattr(r, 'ghost_signals', [])),
-                                "ghost_signals": [gs.__dict__ if hasattr(gs, '__dict__') else str(gs) for gs in getattr(r, 'ghost_signals', [])],  # noqa: E501
-                                "deletion_indicators": getattr(r, 'deletion_indicators', False),
-                                "recovered_content_count": len(getattr(r, 'recovered_content', [])),
+                                "ghost_signals_count": len(getattr(r, "ghost_signals", [])),
+                                "ghost_signals": [
+                                    gs.__dict__ if hasattr(gs, "__dict__") else str(gs)
+                                    for gs in getattr(r, "ghost_signals", [])
+                                ],  # noqa: E501
+                                "deletion_indicators": getattr(r, "deletion_indicators", False),
+                                "recovered_content_count": len(getattr(r, "recovered_content", [])),
                             },
                             tags=["digital_ghost", "forensics"],
                         )
@@ -19836,15 +16908,17 @@ class SprintScheduler:
 
             # Ingest findings through canonical write path
             if findings and self._duckdb_store is not None:
-                _ = await self._gate_then_ingest_and_accumulate(self._duckdb_store, findings, sprint_id=self.sprint_id or "")
+                _ = await self._gate_then_ingest_and_accumulate(
+                    self._duckdb_store, findings, sprint_id=self.sprint_id or ""
+                )
                 log.debug("[F3FORENSICS] Ingested %d digital ghost findings", len(findings))
 
         except Exception as e:
-            _log_advisory_dedup(log, f"dghost_sidecar_fail:{type(e).__name__}",
-                                "[F3FORENSICS] Digital ghost sidecar failed: %s", e)
+            _log_advisory_dedup(
+                log, f"dghost_sidecar_fail:{type(e).__name__}", "[F3FORENSICS] Digital ghost sidecar failed: %s", e
+            )
 
         return findings
-
 
     # ── F3FORENSICS: Steganography Detection Sidecar ───────────────────────
 
@@ -19872,16 +16946,15 @@ class SprintScheduler:
 
             from pathlib import Path
 
-
             MAX_IMAGES = 10  # noqa: N806
             MAX_IMAGE_SIZE_MB = 50  # noqa: N806
-            IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp'}  # noqa: N806
+            IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp"}  # noqa: N806
 
             # Filter for image findings
             image_paths = []
             for f in image_findings:
-                fp = getattr(f, 'ioc_value', '') or ''
-                ext = Path(fp).suffix.lower() if fp else ''
+                fp = getattr(f, "ioc_value", "") or ""
+                ext = Path(fp).suffix.lower() if fp else ""
                 if ext in IMAGE_EXTENSIONS:
                     image_paths.append((fp, getattr(f, "confidence", 0.5)))
 
@@ -19913,10 +16986,7 @@ class SprintScheduler:
                     return None
 
             # F262D: migrated asyncio.gather -> safe_gather_ok (fail-soft invariant preserved)
-            results = await safe_gather_ok(
-                *[analyze_one(fp) for fp in image_paths],
-                label="sprint_scheduler:17380"
-            )
+            results = await safe_gather_ok(*[analyze_one(fp) for fp in image_paths], label="sprint_scheduler:17380")
 
             from core.findings import CanonicalFinding
 
@@ -19924,8 +16994,8 @@ class SprintScheduler:
                 if r is None or isinstance(r, Exception):
                     continue
                 try:
-                    suspicious = getattr(r, 'overall_suspicious', False)
-                    confidence = getattr(r, 'confidence', 0.0)
+                    suspicious = getattr(r, "overall_suspicious", False)
+                    confidence = getattr(r, "confidence", 0.0)
                     # Only emit if suspicious > 0.3
                     if suspicious and confidence > 0.3:
                         from hledac.universal.knowledge.duckdb_store import CanonicalFinding
@@ -19933,7 +17003,7 @@ class SprintScheduler:
                         finding = CanonicalFinding(
                             source_type=SourceType.STEGANOGRAPHY_DETECTION,
                             ioc_type="file",
-                            ioc_value=getattr(r, 'file_path', ""),
+                            ioc_value=getattr(r, "file_path", ""),
                             confidence=confidence,
                         )
                         # Sprint F11C: Wire EvidenceLog — observation event
@@ -19945,11 +17015,11 @@ class SprintScheduler:
                                     source_ids=[finding.source_id] if hasattr(finding, "source_id") else [],
                                     confidence=getattr(finding, "confidence", 0.5),
                                     payload={
-                                        "chi_square_score": getattr(r, 'chi_square_score', 0.0),
-                                        "entropy_score": getattr(r, 'entropy_score', 0.0),
-                                        "lsb_suspicious": getattr(r, 'lsb_suspicious', False),
-                                        "stegdetect_available": getattr(r, 'stegdetect_available', False),
-                                        "stegdetect_result": getattr(r, 'stegdetect_result', None),
+                                        "chi_square_score": getattr(r, "chi_square_score", 0.0),
+                                        "entropy_score": getattr(r, "entropy_score", 0.0),
+                                        "lsb_suspicious": getattr(r, "lsb_suspicious", False),
+                                        "stegdetect_available": getattr(r, "stegdetect_available", False),
+                                        "stegdetect_result": getattr(r, "stegdetect_result", None),
                                     },
                                     tags=["steganography", "forensics"],
                                 )
@@ -19961,18 +17031,20 @@ class SprintScheduler:
 
             # Ingest findings through canonical write path
             if findings and self._duckdb_store is not None:
-                _ = await self._gate_then_ingest_and_accumulate(self._duckdb_store, findings, sprint_id=self.sprint_id or "")
+                _ = await self._gate_then_ingest_and_accumulate(
+                    self._duckdb_store, findings, sprint_id=self.sprint_id or ""
+                )
                 log.debug("[F3FORENSICS] Ingested %d steganography findings", len(findings))
 
         except Exception as e:
-            _log_advisory_dedup(log, f"steg_sidecar_fail:{type(e).__name__}",
-                                "[F3FORENSICS] Steganography sidecar failed: %s", e)
+            _log_advisory_dedup(
+                log, f"steg_sidecar_fail:{type(e).__name__}", "[F3FORENSICS] Steganography sidecar failed: %s", e
+            )
         return findings
 
     # ── F214Q: BGP Enrichment Sidecar ──────────────────────────────────────────
 
     async def _run_bgp_enrichment_sidecar(self) -> list[CanonicalFinding]:
-
         """F214Q: BGP enrichment -- AS path analysis for IP/ASN seeds.
 
 
@@ -19994,121 +17066,85 @@ class SprintScheduler:
         except (ImportError, ModuleNotFoundError):
             IOC_TYPES = ["ip", "asn", "ipv6", "cidr"]  # noqa: N806
 
-
-
         _bgp_env = ENV.get_bool("HLEDAC_ENABLE_BGP")
 
         if not _bgp_env:
-
             return []
 
-
-
         try:
-
             governor = getattr(self, "_governor", None)
 
             if governor is not None:
-
                 uma_state = getattr(governor, "_uma_state", "normal")
 
                 if uma_state in ("critical", "emergency"):
-
                     log.debug("[F214Q] BGP skipped -- memory pressure")
 
                     return []
 
         except Exception:  # noqa: BLE001
-
             pass
-
-
 
         # Extract IP/ASN seeds from current findings
 
         seed_ips = []
 
         for finding in getattr(self, "_result", None) or []:
-
-            if hasattr(finding, 'query') and finding.query:
-
+            if hasattr(finding, "query") and finding.query:
                 query_lower = finding.query.lower()
 
                 if any(ioc in query_lower for ioc in IOC_TYPES):
-
                     # Extract IP-like patterns
 
                     import re
 
-                    ips = re.findall(r'\b(?:(?:\d{1,3}\.){3}\d{1,3})\b', finding.query)
+                    ips = re.findall(r"\b(?:(?:\d{1,3}\.){3}\d{1,3})\b", finding.query)
 
                     seed_ips.extend(ips)
 
-
-
         seed_ips = list(set(seed_ips))[:3]  # Max 3
-
-
 
         findings = []
 
         sem = asyncio.Semaphore(1)
 
-
-
         async def _query_one(ip_or_asn: str) -> list[CanonicalFinding]:
 
             try:
-
                 async with sem:
-
                     return await safe_wait_for(
-
                         bgp_enrich_to_canonical(ip_or_asn, query_context="sprint_enrichment"),
-
-                        timeout=30.0, label="bgp_enrich"
-
+                        timeout=30.0,
+                        label="bgp_enrich",
                     )
 
             except Exception:
-
                 return []
 
-
-
         try:
-
             results = await safe_gather_ok(*[_query_one(ip) for ip in seed_ips], label="sprint_scheduler:17523")
 
             for r in results:
-
                 if r and not isinstance(r, Exception):
-
                     findings.extend(r)
 
         except Exception as e:
-
             log.debug("[F214Q] BGP query failed: %s", e)
-
-
 
         # Canonical write
 
         if findings and self._duckdb_store is not None:
-
-            _ = await self._gate_then_ingest_and_accumulate(self._duckdb_store, findings, sprint_id=self.sprint_id or "")
+            _ = await self._gate_then_ingest_and_accumulate(
+                self._duckdb_store, findings, sprint_id=self.sprint_id or ""
+            )
 
             log.debug("[F214Q] Ingested %d BGP enrichment findings", len(findings))
 
-
         return findings[:20]
-
-
 
     # ── F214Q: Banner Grab Sidecar ──────────────────────────────────────────────
 
     async def _run_banner_grab_sidecar(self) -> list[CanonicalFinding]:
-
         """F214Q: Banner grab -- service fingerprinting via TCP probe.
 
 
@@ -20125,141 +17161,97 @@ class SprintScheduler:
 
         from hledac.universal.network.banner_grabber import banner_grab_to_canonical
 
-
-
         _banner_env = ENV.get_bool("HLEDAC_ENABLE_BANNER_GRAB")
 
         if not _banner_env:
-
             return []
 
-
-
         try:
-
             governor = getattr(self, "_governor", None)
 
             if governor is not None:
-
                 uma_state = getattr(governor, "_uma_state", "normal")
 
                 if uma_state in ("critical", "emergency"):
-
                     log.debug("[F214Q] Banner grab skipped -- memory pressure")
 
                     return []
 
         except Exception:  # noqa: BLE001
-
             pass
-
-
 
         # Extract IP seeds from findings
 
         seed_ips = []
 
         for finding in getattr(self, "_result", None) or []:
-
-            if hasattr(finding, 'provenance'):
-
+            if hasattr(finding, "provenance"):
                 prov = finding.provenance
 
                 if isinstance(prov, tuple) and prov:
-
                     first = str(prov[0])
 
                     import re
 
-                    if re.match(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', first):
-
+                    if re.match(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", first):
                         seed_ips.append(first)
 
-
-
         seed_ips = list(set(seed_ips))[:3]  # Max 3
-
-
 
         # Default ports z ENV
 
         ports_str = ENV.get_str("HLEDAC_BANNER_GRAB_PORTS", default="22,80,443,8080,8443")
 
         try:
-
-            ports = [int(p.strip()) for p in ports_str.split(',') if p.strip()]
+            ports = [int(p.strip()) for p in ports_str.split(",") if p.strip()]
 
         except Exception:
-
             ports = [22, 80, 443, 8080, 8443]
 
         ports = ports[:5]  # Max 5
 
-
-
         findings = []
-
-
 
         async def _grab_one(ip: str) -> list[CanonicalFinding]:
 
             try:
-
                 return await safe_wait_for(
-
                     banner_grab_to_canonical(ip, ports=ports, query_context="sprint_enrichment"),
-
-                    timeout=60.0, label="banner_grab"
-
+                    timeout=60.0,
+                    label="banner_grab",
                 )
 
             except Exception:
-
                 return []
 
-
-
         try:
-
             results = await safe_gather_ok(*[_grab_one(ip) for ip in seed_ips], label="sprint_scheduler:17667")
 
             for r in results:
-
                 if r and not isinstance(r, Exception):
-
                     findings.extend(r)
 
         except Exception as e:
-
             log.debug("[F214Q] Banner grab failed: %s", e)
-
-
 
         # Canonical write
 
         if findings and self._duckdb_store is not None:
-
-            _ = await self._gate_then_ingest_and_accumulate(self._duckdb_store, findings, sprint_id=self.sprint_id or "")
+            _ = await self._gate_then_ingest_and_accumulate(
+                self._duckdb_store, findings, sprint_id=self.sprint_id or ""
+            )
 
             log.debug("[F214Q] Ingested %d banner grab findings", len(findings))
-
 
         return findings[:50]
 
     # ── F198A: Cross-Sprint Graph Accumulation ───────────────────────────────
 
-
-
     def _accumulate_findings_to_graph(
-
         self,
-
         findings: list,
-
         sprint_id: str = "",
-
     ) -> int:
-
         """
 
         F198A: Extract IOCs from accepted findings and upsert to graph_service.
@@ -20295,13 +17287,7 @@ class SprintScheduler:
 
         return self._graph_accumulator.accumulate_findings(findings, sprint_id=sprint_id or "")
 
-
-
     # ── Wave 2: Latent Relationship Sync ───────────────────────────────────────
-
-
-
-
 
     # ── F266: Class-method replacements for __init__ closures ───────────────
 
@@ -20325,25 +17311,25 @@ class SprintScheduler:
 
         pii_count = 0
         anonymized = []
-        _ctx_id = getattr(self, '_privacy_context_id', None)
+        _ctx_id = getattr(self, "_privacy_context_id", None)
 
         for f in findings:
             try:
                 if isinstance(f, dict):
                     text_fields = {
-                        'content': f.get('content') or "",
-                        'raw_content': f.get('raw_content') or "",
-                        'payload_text': f.get('payload_text') or "",
-                        'title': f.get('title') or "",
-                        'summary': f.get('summary') or "",
+                        "content": f.get("content") or "",
+                        "raw_content": f.get("raw_content") or "",
+                        "payload_text": f.get("payload_text") or "",
+                        "title": f.get("title") or "",
+                        "summary": f.get("summary") or "",
                     }
                 else:
                     text_fields = {
-                        'content': getattr(f, 'content', None) or "",
-                        'raw_content': getattr(f, 'raw_content', None) or "",
-                        'payload_text': getattr(f, 'payload_text', None) or "",
-                        'title': getattr(f, 'title', None) or "",
-                        'summary': getattr(f, 'summary', None) or "",
+                        "content": getattr(f, "content", None) or "",
+                        "raw_content": getattr(f, "raw_content", None) or "",
+                        "payload_text": getattr(f, "payload_text", None) or "",
+                        "title": getattr(f, "title", None) or "",
+                        "summary": getattr(f, "summary", None) or "",
                     }
 
                 has_pii = False
@@ -20352,8 +17338,7 @@ class SprintScheduler:
                         continue
                     pii_result = privacy_layer.detect_pii(field_value)
                     field_has_pii = (
-                        bool(pii_result) if isinstance(pii_result, bool)
-                        else any(v for v in pii_result.values() if v)
+                        bool(pii_result) if isinstance(pii_result, bool) else any(v for v in pii_result.values() if v)
                     )
 
                     if field_has_pii:
@@ -20372,7 +17357,7 @@ class SprintScheduler:
                     if _ctx_id:
                         try:
                             if isinstance(f, dict):
-                                f['_privacy_context_id'] = _ctx_id
+                                f["_privacy_context_id"] = _ctx_id
                             else:
                                 f._privacy_context_id = _ctx_id
                         except Exception:  # noqa: BLE001
@@ -20386,9 +17371,7 @@ class SprintScheduler:
 
         return anonymized, pii_count
 
-    async def _gate_then_ingest(
-        self, store: Any, findings: list, sprint_id: str = ""
-    ) -> Any:
+    async def _gate_then_ingest(self, store: Any, findings: list, sprint_id: str = "") -> Any:
         """F285: PII gate + canonical write for feed lanes.
 
         When HLEDAC_ENABLE_PRIVACY_LAYER=1, anonymizes PII in
@@ -20414,15 +17397,15 @@ class SprintScheduler:
             _gated: list = findings
             if ENV.get_bool("HLEDAC_ENABLE_PRIVACY_LAYER"):
                 try:
-                    _privacy = (self._privacy_layer or getattr(self._layer_manager, "privacy", None))
+                    _privacy = self._privacy_layer or getattr(self._layer_manager, "privacy", None)
                     if _privacy:
                         _gated, _pii_count = await self._run_privacy_gate_async(
-                            findings, _privacy,
+                            findings,
+                            _privacy,
                         )
                         if _pii_count > 0:
                             self._result.pii_findings_anonymized = (
-                                getattr(self._result, "pii_findings_anonymized", 0)
-                                + _pii_count
+                                getattr(self._result, "pii_findings_anonymized", 0) + _pii_count
                             )
                 except Exception as _e:
                     logger.debug("privacy_gate call failed: %s", _e)
@@ -20560,7 +17543,7 @@ class SprintScheduler:
                         "phase": "CREATED",
                         "findings_count": len(findings),
                         "sprint_id": sprint_id or "",
-                        "source": store.__class__.__name__ if hasattr(store, '__class__') else str(type(store)),
+                        "source": store.__class__.__name__ if hasattr(store, "__class__") else str(type(store)),
                     },
                     source_ids=[],
                     confidence=1.0,
@@ -20572,7 +17555,7 @@ class SprintScheduler:
         if self._evidence_log is not None:
             try:
                 _finding_ids = [
-                    getattr(f, 'finding_id', None) or getattr(f, 'source_id', None) or str(hash(str(f)))
+                    getattr(f, "finding_id", None) or getattr(f, "source_id", None) or str(hash(str(f)))
                     for f in findings
                 ]
                 self._evidence_log.create_event(
@@ -20627,8 +17610,7 @@ class SprintScheduler:
                 if isinstance(_ingest_result, list) and len(_ingest_result) == len(findings):
                     # Filter to accepted findings only (matching DuckDB canonical path)
                     _accepted_findings = [
-                        f for f, r in zip(findings, _ingest_result)
-                        if isinstance(r, dict) and r.get("accepted")
+                        f for f, r in zip(findings, _ingest_result) if isinstance(r, dict) and r.get("accepted")
                     ]
                 else:
                     # Fallback: all findings if decision list is malformed
@@ -20640,7 +17622,10 @@ class SprintScheduler:
                     _rejected = _total - _accepted
                     logger.debug(
                         "[F320] graph_accum: %d/%d accepted (rejected=%d) for sprint_id=%s",
-                        _accepted, _total, _rejected, sprint_id or "",
+                        _accepted,
+                        _total,
+                        _rejected,
+                        sprint_id or "",
                     )
                 if _accepted_findings:
                     if self._graph_accumulator is None:
@@ -20683,15 +17668,12 @@ class SprintScheduler:
                     try:
                         if isinstance(duck_results, list) and len(duck_results) == len(chunk):
                             _accepted_chunk = [
-                                f for f, r in zip(chunk, duck_results)
-                                if isinstance(r, dict) and r.get("accepted")
+                                f for f, r in zip(chunk, duck_results) if isinstance(r, dict) and r.get("accepted")
                             ]
                         else:
                             _accepted_chunk = chunk
                         if _accepted_chunk:
-                            graph_result = self._accumulate_findings_to_graph(
-                                _accepted_chunk, sprint_id=sprint_id
-                            )
+                            graph_result = self._accumulate_findings_to_graph(_accepted_chunk, sprint_id=sprint_id)
                     except Exception as _e:
                         logger.debug("[F266] graph_accumulate post-DuckDB failed: %s", _e)
             except Exception as e:
@@ -20700,6 +17682,7 @@ class SprintScheduler:
             # Metal barrier between chunks
             try:
                 import mlx.core as mx
+
                 mx.eval([])
             except Exception:  # noqa: BLE001
                 pass
@@ -20733,7 +17716,6 @@ class SprintScheduler:
         return all_results
 
     def _sync_latent_relationships_to_graph(self) -> None:
-
         """
 
         Wave 2: Export NetworkX latent relationships and upsert unseen ones to DuckPGQ.
@@ -20749,15 +17731,12 @@ class SprintScheduler:
         """
 
         if self._rel_discovery_engine is None:
-
             return
 
         try:
-
             nx_graph = self._rel_discovery_engine.export_graph()
 
             if nx_graph is None:
-
                 return
 
             from hledac.universal.knowledge.graph_service import _DEFAULT_GRAPH_SERVICE
@@ -20767,19 +17746,11 @@ class SprintScheduler:
             added = 0
 
             for src, dst, data in nx_graph.edges(data=True):
-
                 key = (src, dst, "latent_related")
 
                 if key not in seen_rels:
-
                     _DEFAULT_GRAPH_SERVICE.upsert_relation(
-
-                        src, dst, "latent_related",
-
-                        weight=data.get("weight", 1.0),
-
-                        evidence="latent_networkx"
-
+                        src, dst, "latent_related", weight=data.get("weight", 1.0), evidence="latent_networkx"
                     )
 
                     seen_rels.add(key)
@@ -20787,17 +17758,12 @@ class SprintScheduler:
                     added += 1
 
             if added:
-
                 log.debug(f"[RelDiscovery] Synced {added} latent relationships to DuckPGQ")
 
         except Exception as _e:
-
             log.warning(f"[RelDiscovery] Latent sync failed: {_e}")
 
-
-
     async def _run_quantum_path_analysis(self, new_ioc_values: list[str]) -> list[str]:
-
         """
         Sprint F214Q: Post-sprint quantum-inspired graph walk.
         Find undiscovered connected IOCs via DuckPGQGraph.find_connected().
@@ -20810,9 +17776,7 @@ class SprintScheduler:
         only on cache miss.
         """
 
-
         if not ENV.get_bool("HLEDAC_ENABLE_GRAPH_ANALYSIS"):
-
             return []
 
         if not new_ioc_values:
@@ -20821,19 +17785,15 @@ class SprintScheduler:
         try:
             # P1-1: Batch query — single DuckDB round-trip instead of N individual calls.
             # DuckPGQGraph.find_connected_batch uses CTE with IN(values) → O(1) vs N×O(V+E).
-            batch_map = _DEFAULT_GRAPH_SERVICE.find_connected_batch(
-                new_ioc_values[:20], max_hops=2
-            )
+            batch_map = _DEFAULT_GRAPH_SERVICE.find_connected_batch(new_ioc_values[:20], max_hops=2)
 
             seen_connections: dict[str, int] = {}
 
             for ioc_val, connected in batch_map.items():
-
                 if not isinstance(connected, list):
                     continue
 
                 for node in connected:
-
                     val = node.get("value") if isinstance(node, dict) else str(node)
 
                     if val and val != ioc_val:
@@ -20846,9 +17806,7 @@ class SprintScheduler:
                     break
 
             # Sprint F229A: rank by connection frequency — deduplicate + sort by degree
-            ranked = sorted(
-                seen_connections.keys(), key=lambda v: seen_connections[v], reverse=True
-            )
+            ranked = sorted(seen_connections.keys(), key=lambda v: seen_connections[v], reverse=True)
 
             return ranked[:20]
 
@@ -20856,15 +17814,9 @@ class SprintScheduler:
             logger.debug(f"[SPRINT] quantum_path find_connected_batch failed: {e}")
             return []
 
-
-
-
     # ── Sprint F216G: Quality Rejection Ledger recording ─────────────────────────
 
-
-
     def _record_quality_rejections_from_store(self, store: Any | None) -> None:
-
         """
 
         Sprint F216G: Read quality rejection ledger from duckdb_store and
@@ -20900,26 +17852,20 @@ class SprintScheduler:
         """
 
         if store is None:
-
             return
 
         try:
-
             if not hasattr(store, "get_quality_rejection_ledger"):
-
                 return
 
             ledger = store.get_quality_rejection_ledger()
 
             if not ledger:
-
                 return
 
             # Store raw ledger (bounded tuple)
 
             self._result.quality_rejection_ledger = ledger
-
-
 
             # Compute summaries by family and reason
 
@@ -20929,33 +17875,25 @@ class SprintScheduler:
 
             low_info_sum: dict[str, dict[str, int]] = {}
 
-
-
             for rec in ledger:
-
                 fam = rec.source_family or "unknown"
 
                 reason = rec.reason or "unknown"
 
                 if reason in ("low_entropy_rejected",):
-
                     d = low_info_sum.setdefault(fam, {})
 
                     d[reason] = d.get(reason, 0) + 1
 
                 elif reason in ("persistent_duplicate", "duplicate_detected", "semantic_duplicate"):
-
                     d = dup_sum.setdefault(fam, {})
 
                     d[reason] = d.get(reason, 0) + 1
 
                 else:
-
                     d = quality_sum.setdefault(fam, {})
 
                     d[reason] = d.get(reason, 0) + 1
-
-
 
             self._result.quality_rejection_summary_by_family = quality_sum
 
@@ -20964,27 +17902,16 @@ class SprintScheduler:
             self._result.low_information_by_family = low_info_sum
 
         except Exception:  # noqa: BLE001
-
             pass  # noqa: BLE001  # Fail-soft: ledger recording must never block sprint
-
-
-
-
 
     # ── Sprint R8: CT -> PassiveDNS Active-Cycle Pivot ───────────────────────
 
     async def _run_ct_to_passivedns_active_pivot(
-
         self,
-
         ct_findings: list,
-
         duckdb_store: Any | None,
-
         remaining_s: float,
-
     ) -> None:
-
         """
 
         Sprint R8: CT -> PassiveDNS active-cycle bounded pivot.
@@ -21034,36 +17961,27 @@ class SprintScheduler:
         # Guard: skip if already done in this cycle
 
         if getattr(self, "_ct_pdns_active_done", False):
-
             log.debug("[R8] CT->PDNS active pivot skipped: already ran this cycle")
 
             return
 
-
-
         # Guard: skip under UMA critical/emergency
 
         try:
-
             governor = getattr(self, "_governor", None)
 
             if governor is not None:
-
                 snap = await governor.evaluate()
 
                 uma_state = getattr(snap, "uma_state", "ok") or "ok"
 
                 if uma_state in ("critical", "emergency"):
-
                     log.debug(f"[R8] CT->PDNS active pivot skipped: uma_state={uma_state}")
 
                     return
 
         except Exception:  # noqa: BLE001
-
             pass
-
-
 
         # F273B: Use remaining-time-aware floor (falls back to cycle-ema formula
         # if _min_branch_remaining_s doesn't accept remaining_s).
@@ -21071,20 +17989,14 @@ class SprintScheduler:
         min_remaining = self._min_branch_remaining_s(remaining_s)
 
         if remaining_s <= min_remaining:
-
             log.debug(f"[R8] CT->PDNS active pivot skipped: remaining={remaining_s:.1f}s <= floor={min_remaining:.1f}s")
 
             return
 
-
-
         if not ct_findings:
-
             log.debug("[R8] CT->PDNS active pivot: no CT findings to pivot")
 
             return
-
-
 
         from hledac.universal.runtime.acquisition_strategy import (
             select_ct_domains_for_passivedns_pivot,
@@ -21093,28 +18005,19 @@ class SprintScheduler:
         pivot_domains = select_ct_domains_for_passivedns_pivot(ct_findings, max_pivots=5)
 
         if not pivot_domains:
-
             log.debug("[R8] CT->PDNS active pivot: no domains extracted from CT findings")
 
             return
 
-
-
         log.debug(f"[R8] CT->PDNS active pivot: {len(pivot_domains)} domains: {pivot_domains[:3]}...")
 
-
-
         self._ct_pdns_active_done = True
-
-
 
         store = getattr(self, "_duckdb_store", None) or duckdb_store
 
         pdns_results: list = []
 
         errors: list = []
-
-
 
         from hledac.universal.runtime.source_finding_bridge import (
             passive_dns_results_to_findings,
@@ -21126,43 +18029,29 @@ class SprintScheduler:
             call_lookup_passive_dns as _pdns_lookup,
         )
 
-
-
         async def _run_pdns_for_domain(domain: str) -> tuple[str, list[str], PassiveDNSOutcome | None]:
 
             try:
-
                 ips, outcome = await _pdns_lookup(domain)
 
                 return domain, ips, outcome
 
             except asyncio.CancelledError:
-
                 raise
 
             except Exception:
-
                 return domain, [], None
 
-
-
         try:
-
             # F262D: migrated asyncio.gather -> safe_gather_ok (fail-soft invariant preserved)
             gather_results = await safe_gather_ok(
-
                 *[_run_pdns_for_domain(d) for d in pivot_domains],
-
                 label="sprint_scheduler:18182",
-
             )
 
             for result in gather_results:
-
                 if isinstance(result, BaseException):
-
                     if isinstance(result, asyncio.CancelledError):
-
                         raise result
 
                     errors.append(str(result))
@@ -21172,29 +18061,21 @@ class SprintScheduler:
                 domain, ips, outcome = result
 
                 if outcome is not None:
-
                     pdns_results.append({"domain": domain, "ips": ips, "outcome": outcome})
 
                 else:
-
                     errors.append(f"domain_{domain}_none")
 
         except asyncio.CancelledError:
-
             raise
 
         except Exception as _exc:
-
             log.warning("ct_pdns_pivot inner gather failed: %s", _exc)
-
-
 
         # Convert and ingest
 
         if pdns_results and store is not None:
-
             for res in pdns_results:
-
                 outcome = res["outcome"]
 
                 ips = res["ips"] or []
@@ -21202,158 +18083,100 @@ class SprintScheduler:
                 domain = res["domain"]
 
                 if not ips or outcome is None:
-
                     continue
 
                 pdns_findings, pdns_rejections, pdns_telemetry = passive_dns_results_to_findings(
-
                     ips, outcome, domain, sprint_id=self.sprint_id or ""
-
                 )
 
                 if pdns_findings:
-
                     try:
-
-                        ingest_results = await self._gate_then_ingest_and_accumulate(store, pdns_findings, sprint_id=self.sprint_id or "")
+                        ingest_results = await self._gate_then_ingest_and_accumulate(
+                            store, pdns_findings, sprint_id=self.sprint_id or ""
+                        )
 
                         _stored = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
 
-
                     except asyncio.CancelledError:
-
                         raise
 
                     except Exception as exc:
-
                         log.debug(f"[R8] PDNS ingest failed for {domain}: {exc}")
-
-
 
         # Record FAMILY_PIVOT in NonfeedCandidateLedger
 
         ledger = getattr(self, "_nonfeed_ledger", None)
 
         if ledger is not None:
-
             for res in pdns_results:
-
                 try:
-
                     domain = res.get("domain", "")
 
                     outcome = res.get("outcome", None)
 
                     if outcome and hasattr(outcome, "result_count"):
-
                         count = getattr(outcome, "result_count", 0) or 0
 
                         if count > 0:
-
                             ledger.add_pivot_discovered(
-
                                 pivot_type="ct_to_passivedns",
-
                                 ioc_value=domain,
-
                                 source_hint=f"ct_domain:{domain}",
-
                                 reason=f"pdns_results={count}",
-
                             )
 
                             ledger.add_pivot_stored(
-
                                 pivot_type="ct_to_passivedns",
-
                                 ioc_value=domain,
-
                                 stored_count=count,
-
                             )
 
                 except asyncio.CancelledError:
-
                     raise
 
                 except Exception as _exc:
-
                     log.warning("ct_pdns_pivot store loop failed: %s", _exc)
-
-
 
         # Record source_family_outcomes pivot_source=ct, pivot_phase=active
 
         if pdns_results:
-
             _sfos = list(getattr(self._result, "source_family_outcomes_list", []) or [])
 
             for res in pdns_results:
-
                 outcome = res.get("outcome", None)
 
                 if outcome is None:
-
                     continue
 
-                _sfos.append({
-
-                    "family": "passive_dns",
-
-                    "lane": "PASSIVE_DNS",
-
-                    "attempted": getattr(outcome, "attempted", True),
-
-                    "accepted": getattr(outcome, "result_count", 0) or 0,
-
-                    "terminal_state": "pivot_ct_domain",
-
-                    "raw_count": 0,
-
-                    "accepted_count": getattr(outcome, "result_count", 0) or 0,
-
-                    "error": getattr(outcome, "error", None),
-
-                    "timeout": getattr(outcome, "timeout", False),
-
-                    "skipped": False,
-
-                    "pivot_source": "ct",
-
-                    "pivot_phase": "active",
-
-                    "pivot_domains": pivot_domains,
-
-                })
+                _sfos.append(
+                    {
+                        "family": "passive_dns",
+                        "lane": "PASSIVE_DNS",
+                        "attempted": getattr(outcome, "attempted", True),
+                        "accepted": getattr(outcome, "result_count", 0) or 0,
+                        "terminal_state": "pivot_ct_domain",
+                        "raw_count": 0,
+                        "accepted_count": getattr(outcome, "result_count", 0) or 0,
+                        "error": getattr(outcome, "error", None),
+                        "timeout": getattr(outcome, "timeout", False),
+                        "skipped": False,
+                        "pivot_source": "ct",
+                        "pivot_phase": "active",
+                        "pivot_domains": pivot_domains,
+                    }
+                )
 
             self._result.source_family_outcomes_list = _sfos
 
-
-
-        log.debug(
-
-            f"[R8] CT->PDNS active pivot done: {len(pdns_results)} domains with results, "
-
-            f"errors={len(errors)}"
-
-        )
-
-
+        log.debug(f"[R8] CT->PDNS active pivot done: {len(pdns_results)} domains with results, errors={len(errors)}")
 
     # ── Sprint F207J-A: Lane findings accumulation into scheduler truth ──────────
 
-
-
     def _accumulate_lane_findings(
-
         self,
-
         outcomes: tuple,
-
         query: str,
-
     ) -> None:
-
         """
 
         Sprint F207J-A: Accumulate accepted lane findings into scheduler truth.
@@ -21387,27 +18210,16 @@ class SprintScheduler:
         """
 
         _LANE_SOURCE_MAP = {  # noqa: N806
-
             AcquisitionLane.CT: "ct",
-
             AcquisitionLane.WAYBACK: "wayback_archive",
-
             AcquisitionLane.PASSIVE_DNS: "passive_dns",
-
             AcquisitionLane.BLOCKCHAIN: "blockchain",
-
             AcquisitionLane.IPFS: "ipfs",
-
             AcquisitionLane.PUBLIC: "public",
-
         }
 
-
-
         for outcome in outcomes:
-
             if not getattr(outcome, "attempted", False):
-
                 continue
 
             lane_name = getattr(outcome, "lane", None)
@@ -21422,8 +18234,6 @@ class SprintScheduler:
 
             source_family = getattr(outcome, "source_family", None) or "unknown"
 
-
-
             # [F207K-A] Extract bridge rejection data
 
             rejected_count = getattr(outcome, "rejected_count", 0) or 0
@@ -21431,8 +18241,6 @@ class SprintScheduler:
             rejection_reasons = getattr(outcome, "rejection_reasons", ()) or ()
 
             sample_rejections = getattr(outcome, "sample_rejections", ()) or ()
-
-
 
             # Update per-lane accepted count on SprintSchedulerResult.
             # Sprint Opt: structural pattern matching (PEP 634) replaces 6-way
@@ -21455,8 +18263,6 @@ class SprintScheduler:
                     # Unknown lane (future enum addition): no-op, fail-soft.
                     pass
 
-
-
             # Sprint F229: Populate wayback/pdns telemetry from AcquisitionLaneOutcome
 
             wayback_raw = getattr(outcome, "wayback_raw_count", 0) or 0
@@ -21466,7 +18272,6 @@ class SprintScheduler:
             candidate_findings = getattr(outcome, "candidate_findings", ()) or ()
 
             if lane_name == AcquisitionLane.WAYBACK:
-
                 self._result.wayback_attempted = True
 
                 self._result.wayback_raw_count += wayback_raw
@@ -21476,7 +18281,6 @@ class SprintScheduler:
                 self._result.wayback_accepted_count += accepted
 
             elif lane_name == AcquisitionLane.PASSIVE_DNS:
-
                 self._result.passive_dns_attempted = True
 
                 self._result.passive_dns_raw_count += passive_dns_raw
@@ -21485,25 +18289,26 @@ class SprintScheduler:
 
                 self._result.passive_dns_accepted_count += accepted
 
-
-
             # Accumulate into _lane_verdicts (same shape as _feed_verdicts)
 
             # Shape: (verdict_tag, signal, fallback_use, fallback_waste, quality)
 
             if accepted > 0:
-
                 verdict_tag = _LANE_SOURCE_MAP.get(lane_name, "unknown_lane")
 
                 quality = 1 if not error else 0
 
-                self._lane_verdicts.extend([(
-                    verdict_tag,
-                    accepted,
-                    0,
-                    0,
-                    quality,
-                )])
+                self._lane_verdicts.extend(
+                    [
+                        (
+                            verdict_tag,
+                            accepted,
+                            0,
+                            0,
+                            quality,
+                        )
+                    ]
+                )
 
                 # [F207K-A] Bounded accumulation of CanonicalFinding candidates from bridge
 
@@ -21518,16 +18323,20 @@ class SprintScheduler:
                     _errored = 0
                     for cf in _cf_slice:
                         try:
-                            _new_entries.append({
-                                "type": f"lane_{getattr(cf, 'source_type', verdict_tag) or verdict_tag}",
-                                "source": getattr(cf, "source_type", verdict_tag) or verdict_tag,
-                                "matched_patterns": produced,
-                                "accepted_findings": accepted,
-                                "severity": "medium",
-                                "confidence": getattr(cf, "confidence", 0.5) or 0.5,
-                                "description": str(getattr(cf, "payload_text", "bridge finding") or "bridge finding")[:200],
-                                "ts": getattr(cf, "ts", 0.0) or 0.0,
-                            })
+                            _new_entries.append(
+                                {
+                                    "type": f"lane_{getattr(cf, 'source_type', verdict_tag) or verdict_tag}",
+                                    "source": getattr(cf, "source_type", verdict_tag) or verdict_tag,
+                                    "matched_patterns": produced,
+                                    "accepted_findings": accepted,
+                                    "severity": "medium",
+                                    "confidence": getattr(cf, "confidence", 0.5) or 0.5,
+                                    "description": str(
+                                        getattr(cf, "payload_text", "bridge finding") or "bridge finding"
+                                    )[:200],
+                                    "ts": getattr(cf, "ts", 0.0) or 0.0,
+                                }
+                            )
                         except asyncio.CancelledError:
                             raise  # [I6] propagate CancelledError
                         except Exception:
@@ -21551,48 +18360,30 @@ class SprintScheduler:
                 }
                 if candidate_findings and lane_name not in _already_graphed_in_lane:
                     try:
-                        self._accumulate_findings_to_graph(
-                            candidate_findings, sprint_id=self.sprint_id or ""
-                        )
+                        self._accumulate_findings_to_graph(candidate_findings, sprint_id=self.sprint_id or "")
                     except Exception:
                         log.debug("[F265C] Lane graph accumulation failed (non-fatal)")
 
                 elif remaining > 0:
-
                     if len(self._all_findings) < self._MAX_FINDINGS_PER_SPRINT:
-
-                        self._all_findings.append({
-
-                        "type": f"lane_{verdict_tag}",
-
-                        "source": verdict_tag,
-
-                        "matched_patterns": produced,
-
-                        "accepted_findings": accepted,
-
-                        "severity": "medium",
-
-                        "confidence": quality * 0.8,
-
-                        "description": (
-
-                            f"{accepted} accepted findings from {verdict_tag} lane "
-
-                            f"in {duration:.1f}s"
-
-                        ),
-
-                    })
-
-
+                        self._all_findings.append(
+                            {
+                                "type": f"lane_{verdict_tag}",
+                                "source": verdict_tag,
+                                "matched_patterns": produced,
+                                "accepted_findings": accepted,
+                                "severity": "medium",
+                                "confidence": quality * 0.8,
+                                "description": (
+                                    f"{accepted} accepted findings from {verdict_tag} lane in {duration:.1f}s"
+                                ),
+                            }
+                        )
 
             # [F207K-A] Record rejections: source_family, rejection_reason, rejected_count, sample
 
             if rejected_count > 0 and source_family != "unknown":
-
                 if not hasattr(self, "_lane_rejections") or self._lane_rejections is None:
-
                     self._lane_rejections = []
 
                     self._lane_rejections_total_seen = 0
@@ -21604,43 +18395,30 @@ class SprintScheduler:
                 reason_counts: dict[str, int] = {}
 
                 for reason in rejection_reasons:
-
                     reason_counts[reason] = reason_counts.get(reason, 0) + 1
 
                 for reason, count in reason_counts.items():
-
                     self._lane_rejections_total_seen += count
 
-                    self._lane_rejections.append({
-
-                        "source_family": source_family,
-
-                        "rejection_reason": reason,
-
-                        "rejected_count": count,
-
-                        "sample": list(sample_rejections[:3]),
-
-                        "verdict_tag": verdict_tag,
-
-                        "lane_name": str(lane_name) if lane_name else "unknown",
-
-                    })
+                    self._lane_rejections.append(
+                        {
+                            "source_family": source_family,
+                            "rejection_reason": reason,
+                            "rejected_count": count,
+                            "sample": list(sample_rejections[:3]),
+                            "verdict_tag": verdict_tag,
+                            "lane_name": str(lane_name) if lane_name else "unknown",
+                        }
+                    )
 
                     if len(self._lane_rejections) > MAX_LANE_REJECTIONS:
-
                         self._lane_rejections_dropped += len(self._lane_rejections) - MAX_LANE_REJECTIONS
 
                         self._lane_rejections = self._lane_rejections[-MAX_LANE_REJECTIONS:]
 
-
-
     # ── F214: Feed/PUBLIC -> Nonfeed Candidate Ledger Bridge ───────────────────
 
-
-
     def _ingest_feed_public_candidates_to_ledger(self) -> None:
-
         """
 
         F214: Bridge feed and PUBLIC findings into nonfeed candidate ledger.
@@ -21686,7 +18464,6 @@ class SprintScheduler:
         """
 
         try:
-
             from hledac.universal.runtime.nonfeed_candidate_ledger import (
                 FAMILY_FEED,
                 FAMILY_PUBLIC,
@@ -21699,132 +18476,84 @@ class SprintScheduler:
             )
 
         except Exception:
-
             return  # fail-soft: missing dependency
 
-
-
         try:
-
             outcomes = getattr(self, "_lane_outcomes", None) or ()
 
             if not outcomes:
-
                 return
-
-
 
             all_candidates: list = []
 
             source_url_by_family: dict[str, str] = {}
 
-
-
             for outcome in outcomes:
-
                 if not getattr(outcome, "attempted", False):
-
                     continue
-
-
 
                 family = getattr(outcome, "source_family", None) or ""
 
                 source_family = FAMILY_FEED if family == "feed" else FAMILY_PUBLIC
-
-
 
                 # Get candidate findings from the lane outcome
 
                 candidates = getattr(outcome, "candidate_findings", ()) or ()
 
                 if not candidates:
-
                     continue
-
-
 
                 # Track source URL per family for source-host filtering
 
                 source_url = ""
 
                 for c in candidates:
-
                     # Try to get source URL from candidate
 
                     prov = getattr(c, "provenance", None) or ()
 
                     if isinstance(prov, (list, tuple)) and prov:
-
                         source_url = str(prov[0]) if prov else ""
 
                         break
 
-
-
                 if source_url:
-
                     source_url_by_family[source_family] = source_url
-
-
 
                 # Extract domain candidates from each candidate finding
 
                 for c in candidates:
-
                     # Build a pseudo-finding object with payload_text and provenance
 
                     payload_text = getattr(c, "payload_text", "") or ""
 
                     query = getattr(c, "query", "") or ""
 
-
-
                     if payload_text:
-
                         text_candidates = extract_domain_candidates_from_text(
-
                             payload_text,
-
                             source_url=source_url if source_url else None,
-
                             source_family=source_family,
-
                         )
 
                         for tc in text_candidates[:MAX_FEED_CANDIDATES]:
-
                             all_candidates.append(tc)
 
-
-
                     if query:
-
                         query_candidates = extract_domain_candidates_from_text(
-
                             query,
-
                             source_url=source_url if source_url else None,
-
                             source_family=source_family,
-
                         )
 
                         for qc in query_candidates[:MAX_FEED_CANDIDATES]:
-
                             # Avoid duplicates
 
                             if not any(tc.domain == qc.domain for tc in all_candidates):
-
                                 all_candidates.append(qc)
 
-
-
             if not all_candidates:
-
                 return
-
-
 
             # Deduplicate by domain+source_field
 
@@ -21833,49 +18562,38 @@ class SprintScheduler:
             deduped: list = []
 
             for tc in all_candidates:
-
                 key = f"{tc.domain}|{tc.source_field}"
 
                 if key not in seen:
-
                     seen[key] = tc
 
                     deduped.append(tc)
 
                 else:
-
                     # Increment seen_count
 
                     existing = seen[key]
 
                     from dataclasses import replace
 
-                    deduped.append(replace(
-
-                        existing,
-
-                        seen_count=existing.seen_count + 1,
-
-                    ))
-
-
+                    deduped.append(
+                        replace(
+                            existing,
+                            seen_count=existing.seen_count + 1,
+                        )
+                    )
 
             all_candidates = deduped
-
-
 
             # Apply source_host filtering if we have source URLs
 
             source_host_domains = frozenset()
 
             if source_url_by_family:
-
                 # For each family, filter source-host-only candidates
 
                 for _sf, surl in source_url_by_family.items():
-
                     if surl:
-
                         filtered, sh_domains = filter_source_host_only(all_candidates, surl)
 
                         all_candidates = filtered
@@ -21884,90 +18602,63 @@ class SprintScheduler:
 
                         break  # Only do this once with primary source URL
 
-
-
             # Rank and bound candidates
 
             ranked = rank_candidates(
-
                 all_candidates,
-
                 max_total=MAX_DOMAIN_CANDIDATES_FOR_LANES,
-
                 source_host_domains=source_host_domains,
-
             )
-
-
 
             # Record in ledger
 
             mv = get_domain_mv()  # P2-1: DuckDB domain-candidate MV
 
             for tc in ranked:
-
                 try:
-
                     self._nonfeed_ledger.add_feed_candidate(
-
                         domain=tc.domain,
-
                         source_field=tc.source_field,
-
                         confidence=tc.confidence,
-
                         reason=f"{tc.reason} (seen={tc.seen_count})",
-
                         sample_context=tc.sample_context[:200] if tc.sample_context else "",
-
                     )
 
                     # P2-1: upsert into DuckDB MV for cross-sprint persistence
                     try:
-
                         mv.upsert_candidate(
-
                             domain=tc.domain,
-
                             source_family=getattr(tc, "source_field", "") or "feed",
-
                             ioc_type="domain",
-
                             confidence=tc.confidence,
-
                             rank_score=getattr(tc, "rank_score", None),
-
                             nonfeed_eligible_ct=(
                                 eligibility.get("ct", {}).get("eligible", False)
-                                if isinstance(eligibility, dict) else False
+                                if isinstance(eligibility, dict)
+                                else False
                             ),
-
                             nonfeed_eligible_doh=(
                                 eligibility.get("doh", {}).get("eligible", False)
-                                if isinstance(eligibility, dict) else False
+                                if isinstance(eligibility, dict)
+                                else False
                             ),
-
                             nonfeed_eligible_wayback=(
                                 eligibility.get("wayback", {}).get("eligible", False)
-                                if isinstance(eligibility, dict) else False
+                                if isinstance(eligibility, dict)
+                                else False
                             ),
-
                             nonfeed_eligible_pdns=(
                                 eligibility.get("passive_dns", {}).get("eligible", False)
-                                if isinstance(eligibility, dict) else False
+                                if isinstance(eligibility, dict)
+                                else False
                             ),
-
                         )
 
                     except Exception:  # noqa: BLE001
-
                         pass  # noqa: BLE001  # fail-soft: MV errors never crash sprint
 
                 except Exception:  # noqa: BLE001
-
                     pass  # noqa: BLE001  # fail-soft
-
-
 
             # Compute and store lane eligibility
 
@@ -21975,27 +18666,18 @@ class SprintScheduler:
 
             self._result.nonfeed_lane_eligibility = eligibility  # type: ignore[attr-defined]
 
-
-
             # Store lane planning inputs
 
             if ranked:
-
                 doh_domains = [tc.domain for tc in ranked if not tc.domain[0].isdigit()][:5]
 
                 ct_domains = [tc.domain for tc in ranked if not tc.domain[0].isdigit()][:10]
 
                 wayback_candidates = [tc.domain for tc in ranked][:10]
 
-                pdns_candidates = [
-
-                    tc.domain for tc in ranked
-
-                    if not tc.domain[0].isdigit() or tc.domain[0].isdigit()
-
-                ][:10]
-
-
+                pdns_candidates = [tc.domain for tc in ranked if not tc.domain[0].isdigit() or tc.domain[0].isdigit()][
+                    :10
+                ]
 
                 self._result.nonfeed_doh_planner_input = doh_domains  # type: ignore[attr-defined]
 
@@ -22011,28 +18693,16 @@ class SprintScheduler:
                 if domain_tuples:
                     self._result.feed_domain_seeds = domain_tuples[:10]  # type: ignore[attr-defined]
 
-
-
         except Exception:  # noqa: BLE001
-
             pass  # noqa: BLE001  # fail-soft: ledger bridge must never crash sprint
-
-
 
     # ── Sprint R1B: CT Lane Canonical Finding Ingest ─────────────────────────
 
-
-
     async def _ingest_ct_lane_candidates(
-
         self,
-
         outcomes: tuple,
-
         duckdb_store: Any,
-
     ) -> None:
-
         """
 
         Sprint R1B: Ingest CT lane CanonicalFinding candidates via DuckDBShadowStore.
@@ -22076,26 +18746,19 @@ class SprintScheduler:
         """
 
         if not duckdb_store:
-
             return
 
         for outcome in outcomes:
-
             if getattr(outcome, "source_family", None) != "ct":
-
                 continue
 
             if not getattr(outcome, "attempted", False):
-
                 continue
 
             candidates = getattr(outcome, "candidate_findings", ()) or ()
 
             if not candidates:
-
                 continue
-
-
 
             # Record bridge rejections (quarantined) before storage
 
@@ -22104,162 +18767,100 @@ class SprintScheduler:
             getattr(outcome, "sample_rejections", ()) or ()
 
             for rej in rejection_reasons[:5]:
-
                 try:
-
                     reason_str = getattr(rej, "reject_reason", str(rej)) or "bridge_rejection"
 
                     domain_str = getattr(rej, "domain", "") or ""
 
                     self._nonfeed_ledger.add_ct_quarantine(
-
                         domain=domain_str,
-
                         reject_reason=reason_str,
-
                         source_url="",
-
                         query=getattr(outcome, "ct_query", "") or "",
-
                     )
 
                 except Exception:  # noqa: BLE001
-
                     pass  # noqa: BLE001  # fail-soft ledger write
-
-
 
             # Call canonical storage
 
             try:
-
-                storage_results = await self._gate_then_ingest_and_accumulate(duckdb_store, list(candidates), sprint_id=self.sprint_id or "")
-
-
-
+                storage_results = await self._gate_then_ingest_and_accumulate(
+                    duckdb_store, list(candidates), sprint_id=self.sprint_id or ""
+                )
 
                 accepted_count = 0
 
                 for i, result in enumerate(storage_results):
-
                     is_accepted = (
-
-                        getattr(result, "lmdb_success", False) if hasattr(result, "lmdb_success")
-
-                        else result.get("lmdb_success", False) if isinstance(result, dict) else False
-
+                        getattr(result, "lmdb_success", False)
+                        if hasattr(result, "lmdb_success")
+                        else result.get("lmdb_success", False)
+                        if isinstance(result, dict)
+                        else False
                     )
 
                     candidate = candidates[i] if i < len(candidates) else None
 
-                    candidate_id = (
+                    candidate_id = getattr(candidate, "finding_id", "")[:32] if candidate else ""
 
-                        getattr(candidate, "finding_id", "")[:32]
-
-                        if candidate else ""
-
-                    )
-
-                    domain = (
-
-                        getattr(candidate, "query", "") if candidate else ""
-
-                    )
+                    domain = getattr(candidate, "query", "") if candidate else ""
 
                     if is_accepted:
-
                         accepted_count += 1
 
                         try:
-
                             self._nonfeed_ledger.add_public_event(
-
                                 stage="stored",
-
                                 candidate_id=candidate_id,
-
                                 reason="ct_stored",
-
                                 accepted=True,
-
                                 sample_url="",
-
                                 sample_value=domain[:64] if domain else candidate_id[:16],
-
                             )
 
                         except Exception:  # noqa: BLE001
-
                             pass  # noqa: BLE001  # fail-soft
 
                     else:
-
                         try:
-
                             self._nonfeed_ledger.add_public_event(
-
                                 stage="quarantine",
-
                                 candidate_id=candidate_id,
-
                                 reason="ct_quarantine",
-
                                 accepted=False,
-
                                 sample_url="",
-
                                 sample_value=domain[:64] if domain else candidate_id[:16],
-
                             )
 
                         except Exception:  # noqa: BLE001
-
                             pass  # noqa: BLE001  # fail-soft
-
-
 
                 # Update accepted count on result (set by _accumulate_lane_findings; augment)
 
                 if accepted_count > 0:
-
                     self._result.lane_ct_accepted_findings = (
-
                         getattr(self._result, "lane_ct_accepted_findings", 0) + accepted_count
-
                     )
 
-
-
             except asyncio.CancelledError:
-
                 raise  # [I6] propagate CancelledError
 
             except Exception:  # noqa: BLE001
-
                 pass  # noqa: BLE001  # fail-soft: storage error never crashes sprint
-
-
 
     # ── F202I: Evidence Triage Sidecar ─────────────────────────────────────
 
-# ── F202I: Evidence Triage Sidecar ─────────────────────────────────────
+    # ── F202I: Evidence Triage Sidecar ─────────────────────────────────────
 
     # ── F204D: Target Memory Update ───────────────────────────────────────────
 
-
-
     async def _run_target_memory_update(
-
         self,
-
         findings: list[Any],
-
         store: Any,
-
         query: str,
-
     ) -> None:
-
         """
 
         F204D: Update cross-sprint target memory after findings are accepted.
@@ -22291,25 +18892,17 @@ class SprintScheduler:
         """
 
         if not findings or store is None:
-
             return
-
-
 
         # RAM guard -- skip under memory pressure
 
         try:
-
             import psutil
 
         except Exception:
-
             return
 
-
-
         try:
-
             process = psutil.Process()
 
             mem_info = process.memory_info()
@@ -22321,14 +18914,10 @@ class SprintScheduler:
             high_water = vm.percent * 0.85  # 85% threshold
 
             if rss_mb > high_water:
-
                 return  # Skip merge under memory pressure
 
         except Exception:  # noqa: BLE001
-
             pass
-
-
 
         # Build entity/exposure/pivot facets from findings
 
@@ -22338,79 +18927,59 @@ class SprintScheduler:
 
         pivot_facets: dict[str, Any] = {}
 
-
-
         for finding in findings:
-
             target_id = getattr(finding, "target_id", None) or getattr(finding, "entity_id", None)
 
             if not target_id:
-
                 continue
-
-
 
             # Extract entity facets
 
             if hasattr(finding, "entity_type"):
-
                 if target_id not in entity_facets:
-
                     entity_facets[target_id] = {"types": set(), "count": 0}
 
                 entity_facets[target_id]["types"].add(getattr(finding, "entity_type", "unknown"))
 
                 entity_facets[target_id]["count"] += 1
 
-
-
             # Extract exposure facets
 
             if hasattr(finding, "source_type") and getattr(finding, "source_type", None) == "exposure":
-
                 if target_id not in exposure_facets:
-
                     exposure_facets[target_id] = {"signals": [], "count": 0}
 
                 exposure_facets[target_id]["signals"].append(getattr(finding, "signal_type", "unknown"))
 
                 exposure_facets[target_id]["count"] += 1
 
-
-
             # Extract pivot facets
 
             if hasattr(finding, "suggested_pivots"):
-
                 pivots = getattr(finding, "suggested_pivots", [])
 
                 for pivot in pivots[:5]:  # Max 5 pivots per finding
-
                     f"{pivot.get('pivot_type', '')}:{pivot.get('ioc_value', '')}"
 
                     if target_id not in pivot_facets:
-
                         pivot_facets[target_id] = {"pivots": [], "count": 0}
 
                     pivot_facets[target_id]["pivots"].append(pivot)
 
                     pivot_facets[target_id]["count"] += 1
 
-
-
             # F204H: Extract RIR/ASN facets from rir_correlation findings
 
             if hasattr(finding, "source_type") and getattr(finding, "source_type", None) == "rir_correlation":
-
                 # Sprint Opt: orjson.loads (5-8× rychlejší než stdlib json.loads)
                 payload_text = getattr(finding, "payload_text", None) or ""
 
                 try:
-
-                    rir_data = _msgspec_decode(payload_text) if isinstance(payload_text, (str, bytes, bytearray)) else {}
+                    rir_data = (
+                        _msgspec_decode(payload_text) if isinstance(payload_text, (str, bytes, bytearray)) else {}
+                    )
 
                 except Exception:
-
                     rir_data = {}
 
                 asn = rir_data.get("asn", "") or ""
@@ -22426,123 +18995,89 @@ class SprintScheduler:
                 ioc_value_from_payload = rir_data.get("ioc_value", "") or getattr(finding, "ioc_value", "") or ""
 
                 if target_id not in exposure_facets:
-
                     exposure_facets[target_id] = {"signals": [], "rir_asns": {}, "count": 0}
 
                 rir_asns = exposure_facets[target_id].setdefault("rir_asns", {})
 
                 if asn:
-
-                    rir_asns[asn] = {"org": org, "netblock": netblock, "country": country,
-
-                                      "ioc_type": ioc_type, "ioc_value": ioc_value_from_payload}
+                    rir_asns[asn] = {
+                        "org": org,
+                        "netblock": netblock,
+                        "country": country,
+                        "ioc_type": ioc_type,
+                        "ioc_value": ioc_value_from_payload,
+                    }
 
                 exposure_facets[target_id]["count"] += 1
-
-
 
         # Convert sets to lists for JSON
 
         for tid in entity_facets:
-
             entity_facets[tid]["types"] = list(entity_facets[tid]["types"])[:MAX_MEMORY_ENTITIES]
-
-
 
         # Apply bounds
 
         for tid in list(exposure_facets.keys()):
-
             exposure_facets[tid]["signals"] = exposure_facets[tid]["signals"][:MAX_MEMORY_EXPOSURES]
 
             # F204H: bound rir_asns facet to 100 entries
 
             if "rir_asns" in exposure_facets[tid]:
-
                 rir_asns = exposure_facets[tid]["rir_asns"]
 
                 if len(rir_asns) > 100:
-
                     exposure_facets[tid]["rir_asns"] = dict(list(rir_asns.items())[:100])
 
-
-
         for tid in list(pivot_facets.keys()):
-
             pivot_facets[tid]["pivots"] = pivot_facets[tid]["pivots"][:MAX_MEMORY_PIVOTS]
-
-
 
         # Create update for each target
 
         now = _time.time()
 
         for target_id in set(entity_facets.keys()) | set(exposure_facets.keys()) | set(pivot_facets.keys()):
-
             update = TargetMemoryUpdate(
-
                 target_id=target_id,
-
                 sprint_id=self.sprint_id or "",
-
                 finding_count=len(findings),
-
                 entity_facets=entity_facets.get(target_id, {}),
-
                 exposure_facets=exposure_facets.get(target_id, {}),
-
                 pivot_facets=pivot_facets.get(target_id, {}),
-
                 observed_ts=now,
-
             )
-
-
 
             # Lazy init of service
 
             if self._target_memory_service is None:
-
                 self._target_memory_service = TargetMemoryService()
 
-
-
             merged = self._target_memory_service.merge_update(update)
-
-
 
             # Persist via duckdb_store -- F206H FIX: pass merged TargetMemory
 
             # (previously passed update which caused silent failure due to type mismatch)
 
             try:
-
                 await store.async_upsert_target_memory(merged)
 
             except Exception:  # noqa: BLE001
-
                 pass  # noqa: BLE001  # Fail-soft: target memory is non-critical advisory
-
-
 
     # ── F203F: Wayback Diff Sidecar ─────────────────────────────────────────
 
-# ── F203F: Wayback Diff Sidecar ─────────────────────────────────────────
+    # ── F203F: Wayback Diff Sidecar ─────────────────────────────────────────
 
     # ── F204H: RIR/ASN/WHOIS Correlator Sidecar ─────────────────────────────
 
-# ── F204H: RIR/ASN/WHOIS Correlator Sidecar ─────────────────────────────
+    # ── F204H: RIR/ASN/WHOIS Correlator Sidecar ─────────────────────────────
 
     # ── F204I: Social Identity Surface Sidecar ─────────────────────────────────
 
-# ── F204I: Social Identity Surface Sidecar ─────────────────────────────────
+    # ── F204I: Social Identity Surface Sidecar ─────────────────────────────────
 
     # ── F206D: Run All Advisories via SprintAdvisoryRunner ────────────────────
 
-
-
     async def _run_advisory_runner(self) -> None:
-
         """
 
         F206D: Delegate all advisory orchestration to SidecarOrchestrator.
@@ -22567,27 +19102,25 @@ class SprintScheduler:
 
         await self._sidecar_orchestrator.run_advisory_runner()
 
-
+    # ── F202G: Pivot Planner Advisory ───────────────────────────────────────
 
     # ── F202G: Pivot Planner Advisory ───────────────────────────────────────
 
-# ── F202G: Pivot Planner Advisory ───────────────────────────────────────
+    # ── F204C: Pivot Executor Advisory ──────────────────────────────────────────
 
     # ── F204C: Pivot Executor Advisory ──────────────────────────────────────────
 
-# ── F204C: Pivot Executor Advisory ──────────────────────────────────────────
+    # ── F202J: Resource Governor Advisory ─────────────────────────────────
 
     # ── F202J: Resource Governor Advisory ─────────────────────────────────
 
-# ── F202J: Resource Governor Advisory ─────────────────────────────────
+    # ── F204E: Analyst Brief Advisory ─────────────────────────────────────────
 
     # ── F204E: Analyst Brief Advisory ─────────────────────────────────────────
 
-# ── F204E: Analyst Brief Advisory ─────────────────────────────────────────
-
     # ── F265B-III: ANE Semantic Dedup Advisory ─────────────────────────────────
 
-# ── F265B-III: ANE Semantic Dedup Advisory ─────────────────────────────────
+    # ── F265B-III: ANE Semantic Dedup Advisory ─────────────────────────────────
 
     async def _run_ane_semantic_dedup_advisory(self) -> None:
         """
@@ -22619,7 +19152,9 @@ class SprintScheduler:
 
             original_count = len(all_findings)
             deduped = await asyncio.to_thread(
-                semantic_dedup_findings, all_findings, threshold=threshold,
+                semantic_dedup_findings,
+                all_findings,
+                threshold=threshold,
             )
             if deduped is not None and len(deduped) < original_count:
                 self._result.all_findings = deduped
@@ -22638,7 +19173,6 @@ class SprintScheduler:
             logger.debug("[ANE-DEDUP] failed (fail-soft): %s", _e)
 
     async def _run_ct_to_passivedns_pivot_advisory(self) -> None:
-
         """
 
         Sprint R5: CT accepted domains -> PassiveDNS one-hop pivot.
@@ -22692,47 +19226,33 @@ class SprintScheduler:
         # Guard: skip under UMA critical/emergency
 
         try:
-
             governor = getattr(self, "_governor", None)
 
             if governor is not None:
-
                 snap = await governor.evaluate()
 
                 uma_state = getattr(snap, "uma_state", "ok") or "ok"
 
                 if uma_state in ("critical", "emergency"):
-
-                    log.debug(
-
-                        f"[R5] CT->PDNS pivot skipped: uma_state={uma_state}"
-
-                    )
+                    log.debug(f"[R5] CT->PDNS pivot skipped: uma_state={uma_state}")
 
                     return
 
         except Exception:  # noqa: BLE001
-
             pass  # noqa: BLE001  # Fail-soft: governor evaluation is best-effort
-
-
 
         # Step 1: Get CT accepted findings from acquisition lane outcomes
 
         ct_findings: list = []
 
         try:
-
             outcomes = getattr(self._result, "acquisition_lane_outcomes", ()) or ()
 
             for outcome in outcomes:
-
                 if getattr(outcome, "source_family", None) != "ct":
-
                     continue
 
                 if not getattr(outcome, "attempted", False):
-
                     continue
 
                 candidates = getattr(outcome, "candidate_findings", ()) or ()
@@ -22740,22 +19260,15 @@ class SprintScheduler:
                 accepted = getattr(outcome, "accepted_count", 0) or 0
 
                 if accepted > 0 and candidates:
-
                     ct_findings.extend(candidates)
 
         except Exception:  # noqa: BLE001
-
             pass  # noqa: BLE001  # fail-soft
 
-
-
         if not ct_findings:
-
             log.debug("[R5] CT->PDNS pivot: no CT accepted findings")
 
             return
-
-
 
         # Step 2: Select deduplicated domains (max 10 hard cap, default 5)
 
@@ -22764,24 +19277,16 @@ class SprintScheduler:
         )
 
         pivot_domains = select_ct_domains_for_passivedns_pivot(
-
             ct_findings,
-
             max_pivots=5,
-
         )
 
         if not pivot_domains:
-
             log.debug("[R5] CT->PDNS pivot: no domains extracted from CT findings")
 
             return
 
-
-
         log.debug(f"[R5] CT->PDNS pivot: {len(pivot_domains)} domains: {pivot_domains[:3]}...")
-
-
 
         # Step 3: Run PassiveDNS for each domain (bounded, fail-soft)
 
@@ -22791,8 +19296,6 @@ class SprintScheduler:
 
         errors: list = []
 
-
-
         from hledac.universal.security.passive_dns import (
             PassiveDNSOutcome,
         )
@@ -22800,45 +19303,29 @@ class SprintScheduler:
             call_lookup_passive_dns as _pdns_lookup,
         )
 
-
-
         async def _run_pdns_for_domain(domain: str) -> tuple[str, list[str], PassiveDNSOutcome]:
-
             """Run PassiveDNS for one domain, return (domain, ips, outcome)."""
 
             try:
-
                 ips, outcome = await _pdns_lookup(domain)
 
                 return domain, ips, outcome
 
             except Exception:
-
                 return domain, [], None
 
-
-
         try:
-
             # F262D: migrated asyncio.gather -> safe_gather_ok (fail-soft invariant preserved)
             gather_results = await safe_gather_ok(
-
                 *[_run_pdns_for_domain(d) for d in pivot_domains],
-
                 label="sprint_scheduler:19776",
-
             )
-
-
 
             # Check gathered results
 
             for i, result in enumerate(gather_results):
-
                 if isinstance(result, BaseException):
-
                     if isinstance(result, asyncio.CancelledError):
-
                         raise result
 
                     errors.append(f"domain_{i}_error:{result}")
@@ -22848,45 +19335,31 @@ class SprintScheduler:
                 domain, ips, outcome = result
 
                 if outcome is not None:
-
-                    pdns_results.append({
-
-                        "domain": domain,
-
-                        "ips": ips,
-
-                        "outcome": outcome,
-
-                        "pivot_source": "ct",
-
-                    })
+                    pdns_results.append(
+                        {
+                            "domain": domain,
+                            "ips": ips,
+                            "outcome": outcome,
+                            "pivot_source": "ct",
+                        }
+                    )
 
                 else:
-
                     errors.append(f"domain_{domain}_none")
 
-
-
         except asyncio.CancelledError:
-
             raise  # [I6] propagate CancelledError
 
         except Exception as _exc:
-
             log.warning("ct_to_passivedns_pivot gather failed: %s", _exc)  # fail-soft: PDNS errors never crash pivot
-
-
 
         # Step 4: Record FAMILY_PIVOT in NonfeedCandidateLedger
 
         ledger = getattr(self, "_nonfeed_ledger", None)
 
         if ledger is not None:
-
             for res in pdns_results:
-
                 try:
-
                     domain = res.get("domain", "")
 
                     ips = res.get("ips", []) or []
@@ -22894,93 +19367,56 @@ class SprintScheduler:
                     outcome = res.get("outcome", None)
 
                     if outcome and hasattr(outcome, "result_count"):
-
                         count = getattr(outcome, "result_count", 0) or 0
 
                         if count > 0:
-
                             ledger.add_pivot_discovered(
-
                                 pivot_type="ct_to_passivedns",
-
                                 ioc_value=domain,
-
                                 source_hint=f"ct_domain:{domain}",
-
                                 reason=f"pdns_results={count}",
-
                             )
 
                 except Exception:  # noqa: BLE001
-
                     pass  # noqa: BLE001  # fail-soft
-
-
 
         # Step 5: Record source_family_outcomes pivot source
 
         # Append pivot-driven PDNS outcomes to _result for the diagnostic report
 
         if pdns_results:
-
             _sfos = list(getattr(self._result, "source_family_outcomes_list", []) or [])
 
             for res in pdns_results:
-
                 outcome = res.get("outcome", None)
 
                 if outcome is None:
-
                     continue
 
-                _sfos.append({
-
-                    "family": "passive_dns",
-
-                    "lane": "PASSIVE_DNS",
-
-                    "attempted": getattr(outcome, "attempted", True),
-
-                    "accepted": getattr(outcome, "result_count", 0) or 0,
-
-                    "terminal_state": "pivot_ct_domain",
-
-                    "raw_count": 0,
-
-                    "accepted_count": getattr(outcome, "result_count", 0) or 0,
-
-                    "error": getattr(outcome, "error", None),
-
-                    "timeout": getattr(outcome, "timeout", False),
-
-                    "skipped": False,
-
-                    "pivot_source": "ct",
-
-                    "pivot_domains": pivot_domains,
-
-                })
+                _sfos.append(
+                    {
+                        "family": "passive_dns",
+                        "lane": "PASSIVE_DNS",
+                        "attempted": getattr(outcome, "attempted", True),
+                        "accepted": getattr(outcome, "result_count", 0) or 0,
+                        "terminal_state": "pivot_ct_domain",
+                        "raw_count": 0,
+                        "accepted_count": getattr(outcome, "result_count", 0) or 0,
+                        "error": getattr(outcome, "error", None),
+                        "timeout": getattr(outcome, "timeout", False),
+                        "skipped": False,
+                        "pivot_source": "ct",
+                        "pivot_domains": pivot_domains,
+                    }
+                )
 
             self._result.source_family_outcomes_list = _sfos  # type: ignore[attr-defined]
 
-
-
-        log.debug(
-
-            f"[R5] CT->PDNS pivot done: {len(pdns_results)} domains with results, "
-
-            f"errors={len(errors)}"
-
-        )
-
-
+        log.debug(f"[R5] CT->PDNS pivot done: {len(pdns_results)} domains with results, errors={len(errors)}")
 
     # ── F234: BGP Advisory Sidecar ───────────────────────────────────────────
 
-
-
     async def _run_bgp_advisory_sidecar(self) -> None:
-
         """
 
         Sprint F234: BGP IP-to-Org attribution advisory.
@@ -23008,17 +19444,12 @@ class SprintScheduler:
         """
 
         try:
-
             from hledac.universal.intelligence.bgp_lane import BGPAdapter
 
         except Exception:
-
             return  # fail-soft: missing dependency
 
-
-
         try:
-
             # Get session provider for httpx session reuse
 
             session_provider = getattr(self, "_httpx_session_provider", None)
@@ -23031,8 +19462,6 @@ class SprintScheduler:
 
                     return await session_pool.httpx()
 
-
-
             adapter = BGPAdapter(session_provider=session_provider)
 
             # F214R: PassiveDNS adapter (gated by HLEDAC_ENABLE_BGP_PDNS=1)
@@ -23040,13 +19469,13 @@ class SprintScheduler:
             if ENV.get_bool("HLEDAC_ENABLE_BGP_PDNS"):
                 try:
                     from hledac.universal.intelligence.bgp_passive_dns_adapter import PassiveDNSAdapter
+
                     pdns_adapter = PassiveDNSAdapter()
                     pdns_adapter.set_session(await session_provider())
                 except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001  # fail-soft
 
             try:
-
                 # Extract domains from acquisition lane outcomes
 
                 outcomes = getattr(self._result, "acquisition_lane_outcomes", ()) or ()
@@ -23054,30 +19483,21 @@ class SprintScheduler:
                 domains: list[str] = []
 
                 for outcome in outcomes:
-
                     if not getattr(outcome, "attempted", False):
-
                         continue
 
                     candidates = getattr(outcome, "candidate_findings", ()) or ()
 
                     for c in candidates:
-
                         ioc_type = getattr(c, "ioc_type", "") or ""
 
                         ioc_value = getattr(c, "ioc_value", "") or ""
 
                         if ioc_type in ("domain", "ip") and ioc_value:
-
                             domains.append(ioc_value)
 
-
-
                 if not domains:
-
                     return
-
-
 
                 # Deduplicate, cap at 20
 
@@ -23086,30 +19506,20 @@ class SprintScheduler:
                 unique_domains = []
 
                 for d in domains:
-
                     if d not in seen and len(unique_domains) < 20:
-
                         seen.add(d)
 
                         unique_domains.append(d)
 
-
-
                 if not unique_domains:
-
                     return
-
-
 
                 # Enrich via BGP org lookup
 
                 bgp_results = await adapter.enrich_org(unique_domains[0])
 
                 if not bgp_results:
-
                     return
-
-
 
                 # Record findings
 
@@ -23121,31 +19531,19 @@ class SprintScheduler:
                     findings: list[CanonicalFinding] = []
 
                     for r in bgp_results:
-
                         finding = CanonicalFinding(
-
                             finding_id=f"bgp-{r.prefix or r.asn}",
-
                             source_type=SourceType.BGP_INTELLIGENCE,
-
                             confidence=0.75,
-
                             query=self._query[:128],
-
                             ts=_time.time(),
-
                             payload_text=f"ASN={r.asn} org={r.asn_name} prefix={r.prefix} country={r.country_code}",
-
                             provenance=(f"asn:{r.asn}", f"source:{r.source}"),
-
                         )
 
                         findings.append(finding)
 
-
-
                     if findings:
-
                         _ = await self._gate_then_ingest_and_accumulate(store, findings, sprint_id=self.sprint_id or "")
 
                         self._result.bgp_advisory_findings_produced = len(findings)
@@ -23155,7 +19553,11 @@ class SprintScheduler:
                     async def _query_one(domain: str) -> list:
                         try:
                             recs = await pdns_adapter.query_pdns(domain)
-                            return [rec.to_canonical_finding(self._query) for rec in recs if rec.to_canonical_finding(self._query)]
+                            return [
+                                rec.to_canonical_finding(self._query)
+                                for rec in recs
+                                if rec.to_canonical_finding(self._query)
+                            ]
                         except Exception:
                             return []
 
@@ -23166,42 +19568,32 @@ class SprintScheduler:
                         if _pr and isinstance(_pr, list):
                             pdns_findings.extend(_pr)
                     if pdns_findings:
-                        _ = await self._gate_then_ingest_and_accumulate(store, pdns_findings, sprint_id=self.sprint_id or "")
+                        _ = await self._gate_then_ingest_and_accumulate(
+                            store, pdns_findings, sprint_id=self.sprint_id or ""
+                        )
                         self._result.pdns_advisory_findings_produced = len(pdns_findings)
 
                 # Record source_family_outcomes
                 _sfos = list(getattr(self._result, "source_family_outcomes_list", []) or [])
 
-                _sfos.append({
-
-                    "family": "bgp_advisory",
-
-                    "lane": "BGP_ADVISORY",
-
-                    "attempted": True,
-
-                    "accepted": len(bgp_results),
-
-                    "terminal_state": "advisory_bgp",
-
-                    "raw_count": len(bgp_results),
-
-                    "accepted_count": len(bgp_results),
-
-                    "error": None,
-
-                    "timeout": False,
-
-                    "skipped": False,
-
-                })
+                _sfos.append(
+                    {
+                        "family": "bgp_advisory",
+                        "lane": "BGP_ADVISORY",
+                        "attempted": True,
+                        "accepted": len(bgp_results),
+                        "terminal_state": "advisory_bgp",
+                        "raw_count": len(bgp_results),
+                        "accepted_count": len(bgp_results),
+                        "error": None,
+                        "timeout": False,
+                        "skipped": False,
+                    }
+                )
 
                 self._result.source_family_outcomes_list = _sfos  # type: ignore[attr-defined]
 
-
-
             finally:
-
                 await adapter.close()
                 if pdns_adapter is not None:
                     try:
@@ -23209,15 +19601,10 @@ class SprintScheduler:
                     except Exception:  # noqa: BLE001
                         pass
 
-
-
         except Exception:  # noqa: BLE001
-
             pass  # noqa: BLE001  # fail-soft: advisory must never crash sprint
 
-
     # ── F252: TI Feed Advisory Sidecar ─────────────────────────────────────
-
 
     async def _run_ti_feed_sidecar(self) -> None:
         """
@@ -23264,13 +19651,9 @@ class SprintScheduler:
         except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # fail-soft
 
-
     # ── F234: WaybackCDX Deep Advisory Sidecar ───────────────────────────────
 
-
-
     async def _run_wayback_cdx_deep_sidecar(self) -> None:
-
         """
 
         Sprint F234: WaybackCDX deep search advisory.
@@ -23296,17 +19679,12 @@ class SprintScheduler:
         """
 
         try:
-
             from hledac.universal.intelligence.wayback_cdx import WaybackCDXDeepSearch
 
         except Exception:
-
             return  # fail-soft: missing dependency
 
-
-
         try:
-
             # Get session provider for aiohttp session reuse
 
             session_provider = getattr(self, "_httpx_session_provider", None)
@@ -23319,12 +19697,9 @@ class SprintScheduler:
 
                     return await session_pool.httpx()
 
-
-
             searcher = WaybackCDXDeepSearch(session_provider=session_provider)
 
             try:
-
                 # Extract domains from acquisition lane outcomes
 
                 outcomes = getattr(self._result, "acquisition_lane_outcomes", ()) or ()
@@ -23332,30 +19707,21 @@ class SprintScheduler:
                 domains: list[str] = []
 
                 for outcome in outcomes:
-
                     if not getattr(outcome, "attempted", False):
-
                         continue
 
                     candidates = getattr(outcome, "candidate_findings", ()) or ()
 
                     for c in candidates:
-
                         ioc_type = getattr(c, "ioc_type", "") or ""
 
                         ioc_value = getattr(c, "ioc_value", "") or ""
 
                         if ioc_type == "domain" and ioc_value:
-
                             domains.append(ioc_value)
 
-
-
                 if not domains:
-
                     return
-
-
 
                 # Deduplicate, cap at 10
 
@@ -23364,134 +19730,85 @@ class SprintScheduler:
                 unique_domains = []
 
                 for d in domains:
-
                     if d not in seen and len(unique_domains) < 10:
-
                         seen.add(d)
 
                         unique_domains.append(d)
 
-
-
                 if not unique_domains:
-
                     return
-
-
 
                 # Run WaybackCDX deep search
 
                 result = await searcher.search(
-
                     domains_or_urls=unique_domains,
-
                     match_type="domain",
-
                     limit_per_domain=100,
-
                     concurrency=2,
-
                 )
 
-
-
                 if not result.results:
-
                     return
-
-
 
                 # Convert to CanonicalFinding and ingest
 
                 findings = result.to_findings(query=self._query, sprint_id=self.sprint_id or "")
 
                 if not findings:
-
                     return
-
-
 
                 store = getattr(self, "_duckdb_store", None)
 
                 if store is not None:
-
-                    ingested = await self._gate_then_ingest_and_accumulate(store, findings, sprint_id=self.sprint_id or "")
+                    ingested = await self._gate_then_ingest_and_accumulate(
+                        store, findings, sprint_id=self.sprint_id or ""
+                    )
 
                     stored = sum(1 for r in ingested if isinstance(r, dict) and r.get("accepted"))
 
-
                 else:
-
                     stored = 0
-
-
 
                 # Record source_family_outcomes
 
                 _sfos = list(getattr(self._result, "source_family_outcomes_list", []) or [])
 
-                _sfos.append({
-
-                    "family": "wayback_cdx_advisory",
-
-                    "lane": "WAYBACK_CDX_ADVISORY",
-
-                    "attempted": True,
-
-                    "accepted": stored,
-
-                    "terminal_state": "advisory_wayback_cdx",
-
-                    "raw_count": len(result.results),
-
-                    "accepted_count": stored,
-
-                    "error": None,
-
-                    "timeout": False,
-
-                    "skipped": False,
-
-                })
+                _sfos.append(
+                    {
+                        "family": "wayback_cdx_advisory",
+                        "lane": "WAYBACK_CDX_ADVISORY",
+                        "attempted": True,
+                        "accepted": stored,
+                        "terminal_state": "advisory_wayback_cdx",
+                        "raw_count": len(result.results),
+                        "accepted_count": stored,
+                        "error": None,
+                        "timeout": False,
+                        "skipped": False,
+                    }
+                )
 
                 self._result.source_family_outcomes_list = _sfos  # type: ignore[attr-defined]
 
-
-
             finally:
-
                 await searcher.close()
 
-
-
         except Exception:  # noqa: BLE001
-
             pass  # noqa: BLE001  # fail-soft: advisory must never crash sprint
 
-
-
     # ── F206I: Source health summary for export teardown ─────────────────────
-
-
 
     # Bounds: no more than 100 source entries regardless of data availability
 
     MAX_SOURCE_HEALTH_ENTRIES: Final[int] = 100
 
-    _POSTURE_ORDER: Final[dict[str, int]] = {
-
-        "hot": 0, "warm": 1, "lukewarm": 2, "marginal": 3, "cold": 4, "unknown": 5
-
-    }
+    _POSTURE_ORDER: Final[dict[str, int]] = {"hot": 0, "warm": 1, "lukewarm": 2, "marginal": 3, "cold": 4, "unknown": 5}
 
     # F206I: MAX_BREAKER_DOMAINS mirrors MAX_TRACKED_DOMAINS from circuit_breaker
 
     MAX_BREAKER_DOMAINS: Final[int] = MAX_TRACKED_DOMAINS
 
-
-
     def _get_source_health_summary(self) -> dict:
-
         """
 
         F206I: Build a bounded source health summary from per-source economics.
@@ -23529,69 +19846,46 @@ class SprintScheduler:
         """
 
         try:
-
             if not self._source_economics:
-
                 return {}
 
             # Sort: hot > warm > lukewarm > marginal > cold > unknown
 
             sorted_sources = sorted(
-
                 self._source_economics.values(),
-
                 key=lambda e: (
-
                     self._POSTURE_ORDER.get(e.recent_health_posture, 5),
-
                     -e.last_signal_cycle,
-
                 ),
-
             )
 
             entries = []
 
             for econ in sorted_sources[: self.MAX_SOURCE_HEALTH_ENTRIES]:
-
-                entries.append({
-
-                    "source": econ.source,
-
-                    "posture": econ.recent_health_posture,
-
-                    "last_signal_cycle": econ.last_signal_cycle,
-
-                    "silent_streak": econ.silent_streak,
-
-                    "in_cooldown": econ.cooldown_until_cycle is not None,
-
-                })
+                entries.append(
+                    {
+                        "source": econ.source,
+                        "posture": econ.recent_health_posture,
+                        "last_signal_cycle": econ.last_signal_cycle,
+                        "silent_streak": econ.silent_streak,
+                        "in_cooldown": econ.cooldown_until_cycle is not None,
+                    }
+                )
 
             total_tracked = len(self._source_economics)
 
             return {
-
                 "entries": entries,
-
                 "total_tracked": total_tracked,
-
                 "max_entries": self.MAX_SOURCE_HEALTH_ENTRIES,
-
             }
 
         except Exception:
-
             return {}  # fail-soft: source health summary advisory only
-
-
 
     # ── F198A: Graph stats summary for export teardown ───────────────────────
 
-
-
     def _get_graph_signal(self) -> dict:
-
         """
 
         F198A: Read graph signal at teardown without blocking sprint.
@@ -23607,41 +19901,27 @@ class SprintScheduler:
         """
 
         try:
-
             from hledac.universal.knowledge import graph_service
 
             stats = graph_service.graph_stats()
 
             if stats:
-
                 return {
-
                     "graph_nodes": stats.get("nodes", 0),
-
                     "graph_edges": stats.get("edges", 0),
-
                     "graph_pgq_available": stats.get("pgq_available", False),
-
                 }
 
         except Exception:  # noqa: BLE001
-
             pass
 
         return {}
 
-
-
     # ── F238D: Graph stats for pivot planning ─────────────────────────────────
-
-
 
     MAX_PIVOT_GRAPH_STATS_NODES: int = 500  # bound: max domains to collect
 
-
-
     def _get_pivot_graph_stats_for_planning(self) -> dict:
-
         """
 
         F238D: Build structured graph_stats dict for PivotPlanner scoring.
@@ -23679,18 +19959,13 @@ class SprintScheduler:
         """
 
         try:
-
             from hledac.universal.knowledge import graph_service
-
-
 
             stats = graph_service.graph_stats()
 
             nodes = stats.get("nodes", 0) if stats else 0
 
             edges = stats.get("edges", 0) if stats else 0
-
-
 
             domains: list[str] = []
 
@@ -23730,28 +20005,17 @@ class SprintScheduler:
                     pass
 
             return {
-
                 "nodes": nodes,
-
                 "edges": edges,
-
                 "domains": domains,
-
                 "connected_iocs": set(),
-
                 "node_degrees": node_degrees,
-
                 "confidence_by_node": confidence_by_node,
-
                 "source_count_by_node": source_count_by_node,
-
             }
 
         except Exception:
-
             return {}
-
-
 
     # Sprint F206E: Windup scorecard -- read-only extraction from dormant windup_engine.py donor
 
@@ -23759,10 +20023,7 @@ class SprintScheduler:
 
     MAX_WINDUP_SCORECARD_KEYS: int = 32
 
-
-
     def _get_windup_scorecard(self) -> dict:
-
         """
 
         F206E: Extract read-only windup scorecard fields from active pipeline data.
@@ -23804,77 +20065,49 @@ class SprintScheduler:
         """
 
         try:
-
             scorecard: dict = {}
-
-
 
             # 1. Circuit breaker open domains (read-only, fail-soft)
 
             try:
-
                 # Uses module-level import from hledac.universal.transport.circuit_breaker
 
                 cb_states = get_all_breaker_states()
 
                 if cb_states:
-
                     # Bound: only open/half_open circuits are interesting for diagnostics
 
-                    open_domains = {
-
-                        d: s for d, s in cb_states.items()
-
-                        if s in ("open", "half_open")
-
-                    }
+                    open_domains = {d: s for d, s in cb_states.items() if s in ("open", "half_open")}
 
                     if open_domains:
-
                         scorecard["cb_open_domains"] = open_domains
 
                     scorecard["cb_tracked_count"] = len(cb_states)
 
             except Exception as _exc:
-
                 log.warning(
-
                     "sprint %s: scorecard cb_tracked_count failed -- %s: %s",
-
                     getattr(self._result, "sprint_id", "?"),
-
-                    type(_exc).__name__, _exc,
-
+                    type(_exc).__name__,
+                    _exc,
                 )
 
                 # NOTE S1: scorecard metric silently corrupted before this fix.
-
-
 
             # 2. Phase durations from timing fields already tracked in result
 
             phase_durations: dict = {}
 
             if self._result.pre_loop_elapsed_s is not None:
-
                 phase_durations["warmup_s"] = round(self._result.pre_loop_elapsed_s, 2)
 
             if (
-
                 self._result.entered_active_at_monotonic is not None
-
                 and self._result.first_cycle_started_at_monotonic is not None
-
             ):
-
                 active_dur = round(
-
-                    self._result.first_cycle_started_at_monotonic
-
-                    - self._result.entered_active_at_monotonic,
-
+                    self._result.first_cycle_started_at_monotonic - self._result.entered_active_at_monotonic,
                     2,
-
                 )
 
                 phase_durations["active_s"] = max(0.0, active_dur)
@@ -23882,32 +20115,23 @@ class SprintScheduler:
             # Windup duration not available in active pipeline (run_windup() is dormant)
 
             if phase_durations:
-
                 scorecard["phase_durations"] = phase_durations
-
-
 
             # 3. Graph stats (re-use _get_graph_signal for consistency)
 
             graph_signal = self._get_graph_signal()
 
             if graph_signal:
-
                 scorecard["graph_nodes"] = graph_signal.get("graph_nodes", 0)
 
                 scorecard["graph_edges"] = graph_signal.get("graph_edges", 0)
 
                 scorecard["graph_pgq_available"] = graph_signal.get("graph_pgq_available", False)
 
-
-
             # 4. Peak RSS from result (set during sprint)
 
             if self._result.peak_rss_gib > 0:
-
                 scorecard["peak_rss_mb"] = round(self._result.peak_rss_gib * 1024, 1)
-
-
 
             # 5. Accepted findings count (from result)
             # F265B: Use _finding_count which includes FEED + PUBLIC accepted_findings
@@ -23917,50 +20141,37 @@ class SprintScheduler:
             if _total_accepted > 0:
                 scorecard["accepted_findings"] = _total_accepted
 
-
-
             # 6. Sidecar findings counts (from result -- additive sidecar metrics)
 
             sidecar_counts: dict = {}
 
             if self._result.identity_findings_produced > 0:
-
                 sidecar_counts["identity"] = self._result.identity_findings_produced
 
             if self._result.exposure_findings_produced > 0:
-
                 sidecar_counts["exposure"] = self._result.exposure_findings_produced
 
             if self._result.timeline_findings_produced > 0:
-
                 sidecar_counts["timeline"] = self._result.timeline_findings_produced
 
             if self._result.leak_findings_produced > 0:
-
                 sidecar_counts["leak"] = self._result.leak_findings_produced
 
             if self._result.evidence_triage_findings_count > 0:
-
                 sidecar_counts["evidence_triage"] = self._result.evidence_triage_findings_count
 
             if self._result.forensics_enriched_ct_findings > 0:
-
                 sidecar_counts["forensics"] = self._result.forensics_enriched_ct_findings
 
             if self._result.multimodal_enriched_findings > 0:
-
                 sidecar_counts["multimodal"] = self._result.multimodal_enriched_findings
 
             if sidecar_counts:
-
                 scorecard["sidecar_findings"] = sidecar_counts
-
-
 
             # 7. Branch timeout tracking (F195B)
 
             if self._result.branch_timeout_count > 0:
-
                 scorecard["branch_timeouts"] = self._result.branch_timeout_count
 
                 # F2-2: EMA timeout pressure from governor
@@ -23971,10 +20182,7 @@ class SprintScheduler:
             # 8. Budget violations (F204J)
 
             if self._result.budget_violations > 0:
-
                 scorecard["budget_violations"] = self._result.budget_violations
-
-
 
             # 9. Synthesis engine (set by windup_engine during windup, or "hermes3" if MLX loaded)
 
@@ -23983,77 +20191,58 @@ class SprintScheduler:
             _se = getattr(self, "_synthesis_engine", None) or "unknown"
 
             if _se != "unknown":
-
                 scorecard["synthesis_engine_used"] = _se
-
-
 
             # 10. Derived telemetry: findings_per_minute (for _signal_quality_classification)
 
             # F234: Surface ioc_density and findings_per_minute for signal quality derivation
 
             if self._result.accepted_findings > 0 and self._result.sprint_elapsed_s > 0:
-
                 scorecard["findings_per_minute"] = round(
-
                     self._result.accepted_findings / (self._result.sprint_elapsed_s / 60), 2
-
                 )
 
             if self._result.ioc_density > 0:
-
                 scorecard["ioc_density"] = round(self._result.ioc_density, 4)
-
-
 
             # Bound: enforce MAX_WINDUP_SCORECARD_KEYS
 
             if len(scorecard) > self.MAX_WINDUP_SCORECARD_KEYS:
-
                 # Prune to bound -- keep priority fields
 
                 priority_keys = [
-
-                    "cb_open_domains", "phase_durations", "graph_nodes",
-
-                    "graph_edges", "peak_rss_mb", "accepted_findings",
-
-                    "sidecar_findings", "branch_timeouts", "budget_violations",
-
-                    "graph_pgq_available", "cb_tracked_count",
-
+                    "cb_open_domains",
+                    "phase_durations",
+                    "graph_nodes",
+                    "graph_edges",
+                    "peak_rss_mb",
+                    "accepted_findings",
+                    "sidecar_findings",
+                    "branch_timeouts",
+                    "budget_violations",
+                    "graph_pgq_available",
+                    "cb_tracked_count",
                 ]
 
                 pruned: dict = {}
 
                 for k in priority_keys:
-
                     if k in scorecard:
-
                         pruned[k] = scorecard[k]
 
                         if len(pruned) >= self.MAX_WINDUP_SCORECARD_KEYS:
-
                             break
 
                 scorecard = pruned
 
-
-
             return scorecard
 
         except Exception:
-
             return {}
-
-
 
     # ── F206I: Circuit breaker coverage summary ───────────────────────────────
 
-
-
     def _get_circuit_breaker_summary(self) -> dict:
-
         """
 
         F206I: Build a bounded circuit breaker state summary for the diagnostic report.
@@ -24093,11 +20282,9 @@ class SprintScheduler:
         """
 
         try:
-
             snapshots = get_all_breaker_snapshots()
 
             if not snapshots:
-
                 return {"total_tracked": 0, "open_count": 0, "half_open_count": 0}
 
             open_count = sum(1 for s in snapshots if s.state == "open")
@@ -24109,47 +20296,28 @@ class SprintScheduler:
             entries = []
 
             for snap in snapshots[: self.MAX_BREAKER_DOMAINS]:
-
-                entries.append({
-
-                    "domain": snap.domain,
-
-                    "state": snap.state,
-
-                    "failure_count": snap.failure_count,
-
-                    "last_failure_kind": snap.last_failure_kind,
-
-                    "recovery_timeout_s": round(snap.recovery_timeout_s, 1),
-
-                })
+                entries.append(
+                    {
+                        "domain": snap.domain,
+                        "state": snap.state,
+                        "failure_count": snap.failure_count,
+                        "last_failure_kind": snap.last_failure_kind,
+                        "recovery_timeout_s": round(snap.recovery_timeout_s, 1),
+                    }
+                )
 
             return {
-
                 "total_tracked": len(snapshots),
-
                 "open_count": open_count,
-
                 "half_open_count": half_open_count,
-
                 "entries": entries,
-
                 "max_entries": self.MAX_BREAKER_DOMAINS,
-
             }
 
         except Exception:
-
             return {}
 
-
-
-    def _build_work_items(
-
-        self, sources: Sequence[str]
-
-    ) -> list[SourceWork]:
-
+    def _build_work_items(self, sources: Sequence[str]) -> list[SourceWork]:
         """Build and tier-sort work items from source list.
 
         Sprint F228G: tier resolution falls back to _DEFAULT_SOURCE_TIER_MAP
@@ -24162,26 +20330,21 @@ class SprintScheduler:
         items = []
 
         for url in sources:
-
             # F228G: tier resolution -- explicit config -> default map -> OTHER
 
             tier = self._config.tier_of(url)
 
             if tier == SourceTier.OTHER and url in _DEFAULT_SOURCE_TIER_MAP:
-
                 tier = _DEFAULT_SOURCE_TIER_MAP[url]
 
-            items.append(SourceWork(
-
-                feed_url=url,
-
-                source=url,
-
-                tier=tier,
-
-                max_entries=self._config.max_entries_per_cycle,
-
-            ))
+            items.append(
+                SourceWork(
+                    feed_url=url,
+                    source=url,
+                    tier=tier,
+                    max_entries=self._config.max_entries_per_cycle,
+                )
+            )
 
         # Sort: high tier first
 
@@ -24189,23 +20352,12 @@ class SprintScheduler:
 
         return items
 
-
-
-    def _prune_work_items(
-
-        self, items: list[SourceWork]
-
-    ) -> list[SourceWork]:
-
+    def _prune_work_items(self, items: list[SourceWork]) -> list[SourceWork]:
         """Drop ARCHIVE and OTHER tier items when in prune mode."""
 
         return [w for w in items if w.tier not in (SourceTier.ARCHIVE, SourceTier.OTHER)]
 
-
-
     # ── Sprint F195C: Multimodal enrichment ─────────────────────────────────
-
-
 
     # ── Sprint F251C: M1 Event Loop Offload for Enrichment ───────────────────
 
@@ -24276,21 +20428,13 @@ class SprintScheduler:
         except Exception:  # noqa: BLE001
             pass
 
-
     # ── Sprint F216E: Feed Dominance Budget ────────────────────────────────
 
-
-
     def _feed_dominance_should_fetch(
-
         self,
-
         work: _FeedWorkItem,
-
         nonfeed_terminal: bool,
-
     ) -> tuple[bool, str]:
-
         """F216E+F227D: Determine if a feed source should be fetched given current budget state.
 
 
@@ -24316,7 +20460,6 @@ class SprintScheduler:
         acquisition_profile = None
 
         if self._acquisition_plan is not None:
-
             budget = getattr(self._acquisition_plan, "feed_dominance_budget", None)
 
             mission_intent = getattr(self._acquisition_plan, "mission_intent", None)
@@ -24324,10 +20467,7 @@ class SprintScheduler:
             nd = getattr(self._acquisition_plan, "nonfeed_plan_debug", None)
 
             if nd is not None:
-
                 acquisition_profile = getattr(nd, "acquisition_profile", None)
-
-
 
         # F227D: Evaluate mission-aware cap even when base budget is not active
 
@@ -24335,58 +20475,37 @@ class SprintScheduler:
 
         nonfeed_unresolved = not nonfeed_terminal
 
-
-
         if budget is None:
-
             return True, ""
-
-
 
         # F227D: Check mission-aware cap first (active for domain/infra/person/wallet missions)
 
         # F230D: Also check nonfeed_diagnostic profile cap here
 
         if mission_intent is not None and nonfeed_unresolved:
-
             mission_cap_reason = budget.cap_feeding(
-
                 feed_accepted_so_far=self._result.accepted_findings,
-
                 nonfeed_accepted_so_far=(
-
                     self._result.lane_ct_accepted_findings
-
                     + self._result.lane_wayback_accepted_findings
-
                     + self._result.lane_pdns_accepted_findings
-
                     + self._result.lane_blockchain_accepted_findings
-
                 ),
-
                 feed_per_source=get_sprint_ctx().feed_accepted_per_source,
-
                 mission_intent=mission_intent,
-
                 nonfeed_unresolved=nonfeed_unresolved,
-
                 acquisition_profile=acquisition_profile,
-
             )
 
             if mission_cap_reason[0]:
-
                 # F227D: Record cap reason for telemetry
 
                 if mission_cap_reason[1].startswith("feed_cap_active:mission:"):
-
                     self._result.feed_budget_reason = mission_cap_reason[1]
 
                     # F227D: Annotate nonfeed_plan_debug with mission cap telemetry
 
                     if self._acquisition_plan is not None and self._acquisition_plan.nonfeed_plan_debug is not None:
-
                         nd = self._acquisition_plan.nonfeed_plan_debug
 
                         nd.mission_feed_cap_reason = mission_cap_reason[1]
@@ -24397,52 +20516,33 @@ class SprintScheduler:
 
                 return False, mission_cap_reason[1]
 
-
-
         # F230D: nonfeed_diagnostic profile cap -- evaluated when profile is active
 
         if acquisition_profile == AcquisitionProfile.NONFEED_DIAGNOSTIC and nonfeed_unresolved:
-
             profile_cap_reason = budget.cap_feeding(
-
                 feed_accepted_so_far=self._result.accepted_findings,
-
                 nonfeed_accepted_so_far=(
-
                     self._result.lane_ct_accepted_findings
-
                     + self._result.lane_wayback_accepted_findings
-
                     + self._result.lane_pdns_accepted_findings
-
                     + self._result.lane_blockchain_accepted_findings
-
                 ),
-
                 feed_per_source=self._feed_accepted_per_source,
-
-                mission_intent=mission_intent if mission_intent else (
-
+                mission_intent=mission_intent
+                if mission_intent
+                else (
                     infer_mission_intent(self._acquisition_plan.query)
-
                     if self._acquisition_plan and self._acquisition_plan.query
-
                     else "unknown"
-
                 ),
-
                 nonfeed_unresolved=nonfeed_unresolved,
-
                 acquisition_profile=acquisition_profile,
-
             )
 
             if profile_cap_reason[0]:
-
                 self._result.feed_budget_reason = profile_cap_reason[1]
 
                 if self._acquisition_plan is not None and self._acquisition_plan.nonfeed_plan_debug is not None:
-
                     nd = self._acquisition_plan.nonfeed_plan_debug
 
                     nd.feed_cap_reason = profile_cap_reason[1]
@@ -24451,76 +20551,42 @@ class SprintScheduler:
 
                 return False, profile_cap_reason[1]
 
-
-
         # Fall through to base budget check only when base budget is active
 
         if not budget.is_active():
-
             return True, ""
-
-
 
         if nonfeed_terminal:
-
             return True, ""
 
-
-
         if self._feed_budget_triggered:
-
             return False, "feed_budget_triggered:global_suppressed"
 
-
-
         budget_reason = budget.cap_feeding(
-
             feed_accepted_so_far=self._result.accepted_findings,
-
             nonfeed_accepted_so_far=(
-
                 self._result.lane_ct_accepted_findings
-
                 + self._result.lane_wayback_accepted_findings
-
                 + self._result.lane_pdns_accepted_findings
-
                 + self._result.lane_blockchain_accepted_findings
-
             ),
-
             feed_per_source=get_sprint_ctx().feed_accepted_per_source,
-
             nonfeed_unresolved=nonfeed_unresolved,
-
             acquisition_profile=acquisition_profile,
-
         )
 
         if budget_reason[0]:
-
             return False, budget_reason[1]
-
-
 
         return True, ""
 
-
-
     def _feed_dominance_record_result(
-
         self,
-
         feed_url: str,
-
         accepted_count: int,
-
         suppressed: bool,
-
         reason: str,
-
     ) -> None:
-
         """F216E: Record feed result into budget telemetry.
 
 
@@ -24531,30 +20597,21 @@ class SprintScheduler:
 
         if accepted_count > 0:
             ctx = get_sprint_ctx()
-            ctx.feed_accepted_per_source[feed_url] = (
-                ctx.feed_accepted_per_source.get(feed_url, 0) + accepted_count
-            )
-
-
+            ctx.feed_accepted_per_source[feed_url] = ctx.feed_accepted_per_source.get(feed_url, 0) + accepted_count
 
         if suppressed:
-
             self._result.feed_suppressed_by_budget += accepted_count
 
             # F230D: Track nonfeed budget suppression separately
 
             if "nonfeed_profile" in reason:
-
                 self._result.feed_suppressed_by_nonfeed_budget += accepted_count
 
                 self._result.feed_suppression_count += 1
 
                 self._result.feed_suppression_reason = reason
 
-
-
         if not self._feed_budget_triggered and reason:
-
             self._feed_budget_triggered = True
 
             self._result.feed_budget_active = True
@@ -24567,45 +20624,32 @@ class SprintScheduler:
 
             top = sorted(
                 ctx.feed_accepted_per_source.items(),
-
                 key=lambda x: x[1],
-
                 reverse=True,
-
             )[:10]
 
             self._result.top_feed_source_counts = tuple(top)
 
-
-
             budget = None
 
             if self._acquisition_plan is not None:
-
                 budget = getattr(self._acquisition_plan, "feed_dominance_budget", None)
 
             if budget and budget.max_feed_per_source > 0:
-
                 for src, cnt in top:
-
                     if cnt >= budget.max_feed_per_source:
-
                         self._result.max_per_source_applied = src
 
                         break
 
-
-
             # F230D: Also activate nonfeed budget telemetry if reason contains nonfeed_profile
 
             if "nonfeed_profile" in reason:
-
                 self._result.nonfeed_budget_active = True
 
                 nd = getattr(self._acquisition_plan, "nonfeed_plan_debug", None) if self._acquisition_plan else None
 
                 if nd is not None:
-
                     self._result.nonfeed_budget_expected_lanes = getattr(nd, "nonfeed_profile_expected_lanes", ())
 
                     # Compute terminal vs unresolved lanes
@@ -24617,26 +20661,19 @@ class SprintScheduler:
                     _unresolved = []
 
                     for lane in _expected:
-
                         _count = getattr(self._result, f"lane_{lane.lower()}_accepted_findings", 0)
 
                         if _count > 0:
-
                             _terminal.append(lane)
 
                         else:
-
                             _unresolved.append(lane)
 
                     self._result.nonfeed_budget_terminal_lanes = tuple(_terminal)
 
                     self._result.nonfeed_budget_unresolved_lanes = tuple(_unresolved)
 
-
-
     # ── Sprint F195C: Forensics enrichment ─────────────────────────────────
-
-
 
     # ── Sprint F251C: M1 Event Loop Offload for Enrichment ───────────────────
 
@@ -24705,19 +20742,13 @@ class SprintScheduler:
         except Exception:  # noqa: BLE001
             pass
 
-
     def _process_result(self, feed_url: str, result) -> None:
-
         """Accumulate result stats and dedup."""
 
         # Accumulate per-source stats
         ctx = get_sprint_ctx()
-        ctx.entries_per_source[feed_url] = (
-            ctx.entries_per_source.get(feed_url, 0) + result.fetched_entries
-        )
-        ctx.hits_per_source[feed_url] = (
-            ctx.hits_per_source.get(feed_url, 0) + result.matched_patterns
-        )
+        ctx.entries_per_source[feed_url] = ctx.entries_per_source.get(feed_url, 0) + result.fetched_entries
+        ctx.hits_per_source[feed_url] = ctx.hits_per_source.get(feed_url, 0) + result.matched_patterns
         # Also update _result directly so it's available even without _build_diagnostic_report
         self._result.entries_per_source[feed_url] = ctx.entries_per_source[feed_url]
         self._result.hits_per_source[feed_url] = ctx.hits_per_source[feed_url]
@@ -24727,12 +20758,12 @@ class SprintScheduler:
         # Sprint F290: Aggregate FEED signal funnel telemetry from FeedPipelineRunResult
         # Issue #2: telemetry moved to FeedSignalTelemetry sidecar (2026-07-04)
         _tel = result.telemetry
-        self._result.entries_seen += getattr(_tel, 'entries_seen', 0) if _tel else 0
-        self._result.entries_scanned += getattr(_tel, 'entries_scanned', 0) if _tel else 0
-        self._result.entries_with_hits += getattr(_tel, 'entries_with_hits', 0) if _tel else 0
-        self._result.findings_built_pre_store += getattr(_tel, 'findings_built_pre_store', 0) if _tel else 0
-        _sig = getattr(_tel, 'signal_stage', None) if _tel else None
-        if _sig and _sig != 'unknown':
+        self._result.entries_seen += getattr(_tel, "entries_seen", 0) if _tel else 0
+        self._result.entries_scanned += getattr(_tel, "entries_scanned", 0) if _tel else 0
+        self._result.entries_with_hits += getattr(_tel, "entries_with_hits", 0) if _tel else 0
+        self._result.findings_built_pre_store += getattr(_tel, "findings_built_pre_store", 0) if _tel else 0
+        _sig = getattr(_tel, "signal_stage", None) if _tel else None
+        if _sig and _sig != "unknown":
             self._result.signal_stage = _sig
 
         self._result.accepted_findings += result.accepted_findings
@@ -24740,15 +20771,10 @@ class SprintScheduler:
         # Sprint F216A: Emit FEED accepted event when findings are accepted
 
         if result.accepted_findings > 0:
-
             self._emit_source_family_event(
-
                 family="FEED",
-
                 event="accepted",
-
                 count=result.accepted_findings,
-
             )
 
         # Sprint 8VD §F: Track finding count for scorecard
@@ -24760,40 +20786,32 @@ class SprintScheduler:
 
         # Sprint 8VN §C: Accumulate feed economics verdict (additive, fail-soft)
 
-        if _tel is not None and hasattr(_tel, 'feed_economics_verdict'):
-
+        if _tel is not None and hasattr(_tel, "feed_economics_verdict"):
             verdict = _tel.feed_economics_verdict
 
             if verdict and isinstance(verdict, (list, tuple)) and len(verdict) == 5:
-
                 self._feed_verdicts.append(tuple(verdict))
 
         # Sprint F169E: Feed branch blocker aggregation -- fail-soft, additive
 
-        _zsr = getattr(_tel, 'zero_signal_reason', None) if _tel else None
+        _zsr = getattr(_tel, "zero_signal_reason", None) if _tel else None
 
-        _stage = getattr(_tel, 'signal_stage', 'unknown') if _tel else 'unknown'
+        _stage = getattr(_tel, "signal_stage", "unknown") if _tel else "unknown"
 
         if _zsr:
-
             self._result.feed_zero_yield_detected = True
 
             match _zsr:
-
                 case "empty_fetch":
-
                     self._result.feed_inaccessible_detected = True
 
                 case "content_empty":
-
                     self._result.feed_content_empty_detected = True
 
                 case "no_pattern_hits_with_content":
-
                     self._result.feed_no_pattern_with_content = True
 
                 case "findings_build_loss":
-
                     self._result.findings_build_loss_detected = True
 
                     self._result.feed_no_signal_sources.append(feed_url)
@@ -24801,39 +20819,27 @@ class SprintScheduler:
             # Bounded: max 20 sources in blocker list
 
             if len(self._result.feed_no_signal_sources) < 20:
-
                 if feed_url not in self._result.feed_no_signal_sources:
-
                     self._result.feed_no_signal_sources.append(feed_url)
 
         # Sprint 8VN: Accumulate findings for correlation + hypothesis seams
 
         # Bounded to 500 to stay M1 8GB safe
 
-        if hasattr(result, 'matched_patterns') and result.matched_patterns > 0:
-
+        if hasattr(result, "matched_patterns") and result.matched_patterns > 0:
             finding_entry = {
-
                 "type": "pattern_hit",
-
                 "source": feed_url,
-
                 "matched_patterns": result.matched_patterns,
-
                 "accepted_findings": result.accepted_findings,
-
                 "severity": "medium",
-
                 "confidence": 0.6,
-
                 "description": f"{result.matched_patterns} pattern hits from {feed_url}",
-
             }
 
             # Sprint 8VN: bounded accumulation -- cap at 500 to prevent OOM
 
             if len(self._all_findings) < self._MAX_FINDINGS_PER_SPRINT:
-
                 self._all_findings.append(finding_entry)
 
         # Sprint F160C: Update source economics from pipeline result signals
@@ -24847,63 +20853,41 @@ class SprintScheduler:
         # Bounded accumulation: max 200 feed_urls tracked
 
         if len(self._source_quality_feedback) < 200:
-
             fb = self._source_quality_feedback.setdefault(feed_url, {"fetched": 0, "accepted": 0})
 
-            fb["fetched"] = fb.get("fetched", 0) + getattr(result, 'fetched_entries', 0)
+            fb["fetched"] = fb.get("fetched", 0) + getattr(result, "fetched_entries", 0)
 
-            fb["accepted"] = fb.get("accepted", 0) + getattr(result, 'accepted_findings', 0)
+            fb["accepted"] = fb.get("accepted", 0) + getattr(result, "accepted_findings", 0)
 
         # Sprint F200A: Record outcome for prefetch oracle (advisory only, fail-soft)
 
         if self._prefetch_oracle is not None:
-
             try:
-
                 self._prefetch_oracle.record_outcome(
-
                     feed_url=feed_url,
-
-                    fetched=getattr(result, 'fetched_entries', 0),
-
-                    accepted=getattr(result, 'accepted_findings', 0),
-
+                    fetched=getattr(result, "fetched_entries", 0),
+                    accepted=getattr(result, "accepted_findings", 0),
                     cycle=self._result.cycles_started,
-
-                    seen_new_urls=getattr(result, 'matched_patterns', 0),
-
+                    seen_new_urls=getattr(result, "matched_patterns", 0),
                 )
 
             except Exception:  # noqa: BLE001
-
                 pass  # noqa: BLE001  # Advisory only -- never affect scheduler
 
         # Sprint F216E: Record feed result into budget telemetry
 
         self._feed_dominance_record_result(
-
             feed_url=feed_url,
-
             accepted_count=result.accepted_findings,
-
             suppressed=(getattr(result, "error", "") == "feed_budget_cap_suppressed"),
-
             reason=getattr(result, "feed_budget_cap_reason", ""),
-
         )
-
-
 
     # ── Dedup ─────────────────────────────────────────────────────────────
 
-
-
     # ── Persistent dedup (Sprint 8RA) ───────────────────────────────────
 
-
-
     async def _load_dedup(self) -> None:
-
         """Load existing hashes from LMDB at BOOT. Idempotent. Non-blocking via to_thread."""
 
         db_path = _get_dedup_lmdb_path()
@@ -24917,6 +20901,7 @@ class SprintScheduler:
             count = 0
             try:
                 from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
+
                 env = open_lmdb_with_guard(
                     db_path,
                     map_size=100 * 1024 * 1024,  # 100MB max
@@ -24951,26 +20936,20 @@ class SprintScheduler:
         try:
             await self._dedup_loading_task
             self._dedup_loading_task = None
-            self._result.dedup_preload_count = (
-                len(self._dedup_seen) if self._dedup_seen is not None else 0
-            )
+            self._result.dedup_preload_count = len(self._dedup_seen) if self._dedup_seen is not None else 0
         except Exception as _e:
             log.warning(f"Dedup lazy load failed: {_e} -- continuing without dedup")
             self._dedup_loading_task = None
             self._dedup_seen = set()
             self._dedup_env = None
 
-
     async def _flush_dedup(self) -> None:
-
         """Flush in-memory hashes to LMDB. Called at WINDUP."""
 
         if self._dedup_env is None or not self._dedup_seen:
-
             return
 
         try:
-
             ts_bytes = struct.pack("d", _time.time())
 
             # Bulk write: single commit for N hashes (10× speedup vs
@@ -24985,9 +20964,7 @@ class SprintScheduler:
             log.info(f"Dedup flushed: {written}/{len(self._dedup_seen)} hashes")
 
         except Exception as exc:
-
             log.warning(f"Dedup flush failed: {exc}")
-
 
     # ── Issue 4.1: IOC Co-occurrence Sidecar ───────────────────────────────────
 
@@ -25051,7 +21028,6 @@ class SprintScheduler:
         except Exception as e:
             logger.debug("[IOC] Co-occurrence analysis failed: %s", e)
 
-
     async def _run_synthesis_sidecar(
         self,
         query: str,
@@ -25066,10 +21042,10 @@ class SprintScheduler:
         # M1 8GB UMA guard
         try:
             from hledac.universal.utils.uma_budget import get_uma_snapshot
+
             uma = get_uma_snapshot()
             if uma.rss_gib >= 5.5 or uma.is_critical or uma.is_emergency:
-                log.debug("[F259] Synthesis skipped -- UMA RSS=%.1fGB, state=%s",
-                          uma.rss_gib, uma.state)
+                log.debug("[F259] Synthesis skipped -- UMA RSS=%.1fGB, state=%s", uma.rss_gib, uma.state)
                 self._result.synthesis_success = False
                 self._result.synthesis_engine = "uma_guard"
                 return
@@ -25152,26 +21128,33 @@ class SprintScheduler:
             # Capture results
             self._result.synthesis_findings_count = len(findings)
             self._result.synthesis_success = report is not None
-            self._result.synthesis_engine = getattr(runner, "_last_synthesis_engine", "synthesis_runner") or "synthesis_runner"  # noqa: E501
+            self._result.synthesis_engine = (
+                getattr(runner, "_last_synthesis_engine", "synthesis_runner") or "synthesis_runner"
+            )  # noqa: E501
 
             if report is not None:
                 try:
-                    self._result.synthesis_text = _msgspec_encode({
-                        "query": query,
-                        "ioc_entities": [
-                            {"type": e.ioc_type, "value": e.value}
-                            for e in (getattr(report, "ioc_entities", None) or [])
-                        ],
-                        "threat_summary": getattr(report, "threat_summary", ""),
-                        "threat_actors": list(getattr(report, "threat_actors", None) or []),
-                        "confidence": getattr(report, "confidence", 0.0),
-                        "sources_count": getattr(report, "sources_count", 0),
-                        "timestamp": getattr(report, "timestamp", 0.0),
-                    }).decode("utf-8")
+                    self._result.synthesis_text = _msgspec_encode(
+                        {
+                            "query": query,
+                            "ioc_entities": [
+                                {"type": e.ioc_type, "value": e.value}
+                                for e in (getattr(report, "ioc_entities", None) or [])
+                            ],
+                            "threat_summary": getattr(report, "threat_summary", ""),
+                            "threat_actors": list(getattr(report, "threat_actors", None) or []),
+                            "confidence": getattr(report, "confidence", 0.0),
+                            "sources_count": getattr(report, "sources_count", 0),
+                            "timestamp": getattr(report, "timestamp", 0.0),
+                        }
+                    ).decode("utf-8")
                 except Exception:
                     self._result.synthesis_text = str(report)[:4096]
-                log.info("[F259] Synthesis complete: success=%s, findings=%d",
-                         self._result.synthesis_success, self._result.synthesis_findings_count)
+                log.info(
+                    "[F259] Synthesis complete: success=%s, findings=%d",
+                    self._result.synthesis_success,
+                    self._result.synthesis_findings_count,
+                )
 
                 # F285: Collect MLXBatchedExecutor telemetry from the Hermes3Engine
                 # instance that SynthesisRunner created. This is the ground-truth
@@ -25233,10 +21216,10 @@ class SprintScheduler:
         # M1 8GB UMA RAM guard — skip if memory is tight
         try:
             from hledac.universal.utils.uma_budget import get_uma_snapshot
+
             uma = get_uma_snapshot()
             if uma.rss_gib >= 5.5 or uma.is_critical or uma.is_emergency:
-                log.debug("[F204I] UMA guard: RSS=%.1fGB, state=%s -- skipping",
-                          uma.rss_gib, uma.state)
+                log.debug("[F204I] UMA guard: RSS=%.1fGB, state=%s -- skipping", uma.rss_gib, uma.state)
                 return
         except Exception:  # noqa: BLE001
             pass
@@ -25261,8 +21244,12 @@ class SprintScheduler:
                 store=duckdb_store,
                 query=query,
             )
-            log.info("[F204I] Social Identity scan complete: scanned=%d, facets=%d, elapsed_ms=%.1f",
-                     result.scanned_count, len(result.facets), result.elapsed_ms)
+            log.info(
+                "[F204I] Social Identity scan complete: scanned=%d, facets=%d, elapsed_ms=%.1f",
+                result.scanned_count,
+                len(result.facets),
+                result.elapsed_ms,
+            )
         except Exception as e:
             log.debug("[F204I] mine() failed: %s", e)
 
@@ -25274,21 +21261,21 @@ class SprintScheduler:
         duckdb_store: Any,
     ) -> None:
         """
-        Sprint F260: Run EpistemicGapProgram and ContradictionResolverProgram.
+               Sprint F260: Run EpistemicGapProgram and ContradictionResolverProgram.
 
-        Wire point: called after _run_synthesis_sidecar in WINDUP phase.
+               Wire point: called after _run_synthesis_sidecar in WINDUP phase.
 
-        Gates:
- - HLEDAC_ENABLE_LLM=1 (same as synthesis)
-          - RAM < 5.0GB (tighter than synthesis's 5.5GB)
+               Gates:
+        - HLEDAC_ENABLE_LLM=1 (same as synthesis)
+                 - RAM < 5.0GB (tighter than synthesis's 5.5GB)
 
-        Part A: EpistemicGapProgram
-          - Inputs: findings from sprint + known gaps from ResearchSessionMemory
-          - Output: gaps written to ResearchSessionMemory via record_sprint_outcome()
+               Part A: EpistemicGapProgram
+                 - Inputs: findings from sprint + known gaps from ResearchSessionMemory
+                 - Output: gaps written to ResearchSessionMemory via record_sprint_outcome()
 
-        Part B: ContradictionResolverProgram
-          - Triggered when DS conflict_mass > 0.3
-          - Max 5 contradictions per call (M1 constraint)
+               Part B: ContradictionResolverProgram
+                 - Triggered when DS conflict_mass > 0.3
+                 - Max 5 contradictions per call (M1 constraint)
         """
         # Gate: LLM must be enabled
         if not ENV.get_bool("HLEDAC_ENABLE_LLM"):
@@ -25298,10 +21285,10 @@ class SprintScheduler:
         # M1 8GB RAM guard (tighter than synthesis's 5.5GB)
         try:
             from hledac.universal.utils.uma_budget import get_uma_snapshot
+
             uma = get_uma_snapshot()
             if uma.rss_gib >= 5.0 or uma.is_critical or uma.is_emergency:
-                log.debug("[F260] Epistemic gap skipped -- UMA RSS=%.1fGB, state=%s",
-                          uma.rss_gib, uma.state)
+                log.debug("[F260] Epistemic gap skipped -- UMA RSS=%.1fGB, state=%s", uma.rss_gib, uma.state)
                 return
         except Exception as e:
             log.debug("[F260] UMA check failed: %s", e)
@@ -25348,11 +21335,9 @@ class SprintScheduler:
                 # record_sprint_outcome stores gaps_json -- we read it back
                 try:
                     conn = memory._get_conn()
-                    result = conn.execute(
-                        "SELECT gaps_json FROM research_sessions ORDER BY ts DESC LIMIT 1"
-                    ).fetchone()
+                    result = conn.execute("SELECT gaps_json FROM research_sessions ORDER BY ts DESC LIMIT 1").fetchone()
                     if result and result[0]:
-                        gaps_data = (_msgspec_decode(result[0]) if result[0] else [])
+                        gaps_data = _msgspec_decode(result[0]) if result[0] else []
                         known_gaps = [g.get("description", "") for g in gaps_data if g]
                 except Exception:  # noqa: BLE001
                     pass
@@ -25416,15 +21401,16 @@ class SprintScheduler:
                         )
                     conflict = ds.conflict_mass()
                     if conflict > 0.3:
-                        contradictory_findings.append({
-                            "finding": f.get("payload_text", "") or str(f)[:150],
-                            "conflict_mass": conflict,
-                            "source": f.get("source_type", "unknown"),
-                        })
+                        contradictory_findings.append(
+                            {
+                                "finding": f.get("payload_text", "") or str(f)[:150],
+                                "conflict_mass": conflict,
+                                "source": f.get("source_type", "unknown"),
+                            }
+                        )
 
             if contradictory_findings:
-                log.info("[F260] Found %d contradictory findings (DS conflict > 0.3)",
-                         len(contradictory_findings))
+                log.info("[F260] Found %d contradictory findings (DS conflict > 0.3)", len(contradictory_findings))
 
                 # Run ContradictionResolverProgram
                 resolver = ContradictionResolverProgram()
@@ -25440,37 +21426,29 @@ class SprintScheduler:
         except Exception as e:
             log.debug("[F260] ContradictionResolverProgram failed: %s", e)
 
-
     # F11: Background task tracking set -- prevents GC of fire-and-forget tasks
 
     _background_research_tasks: set[asyncio.Task[None]] = set()
 
-
-
     def _maybe_launch_enhanced_research(self) -> None:
-
         """Fire-and-forget deep research advisory. Called at TEARDOWN."""
 
         if not self._config.deep_research_enabled:
-
             return
 
         # Memory guard: block if UMA is in WARN or worse
 
         try:
-
             from hledac.universal.utils.uma_budget import get_uma_snapshot
 
             snapshot = get_uma_snapshot()
 
             if snapshot.is_warn or snapshot.is_critical or snapshot.is_emergency:
-
                 log.debug("[F11] Deep research blocked -- memory pressure: %s", snapshot.state)
 
                 return
 
         except Exception:  # noqa: BLE001
-
             pass  # noqa: BLE001  # fail-safe: guard is advisory
 
         task = safe_create_task(self._run_enhanced_research_async())
@@ -25481,12 +21459,9 @@ class SprintScheduler:
 
         log.info("[F11] Deep research advisory launched (fire-and-forget)")
 
-
-
         # F214K: Dark surface pivot advisory (onion/IPFS/DHT/I2P)
 
         try:
-
             dark_task = safe_create_task(self._run_dark_surface_pivot_advisory())
 
             self._background_research_tasks.add(dark_task)
@@ -25496,34 +21471,22 @@ class SprintScheduler:
             log.debug("[F214K] Dark surface pivot advisory launched")
 
         except Exception:  # noqa: BLE001
-
             pass  # noqa: BLE001  # fail-safe: advisory never blocks sprint
 
-
-
     async def _run_enhanced_research_async(self) -> None:
-
         """Async wrapper -- runs deep research advisory with 180s timeout."""
 
         try:
-
             async with asyncio.timeout(180.0):
                 await self._run_enhanced_research()
 
         except TimeoutError:
-
             log.warning("[F11] Deep research timed out after 180s")
 
         except Exception as e:
-
             log.warning(f"[F11] Deep research advisory failed: {e}")
 
-
-
-
-
     async def _run_enhanced_research(self) -> list:
-
         """
 
         F11: Run enhanced/deep research advisory post-sprint.
@@ -25535,7 +21498,6 @@ class SprintScheduler:
         """
 
         try:
-
             from hledac.universal.enhanced_research import (
                 ResearchDepth,
                 UnifiedResearchConfig,
@@ -25546,23 +21508,18 @@ class SprintScheduler:
             )
 
         except ImportError:
-
             log.debug("[F11] enhanced_research not available")
 
             return []
 
-
-
         # Gate: preset must be DEEP/EXTREME/AUTONOMOUS (check via extreme_mode flag)
 
         if not self._config.deep_research_enabled:
-
             return []
 
         # Sprint F11: require minimum accepted findings for deep research context
 
-        if getattr(self._result, 'accepted_findings', 0) < 3:
-
+        if getattr(self._result, "accepted_findings", 0) < 3:
             return []
 
         # RAM guard: block if UMA > 75% (strict 75% cap per GHOST_INVARIANTS)
@@ -25570,21 +21527,18 @@ class SprintScheduler:
         # GHOST_INVARIANTS: use is_warn as the strict cap boundary
 
         try:
-
             from hledac.universal.utils.uma_budget import get_uma_snapshot
 
             snap = get_uma_snapshot()
 
-            if snap.get('is_warn') or snap.get('is_critical') or snap.get('is_emergency'):
-
-                level = snap.get('uma_pressure_level', 'unknown')
+            if snap.get("is_warn") or snap.get("is_critical") or snap.get("is_emergency"):
+                level = snap.get("uma_pressure_level", "unknown")
 
                 log.debug("[F11] Deep research blocked -- RAM pressure: %s", level)
 
                 return []
 
         except Exception:  # noqa: BLE001
-
             pass  # noqa: BLE001  # fail-safe: guard is advisory
 
         # Build IOC seed list (top 10 from sprint result)
@@ -25592,87 +21546,58 @@ class SprintScheduler:
         seed_iocs: list[str] = []
 
         for src_field in (
-
             "pivot_seed_domains",
-
             "pivot_seed_ips",
-
             "pivot_seed_urls",
-
             "pivot_seed_hashes",
-
             "pivot_seed_cves",
-
             "next_seeds_ioc_domains",
-
             "next_seeds_ioc_ips",
-
             "next_seeds_ioc_urls",
-
             "next_seeds_ioc_hashes",
-
             "next_seeds_ioc_cves",
-
         ):
-
             for v in getattr(self._result, src_field, ()) or ():
-
                 if isinstance(v, str) and v and v not in seed_iocs:
-
                     seed_iocs.append(v)
 
                 if len(seed_iocs) >= 10:
-
                     break
 
             if len(seed_iocs) >= 10:
-
                 break
 
         # Compose composite query from IOC seeds
 
         if seed_iocs:
-
             query = " ".join(seed_iocs[:10])
 
         else:
-
-            query = getattr(self._config, 'sprint_query', '') or "OSINT"
+            query = getattr(self._config, "sprint_query", "") or "OSINT"
 
         depth = ResearchDepth.EXHAUSTIVE if self._config.extreme_mode else ResearchDepth.ADVANCED
 
         # Conservative budget: remaining time until 30 min wall, capped
 
         try:
-
-            start_mono = getattr(self, '_sprint_start_monotonic', None) or _time.monotonic()
+            start_mono = getattr(self, "_sprint_start_monotonic", None) or _time.monotonic()
 
             elapsed = _time.monotonic() - start_mono
 
         except Exception:
-
             elapsed = 0.0
 
         remaining_s = max(60.0, min(180.0, 1800.0 - elapsed))  # 60-180s cap
 
         engine_config = UnifiedResearchConfig(
-
             depth=depth,
-
             max_concurrent_tools=2,
-
             enable_temporal_analysis=True,
-
             enable_data_leak_check=False,  # avoid extra I/O; LLM already saturated
-
             enable_archive_search=True,
-
             enable_stealth_crawling=False,  # post-sprint; no fresh creds
-
             cache_results=True,
-
             cache_ttl_seconds=3600,
-
         )
 
         # Execute via canonical UnifiedResearchEngine.deep_research()
@@ -25682,29 +21607,23 @@ class SprintScheduler:
         _deep_sec = DeepResearchSecurity(_build_deep_security_config(_mode))
 
         try:
-
             async with _deep_sec.protected_session() as _sec_ctx:
                 engine = UnifiedResearchEngine(config=engine_config)
 
                 async with asyncio.timeout(remaining_s):
-                    response = await engine.deep_research(
-                        query=query, depth=depth, max_results=50
-                    )
+                    response = await engine.deep_research(query=query, depth=depth, max_results=50)
 
         except TimeoutError:
-
             log.warning(f"[F11] UnifiedResearchEngine timed out after {remaining_s:.0f}s")
 
             return []
 
         except Exception as e:
-
             log.warning(f"[F11] UnifiedResearchEngine failed: {e}")
 
             return []
 
         if not response or not response.findings:
-
             return []
 
         # Convert ResearchFinding -> CanonicalFinding
@@ -25712,57 +21631,43 @@ class SprintScheduler:
         canonicals = []
 
         for f in response.findings[:100]:  # MAX_DEEP_RESEARCH_FINDINGS=100
-
             try:
-
                 import time as _time_module
 
                 from hledac.universal.capabilities import CanonicalFinding
 
-                ts = getattr(f, 'timestamp', None)
+                ts = getattr(f, "timestamp", None)
 
                 ts_float = ts.timestamp() if ts else _time_module.time()
 
-                confidence = getattr(f, 'relevance_score', 0.5) * getattr(f, 'credibility_score', 0.5)
+                confidence = getattr(f, "relevance_score", 0.5) * getattr(f, "credibility_score", 0.5)
 
-                src = getattr(f, 'src', 'enhanced_research')
+                src = getattr(f, "src", "enhanced_research")
 
                 canonical = CanonicalFinding(
-
                     finding_id=f"er_{getattr(f, 'id', 'unknown')}",
-
                     query=f"deep_research:{getattr(self._result, 'sprint_id', 'unknown')}",
-
-                    source_type=getattr(f, 'source_type', src) or src,
-
+                    source_type=getattr(f, "source_type", src) or src,
                     confidence=confidence,
-
                     ts=ts_float,
-
-                    provenance=getattr(f, 'url', '') or '',
-
+                    provenance=getattr(f, "url", "") or "",
                     payload_text=f"{getattr(f, 'title', '')}\n{getattr(f, 'content', '')[:2000]}",
-
                 )
 
                 canonicals.append(canonical)
 
             except Exception:  # noqa: BLE001
-
                 pass  # noqa: BLE001  # fail-safe: skip unconvertible findings
 
         if not canonicals:
-
             return []
 
         # Ingest to DuckDB
 
         try:
+            store = getattr(self, "_duckdb_store", None)
 
-            store = getattr(self, '_duckdb_store', None)
-
-            if store and hasattr(store, 'async_ingest_findings_batch'):
-
+            if store and hasattr(store, "async_ingest_findings_batch"):
                 _ = await self._gate_then_ingest_and_accumulate(store, canonicals, sprint_id=self.sprint_id or "")
 
                 log.info(f"[F11] Deep research ingested {len(canonicals)} findings")
@@ -25772,12 +21677,9 @@ class SprintScheduler:
 
         return canonicals
 
-
-
     # ── F214K: Dark surface pivot advisory ────────────────────────────────────
 
     async def _run_dark_surface_pivot_advisory(self) -> None:
-
         """
 
         F214K: Generate and enqueue dark surface pivot queries (onion/IPFS/DHT/I2P)
@@ -25793,31 +21695,20 @@ class SprintScheduler:
         """
 
         try:
-
-
             if not ENV.get_bool("HLEDAC_ENABLE_DARK_PIVOTS"):
-
                 return
 
         except Exception:
-
             return
 
-
-
         try:
-
             accepted = getattr(self._result, "accepted_findings", 0) or 0
 
             if accepted < 5:
-
                 return
 
         except Exception:
-
             return
-
-
 
         # Check dark transport availability
 
@@ -25826,76 +21717,56 @@ class SprintScheduler:
         i2p_available = False
 
         try:
-
             from hledac.universal.transport.tor_transport import TorTransport
 
             tor_available = TorTransport is not None
 
         except Exception:  # noqa: BLE001
-
             pass
 
         try:
-
             from hledac.universal.transport.i2p_transport import I2PTransport
 
             i2p_available = I2PTransport is not None
 
         except Exception:  # noqa: BLE001
-
             pass
 
-
-
         if not (tor_available or i2p_available):
-
             log.debug("[F214K] No dark transport available, skipping")
 
             return
-
-
 
         # Collect findings for query generation
 
         findings_for_dark: list = []
 
         try:
-
             store = getattr(self, "_duckdb_store", None)
 
             if store and hasattr(store, "_findings_cache"):
-
                 findings_for_dark = list(getattr(store, "_findings_cache", [])[:50])
 
         except Exception:  # noqa: BLE001
-
             pass
 
-
-
         if not findings_for_dark:
-
             log.debug("[F214K] No findings available for dark surface queries")
 
             return
-
-
 
         # Generate dark surface queries via hypothesis engine
 
         dark_queries: list = []
 
         try:
-
             from hledac.universal.brain.research_hypothesis_engine import HypothesisEngine
 
             hyp_eng = HypothesisEngine()
 
             # F265C: Attach ResearchContext to result for epistemic bonus
             dark_queries = await hyp_eng.generate_dark_surface_queries(
-
                 findings=findings_for_dark,
-
                 hermes_engine=self._hermes_engine if self._hermes_engine is not None else None,
                 tor_available=tor_available,
                 i2p_available=i2p_available,
@@ -25952,19 +21823,15 @@ class SprintScheduler:
                 pass  # noqa: BLE001  # fail-soft: epistemic bonus returns 0.0
 
         if not dark_queries:
-
             log.debug("[F214K] No dark surface queries generated")
 
             return
-
-
 
         # Enqueue via pivot lane planner
 
         planned = 0
 
         try:
-
             from hledac.universal.pipeline.pivot_lane_planner import _plan_dark_surface_pivot
 
             items: list = []
@@ -25972,17 +21839,11 @@ class SprintScheduler:
             seen_pairs: set = set()
 
             _plan_dark_surface_pivot(
-
                 dark_queries,
-
                 items,
-
                 seen_pairs,
-
                 tor_available=tor_available,
-
                 i2p_available=i2p_available,
-
             )
 
             planned = len(items)
@@ -25990,19 +21851,13 @@ class SprintScheduler:
             log.info(f"[F214K] Planned {planned} dark surface pivot queries")
 
         except Exception as e:
-
             log.warning(f"[F214K] Dark pivot planning failed: {e}")
-
-
 
         self._result.dark_surface_pivots_attempted = len(dark_queries)
 
         self._result.dark_surface_pivots_accepted = planned
 
-
-
     async def _close_dedup(self) -> None:
-
         """Close LMDB at TEARDOWN. Calls flush first."""
 
         # Sprint F278B-2: Cancel lazy dedup load if still running (sprint cut short).
@@ -26017,13 +21872,10 @@ class SprintScheduler:
         await self._flush_dedup()
 
         if self._dedup_env is not None:
-
             try:
-
                 self._dedup_env.close()
 
             except Exception as exc:
-
                 log.warning(f"Dedup LMDB close failed: {exc}")
 
             self._dedup_env = None
@@ -26031,29 +21883,20 @@ class SprintScheduler:
         # Sprint 8RA: Close DuckDB read connection
 
         if self._duckdb_read_con is not None:
-
             try:
-
                 self._duckdb_read_con.close()
 
             except Exception:  # noqa: BLE001
-
                 pass
 
             self._duckdb_read_con = None
 
-
-
     # ── Sprint F195C: Forensics enrichment ─────────────────────────────────
 
-
-
     async def _init_forensics(self) -> None:
-
         """Initialize forensics enricher and LMDB. Fail-safe -- does not raise."""
 
         try:
-
             from forensics.enrichment_service import ForensicsEnricher
 
             self._forensics_enricher = ForensicsEnricher()
@@ -26061,20 +21904,17 @@ class SprintScheduler:
             await self._forensics_enricher.initialize()
 
         except Exception as exc:
-
             log.debug("Forensics enricher init failed: %s", exc)
 
             self._forensics_enricher = None
 
-
-
         try:
-
             db_path = _get_forensics_lmdb_path()
 
             db_path.parent.mkdir(parents=True, exist_ok=True)
 
             from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
+
             self._forensics_lmdb_env = open_lmdb_with_guard(
                 db_path,
                 map_size=50 * 1024 * 1024,  # 50MB max for enrichment data
@@ -26082,90 +21922,64 @@ class SprintScheduler:
             )
 
         except Exception as exc:
-
             log.debug("Forensics LMDB open failed: %s", exc)
 
             self._forensics_lmdb_env = None
 
-
-
     async def _flush_forensics(self) -> None:
-
         """Flush forensics LMDB. Called at WINDUP. No-op if not initialized."""
 
         pass  # LMDB write-only env auto-flushes; nothing to do
 
-
-
     async def _close_forensics(self) -> None:
-
         """Close forensics enricher and LMDB at TEARDOWN."""
 
         if self._forensics_enricher is not None:
-
             try:
-
                 await self._forensics_enricher.close()
 
             except Exception as exc:
-
                 log.debug("Forensics enricher close failed: %s", exc)
 
             self._forensics_enricher = None
 
         if self._forensics_lmdb_env is not None:
-
             try:
-
                 self._forensics_lmdb_env.close()
 
             except Exception as exc:
-
                 log.debug("Forensics LMDB close failed: %s", exc)
 
             self._forensics_lmdb_env = None
 
-
-
     # ── Sprint F195C: Multimodal enrichment ─────────────────────────────────
 
-
-
     async def _init_multimodal(self) -> None:
-
         """Initialize multimodal enricher and LMDB. Fail-safe -- does not raise."""
 
         try:
-
             from multimodal.analyzer import MultimodalEnricher
 
             self._multimodal_enricher = MultimodalEnricher(
-
                 governor=self._governor,
-
                 embedding_dim=1280,
-
                 batch_size=4,
-
             )
 
             await self._multimodal_enricher.initialize()
 
         except Exception as exc:
-
             log.debug("Multimodal enricher init failed: %s", exc)
 
             self._multimodal_enricher = None
 
-
-
         try:
-
             db_path = _get_multimodal_lmdb_path()
 
             db_path.parent.mkdir(parents=True, exist_ok=True)
 
             from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
+
             self._multimodal_lmdb_env = open_lmdb_with_guard(
                 db_path,
                 map_size=50 * 1024 * 1024,  # 50MB max
@@ -26173,57 +21987,39 @@ class SprintScheduler:
             )
 
         except Exception as exc:
-
             log.debug("Multimodal LMDB open failed: %s", exc)
 
             self._multimodal_lmdb_env = None
 
-
-
     async def _flush_multimodal(self) -> None:
-
         """Flush multimodal LMDB. Called at WINDUP. No-op if not initialized."""
 
         pass  # LMDB write-only env auto-flushes; nothing to do
 
-
-
     async def _close_multimodal(self) -> None:
-
         """Close multimodal enricher and LMDB at TEARDOWN."""
 
         if self._multimodal_enricher is not None:
-
             try:
-
                 await self._multimodal_enricher.close()
 
             except Exception as exc:
-
                 log.debug("Multimodal enricher close failed: %s", exc)
 
             self._multimodal_enricher = None
 
         if self._multimodal_lmdb_env is not None:
-
             try:
-
                 self._multimodal_lmdb_env.close()
 
             except Exception as exc:
-
                 log.debug("Multimodal LMDB close failed: %s", exc)
 
             self._multimodal_lmdb_env = None
 
-
-
     # ── Sprint F205H: Metrics Registry ────────────────────────────────────
 
-
-
     async def _init_metrics_registry(self) -> None:
-
         """
 
         Initialize MetricsRegistry fail-soft using config export_dir or default path.
@@ -26239,47 +22035,31 @@ class SprintScheduler:
         """
 
         try:
-
             from hledac.universal.metrics_registry import MetricsRegistry
-
-
 
             # Derive run_dir from config export_dir or use default
 
             export_dir = self._config.export_dir
 
             if export_dir:
-
                 run_dir = Path(export_dir)
 
             else:
-
                 run_dir = Path.home() / ".hledac" / "runs"
 
             run_dir.mkdir(parents=True, exist_ok=True)
 
-
-
             correlation = {
-
                 "run_id": self.sprint_id or "default",
-
                 "branch_id": None,
-
                 "provider_id": None,
-
                 "action_id": None,
-
             }
 
             self._metrics_registry = MetricsRegistry(
-
                 run_dir=run_dir,
-
                 run_id=self.sprint_id or "default",
-
                 correlation=correlation,
-
             )
 
             self._metrics_initialized = True
@@ -26287,17 +22067,13 @@ class SprintScheduler:
             log.debug(f"[F205H] MetricsRegistry initialized: run_dir={run_dir}")
 
         except Exception as exc:
-
             self._metrics_registry = None
 
             self._metrics_initialized = False
 
             log.debug(f"[F205H] MetricsRegistry init failed (non-fatal): {exc}")
 
-
-
     def _tick_metrics_on_cycle_end(self) -> None:
-
         """
 
         Tick metrics at cycle completion -- captures RSS, open FDs.
@@ -26311,21 +22087,15 @@ class SprintScheduler:
         """
 
         if not self._metrics_initialized or self._metrics_registry is None:
-
             return
 
         try:
-
             self._metrics_registry.tick()
 
         except Exception:  # noqa: BLE001
-
             pass
 
-
-
     def _get_metrics_summary(self) -> dict | None:
-
         """
 
         Get metrics summary for sprint report embedding.
@@ -26341,35 +22111,23 @@ class SprintScheduler:
         """
 
         if not self._metrics_initialized or self._metrics_registry is None:
-
             return None
 
         try:
-
             summary = self._metrics_registry.get_summary()
 
             return {
-
                 "counter_count": summary.get("counter_count", 0),
-
                 "gauge_count": summary.get("gauge_count", 0),
-
                 "last_rss_mb": summary.get("gauges", {}).get("memory_rss_mb", 0.0),
-
                 "persist_available": summary.get("persist_available", False),
-
                 "closed": summary.get("closed", False),
-
             }
 
         except Exception:
-
             return None
 
-
-
     async def _close_metrics_registry(self) -> None:
-
         """
 
         Close metrics registry at TEARDOWN -- force flush prevents tail-loss.
@@ -26381,29 +22139,21 @@ class SprintScheduler:
         """
 
         if self._metrics_registry is None:
-
             return
 
         try:
-
             self._metrics_registry.close()
 
         except asyncio.CancelledError:
-
             raise
 
         except Exception as exc:
-
             log.debug(f"[F205H] MetricsRegistry close failed: {exc}")
 
         finally:
-
             self._metrics_registry = None
 
-
-
     async def _prewarm_hermes_for_sprint(self) -> None:
-
         """
 
         P12: Mode-aware Hermes prewarm policy.
@@ -26441,19 +22191,14 @@ class SprintScheduler:
         RSS_PREWARM_HEADROOM_GB = 4.0  # noqa: N806
 
         if self._config.aggressive_mode:
-
             from hledac.universal.brain.model_manager import _get_current_rss_gb
 
             rss_before = _get_current_rss_gb()
 
             if rss_before > RSS_PREWARM_HEADROOM_GB:
-
                 log.debug(
-
                     f"[P12] Skipping Hermes prewarm -- RSS {rss_before:.2f}GB "
-
                     f"> {RSS_PREWARM_HEADROOM_GB}GB headroom threshold"
-
                 )
 
                 self._hermes_engine = None
@@ -26461,8 +22206,6 @@ class SprintScheduler:
                 self._memory_manager = None
 
                 return
-
-
 
         # F206AE: Lazy advisory gate -- Hermes load is EXPENSIVE on M1 8GB and
 
@@ -26482,13 +22225,9 @@ class SprintScheduler:
 
         # in the diagnostic so the JSON report shows why the model was loaded.
 
-        _hermes_force = bool(
-            getattr(self, "_flags", None) is not None
-            and getattr(self._flags, "hermes_force", False)
-        )
+        _hermes_force = bool(getattr(self, "_flags", None) is not None and getattr(self._flags, "hermes_force", False))
 
         if _hermes_force and not hermes_synthesis_enabled:
-
             log.debug(
                 "[F273D] Hermes force-load requested via flags.hermes_force -- "
                 "overriding HLEDAC_ENABLE_HERMES_SYNTHESIS gate"
@@ -26507,7 +22246,6 @@ class SprintScheduler:
         self._result.hermes_load_attempted = True
 
         if not hermes_synthesis_enabled:
-
             hermes_load_skipped_reason = "disabled_env"
 
             self._hermes_engine = None
@@ -26519,11 +22257,8 @@ class SprintScheduler:
             self._result.hermes_model_loaded = False
 
             log.debug(
-
                 "[F206AE] Hermes load skipped -- HLEDAC_ENABLE_HERMES_SYNTHESIS != '1', "
-
                 f"reason={hermes_load_skipped_reason}"
-
             )
 
         else:
@@ -26534,7 +22269,6 @@ class SprintScheduler:
             log.debug("[Phase4] Hermes load deferred to synthesis sidecar.")
 
     async def _load_hermes_for_sprint(self) -> None:
-
         """
         P12: Load Hermes engine at sprint start via ModelManager.
         Bounded lifecycle: loaded at BOOT/WARMUP, released at TEARDOWN.
@@ -26571,8 +22305,10 @@ class SprintScheduler:
                         _MLX_PREWARM_LAST_UNLOAD_TIME,
                         _MLX_PREWARM_SKIP_THRESHOLD_S,
                     )
+
                     if _MLX_PREWARM_LAST_UNLOAD_TIME is not None:
                         import time as _t_f267
+
                         gap = _t_f267.monotonic() - _MLX_PREWARM_LAST_UNLOAD_TIME
                         if gap < _MLX_PREWARM_SKIP_THRESHOLD_S:
                             log.debug(
@@ -26580,9 +22316,11 @@ class SprintScheduler:
                                 f"< {_MLX_PREWARM_SKIP_THRESHOLD_S}s threshold -- verifying Metal cache"
                             )
                             from brain.deephermes3_engine import _verify_metal_cache_warm
+
                             warm = _verify_metal_cache_warm()
                             if warm:
                                 import brain.deephermes3_engine as _dhe_mod
+
                                 _dhe_mod._mlx_prewarm_active = True
                                 self._result.hermes_load_reason = "prewarm_skip"
                                 self._result.hermes_model_loaded = True
@@ -26594,6 +22332,7 @@ class SprintScheduler:
                     log.debug("[F267] MLX prewarm check failed: %s", _e)
 
             import time as _t_f273d
+
             from hledac.universal.brain.model_manager import get_model_manager
 
             _hermes_t0 = _t_f273d.monotonic()
@@ -26622,11 +22361,12 @@ class SprintScheduler:
         async def _prefetch_urls() -> None:
             """ISSUE-121: Parallel DNS prefetch during Hermes load."""
             try:
-                import socket
                 import re as _re
+                import socket
+
                 _query = getattr(self, "_query", "") or ""
                 # Extract domain from query for speculative DNS prefetch
-                _domain_m = _re.search(r'https?://([^/]+)', _query)
+                _domain_m = _re.search(r"https?://([^/]+)", _query)
                 if not _domain_m:
                     return
                 _domain = _domain_m.group(1)
@@ -26646,9 +22386,10 @@ class SprintScheduler:
             """ISSUE-121: Parallel ModernBERT warmup during Hermes load."""
             try:
                 from hledac.universal.brain.modernbert_engine import ModernBertEngine
+
                 engine = ModernBertEngine()
                 # Check if already warm
-                if hasattr(engine, '_is_warm') and engine._is_warm:
+                if hasattr(engine, "_is_warm") and engine._is_warm:
                     return
                 # Non-blocking load
                 await asyncio.sleep(0)
@@ -26667,8 +22408,6 @@ class SprintScheduler:
             # ExceptionGroup from TaskGroup -- log and continue (fail-soft)
             log.debug("[ISSUE-121] TaskGroup exception during parallel prewarm: %s", e)
 
-
-
     async def _unload_hermes_at_teardown(self) -> None:
         """
         P12: Unload Hermes engine at sprint teardown via ModelManager.
@@ -26686,7 +22425,7 @@ class SprintScheduler:
             return
 
         # F273H: Check idle status before unload — keep warm if recently used
-        if hasattr(self._hermes_engine, 'is_idle') and callable(self._hermes_engine.is_idle):
+        if hasattr(self._hermes_engine, "is_idle") and callable(self._hermes_engine.is_idle):
             if not self._hermes_engine.is_idle():
                 log.debug("[P12][F273H] Hermes still active (idle check), skipping unload")
                 return
@@ -26701,7 +22440,6 @@ class SprintScheduler:
             self._hermes_engine = None
 
     def is_duplicate(self, source_type: str, url: str, title: str = "") -> bool:
-
         """Check if (source_type, url, title) was already seen in any sprint.
 
         F1.1: Uses Rust BloomFilter for O(1) negative pre-check. On positive
@@ -26709,7 +22447,6 @@ class SprintScheduler:
         """
 
         if self._dedup_env is None:
-
             return False
 
         key = xxhash.xxh3_64(f"{source_type}:{url}:{title}".encode()).hexdigest()
@@ -26723,12 +22460,7 @@ class SprintScheduler:
                 pass
         return key in self._dedup_seen
 
-
-
-    def mark_seen(self, source_type: str, url: str, title: str = "",
-
-                  sprint_id: str = "") -> None:
-
+    def mark_seen(self, source_type: str, url: str, title: str = "", sprint_id: str = "") -> None:
         """Mark a finding as seen. Flush happens at WINDUP.
 
         F1.1: Inserts into Rust BloomFilter (fast negative pre-check) and
@@ -26736,7 +22468,6 @@ class SprintScheduler:
         """
 
         if self._dedup_env is None:
-
             return
 
         key = xxhash.xxh3_64(f"{source_type}:{url}:{title}".encode()).hexdigest()
@@ -26750,27 +22481,20 @@ class SprintScheduler:
             except Exception:  # noqa: BLE001
                 pass
 
-
     def request_early_windup(self) -> None:
-
         """Sprint 8RA: Request early wind-down (called from UMA CRITICAL callback)."""
 
         # Trigger lifecycle windup if available
 
-        if hasattr(self, '_lifecycle') and self._lifecycle is not None:
-
+        if hasattr(self, "_lifecycle") and self._lifecycle is not None:
             self._lifecycle.request_windup()
 
         else:
-
             # Fallback: set stop flag to exit at next cycle
 
             self._stop_requested = True
 
-
-
     def request_immediate_abort(self) -> None:
-
         """Sprint 8RA: Request immediate abort (called from UMA EMERGENCY callback)."""
 
         self._stop_requested = True
@@ -26779,22 +22503,16 @@ class SprintScheduler:
 
         self._result.abort_reason = "uma_emergency"
 
-        if hasattr(self, '_lifecycle') and self._lifecycle is not None:
-
+        if hasattr(self, "_lifecycle") and self._lifecycle is not None:
             self._lifecycle.request_abort("uma_emergency")
 
-
-
     def is_new_entry(self, entry_hash: str) -> bool:
-
         """Return True if entry_hash has not been seen in this sprint."""
 
         if not entry_hash:
-
             return True  # empty hash = always new (backwards compat)
 
         if entry_hash in self._seen_hashes:
-
             self._result.duplicate_entry_hashes_skipped += 1
 
             return False
@@ -26805,14 +22523,9 @@ class SprintScheduler:
 
         return True
 
-
-
     # ── Sprint F207Q-A: Pre-windup barrier result accessor for diagnostic report ─
 
-
-
     def _get_prewindup_barrier_report(self) -> dict | None:
-
         """
 
         Sprint F207Q-A: Read prewindup barrier telemetry for diagnostic report.
@@ -26826,79 +22539,53 @@ class SprintScheduler:
         """
 
         if not getattr(self._result, "prewindup_barrier_checked", False):
-
             return None
 
         return {
-
             "required_lanes": list(getattr(self._result, "prewindup_barrier_required_lanes", ())),
-
             "satisfied": getattr(self._result, "prewindup_barrier_satisfied", False),
-
             "attempted_lanes": list(getattr(self._result, "prewindup_barrier_attempted_lanes", ())),
-
             "skipped_lanes": dict(getattr(self._result, "prewindup_barrier_skipped_lanes", {})),
-
             "errors": dict(getattr(self._result, "prewindup_barrier_errors", {})),
-
             "duration_s": round(getattr(self._result, "prewindup_barrier_duration_s", 0.0), 3),
-
             "windup_delayed": getattr(self._result, "windup_delayed_for_nonfeed", False),
-
         }
 
-
-
     def _final_phase(self, lifecycle) -> None:
-
         """Mark teardown on lifecycle."""
 
         # Sprint F206C: Delegated to runner.teardown()
 
         if hasattr(self, "_runner") and self._runner is not None:
-
             self._runner.teardown()
 
         else:
-
             self._final_phase_fallback(lifecycle)
 
-
-
     def _final_phase_fallback(self, lifecycle) -> None:
-
         """Fallback for direct calls to _final_phase (e.g. tests)."""
 
         try:
-
             from hledac.universal.runtime.sprint_lifecycle import SprintPhase
 
             phase = lifecycle.current_phase
 
             if phase == SprintPhase.WINDUP:
-
                 lifecycle.mark_export_started()
 
                 lifecycle.mark_teardown_started()
 
             elif phase not in (SprintPhase.EXPORT, SprintPhase.TEARDOWN):
-
                 lifecycle.request_abort("scheduler_final_phase")
 
                 lifecycle.mark_teardown_started()
 
         except Exception:  # noqa: BLE001
-
             pass  # noqa: BLE001  # teardown is best-effort
-
-
 
     # ── Partial Export (aggressive mode) ──────────────────────────────────
 
-
-
     async def _maybe_export_partial(self, lifecycle) -> None:
-
         """
 
         Write a partial JSON artifact if the findings interval has been reached.
@@ -26912,126 +22599,75 @@ class SprintScheduler:
         """
 
         if not self._config.aggressive_mode:
-
             return
 
         interval = self._config.partial_export_findings_interval
 
         if interval <= 0:
-
             return
 
         delta = self._finding_count - self._last_partial_finding_count
 
         if delta < interval:
-
             return
-
-
 
         # Build minimal handoff dict from current scheduler state
 
         try:
-
             from hledac.universal.export.sprint_exporter import export_partial_sprint
 
-
-
             runtime_truth = {
-
                 "is_meaningful": self._finding_count > 0,
-
                 "accepted_findings": self._finding_count,
-
                 "cycles_completed": self._result.cycles_completed,
-
                 "cycles_started": self._result.cycles_started,
-
                 "aggressive_mode": True,
-
             }
 
             scorecard = {
-
                 "cycles_started": self._result.cycles_started,
-
                 "cycles_completed": self._result.cycles_completed,
-
                 "total_pattern_hits": self._result.total_pattern_hits,
-
             }
 
             handoff_dict = {
-
                 "sprint_id": self.sprint_id or "unknown",
-
                 "runtime_truth": runtime_truth,
-
                 "scorecard": scorecard,
-
             }
 
-
-
             await export_partial_sprint(
-
                 store=self._duckdb_store,
-
                 handoff=handoff_dict,
-
                 sprint_id=self.sprint_id or "unknown",
-
                 finding_count=self._finding_count,
-
             )
 
             self._last_partial_finding_count = self._finding_count
 
-            log.debug(
-
-                f"[PARTIAL-EXPORT] triggered at finding_count={self._finding_count}"
-
-            )
+            log.debug(f"[PARTIAL-EXPORT] triggered at finding_count={self._finding_count}")
 
         except Exception as ex:
-
             log.warning(f"[PARTIAL-EXPORT] _maybe_export_partial failed (non-fatal): {ex}")
-
-
 
     # ── Export ────────────────────────────────────────────────────────────
 
-
-
     async def _run_export(self, lifecycle) -> None:
-
         """Run all four exporters; failure is fail-soft."""
 
         (
-
             rend_md,
-
             rend_jsonld,
-
             rend_stix,
-
             rend_cti_stix,
-
             collect_cti_inputs,
-
         ) = _import_exporters()
-
-
 
         # Build minimal diagnostic report from result
 
         report = await self._build_diagnostic_report(lifecycle)
 
-
-
         export_dir = self._config.export_dir
-
-
 
         # F220D-V: Parallelize all 5 export steps — they are fully independent.
         # - 3 renderers (md/jsonld/stix.json) are sync I/O, run via to_thread to avoid blocking
@@ -27110,7 +22746,6 @@ class SprintScheduler:
             if result.stix_bundle_path:
                 self._result.export_paths.append(result.stix_bundle_path)
 
-
             # Wire hypothesis count to result telemetry (F259)
             self._result.hypotheses_generated = result.hypotheses_generated
 
@@ -27125,19 +22760,12 @@ class SprintScheduler:
             self._result.export_paths.append(f"EXPORT_ERROR:hypothesis:{exc}")
 
     async def _run_cti_export(
-
         self,
-
         render_cti_stix_to_path: Any,
-
         collect_cti_inputs: Any,
-
         report: dict[str, Any],
-
         export_dir: str | None,
-
     ) -> None:
-
         """
 
         Sprint F204F: Run CTI STIX export with fail-soft error handling.
@@ -27161,75 +22789,48 @@ class SprintScheduler:
         """
 
         try:
-
             cti_inputs = await collect_cti_inputs(report, self._duckdb_store)
 
         except Exception as exc:
-
             self._result.export_paths.append(f"EXPORT_ERROR:cti_stix:{exc}")
 
             return
 
-
-
         try:
-
             # Large serialization via run_in_executor if findings exceed 1000
 
             if len(cti_inputs.findings) > 1000:
-
                 path = await asyncio.to_thread(
                     render_cti_stix_to_path,
-
-                        findings=list(cti_inputs.findings),
-
-                        identity_candidates=list(cti_inputs.identity_candidates),
-
-                        attribution_scores=cti_inputs.attribution_scores,
-
-                        killchain_tags=cti_inputs.killchain_tags,
-
-                        evidence_chains=list(cti_inputs.evidence_chains),
-
-                        path=export_dir,
-                    )
+                    findings=list(cti_inputs.findings),
+                    identity_candidates=list(cti_inputs.identity_candidates),
+                    attribution_scores=cti_inputs.attribution_scores,
+                    killchain_tags=cti_inputs.killchain_tags,
+                    evidence_chains=list(cti_inputs.evidence_chains),
+                    path=export_dir,
+                )
 
             else:
-
                 path = render_cti_stix_to_path(
-
                     findings=list(cti_inputs.findings),
-
                     identity_candidates=list(cti_inputs.identity_candidates),
-
                     attribution_scores=cti_inputs.attribution_scores,
-
                     killchain_tags=cti_inputs.killchain_tags,
-
                     evidence_chains=list(cti_inputs.evidence_chains),
-
                     path=export_dir,
-
                 )
 
             self._result.export_paths.append(str(path))
 
         except asyncio.CancelledError:
-
             raise
 
         except Exception as exc:
-
             self._result.export_paths.append(f"EXPORT_ERROR:cti_stix:{exc}")
-
-
 
     # ── F208G-A: PUBLIC Yield Taxonomy -- stage counters builder ────────────────
 
-
-
     def _build_public_stage_counters(self) -> dict:
-
         """
 
         F208G-A: Build public_stage_counters dict from _public_pipeline_result.
@@ -27249,89 +22850,49 @@ class SprintScheduler:
         """
 
         if self._public_pipeline_result is None:
-
             return {}
 
         pr = self._public_pipeline_result
 
         return {
-
             # Discovery/fetch overview
-
-            "public_discovered": getattr(pr, 'public_discovered', 0) or 0,
-
-            "public_fetch_candidate_count": getattr(pr, 'public_fetch_candidate_count', 0) or 0,
-
-            "public_fetch_attempted": getattr(pr, 'public_fetch_attempted', 0) or 0,
-
-            "public_fetch_success": getattr(pr, 'public_fetch_success', 0) or 0,
-
-            "public_fetch_failed": getattr(pr, 'public_fetch_failed', 0) or 0,
-
+            "public_discovered": getattr(pr, "public_discovered", 0) or 0,
+            "public_fetch_candidate_count": getattr(pr, "public_fetch_candidate_count", 0) or 0,
+            "public_fetch_attempted": getattr(pr, "public_fetch_attempted", 0) or 0,
+            "public_fetch_success": getattr(pr, "public_fetch_success", 0) or 0,
+            "public_fetch_failed": getattr(pr, "public_fetch_failed", 0) or 0,
             # Acceptance/rejection
-
-            "public_acceptance_attempted": getattr(pr, 'public_acceptance_attempted', 0) or 0,
-
-            "public_acceptance_accepted": getattr(pr, 'public_acceptance_accepted', 0) or 0,
-
-            "public_acceptance_rejected": getattr(pr, 'public_acceptance_rejected', 0) or 0,
-
-            "public_acceptance_reject_reasons": getattr(pr, 'public_acceptance_reject_reasons', {}) or {},
-
+            "public_acceptance_attempted": getattr(pr, "public_acceptance_attempted", 0) or 0,
+            "public_acceptance_accepted": getattr(pr, "public_acceptance_accepted", 0) or 0,
+            "public_acceptance_rejected": getattr(pr, "public_acceptance_rejected", 0) or 0,
+            "public_acceptance_reject_reasons": getattr(pr, "public_acceptance_reject_reasons", {}) or {},
             # Terminal classification
-
-            "public_terminal_classified_count": getattr(pr, 'public_terminal_classified_count', 0) or 0,
-
-            "public_unclassified_count": getattr(pr, 'public_unclassified_count', 0) or 0,
-
-            "public_terminal_reason_counts": getattr(pr, 'public_terminal_reason_counts', {}) or {},
-
+            "public_terminal_classified_count": getattr(pr, "public_terminal_classified_count", 0) or 0,
+            "public_unclassified_count": getattr(pr, "public_unclassified_count", 0) or 0,
+            "public_terminal_reason_counts": getattr(pr, "public_terminal_reason_counts", {}) or {},
             # Skipped reason breakdown
-
-            "public_skipped_duplicate": getattr(pr, 'public_skipped_duplicate', 0) or 0,
-
-            "public_skipped_unsupported_scheme": getattr(pr, 'public_skipped_unsupported_scheme', 0) or 0,
-
-            "public_skipped_memory_gate": getattr(pr, 'public_skipped_memory_gate', 0) or 0,
-
-            "public_skipped_quality_gate": getattr(pr, 'public_skipped_quality_gate', 0) or 0,
-
-            "security_rejected_count": getattr(pr, 'security_rejected_count', 0) or 0,
-
-            "pii_redacted_count": getattr(pr, 'pii_redacted_count', 0) or 0,
-
-            "public_skipped_browser_unavailable": getattr(pr, 'public_skipped_browser_unavailable', 0) or 0,
-
-            "public_skipped_xml_or_feed": getattr(pr, 'public_skipped_xml_or_feed', 0) or 0,
-
-            "public_skipped_timeout": getattr(pr, 'public_skipped_timeout', 0) or 0,
-
-            "public_skipped_fetch_error": getattr(pr, 'public_skipped_fetch_error', 0) or 0,
-
-            "public_skipped_url_sample": getattr(pr, 'public_skipped_url_sample', ()) or (),
-
+            "public_skipped_duplicate": getattr(pr, "public_skipped_duplicate", 0) or 0,
+            "public_skipped_unsupported_scheme": getattr(pr, "public_skipped_unsupported_scheme", 0) or 0,
+            "public_skipped_memory_gate": getattr(pr, "public_skipped_memory_gate", 0) or 0,
+            "public_skipped_quality_gate": getattr(pr, "public_skipped_quality_gate", 0) or 0,
+            "security_rejected_count": getattr(pr, "security_rejected_count", 0) or 0,
+            "pii_redacted_count": getattr(pr, "pii_redacted_count", 0) or 0,
+            "public_skipped_browser_unavailable": getattr(pr, "public_skipped_browser_unavailable", 0) or 0,
+            "public_skipped_xml_or_feed": getattr(pr, "public_skipped_xml_or_feed", 0) or 0,
+            "public_skipped_timeout": getattr(pr, "public_skipped_timeout", 0) or 0,
+            "public_skipped_fetch_error": getattr(pr, "public_skipped_fetch_error", 0) or 0,
+            "public_skipped_url_sample": getattr(pr, "public_skipped_url_sample", ()) or (),
             # Rejected reason breakdown
-
-            "public_rejected_no_pattern_match": getattr(pr, 'public_rejected_no_pattern_match', 0) or 0,
-
-            "public_rejected_low_information": getattr(pr, 'public_rejected_low_information', 0) or 0,
-
-            "public_rejected_duplicate": getattr(pr, 'public_rejected_duplicate', 0) or 0,
-
-            "public_rejected_storage_rejected": getattr(pr, 'public_rejected_storage_rejected', 0) or 0,
-
-            "public_rejected_url_samples": getattr(pr, 'public_rejected_url_samples', ()) or (),
-
+            "public_rejected_no_pattern_match": getattr(pr, "public_rejected_no_pattern_match", 0) or 0,
+            "public_rejected_low_information": getattr(pr, "public_rejected_low_information", 0) or 0,
+            "public_rejected_duplicate": getattr(pr, "public_rejected_duplicate", 0) or 0,
+            "public_rejected_storage_rejected": getattr(pr, "public_rejected_storage_rejected", 0) or 0,
+            "public_rejected_url_samples": getattr(pr, "public_rejected_url_samples", ()) or (),
             # Accepted samples
-
-            "public_accepted_url_sample": getattr(pr, 'public_accepted_url_sample', ()) or (),
-
+            "public_accepted_url_sample": getattr(pr, "public_accepted_url_sample", ()) or (),
         }
 
-
-
     async def _build_diagnostic_report(self, lifecycle) -> dict:
-
         """Build a diagnostic report dict for exporters."""
 
         # Sprint F350D: Use truthful sprint_id -- NOT synthetic time-based run_id.
@@ -27408,40 +22969,23 @@ class SprintScheduler:
 
         _exit_path = getattr(r, "scheduler_exit_path", None)
 
-
-
         run_id = self.sprint_id or f"8bk_sprint_{int(_time.time())}"
 
         report = {
-
             "run_id": run_id,
-
             "phase": lifecycle.current_phase.name,
-
             "cycles_started": r.cycles_started,
-
             "cycles_completed": r.cycles_completed,
-
             "unique_entry_hashes": r.unique_entry_hashes_seen,
-
             "duplicates_skipped": r.duplicate_entry_hashes_skipped,
-
             "pattern_hits": r.total_pattern_hits,
-
             "accepted_findings": r.accepted_findings,
-
             "aborted": r.aborted,
-
             "abort_reason": r.abort_reason,
-
             "stop_requested": r.stop_requested,
-
             "lifecycle_snapshot": lifecycle.snapshot(),
-
             "entries_per_source": dict(get_sprint_ctx().entries_per_source),
-
             "hits_per_source": dict(get_sprint_ctx().hits_per_source),
-
         }
 
         # Sprint F205H: Append metrics registry summary (read-only, fail-soft)
@@ -27449,7 +22993,6 @@ class SprintScheduler:
         metrics_summary = self._get_metrics_summary()
 
         if metrics_summary:
-
             report["metrics_registry"] = metrics_summary
 
         # Sprint F265C: Append Arrow ingest metrics snapshot (read-only, fail-soft)
@@ -27458,6 +23001,7 @@ class SprintScheduler:
         # or pyarrow not installed, or all batches fell below ARROW_MIN_BATCH threshold).
         try:
             from hledac.universal.knowledge.duckdb_store import get_arrow_metrics
+
             arrow_metrics = get_arrow_metrics()
             if arrow_metrics:  # non-empty dict = at least one counter was initialized
                 report["arrow_ingest"] = arrow_metrics
@@ -27469,7 +23013,6 @@ class SprintScheduler:
         graph_signal = self._get_graph_signal()
 
         if graph_signal:
-
             report["graph_signal"] = graph_signal
 
         # Sprint 8VM: Append shadow pre-decision readiness preview (read-only, diagnostic)
@@ -27477,7 +23020,6 @@ class SprintScheduler:
         shadow_preview = self._build_shadow_readiness_preview()
 
         if shadow_preview:
-
             report["shadow_pre_decision"] = shadow_preview
 
         # Sprint 8VN: Embed correlation + hypothesis intelligence into report
@@ -27485,15 +23027,12 @@ class SprintScheduler:
         intel = self.compute_sprint_intelligence()
 
         if intel.get("correlation"):
-
             report["correlation_summary"] = intel["correlation"]
 
         if intel.get("hypothesis_pack"):
-
             report["hypothesis_pack_summary"] = intel["hypothesis_pack"]
 
         if intel.get("branch_value"):
-
             report["branch_value"] = intel["branch_value"]
 
         # Sprint F206E: Append windup scorecard (read-only, from dormant windup_engine donor)
@@ -27501,7 +23040,6 @@ class SprintScheduler:
         windup_scorecard = self._get_windup_scorecard()
 
         if windup_scorecard:
-
             report["windup_scorecard"] = windup_scorecard
 
         # Sprint F206I: Append source health summary (read-only, from per-sprint economics)
@@ -27509,7 +23047,6 @@ class SprintScheduler:
         source_health = self._get_source_health_summary()
 
         if source_health:
-
             report["source_health_summary"] = source_health
 
         # Sprint F206I: Append circuit breaker coverage summary (read-only, from transport registry)
@@ -27517,7 +23054,6 @@ class SprintScheduler:
         circuit_state = self._get_circuit_breaker_summary()
 
         if circuit_state:
-
             report["circuit_breaker_state"] = circuit_state
 
         # Sprint F206BG: Append acquisition strategy snapshot (read-only, built at sprint start)
@@ -27525,99 +23061,61 @@ class SprintScheduler:
         # Sprint F206BK: Add enforcement fields
 
         if self._acquisition_plan is not None:
-
             _lanes_list = [
-
                 {
-
                     "lane": p.lane,
-
                     "enabled": p.enabled,
-
                     "reason": p.reason,
-
                     "max_items": p.max_items,
-
                     "timeout_s": p.timeout_s,
-
                     "concurrency": p.concurrency,
-
                     "risk_level": p.risk_level,
-
                 }
-
                 for p in self._acquisition_plan.plans
-
             ]
 
-            _skipped = [
-
-                p.lane for p in self._acquisition_plan.plans if not p.enabled
-
-            ]
+            _skipped = [p.lane for p in self._acquisition_plan.plans if not p.enabled]
 
             _executed = [p.lane for p in self._acquisition_plan.plans if p.enabled]
 
             report["acquisition_strategy"] = {
-
                 "uma_state": self._acquisition_plan.uma_state,
-
                 "swap_detected": self._acquisition_plan.swap_detected,
-
                 "aggressive_mode": self._acquisition_plan.aggressive_mode,
-
                 "stealth_ready": self._acquisition_plan.stealth_ready,
-
                 "transport_degraded": self._acquisition_plan.transport_degraded,
-
                 "enforced": True,
-
                 "skipped_lanes": _skipped,
-
                 "executed_lanes": _executed,
-
                 "lanes": _lanes_list,
-
                 # [F207L] Nonfeed lane planning debug snapshot for KPI diagnosis
-
                 "nonfeed_plan_debug": (
-
                     {
-
                         "domain_detected": self._acquisition_plan.nonfeed_plan_debug.domain_detected,
-
                         "wallet_detected": self._acquisition_plan.nonfeed_plan_debug.wallet_detected,
-
                         "enabled_nonfeed_lanes": list(self._acquisition_plan.nonfeed_plan_debug.enabled_nonfeed_lanes),
-
-                        "disabled_nonfeed_lanes": list(self._acquisition_plan.nonfeed_plan_debug.disabled_nonfeed_lanes),  # noqa: E501
-
+                        "disabled_nonfeed_lanes": list(
+                            self._acquisition_plan.nonfeed_plan_debug.disabled_nonfeed_lanes
+                        ),  # noqa: E501
                         "disabled_reasons": list(self._acquisition_plan.nonfeed_plan_debug.disabled_reasons),
-
-                        "scheduled_nonfeed_lanes": list(self._acquisition_plan.nonfeed_plan_debug.scheduled_nonfeed_lanes),  # noqa: E501
-
-                        "hardware_skipped_lanes": list(self._acquisition_plan.nonfeed_plan_debug.hardware_skipped_lanes),  # noqa: E501
-
+                        "scheduled_nonfeed_lanes": list(
+                            self._acquisition_plan.nonfeed_plan_debug.scheduled_nonfeed_lanes
+                        ),  # noqa: E501
+                        "hardware_skipped_lanes": list(
+                            self._acquisition_plan.nonfeed_plan_debug.hardware_skipped_lanes
+                        ),  # noqa: E501
                         "nonfeed_execution_scheduled": self._acquisition_plan.nonfeed_plan_debug.nonfeed_execution_scheduled,  # noqa: E501
-
                         "nonfeed_execution_skip_reason": self._acquisition_plan.nonfeed_plan_debug.nonfeed_execution_skip_reason,  # noqa: E501
-
                     }
-
                     if self._acquisition_plan.nonfeed_plan_debug is not None
-
                     else None
-
                 ),
-
                 # [F207Q-A] Pre-windup barrier telemetry for live KPI diagnosis
-
-                "prewindup_barrier": self._get_prewindup_barrier_report() if hasattr(self, "_get_prewindup_barrier_report") else None,  # noqa: E501
-
+                "prewindup_barrier": self._get_prewindup_barrier_report()
+                if hasattr(self, "_get_prewindup_barrier_report")
+                else None,  # noqa: E501
                 # [F207Q-A] Flat field so live_sprint_measurement can read acquisition_strategy.prewindup_barrier_checked directly  # noqa: E501
-
                 "prewindup_barrier_checked": getattr(self._result, "prewindup_barrier_checked", False),
-
             }
 
         # Sprint F208H: Surface terminality fields at TOP LEVEL so validator can find them
@@ -27633,83 +23131,50 @@ class SprintScheduler:
         # F208M-B: callback_not_executed_reason added
 
         report["windup_guard_observation"] = {
-
             "call_count": _wg_call,
-
             "callback_supplied_count": _wg_supplied,
-
             "callback_executed_count": _wg_executed,
-
             "last_reason": _wg_last_reason,
-
             "last_phase": _wg_last_phase,
-
             "last_allowed": _wg_last_allowed,
-
             "callback_not_executed_reason": _wg_not_exec_reason,
-
         }
 
         # Sprint F207T-A: Return guard telemetry for mandatory nonfeed terminal state
 
         report["return_guard"] = {
-
             "checked": _rg_checked,
-
             "required_lanes": _rg_attempted,
-
             "satisfied": _rg_satisfied,
-
             "delayed_for_nonfeed": _rg_delayed,
-
             "block_reason": _rg_block,
-
             "attempted_lanes": _rg_attempted,
-
             "skipped_lanes": _rg_skipped,
-
             "errors": _rg_errors,
-
         }
 
         # Sprint F207V-A: Scheduler exit path tracer
 
         report["scheduler_exit"] = {
-
             "exit_path": _se_path,
-
             "exit_reason": _se_reason,
-
             "exit_phase": _se_phase,
-
             "exit_cycle": _se_cycle,
-
             "elapsed_s": _se_elapsed,
-
             "guard_checked": _se_guard_checked,
-
             "guard_required": _se_guard_required,
-
             "guard_satisfied": _se_guard_satisfied,
-
         }
 
         # Sprint F216E: Feed dominance budget telemetry
 
         report["feed_dominance_budget"] = {
-
             "active": _feed_active,
-
             "reason": _feed_reason,
-
             "feed_accepted_before_cap": _feed_accepted_before,
-
             "feed_suppressed_by_budget": _feed_suppressed,
-
             "top_feed_source_counts": _feed_top,
-
             "max_per_source_applied": _feed_max_per,
-
         }
 
         # Sprint F208B: Acquisition terminality consumer report
@@ -27717,7 +23182,6 @@ class SprintScheduler:
         # Merge terminality into the existing acquisition_strategy block
 
         if "acquisition_strategy" in report:
-
             report["acquisition_strategy"]["terminality"] = _at_report
 
             # F208F: also surface individual terminality fields so live_sprint_measurement can find them
@@ -27729,47 +23193,37 @@ class SprintScheduler:
             report["acquisition_strategy"]["acquisition_terminality_missing_lanes"] = _at_missing
 
         else:
-
             report["acquisition_strategy"] = {
-
                 "terminality": _at_report,
-
                 "acquisition_terminality_checked": _at_checked,
-
                 "acquisition_terminality_satisfied": _at_satisfied,
-
                 "acquisition_terminality_missing_lanes": _at_missing,
-
             }
 
         # Sprint F207A: Append multi-source acquisition lane outcomes
 
         if self._lane_outcomes:
-
             _outcomes_list = [o.to_dict() if hasattr(o, "to_dict") else dict(o) for o in self._lane_outcomes]
 
             _planned = [p.lane for p in (self._acquisition_plan.plans if self._acquisition_plan else [])]
 
             _attempted = [o["lane"] for o in _outcomes_list if o.get("attempted")]
 
-            _skipped_lanes = [lane for lane in _planned if lane not in _attempted and lane not in (_executed if self._acquisition_plan else [])]
+            _skipped_lanes = [
+                lane
+                for lane in _planned
+                if lane not in _attempted and lane not in (_executed if self._acquisition_plan else [])
+            ]
 
             _lane_errors = [o["error"] for o in _outcomes_list if o.get("error")]
 
             report["acquisition_lanes"] = {
-
                 "planned": _planned,
-
                 "attempted": _attempted,
-
                 "skipped": _skipped_lanes,
-
                 "outcomes": _outcomes_list,
-
                 "total_optional_findings": sum(o.get("accepted_findings", 0) for o in _outcomes_list),
-
                 "lane_errors": _lane_errors,
-
             }
 
         # Sprint F207G: Canonical per-source-family outcome breakdown
@@ -27779,27 +23233,17 @@ class SprintScheduler:
         _sfo: dict[str, dict] = {}
 
         for _fam, _lane in [
-
             ("ct", AcquisitionLane.CT),
-
             ("wayback", AcquisitionLane.WAYBACK),
-
             ("passive_dns", AcquisitionLane.PASSIVE_DNS),
-
             ("blockchain", AcquisitionLane.BLOCKCHAIN),
-
             ("feed", "FEED"),
-
             ("public", AcquisitionLane.PUBLIC),
-
             ("doh", AcquisitionLane.DOH),
-
         ]:
-
             _raw: dict | list | None = None
 
             if _lane == "FEED":
-
                 _raw = getattr(self, "_feed_verdicts", []) or None
 
                 # F215E: FEED accepted_count must come from result-level counts, not _feed_verdicts
@@ -27809,21 +23253,15 @@ class SprintScheduler:
                 # Net FEED = total - public - CT_log
 
                 if _raw is not None:
-
                     _feed_accepted = (
-
                         (self._result.accepted_findings or 0)
-
                         - (self._result.public_accepted_findings or 0)
-
                         - (self._result.ct_log_accepted_findings or 0)
-
                     )
 
                     _feed_accepted = max(0, _feed_accepted)
 
                     if isinstance(_raw, list) and len(_raw) > 0:
-
                         # Attach accepted_count to first verdict for normalize_source_family_outcome
 
                         # Pass as a dict so normalize can read accepted_count and raw_count
@@ -27831,31 +23269,21 @@ class SprintScheduler:
                         _first = _raw[0]
 
                         if isinstance(_first, tuple):
-
                             _raw = {
-
                                 "verdict": _first,
-
                                 "accepted_count": _feed_accepted,
-
                                 "raw_count": _first[1] if len(_first) > 1 else 0,
-
                                 "attempted": True,
-
                             }
 
             elif _lane == AcquisitionLane.PUBLIC:
-
                 # Sprint F207H: Consume public pipeline outcome directly
 
                 _raw = getattr(self, "_public_outcome", None)
 
             elif self._lane_outcomes:
-
                 for _o in self._lane_outcomes:
-
                     if hasattr(_o, "lane") and _o.lane == _lane:
-
                         _raw = _o
 
                         break
@@ -27866,53 +23294,37 @@ class SprintScheduler:
 
         _sfo["academic"] = normalize_source_family_outcome("academic", None)
 
-
-
         # Sprint F245B: RDAP enrichment -- synthesize from scheduler result telemetry
 
         if hasattr(self._result, "rdap_enrichment_attempted") and self._result.rdap_enrichment_attempted:
-
             _rdap_raw = {
-
                 "attempted": True,
-
                 "accepted_count": getattr(self._result, "rdap_enrichment_findings_stored", 0) or 0,
-
                 "raw_count": getattr(self._result, "rdap_enrichment_findings_built", 0) or 0,
-
                 "error": getattr(self._result, "rdap_enrichment_error", None),
-
-                "terminal_state": "ATTEMPTED_ERROR" if getattr(self._result, "rdap_enrichment_error", None)
-
-                    else ("ATTEMPTED_ACCEPTED" if getattr(self._result, "rdap_enrichment_findings_stored", 0) else "ATTEMPTED_NO_RESULTS"),  # noqa: E501
-
+                "terminal_state": "ATTEMPTED_ERROR"
+                if getattr(self._result, "rdap_enrichment_error", None)
+                else (
+                    "ATTEMPTED_ACCEPTED"
+                    if getattr(self._result, "rdap_enrichment_findings_stored", 0)
+                    else "ATTEMPTED_NO_RESULTS"
+                ),  # noqa: E501
             }
 
             _sfo["rdap_enrichment"] = normalize_source_family_outcome("rdap_enrichment", _rdap_raw)
 
-
-
         # Sprint F245B: RIR correlation -- synthesize from scheduler result telemetry
 
         if hasattr(self._result, "rir_correlation_produced") and self._result.rir_correlation_produced > 0:
-
             _rir_raw = {
-
                 "attempted": True,
-
                 "accepted_count": self._result.rir_correlation_produced or 0,
-
                 "raw_count": self._result.rir_correlation_produced or 0,
-
                 "error": None,
-
                 "terminal_state": "ATTEMPTED_ACCEPTED",
-
             }
 
             _sfo["rir_correlation"] = normalize_source_family_outcome("rir_correlation", _rir_raw)
-
-
 
         # F210A+F265-U9: Canonical source_family_outcomes lives ONLY inside acquisition_report
         # (as a list from _sfo_list via build_acquisition_report below).
@@ -27934,15 +23346,12 @@ class SprintScheduler:
         # source_family_outcomes so the two can never disagree.
 
         try:
-
             _term_uma = "ok"
 
             _term_swap = False
 
             if self._governor is not None:
-
                 try:
-
                     _snap = await self._governor.evaluate()
 
                     _term_uma = getattr(_snap, "uma_state", "ok")
@@ -27950,76 +23359,51 @@ class SprintScheduler:
                     _term_swap = getattr(_snap, "swap_detected", False)
 
                 except Exception:  # noqa: BLE001
-
                     pass
 
             _mlt = required_terminal_lanes(
-
                 snapshot=self._acquisition_plan,
-
                 query=self._query,
-
                 uma_state=_term_uma,
-
                 swap_detected=_term_swap,
-
             )
 
             _canonical_outcomes = self._final_source_family_outcomes_for_terminality()
 
             _fresh_term = terminality_report(
-
                 required_lanes=_mlt,
-
                 observed_outcomes=_canonical_outcomes,
-
             )
 
             # Update acquisition_strategy terminality with the fresh computation
 
             if "acquisition_strategy" in report:
-
                 report["acquisition_strategy"]["terminality"] = _fresh_term
 
                 report["acquisition_strategy"]["acquisition_terminality_checked"] = True
 
                 report["acquisition_strategy"]["acquisition_terminality_satisfied"] = (
-
                     len(_fresh_term.get("missing_lanes", [])) == 0
-
                 )
 
                 report["acquisition_strategy"]["acquisition_terminality_missing_lanes"] = list(
-
                     _fresh_term.get("missing_lanes", [])
-
                 )
 
             # Also update top-level terminality fields (used by validators)
 
             report["acquisition_terminality_checked"] = True
 
-            report["acquisition_terminality_satisfied"] = (
+            report["acquisition_terminality_satisfied"] = len(_fresh_term.get("missing_lanes", [])) == 0
 
-                len(_fresh_term.get("missing_lanes", [])) == 0
-
-            )
-
-            report["acquisition_terminality_missing_lanes"] = list(
-
-                _fresh_term.get("missing_lanes", [])
-
-            )
+            report["acquisition_terminality_missing_lanes"] = list(_fresh_term.get("missing_lanes", []))
 
         except Exception:  # noqa: BLE001
-
             # Fail-safe: if terminality recomputation fails, keep the already-set values
 
             # (they were set by _finalize_result_truth before this report build)
 
             pass
-
-
 
         # Sprint F208H/F215C: Surface terminality and guard fields at TOP LEVEL for validator consumption.
 
@@ -28031,19 +23415,11 @@ class SprintScheduler:
 
         # represents the "never in plan" case.
 
-        report["public_terminal_state"] = (
-
-            _sfo.get("public", {}).get("terminal_state") or "NEVER_SCHEDULED"
-
-        )
+        report["public_terminal_state"] = _sfo.get("public", {}).get("terminal_state") or "NEVER_SCHEDULED"
 
         # CT terminal state (active300 domain queries)
 
-        report["ct_terminal_state"] = (
-
-            _sfo.get("ct", {}).get("terminal_state") or "NEVER_ATTEMPTED"
-
-        )
+        report["ct_terminal_state"] = _sfo.get("ct", {}).get("terminal_state") or "NEVER_ATTEMPTED"
 
         # Scheduler exit path at top level (validator check)
 
@@ -28061,18 +23437,11 @@ class SprintScheduler:
 
         report["windup_guard_reason"] = _wg_last_reason
 
-        report["windup_guard_not_applicable"] = (
-
-            _wg_last_reason.lower() in _wg_irrelevant
-
-        )
-
-
+        report["windup_guard_not_applicable"] = _wg_last_reason.lower() in _wg_irrelevant
 
         # Sprint F240A: Attach runtime_loop_telemetry from timer events (fail-soft)
 
         try:
-
             from hledac.universal.runtime.sprint_timer import (
                 compute_runtime_loop_telemetry,
             )
@@ -28082,29 +23451,19 @@ class SprintScheduler:
             report["runtime_loop_telemetry"] = compute_runtime_loop_telemetry(_timer_ev)
 
         except Exception:
-
             report["runtime_loop_telemetry"] = {
-
                 "events": [],
-
                 "phase_totals_s": {},
-
                 "slowest_phases": [],
-
                 "lane_timings": {},
-
                 "timer_event_count": 0,
-
             }
-
-
 
         # Sprint F208F: Canonical acquisition_report -- wired using build_acquisition_report()
 
         # so live_sprint_measurement.py can find it at report["acquisition_report"] first
 
         try:
-
             from hledac.universal.runtime.acquisition_strategy import (
                 build_acquisition_report,
             )
@@ -28114,43 +23473,26 @@ class SprintScheduler:
             # F208M-B: callback_not_executed_reason added
 
             _wg_obs = {
-
                 "call_count": _wg_call,
-
                 "callback_supplied_count": _wg_supplied,
-
                 "callback_executed_count": _wg_executed,
-
                 "last_reason": _wg_last_reason,
-
                 "last_phase": _wg_last_phase,
-
                 "last_allowed": _wg_last_allowed,
-
                 "callback_not_executed_reason": _wg_not_exec_reason,
-
             }
 
             # Build return guard dict
 
             _rg_dict = {
-
                 "checked": _rg_checked,
-
                 "required_lanes": _rg_attempted,
-
                 "satisfied": _rg_satisfied,
-
                 "delayed_for_nonfeed": _rg_delayed,
-
                 "block_reason": _rg_block,
-
                 "attempted_lanes": _rg_attempted,
-
                 "skipped_lanes": _rg_skipped,
-
                 "errors": _rg_errors,
-
             }
 
             # Build prewindup_barrier dict
@@ -28170,7 +23512,6 @@ class SprintScheduler:
             _pwb = None
 
             if hasattr(self, "_get_prewindup_barrier_report"):
-
                 _pwb = self._get_prewindup_barrier_report()
 
                 # If barrier was checked but dict is None, inject checked=True so the
@@ -28180,59 +23521,33 @@ class SprintScheduler:
                 # even when no barrier telemetry was produced (active300 early exit case)
 
                 if _pwb is None and getattr(self._result, "prewindup_barrier_checked", False):
-
                     _pwb = {
-
                         "checked": True,
-
                         "satisfied": getattr(self._result, "prewindup_barrier_satisfied", True),
-
                         "required_lanes": (),
-
                         "attempted_lanes": (),
-
                         "skipped_lanes": {},
-
                         "errors": {},
-
                         "windup_delayed": getattr(self._result, "windup_delayed_for_nonfeed", False),
-
-                        "nonfeed_scheduler_gap_resolved": getattr(
-
-                            self._result, "nonfeed_scheduler_gap_resolved", None
-
-                        ),
-
+                        "nonfeed_scheduler_gap_resolved": getattr(self._result, "nonfeed_scheduler_gap_resolved", None),
                     }
 
                     logger.debug(
-
                         "[F214WINDUP] Synthetic prewindup_barrier injected: barrier checked=True "
-
                         "but _get_prewindup_barrier_report() returned None (active300 early exit)"
-
                     )
 
             # Build scheduler_exit dict (same as report["scheduler_exit"])
 
             _se_dict = {
-
                 "exit_path": _se_path,
-
                 "exit_reason": _se_reason,
-
                 "exit_phase": _se_phase,
-
                 "exit_cycle": _se_cycle,
-
                 "elapsed_s": _se_elapsed,
-
                 "guard_checked": _se_guard_checked,
-
                 "guard_required": _se_guard_required,
-
                 "guard_satisfied": _se_guard_satisfied,
-
             }
 
             # Build nonfeed_plan_debug
@@ -28240,88 +23555,49 @@ class SprintScheduler:
             _nd = None
 
             if self._acquisition_plan is not None and self._acquisition_plan.nonfeed_plan_debug is not None:
-
                 nd = self._acquisition_plan.nonfeed_plan_debug
 
                 _nd = {
-
                     "domain_detected": nd.domain_detected,
-
                     "wallet_detected": nd.wallet_detected,
-
                     "enabled_nonfeed_lanes": list(nd.enabled_nonfeed_lanes),
-
                     "disabled_nonfeed_lanes": list(nd.disabled_nonfeed_lanes),
-
                     "disabled_reasons": list(nd.disabled_reasons),
-
                     "scheduled_nonfeed_lanes": list(nd.scheduled_nonfeed_lanes),
-
                     "hardware_skipped_lanes": list(nd.hardware_skipped_lanes),
-
                     "nonfeed_execution_scheduled": nd.nonfeed_execution_scheduled,
-
                     "nonfeed_execution_skip_reason": nd.nonfeed_execution_skip_reason,
-
                     # F216B: Nonfeed diagnostic profile telemetry
-
                     "acquisition_profile": getattr(nd, "acquisition_profile", "default"),
-
                     "feed_cap_reason": getattr(nd, "feed_cap_reason", None),
-
                     "nonfeed_priority_enabled": getattr(nd, "nonfeed_priority_enabled", False),
-
                     "nonfeed_profile_expected_lanes": list(getattr(nd, "nonfeed_profile_expected_lanes", ()) or ()),
-
                     # F216F: Pivot executor telemetry
-
                     "pivot_executor_enabled": getattr(nd, "pivot_executor_enabled", False),
-
                     "pivot_candidates_count": getattr(nd, "pivot_candidates_count", 0),
-
                     "pivot_candidate_types": list(getattr(nd, "pivot_candidate_types", ()) or ()),
-
                     "pivot_scheduled_lanes": list(getattr(nd, "pivot_scheduled_lanes", ()) or ()),
-
                     "pivot_skip_reason": getattr(nd, "pivot_skip_reason", None),
-
                     "pivot_errors": list(getattr(nd, "pivot_errors", ()) or ()),
-
                     # F225A: Mission intent telemetry
-
                     "mission_intent": getattr(nd, "mission_intent", "unknown"),
-
                     "mission_target_kind": getattr(nd, "mission_target_kind", "unknown"),
-
                     "mission_required_lanes": list(getattr(nd, "mission_required_lanes", ()) or ()),
-
                     "mission_optional_lanes": list(getattr(nd, "mission_optional_lanes", ()) or ()),
-
                     "mission_reason": getattr(nd, "mission_reason", ""),
-
                     # F226A: Mission runtime wiring
-
                     "mission_runtime_applied": getattr(nd, "mission_runtime_applied", False),
-
                     "mission_lane_priority": list(getattr(nd, "mission_lane_priority", ()) or ()),
-
                     "mission_pivot_boost_applied": getattr(nd, "mission_pivot_boost_applied", False),
-
                     # F227D: Mission-aware feed cap telemetry
-
                     "mission_feed_cap_reason": getattr(nd, "mission_feed_cap_reason", None),
-
                     "feed_cap_applied_by_mission": getattr(nd, "feed_cap_applied_by_mission", False),
-
                     "feed_cap_mission_intent": getattr(nd, "feed_cap_mission_intent", None),
-
                 }
 
             # source_family_outcomes as list of dicts (normalize_source_family_outcome returns dict)
 
             _sfo_list = list(_sfo.values())
-
-
 
             # F228C: Compute nonfeed surface completeness telemetry from _sfo dict
 
@@ -28333,20 +23609,20 @@ class SprintScheduler:
 
             _sfo_by_family = {entry.get("family", ""): entry for entry in _sfo_list}
 
-            _expected = list(_nd.get("nonfeed_profile_expected_lanes", ()) or []) if _nd else (nonfeed_expected_lanes or [])  # noqa: E501
+            _expected = (
+                list(_nd.get("nonfeed_profile_expected_lanes", ()) or []) if _nd else (nonfeed_expected_lanes or [])
+            )  # noqa: E501
 
             # Map uppercase lane constants to lowercase family names for comparison
 
             _FAM_MAP = {  # noqa: N806
-
-                "CT": "ct", "WAYBACK": "wayback", "PASSIVE_DNS": "passive_dns",
-
-                "BLOCKCHAIN": "blockchain", "PUBLIC": "public",
-
+                "CT": "ct",
+                "WAYBACK": "wayback",
+                "PASSIVE_DNS": "passive_dns",
+                "BLOCKCHAIN": "blockchain",
+                "PUBLIC": "public",
                 "PIVOT_EXECUTOR": "pivot_executor",
-
                 "DOH": "doh",
-
             }
 
             _surf_ct = _sfo_by_family.get("ct", {})
@@ -28356,13 +23632,9 @@ class SprintScheduler:
             # A lane is "surfaced" if it was attempted OR explicitly skipped (not absent)
 
             _surfaced_lower = {
-
                 _FAM_MAP.get(fam.upper(), fam.lower())
-
                 for fam, entry in _sfo_by_family.items()
-
                 if entry.get("attempted") or entry.get("skipped")
-
             }
 
             _missing = [e for e in _expected if _FAM_MAP.get(e, e.lower()) not in _surfaced_lower]
@@ -28372,13 +23644,11 @@ class SprintScheduler:
             _elig = getattr(self._result, "nonfeed_lane_eligibility", {}) or {}
 
             for _lane_el in ("DOH", "WAYBACK", "PASSIVE_DNS"):
-
                 _fam_key = _FAM_MAP.get(_lane_el, _lane_el.lower())
 
                 _eligible = bool(_elig.get(_lane_el.lower()) or _elig.get(_lane_el, False))
 
                 if _fam_key not in _surfaced_lower and _eligible and _lane_el not in _missing:
-
                     _missing.append(_lane_el)
 
             # F227A/F231A: If wayback/passive_dns eligible+missing, set explicit terminal state
@@ -28388,16 +23658,12 @@ class SprintScheduler:
             _surf_pdns = _sfo_by_family.get("passive_dns", {})
 
             if (not _surf_wayback or not _surf_wayback.get("terminal_state")) and "WAYBACK" in _missing:
-
                 _surf_wayback = {"terminal_state": "not_scheduled"}
 
             if (not _surf_pdns or not _surf_pdns.get("terminal_state")) and "PASSIVE_DNS" in _missing:
-
                 _surf_pdns = {"terminal_state": "not_scheduled"}
 
             _surf_complete = not _missing
-
-
 
             # Sprint F229A: Extract bootstrap ordering telemetry from public outcome
 
@@ -28409,151 +23675,89 @@ class SprintScheduler:
 
             _pub_bootstrap_fetch_att = _surf_public.get("public_bootstrap_first_fetch_attempted", False)
 
-
-
             report["acquisition_report"] = build_acquisition_report(
-
                 query=self._query,
-
                 plan=self._acquisition_plan,
-
                 terminality=_at_report,
-
                 nonfeed_plan_debug=_nd,
-
                 source_family_outcomes=_sfo_list,
-
                 return_guard=_rg_dict,
-
                 prewindup_barrier=_pwb,
-
                 scheduler_exit=_se_dict,
-
                 windup_guard_observation=_wg_obs,
-
                 # F223A: Pass explicit acquisition_profile from config
-
                 acquisition_profile=(
-
-                    self._config.acquisition_profile
-
-                    if self._config.acquisition_profile is not None
-
-                    else "default"
-
+                    self._config.acquisition_profile if self._config.acquisition_profile is not None else "default"
                 ),
-
                 # F228C: Nonfeed surface completeness telemetry
-
                 nonfeed_expected_lanes=_expected,
-
                 nonfeed_missing_expected_lanes=_missing,
-
                 wayback_terminal_state=_surf_wayback.get("terminal_state", ""),
-
                 passive_dns_terminal_state=_surf_pdns.get("terminal_state", ""),
-
                 nonfeed_surface_complete=_surf_complete,
-
                 # Sprint F229A: Bootstrap ordering telemetry
-
                 public_bootstrap_order=_pub_bootstrap_order,
                 # F1-3: keyword_seed_fallback telemetry
                 keyword_seed_fallback_triggered=_keyword_seed_fallback,
                 public_bootstrap_prevented_discovery_timeout=_pub_bootstrap_prevented,
-
                 public_bootstrap_first_fetch_attempted=_pub_bootstrap_fetch_att,
-
                 # F208G-A: PUBLIC Yield Taxonomy -- stage counters for acquisition_report
-
                 public_stage_counters=self._build_public_stage_counters(),
-
                 # NOTE R3: Critical 33 batch -- runtime error/signal fields
-
                 ct_bridge_rejections_count=getattr(self._result, "ct_bridge_rejections_count", 0),
-
                 ct_storage_rejected=getattr(self._result, "ct_storage_rejected", 0),
-
                 arrow_last_flush_error=getattr(self._result, "arrow_last_flush_error", "") or "",
-
                 arrow_batch_dropped=getattr(self._result, "arrow_batch_dropped_after_flush_failure", 0),
-
                 prewindup_barrier_errors=getattr(self._result, "prewindup_barrier_errors", None) or {},
-
                 return_guard_errors=getattr(self._result, "return_guard_errors", None) or {},
-
                 wayback_unchanged_rejected=getattr(self._result, "wayback_unchanged_rejected", 0),
-
                 nonfeed_provider_failures=getattr(self._result, "nonfeed_provider_failures", None) or [],
-
                 # F216G/F217E: Quality/duplicate/nonfeed ledger summaries from result fields
-
-                quality_rejection_summary_by_family=getattr(self._result, "quality_rejection_summary_by_family", None) or {},  # noqa: E501
-
-                duplicate_rejection_summary_by_family=getattr(self._result, "duplicate_rejection_summary_by_family", None) or {},  # noqa: E501
-
+                quality_rejection_summary_by_family=getattr(self._result, "quality_rejection_summary_by_family", None)
+                or {},  # noqa: E501
+                duplicate_rejection_summary_by_family=getattr(
+                    self._result, "duplicate_rejection_summary_by_family", None
+                )
+                or {},  # noqa: E501
                 low_information_by_family=getattr(self._result, "low_information_by_family", None) or {},
-
-                nonfeed_candidate_ledger_summary=(self._nonfeed_ledger.summary() if hasattr(self, "_nonfeed_ledger") and self._nonfeed_ledger is not None and hasattr(self._nonfeed_ledger, "summary") else {}),  # noqa: E501
-
+                nonfeed_candidate_ledger_summary=(
+                    self._nonfeed_ledger.summary()
+                    if hasattr(self, "_nonfeed_ledger")
+                    and self._nonfeed_ledger is not None
+                    and hasattr(self._nonfeed_ledger, "summary")
+                    else {}
+                ),  # noqa: E501
                 # Sprint F225A: Acquisition plan build error surface
-
                 acquisition_plan_build_failed=getattr(self._result, "acquisition_plan_build_failed", False),
-
                 acquisition_plan_build_error_type=getattr(self._result, "acquisition_plan_build_error_type", ""),
-
                 acquisition_plan_build_error=getattr(self._result, "acquisition_plan_build_error", ""),
-
                 # F227A: Seed context telemetry
-
                 seed_context_available=getattr(self._result, "seed_context_available", False),
-
                 seed_context_propagated=getattr(self._result, "seed_context_propagated", False),
-
                 seed_context_skip_reason=getattr(self._result, "seed_context_skip_reason", ""),
-
                 seed_context_source=getattr(self._result, "seed_context_source", ""),
-
                 lanes_unlocked_by_seed_context=getattr(self._result, "lanes_unlocked_by_seed_context", []) or [],
-
                 # F214-ACQ / F251B: Public provider selection debug -- last-mile passthrough
-
                 public_provider_selection_debug=getattr(self._result, "public_provider_selection_debug", None) or {},
-
             )
 
         except Exception:  # noqa: BLE001
-
             pass  # noqa: BLE001  # fail-soft: acquisition_report is diagnostic only
-
-
 
         return report
 
-
-
     # ── Sprint 8RC: IOC-aware prioritisation ───────────────────────────────
-
-
 
     # Base tier weights (B.1 invariant)
 
     _BASE_TIER_WEIGHTS: dict[str, float] = {
-
         "structured_ti": 1.0,
-
         "clearnet": 0.8,
-
         "academic": 0.6,
-
         "dark": 1.2,
-
     }
 
-
-
     async def load_source_weights(self, store: Any) -> None:
-
         """
 
         Load hit-rate history from DuckDB and set source weights.
@@ -28567,17 +23771,14 @@ class SprintScheduler:
         """
 
         try:
-
             rows = await store.async_query_sprint_source_stats()
 
             if not rows:
-
                 return
 
             max_rate = max(r["avg_hit_rate"] for r in rows) or 1.0
 
             for row in rows:
-
                 src = row["source_type"]
 
                 raw = row["avg_hit_rate"] / max_rate * 1.5
@@ -28588,10 +23789,7 @@ class SprintScheduler:
                 log.debug(f"Source weight {src}: {clipped:.2f}")
 
         except Exception as e:
-
             log.warning(f"Source weight load failed: {e} -- using defaults")
-
-
 
     # ── Sprint P2-2: Pure-Python fallback for _adapt_source_weights_from_feedback ──
 
@@ -28639,10 +23837,7 @@ class SprintScheduler:
 
     # ── Sprint F199A: Reward-driven source weight adaptation ─────────────
 
-
-
     def _adapt_source_weights_from_feedback(self) -> None:
-
         """
 
         F199A: Adapt _source_weights from per-source quality feedback collected during the sprint.
@@ -28690,12 +23885,14 @@ class SprintScheduler:
             ctx = get_sprint_ctx()
             current = ctx.source_weights.get(source_type, 1.0)
             source_type_map.append((source_type, feed_url))
-            stats_list.append({
-                "fetched": float(total),
-                "accepted": float(accepted),
-                "current_weight": current,
-                "novelty": False,
-            })
+            stats_list.append(
+                {
+                    "fetched": float(total),
+                    "accepted": float(accepted),
+                    "current_weight": current,
+                    "novelty": False,
+                }
+            )
 
         # P2-2: NEON-accelerated batch scoring when Rust backend is available.
         if batch_compute_scores is not None and stats_list:
@@ -28722,14 +23919,7 @@ class SprintScheduler:
                 self._source_quality_feedback, self._config, get_sprint_ctx().source_weights, log
             )
 
-
-
-    def score_source(
-
-        self, source_type: str, ioc_graph_stats: dict | None = None
-
-    ) -> float:
-
+    def score_source(self, source_type: str, ioc_graph_stats: dict | None = None) -> float:
         """
 
         Compute priority score per B.1 formula.
@@ -28752,14 +23942,7 @@ class SprintScheduler:
 
         return base * hit_mult * novelty
 
-
-
-    def prioritize_sources(
-
-        self, candidates: list[str], ioc_graph_stats: dict | None = None
-
-    ) -> list[str]:
-
+    def prioritize_sources(self, candidates: list[str], ioc_graph_stats: dict | None = None) -> list[str]:
         """
 
         Sort candidates by score -- highest first.
@@ -28768,47 +23951,27 @@ class SprintScheduler:
 
         """
 
-        scored = [
-
-            (src, self.score_source(src, ioc_graph_stats))
-
-            for src in candidates
-
-        ]
+        scored = [(src, self.score_source(src, ioc_graph_stats)) for src in candidates]
 
         scored.sort(key=lambda x: x[1], reverse=True)
 
-        log.debug(
-
-            f"Source priorities: {[(s, f'{sc:.2f}') for s, sc in scored[:5]]}"
-
-        )
+        log.debug(f"Source priorities: {[(s, f'{sc:.2f}') for s, sc in scored[:5]]}")
 
         return [s for s, _ in scored]
 
-
-
     def set_novelty_bonus(self, source_type: str, has_bonus: bool) -> None:
-
         """Set novelty bonus: 1.5 if source added new IOC types this sprint."""
 
         get_sprint_ctx().novelty_bonuses[source_type] = 1.5 if has_bonus else 1.0
 
-
-
     # ── Sprint 8VB: Adaptive Timeout ───────────────────────────────────
 
-
-
     def _update_latency_ema(self, domain: str, latency: float) -> None:
-
         """Update EMA for domain fetch latency. Bounded to _MAX_FETCH_LATENCY_EMA entries."""
 
         ctx = get_sprint_ctx()
         prev = ctx.fetch_latency_ema.get(domain, latency)
-        ctx.fetch_latency_ema[domain] = (
-            0.3 * latency + 0.7 * prev
-        )
+        ctx.fetch_latency_ema[domain] = 0.3 * latency + 0.7 * prev
         # F196C: deque(maxlen=1000) auto-evicts oldest entry when full
         if domain not in self._fetch_latency_ema_order:
             self._fetch_latency_ema_order.append(domain)
@@ -28819,47 +23982,32 @@ class SprintScheduler:
         ema = ctx.fetch_latency_ema.get(domain, 10.0)
         return max(5.0, min(30.0, ema * 3.0))
 
-
-
     async def log_source_hit(
-
         self,
-
         store: Any,
-
         sprint_id: str,
-
         source_type: str,
-
         findings_count: int,
-
         ioc_count: int,
-
     ) -> None:
-
         """Record a source hit for hit-rate tracking."""
 
         hit_rate = findings_count / max(1, findings_count + 1)
 
         try:
-
             await store.async_record_source_hit(
-
-                sprint_id, _time.time(), source_type,
-
-                findings_count, ioc_count, hit_rate,
-
+                sprint_id,
+                _time.time(),
+                source_type,
+                findings_count,
+                ioc_count,
+                hit_rate,
             )
 
         except Exception as e:
-
             log.warning(f"source_hit_log insert failed: {e}")
 
-
-
     # ── Sprint 8TB: Agentic Pivot Loop ──────────────────────────────────
-
-
 
     def inject_ioc_graph(self, ioc_graph: Any) -> None:
         """Inject IOCGraph reference for pivot operations.
@@ -28877,10 +24025,7 @@ class SprintScheduler:
         """
         return getattr(self, "_ioc_graph", None)
 
-
-
     def inject_policy_manager(self, policy_manager: Any) -> None:
-
         """Inject SprintPolicyManager reference (opt-in RL layer)."""
 
         self._policy_manager = policy_manager
@@ -28890,11 +24035,7 @@ class SprintScheduler:
         # adaptation back to this scheduler's _adapt_source_weights_from_feedback
 
         if hasattr(policy_manager, "inject_scheduler"):
-
             policy_manager.inject_scheduler(self)
-
-
-
 
     def inject_communication_layer(self, layer: Any) -> None:
         """Inject CommunicationLayer reference (F26X-3, advisory, default-OFF).
@@ -28921,6 +24062,7 @@ class SprintScheduler:
         self._stealth_layer = layer
         # Issue 8.4: propagate stealth state to ContextVar for TaskGroup child task visibility
         from core.telemetry.context_state import set_stealth_enabled as _set_stealth
+
         _set_stealth(layer is not None)
 
     def inject_ghost_layer(self, layer: Any) -> None:
@@ -28935,9 +24077,7 @@ class SprintScheduler:
         """
         self._ghost_layer = layer
 
-
     def inject_prefetch_oracle(self, oracle: Any) -> None:
-
         """
 
         Inject PrefetchOracleIntegration reference (advisory prefetch ordering).
@@ -28955,7 +24095,6 @@ class SprintScheduler:
         self._prefetch_oracle = oracle
 
     def inject_prefetch_pipeline(self, pipeline: Any) -> None:
-
         """
 
         P3-3: Inject ContinuousPrefetchPipeline reference.
@@ -28978,7 +24117,6 @@ class SprintScheduler:
         self._temporal_predictor = predictor
 
     def get_prefetch_pipeline_stats(self) -> dict[str, Any] | None:
-
         """
 
         P3-3: Return pipeline statistics if pipeline is injected.
@@ -28986,15 +24124,11 @@ class SprintScheduler:
         """
 
         if self._prefetch_pipeline is None:
-
             return None
 
         return self._prefetch_pipeline.get_stats()
 
-
-
     def inject_pivot_planner(self, planner: Any) -> None:
-
         """
 
         Inject PivotPlanner reference (F202G advisory pivot ordering).
@@ -29013,10 +24147,7 @@ class SprintScheduler:
 
         self._pivot_planner = planner
 
-
-
     def inject_analyst_workbench(self, workbench: Any) -> None:
-
         """
 
         F204E: Inject AnalystWorkbench reference for sprint brief generation.
@@ -29037,18 +24168,11 @@ class SprintScheduler:
 
         self._analyst_workbench = workbench
 
-
-
     def inject_forensics_enricher(
-
         self,
-
         enricher: Any,
-
         lmdb_env: Any = None,
-
     ) -> None:
-
         """
 
         F195C: Inject ForensicsEnricher + LMDB env (external wiring).
@@ -29069,18 +24193,11 @@ class SprintScheduler:
 
         self._forensics_lmdb_env = lmdb_env
 
-
-
     def inject_multimodal_enricher(
-
         self,
-
         enricher: Any,
-
         lmdb_env: Any = None,
-
     ) -> None:
-
         """
 
         F195C: Inject MultimodalEnricher + LMDB env (external wiring).
@@ -29101,10 +24218,7 @@ class SprintScheduler:
 
         self._multimodal_lmdb_env = lmdb_env
 
-
-
     def inject_enrichment_services(self, services: Any) -> None:
-
         """F350M: Inject EnrichmentServices (forensics + multimodal unified lifecycle)."""
 
         self._enrichment_services = services
@@ -29114,13 +24228,9 @@ class SprintScheduler:
         self._evidence_log = elog
 
     def inject_source_economics(
-
         self,
-
         economics: dict[str, SourceEconomics],
-
     ) -> None:
-
         """
 
         F160C: Inject pre-built source economics map (external wiring).
@@ -29136,13 +24246,9 @@ class SprintScheduler:
         """
 
         if economics is not None:
-
             self._source_economics = economics
 
-
-
     def inject_duckdb_store(self, store: Any) -> None:
-
         """
 
         F195: Inject DuckDB store reference (canonical write seam).
@@ -29159,14 +24265,9 @@ class SprintScheduler:
 
         self._duckdb_store = store
 
-        self._duckdb_can_ingest = store is not None and hasattr(
-
-            store, "async_ingest_findings_batch"
-
-        )
+        self._duckdb_can_ingest = store is not None and hasattr(store, "async_ingest_findings_batch")
 
     def inject_privacy_layer(self, layer: Any) -> None:
-
         """
 
         F26X: Inject PrivacyLayer reference for PII gate.
@@ -29199,7 +24300,6 @@ class SprintScheduler:
         self._security_coordinator = coordinator
 
     def get_analyst_brief(self) -> Any:
-
         """
 
         F204E: Return the last generated analyst brief.
@@ -29212,10 +24312,7 @@ class SprintScheduler:
 
         return getattr(self, "_analyst_brief", None)
 
-
-
     def get_planned_pivots(self) -> list:
-
         """
 
         F202G: Return last planned pivots for diagnostics.
@@ -29228,10 +24325,7 @@ class SprintScheduler:
 
         return getattr(self, "_planned_pivots", [])
 
-
-
     async def _sensitive_query_transport(self) -> str:
-
         """
 
         Sprint F250: Return preferred transport for sensitive queries.
@@ -29245,46 +24339,38 @@ class SprintScheduler:
         # Check Nym first (highest anonymity)
 
         try:
-
             from hledac.universal.transport.nym_transport import NymTransport
 
             nym = NymTransport()
 
             if nym.is_running and not getattr(nym, "circuit_breaker_open", False):
-
                 return "nym"
 
         except Exception:  # noqa: BLE001
-
             pass
 
         # Check Tor
 
         try:
-
             from hledac.universal.transport.tor_transport import TorTransport
 
             tor = TorTransport()
 
             if tor.available and getattr(tor, "_circuit_established", False):
-
                 return "tor"
 
         except Exception:  # noqa: BLE001
-
             pass
 
         # Check I2P -- use singleton first, fallback to instantiation
 
         try:
-
             from hledac.universal.transport.i2p_transport import I2PTransport
             from hledac.universal.transport.transport_resolver import get_i2p_transport_singleton
 
             singleton = get_i2p_transport_singleton()
 
             if singleton is not None and await singleton.is_running():
-
                 return "i2p"
 
             # Fallback: instantiate to check is_running()
@@ -29292,19 +24378,14 @@ class SprintScheduler:
             i2p = I2PTransport()
 
             if await i2p.is_running():
-
                 return "i2p"
 
         except Exception:  # noqa: BLE001
-
             pass
 
         return "clearnet"
 
-
-
     async def health_check(self) -> HealthReport:
-
         """
 
         F228F: Pre-run health check for critical dependencies.
@@ -29332,8 +24413,6 @@ class SprintScheduler:
         fetch_coordinator_ok = False
 
         graph_service_ok = False
-
-
 
         # DuckDB: check store exists, has async_ingest_findings_batch, and is not locked
         duckdb_locked = False
@@ -29378,8 +24457,8 @@ class SprintScheduler:
         # F265.1: Memory pressure check for M1 8GB
         # F270-4.3: Uses module-level _psutil (imported once at module load)
         try:
-            M1_MEMORY_WARNING_THRESHOLD = 5.5 * 1024 ** 3  # 5.5 GiB
-            M1_MEMORY_CRITICAL_THRESHOLD = 6.0 * 1024 ** 3  # 6.0 GiB
+            M1_MEMORY_WARNING_THRESHOLD = 5.5 * 1024**3  # 5.5 GiB
+            M1_MEMORY_CRITICAL_THRESHOLD = 6.0 * 1024**3  # 6.0 GiB
             current_rss = getattr(self, "_current_rss_mb", 0) * 1024 * 1024
             if current_rss > M1_MEMORY_CRITICAL_THRESHOLD:
                 memory_pressure_ok = False
@@ -29389,8 +24468,6 @@ class SprintScheduler:
                 log.warning(f"[F265.1] memory pressure warning: RSS={current_rss / (1024**3):.1f}GiB > 5.5GiB")
         except Exception:
             memory_pressure_ok = True  # best-effort, don't block sprint
-
-
 
         # Hermes: check engine loaded
 
@@ -29415,11 +24492,9 @@ class SprintScheduler:
         except Exception as e:
             errors.append(f"hermes check failed: {e}")
 
-
         # FetchCoordinator: check via public_fetcher session status
 
         try:
-
             from hledac.universal.fetching.public_fetcher import get_public_fetcher_session_status
 
             status = get_public_fetcher_session_status()
@@ -29427,31 +24502,20 @@ class SprintScheduler:
             # fetcher considered available if any session is present and not closed
 
             fetch_coordinator_ok = (
-
                 status.get("tor_session_present", False) and not status.get("tor_session_closed", True)
-
-            ) or (
-
-                status.get("i2p_session_present", False) and not status.get("i2p_session_closed", True)
-
-            )
+            ) or (status.get("i2p_session_present", False) and not status.get("i2p_session_closed", True))
 
             if not fetch_coordinator_ok:
-
                 errors.append("public_fetcher sessions not available")
 
         except Exception:
-
             # fetch_coordinator not critical -- degraded mode only
 
             fetch_coordinator_ok = False
 
-
-
         # GraphService: check via module-level graph_stats() function
 
         try:
-
             from hledac.universal.knowledge.graph_service import graph_stats
 
             stats = graph_stats()
@@ -29459,17 +24523,13 @@ class SprintScheduler:
             graph_service_ok = stats is not None
 
         except Exception:
-
             graph_service_ok = False  # fail-soft, graph is optionalional
-
-
 
         # Nym circuit breaker state
         # F270-4.3: _safe_getattr replaces getattr(..., False) lambda pattern
         nym_circuit_open = False
 
         try:
-
             from hledac.universal.transport.nym_transport import NymTransport
 
             nym = NymTransport()
@@ -29477,10 +24537,7 @@ class SprintScheduler:
             nym_circuit_open = _safe_getattr(nym, "circuit_breaker_open", False)
 
         except Exception:  # noqa: BLE001
-
             pass  # noqa: BLE001  # Nym is optional
-
-
 
         # overall_ok: duckdb and hermes are critical
         # F228G: blocking_ok is the stricter "sprint MUST run" check -- only
@@ -29492,36 +24549,20 @@ class SprintScheduler:
 
         blocking_ok = duckdb_ok and graph_service_ok and memory_pressure_ok
 
-
-
         report = HealthReport(
-
             duckdb_ok=duckdb_ok,
-
             hermes_ok=hermes_ok,
-
             fetch_coordinator_ok=fetch_coordinator_ok,
-
             graph_service_ok=graph_service_ok,
-
             nym_circuit_open=nym_circuit_open,
-
             evidence_log_ok=evidence_log_ok,
-
             memory_pressure_ok=memory_pressure_ok,
-
             overall_ok=overall_ok,
-
             blocking_ok=blocking_ok,
-
             errors=errors,
-
         )
 
-
-
         if blocking_ok:
-
             # Sprint F228G: blocking-OK is the only signal the operator must
             # trust to mean "sprint will run." Advisory degradation of hermes
             # or fetch is informational, not a blocker -- log at info level
@@ -29530,12 +24571,8 @@ class SprintScheduler:
                 log.info(f"[F228F] Health check: {report.summary()}")
             else:
                 # blocking_ok but hermes/transport advisory-degraded
-                log.info(
-                    f"[F228F] Health check: {report.summary()} "
-                    f"(advisory-degraded, non-blocking: {errors})"
-                )
+                log.info(f"[F228F] Health check: {report.summary()} (advisory-degraded, non-blocking: {errors})")
         else:
-
             # DuckDB or graph_service down -- sprint cannot write or query.
             # This IS a real blocker.
             log.warning(f"[F228F] Health check BLOCKING-DEGRADED: {errors}")
@@ -29551,21 +24588,13 @@ class SprintScheduler:
         self._health_cache = None
 
     def enqueue_pivot(
-
         self,
-
         ioc_value: str,
-
         ioc_type: str,
-
         confidence: float,
-
         degree: float = 1.0,
-
         task_type: str | None = None,
-
     ) -> None:
-
         """Sprint F-EXTRACT-2: Delegation wrapper to FetchCoordinator.enqueue_pivot.
 
         Original 104-LOC implementation moved to
@@ -29617,10 +24646,7 @@ class SprintScheduler:
             depth=depth,
         )
 
-
-
     async def _drain_pivot_queue(self, max_tasks: int = 5) -> int:
-
         """
 
         Drain up to max_tasks from pivot queue. Max 8s total deadline.
@@ -29634,28 +24660,22 @@ class SprintScheduler:
         deadline = _time.monotonic() + 8.0
 
         while processed < max_tasks:
-
             if _time.monotonic() > deadline:
-
                 break
 
             try:
-
                 task = self._pivot_queue.get_nowait()
 
             except asyncio.QueueEmpty:
-
                 break
 
             try:
-
                 async with asyncio.timeout(6.0):
                     await self._execute_pivot(task)
 
                 get_sprint_ctx().pivot_stats["processed"] += 1
 
             except (TimeoutError, Exception) as e:
-
                 get_sprint_ctx().pivot_stats["errors"] += 1
 
                 log.debug(f"pivot {task.task_type} {task.ioc_value}: {e}")
@@ -29664,30 +24684,19 @@ class SprintScheduler:
 
         return processed
 
-
-
     async def _execute_pivot(self, task: PivotTask) -> None:
-
         """Dispatch pivot task to appropriate intelligence client."""
 
-
-
-
         from hledac.universal.tool_registry import get_task_handler
-
-
 
         # Sprint 8VF: Registry dispatch -- OSINT handlers registered via @register_task
 
         handler = get_task_handler(task.task_type)
 
         if handler is not None:
-
             await handler(task, self)
 
             return
-
-
 
             # Sprint 8VF: Inline lifecycle handlers only (max 5 branches)
 
@@ -29696,88 +24705,57 @@ class SprintScheduler:
             # Sprint 8VI §C: Hypothesis -> DuckPGQ confirmed_by feedback
 
         elif task.task_type == "hypothesis_probe":
+            words = task.ioc_value.split()
 
-                words = task.ioc_value.split()
+            queries = sorted({w.lower() for w in words if len(w) > 5}, key=len, reverse=True)[:3]
 
-                queries = sorted(
+            count_before = getattr(self, "_finding_count", 0)
 
-                    {w.lower() for w in words if len(w) > 5},
+            for sq in queries:
+                self.enqueue_pivot(
+                    ioc_value=sq,
+                    ioc_type="url",
+                    confidence=0.7,
+                )
 
-                    key=len, reverse=True
+            count_after = getattr(self, "_finding_count", 0)
 
-                )[:3]
+            hyp_found = count_after - count_before
 
-                count_before = getattr(self, "_finding_count", 0)
+            # Sprint 8VI §C: Feedback -- successful hypotheses strengthen edges
 
-                for sq in queries:
+            if hyp_found > 0:
+                try:
+                    for ioc_entry in get_sprint_ctx().recent_iocs[-hyp_found:]:
+                        ioc_val = ioc_entry.get("value") or ioc_entry.get("ioc", "")
 
-                    self.enqueue_pivot(
+                        if ioc_val:
+                            _DEFAULT_GRAPH_SERVICE.upsert_relation(
+                                task.ioc_value[:100],
+                                ioc_val,
+                                rel_type="confirmed_by",
+                                weight=0.8,
+                                evidence="hypothesis_probe",
+                            )
 
-                        ioc_value=sq,
+                except Exception:  # noqa: BLE001
+                    pass
 
-                        ioc_type="url",
-
-                        confidence=0.7,
-
-                    )
-
-                count_after = getattr(self, "_finding_count", 0)
-
-                hyp_found = count_after - count_before
-
-                # Sprint 8VI §C: Feedback -- successful hypotheses strengthen edges
-
-                if hyp_found > 0:
-
-                    try:
-
-                        for ioc_entry in get_sprint_ctx().recent_iocs[-hyp_found:]:
-
-                            ioc_val = ioc_entry.get("value") or ioc_entry.get("ioc", "")
-
-                            if ioc_val:
-
-                                _DEFAULT_GRAPH_SERVICE.upsert_relation(
-
-                                    task.ioc_value[:100],
-
-                                    ioc_val,
-
-                                    rel_type="confirmed_by",
-
-                                    weight=0.8,
-
-                                    evidence="hypothesis_probe",
-
-                                )
-
-                    except Exception:  # noqa: BLE001
-
-                        pass
-
-
-
-            # Sprint 8VF §C: Sprint lifecycle inline handlers (only these stay as elif)
+        # Sprint 8VF §C: Sprint lifecycle inline handlers (only these stay as elif)
 
         elif task.task_type == "sprint_windup":
+            # Signal windup -- nothing to do in pivot
 
-                # Signal windup -- nothing to do in pivot
-
-                pass
-
-
+            pass
 
         else:
+            # Sprint 8VF: OSINT handlers moved to @register_task registry
 
-                # Sprint 8VF: OSINT handlers moved to @register_task registry
+            # (ti_feed_adapter, duckduckgo_adapter). Remaining types are either
 
-                # (ti_feed_adapter, duckduckgo_adapter). Remaining types are either
+            # unregistered or lifecycle-only.
 
-                # unregistered or lifecycle-only.
-
-                log.debug(f"[DISPATCH] Unknown task type: {task.task_type}")
-
-
+            log.debug(f"[DISPATCH] Unknown task type: {task.task_type}")
 
     # AptOnionSeeder is instantiated lazily on first use (lazy import to avoid early import cost)
     _apt_onion_seeder: Any = None
@@ -29809,12 +24787,7 @@ class SprintScheduler:
         candidates = seeder.get_candidates_for_query(query, min_confidence=0.7)
         return [domain for domain, _ in candidates]
 
-    async def _buffer_ioc_pivot(
-
-        self, ioc_type: str, ioc_value: str, confidence: float
-
-    ) -> None:
-
+    async def _buffer_ioc_pivot(self, ioc_type: str, ioc_value: str, confidence: float) -> None:
         """Wrapper: buffer IOC to graph and enqueue for further pivoting."""
 
         # Sprint F268 FIX: Removed isolated DuckPGQGraph() init — now uses
@@ -29825,21 +24798,15 @@ class SprintScheduler:
         # Sprint F238E Phase B: extract relation write to graph_accumulator
 
         if self._graph_accumulator is None:
-
             from hledac.universal.runtime.graph_accumulator import SprintGraphAccumulator
 
             self._graph_accumulator = SprintGraphAccumulator()
 
-
-
         self._graph_accumulator.buffer_pivot_relation(ioc_value, ioc_type, confidence)
-
-
 
         # Also buffer to pivot_ioc_graph if set
 
         if self._pivot_ioc_graph is not None:
-
             await self._pivot_ioc_graph.buffer_ioc(ioc_type, ioc_value, confidence)
 
             # Re-enqueue for further pivot (with degree+1)
@@ -29848,52 +24815,34 @@ class SprintScheduler:
 
             self.enqueue_pivot(ioc_value, ioc_type, confidence * 0.9, degree)
 
-
-
     # ── Sprint 8UC B.4: Speculative prefetch ─────────────────────────────
 
-
-
     async def _speculative_prefetch(
-
         self,
-
         n: int = 3,
-
     ) -> None:
-
         """Spustit top-n pivot tasků spekulativně jako background tasks."""
 
         if self._pivot_queue.empty():
-
             return
-
-
 
         # Sprint 8RA: Bound _speculative_results to prevent unbounded growth
 
         if len(self._speculative_results) > 500:
-
             keys = list(self._speculative_results.keys())
 
             for k in keys[:250]:
-
                 del self._speculative_results[k]
-
-
 
         # Peek top-n z heap (min-heap: nejnižší = nejvyšší priorita)
 
         peeked = []
 
         try:
-
             with self._pivot_queue.mutex:
-
                 peeked = list(self._pivot_queue.queue)[:n]
 
         except AttributeError:
-
             # Fallback for queues without mutex
 
             # NON-DESTRUCTIVE: get item, re-enqueue immediately to preserve queue
@@ -29901,9 +24850,7 @@ class SprintScheduler:
             peeked = []
 
             for _ in range(min(n, self._pivot_queue.qsize())):
-
                 try:
-
                     item = self._pivot_queue.get_nowait()
 
                     peeked.append(item)
@@ -29911,29 +24858,20 @@ class SprintScheduler:
                     self._pivot_queue.put_nowait(item)
 
                 except asyncio.QueueEmpty:
-
                     break
 
                 except asyncio.QueueFull:
-
                     break
 
-
-
         for pivot_task in peeked[:n]:
-
             task_key = f"{pivot_task.task_type}:{pivot_task.ioc_value}"
 
             if task_key in self._speculative_results:
-
                 continue
-
-
 
             async def _speculative_run(pt=pivot_task, key=task_key):
 
                 try:
-
                     result = await self._execute_pivot(pt)
 
                     self._speculative_results[key] = result or {}
@@ -29941,7 +24879,6 @@ class SprintScheduler:
                     log.debug(f"Speculative hit: {key}")
 
                 except asyncio.CancelledError:
-
                     # [I6] propagate -- silent swallow would hide cancellation from
 
                     # _bg_tasks gather teardown; cancellation must reach sprint owner
@@ -29949,10 +24886,7 @@ class SprintScheduler:
                     raise
 
                 except Exception as e:
-
                     log.debug(f"Speculative miss {key}: {e}")
-
-
 
             task = safe_create_task(_speculative_run(), name="sprint:speculative_run")
 
@@ -30017,19 +24951,12 @@ class SprintScheduler:
 
     # ── Sprint 8UC B.5: OODA agentic loop ────────────────────────────────
 
-
-
     async def _run_ooda_cycle(
-
         self,
-
         ioc_graph,
-
     ) -> None:
         """Jeden OODA cyklus -- 60s interval."""
         log.info("OODA: cycle start")
-
-
 
         # F270-4.3 FIX: Defenzivni resoluce grafu + bootstrap pro low-density graph.
         # Root cause: "acted on 0 nodes" kdyz:
@@ -30044,9 +24971,9 @@ class SprintScheduler:
         if _graph is None:
             _graph = getattr(self, "_ioc_graph", None)
 
-        _graph_source = "param" if ioc_graph else ("_pivot_ioc_graph" if getattr(self, "_pivot_ioc_graph", None) else "_ioc_graph")
-
-
+        _graph_source = (
+            "param" if ioc_graph else ("_pivot_ioc_graph" if getattr(self, "_pivot_ioc_graph", None) else "_ioc_graph")
+        )
 
         # OBSERVE -- use DuckPGQGraph.stats()["nodes"]
         node_count = 0
@@ -30060,16 +24987,13 @@ class SprintScheduler:
         except Exception:
             node_count = 0
 
-
-
         # ORIENT -- top-k nodes by degree (DuckPGQGraph.get_top_nodes_by_degree)
         # Transforms dict format to (value, ioc_type, degree) tuples.
         # degree serves as proxy for pagerank score.
         top_nodes: list = []
         try:
             if _graph and hasattr(_graph, "get_top_nodes_by_degree"):
-                raw_nodes = await asyncio.to_thread(
-                    _graph.get_top_nodes_by_degree, 10)
+                raw_nodes = await asyncio.to_thread(_graph.get_top_nodes_by_degree, 10)
                 for n in (raw_nodes or [])[:10]:
                     if isinstance(n, dict):
                         val = n.get("value", "")
@@ -30079,8 +25003,6 @@ class SprintScheduler:
                             top_nodes.append((val, ioc_type, degree))
         except Exception as e:
             log.debug(f"OODA Orient degree ranking: {e}")
-
-
 
         # F270-4.3 FIX: Bootstrap pro low-density graph (org name queries jako "LockBit BlackCat AlphV").
         # Kdyz graph ma <3 nodu nebo zadne hrany, extrahuj domain kandidat z:
@@ -30125,7 +25047,9 @@ class SprintScheduler:
                         _text = _row.get("payload_text", "") or ""
                         if _text and isinstance(_text, str):
                             try:
-                                _cands = extract_domain_candidates_from_text(_text, source_family="PUBLIC", min_confidence=0.2)
+                                _cands = extract_domain_candidates_from_text(
+                                    _text, source_family="PUBLIC", min_confidence=0.2
+                                )
                                 for c in _cands[:3]:
                                     if hasattr(c, "domain") and c.domain:
                                         _bootstrap_seeds.append((c.domain, "domain", c.confidence))
@@ -30146,8 +25070,6 @@ class SprintScheduler:
                     if len(top_nodes) >= 5:
                         break
 
-
-
         # DECIDE -- nodes with degree > 0 get priority boost
         decided_seeds: list = []
         for node in top_nodes[:5]:
@@ -30161,8 +25083,6 @@ class SprintScheduler:
                 confidence = min(0.95, 0.5 + (pr_score * 0.05))
                 decided_seeds.append((value, ioc_type, confidence))
 
-
-
         # ACT -- enqueue pivot tasks (sync, no await needed)
         acted = 0
         for value, ioc_type, confidence in decided_seeds:
@@ -30172,8 +25092,6 @@ class SprintScheduler:
             except Exception as e:
                 log.debug(f"OODA Act enqueue {value}: {e}")
 
-
-
         ctx = get_sprint_ctx()
         ctx.pivot_stats["ooda_cycles"] = ctx.pivot_stats.get("ooda_cycles", 0) + 1
         ctx.pivot_stats["ooda_last_acted"] = acted
@@ -30181,8 +25099,6 @@ class SprintScheduler:
         ctx.pivot_stats["ooda_edges"] = edge_count
         ctx.pivot_stats["ooda_graph_source"] = _graph_source
         log.info(f"OODA: acted on {acted} nodes [nodes={node_count} edges={edge_count} src={_graph_source}]")
-
-
 
     # ── Sprint 8VD §B: Arrow / Parquet columnar buffer ────────────────────
 
@@ -30204,7 +25120,6 @@ class SprintScheduler:
         return 1000
 
     def _resolve_arrow_batch_hard_cap(self) -> int:
-
         """Resolve Arrow batch hard cap from env or return M1-safe default.
 
 
@@ -30218,21 +25133,16 @@ class SprintScheduler:
         """
 
         try:
-
             raw = ENV.get_int("HLEDAC_ARROW_BATCH_HARD_CAP")
             if raw:
                 return max(100, min(raw, 50000))
 
         except (ValueError, TypeError):
-
             pass  # noqa: BLE001  # env parsing fail-safe
 
         return max(2 * self._arrow_flush_n, 2000)
 
-
-
     async def _maybe_flush_to_parquet(self) -> None:
-
         """Flush Arrow batch to Parquet when N or S threshold is hit.
 
 
@@ -30248,67 +25158,44 @@ class SprintScheduler:
         now = _time.monotonic()
 
         if (
-
             len(get_sprint_ctx().arrow_batch) < self._arrow_flush_n
-
             and now - self._arrow_last_flush < self._ARROW_FLUSH_S
-
         ):
-
             return
 
         if not get_sprint_ctx().arrow_batch:
-
             return
 
-
-
         try:
-
             import pyarrow as pa
             import pyarrow.parquet as pq
 
         except ImportError:
-
             log.warning("[8VD-PARQUET] pyarrow not available -- skipping flush")
 
             return
-
-
 
         batch = get_sprint_ctx().arrow_batch[:]
 
         # F214OPT-D: Do NOT clear batch until flush succeeds -- preserves data on failure
 
-
-
-        schema = pa.schema([
-
-            ("url",        pa.string()),
-
-            ("title",      pa.string()),
-
-            ("snippet",    pa.string()),
-
-            ("source",     pa.string()),
-
-            ("ioc",        pa.string()),
-
-            ("ioc_type",   pa.string()),
-
-            ("confidence", pa.float32()),
-
-            ("timestamp",  pa.timestamp("ms", tz="UTC")),
-
-            ("sprint_id",  pa.string()),
-
-        ])
+        schema = pa.schema(
+            [
+                ("url", pa.string()),
+                ("title", pa.string()),
+                ("snippet", pa.string()),
+                ("source", pa.string()),
+                ("ioc", pa.string()),
+                ("ioc_type", pa.string()),
+                ("confidence", pa.float32()),
+                ("timestamp", pa.timestamp("ms", tz="UTC")),
+                ("sprint_id", pa.string()),
+            ]
+        )
 
         rows = {k: [r.get(k) for r in batch] for k in schema.names}
 
         table = pa.table(rows, schema=schema)
-
-
 
         from hledac.universal.paths import get_sprint_parquet_dir
 
@@ -30316,12 +25203,12 @@ class SprintScheduler:
 
         path = get_sprint_parquet_dir(sid) / f"batch_{int(now * 1000)}.parquet"
 
-
-
         try:
-
             await asyncio.to_thread(
-                pq.write_table, table, path, compression="snappy",
+                pq.write_table,
+                table,
+                path,
+                compression="snappy",
             )
 
             log.info(f"[8VD-PARQUET] flushed {len(batch)} rows -> {path}")
@@ -30333,7 +25220,6 @@ class SprintScheduler:
             self._arrow_last_flush = now
 
         except Exception as exc:
-
             # F214OPT-D: Flush failed -- record error, enforce HARD_CAP, keep partial
 
             self._result.arrow_last_flush_error = str(exc)[:256]
@@ -30343,7 +25229,6 @@ class SprintScheduler:
             hard_cap = self._ARROW_BATCH_HARD_CAP
 
             if batch_len > hard_cap:
-
                 drop_count = batch_len - hard_cap
 
                 get_sprint_ctx().arrow_batch = get_sprint_ctx().arrow_batch[drop_count:]
@@ -30351,23 +25236,16 @@ class SprintScheduler:
                 self._result.arrow_batch_dropped_after_flush_failure += drop_count
 
                 log.warning(
-
                     f"[8VD-PARQUET] flush failed ({exc}), dropped {drop_count} oldest "
-
                     f"entries to enforce HARD_CAP={hard_cap}, {len(get_sprint_ctx().arrow_batch)} remain"
-
                 )
 
             else:
-
                 # Keep batch intact -- it will retry on next call
 
                 log.warning(f"[8VD-PARQUET] flush failed ({exc}), batch intact ({batch_len}), will retry")
 
-
-
     def buffer_finding(self, finding: dict) -> None:
-
         """Buffer a finding into the Arrow batch."""
 
         # NOTE D1: list.append() is optimal for Python lists (dynamic array,
@@ -30381,7 +25259,6 @@ class SprintScheduler:
         # Kick off async flush without awaiting
 
         try:
-
             _t = safe_create_task(self._maybe_flush_to_parquet(), name="sprint:flush_arrow")
 
             self._bg_tasks.add(_t)
@@ -30389,49 +25266,38 @@ class SprintScheduler:
             _t.add_done_callback(self._bg_tasks.discard)
 
         except RuntimeError:
-
             pass  # noqa: BLE001  # callback may already be unregistered  # No running loop in sync context
 
         # Sprint 8VF §B.3: IOC extraction -- regex PRIMARY, spaCy SECONDARY
 
-        _text = " ".join(filter(None, [
-
-            finding.get("snippet", ""),
-
-            finding.get("content", ""),
-
-            finding.get("title", ""),
-
-        ])).strip()
+        _text = " ".join(
+            filter(
+                None,
+                [
+                    finding.get("snippet", ""),
+                    finding.get("content", ""),
+                    finding.get("title", ""),
+                ],
+            )
+        ).strip()
 
         if len(_text) > 10:
-
             try:
-
                 from hledac.universal.brain.ane_embedder import extract_iocs_from_text
 
                 for ioc in extract_iocs_from_text(_text[:2_000]):
-
                     ioc_entry = {
-
                         **ioc,
-
                         "source": "ner_extracted",
-
                         "parent_url": finding.get("url", ""),
-
                     }
 
                     self.buffer_ioc(ioc_entry)
 
             except Exception:  # noqa: BLE001
-
                 pass  # noqa: BLE001  # NER is enrichment -- never crashes the pipeline
 
-
-
     def buffer_ioc(self, ioc: dict) -> None:
-
         """
 
         Buffer an IOC into the Arrow batch.
@@ -30449,36 +25315,26 @@ class SprintScheduler:
         ioc_entry = dict(ioc)
 
         if hasattr(self, "_ioc_scorer") and self._ioc_scorer is not None:
-
             try:
-
                 score = self._ioc_scorer.final_score(ioc_entry)
 
                 ioc_entry["confidence"] = score
 
             except Exception as _exc:
-
                 log.debug("ioc_scorer.final_score failed: %s", _exc)
-
-
 
         # Sprint 8VI §C: Ring buffer -- max 100 recent IOCs
         ctx = get_sprint_ctx()
         ctx.recent_iocs.append(ioc_entry)
         ctx.recent_iocs = ctx.recent_iocs[-100:]
 
-
-
         # Sprint 8VI §C: Hypothesis -> DuckPGQ confirmed_by hrany
 
         # (handled in _execute_pivot after finding confirmation)
 
-
-
         get_sprint_ctx().arrow_batch.append(ioc_entry)
 
         try:
-
             _t = safe_create_task(self._maybe_flush_to_parquet(), name="sprint:flush_arrow_ioc")
 
             self._bg_tasks.add(_t)
@@ -30486,28 +25342,19 @@ class SprintScheduler:
             _t.add_done_callback(self._bg_tasks.discard)
 
         except RuntimeError:
-
             pass  # noqa: BLE001  # callback may already be unregistered
-
-
 
     # ── Sprint 8VD §B.5: DuckDB singleton helpers ───────────────────────────
 
-
-
     def _get_duckdb_con(self):
-
         """Singleton DuckDB connection -- initialized once."""
 
         if self._duckdb_read_con is None:
-
             import duckdb
 
             self._duckdb_read_con = duckdb.connect()
 
         return self._duckdb_read_con
-
-
 
     def query_sprint_results(self, sql: str) -> list[dict]:
         """DuckDB zero-copy query over Parquet files via Arrow.
@@ -30527,13 +25374,9 @@ class SprintScheduler:
             except Exception:
                 return []
 
-
-
     # NOTE D1: f-string per finding is optimal. No caching needed for this path.
 
     # ── F5.4: DuckDB-powered dedup + ranking ───────────────────────────────
-
-
 
     def deduplicate_and_rank_findings(self, sprint_id: str | None = None) -> str:
         """DuckDB-powered dedup + ranking over Parquet files (F5.4).
@@ -30584,17 +25427,21 @@ class SprintScheduler:
             (
                 pl.scan_parquet(glob)
                 .filter(pl.col("url").is_not_null() | pl.col("ioc").is_not_null())
-                .with_columns([
-                    pl.col("confidence").fill_null(0.5),
-                    pl.col("source").cast(pl.Categorical),
-                ])
+                .with_columns(
+                    [
+                        pl.col("confidence").fill_null(0.5),
+                        pl.col("source").cast(pl.Categorical),
+                    ]
+                )
                 .group_by(["url", "ioc"])
-                .agg([
-                    pl.col("title").first(),
-                    pl.col("source").first(),
-                    pl.col("confidence").max(),
-                    pl.len().alias("hit_count"),
-                ])
+                .agg(
+                    [
+                        pl.col("title").first(),
+                        pl.col("source").first(),
+                        pl.col("confidence").max(),
+                        pl.len().alias("hit_count"),
+                    ]
+                )
                 .sort("hit_count", descending=True)
                 .collect(engine="streaming")
                 .write_parquet(out, compression="snappy")
@@ -30624,32 +25471,28 @@ class SprintScheduler:
             """).fetchall()
 
             if rows:
-                schema = pa.schema([
-                    ("title", pa.string()),
-                    ("source", pa.string()),
-                    ("url", pa.string()),
-                    ("ioc", pa.string()),
-                    ("confidence", pa.float64()),
-                    ("hit_count", pa.int64()),
-                ])
+                schema = pa.schema(
+                    [
+                        ("title", pa.string()),
+                        ("source", pa.string()),
+                        ("url", pa.string()),
+                        ("ioc", pa.string()),
+                        ("confidence", pa.float64()),
+                        ("hit_count", pa.int64()),
+                    ]
+                )
                 tbl = pa.table.from_pylist(rows, schema=schema)
                 pq.write_table(tbl, out, compression="snappy")
             return out
         except Exception:
             return out  # Return path even on failure — callers handle None
 
-
-
     # ── Sprint F214: DHT KademliaNode singleton background init ─────────────
 
-
-
     async def _init_dht_node_background(self) -> None:
-
         """Background init -- DHT node singleton (F214). Fire-and-forget."""
 
         try:
-
             import uuid
 
             from hledac.universal.core.resource_governor import ResourceGovernor
@@ -30659,18 +25502,12 @@ class SprintScheduler:
                 KademliaNode,
             )
 
-
-
             gov = self._governor or ResourceGovernor()
 
             node = KademliaNode(
-
                 node_id=f"hledac-sprint-{uuid.uuid4().hex[:8]}",
-
                 governor=gov,
-
                 bootstrap_nodes=list(DHT_BOOTSTRAP_PEERS),
-
             )
 
             await node.start()
@@ -30680,26 +25517,17 @@ class SprintScheduler:
             log.info("[DHT] singleton started (real_udp=%s)", DHT_REAL_UDP)
 
         except Exception as e:
-
             log.debug("[DHT] background init failed (non-fatal): %s", e)
 
             self._dht_node = None
 
-
-
     # ── Sprint F250: I2PTransport background init ────────────────────────────
 
-
-
     async def _init_i2p_background(self) -> None:
-
         """Background init -- I2PTransport singleton (F250). Fire-and-forget."""
 
         try:
-
             from hledac.universal.transport.i2p_transport import I2PTransport
-
-
 
             transport = I2PTransport()
 
@@ -30712,61 +25540,44 @@ class SprintScheduler:
             # F250: Register singleton so transport_resolver/router share same session
 
             try:
-
                 from hledac.universal.transport.transport_resolver import set_i2p_transport_singleton
 
                 set_i2p_transport_singleton(self._i2p_transport)
 
             except Exception:  # noqa: BLE001
-
                 pass
 
             try:
-
                 from hledac.universal.transport.transport_router import set_i2p_transport_singleton
 
                 set_i2p_transport_singleton(self._i2p_transport)
 
             except Exception:  # noqa: BLE001
-
                 pass
 
         except Exception as e:  # noqa: BLE001
-
             log.debug("[I2P] background init failed (non-fatal): %s", e)
 
             if self._i2p_transport is not None:
-
                 try:
-
                     self._i2p_transport.available = False
 
                 except Exception:  # noqa: BLE001
-
                     pass
-
-
 
     # ── Sprint F214Q B.3: TorTransport background init ─────────────────────────
 
-
-
     async def _init_tor_background(self) -> None:
-
         """Background init -- TorTransport singleton (F214Q). Fire-and-forget."""
 
         try:
-
             from hledac.universal.transport.tor_transport import TorTransport, set_tor_transport_singleton
-
-
 
             transport = TorTransport()
 
             started = await transport.start()
 
             if not started:
-
                 set_tor_transport_singleton(None)
 
                 log.debug("[Tor] start failed -- transport disabled")
@@ -30780,37 +25591,24 @@ class SprintScheduler:
             log.info("[Tor] background transport started")
 
         except Exception as e:  # noqa: BLE001
-
             log.debug("[Tor] background init failed (non-fatal): %s", e)
 
             if self._tor_transport is not None:
-
                 try:
-
                     self._tor_transport.available = False
 
                 except Exception:  # noqa: BLE001
-
                     pass
-
-
 
     # ── Sprint F250: NymTransport background init ───────────────────────────
 
-
-
     async def _init_nym_background(self) -> None:
-
         """Background init -- NymTransport singleton (F250). Fire-and-forget."""
 
         try:
-
             from hledac.universal.transport.nym_transport import NYM_CLIENT_AVAILABLE, NymTransport
 
-
-
             if not NYM_CLIENT_AVAILABLE:
-
                 from hledac.universal.transport.nym_transport import set_nym_transport_singleton
 
                 set_nym_transport_singleton(None)
@@ -30818,8 +25616,6 @@ class SprintScheduler:
                 log.debug("[Nym] nym-client not available -- transport disabled")
 
                 return
-
-
 
             transport = NymTransport()
 
@@ -30830,39 +25626,26 @@ class SprintScheduler:
             log.info("[Nym] background transport started")
 
         except Exception as e:  # noqa: BLE001
-
             log.debug("[Nym] background init failed (non-fatal): %s", e)
 
             if self._nym_transport is not None:
-
                 try:
-
                     self._nym_transport.available = False
 
                 except Exception:  # noqa: BLE001
-
                     pass
-
-
 
     # ── Sprint 8VD §C: Memory pressure loop ────────────────────────────────
 
-
-
     async def _memory_pressure_loop(self) -> None:
-
         """Background task -- adjusts concurrency based on memory pressure."""
 
         import asyncio as asyncio
 
         from hledac.universal.resource_allocator import get_recommended_concurrency
 
-
-
         while True:
-
             try:
-
                 limits = get_recommended_concurrency()
 
                 self._fetch_semaphore = asyncio.Semaphore(limits["fetch"])
@@ -30879,23 +25662,18 @@ class SprintScheduler:
                     except Exception as _bp_exc:
                         log.debug("[BACKPRESSURE] evaluate failed: %s", _bp_exc)
 
-                log.info(
-
-                    f"[MEM] fetch_limit={limits['fetch']} "
-
-                    f"ml_jobs={limits['ml_jobs']}"
-
-                )
+                log.info(f"[MEM] fetch_limit={limits['fetch']} ml_jobs={limits['ml_jobs']}")
 
                 interval = 10 if limits["fetch"] <= 2 else 30
 
                 # F-Alert: Memory delta check — fire alert if > 1GB delta
                 try:
                     from hledac.universal.monitoring.alert_manager import (
-                        check_memory_delta_alert,
                         check_lock_contention_alert,
+                        check_memory_delta_alert,
                         get_lock_contention_tracker,
                     )
+
                     if _psutil is not None:
                         _current_rss_mb = _psutil.Process().memory_info().rss / (1024 * 1024)
                         await check_memory_delta_alert(self._memory_delta_tracker, _current_rss_mb)
@@ -30905,7 +25683,6 @@ class SprintScheduler:
                     pass
 
             except Exception as e:
-
                 log.warning(f"[MEM] pressure check failed: {e}")
 
                 interval = 30
@@ -30919,17 +25696,13 @@ class SprintScheduler:
             except asyncio.CancelledError:
                 break
 
-
     # ── Sprint 8VM: Shadow Pre-Decision Consumer ───────────────────────────
 
     # Read-only seam: consumes existing shadow/pre-decision layer
 
     # WITHOUT creating new scheduler framework, mutable state, or execution path
 
-
-
     def consume_shadow_pre_decision(self) -> Any:
-
         """
 
         Sprint 8VM: Read-only shadow pre-decision consumer.
@@ -30982,40 +25755,27 @@ class SprintScheduler:
 
         from hledac.universal.runtime.shadow_inputs import RuntimeMode
 
-
-
         # Only run when shadow mode is explicitly enabled
 
         if not RuntimeMode.is_shadow_mode():
-
             return None
-
-
 
         # Return cached value if already computed this sprint
 
         if self._shadow_pd_summary is not None:
-
             return self._shadow_pd_summary
-
-
 
         lc = None
 
         if self._lc_adapter is not None:
-
             lc = self._lc_adapter._lc
 
         if lc is None:
-
             return None
-
-
 
         # Collect lifecycle snapshot
 
         try:
-
             now_mono = _time.monotonic()
 
             # Derive thermal state from latency EMA (read-only heuristic)
@@ -31023,140 +25783,86 @@ class SprintScheduler:
             thermal = "nominal"
 
             if self._fetch_latency_ema:
-
                 max_ema = max(self._fetch_latency_ema.values()) if self._fetch_latency_ema else 10.0
 
                 if max_ema > 20.0:
-
                     thermal = "critical"
 
                 elif max_ema > 15.0:
-
                     thermal = "throttled"
 
                 elif max_ema > 10.0:
-
                     thermal = "fair"
 
-
-
             lifecycle_bundle = collect_lifecycle_snapshot(
-
-                lc, now_mono, thermal,
-
+                lc,
+                now_mono,
+                thermal,
                 windup_synthesis_mode="synthesis",
-
                 windup_error=False,
-
                 windup_engine=self._synthesis_engine or "unknown",
-
             )
 
         except Exception:
-
             return None
-
-
 
         # Collect graph summary (may be None if no graph injected yet)
 
         try:
-
             graph_bundle = collect_graph_summary(self._ioc_graph)
 
         except Exception:
-
             from hledac.universal.runtime.shadow_inputs import GraphSummaryBundle
 
             graph_bundle = GraphSummaryBundle()
 
-
-
         # Collect model/control facts from scheduler config
 
         try:
-
             mc_bundle = collect_model_control_facts(
-
                 analyzer_result=None,
-
                 raw_profile={
-
                     "tools": [],
-
                     "sources": list(self._config.source_tier_map.keys()),
-
                     "privacy_level": "STANDARD",
-
                     "use_tor": False,
-
                     "depth": "STANDARD",
-
                     "use_tot": False,
-
                     "tot_mode": "standard",
-
                     "models_needed": [],
-
                 },
-
             )
 
         except Exception:
-
             from hledac.universal.runtime.shadow_inputs import ModelControlFactsBundle
 
             mc_bundle = ModelControlFactsBundle()
 
-
-
         # Export handoff facts (synthesized from scheduler state)
 
         export_facts = {
-
             "sprint_id": self.sprint_id or "unknown",
-
             "synthesis_engine": self._synthesis_engine or "unknown",
-
             "gnn_predictions": 0,
-
             "top_nodes_count": 0,
-
             "ranked_parquet_present": False,
-
             "phase_durations": {},
-
         }
 
-
-
         try:
-
             parity = run_shadow_parity(
-
                 lifecycle_bundle=lifecycle_bundle,
-
                 graph_bundle=graph_bundle,
-
                 model_control_bundle=mc_bundle,
-
                 export_handoff_facts=export_facts,
-
                 branch_decision=None,
-
                 provider_recommend=None,
-
                 correlation=None,
-
                 runtime_mode=RuntimeMode.get_current(),
-
             )
 
         except Exception:
-
             return None
-
-
 
         # Sprint F3.13: Collect provider runtime facts (read-only)
 
@@ -31171,7 +25877,6 @@ class SprintScheduler:
         # COMPAT is sufficient for diagnostic purposes).
 
         try:
-
             # Sprint F350M: Canonical import path -- F350N §H4 import truth fix
 
             from hledac.universal.brain.model_lifecycle import get_model_lifecycle_status
@@ -31179,30 +25884,21 @@ class SprintScheduler:
             lifecycle_status = get_model_lifecycle_status()
 
         except Exception:
-
             lifecycle_status = None
 
         try:
-
             runtime_facts = collect_provider_runtime_facts(model_manager=None, lifecycle_status=lifecycle_status)
 
         except Exception:
-
             from hledac.universal.runtime.shadow_inputs import ProviderRuntimeFactsBundle
 
             runtime_facts = ProviderRuntimeFactsBundle()
 
-
-
         try:
-
             pd_summary = compose_pre_decision(parity, runtime_facts=runtime_facts)
 
         except Exception:
-
             return None
-
-
 
         # Tool readiness preview -- DIAGNOSTIC ONLY, no dispatch, no execute_with_limits
 
@@ -31211,7 +25907,6 @@ class SprintScheduler:
         # Shadow path uses metadata-only preview (count/category heuristics, no registry init).
 
         try:
-
             # Sprint F350D: Use metadata-only heuristic -- lightweight, no registry materialization.
 
             # Tool count is estimated from source_tier_map size + known pipeline tools.
@@ -31223,11 +25918,7 @@ class SprintScheduler:
             source_types = list(self._config.source_tier_map.keys())
 
             has_network_tools = any(
-
-                s in source_types for s in
-
-                ["cisa_kev", "threatfox_ioc", "urlhaus_recent", "feodo_ip", "openphish_feed"]
-
+                s in source_types for s in ["cisa_kev", "threatfox_ioc", "urlhaus_recent", "feodo_ip", "openphish_feed"]
             )
 
             has_high_memory_tools = False  # unknown without registry init -- deferred
@@ -31235,166 +25926,119 @@ class SprintScheduler:
             # Attach as read-only diagnostic annotations to pd_summary
 
             pd_summary._tool_readiness_preview = {
-
                 "tool_count": estimated_tool_count,
-
                 "tool_names": [],  # unknown without registry init -- deferred
-
                 "has_network_tools": has_network_tools,
-
                 "has_high_memory_tools": has_high_memory_tools,
-
                 "tool_cards_sample": [],  # deferred without registry init
-
                 "_deferred_registry": True,  # marker: full registry not materialized
-
             }
 
         except Exception:  # noqa: BLE001
-
             # ToolRegistry unavailable -- skip, this is diagnostic only
 
             pass
-
-
 
         # Sprint F3.11: Dispatch parity preview -- DIAGNOSTIC ONLY
 
         # Read-only task candidate analysis, no execute_with_limits, no dispatch
 
         try:
-
             from hledac.universal.runtime.shadow_pre_decision import preview_dispatch_parity
-
-
 
             # Default task candidates for dispatch parity preview
 
             # These represent the pivot task types from _execute_pivot()
 
             task_candidates = [
-
-                "cve_to_github", "cve_to_academic",
-
-                "ip_to_ct", "ip_to_greynoise", "shodan_enrich",
-
-                "domain_to_dns", "domain_to_wayback", "domain_to_pdns",
-
-                "domain_to_ct", "ahmia_search", "rdap_lookup",
-
+                "cve_to_github",
+                "cve_to_academic",
+                "ip_to_ct",
+                "ip_to_greynoise",
+                "shodan_enrich",
+                "domain_to_dns",
+                "domain_to_wayback",
+                "domain_to_pdns",
+                "domain_to_ct",
+                "ahmia_search",
+                "rdap_lookup",
                 "hash_to_mb",
-
-                "wayback_search", "commoncrawl_search", "paste_keyword_search",
-
-                "github_dork", "multi_engine_search",
-
+                "wayback_search",
+                "commoncrawl_search",
+                "paste_keyword_search",
+                "github_dork",
+                "multi_engine_search",
                 "hypothesis_probe",
-
             ]
-
-
 
             # Available capabilities from model_control facts (heuristic)
 
             available_caps: set = set()
 
             if mc_bundle.tools:
-
                 # Map tools to capabilities heuristically
 
                 for tool in mc_bundle.tools:
-
                     if tool in ("web_search", "academic_search"):
-
                         available_caps.add("reranking")
 
                     if tool == "entity_extraction":
-
                         available_caps.add("entity_linking")
-
-
 
             # Control mode from lifecycle
 
-            ctrl_mode = lifecycle_bundle.control_phase.mode if hasattr(lifecycle_bundle, 'control_phase') else "normal"
-
-
+            ctrl_mode = lifecycle_bundle.control_phase.mode if hasattr(lifecycle_bundle, "control_phase") else "normal"
 
             # Sprint F350E: registry is metadata-only deferred -- never materialized in shadow path.
 
             # Shadow path uses source_tier_map as lightweight heuristic (avoids cold-import cost).
 
-            registry_tools: (list[str] | None) = None  # deferred: no full registry init in shadow path
-
-
+            registry_tools: list[str] | None = None  # deferred: no full registry init in shadow path
 
             dispatch_preview = preview_dispatch_parity(
-
                 task_candidates=task_candidates,
-
                 available_capabilities=available_caps,
-
                 control_mode=ctrl_mode,
-
                 registry_tools=registry_tools,
-
             )
-
-
 
             # Sprint F9: Attach execution context readiness (capability/correlation/audit separation)
 
             # This is READ-ONLY -- does not call execute_with_limits or activate anything
 
             try:
-
                 from hledac.universal.runtime.shadow_pre_decision import (
                     build_execution_context_readiness,
                 )
 
                 # Correlation context from scheduler run (run_id present in sprint context)
 
-                correlation_context: (dict[str, Any] | None) = None
+                correlation_context: dict[str, Any] | None = None
 
                 if hasattr(self, "_run_id") and self._run_id:
-
                     correlation_context = {"run_id": self._run_id}
-
-
 
                 execlogger_available = hasattr(self, "_tool_execlogger") and self._tool_execlogger is not None
 
-
-
                 execution_context = build_execution_context_readiness(
-
                     dispatch_preview=dispatch_preview,
-
                     correlation_context=correlation_context,
-
                     execlogger_available=execlogger_available,
-
                 )
 
                 dispatch_preview.execution_context = execution_context
 
             except Exception:  # noqa: BLE001
-
                 # Execution context unavailable -- skip, this is diagnostic only
 
                 pass
 
-
-
             pd_summary.dispatch_parity = dispatch_preview
 
         except Exception:  # noqa: BLE001
-
             # Dispatch preview unavailable -- skip, this is diagnostic only
 
             pass
-
-
 
         # Cache for repeated calls within the same sprint
 
@@ -31402,10 +26046,7 @@ class SprintScheduler:
 
         return pd_summary
 
-
-
     def evaluate_advisory_gate(self) -> None:
-
         """
 
         Sprint 8VQ: Evaluate advisory gate at WINDUP entry -- DIAGNOSTIC ONLY.
@@ -31434,30 +26075,20 @@ class SprintScheduler:
 
         from hledac.universal.runtime.shadow_pre_decision import compose_advisory_gate
 
-
-
         pd = self.consume_shadow_pre_decision()
 
         if pd is None:
-
             self._advisory_gate_snapshot = None
 
             return
 
-
-
         try:
-
             self._advisory_gate_snapshot = compose_advisory_gate(pd)
 
         except Exception:
-
             self._advisory_gate_snapshot = None
 
-
-
     def _build_shadow_readiness_preview(self) -> dict[str, Any]:
-
         """
 
         Sprint 8VM + 8VQ: Build a machine-readable shadow readiness preview dict.
@@ -31475,316 +26106,172 @@ class SprintScheduler:
         pd = self.consume_shadow_pre_decision()
 
         if pd is None:
-
             return {}
 
-
-
         result: dict[str, Any] = {
-
             "runtime_mode": pd.runtime_mode,
-
             "parity_timestamp_monotonic": pd.parity_timestamp_monotonic,
-
             "lifecycle_readiness": {
-
                 "phase": pd.lifecycle.workflow_phase,
-
                 "is_active": pd.lifecycle.is_active,
-
                 "is_windup": pd.lifecycle.is_windup,
-
                 "can_accept_work": pd.lifecycle.can_accept_work,
-
                 "should_prune": pd.lifecycle.should_prune,
-
                 "phase_conflict": pd.lifecycle.phase_conflict,
-
             },
-
             "graph_readiness": {
-
                 "backend": pd.graph.backend,
-
                 "readiness": pd.graph.readiness,
-
                 "nodes": pd.graph.nodes,
-
                 "edges": pd.graph.edges,
-
             },
-
             "export_readiness": {
-
                 "readiness": pd.export_readiness.readiness,
-
                 "synthesis_engine": pd.export_readiness.synthesis_engine,
-
             },
-
             "model_control_readiness": {
-
                 "readiness": pd.model_control.readiness,
-
                 "tools_count": pd.model_control.tools_count,
-
             },
-
             "diff_taxonomy": [d.name for d in pd.diff_taxonomy],
-
             "blockers": pd.blockers,
-
             "unknowns": pd.unknowns,
-
             "compat_seams": pd.compat_seams,
-
         }
-
-
 
         # Sprint 8VQ: Decision gate readiness
 
         if pd.decision_gate is not None:
-
             result["decision_gate"] = {
-
                 "gate_status": pd.decision_gate.gate_status,
-
                 "blocker_count": pd.decision_gate.blocker_count,
-
                 "unknown_count": pd.decision_gate.unknown_count,
-
                 "compat_seam_count": pd.decision_gate.compat_seam_count,
-
                 "is_proceed_allowed": pd.decision_gate.is_proceed_allowed,
-
                 "defer_to_provider": pd.decision_gate.defer_to_provider,
-
                 "blocker_categories": pd.decision_gate.blocker_categories,
-
                 "unknown_categories": pd.decision_gate.unknown_categories,
-
             }
-
-
 
         # Sprint 8VQ: Tool readiness preview (read-only, no dispatch)
 
         if pd.tool_readiness is not None:
-
             result["tool_readiness"] = {
-
                 "readiness": pd.tool_readiness.readiness,
-
                 "tool_count": pd.tool_readiness.tool_count,
-
                 "has_network_tools": pd.tool_readiness.has_network_tools,
-
                 "has_high_memory_tools": pd.tool_readiness.has_high_memory_tools,
-
                 "control_mode": pd.tool_readiness.control_mode,
-
                 "pruned_tool_count": pd.tool_readiness.pruned_tool_count,
-
                 "resource_constraint": pd.tool_readiness.resource_constraint,
-
                 "can_execute": pd.tool_readiness.can_execute,
-
                 "defer_reason": pd.tool_readiness.defer_reason,
-
             }
-
-
 
         # Sprint 8VQ: Windup readiness preview
 
         if pd.windup_readiness is not None:
-
             result["windup_readiness"] = {
-
                 "readiness": pd.windup_readiness.readiness,
-
                 "is_windup_phase": pd.windup_readiness.is_windup_phase,
-
                 "synthesis_mode": pd.windup_readiness.synthesis_mode,
-
                 "synthesis_engine": pd.windup_readiness.synthesis_engine,
-
                 "has_export_data": pd.windup_readiness.has_export_data,
-
                 "export_data_quality": pd.windup_readiness.export_data_quality,
-
                 "defer_reason": pd.windup_readiness.defer_reason,
-
             }
-
-
 
         # Sprint 8VQ: Provider activation note (deferred/unknown only)
 
         if pd.provider_note is not None:
-
             result["provider_activation_note"] = {
-
                 "status": pd.provider_note.status,
-
                 "deferral_reason": pd.provider_note.deferral_reason,
-
                 "has_recommendation": pd.provider_note.has_recommendation,
-
                 "recommendation": pd.provider_note.recommendation,
-
                 "next_phase_hint": pd.provider_note.next_phase_hint,
-
             }
-
-
 
         # Legacy: tool_readiness_preview from consumer seam (if still attached)
 
         if hasattr(pd, "_tool_readiness_preview"):
-
             result["tool_readiness_preview"] = pd._tool_readiness_preview
-
-
 
         # Sprint 8VQ: Advisory gate snapshot (computed at WINDUP entry, diagnostic only)
 
         if self._advisory_gate_snapshot is not None:
-
             ag = self._advisory_gate_snapshot
 
             result["advisory_gate"] = {
-
                 "gate_outcome": ag.gate_outcome,
-
                 "gate_status": ag.gate_status,
-
                 "blocker_count": ag.blocker_count,
-
                 "unknown_count": ag.unknown_count,
-
                 "compat_seam_count": ag.compat_seam_count,
-
                 "blocker_reasons": ag.blocker_reasons,
-
                 "unknown_reasons": ag.unknown_reasons,
-
                 "compat_seam_reasons": ag.compat_seam_reasons,
-
                 "defer_to_provider": ag.defer_to_provider,
-
                 "gate_evaluated_at_monotonic": ag.gate_evaluated_at_monotonic,
-
                 "gate_evaluated_at_wall": ag.gate_evaluated_at_wall,
-
             }
-
-
 
         # Sprint F3.11: Dispatch parity preview -- diagnostic only, no execute_with_limits
 
         if pd.dispatch_parity is not None:
-
             result["dispatch_parity"] = {
-
                 "readiness": pd.dispatch_parity.readiness,
-
                 "dispatch_path": pd.dispatch_parity.dispatch_path,
-
                 "canonical_count": pd.dispatch_parity.canonical_count,
-
                 "runtime_only_count": pd.dispatch_parity.runtime_only_count,
-
                 "satisfied_count": pd.dispatch_parity.satisfied_count,
-
                 "blocked_count": pd.dispatch_parity.blocked_count,
-
                 "runtime_only_handlers": pd.dispatch_parity.runtime_only_handlers,
-
                 "blockers": pd.dispatch_parity.blockers,
-
                 "pruned_tools": pd.dispatch_parity.pruned_tools,
-
                 "will_be_pruned": pd.dispatch_parity.will_be_pruned,
-
                 "control_mode": pd.dispatch_parity.control_mode,
-
             }
-
-
 
             # Sprint F9: Execution context readiness -- separated capability/correlation/audit
 
             # Exposed as separate section for clarity and future F9 cutover readiness
 
             if pd.dispatch_parity.execution_context is not None:
-
                 ec = pd.dispatch_parity.execution_context
 
                 result["execution_context"] = {
-
                     "capability_ready": ec.capability_ready,
-
                     "capability_missing": ec.capability_missing,
-
                     "correlation_ready": ec.correlation_ready,
-
                     "run_id_present": ec.run_id_present,
-
                     "branch_id_present": ec.branch_id_present,
-
                     "provider_id_present": ec.provider_id_present,
-
                     "action_id_present": ec.action_id_present,
-
                     "correlation_note": ec.correlation_note,
-
                     "audit_ready": ec.audit_ready,
-
                     "execlogger_note": ec.execlogger_note,
-
                     "canonical_tool_dispatch": ec.canonical_tool_dispatch,
-
                     "runtime_only_compat_dispatch": ec.runtime_only_compat_dispatch,
-
                     "blocker_matrix": ec.blocker_matrix,
-
                 }
-
-
 
         # Sprint F3.5-F3.6: Provider readiness preview -- diagnostic only, no activation
 
         if pd.provider_readiness is not None:
-
             result["provider_readiness"] = {
-
                 "readiness": pd.provider_readiness.readiness,
-
                 "has_recommendation": pd.provider_readiness.has_recommendation,
-
                 "recommendation": pd.provider_readiness.recommendation,
-
                 "lifecycle_ready": pd.provider_readiness.lifecycle_ready,
-
                 "control_ready": pd.provider_readiness.control_ready,
-
                 "thermal_safe": pd.provider_readiness.thermal_safe,
-
                 "has_facts": pd.provider_readiness.has_facts,
-
                 "blockers": pd.provider_readiness.blockers,
-
                 "unknowns": pd.provider_readiness.unknowns,
-
                 "next_phase_hint": pd.provider_readiness.next_phase_hint,
-
                 "deferred_reasons": pd.provider_readiness.deferred_reasons,
-
             }
-
-
 
         # Sprint F3.13: Provider runtime facts -- standalone top-level section
 
@@ -31797,21 +26284,13 @@ class SprintScheduler:
         # for cases where the complete fact set is needed.
 
         if pd.runtime_facts is not None:
-
             result["runtime_facts"] = pd.runtime_facts.to_dict()
-
-
 
         return result
 
-
-
     # ── Sprint 8VN: Correlation + Hypothesis seams ──────────────────────────
 
-
-
     def compute_sprint_intelligence(self) -> dict[str, Any]:
-
         """
 
         Sprint 8VN: Lazy fail-soft computation of correlation + hypothesis seams.
@@ -31850,25 +26329,14 @@ class SprintScheduler:
 
         findings = getattr(self, "_all_findings", []) or []
 
-
-
         result: dict[str, Any] = {
-
             "correlation": None,
-
             "hypothesis_pack": None,
-
             "branch_value": None,
-
             "signal_path": None,
-
             "feed_verdict": None,
-
             "public_verdict": None,
-
         }
-
-
 
         # ── Sprint F207J-A: Lane verdict (CT/WAYBACK/PASSIVE_DNS/BLOCKCHAIN) ──
 
@@ -31877,11 +26345,9 @@ class SprintScheduler:
         # depend on _all_findings and must appear in intelligence even for empty sprints.
 
         try:
-
-            lane_vlist: list[tuple[str, int, int, int, int]] = getattr(self, '_lane_verdicts', []) or []
+            lane_vlist: list[tuple[str, int, int, int, int]] = getattr(self, "_lane_verdicts", []) or []
 
             if lane_vlist:
-
                 verdict_tags: dict[str, int] = {}
 
                 total_signal = 0
@@ -31889,7 +26355,6 @@ class SprintScheduler:
                 total_quality = 0
 
                 for tag, sig, _fb_use, fb_waste, qual in lane_vlist:  # noqa: B007
-
                     verdict_tags[tag] = verdict_tags.get(tag, 0) + sig
 
                     total_signal += sig
@@ -31911,200 +26376,114 @@ class SprintScheduler:
                 avg_quality = total_quality / len(lane_vlist) if lane_vlist else 0.0
 
                 result["lane_verdict"] = {
-
                     "dominant_tag": dominant_tag,
-
-                    "ct_storage_rejection_reasons": list(
-
-                        getattr(self._result, 'ct_storage_rejection_reasons', ())
-
-                    ),
-
+                    "ct_storage_rejection_reasons": list(getattr(self._result, "ct_storage_rejection_reasons", ())),
                     "cycle_count": len(lane_vlist),
-
                     "total_signal_strength": total_signal,
-
                     "tag_distribution": verdict_tags,
-
                     "avg_quality": avg_quality,
-
                     "ct_findings": self._result.lane_ct_accepted_findings,
-
                     "wayback_findings": self._result.lane_wayback_accepted_findings,
-
                     "pdns_findings": self._result.lane_pdns_accepted_findings,
-
                     "blockchain_findings": self._result.lane_blockchain_accepted_findings,
-
                     "ipfs_findings": self._result.lane_ipfs_accepted_findings,
-
                     "doh_findings": self._result.lane_doh_accepted_findings,
-
                     # Issue 9: PUBLIC lane findings in lane_verdict
                     "public_findings": self._result.lane_public_accepted_findings,
-
                     # Sprint F214D: CT Bridge Loss Audit telemetry
-
-                    "ct_loss_stage": getattr(self._result, 'ct_loss_stage', 'no_loss'),
-
-                    "ct_bridge_invoked": getattr(self._result, 'ct_bridge_invoked', False),
-
-                    "ct_raw_count": getattr(self._result, 'ct_raw_count', 0),
-
-                    "ct_raw_sample_count": getattr(self._result, 'ct_raw_sample_count', 0),
-
-                    "ct_candidates_built": getattr(self._result, 'ct_candidates_built', 0),
-
-                    "ct_bridge_rejections_count": getattr(self._result, 'ct_bridge_rejections_count', 0),
-
-                    "ct_candidates_accumulated": getattr(self._result, 'ct_candidates_accumulated', 0),
-
-                    "ct_candidates_stored": getattr(self._result, 'ct_candidates_stored', 0),
-
-                    "ct_storage_rejected": getattr(self._result, 'ct_storage_rejected', 0),
-
+                    "ct_loss_stage": getattr(self._result, "ct_loss_stage", "no_loss"),
+                    "ct_bridge_invoked": getattr(self._result, "ct_bridge_invoked", False),
+                    "ct_raw_count": getattr(self._result, "ct_raw_count", 0),
+                    "ct_raw_sample_count": getattr(self._result, "ct_raw_sample_count", 0),
+                    "ct_candidates_built": getattr(self._result, "ct_candidates_built", 0),
+                    "ct_bridge_rejections_count": getattr(self._result, "ct_bridge_rejections_count", 0),
+                    "ct_candidates_accumulated": getattr(self._result, "ct_candidates_accumulated", 0),
+                    "ct_candidates_stored": getattr(self._result, "ct_candidates_stored", 0),
+                    "ct_storage_rejected": getattr(self._result, "ct_storage_rejected", 0),
                     # Sprint F226C: CT bridge acceptance diagnostics
-
-                    "ct_bridge_candidate_count": getattr(self._result, 'ct_candidate_count', 0),
-
-                    "ct_bridge_valid_domain_count": getattr(self._result, 'ct_valid_domain_count', 0),
-
-                    "ct_bridge_build_success_count": getattr(self._result, 'ct_bridge_build_success_count', 0),
-
-                    "ct_bridge_quality_rejected_count": getattr(self._result, 'ct_bridge_quality_rejected_count', 0),
-
+                    "ct_bridge_candidate_count": getattr(self._result, "ct_candidate_count", 0),
+                    "ct_bridge_valid_domain_count": getattr(self._result, "ct_valid_domain_count", 0),
+                    "ct_bridge_build_success_count": getattr(self._result, "ct_bridge_build_success_count", 0),
+                    "ct_bridge_quality_rejected_count": getattr(self._result, "ct_bridge_quality_rejected_count", 0),
                     # F231B: CT expansion clue summary -- domain expansion evidence visible even when accepted=0
-
-                    "ct_expansion_clues_count": getattr(self._result, 'ct_expansion_clues_count', 0),
-
-                    "ct_valid_public_domains": getattr(self._result, 'ct_valid_public_domains', 0),
-
-                    "ct_wildcard_domains": getattr(self._result, 'ct_wildcard_domains', 0),
-
-                    "ct_private_reserved_domains": getattr(self._result, 'ct_private_reserved_domains', 0),
-
-                    "ct_duplicate_candidates": getattr(self._result, 'ct_duplicate_candidates', 0),
-
+                    "ct_expansion_clues_count": getattr(self._result, "ct_expansion_clues_count", 0),
+                    "ct_valid_public_domains": getattr(self._result, "ct_valid_public_domains", 0),
+                    "ct_wildcard_domains": getattr(self._result, "ct_wildcard_domains", 0),
+                    "ct_private_reserved_domains": getattr(self._result, "ct_private_reserved_domains", 0),
+                    "ct_duplicate_candidates": getattr(self._result, "ct_duplicate_candidates", 0),
                     # Sprint F216G: Quality gate rejection summaries by category
-
-                    "quality_rejection_summary_by_family": getattr(self._result, 'quality_rejection_summary_by_family', {}),  # noqa: E501
-
-                    "duplicate_rejection_summary_by_family": getattr(self._result, 'duplicate_rejection_summary_by_family', {}),  # noqa: E501
-
-                    "low_information_by_family": getattr(self._result, 'low_information_by_family', {}),
-
-                    "quality_rejection_ledger_size": len(getattr(self._result, 'quality_rejection_ledger', ())),
-
+                    "quality_rejection_summary_by_family": getattr(
+                        self._result, "quality_rejection_summary_by_family", {}
+                    ),  # noqa: E501
+                    "duplicate_rejection_summary_by_family": getattr(
+                        self._result, "duplicate_rejection_summary_by_family", {}
+                    ),  # noqa: E501
+                    "low_information_by_family": getattr(self._result, "low_information_by_family", {}),
+                    "quality_rejection_ledger_size": len(getattr(self._result, "quality_rejection_ledger", ())),
                     # F231C: Wayback advisory evidence surface
-
-                    "wayback_advisory_clues_count": getattr(self._result, 'wayback_advisory_clues_count', 0),
-
-                    "wayback_changed_url_count": getattr(self._result, 'wayback_changed_url_count', 0),
-
-                    "wayback_added_url_count": getattr(self._result, 'wayback_added_url_count', 0),
-
-                    "wayback_digest_changed_count": getattr(self._result, 'wayback_digest_changed_count', 0),
-
-                    "wayback_unchanged_rejected": getattr(self._result, 'wayback_unchanged_rejected', 0),
-
+                    "wayback_advisory_clues_count": getattr(self._result, "wayback_advisory_clues_count", 0),
+                    "wayback_changed_url_count": getattr(self._result, "wayback_changed_url_count", 0),
+                    "wayback_added_url_count": getattr(self._result, "wayback_added_url_count", 0),
+                    "wayback_digest_changed_count": getattr(self._result, "wayback_digest_changed_count", 0),
+                    "wayback_unchanged_rejected": getattr(self._result, "wayback_unchanged_rejected", 0),
                     # F231C: PassiveDNS advisory evidence surface
-
-                    "passive_dns_advisory_clues_count": getattr(self._result, 'passive_dns_advisory_clues_count', 0),
-
-                    "passive_dns_private_ip_rejected": getattr(self._result, 'passive_dns_private_ip_rejected', 0),
-
-                    "passive_dns_empty_ip_rejected": getattr(self._result, 'passive_dns_empty_ip_rejected', 0),
-
+                    "passive_dns_advisory_clues_count": getattr(self._result, "passive_dns_advisory_clues_count", 0),
+                    "passive_dns_private_ip_rejected": getattr(self._result, "passive_dns_private_ip_rejected", 0),
+                    "passive_dns_empty_ip_rejected": getattr(self._result, "passive_dns_empty_ip_rejected", 0),
                     # F235C: Arrow flush error diagnostics
-
-                    "arrow_last_flush_error": getattr(self._result, 'arrow_last_flush_error', "") or "",
-
-                    "arrow_batch_dropped": getattr(self._result, 'arrow_batch_dropped_after_flush_failure', 0),
-
+                    "arrow_last_flush_error": getattr(self._result, "arrow_last_flush_error", "") or "",
+                    "arrow_batch_dropped": getattr(self._result, "arrow_batch_dropped_after_flush_failure", 0),
                     # F235C: Prewindup/return guard error diagnostics
-
-                    "prewindup_barrier_errors": getattr(self._result, 'prewindup_barrier_errors', 0) or 0,
-
-                    "return_guard_errors": getattr(self._result, 'return_guard_errors', 0) or 0,
-
+                    "prewindup_barrier_errors": getattr(self._result, "prewindup_barrier_errors", 0) or 0,
+                    "return_guard_errors": getattr(self._result, "return_guard_errors", 0) or 0,
                 }
 
         except Exception:
-
             result["lane_verdict"] = None
 
-
-
         if not findings:
-
             return result
-
-
 
         # ── Correlation seam (second-order condensation) ────────────────────
 
         try:
-
             correlate_fn = _import_correlate_findings()
 
             corr = correlate_fn(findings[:500])
 
             result["correlation"] = {
-
                 "risk_score": round(corr.risk_score, 3),
-
                 "verdict": corr.verdict,
-
                 "anomaly_count": corr.anomaly_count,
-
                 "top_themes": list(corr.top_themes[:5]),
-
                 "theme_count": len(corr.themes),
-
                 # Sprint 8VN §C: second-order -- actionable condensation
-
-                "signal_quality": getattr(corr, 'signal_quality', "weak"),
-
-                "cross_source_confidence": round(getattr(corr, 'cross_source_confidence', 0.0), 3),
-
-                "campaign_confidence": round(getattr(corr, 'campaign_confidence', 0.0), 3),
-
-                "dominant_cluster": getattr(corr, 'dominant_cluster', None),
-
-                "so_what": getattr(corr, 'so_what', ""),
-
-                "what_matters_first": getattr(corr, 'what_matters_first', ""),
-
+                "signal_quality": getattr(corr, "signal_quality", "weak"),
+                "cross_source_confidence": round(getattr(corr, "cross_source_confidence", 0.0), 3),
+                "campaign_confidence": round(getattr(corr, "campaign_confidence", 0.0), 3),
+                "dominant_cluster": getattr(corr, "dominant_cluster", None),
+                "so_what": getattr(corr, "so_what", ""),
+                "what_matters_first": getattr(corr, "what_matters_first", ""),
                 "operator_shortlist": [
-
-                    {"action": item.get("action", ""), "target": item.get("target", "")[:80],
-
-                     "rationale": item.get("rationale", "")}
-
-                    for item in (getattr(corr, 'operator_shortlist', None) or [])[:3]
-
+                    {
+                        "action": item.get("action", ""),
+                        "target": item.get("target", "")[:80],
+                        "rationale": item.get("rationale", ""),
+                    }
+                    for item in (getattr(corr, "operator_shortlist", None) or [])[:3]
                     if isinstance(item, dict)
-
                 ],
-
-                "confidence_note": getattr(corr, 'confidence_note', ""),
-
-                "corroborated_iocs_count": len(getattr(corr, 'corroborated_iocs', []) or []),
-
-                "top_priority_pivots_count": len(getattr(corr, 'top_priority_pivots', []) or []),
-
+                "confidence_note": getattr(corr, "confidence_note", ""),
+                "corroborated_iocs_count": len(getattr(corr, "corroborated_iocs", []) or []),
+                "top_priority_pivots_count": len(getattr(corr, "top_priority_pivots", []) or []),
             }
 
         except Exception:
-
             result["correlation"] = None
-
-
 
         # ── Hypothesis pack seam (operator shortlist) ───────────────────────
 
         try:
-
             HypEng = _import_hypothesis_engine()  # noqa: N806
 
             eng = HypEng()
@@ -32112,7 +26491,6 @@ class SprintScheduler:
             finding_texts: list[str] = []
 
             for f in findings[:200]:
-
                 desc = f.get("description", "")
 
                 src = f.get("source", "")
@@ -32120,95 +26498,59 @@ class SprintScheduler:
                 finding_texts.append(f"[{src}] {desc}" if (src and desc) else (desc or ""))
 
             if finding_texts:
-
                 pack = eng.build_hypothesis_pack(finding_texts)
 
                 result["hypothesis_pack"] = {
-
                     "hypothesis_count": len(pack.hypotheses),
-
                     "query_count": len(pack.suggested_queries),
-
                     "ioc_follow_ups": len(pack.ioc_follow_ups),
-
                     "source_hints_count": len(pack.source_hints),
-
                     "provenance": pack.provenance,
-
-                    "signal_quality": getattr(pack, 'signal_quality', "weak"),
-
-                    "what_matters_first": getattr(pack, 'what_matters_first', ""),
-
-                    "confidence_note": getattr(pack, 'confidence_note', ""),
-
+                    "signal_quality": getattr(pack, "signal_quality", "weak"),
+                    "what_matters_first": getattr(pack, "what_matters_first", ""),
+                    "confidence_note": getattr(pack, "confidence_note", ""),
                     "top_queries": [
-
                         {"query": q.get("query", ""), "rationale": q.get("rationale", "")[:80]}
-
                         for q in (pack.suggested_queries or [])[:5]
-
                         if isinstance(q, dict)
-
                     ],
-
                     # Sprint F187E: operator_shortlist is now a @property on HypothesisPack
-
                     # returning scheduler-consumable shape directly: action, target, rationale
-
                     "operator_shortlist": [
-
-                        {"action": item.get("action", ""),
-
-                         "target": item.get("target", "")[:80],
-
-                         "rationale": item.get("rationale", "")}
-
-                        for item in (getattr(pack, 'operator_shortlist', None) or [])[:3]
-
+                        {
+                            "action": item.get("action", ""),
+                            "target": item.get("target", "")[:80],
+                            "rationale": item.get("rationale", ""),
+                        }
+                        for item in (getattr(pack, "operator_shortlist", None) or [])[:3]
                         if isinstance(item, dict)
-
                     ],
-
                     # Sprint F191D: discarded_as_redundant -- what was dropped and why
-
                     # Bounded: max 3 items, fail-soft, memory-cheap
-
                     "discarded_as_redundant": [
-
-                        {"action_type": item.get("action_type", ""),
-
-                         "query": item.get("query", "")[:120],
-
-                         "reason_discarded": item.get("reason_discarded", ""),
-
-                         "pivot_type": item.get("pivot_type", ""),
-
-                         "priority": item.get("priority", 0.0)}
-
-                        for item in (getattr(pack, 'discarded_as_redundant', lambda max_items=3: [])(
-
-                            max_items=3) or [])[:3]
-
+                        {
+                            "action_type": item.get("action_type", ""),
+                            "query": item.get("query", "")[:120],
+                            "reason_discarded": item.get("reason_discarded", ""),
+                            "pivot_type": item.get("pivot_type", ""),
+                            "priority": item.get("priority", 0.0),
+                        }
+                        for item in (
+                            getattr(pack, "discarded_as_redundant", lambda max_items=3: [])(max_items=3) or []
+                        )[:3]
                         if isinstance(item, dict)
-
                     ],
-
                 }
 
         except Exception:
-
             result["hypothesis_pack"] = None
-
-
 
         # ── Feed branch verdict (aggregated across cycles) ─────────────────
 
         try:
-
-            feed_vlist: list[tuple[str, int, int, int, int]] = getattr(self, '_feed_verdicts', []) or []
+            feed_vlist: list[tuple[str, int, int, int, int]] = getattr(self, "_feed_verdicts", []) or []
 
             if feed_vlist:
-
                 verdict_tags: dict[str, int] = {}
 
                 total_signal = 0
@@ -32216,7 +26558,6 @@ class SprintScheduler:
                 total_fallback_waste = 0
 
                 for tag, sig, _fb_use, fb_waste, qual in feed_vlist:  # noqa: B007
-
                     verdict_tags[tag] = verdict_tags.get(tag, 0) + 1
 
                     total_signal += sig
@@ -32225,51 +26566,39 @@ class SprintScheduler:
 
                 dominant_tag = max(verdict_tags, key=verdict_tags.get) if verdict_tags else ""
 
-                avg_quality = round(
-
-                    sum(v[4] for v in feed_vlist) / len(feed_vlist), 2
-
-                ) if feed_vlist else 0.0
+                avg_quality = round(sum(v[4] for v in feed_vlist) / len(feed_vlist), 2) if feed_vlist else 0.0
 
                 result["feed_verdict"] = {
-
                     "dominant_tag": dominant_tag,
-
                     "cycle_count": len(feed_vlist),
-
                     "total_signal_strength": total_signal,
-
                     "total_fallback_waste": total_fallback_waste,
-
                     "avg_quality": avg_quality,
-
                     "tag_distribution": verdict_tags,
-
                 }
 
         except Exception:
-
             result["feed_verdict"] = None
-
-
 
         # ── Public branch verdict (aggregated across cycles) ───────────────
 
         try:
-
-            pub_vlist: list[dict] = getattr(self, '_public_verdicts', []) or []
+            pub_vlist: list[dict] = getattr(self, "_public_verdicts", []) or []
 
             if pub_vlist:
-
                 waste_ratios = [v.get("waste_ratio", 0.0) for v in pub_vlist if "waste_ratio" in v]
 
                 value_ratios = [v.get("value_ratio", 0.0) for v in pub_vlist if "value_ratio" in v]
 
-                corroborations = [v.get("corroboration_vs_burn", 0.0) for v in pub_vlist if "corroboration_vs_burn" in v]  # noqa: E501
+                corroborations = [
+                    v.get("corroboration_vs_burn", 0.0) for v in pub_vlist if "corroboration_vs_burn" in v
+                ]  # noqa: E501
 
                 next_actions = [v.get("public_next_action", "") for v in pub_vlist if "public_next_action" in v]
 
-                confidence_notes = [v.get("public_confidence_note", "") for v in pub_vlist if "public_confidence_note" in v]  # noqa: E501
+                confidence_notes = [
+                    v.get("public_confidence_note", "") for v in pub_vlist if "public_confidence_note" in v
+                ]  # noqa: E501
 
                 # Sprint F150L: additional economics signals
 
@@ -32282,43 +26611,31 @@ class SprintScheduler:
                 dominant_conf = max(set(confidence_notes), key=confidence_notes.count) if confidence_notes else ""
 
                 result["public_verdict"] = {
-
                     "cycle_count": len(pub_vlist),
-
                     "avg_waste_ratio": round(sum(waste_ratios) / len(waste_ratios), 3) if waste_ratios else 0.0,
-
                     "avg_value_ratio": round(sum(value_ratios) / len(value_ratios), 3) if value_ratios else 0.0,
-
-                    "avg_corroboration_vs_burn": round(sum(corroborations) / len(corroborations), 3) if corroborations else 0.0,  # noqa: E501
-
-                    "avg_discovery_squandered": round(sum(squandered_hits) / len(squandered_hits), 2) if squandered_hits else 0.0,  # noqa: E501
-
+                    "avg_corroboration_vs_burn": round(sum(corroborations) / len(corroborations), 3)
+                    if corroborations
+                    else 0.0,  # noqa: E501
+                    "avg_discovery_squandered": round(sum(squandered_hits) / len(squandered_hits), 2)
+                    if squandered_hits
+                    else 0.0,  # noqa: E501
                     "total_discovery_squandered": sum(squandered_hits),
-
                     "avg_noise_fetch_ratio": round(sum(noise_ratios) / len(noise_ratios), 3) if noise_ratios else 0.0,
-
                     "dominant_next_action": dominant_action,
-
                     "dominant_confidence_note": dominant_conf,
-
                     "action_distribution": {a: next_actions.count(a) for a in set(next_actions)},
-
                 }
 
         except Exception:
-
             result["public_verdict"] = None
-
-
 
         # ── Sprint F207J-A: Lane verdict (CT/WAYBACK/PASSIVE_DNS/BLOCKCHAIN) ──
 
         try:
-
-            lane_vlist: list[tuple[str, int, int, int, int]] = getattr(self, '_lane_verdicts', []) or []
+            lane_vlist: list[tuple[str, int, int, int, int]] = getattr(self, "_lane_verdicts", []) or []
 
             if lane_vlist:
-
                 verdict_tags: dict[str, int] = {}
 
                 total_signal = 0
@@ -32326,7 +26643,6 @@ class SprintScheduler:
                 total_quality = 0
 
                 for tag, sig, _fb_use, fb_waste, qual in lane_vlist:  # noqa: B007
-
                     verdict_tags[tag] = verdict_tags.get(tag, 0) + sig
 
                     total_signal += sig
@@ -32338,121 +26654,63 @@ class SprintScheduler:
                 avg_quality = total_quality / len(lane_vlist) if lane_vlist else 0.0
 
                 result["lane_verdict"] = {
-
                     "dominant_tag": dominant_tag,
-
-                    "ct_storage_rejection_reasons": list(
-
-                        getattr(self._result, 'ct_storage_rejection_reasons', ())
-
-                    ),
-
+                    "ct_storage_rejection_reasons": list(getattr(self._result, "ct_storage_rejection_reasons", ())),
                     "cycle_count": len(lane_vlist),
-
                     "total_signal_strength": total_signal,
-
                     "tag_distribution": verdict_tags,
-
                     "avg_quality": avg_quality,
-
                     "ct_findings": self._result.lane_ct_accepted_findings,
-
                     "wayback_findings": self._result.lane_wayback_accepted_findings,
-
                     "pdns_findings": self._result.lane_pdns_accepted_findings,
-
                     "blockchain_findings": self._result.lane_blockchain_accepted_findings,
-
                     "ipfs_findings": self._result.lane_ipfs_accepted_findings,
-
                     "doh_findings": self._result.lane_doh_accepted_findings,
-
                     # Sprint F214D: CT Bridge Loss Audit telemetry
-
-                    "ct_loss_stage": getattr(self._result, 'ct_loss_stage', 'no_loss'),
-
-                    "ct_bridge_invoked": getattr(self._result, 'ct_bridge_invoked', False),
-
-                    "ct_raw_count": getattr(self._result, 'ct_raw_count', 0),
-
-                    "ct_raw_sample_count": getattr(self._result, 'ct_raw_sample_count', 0),
-
-                    "ct_candidates_built": getattr(self._result, 'ct_candidates_built', 0),
-
-                    "ct_bridge_rejections_count": getattr(self._result, 'ct_bridge_rejections_count', 0),
-
-                    "ct_candidates_accumulated": getattr(self._result, 'ct_candidates_accumulated', 0),
-
-                    "ct_candidates_stored": getattr(self._result, 'ct_candidates_stored', 0),
-
-                    "ct_storage_rejected": getattr(self._result, 'ct_storage_rejected', 0),
-
+                    "ct_loss_stage": getattr(self._result, "ct_loss_stage", "no_loss"),
+                    "ct_bridge_invoked": getattr(self._result, "ct_bridge_invoked", False),
+                    "ct_raw_count": getattr(self._result, "ct_raw_count", 0),
+                    "ct_raw_sample_count": getattr(self._result, "ct_raw_sample_count", 0),
+                    "ct_candidates_built": getattr(self._result, "ct_candidates_built", 0),
+                    "ct_bridge_rejections_count": getattr(self._result, "ct_bridge_rejections_count", 0),
+                    "ct_candidates_accumulated": getattr(self._result, "ct_candidates_accumulated", 0),
+                    "ct_candidates_stored": getattr(self._result, "ct_candidates_stored", 0),
+                    "ct_storage_rejected": getattr(self._result, "ct_storage_rejected", 0),
                     # Sprint F226C: CT bridge acceptance diagnostics
-
-                    "ct_bridge_candidate_count": getattr(self._result, 'ct_candidate_count', 0),
-
-                    "ct_bridge_valid_domain_count": getattr(self._result, 'ct_valid_domain_count', 0),
-
-                    "ct_bridge_build_success_count": getattr(self._result, 'ct_bridge_build_success_count', 0),
-
-                    "ct_bridge_quality_rejected_count": getattr(self._result, 'ct_bridge_quality_rejected_count', 0),
-
+                    "ct_bridge_candidate_count": getattr(self._result, "ct_candidate_count", 0),
+                    "ct_bridge_valid_domain_count": getattr(self._result, "ct_valid_domain_count", 0),
+                    "ct_bridge_build_success_count": getattr(self._result, "ct_bridge_build_success_count", 0),
+                    "ct_bridge_quality_rejected_count": getattr(self._result, "ct_bridge_quality_rejected_count", 0),
                     # F231B: CT expansion clue summary -- domain expansion evidence visible even when accepted=0
-
-                    "ct_expansion_clues_count": getattr(self._result, 'ct_expansion_clues_count', 0),
-
-                    "ct_valid_public_domains": getattr(self._result, 'ct_valid_public_domains', 0),
-
-                    "ct_wildcard_domains": getattr(self._result, 'ct_wildcard_domains', 0),
-
-                    "ct_private_reserved_domains": getattr(self._result, 'ct_private_reserved_domains', 0),
-
-                    "ct_duplicate_candidates": getattr(self._result, 'ct_duplicate_candidates', 0),
-
+                    "ct_expansion_clues_count": getattr(self._result, "ct_expansion_clues_count", 0),
+                    "ct_valid_public_domains": getattr(self._result, "ct_valid_public_domains", 0),
+                    "ct_wildcard_domains": getattr(self._result, "ct_wildcard_domains", 0),
+                    "ct_private_reserved_domains": getattr(self._result, "ct_private_reserved_domains", 0),
+                    "ct_duplicate_candidates": getattr(self._result, "ct_duplicate_candidates", 0),
                     # F231C: Wayback advisory evidence surface
-
-                    "wayback_advisory_clues_count": getattr(self._result, 'wayback_advisory_clues_count', 0),
-
-                    "wayback_changed_url_count": getattr(self._result, 'wayback_changed_url_count', 0),
-
-                    "wayback_added_url_count": getattr(self._result, 'wayback_added_url_count', 0),
-
-                    "wayback_digest_changed_count": getattr(self._result, 'wayback_digest_changed_count', 0),
-
-                    "wayback_unchanged_rejected": getattr(self._result, 'wayback_unchanged_rejected', 0),
-
+                    "wayback_advisory_clues_count": getattr(self._result, "wayback_advisory_clues_count", 0),
+                    "wayback_changed_url_count": getattr(self._result, "wayback_changed_url_count", 0),
+                    "wayback_added_url_count": getattr(self._result, "wayback_added_url_count", 0),
+                    "wayback_digest_changed_count": getattr(self._result, "wayback_digest_changed_count", 0),
+                    "wayback_unchanged_rejected": getattr(self._result, "wayback_unchanged_rejected", 0),
                     # F231C: PassiveDNS advisory evidence surface
-
-                    "passive_dns_advisory_clues_count": getattr(self._result, 'passive_dns_advisory_clues_count', 0),
-
-                    "passive_dns_private_ip_rejected": getattr(self._result, 'passive_dns_private_ip_rejected', 0),
-
-                    "passive_dns_empty_ip_rejected": getattr(self._result, 'passive_dns_empty_ip_rejected', 0),
-
+                    "passive_dns_advisory_clues_count": getattr(self._result, "passive_dns_advisory_clues_count", 0),
+                    "passive_dns_private_ip_rejected": getattr(self._result, "passive_dns_private_ip_rejected", 0),
+                    "passive_dns_empty_ip_rejected": getattr(self._result, "passive_dns_empty_ip_rejected", 0),
                     # F235C: Arrow flush error diagnostics
-
-                    "arrow_last_flush_error": getattr(self._result, 'arrow_last_flush_error', "") or "",
-
-                    "arrow_batch_dropped": getattr(self._result, 'arrow_batch_dropped_after_flush_failure', 0),
-
+                    "arrow_last_flush_error": getattr(self._result, "arrow_last_flush_error", "") or "",
+                    "arrow_batch_dropped": getattr(self._result, "arrow_batch_dropped_after_flush_failure", 0),
                     # F235C: Prewindup/return guard error diagnostics
-
-                    "prewindup_barrier_errors": getattr(self._result, 'prewindup_barrier_errors', 0) or 0,
-
-                    "return_guard_errors": getattr(self._result, 'return_guard_errors', 0) or 0,
-
+                    "prewindup_barrier_errors": getattr(self._result, "prewindup_barrier_errors", 0) or 0,
+                    "return_guard_errors": getattr(self._result, "return_guard_errors", 0) or 0,
                 }
 
         except Exception:
-
             result["lane_verdict"] = None
-
-
 
         # ── Signal path + branch mix health ────────────────────────────────
 
         try:
-
             corr = result.get("correlation") or {}
 
             sig_quality = corr.get("signal_quality", "weak")
@@ -32468,40 +26726,26 @@ class SprintScheduler:
             pub_f = self._result.public_accepted_findings or 0
 
             lane_f = (
-
                 self._result.lane_ct_accepted_findings
-
                 + self._result.lane_wayback_accepted_findings
-
                 + self._result.lane_pdns_accepted_findings
-
                 + self._result.lane_blockchain_accepted_findings
-
                 + self._result.lane_ipfs_accepted_findings
-
                 + self._result.lane_doh_accepted_findings
-
             )
 
             total_findings = feed_f + pub_f + lane_f
 
-
-
             # Dominant signal path
 
             if sig_quality == "strong":
-
                 dominant_path = "corroborated" if cross_conf > 0.5 else "high_confidence"
 
             elif sig_quality == "mixed":
-
                 dominant_path = "multi_source" if cross_conf > 0.3 else "degraded"
 
             else:
-
                 dominant_path = "weak_noisy"
-
-
 
             # Next pivot derived from correlation
 
@@ -32509,13 +26753,9 @@ class SprintScheduler:
 
             next_pivot = "pivot_immediately" if (top_pivots_count > 0 and sig_quality != "weak") else "hold_pivoting"
 
-
-
             # Corroboration score
 
             corroboration_score = round(cross_conf * 0.6 + camp_conf * 0.4, 3)
-
-
 
             # Branch mix health.
             # Sprint Opt: structural pattern matching (PEP 634) on the
@@ -32546,8 +26786,6 @@ class SprintScheduler:
                     # Balanced mix but weak/medium signal quality.
                     branch_mix_health = "balanced_low_yield"
 
-
-
             # F214: Feed-only override -- when feed dominates and no nonfeed evidence exists,
 
             # signal cannot be "corroborated" (requires multiple source families).
@@ -32555,71 +26793,44 @@ class SprintScheduler:
             # Override dominant_path and is_corroborated to reflect single-source reality.
 
             feed_dominance_override = (
-
                 self._result.feed_dominance_ratio is not None
-
                 and self._result.feed_dominance_ratio >= 0.95
-
                 and (self._result.public_accepted_findings or 0) == 0
-
                 and (
-
                     self._result.lane_ct_accepted_findings
-
                     + self._result.lane_wayback_accepted_findings
-
                     + self._result.lane_pdns_accepted_findings
-
                     + self._result.lane_blockchain_accepted_findings
-
                     + self._result.lane_ipfs_accepted_findings
-
                     + self._result.lane_doh_accepted_findings
-
-                ) == 0
-
+                )
+                == 0
             )
 
             if feed_dominance_override:
-
                 dominant_path = "feed"
 
                 is_corroborated_flag = False
 
             else:
-
                 is_corroborated_flag = cross_conf > 0.4
 
-
-
             result["signal_path"] = {
-
                 "dominant_signal_path": dominant_path,
-
                 "next_pivot_recommendation": next_pivot,
-
                 "corroboration_score": corroboration_score,
-
                 "branch_mix_health": branch_mix_health,
-
                 "is_noisy": sig_quality == "weak" and cross_conf < 0.2,
-
                 "is_corroborated": is_corroborated_flag,
-
                 "campaign_signal": camp_conf > 0.3,
-
             }
 
         except Exception:
-
             result["signal_path"] = None
-
-
 
         # ── Branch value comparison ────────────────────────────────────────
 
         try:
-
             feed_f = self._result.accepted_findings or 0
 
             pub_f = self._result.public_accepted_findings or 0
@@ -32631,58 +26842,41 @@ class SprintScheduler:
             total = feed_f + pub_f
 
             if total > 0:
-
                 feed_pct = round(feed_f / total * 100, 1)
 
                 pub_pct = round(pub_f / total * 100, 1)
 
             else:
-
                 feed_pct = pub_pct = 0.0
 
             if pub_f > feed_f * 1.5:
-
                 branch_verdict = "public_dominant"
 
                 recommendation = "expand_public_branch"
 
             elif feed_f > pub_f * 1.5:
-
                 branch_verdict = "feed_dominant"
 
                 recommendation = "expand_feed_branch"
 
             else:
-
                 branch_verdict = "balanced"
 
                 recommendation = "maintain_both"
 
             result["branch_value"] = {
-
                 "feed_findings": feed_f,
-
                 "public_findings": pub_f,
-
                 "feed_pattern_hits": feed_h,
-
                 "public_pattern_hits": pub_h,
-
                 "feed_pct": feed_pct,
-
                 "public_pct": pub_pct,
-
                 "branch_verdict": branch_verdict,
-
                 "recommendation": recommendation,
-
             }
 
         except Exception:
-
             result["branch_value"] = None
-
-
 
         # ── Sprint F150L: Second-order condensed summary ──────────────────
 
@@ -32691,7 +26885,6 @@ class SprintScheduler:
         # purely additive, fail-soft, bounded, no new model/persistence deps.
 
         try:
-
             sig_path = result.get("signal_path") or {}
 
             br_val = result.get("branch_value") or {}
@@ -32703,8 +26896,6 @@ class SprintScheduler:
             corr = result.get("correlation") or {}
 
             hyp = result.get("hypothesis_pack") or {}
-
-
 
             dominant_signal = sig_path.get("dominant_signal_path", "unknown")
 
@@ -32748,14 +26939,11 @@ class SprintScheduler:
 
             backup_action = op_shortlist[1].get("action", "") if len(op_shortlist) > 1 else ""
 
-
-
             # Sprint posture: corroborated / mixed / noisy / depleted
 
             total_findings = (br_val.get("feed_findings", 0) or 0) + (br_val.get("public_findings", 0) or 0)
 
             if total_findings == 0:
-
                 posture = "depleted"
 
             # F214: Feed-only override -- check before is_corroborated to ensure
@@ -32763,46 +26951,32 @@ class SprintScheduler:
             # feed-only runs with no nonfeed evidence are NOT labeled corroborated
 
             elif (
-
                 self._result.feed_dominance_ratio is not None
-
                 and self._result.feed_dominance_ratio >= 0.95
-
                 and (br_val.get("public_findings", 0) or 0) == 0
-
                 and (br_val.get("feed_findings", 0) or 0) > 0
-
             ):
-
                 # Feed-only run: signal is not corroborated (single source)
 
                 posture = "noisy"  # feed-only is inherently noisy -- one source family
 
             elif is_noisy and avg_noise > 0.4:
-
                 posture = "noisy"
 
             elif is_corroborated and corroboration_score > 0.35:
-
                 posture = "corroborated"
 
             elif campaign_signal and avg_corr_vs_burn > 0.35:
-
                 posture = "mixed"
 
             elif dominant_signal in ("corroborated", "high_confidence"):
-
                 posture = "corroborated"
 
             elif dominant_signal == "weak_noisy":
-
                 posture = "noisy"
 
             else:
-
                 posture = "mixed"
-
-
 
             # Sprint F151A: Additive derived fields -- bounded, derived-only, fail-soft
 
@@ -32813,19 +26987,15 @@ class SprintScheduler:
             # proof_grade: evidence quality heuristic from corroboration + noise
 
             if is_corroborated and corroboration_score > 0.4 and avg_noise < 0.3:
-
                 proof_grade = "strong"
 
             elif is_corroborated and corroboration_score > 0.25:
-
                 proof_grade = "moderate"
 
             elif total_findings > 0:
-
                 proof_grade = "weak"
 
             else:
-
                 proof_grade = "none"
 
             # operator_ready: operator shortlist populated with actionable next step
@@ -32836,8 +27006,6 @@ class SprintScheduler:
 
             decision_pressure = "high" if posture in ("noisy", "mixed") and total_findings > 0 else "low"
 
-
-
             # Sprint F155: Second-order branch conversion health
 
             # Derived: is_corroborated * corroboration_score * (1 - avg_noise)
@@ -32845,12 +27013,8 @@ class SprintScheduler:
             avg_noise = pub_v.get("avg_noise_fetch_ratio", 0.0)
 
             branch_conversion_health = round(
-
                 (1.0 if is_corroborated else 0.0) * corroboration_score * (1.0 - avg_noise), 3
-
             )
-
-
 
             # Sprint F155: Second-order discovery efficiency
 
@@ -32858,85 +27022,45 @@ class SprintScheduler:
 
             total_squandered = pub_v.get("total_discovery_squandered", 0) or 0
 
-            discovery_efficiency = round(
-
-                total_findings / (1 + total_squandered), 3
-
-            ) if total_findings > 0 else 0.0
-
-
+            discovery_efficiency = round(total_findings / (1 + total_squandered), 3) if total_findings > 0 else 0.0
 
             result["sprint_verdict"] = {
-
                 "posture": posture,
-
                 "dominant_signal": dominant_signal,
-
                 "branch_verdict": branch_verdict,
-
                 "branch_mix": branch_mix,
-
                 "corroboration_score": corroboration_score,
-
                 "is_corroborated": is_corroborated,
-
                 "campaign_signal": campaign_signal,
-
                 "next_pivot": next_pivot,
-
                 "dominant_action": dominant_action,
-
                 "first_action": first_action,
-
                 "backup_action": backup_action,
-
                 "intel_what_matters": what_matters,  # Sprint F186F: corr -> hyp fallback
-
                 "confidence": dominant_conf,
-
                 "feed_tag": feed_tag,
-
                 "feed_avg_quality": feed_avg_qual,
-
                 "risk_score": risk_score,
-
                 "hypothesis_count": hyp_count,
-
                 "total_findings": total_findings,
-
                 # Sprint F151A: additive derived
-
                 "export_ready": export_ready,
-
                 "proof_grade": proof_grade,
-
                 "operator_ready": operator_ready,
-
                 "decision_pressure": decision_pressure,
-
                 # Sprint F155: second-order derived (from pub_v + sig_path)
-
                 "branch_conversion_health": branch_conversion_health,
-
                 "discovery_efficiency": discovery_efficiency,
-
             }
 
         except Exception:  # noqa: BLE001
-
             # Second-order condensation is purely additive -- never crashes
 
             pass
 
-
-
         return result
 
-
-
     # ── Internal reset ────────────────────────────────────────────────────
-
-
 
     def _reset_result(self) -> None:
 
@@ -32959,13 +27083,10 @@ class SprintScheduler:
         # Sprint 8RA: Close DuckDB read connection
 
         if self._duckdb_read_con is not None:
-
             try:
-
                 self._duckdb_read_con.close()
 
             except Exception:  # noqa: BLE001
-
                 pass
 
             self._duckdb_read_con = None
@@ -32985,13 +27106,10 @@ class SprintScheduler:
         # Sprint F200A: Clear prefetch oracle state for new sprint
 
         if self._prefetch_oracle is not None:
-
             try:
-
                 self._prefetch_oracle.reset()
 
             except Exception:  # noqa: BLE001
-
                 pass  # noqa: BLE001  # Advisory only -- never affect scheduler
 
         # Sprint 8VN: Clear intelligence caches and findings accumulator
@@ -33061,25 +27179,21 @@ class SprintScheduler:
         # Sprint F203D: Reset evidence chain builder for new sprint
 
         try:
-
             from hledac.universal.knowledge.evidence_chain import reset_global_builder
 
             reset_global_builder()
 
         except Exception:  # noqa: BLE001
-
             pass
 
         # Sprint F195C: Reset cross-sprint entity memory idempotency tracker
 
         try:
-
             from hledac.universal.knowledge.graph_service import reset_session
 
             reset_session()
 
         except Exception:  # noqa: BLE001
-
             pass
 
         # Sprint F259: Reset Hermes3 KV cache between sprints (M1 8GB stability)
@@ -33100,7 +27214,6 @@ class SprintScheduler:
         # Sprint F205F: Reset sidecar orchestrator tracking
 
         if hasattr(self, "_sidecar_orchestrator") and self._sidecar_orchestrator is not None:
-
             self._sidecar_orchestrator.reset()
 
         # Sprint F207K-A: Reset lane rejection tracking
@@ -33173,32 +27286,20 @@ class SprintScheduler:
 
         self._result.source_family_events.clear()
 
-
-
     # -------------------------------------------------------------------------
 
     # Sprint F216A: Source family event log helpers
 
     # -------------------------------------------------------------------------
 
-
-
     def _emit_source_family_event(
-
         self,
-
         family: str,
-
         event: str,
-
         count: int = 0,
-
         reason: str = "",
-
         terminal_state: str = "",
-
     ) -> None:
-
         """
 
         Emit a bounded source-family lifecycle event for diagnostics.
@@ -33212,29 +27313,20 @@ class SprintScheduler:
         """
 
         evt = {
-
             "family": family,
-
             "event": event,
-
             "count": count,
-
             "reason": reason,
-
             "terminal_state": terminal_state,
-
             "ts_monotonic": _time.monotonic(),
-
         }
 
         events = self._result.source_family_events
 
         if len(events) >= self._result.MAX_SOURCE_FAMILY_EVENTS:
-
             events.pop(0)
 
         events.append(evt)
-
 
     # ── Sprint F224: Graph RAG Context Sidecar ──────────────────────────────────
 
@@ -33265,6 +27357,7 @@ class SprintScheduler:
             # RAM guard: skip if memory is too high
             try:
                 from hledac.universal.utils.uma_budget import get_uma_snapshot
+
                 uma = get_uma_snapshot()
                 if uma.is_critical or uma.is_emergency:
                     logger.debug("[graph_rag] skipped -- memory pressure")
@@ -33298,7 +27391,6 @@ class SprintScheduler:
             # Convert to CanonicalFinding with context_seed source_type
             CanonicalFinding = None  # noqa: N806
             try:
-
                 CanonicalFinding = CF  # noqa: N806
             except ImportError:
                 pass  # noqa: BLE001  # CF may not be available
@@ -33331,15 +27423,17 @@ class SprintScheduler:
                             pass
                     findings.append(finding)
                 else:
-                    findings.append({
-                        "finding_id": f"graph_rag_ctx_{int(ts * 1000)}_{idx}",
-                        "query": query,
-                        "source_type": "context_seed",
-                        "confidence": insight.get("similarity", 0.5),
-                        "ts": ts,
-                        "provenance": ("graph_rag",),
-                        "payload_text": content[:2048],
-                    })
+                    findings.append(
+                        {
+                            "finding_id": f"graph_rag_ctx_{int(ts * 1000)}_{idx}",
+                            "query": query,
+                            "source_type": "context_seed",
+                            "confidence": insight.get("similarity", 0.5),
+                            "ts": ts,
+                            "provenance": ("graph_rag",),
+                            "payload_text": content[:2048],
+                        }
+                    )
 
             logger.debug("[graph_rag] found %d context insights", len(findings))
 
@@ -33355,21 +27449,13 @@ class SprintScheduler:
 
 
 async def async_run_tiered_feed_sprint_once(
-
     sources: Sequence[str],
-
     config: SprintSchedulerConfig | None = None,
-
     lifecycle: object | None = None,
-
     now_monotonic: float | None = None,
-
     query: str = "",
-
     duckdb_store: Any = None,
-
 ) -> SprintSchedulerResult:
-
     """
 
     One-shot tiered feed sprint.
@@ -33381,17 +27467,13 @@ async def async_run_tiered_feed_sprint_once(
     """
 
     if config is None:
-
         config = SprintSchedulerConfig()
 
     if lifecycle is None:
-
         from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
 
         lifecycle = SprintLifecycleManager(
-
             sprint_duration_s=config.sprint_duration_s,
-
             # F228G: use effective_windup_lead_s (30% of duration, clamped [30,180])
             # not raw windup_lead_s (default 180). For short sprints (60-90s)
             # the raw 180s default is LARGER than the entire sprint, which
@@ -33400,10 +27482,7 @@ async def async_run_tiered_feed_sprint_once(
             # _prune_work_items to filter out all OTHER-tier sources and
             # triggering the empty-cycle guard after 2 cycles.
             windup_lead_s=config.effective_windup_lead_s,
-
         )
-
-
 
     scheduler = SprintScheduler(config)
 
@@ -33427,6 +27506,7 @@ SPRINT_TIERS: dict = {
 
 class SprintTooShortError(ValueError):
     """Raised when sprint duration is below minimum."""
+
     pass
 
 
@@ -33441,4 +27521,3 @@ def detect_sprint_tier(duration_s: float) -> str:
     if duration_s < 600:
         return "deep"
     return "thorough"
-

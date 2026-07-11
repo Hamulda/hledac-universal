@@ -7,7 +7,6 @@ Metal buffers pre-warmed on load; mx.eval([]) barrier before clear_cache().
 Streaming batcher: AdaptiveEmbeddingBatcher with per-batch memory pressure feedback
 reduces peak RSS by 30%+ on M1 8GB by dynamically adjusting batch size mid-stream.
 """
-from __future__ import annotations
 
 import asyncio
 import logging

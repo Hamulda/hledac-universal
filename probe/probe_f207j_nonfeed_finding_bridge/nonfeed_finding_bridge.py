@@ -26,7 +26,6 @@ Rejection reasons:
 Verify:
     python -m pytest tests/probe_f207j_nonfeed_finding_bridge/ -v
 """
-from __future__ import annotations
 
 import hashlib
 import re

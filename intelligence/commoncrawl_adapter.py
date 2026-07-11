@@ -6,7 +6,6 @@ Pattern: mirrors intelligence/wayback_cdx.py (Sprint F234).
 
 Sprint F250F
 """
-from __future__ import annotations
 
 
 import asyncio

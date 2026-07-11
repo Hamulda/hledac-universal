@@ -6,7 +6,6 @@ Defines the Protocol interfaces that each phase orchestrator must implement,
 and the shared SprintContext passed to all phases.
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

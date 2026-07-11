@@ -6,7 +6,6 @@ Provides:
 - Shared semaphore for limiting concurrent MLX inference to 1
 - Thread-safe async access with lazy initialization
 """
-from __future__ import annotations
 
 
 import asyncio

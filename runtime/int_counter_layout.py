@@ -43,7 +43,6 @@ Environment override (Issue 2 fix):
 Always-on, no feature flag.
 M1 8GB safe: bounded by construction, no recursion, fail-soft throughout.
 """
-from __future__ import annotations
 
 
 import array

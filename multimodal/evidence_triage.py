@@ -16,7 +16,6 @@ from PIL import Image
     facets = await coordinator.extract_triage_facets(file_path, source_type)
     await coordinator.close()
 """
-from __future__ import annotations
 
 
 

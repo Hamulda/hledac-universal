@@ -10,7 +10,6 @@ MODERNIZATION (Issue #18):
   - complete_source_family_outcomes_from_lane_details() imported from acquisition_telemetry_reconcile
 """
 
-from __future__ import annotations
 
 from typing import Any
 

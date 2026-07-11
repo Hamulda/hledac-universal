@@ -14,7 +14,6 @@ GHOST_INVARIANTS:
   - Fail-safe: returns default mission intent on error
 """
 
-from __future__ import annotations
 
 from enum import Enum
 

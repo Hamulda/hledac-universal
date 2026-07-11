@@ -19,7 +19,6 @@ Integration order:
     3. macOS WKWebView renderer  ← this module
     4. camoufox/nodriver only if explicitly enabled and available
 """
-from __future__ import annotations
 
 
 import asyncio

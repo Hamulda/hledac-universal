@@ -13,7 +13,6 @@ Example:
     ...     doc = await parser.fetch_robots('https://example.com')
     ...     can_crawl = parser.can_fetch('/page', 'MyBot')
 """
-from __future__ import annotations
 
 
 

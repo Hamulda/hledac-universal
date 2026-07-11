@@ -31,6 +31,7 @@ M1 8GB invarianty:
 
 Always-on, fail-safe, bounded.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -44,12 +45,12 @@ from typing import TYPE_CHECKING, Any, Callable
 import msgspec
 
 if TYPE_CHECKING:
+    from brain.ane_embedder import ANE_MLX_Mutex
     from brain.deephermes3_engine import DeepHermes3Engine
     from brain.mlx_batched_executor import MLXBatchedExecutor
+    from brain.mlx_embedder import MLXEmbedder
     from brain.mlx_worker_thread import MLXWorkerThread
-    from brain.mlx_embedder import MLXEmbedder, AdaptiveEmbeddingBatcher
-    from brain.ane_embedder import ANE_MLX_Mutex
-    from core.resource_governor import ConcurrencyPreset, UMAState
+    from core.resource_governor import ConcurrencyPreset
 
 logger = logging.getLogger(__name__)
 
@@ -70,12 +71,14 @@ class LanePriority(IntEnum):
     EMBEDDING (1): Batch embedding encode — medium priority, batched, ANE-accelerated
     BACKGROUND (2): Speculative decoding, background synthesis — lowest priority
     """
-    INTERACTIVE = 0   # User-facing LLM query (highest priority)
-    EMBEDDING = 1    # Batch embedding encode (medium priority)
-    BACKGROUND = 2   # Speculative/background work (lowest)
+
+    INTERACTIVE = 0  # User-facing LLM query (highest priority)
+    EMBEDDING = 1  # Batch embedding encode (medium priority)
+    BACKGROUND = 2  # Speculative/background work (lowest)
 
 
 # ─── Telemetry ───────────────────────────────────────────────────────────────
+
 
 class SchedulerStats(msgspec.Struct):
     """Mutable unified scheduler telemetry — O(1) in-place inc(), no allocation.
@@ -83,14 +86,15 @@ class SchedulerStats(msgspec.Struct):
     NOTE: msgspec.Struct without frozen=True allows field mutations.
     This is intentional for hot-path telemetry updates.
     """
+
     llm_requests: int = 0
     embedding_requests: int = 0
     background_requests: int = 0
-    cache_hits: int = 0          # Token prefix cache hits
-    cache_misses: int = 0        # Token prefix cache misses
+    cache_hits: int = 0  # Token prefix cache hits
+    cache_misses: int = 0  # Token prefix cache misses
     ane_offload_count: int = 0  # Embedding requests routed to ANE
     gpu_fallback_count: int = 0  # Embedding requests fell back to GPU
-    active_lane: str = "none"    # Current active lane
+    active_lane: str = "none"  # Current active lane
     memory_pressure: float = 0.0  # Current memory pressure 0.0-1.0
     queue_depth: int = 0
 
@@ -113,6 +117,7 @@ class SchedulerStats(msgspec.Struct):
 
 class EmbeddedModelInfo(msgspec.Struct):
     """Information about loaded MLX/ANE models."""
+
     llm_loaded: bool = False
     embedding_loaded: bool = False
     ane_available: bool = False
@@ -121,11 +126,13 @@ class EmbeddedModelInfo(msgspec.Struct):
 
 # ─── Lane Queues ──────────────────────────────────────────────────────────────
 
+
 class LaneMetrics(msgspec.Struct):
     """Per-lane metrics for adaptive scheduling.
 
     NOTE: msgspec.Struct without frozen=True allows field mutations.
     """
+
     requests: int = 0
     total_latency_ms: float = 0.0
     avg_latency_ms: float = 0.0
@@ -139,6 +146,7 @@ class LaneMetrics(msgspec.Struct):
 
 
 # ─── MLX Unified Scheduler ────────────────────────────────────────────────────
+
 
 class MLXUnifiedScheduler:
     """
@@ -242,8 +250,13 @@ class MLXUnifiedScheduler:
             _scheduler_at_exit,
             self,
         )
-        logger.debug("[MLXScheduler] Created — components: engine=%s, embedder=%s, batcher=%s, worker=%s",
-                     bool(llm_engine), bool(embedder), bool(batcher), bool(worker_thread))
+        logger.debug(
+            "[MLXScheduler] Created — components: engine=%s, embedder=%s, batcher=%s, worker=%s",
+            bool(llm_engine),
+            bool(embedder),
+            bool(batcher),
+            bool(worker_thread),
+        )
 
     # ─── Stats update helper ─────────────────────────────────────────────────
 
@@ -302,18 +315,12 @@ class MLXUnifiedScheduler:
 
         # Route based on priority and availability
         if priority == LanePriority.INTERACTIVE:
-            result = await self._submit_interactive(
-                prompt, temperature, max_tokens, system_msg
-            )
+            result = await self._submit_interactive(prompt, temperature, max_tokens, system_msg)
         elif priority == LanePriority.BACKGROUND:
-            result = await self._submit_background(
-                prompt, temperature, max_tokens, system_msg
-            )
+            result = await self._submit_background(prompt, temperature, max_tokens, system_msg)
         else:
             # EMBEDDING priority falls through to interactive for LLM
-            result = await self._submit_interactive(
-                prompt, temperature, max_tokens, system_msg
-            )
+            result = await self._submit_interactive(prompt, temperature, max_tokens, system_msg)
 
         # Record telemetry
         latency_ms = (time_module.monotonic() - start_ts) * 1000
@@ -327,6 +334,7 @@ class MLXUnifiedScheduler:
         # Issue #046: propagate lane metrics to ContextVar for async child task visibility
         try:
             from core.telemetry.context_state import update_lane_latency
+
             update_lane_latency("llm", latency_ms)
         except Exception:
             pass  # fail-safe: telemetry never crashes the hot path
@@ -417,6 +425,7 @@ class MLXUnifiedScheduler:
         # Issue #046: propagate lane metrics to ContextVar for async child task visibility
         try:
             from core.telemetry.context_state import update_lane_latency
+
             update_lane_latency("embedding", latency_ms)
         except Exception:
             pass  # fail-safe: telemetry never crashes the hot path
@@ -453,12 +462,17 @@ class MLXUnifiedScheduler:
         # Issue #046: propagate lane metrics to ContextVar for async child task visibility
         try:
             from core.telemetry.context_state import update_lane_latency
+
             update_lane_latency("background", 0.0)
         except Exception:
             pass  # fail-safe: telemetry never crashes the hot path
 
         # Background work goes through worker thread if available
-        if self._worker_thread is not None and hasattr(self._worker_thread, 'is_active') and self._worker_thread.is_active():
+        if (
+            self._worker_thread is not None
+            and hasattr(self._worker_thread, "is_active")
+            and self._worker_thread.is_active()
+        ):
             return await self._worker_thread.submit(coro, timeout=120.0)
 
         # Fallback: run directly
@@ -480,7 +494,7 @@ class MLXUnifiedScheduler:
         # Propagate to lane metrics
         logger.debug(
             "[MLXScheduler] Memory preset updated: state=%s, pressure=%.2f",
-            preset.state if hasattr(preset, 'state') else 'unknown',
+            preset.state if hasattr(preset, "state") else "unknown",
             self._memory_pressure,
         )
 
@@ -510,6 +524,14 @@ class MLXUnifiedScheduler:
             return
 
         self._shutdown = True
+
+        # ISSUE-120 FIX: clear token cache to release prompt prefix memory
+        if self._token_cache is not None and hasattr(self._token_cache, "clear_cache"):
+            try:
+                self._token_cache.clear_cache()
+            except Exception:
+                pass
+
         self._finalizer.detach()  # Explicit close wins over atexit
 
         # Release ANE mutex if held (no workers to cancel)
@@ -549,7 +571,11 @@ class MLXUnifiedScheduler:
                 logger.debug("[MLXScheduler] Batcher unavailable: %s", e)
 
         # Try worker thread
-        if self._worker_thread is not None and hasattr(self._worker_thread, 'is_active') and self._worker_thread.is_active():
+        if (
+            self._worker_thread is not None
+            and hasattr(self._worker_thread, "is_active")
+            and self._worker_thread.is_active()
+        ):
             coro = self._llm_engine.generate(
                 prompt=prompt,
                 temperature=temperature,
@@ -613,14 +639,14 @@ class MLXUnifiedScheduler:
 
         all_embeddings: list[list[float]] = []
         for i in range(0, len(texts), batch_size):
-            batch = texts[i:i + batch_size]
+            batch = texts[i : i + batch_size]
             # Use type: ignore on the getattr result since we know it's MLXEmbedder at runtime
             embedder = self._embedder
-            if hasattr(embedder, 'embed_batch') and callable(getattr(embedder, 'embed_batch', None)):
-                batch_result: list[list[float]] = await getattr(embedder, 'embed_batch')(batch)  # type: ignore[operator]
-            elif hasattr(embedder, 'embed') and callable(getattr(embedder, 'embed', None)):
+            if hasattr(embedder, "embed_batch") and callable(getattr(embedder, "embed_batch", None)):
+                batch_result: list[list[float]] = await getattr(embedder, "embed_batch")(batch)  # type: ignore[operator]
+            elif hasattr(embedder, "embed") and callable(getattr(embedder, "embed", None)):
                 # Sync embedder — run in thread
-                embed_fn: Callable[[list[str]], list[list[float]]] = getattr(embedder, 'embed')  # type: ignore[assignment]
+                embed_fn: Callable[[list[str]], list[list[float]]] = getattr(embedder, "embed")  # type: ignore[assignment]
                 batch_result = await asyncio.to_thread(embed_fn, batch)
             else:
                 raise RuntimeError(f"Embedder {type(embedder)} has no embed/embed_batch method")
@@ -634,6 +660,7 @@ class MLXUnifiedScheduler:
             return self._embedder
 
         from brain.mlx_embedder import MLXEmbedder
+
         embedder = MLXEmbedder()
         await embedder.load()
         self._embedder = embedder
@@ -653,7 +680,7 @@ class MLXUnifiedScheduler:
     def _preset_to_pressure(self, preset: ConcurrencyPreset) -> float:
         """Convert ConcurrencyPreset to 0.0-1.0 pressure scale."""
         # Map UMA states to pressure (string constants)
-        if hasattr(preset, 'state'):
+        if hasattr(preset, "state"):
             state = preset.state
             if state == "emergency":
                 return 0.95
@@ -666,7 +693,7 @@ class MLXUnifiedScheduler:
             elif state == "soft_warn":
                 return 0.55
         # Fallback: use concurrency ratio if available
-        if hasattr(preset, 'mlx_max') and preset.mlx_max:
+        if hasattr(preset, "mlx_max") and preset.mlx_max:
             mlx_max_val = preset.mlx_max
             if isinstance(mlx_max_val, (int, float)):
                 return min(float(mlx_max_val) / 2.0, 1.0)
@@ -726,11 +753,12 @@ class MLXUnifiedScheduler:
 
 # ─── Module-level Cleanup ────────────────────────────────────────────────────
 
+
 def _scheduler_at_exit(instance: MLXUnifiedScheduler) -> None:
     """Called by weakref.finalize at interpreter exit if explicit shutdown was not called."""
     try:
         # Synchronous cleanup — don't await
-        if hasattr(instance, '_ane_mutex') and instance._ane_mutex is not None:
+        if hasattr(instance, "_ane_mutex") and instance._ane_mutex is not None:
             try:
                 instance._ane_mutex.release(runtime="ane")
             except Exception:

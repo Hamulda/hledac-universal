@@ -19,7 +19,6 @@ INVARIANTS (enforced by probe_8aa tests):
 - [I10] httpx Limits: max_connections=200, max_keepalive_connections=100
 - [I11] uvloop.install() is fail-soft (diagnostic on failure)
 """
-from __future__ import annotations
 
 
 import asyncio

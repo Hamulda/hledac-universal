@@ -46,7 +46,6 @@ Invariants (CLAUDE.md):
   - ``_check_gathered`` enforces CancelledError re-raise (I6),
     BaseException re-raise (I7), Exception route-to-errors (I8).
 """
-from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 

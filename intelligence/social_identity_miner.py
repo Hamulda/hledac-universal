@@ -17,7 +17,6 @@ GHOST_INVARIANTS enforced:
 - Bounds: MAX_SOCIAL_PROFILES, MAX_LINKS_PER_PROFILE, MAX_SOCIAL_TEXT_BYTES
 - Fail-soft: malformed HTML/payload silently skipped
 """
-from __future__ import annotations
 
 
 

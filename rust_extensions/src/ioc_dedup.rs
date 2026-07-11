@@ -91,7 +91,7 @@ struct IocEntry {
 // MmapIocDedupStore — file-backed persistent IOC dedup
 // ===========================================================================
 
-#[pyclass(frozen)]
+#[pyclass]
 pub struct MmapIocDedupStore {
     // Arc<File>: on Unix, File is Send+Sync (fd=i32). Arc<File> provides shared
     // ownership so the fd stays valid when Python GC + ThreadPoolExecutor hold
@@ -494,7 +494,7 @@ impl MmapIocDedupStore {
 // Legacy in-memory IocDedupStore (kept for compat + tests)
 // ===========================================================================
 
-#[pyclass(frozen)]
+#[pyclass]
 pub struct IocDedupStore {
     entries: AHashMap<u64, IocEntry>,
     current_sprint: u32,

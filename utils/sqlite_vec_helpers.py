@@ -8,7 +8,6 @@ Design:
 - Shared db: uses sprint_{id}.db (same as DuckDB shadow store).
 - ANN via SQLite virtual table: CREATE VIRTUAL TABLE ... USING vec0().
 """
-from __future__ import annotations
 
 import sqlite3
 from pathlib import Path

@@ -5,7 +5,6 @@ Sprint 7A additions:
   - PersistentActorExecutor: bridge worker-thread → event-loop
   - ANE_EXECUTOR, DB_EXECUTOR, CPU_EXECUTOR named pools
 """
-from __future__ import annotations
 
 
 

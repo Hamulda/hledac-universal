@@ -7,7 +7,6 @@ Zajišťuje:
 - Jednotné rozhraní pro Hermes3, ModernBERT a GLiNER
 - Strict 1-model-at-a-time policy pro M1 8GB stabilitu
 """
-from __future__ import annotations
 
 
 

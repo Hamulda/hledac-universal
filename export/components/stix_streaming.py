@@ -8,7 +8,6 @@ explicit memory management and size tracking.
 
 Adds stix_bundle_size_bytes to SprintResult telemetry.
 """
-from __future__ import annotations
 
 
 from datetime import UTC

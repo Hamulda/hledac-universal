@@ -31,30 +31,60 @@ impl StdConnectionPool {
         Self { connections, db_path, max_connections }
     }
 
-    fn execute_query_sync(&self, sql: String) -> Result<Vec<Vec<String>>, String> {
-        for conn_mutex in &self.connections {
-            let mut conn_guard = conn_mutex.lock().map_err(|e| format!("mutex lock: {}", e))?;
-
-            if conn_guard.is_none() {
-                match duckdb::Connection::open(&self.db_path) {
-                    Ok(c) => *conn_guard = Some(c),
-                    Err(e) => return Err(format!("open DuckDB: {}", e)),
-                }
-            }
-
-            if let Some(conn) = conn_guard.take() {
-                drop(conn_guard);
-                let result = execute_duckdb_query_sync(conn, &sql);
-
-                let mut guard = conn_mutex.lock().map_err(|e| format!("mutex lock: {}", e))?;
-                if let Ok(new_conn) = duckdb::Connection::open(&self.db_path) {
-                    *guard = Some(new_conn);
-                }
-                return result;
+fn execute_query_sync(
+    &self,
+    sql: &str,
+) -> Result<Vec<Vec<String>>, String> {
+    for conn_mutex in &self.connections {
+        let mut conn_guard = conn_mutex.lock().map_err(|e| format!("mutex lock: {}", e))?;
+        if conn_guard.is_none() {
+            match duckdb::Connection::open(&self.db_path) {
+                Ok(c) => *conn_guard = Some(c),
+                Err(e) => return Err(format!("open DuckDB: {}", e)),
             }
         }
-        Err("No available connections".to_string())
+        if let Some(conn) = conn_guard.take() {
+            drop(conn_guard);
+            let result = execute_duckdb_query_sync(conn, sql, &[]);
+            let mut guard = conn_mutex.lock().map_err(|e| format!("mutex lock: {}", e))?;
+            if let Ok(new_conn) = duckdb::Connection::open(&self.db_path) {
+                *guard = Some(new_conn);
+            }
+            return result;
+        }
     }
+    Err("No available connections".to_string())
+}
+
+fn execute_query_sync_with_params(
+    &self,
+    sql: &str,
+    params: &[String],
+) -> Result<Vec<Vec<String>>, String> {
+    for conn_mutex in &self.connections {
+        let mut conn_guard = conn_mutex.lock().map_err(|e| format!("mutex lock: {}", e))?;
+        if conn_guard.is_none() {
+            match duckdb::Connection::open(&self.db_path) {
+                Ok(c) => *conn_guard = Some(c),
+                Err(e) => return Err(format!("open DuckDB: {}", e)),
+            }
+        }
+        if let Some(conn) = conn_guard.take() {
+            drop(conn_guard);
+            let param_refs: Vec<&dyn duckdb::types::ToSql> = params
+                .iter()
+                .map(|s| s as &dyn duckdb::types::ToSql)
+                .collect();
+            let result = execute_duckdb_query_sync(conn, sql, &param_refs);
+            let mut guard = conn_mutex.lock().map_err(|e| format!("mutex lock: {}", e))?;
+            if let Ok(new_conn) = duckdb::Connection::open(&self.db_path) {
+                *guard = Some(new_conn);
+            }
+            return result;
+        }
+    }
+    Err("No available connections".to_string())
+}
 }
 
 /// Execute DuckDB query and convert rows to Vec<Vec<String>>.
@@ -62,15 +92,15 @@ impl StdConnectionPool {
 fn execute_duckdb_query_sync(
     conn: duckdb::Connection,
     sql: &str,
+    params: &[&dyn duckdb::types::ToSql],
 ) -> Result<Vec<Vec<String>>, String> {
     let mut stmt = conn
         .prepare(sql)
         .map_err(|e| format!("prepare error: {}", e))?;
-
     let n_cols = stmt.column_count();
-
+    // DuckDB native parameter binding via `&[&dyn ToSql]` — no string interpolation.
     let mut row_iter = stmt
-        .query([])
+        .query(params)
         .map_err(|e| format!("query error: {}", e))?;
 
     let mut results: Vec<Vec<String>> = Vec::new();
@@ -156,7 +186,7 @@ pub fn rust_async_query(sql: String) -> PyResult<Vec<Vec<String>>> {
     // Python calls via asyncio.to_thread() — already runs in a ThreadPoolExecutor
     // thread WITHOUT the GIL. Execute query directly on that thread (no Python
     // objects accessed in execute_query_sync). No std::thread::spawn needed.
-    pool.execute_query_sync(sql)
+    pool.execute_query_sync(&sql)
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))
 }
 
@@ -165,33 +195,26 @@ pub fn rust_async_query_with_params(
     sql: String,
     params: Vec<Py<PyAny>>,
 ) -> PyResult<Vec<Vec<String>>> {
-    let executed_sql = if !params.is_empty() {
-        Python::attach(|py| {
-            let mut result_sql = sql;
-            for param in &params {
-                let param_str = if let Ok(s) = param.extract::<String>(py) {
-                    format!("'{}'", s.replace('\'', "''"))
-                } else if let Ok(i) = param.extract::<i64>(py) {
+    // Convert Py<PyAny> params to owned Strings, then borrow as &[&str].
+    // DuckDB parameterized query — no string interpolation, no SQL injection risk.
+    let param_strings: Vec<String> = Python::with_gil(|py| {
+        params
+            .iter()
+            .map(|p| {
+                if let Ok(s) = p.extract::<String>(py) {
+                    s
+                } else if let Ok(i) = p.extract::<i64>(py) {
                     i.to_string()
-                } else if let Ok(f) = param.extract::<f64>(py) {
+                } else if let Ok(f) = p.extract::<f64>(py) {
                     f.to_string()
                 } else {
-                    "NULL".to_string()
-                };
-                if let Some(pos) = result_sql.find('?') {
-                    result_sql = format!("{}{}{}", &result_sql[..pos], param_str, &result_sql[pos+1..]);
+                    String::new()
                 }
-            }
-            result_sql
-        })
-    } else {
-        sql
-    };
-
+            })
+            .collect()
+    });
     let pool = get_async_pool();
-    // Python calls via asyncio.to_thread() — already runs in a ThreadPoolExecutor
-    // thread WITHOUT the GIL. Execute query directly (no Python objects in scope).
-    pool.execute_query_sync(executed_sql)
+    pool.execute_query_sync_with_params(&sql, &param_strings)
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))
 }
 
@@ -206,9 +229,9 @@ fn check_duckdb_health(db_path: String) -> PyResult<String> {
 }
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // NOTE: Raw SQL query functions removed — repository pattern only.
-    // Only health check is exported for diagnostics.
     m.add_function(wrap_pyfunction!(check_duckdb_health, m)?)?;
+    m.add_function(wrap_pyfunction!(rust_async_query, m)?)?;
+    m.add_function(wrap_pyfunction!(rust_async_query_with_params, m)?)?;
     Ok(())
 }
 

@@ -1,0 +1,1 @@
+Rust extensions code review fixed OnceLock compile error and SQL injection vulnerability, identified GIL safety check as false positive, and documented 87 pre-existing PyClass Frozen=False errors.

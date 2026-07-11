@@ -19,7 +19,6 @@ Pattern: build_runtime() is synchronous (no event loop created yet).
 Caller owns the loop lifecycle so that main() can wrap the entire
 run in the asyncio envelope with structured exit codes.
 """
-from __future__ import annotations
 
 import asyncio
 import gc

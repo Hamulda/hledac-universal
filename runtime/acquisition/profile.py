@@ -11,7 +11,6 @@ MODERNIZATION (Issue #18):
   - is_deep_osint_m1_profile() unchanged
 """
 
-from __future__ import annotations
 
 from typing import Any
 

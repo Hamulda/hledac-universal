@@ -1,0 +1,15 @@
+{
+  "id": "drm-1783799118719",
+  "operations": [],
+  "startedAt": 1783799118719,
+  "status": "processing",
+  "summary": {
+    "consolidated": 0,
+    "errors": 0,
+    "flaggedForReview": 0,
+    "pruned": 0,
+    "synthesized": 0
+  },
+  "taskId": "a63035ba-1929-482d-9921-d87b8f607d75",
+  "trigger": "agent-idle"
+}

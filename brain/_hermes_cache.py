@@ -9,7 +9,6 @@ Invarianty (M1 8GB):
   - Active pressure monitor — koriguje pasivní only-insert-time eviction
   - mx.eval([]) barrier před gc.collect + clear_cache — F300-MLX canonical order
 """
-from __future__ import annotations
 
 from hledac.universal.utils.async_helpers import safe_create_task
 

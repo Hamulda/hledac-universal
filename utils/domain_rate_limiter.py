@@ -21,7 +21,6 @@ Usage::
 
 Sprint F320: Issue #10 per-source manual rate limiting.
 """
-from __future__ import annotations
 
 import asyncio
 import logging

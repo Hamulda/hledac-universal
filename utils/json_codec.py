@@ -18,7 +18,6 @@ Invariant: always-on, bounded, fail-safe.
   - If orjson unavailable: delegates to stdlib json (never raises)
   - If default= is provided: delegates to stdlib json (orjson doesn't support)
 """
-from __future__ import annotations
 
 
 

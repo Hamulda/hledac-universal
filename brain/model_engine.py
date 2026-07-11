@@ -14,7 +14,6 @@ Rationale:
 Seam: model_manager._create_*_engine factories return ModelEngine.
 Callers use the protocol, not concrete classes.
 """
-from __future__ import annotations
 
 
 

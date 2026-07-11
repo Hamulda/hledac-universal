@@ -54,7 +54,6 @@ M1 compatibility:
 - `contextlib.suppress` is the C-accelerated stdlib primitive — same
   speed as `try/except: pass` (no measurable difference on M1)
 """
-from __future__ import annotations
 
 
 import contextlib

@@ -15,7 +15,6 @@ CONTENTS:
 - Import helpers: _import_live_feed_pipeline, _import_live_public_pipeline, etc.
 - GC callbacks: _gc_sprint_callback, _gc_sprint_sentinel
 """
-from __future__ import annotations
 
 
 import logging

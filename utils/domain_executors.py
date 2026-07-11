@@ -39,7 +39,6 @@ Each worker has its own GIL — no GIL contention.
 For DuckDB + MLX coexistence on M1 8GB, ThreadPoolExecutor (bounded)
 is optimal — DuckDB releases GIL in C extension, MLX runs on Metal.
 """
-from __future__ import annotations
 
 import asyncio
 import os

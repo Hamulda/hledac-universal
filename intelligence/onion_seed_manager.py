@@ -1,7 +1,6 @@
 """
 OnionSeedManager — curated .onion seed list management + Ahmia discovery.
 """
-from __future__ import annotations
 
 
 

@@ -22,7 +22,6 @@ Bounds:
 All methods fail-soft: sprint continues on any error.
 Findings persist via async_ingest_findings_batch (canonical write path).
 """
-from __future__ import annotations
 
 
 

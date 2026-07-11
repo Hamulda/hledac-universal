@@ -3,7 +3,6 @@
 Probes hledac_rust_extensions exactly once, returns a frozen result.
 Never raises — all exceptions caught and surfaced as availability=False.
 """
-from __future__ import annotations
 
 import logging
 import sys

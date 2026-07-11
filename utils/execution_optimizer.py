@@ -3,7 +3,6 @@
 Parallel Execution Optimizer
 Advanced parallel execution optimization for Hledač automation systems
 """
-from __future__ import annotations
 
 import asyncio
 import inspect

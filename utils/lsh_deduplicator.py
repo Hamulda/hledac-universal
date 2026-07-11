@@ -14,7 +14,6 @@ Usage:
     matches = detector.find_similar("query text...")
 """
 
-from __future__ import annotations
 
 import logging
 import threading

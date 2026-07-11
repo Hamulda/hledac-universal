@@ -7,7 +7,6 @@ Hard invariant: T-3min wind-down.
 All timing uses time.monotonic().
 No async. No threads. No I/O.
 """
-from __future__ import annotations
 
 
 

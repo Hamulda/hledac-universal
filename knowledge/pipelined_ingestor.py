@@ -27,7 +27,6 @@ Usage:
 No new feature flags. Always-on, bounded (max 2 pending batches),
 fail-safe (legacy fallback na jakoukoli chybu).
 """
-from __future__ import annotations
 
 
 import asyncio

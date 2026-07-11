@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 # Sprint F252 / F266: TI Feed Aspirational Registry
 # Sprint F266: Refactored to clear aspirational registry pattern.

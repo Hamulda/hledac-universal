@@ -43,6 +43,7 @@ import typing
 from collections import Counter
 from typing import TYPE_CHECKING, Any
 
+import httpx  # F4XX: replaces aiohttp in wayback fallback seam
 import msgspec
 
 from hledac.universal.pipeline._deduper import (
@@ -1526,7 +1527,7 @@ _WAYBACK_CDX_MAX_AGE_DAYS = 90  # prefer captures within 90 days
 _WAYBACK_CDX_TIMEOUT = 4.0
 
 
-async def _check_wayback_cdx(entry_url: str, session: Any) -> str | None:
+async def _check_wayback_cdx(entry_url: str, session: httpx.AsyncClient) -> str | None:
     """
     F183E: Check Wayback Machine CDX API for recent capture of entry_url.
 
@@ -1534,22 +1535,20 @@ async def _check_wayback_cdx(entry_url: str, session: Any) -> str | None:
     otherwise None. Does NOT raise — returns None on any failure.
 
     CDX API returns: [[url, timestamp, original, mimetype, status, ...], ...]
+
+    F4XX: migrated from aiohttp to httpx.AsyncClient.
     """
     try:
-        import aiohttp as _aiohttp
-    except Exception:
-        return None
-
-    try:
-        cdx_url = f"{_WAYBACK_CDX_URL}?url={entry_url}&output=json&limit=1&filter=statuscode:200&from={_WAYBACK_CDX_MAX_AGE_DAYS}d"  # noqa: E501
+        cdx_url = f"{_WAYBACK_CDX_URL}?url={entry_url}&output=json&limit=1&filter=statuscode:200&from={_WAYBACK_CDX_MAX_AGE_DAYS}d"
         async with asyncio.timeout(_WAYBACK_CDX_TIMEOUT):
-            try:
-                async with session.get(cdx_url, timeout=_aiohttp.ClientTimeout(total=_WAYBACK_CDX_TIMEOUT)) as resp:
-                    if resp.status != 200:
-                        return None
-                    raw = await resp.read()
-            except Exception:
+            resp = await session.get(cdx_url, timeout=_WAYBACK_CDX_TIMEOUT)
+            if resp.status_code != 200:
                 return None
+            raw = resp.read()
+    except asyncio.TimeoutError:
+        return None
+    except asyncio.CancelledError:
+        raise
     except Exception:
         return None
 
@@ -1575,7 +1574,7 @@ async def _check_wayback_cdx(entry_url: str, session: Any) -> str | None:
 # parallel CDX check (Wayback is a fallback, not a race).
 
 
-async def _wayback_resolve(wayback_session: Any, entry_url: str) -> tuple[str, bool, int]:
+async def _wayback_resolve(wayback_session: httpx.AsyncClient, entry_url: str) -> tuple[str, bool, int]:
     """
     Wayback-only fallback: resolve via CDX then fetch.
 
@@ -1584,6 +1583,8 @@ async def _wayback_resolve(wayback_session: Any, entry_url: str) -> tuple[str, b
     the live URL failed. This is a last-resort recovery, not a parallel race.
 
     Returns (article_text, success, replacement_count).
+
+    F4XX: migrated from aiohttp to httpx.AsyncClient.
     """
     try:
         wayback_url = await _check_wayback_cdx(entry_url, wayback_session)
@@ -1591,23 +1592,13 @@ async def _wayback_resolve(wayback_session: Any, entry_url: str) -> tuple[str, b
             return ("", False, 0)
         # Fetch from archive — same decode/strip logic as primary path
         try:
-            import aiohttp as _aiohttp
-        except Exception:
-            return ("", False, 0)
-        try:
             async with asyncio.timeout(_MAX_WAYBACK_FETCH_TIMEOUT):
-                try:
-                    async with wayback_session.get(
-                        wayback_url,
-                        timeout=_aiohttp.ClientTimeout(total=_MAX_WAYBACK_FETCH_TIMEOUT),
-                    ) as resp:
-                        if resp.status != 200:
-                            return ("", False, 0)
-                        raw = await resp.read()
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
+                resp = await wayback_session.get(wayback_url, timeout=_MAX_WAYBACK_FETCH_TIMEOUT)
+                if resp.status_code != 200:
                     return ("", False, 0)
+                raw = resp.read()
+        except asyncio.TimeoutError:
+            return ("", False, 0)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -1641,31 +1632,21 @@ async def _wayback_resolve(wayback_session: Any, entry_url: str) -> tuple[str, b
         return ("", False, 0)
 
 
-async def _safe_fetch(session: Any, fetch_url: str) -> tuple[bytes, int]:
+async def _safe_fetch(session: httpx.AsyncClient, fetch_url: str) -> tuple[bytes, int]:
     """
     Fetch URL and return (raw_bytes, status_code).
 
     Returns (b"", 0) on any error — the caller decides what to do with it.
     CancelledError propagates.
+
+    F4XX: migrated from aiohttp to httpx.AsyncClient.
     """
     try:
-        import aiohttp as _aiohttp
-    except Exception:
-        return (b"", 0)
-    try:
         async with asyncio.timeout(_MAX_WAYBACK_FETCH_TIMEOUT):
-            try:
-                async with session.get(
-                    fetch_url,
-                    timeout=_aiohttp.ClientTimeout(total=_MAX_WAYBACK_FETCH_TIMEOUT),
-                ) as resp:
-                    status = resp.status
-                    raw = await resp.read()
-                    return (raw, status)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                return (b"", 0)
+            resp = await session.get(fetch_url, timeout=_MAX_WAYBACK_FETCH_TIMEOUT)
+            return (resp.read(), resp.status_code)
+    except asyncio.TimeoutError:
+        return (b"", 0)
     except asyncio.CancelledError:
         raise
     except Exception:
@@ -1798,13 +1779,13 @@ async def _fetch_article_text(entry_url: str) -> tuple[str, bool, int]:
         return ("", False, 0)
 
     try:
-        from hledac.universal.network.session_runtime import async_get_aiohttp_session
+        from hledac.universal.network.session_runtime import async_get_httpx_session
     except Exception:
         return ("", False, 0)
 
     try:
-        session = await async_get_aiohttp_session()
-        wayback_session = await async_get_aiohttp_session()
+        session = await async_get_httpx_session()
+        wayback_session = await async_get_httpx_session()
     except Exception:
         return ("", False, 0)
 

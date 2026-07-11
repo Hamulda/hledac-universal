@@ -26,7 +26,6 @@ LMDB NAMESPACE (dedicated WAL LMDB):
 F272: When using unified store, keys are prefixed with "wal:" namespace:
     wal:finding:{id}, wal:pending_duckdb_sync:{id}, wal:deadletter_ingest:{id}
 """
-from __future__ import annotations
 
 
 

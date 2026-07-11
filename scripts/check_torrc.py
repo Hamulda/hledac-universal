@@ -16,7 +16,6 @@ Exit codes:
     1 = not found
     2 = torrc not found / unreadable
 """
-from __future__ import annotations
 
 
 

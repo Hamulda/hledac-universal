@@ -11,7 +11,6 @@ No MLX/GPU dependencies. Schedules structured output requests with:
 
 Sprint F226H: Extracted from Hermes3Engine as standalone policy layer.
 """
-from __future__ import annotations
 
 
 

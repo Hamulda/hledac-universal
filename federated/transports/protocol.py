@@ -46,7 +46,6 @@ DESIGN NOTES
 - The factory keeps a weak reference to singleton instances to avoid
   leaking transport state across sprints.
 """
-from __future__ import annotations
 
 
 

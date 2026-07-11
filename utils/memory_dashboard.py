@@ -5,7 +5,6 @@ Sprint 81: Core Stability & Memory Safety
 - UnifiedMemorySnapshot - dataclass pro kombinovaný memory snapshot
 - UnifiedMemoryMonitor - třída pro sledování unified memory na M1
 """
-from __future__ import annotations
 
 
 

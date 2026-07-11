@@ -14,7 +14,6 @@ Usage:
     engine = AcademicSearchEngine()
     results = await engine.search("quantum computing", max_results=20)
 """
-from __future__ import annotations
 
 
 

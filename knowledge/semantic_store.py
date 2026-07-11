@@ -18,7 +18,6 @@ Migrated to ConcurrencyBudgetRegistry (F268).
 NENÍ owner embedding computation → MLXEmbeddingManager singleton
 NENÍ owner primary retrieval → rag_engine
 """
-from __future__ import annotations
 
 
 

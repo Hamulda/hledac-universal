@@ -27,7 +27,6 @@ INVARIANTS:
   - Žádné nové feature flagy
   - M1 8GB safe: Kuzu single-thread executor, DuckDB in-process
 """
-from __future__ import annotations
 
 
 import logging

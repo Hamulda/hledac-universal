@@ -30,7 +30,6 @@ Usage:
   python benchmarks/live_sprint_measurement.py --print-preflight-only
   python benchmarks/live_sprint_measurement.py --print-preflight-only --output-json /tmp/preflight.json
 """
-from __future__ import annotations
 
 
 import argparse

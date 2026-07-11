@@ -20,7 +20,6 @@ DuckDB analytical queries:
     - error rate: SUM(status != 'OK') / COUNT(*)
 """
 
-from __future__ import annotations
 
 import json
 import threading

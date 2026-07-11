@@ -1,3 +1,6 @@
+---
+related: [knowledge_base/audit/kb_audit_2026_07_11.md]
+---
 # Topic: audit
 
 ## Overview

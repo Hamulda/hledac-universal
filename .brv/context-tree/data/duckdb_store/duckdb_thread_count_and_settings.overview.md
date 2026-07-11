@@ -1,0 +1,8 @@
+- Thread count conflict: settings.py (2 threads) overrides duckdb_store.py (4 threads default)
+- DuckDBSettings configures: in_process (default True, saves ~200MB RAM), threads (default 2), arrow_ingest (default True, zero-copy 1.5-2× faster), memory_limit_gib (default 2.0, ceiling 4.0 for M1)
+- DuckDBShadowStore implements 3-tier facts hierarchy: Sprint Facts, Shadow Findings, Cross-Sprint
+- DuckDB query cache is two-tier: L1 LRU (500 entries, 300s) + L2 LMDB (5000 entries, 300s, 16MB)
+- Sprint facts forwarding documented from EvidenceLog.append()
+- Arrow ingest break-even vs executemany at N=5-10 rows
+- Rules: threads capped at 4 for M1, memory_limit_gib capped at 4.0 for M1 8GB
+- Environment variables: HLEDAC_DUCKDB_THREADS, HLEDAC_DUCKDB_INPROCESS, HLEDAC_ARROW_INGEST, HLEDAC_DUCKDB_MEMORY

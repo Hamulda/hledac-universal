@@ -43,7 +43,6 @@ Fail-safe (always-on):
     - No background workers, no threads, no I/O — pure CPU on a bounded
       in-memory graph.
 """
-from __future__ import annotations
 
 
 

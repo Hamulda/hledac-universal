@@ -18,7 +18,6 @@
 #   [I4] mx.eval([]) barrier before clear_cache if MLX involved
 #   [I5] lz4_flex frame (Rust rayon or Python lz4_flex)
 
-from __future__ import annotations
 
 import asyncio
 import os

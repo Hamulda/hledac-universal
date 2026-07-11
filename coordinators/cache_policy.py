@@ -23,7 +23,6 @@ M1 8GB UMA bounds (per cache instance):
   L2: max 512 MB
   L3: max 1024 MB
 """
-from __future__ import annotations
 
 
 import asyncio

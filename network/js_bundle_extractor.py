@@ -1,6 +1,5 @@
 
 """JS Bundle AST extractor – finds API endpoints in external JS files."""
-from __future__ import annotations
 
 import logging  # noqa: E402
 import re  # noqa: E402

@@ -30,7 +30,6 @@ Usage:
     dedup = get_semantic_deduplicator()
     decision = await dedup.check_duplicate(finding_id, text, metadata)
 """
-from __future__ import annotations
 
 
 import asyncio

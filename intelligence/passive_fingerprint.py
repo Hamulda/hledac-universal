@@ -31,7 +31,6 @@ GHOST_INVARIANTS enforced:
 
 Source type: "passive_fingerprint"
 """
-from __future__ import annotations
 
 
 

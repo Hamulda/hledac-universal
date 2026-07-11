@@ -42,7 +42,6 @@ INVARIANTS:
   - No new public APIs outside this module
 """
 
-from __future__ import annotations
 
 import asyncio
 import fnmatch

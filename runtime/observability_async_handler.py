@@ -14,7 +14,6 @@ Env vars:
   HLEDAC_ASYNC_LOG_DROP_OLDEST=1 — drop oldest on overflow (default 1)
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

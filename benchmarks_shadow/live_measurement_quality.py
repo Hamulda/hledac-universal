@@ -11,7 +11,6 @@ Schema dependency: benchmarks/live_measurement_schema.py (RunQualityVerdict, Mea
 
 NO runtime imports (runtime/, core/, pipeline/, MLX, network).
 """
-from __future__ import annotations
 
 
 

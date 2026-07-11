@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 # Concept→Domain Expansion Pre-Phase (P0-2)
 # ===========================================

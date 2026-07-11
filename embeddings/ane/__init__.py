@@ -24,7 +24,6 @@ Memory budget (M1 8GB):
 
 Canonical import: from hledac.universal.embeddings.ane import ane_embedder
 """
-from __future__ import annotations
 
 import logging
 import threading

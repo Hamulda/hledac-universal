@@ -5,7 +5,6 @@ Provides CapabilityPluginRegistry — a lightweight registration layer for
 capability plugins that validates module presence via importlib.util.find_spec()
 without triggering any network I/O or full module imports.
 """
-from __future__ import annotations
 
 
 import importlib.util

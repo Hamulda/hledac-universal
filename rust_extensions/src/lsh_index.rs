@@ -27,7 +27,7 @@ const DEFAULT_NUM_ROWS: usize = 4;
 
 /// LSH Index using AND-construction (banding)
 /// Each band is a row; a candidate matches if ALL rows in a band match.
-#[pyclass(frozen)]
+#[pyclass]
 pub struct LSHIndex {
     /// Hash tables, one per band/row combination
     /// Key: band_hash, Value: list of (doc_id, fingerprint)

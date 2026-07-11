@@ -18,26 +18,25 @@ AUTHORITY BOUNDARY:
 Sprint 8AB: Unified UMA accountant surface (WARN/CRITICAL/EMERGENCY + I/O-only mode).
 Threshold driver: system_used_gib (total - available), NOT process rss_gib.
 """
+
 from __future__ import annotations
-
-
 
 import asyncio
 import contextlib
-
-from hledac.universal.utils.async_helpers import safe_create_task, stop_task
 import inspect
 import logging
-import os
 import threading
 import time
-import warnings
 from collections.abc import Callable
-from dataclasses import dataclass
 from enum import Enum, IntEnum
-from typing import Any
+from typing import Any, Generic, TypeVar
+
+_KT = TypeVar("_KT")
+_VT = TypeVar("_VT")
 
 import msgspec
+
+from hledac.universal.utils.async_helpers import safe_create_task, stop_task
 
 # Python 3.11+ StrEnum — type-safe UMA state labels, exhaustive match support
 if True:  # noqa: E702 — gate for Python version guard (3.11+)
@@ -56,6 +55,7 @@ if True:  # noqa: E702 — gate for Python version guard (3.11+)
         Values match string constants: UMA_STATE_OK, UMA_STATE_WARN, etc.
         Keep using string literals for serialization (DuckDB, JSON, LMDB).
         """
+
         OK = "ok"
         SOFT_WARN = "soft_warn"
         WARN = "warn"
@@ -129,6 +129,7 @@ class ConcurrencyPreset(msgspec.Struct, frozen=True):
         soft_warn:  5 workers, 10 fetch, block_model_load=False — approaching limit
         ok:         5 workers, 20 fetch, block_model_load=False — normal operation
     """
+
     max_workers: int
     fetch_limit: int
     block_model_load: bool
@@ -145,23 +146,57 @@ class ConcurrencyPreset(msgspec.Struct, frozen=True):
         """
         match state:
             case "emergency":
-                return cls(max_workers=0, fetch_limit=1, block_model_load=True, cache_ttl_seconds=0.1, aimd_decrease_factor=0.0)
+                return cls(
+                    max_workers=0, fetch_limit=1, block_model_load=True, cache_ttl_seconds=0.1, aimd_decrease_factor=0.0
+                )
             case "critical":
-                return cls(max_workers=1, fetch_limit=2, block_model_load=True, cache_ttl_seconds=0.25, aimd_decrease_factor=0.25)
+                return cls(
+                    max_workers=1,
+                    fetch_limit=2,
+                    block_model_load=True,
+                    cache_ttl_seconds=0.25,
+                    aimd_decrease_factor=0.25,
+                )
             case "warn":
-                return cls(max_workers=3, fetch_limit=5, block_model_load=False, cache_ttl_seconds=1.0, aimd_decrease_factor=0.5)
+                return cls(
+                    max_workers=3,
+                    fetch_limit=5,
+                    block_model_load=False,
+                    cache_ttl_seconds=1.0,
+                    aimd_decrease_factor=0.5,
+                )
             case "soft_warn":
-                return cls(max_workers=5, fetch_limit=10, block_model_load=False, cache_ttl_seconds=2.0, aimd_decrease_factor=0.75)
+                return cls(
+                    max_workers=5,
+                    fetch_limit=10,
+                    block_model_load=False,
+                    cache_ttl_seconds=2.0,
+                    aimd_decrease_factor=0.75,
+                )
             case "ok":
-                return cls(max_workers=5, fetch_limit=20, block_model_load=False, cache_ttl_seconds=5.0, aimd_decrease_factor=1.0)
+                return cls(
+                    max_workers=5,
+                    fetch_limit=20,
+                    block_model_load=False,
+                    cache_ttl_seconds=5.0,
+                    aimd_decrease_factor=1.0,
+                )
             case _:  # Safe default — exhaustive match + _ catch-all for forward-compat
-                return cls(max_workers=5, fetch_limit=20, block_model_load=False, cache_ttl_seconds=5.0, aimd_decrease_factor=1.0)
+                return cls(
+                    max_workers=5,
+                    fetch_limit=20,
+                    block_model_load=False,
+                    cache_ttl_seconds=5.0,
+                    aimd_decrease_factor=1.0,
+                )
+
 
 # psutil je canonical dep (requirements.txt: psutil # memory pressure monitoring),
 # ale lazy-guarded pro env-flex (M1 8GB UMA cold start, sessions bez psutil,
 # static analysis / doc builds). Vzor: core/mlx_embeddings.py:29-34.
 try:
     import psutil
+
     _PSUTIL_AVAILABLE = True
 except ImportError:
     psutil = None  # type: ignore[assignment]
@@ -193,13 +228,52 @@ def _get_cached_process() -> Any:
 # background thread, all reads are synchronous cache hits.
 # =============================================================================
 
-import threading as _threading  # noqa: E402
-import time as _time_module  # noqa: E402
-from cachetools import LRUCache  # noqa: E402
+import threading as _threading
+import time as _time_module
+
+
+# Fast LRU cache using __slots__ + dict insertion-order (Python 3.7+).
+# Avoids cachetools.OrderedDict overhead. Expected ~30% faster.
+class _FastLRUCache(Generic[_KT, _VT]):
+    __slots__ = ("_data", "_maxsize")
+
+    def __init__(self, maxsize: int) -> None:
+        object.__setattr__(self, "_data", {})
+        object.__setattr__(self, "_maxsize", maxsize)
+
+    def get(self, key: _KT) -> _VT | None:
+        data = object.__getattribute__(self, "_data")
+        val = data.get(key)
+        if val is not None:
+            # Move to end (most recent) — dict preserves insertion order
+            data[key] = data.pop(key)
+        return val
+
+    def put(self, key: _KT, value: _VT) -> None:
+        data = object.__getattribute__(self, "_data")
+        maxsize = object.__getattribute__(self, "_maxsize")
+        if key in data:
+            data[key] = value
+            return
+        if len(data) >= maxsize:
+            # Evict oldest (first insertion-order key)
+            data.pop(next(iter(data)))
+        data[key] = value
+
+    def clear(self) -> None:
+        object.__getattribute__(self, "_data").clear()
+
+    def __len__(self) -> int:
+        return len(object.__getattribute__(self, "_data"))
+
 
 _MAX_PSUTIL_CACHE_SIZE: int = 32  # defence-in-depth: bounds cache entries
-_psutil_cache: LRUCache[str, tuple[Any, float]] = LRUCache(maxsize=_MAX_PSUTIL_CACHE_SIZE)  # key → (result, timestamp) — ISSUE-112: bounded via LRUCache
-_psutil_key_locks: LRUCache[str, _threading.Lock] = LRUCache(maxsize=128)  # ISSUE-110: bounded per-key lock cache
+_psutil_cache: _FastLRUCache[str, tuple[Any, float]] = _FastLRUCache(
+    maxsize=_MAX_PSUTIL_CACHE_SIZE
+)  # key → (result, timestamp)
+_psutil_key_locks: _FastLRUCache[str, _threading.Lock] = _FastLRUCache(
+    maxsize=128
+)  # ISSUE-110: bounded per-key lock cache
 _psutil_meta_lock: _threading.Lock = _threading.Lock()  # only for dict ops (_psutil_cache, _psutil_key_locks)
 _PSUTIL_CACHE_TTL_S: float = 2.0  # Short TTL — memory state changes fast under load
 
@@ -243,6 +317,7 @@ def _read_swap_memory_sync() -> Any:
 
 # ── Sprint F320-ISSUE-3: Pure-psutil memory pressure (no subprocess) ──────────
 
+
 def _read_memory_pressure_sync() -> dict[str, Any]:
     """
     Blocking psutil-based memory pressure reader.
@@ -262,8 +337,8 @@ def _read_memory_pressure_sync() -> dict[str, Any]:
         return {"status": "UNKNOWN", "free_pct": 0, "compressor_pages": None}
     try:
         vm = psutil.virtual_memory()
-        total = getattr(vm, 'total', 0)
-        used = getattr(vm, 'used', 0)
+        total = getattr(vm, "total", 0)
+        used = getattr(vm, "used", 0)
         if total > 0:
             free_pct = int(((total - used) / total) * 100)
         else:
@@ -365,6 +440,7 @@ def _get_mx():
     global _mx
     if _mx is None:
         import mlx.core as _mx_module
+
         _mx = _mx_module
     return _mx
 
@@ -403,10 +479,10 @@ logger = logging.getLogger(__name__)
 # Per-SoC ratio tables (Apple unified memory pressure profiles):
 _RATIO_TABLE = {
     # (total_gib_min, total_gib_max): (soft_warn, warn, critical, emergency)
-    (0, 10):  (0.850, 0.875, 0.9375, 0.975),   # M1 8GB
-    (10, 18): (0.800, 0.850, 0.9000, 0.950),   # M2 16GB / M3 16GB
-    (18, 32): (0.750, 0.800, 0.8700, 0.920),   # M3 24GB / M4 32GB
-    (32, 128):(0.700, 0.750, 0.8500, 0.900),   # workstation/unlimited
+    (0, 10): (0.850, 0.875, 0.9375, 0.975),  # M1 8GB
+    (10, 18): (0.800, 0.850, 0.9000, 0.950),  # M2 16GB / M3 16GB
+    (18, 32): (0.750, 0.800, 0.8700, 0.920),  # M3 24GB / M4 32GB
+    (32, 128): (0.700, 0.750, 0.8500, 0.900),  # workstation/unlimited
 }
 
 
@@ -414,8 +490,9 @@ def _detect_total_memory_gib() -> float:
     """Detect real system RAM in GiB. Floor 4 GiB, ceil 128 GiB, fallback 8 GiB."""
     try:
         import psutil as _ps
+
         mem = _ps.virtual_memory()
-        detected_gib = mem.total / (1024 ** 3)
+        detected_gib = mem.total / (1024**3)
         return max(4.0, min(128.0, detected_gib))
     except Exception:
         return 8.0  # M1 8GB fallback
@@ -509,9 +586,13 @@ def get_swap_policy_tier(swap_gib: float) -> tuple[str, str]:
     if swap_gib <= CLEAN_SWAP_MAX_GIB:
         return "clean", f"swap={swap_gib:.2f}GiB <= {CLEAN_SWAP_MAX_GIB:.1f}GiB threshold"
     elif swap_gib <= DIAGNOSTIC_SWAP_MAX_GIB:
-        return "diagnostic", f"swap={swap_gib:.2f}GiB in ({CLEAN_SWAP_MAX_GIB:.1f}GiB, {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB] — hardware taint"  # noqa: E501
+        return (
+            "diagnostic",
+            f"swap={swap_gib:.2f}GiB in ({CLEAN_SWAP_MAX_GIB:.1f}GiB, {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB] — hardware taint",
+        )  # noqa: E501
     else:
         return "hard_block", f"swap={swap_gib:.2f}GiB > {HARD_BLOCK_SWAP_GIB:.1f}GiB — restart required"
+
 
 # Sprint 8AK: Thread-safe hysteresis latch for io_only
 # Protected by a simple threading.Lock — not an async subsystem
@@ -577,6 +658,7 @@ def _reset_uma_hysteresis_for_testing() -> None:
     global _io_only_latch
     with _io_only_latch_lock:
         _io_only_latch = False
+
 
 # Sprint 8AB: Lightweight telemetry counters (module-level, no class instantiation)
 # F130A: io_only_enter/exit are now transition-based (only on actual transitions),
@@ -648,6 +730,7 @@ class UMAStatus(msgspec.Struct, frozen=True):
     are independent signals — tiered policy applies to prelive/cockpit,
     swap_detected applies to io_only acceleration and governor decisions.
     """
+
     rss_gib: float
     system_used_gib: float
     system_available_gib: float
@@ -699,7 +782,7 @@ class MemoryPressureHysteresis:
     # Threshold ratios × dwell times (seconds) for each transition
     THRESHOLDS: dict[str, tuple[float, float]] = {
         # (enter_threshold_ratio, dwell_seconds)
-        "normal_to_warning": (0.70, 5.0),   # >70% for 5s → warn
+        "normal_to_warning": (0.70, 5.0),  # >70% for 5s → warn
         "warning_to_critical": (0.85, 3.0),  # >85% for 3s → critical
         # exit transitions use absolute gib values below
     }
@@ -707,10 +790,10 @@ class MemoryPressureHysteresis:
     # Exit hysteresis floors (absolute GB, M1 8GB)
     # critical→warning: must drop below 75% for 10s
     # warning→normal: must drop below 60% for 15s
-    EXIT_FLOOR_CRITICAL = 0.75   # fraction of total RAM
-    EXIT_FLOOR_WARNING = 0.60     # fraction of total RAM
-    EXIT_DWELL_CRITICAL = 10.0   # seconds below floor before exiting critical
-    EXIT_DWELL_WARNING = 15.0    # seconds below floor before exiting warning
+    EXIT_FLOOR_CRITICAL = 0.75  # fraction of total RAM
+    EXIT_FLOOR_WARNING = 0.60  # fraction of total RAM
+    EXIT_DWELL_CRITICAL = 10.0  # seconds below floor before exiting critical
+    EXIT_DWELL_WARNING = 15.0  # seconds below floor before exiting warning
 
     __slots__ = ("_state", "_enter_time", "_exit_enter_time", "_exit_floor_gib", "_total_gib")
 
@@ -834,6 +917,7 @@ class GovernorDecision(msgspec.Struct, frozen=True):
         fetch_limit:      MAX souběžných fetch operací.
         block_model_load: True pokud by se neměl load nový MLX model.
     """
+
     uma_state: str
     io_only: bool
     fetch_limit: int
@@ -932,7 +1016,8 @@ class M1ResourceGovernor:
             )
             block_model_load_valid = (
                 M1ResourceGovernor._cached_decision is not None
-                and now - M1ResourceGovernor._cached_block_model_load_timestamp < M1ResourceGovernor.BLOCK_MODEL_LOAD_TTL_S
+                and now - M1ResourceGovernor._cached_block_model_load_timestamp
+                < M1ResourceGovernor.BLOCK_MODEL_LOAD_TTL_S
             )
 
             if io_only_valid and fetch_limit_valid and block_model_load_valid:
@@ -996,12 +1081,17 @@ class M1ResourceGovernor:
         # F290: Wire MPC predictive control into fetch_limit scaling
         # MPC predicts memory at MPC_HORIZON_S (10s) ahead and returns
         # control ∈ [0.0, 1.0] to scale concurrency before OOM hits
-        mpc_control, _mpc_metrics = await self._mpc_controller.compute_control(
-            uma.system_used_gib, uma.state
-        )
+        mpc_control, _mpc_metrics = await self._mpc_controller.compute_control(uma.system_used_gib, uma.state)
         # Scale fetch_limit by MPC control (MPC control ∈ [0.0, 1.0])
         scaled_fetch_limit = max(1, int(preset.fetch_limit * mpc_control))
 
+        # F330-WIRE: record memory_layer_pressure_pct for ObservabilityHub.get_sprint_health()
+        try:
+            from hledac.universal.metrics_registry import get_metrics_registry
+
+            get_metrics_registry().set_gauge("memory_layer_pressure_pct", memory_ratio * 100.0)
+        except Exception:  # noqa: BLE001
+            pass  # fail-soft: metrics never crash governor
         return GovernorDecision(
             uma_state=gated_state,
             io_only=uma.io_only,
@@ -1044,6 +1134,7 @@ class M1ResourceGovernor:
 
     class SidecarAdmission(msgspec.Struct, frozen=True):
         """Sidecar admission result. Migrated from @dataclass → msgspec.Struct."""
+
         allowed: bool
         reason: str
 
@@ -1062,31 +1153,27 @@ class M1ResourceGovernor:
         if uma.state in ("emergency", "critical"):
             if est_mb > 50:
                 return M1ResourceGovernor.SidecarAdmission(
-                    allowed=False,
-                    reason=f"{uma.state}: {sidecar_name} est={est_mb}MB blocked"
+                    allowed=False, reason=f"{uma.state}: {sidecar_name} est={est_mb}MB blocked"
                 )
             return M1ResourceGovernor.SidecarAdmission(
-                allowed=True,
-                reason=f"{uma.state}: {sidecar_name} est={est_mb}MB low-cost-allowed"
+                allowed=True, reason=f"{uma.state}: {sidecar_name} est={est_mb}MB low-cost-allowed"
             )
 
-        return M1ResourceGovernor.SidecarAdmission(
-            allowed=True,
-            reason=f"{uma.state}: {sidecar_name} admitted"
-        )
+        return M1ResourceGovernor.SidecarAdmission(allowed=True, reason=f"{uma.state}: {sidecar_name} admitted")
 
 
 class Priority(Enum):
-    CRITICAL = "CRITICAL"   # musí se provést, vyšší tolerance (+20 % budget)
-    HIGH = "HIGH"           # důležité, lze odložit
-    NORMAL = "NORMAL"       # běžná operace
-    LOW = "LOW"             # lze zrušit kdykoli
+    CRITICAL = "CRITICAL"  # musí se provést, vyšší tolerance (+20 % budget)
+    HIGH = "HIGH"  # důležité, lze odložit
+    NORMAL = "NORMAL"  # běžná operace
+    LOW = "LOW"  # lze zrušit kdykoli
 
 
 class ResourceGovernor:
     """
     Hlídá zdroje a rozhoduje, zda je možné provést náročnou operaci.
     """
+
     def __init__(self, memory_high_water_mb: float = 5632, thermal_threshold: float = 82.0):
         self.high_water = memory_high_water_mb
         self.thermal_threshold = thermal_threshold
@@ -1144,25 +1231,25 @@ class ResourceGovernor:
                     ram_used = vm.used / (1024 * 1024)
             except Exception:
                 ram_used = 0.0
-        ram_needed = cost_estimate.get('ram_mb', 0)
+        ram_needed = cost_estimate.get("ram_mb", 0)
         factor = self._priority_factor[priority]
 
         if ram_used + ram_needed > self.high_water * factor:
             return False
 
-        if cost_estimate.get('gpu', False):
+        if cost_estimate.get("gpu", False):
             try:
                 # Sprint 8W: use top-level mx API when available (MLX 0.31.1+)
-                if hasattr(_get_mx(), 'get_active_memory'):
+                if hasattr(_get_mx(), "get_active_memory"):
                     gpu_used = _get_mx().get_active_memory() / (1024 * 1024)
-                elif hasattr(_get_mx().metal, 'get_active_memory'):
+                elif hasattr(_get_mx().metal, "get_active_memory"):
                     gpu_used = _get_mx().metal.get_active_memory() / (1024 * 1024)
                 else:
                     gpu_used = 0
 
                 # get_recommended_max_memory not available in MLX 0.31.1 — skip GPU check
-                gpu_total = float('inf')
-                if hasattr(_get_mx().metal, 'get_recommended_max_memory'):
+                gpu_total = float("inf")
+                if hasattr(_get_mx().metal, "get_recommended_max_memory"):
                     gpu_total = _get_mx().metal.get_recommended_max_memory() / (1024 * 1024)
 
                 if gpu_used + ram_needed > gpu_total * factor:
@@ -1172,7 +1259,7 @@ class ResourceGovernor:
 
         # Jednoduchý thermal guard (volitelné, MLX 2026+)
         try:
-            if hasattr(_get_mx().metal, 'get_device_temperature'):
+            if hasattr(_get_mx().metal, "get_device_temperature"):
                 gpu_temp = _get_mx().metal.get_device_temperature()
                 if gpu_temp > self.thermal_threshold and priority != Priority.CRITICAL:
                     logger.warning(f"GPU thermal limit reached: {gpu_temp}°C > {self.thermal_threshold}°C")
@@ -1182,7 +1269,7 @@ class ResourceGovernor:
 
         # Best-effort ANE guard
         try:
-            if hasattr(_get_mx().metal, 'get_ane_utilization'):
+            if hasattr(_get_mx().metal, "get_ane_utilization"):
                 ane = _get_mx().metal.get_ane_utilization()
                 if ane > 0.90 and priority == Priority.LOW:
                     return False
@@ -1200,6 +1287,7 @@ class ResourceGovernor:
         """
         Vrací async context manager pro rezervaci zdrojů. Samotná metoda je synchronní.
         """
+
         class _Reservation:
             def __init__(self, gov, cost, prio):
                 self.gov = gov
@@ -1258,7 +1346,9 @@ def evaluate_uma_state(system_used_gib: float) -> str:
             return UMAState.OK
 
 
-def should_enter_io_only_mode(system_used_gib: float, previous_io_only: bool = False, swap_detected: bool = False) -> bool:  # noqa: E501
+def should_enter_io_only_mode(
+    system_used_gib: float, previous_io_only: bool = False, swap_detected: bool = False
+) -> bool:  # noqa: E501
     """
     Sprint 8AB + F165E: Hysteresis-based I/O-only mode gate.
 
@@ -1305,6 +1395,7 @@ def _get_metal_limits_status_8ab() -> tuple[int | None, int | None]:
     try:
         # Guard: mlx_cache may not be importable in all contexts
         from ..utils.mlx_cache import get_metal_limits_status
+
         status = get_metal_limits_status()
         return status.get("cache_limit_bytes"), status.get("wired_limit_bytes")
     except Exception:
@@ -1330,6 +1421,7 @@ def _get_memory_pressure_status() -> str:
     try:
         import re
         import subprocess
+
         proc = subprocess.run(
             ["memory_pressure"],
             capture_output=True,
@@ -1398,7 +1490,7 @@ def sample_uma_status() -> UMAStatus:
     rss_gib: float = 0.0
     try:
         proc = _get_cached_process()
-        rss_gib = proc.memory_info().rss / (1024 ** 3)
+        rss_gib = proc.memory_info().rss / (1024**3)
     except Exception as exc:
         last_error = f"psutil.Process: {exc}"
 
@@ -1411,8 +1503,8 @@ def sample_uma_status() -> UMAStatus:
         # or lazily on first call after TTL expiry.
         vm = _get_cached_psutil("virtual_memory", _read_virtual_memory_sync)
         if vm is not None:
-            system_used_gib = (vm.total - vm.available) / (1024 ** 3)
-            system_available_gib = vm.available / (1024 ** 3)
+            system_used_gib = (vm.total - vm.available) / (1024**3)
+            system_available_gib = vm.available / (1024**3)
     except Exception as exc:
         last_error = f"virtual_memory: {exc}"
         system_used_gib = 0.0
@@ -1423,7 +1515,7 @@ def sample_uma_status() -> UMAStatus:
     try:
         sm = _get_cached_psutil("swap_memory", _read_swap_memory_sync)
         if sm is not None:
-            swap_used_gib = sm.used / (1024 ** 3)
+            swap_used_gib = sm.used / (1024**3)
     except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # swap unavailable — fail-open silently
 
@@ -1437,13 +1529,13 @@ def sample_uma_status() -> UMAStatus:
         mx = _get_mx()
         if mx is not None:
             if hasattr(mx, "get_active_memory"):
-                metal_active_gib = mx.get_active_memory() / (1024 ** 3)
+                metal_active_gib = mx.get_active_memory() / (1024**3)
             elif hasattr(mx.metal, "get_active_memory"):
-                metal_active_gib = mx.metal.get_active_memory() / (1024 ** 3)
+                metal_active_gib = mx.metal.get_active_memory() / (1024**3)
             if hasattr(mx, "get_peak_memory"):
-                metal_peak_gib = mx.get_peak_memory() / (1024 ** 3)
+                metal_peak_gib = mx.get_peak_memory() / (1024**3)
             elif hasattr(mx.metal, "get_peak_memory"):
-                metal_peak_gib = mx.metal.get_peak_memory() / (1024 ** 3)
+                metal_peak_gib = mx.metal.get_peak_memory() / (1024**3)
     except Exception:  # noqa: BLE001
         pass  # fail-open: MLX unavailable
 
@@ -1729,6 +1821,7 @@ class MPCMetrics(msgspec.Struct, frozen=True):
     All values are measured/derived at computation time.
     Use for telemetry, debugging, and regression testing.
     """
+
     predicted_memory_gib: float
     velocity_gib_per_sec: float
     acceleration_gib_per_sec2: float
@@ -1783,7 +1876,7 @@ class AdaptiveMPCController:
         _TARGET_HEADROOM_GIB = 0.5
         _EMERGENCY_THRESHOLD_GIB = 7.8
 
-    __slots__ = ('_ema_v', '_ema_a', '_last_t', '_last_mem', '_enabled')
+    __slots__ = ("_ema_v", "_ema_a", "_last_t", "_last_mem", "_enabled")
 
     def __init__(self) -> None:
         self._ema_v: float = 0.0
@@ -1944,7 +2037,9 @@ def get_mpc_telemetry() -> dict[str, Any]:
             "velocity_gib_s": _MPC_HISTORY[-1][2] if _MPC_HISTORY else None,
             "acceleration_gib_s2": _MPC_HISTORY[-1][3] if _MPC_HISTORY else None,
             "control_input": _MPC_HISTORY[-1][4] if _MPC_HISTORY else None,
-        } if _MPC_HISTORY else None,
+        }
+        if _MPC_HISTORY
+        else None,
     }
 
 
@@ -1977,6 +2072,7 @@ def set_thread_qos(qos_level: int) -> None:
     try:
         import ctypes
         import ctypes.util
+
         libc = ctypes.CDLL(None)
         # pthread_set_qos_class_self_np syscall number on Darwin is 366
         # signature: int pthread_set_qos_class_self_np(int qos_class, int relative_priority)

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """
+from __future__ import annotations
 F226 — Python 3.14 / M1 Benchmark Gates
 =======================================
 
@@ -30,6 +31,7 @@ Exit codes:
     64 = no psutil (continues, reports wall-time only)
     65 = benchmark error
 """
+from __future__ import annotations
 
 
 import argparse

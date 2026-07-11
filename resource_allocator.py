@@ -21,7 +21,6 @@ uma_budget.py absolute-MB thresholds. These serve different purposes:
 - uma_budget.py: absolute system+MLX used (Calibrated for M1 8GB UMA)
 - resource_allocator.py: percent-based system pressure (for AdaptiveSemaphore decisions)
 """
-from __future__ import annotations
 
 
 import logging

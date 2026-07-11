@@ -23,8 +23,6 @@ Capability flag:
     HLEDAC_ENABLE_ADVANCED_RAG=0 (default, dormant) — gate at runtime.
     HLEDAC_ADVANCED_RAG_BACKEND=sqlitevec|lancedb|auto (default: auto)
 """
-from __future__ import annotations
-
 
 import asyncio
 import logging
@@ -43,7 +41,6 @@ _FALLBACK_CONFIDENCE = 0.5
 # RAM threshold for LanceDB fallback activation (GB)
 _LANCEDB_RAM_THRESHOLD_GB = 1.5
 
-
 def _has_ram_headroom(required_gb: float = _LANCEDB_RAM_THRESHOLD_GB) -> bool:
     """Return True if system has at least `required_gb` available RAM."""
     try:
@@ -53,14 +50,12 @@ def _has_ram_headroom(required_gb: float = _LANCEDB_RAM_THRESHOLD_GB) -> bool:
     except Exception:
         return False
 
-
 def _get_backend_mode() -> str:
     """Resolve backend mode from HLEDAC_ADVANCED_RAG_BACKEND env var."""
     mode = os.environ.get("HLEDAC_ADVANCED_RAG_BACKEND", "auto").lower()
     if mode in ("sqlitevec", "lancedb", "auto"):
         return mode
     return "auto"
-
 
 class RAGOrchestrator:
     """
@@ -381,6 +376,5 @@ class RAGOrchestrator:
             self._sqlite_vec_store = None
         self._lancedb_store = None
         self._initialized = False
-
 
 __all__ = ["RAGOrchestrator"]

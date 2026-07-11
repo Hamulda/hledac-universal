@@ -11,7 +11,6 @@ Consolidates duplicate implementations detected by vibedrift:
 This module is auto-imported by embeddings/manager.py and core/mlx_embeddings.py
 to eliminate semantic duplication while maintaining M1 8GB RAM constraints.
 """
-from __future__ import annotations
 
 import asyncio
 import gc

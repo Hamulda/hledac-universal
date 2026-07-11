@@ -10,7 +10,6 @@ Commands:
     pivot    — Pivot search
     ct       — CT (certificate) pivot
 """
-from __future__ import annotations
 
 import argparse
 import pathlib

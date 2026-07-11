@@ -27,7 +27,6 @@ Definition:
     "disappeared = previously seen digest no longer present in recent CDX window
     "unchanged"  = digest same as previous (skipped by default)
 """
-from __future__ import annotations
 
 import asyncio
 from hledac.universal.utils.async_helpers import safe_create_task

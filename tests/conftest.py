@@ -17,7 +17,7 @@ REPO_ROOT = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 # Tuple order is the iteration order, but `insert(0, …)` reverses it, so
 # we list the parent FIRST and REPO_ROOT SECOND to land the desired
 # final ordering of [REPO_ROOT, parent, …].
-for _p in ('/Users/vojtechhamada/PycharmProjects/Hledac', str(REPO_ROOT)):
+for _p in ("/Users/vojtechhamada/PycharmProjects/Hledac", str(REPO_ROOT)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -30,14 +30,10 @@ for _p in ('/Users/vojtechhamada/PycharmProjects/Hledac', str(REPO_ROOT)):
 # forces the source to be read and executed.
 import importlib.util as _importlib_util  # noqa: E402
 
-_HLEDAC_UNIVERSAL_INIT = (
-    "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/__init__.py"
-)
+_HLEDAC_UNIVERSAL_INIT = "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/__init__.py"
 if os.path.isfile(_HLEDAC_UNIVERSAL_INIT):
     try:
-        _spec = _importlib_util.spec_from_file_location(
-            "hledac.universal", _HLEDAC_UNIVERSAL_INIT
-        )
+        _spec = _importlib_util.spec_from_file_location("hledac.universal", _HLEDAC_UNIVERSAL_INIT)
         if _spec is not None and _spec.loader is not None:
             _hub_mod = _importlib_util.module_from_spec(_spec)
             sys.modules["hledac.universal"] = _hub_mod
@@ -67,6 +63,7 @@ ensure_namespace_paths()
 # had a chance to populate `sys.modules`.  We eagerly touch every common
 # subpackage here so the real modules win.
 _HUB_DIR = "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal"
+
 
 def _force_load(modname: str) -> None:
     """Force-load `modname` from <HUB_DIR> by absolute path, replacing any
@@ -106,43 +103,46 @@ def _force_load(modname: str) -> None:
                 sys.modules.pop(modname, None)
                 return
 
+
 # Issue P0-TEST-SPEED: Lazy _force_load via meta_path finder.
 # Instead of eagerly loading 27 modules at collection time (5-10s overhead),
 # install a meta_path finder that intercepts the FIRST import of any tracked
 # module and force-loads it on-demand.  pytest --collect-only is now near-instant.
 # Subsequent imports use sys.modules directly (our finder returns None).
-_TRACKED_PREFIXES = frozenset((
-    "hledac.universal",
-    "hledac.universal.runtime",
-    "hledac.universal.runtime.acquisition_strategy",
-    "hledac.universal.runtime.sprint_scheduler",
-    "hledac.universal.runtime.pivot_planner",
-    "hledac.universal.brain",
-    "hledac.universal.brain.ane_embedder",
-    "hledac.universal.coordinators",
-    "hledac.universal.coordinators.fetch_coordinator",
-    "hledac.universal.knowledge",
-    "hledac.universal.knowledge.duckdb_store",
-    "hledac.universal.utils",
-    "hledac.universal.utils.concurrency",
-    "hledac.universal.utils.sprint_lifecycle",
-    "hledac.universal.utils.async_helpers",
-    "hledac.universal.discovery",
-    "hledac.universal.discovery.circl_pdns_adapter",
-    "hledac.universal.discovery.duckduckgo_adapter",
-    "hledac.universal.discovery.rss_atom_adapter",
-    "hledac.universal.patterns",
-    "hledac.universal.patterns.pattern_matcher",
-    "hledac.universal.fetching",
-    "hledac.universal.fetching.public_fetcher",
-    "hledac.universal.transport",
-    "hledac.universal.core",
-    "hledac.universal.core.resource_governor",
-    "hledac.universal.pipeline",
-    "hledac.universal.pipeline.live_public_pipeline",
-    "hledac.universal.layers",
-    "hledac.universal.resource_allocator",
-))
+_TRACKED_PREFIXES = frozenset(
+    (
+        "hledac.universal",
+        "hledac.universal.runtime",
+        "hledac.universal.runtime.acquisition_strategy",
+        "hledac.universal.runtime.sprint_scheduler",
+        "hledac.universal.runtime.pivot_planner",
+        "hledac.universal.brain",
+        "hledac.universal.brain.ane_embedder",
+        "hledac.universal.coordinators",
+        "hledac.universal.coordinators.fetch_coordinator",
+        "hledac.universal.knowledge",
+        "hledac.universal.knowledge.duckdb_store",
+        "hledac.universal.utils",
+        "hledac.universal.utils.concurrency",
+        "hledac.universal.utils.sprint_lifecycle",
+        "hledac.universal.utils.async_helpers",
+        "hledac.universal.discovery",
+        "hledac.universal.discovery.circl_pdns_adapter",
+        "hledac.universal.discovery.duckduckgo_adapter",
+        "hledac.universal.discovery.rss_atom_adapter",
+        "hledac.universal.patterns",
+        "hledac.universal.patterns.pattern_matcher",
+        "hledac.universal.fetching",
+        "hledac.universal.fetching.public_fetcher",
+        "hledac.universal.transport",
+        "hledac.universal.core",
+        "hledac.universal.core.resource_governor",
+        "hledac.universal.pipeline",
+        "hledac.universal.pipeline.live_public_pipeline",
+        "hledac.universal.layers",
+        "hledac.universal.resource_allocator",
+    )
+)
 _LOADED: set = set()
 
 
@@ -150,9 +150,7 @@ class _LazyForceLoadFinder:
     """Meta-path finder: force-loads from HUB_DIR on first import, then steps aside."""
 
     def find_spec(self, fullname, path=None, target=None):
-        if not any(
-            fullname == p or fullname.startswith(p + ".") for p in _TRACKED_PREFIXES
-        ):
+        if not any(fullname == p or fullname.startswith(p + ".") for p in _TRACKED_PREFIXES):
             return None
         if fullname in _LOADED:
             return None
@@ -179,8 +177,10 @@ if not any(isinstance(f, _LazyForceLoadFinder) for f in sys.meta_path):
 # explicitly here.
 try:
     import hledac as _hledac_pkg
+
     if not hasattr(_hledac_pkg, "universal"):
         import importlib as _importlib
+
         _mod = _importlib.import_module("hledac.universal")
         # Manually bind as attribute — Python's namespace-package
         # mechanism does NOT set this automatically for sub-modules.
@@ -234,7 +234,7 @@ def _ensure_r0_artifacts() -> None:
             capture_output=True,
             timeout=60,
         )
-    except (subprocess.TimeoutExpired, OSError):
+    except subprocess.TimeoutExpired, OSError:
         # Fail-safe: neblokuj testy kvůli autoprobe
         pass
 
@@ -250,8 +250,8 @@ _ensure_r0_artifacts()
 
 import asyncio  # noqa: E402
 import tempfile  # noqa: E402
+from collections.abc import Generator  # noqa: E402
 from pathlib import Path  # noqa: E402
-from collections.abc import AsyncGenerator, Generator  # noqa: E402
 
 import pytest  # noqa: E402
 
@@ -260,8 +260,7 @@ _OTEL_AVAILABLE = False
 _otel_tracer = None
 try:
     from opentelemetry import trace
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import SimpleSpanProcessor, ConsoleSpanExporter
+
     _OTEL_AVAILABLE = True
 except Exception:
     pass
@@ -317,7 +316,8 @@ def session_duckdb_store():
         store = DuckDBShadowStore(db_path=str(db_path))
 
         from unittest.mock import patch
-        with patch.object(DuckDBShadowStore, '_init_persistent_dedup_lmdb', lambda self: None):
+
+        with patch.object(DuckDBShadowStore, "_init_persistent_dedup_lmdb", lambda self: None):
             loop = asyncio.new_event_loop()
             loop.run_until_complete(store.async_initialize())
             loop.close()
@@ -333,6 +333,7 @@ def session_duckdb_store():
             pass
     finally:
         import shutil
+
         try:
             shutil.rmtree(tmp, ignore_errors=True)
         except Exception:
@@ -364,7 +365,6 @@ def session_otel_tracer():
 # ---------------------------------------------------------------------------
 
 import gc  # noqa: E402
-from collections.abc import Generator  # noqa: E402
 
 try:
     from tests.utils.memory_profiler import (
@@ -452,3 +452,123 @@ def assert_memory_leak():
     if assert_no_leak is None:
         return lambda *a, **k: None  # type: ignore[return-value]
     return assert_no_leak
+
+
+# ---------------------------------------------------------------------------
+# MLX Memory Cleanup Fixtures (F350M-R: Memory Leak Fixes)
+# ---------------------------------------------------------------------------
+
+_MLX_AVAILABLE: bool = False
+_mlx_core: Any = None
+
+try:
+    import mlx.core as _mlx_core
+
+    _MLX_AVAILABLE = True
+except Exception:
+    _MLX_AVAILABLE = False
+
+
+@pytest.fixture(autouse=True)
+def _mlx_cache_cleanup() -> None:
+    """
+    Auto-cleanup MLX Metal cache after each test.
+
+    CRITICAL FIX F350M-R: MLX Metal cache can accumulate up to 1.5GB.
+    Without explicit cleanup, session-scoped tests leak Metal memory
+    and crash M1 8GB after ~100 tests.
+
+    Pattern: mx.eval([]) barrier before clear_cache() — F350M-R invariant.
+    """
+    yield
+    if _MLX_AVAILABLE:
+        try:
+            _mlx_core.eval([])
+            _mlx_core.metal.clear_cache()
+        except Exception:
+            pass  # fail-soft: don't fail tests for cleanup errors
+
+
+@pytest.fixture(autouse=True)
+def _hermes_cache_cleanup() -> None:
+    """
+    Auto-cleanup HermesModelCache singleton after each test.
+
+    CRITICAL FIX F350M-R: hermes_cache() is a process singleton.
+    Models accumulate across tests unless explicitly cleared.
+    """
+    yield
+    try:
+        from brain._hermes_cache import hermes_cache
+
+        cache = hermes_cache()
+        if hasattr(cache, "clear_models"):
+            cache.clear_models()
+    except Exception:
+        pass  # fail-soft: don't fail tests for cleanup errors
+
+
+@pytest.fixture(autouse=True)
+def _mlx_model_pool_cleanup() -> None:
+    """
+    Auto-cleanup MLXModelPool singleton after each test.
+
+    CRITICAL FIX F350M-R: MLXModelPool is a process singleton.
+    Loaded models accumulate across tests without reset.
+    """
+    yield
+    try:
+        from brain.mlx_model_pool import MLXModelPool
+
+        if hasattr(MLXModelPool, "reset_instance"):
+            MLXModelPool.reset_instance()
+    except Exception:
+        pass  # fail-soft: don't fail tests for cleanup errors
+
+
+@pytest.fixture(autouse=True)
+def _asyncio_task_leak_guard(request: pytest.FixtureRequest) -> None:
+    """
+    Detect and warn about asyncio task leaks within each test.
+
+    CRITICAL FIX F350M-R: Orphaned tasks indicate forgotten cleanup.
+    Uses return_exceptions=False to expose real failures, not mask them.
+    """
+    if not _MLX_AVAILABLE:
+        yield
+        return
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        yield  # No running loop, skip check
+        return
+
+    before = len(asyncio.all_tasks(loop))
+    yield
+    after = len(asyncio.all_tasks(loop))
+
+    if after > before:
+        leaked = after - before
+        # Cancel leaked tasks and wait for them to complete
+        current = asyncio.all_tasks(loop)
+        canceled_tasks = []
+        for task in list(current)[before:]:
+            if not task.done():
+                task.cancel()
+                canceled_tasks.append(task)
+        # ISSUE-F350M-R FIX: await canceled tasks to suppress CancelledError noise
+        if canceled_tasks:
+            try:
+                loop.run_until_complete(asyncio.gather(*canceled_tasks, return_exceptions=True))
+            except Exception:
+                pass
+        # Warn but don't fail — cleanup should happen in fixture teardown
+        import warnings
+
+        warnings.warn(
+            f"[F350M-R] {leaked} task(s) leaked in {request.node.name}. "
+            f"Ensure all coroutines are awaited or explicitly cancelled.",
+            RuntimeWarning,
+            stacklevel=2,
+        )

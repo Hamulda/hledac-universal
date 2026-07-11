@@ -6,7 +6,6 @@ Provides:
 - JSON export with deterministic schema
 - Shared fixtures loading
 """
-from __future__ import annotations
 
 
 import gc

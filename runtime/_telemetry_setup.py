@@ -24,7 +24,6 @@ M1 8GB constraints:
                  instrument_lmdb_env() (wired by duckdb_store.py + paths.py).
 """
 
-from __future__ import annotations
 
 import os
 import sys

@@ -44,7 +44,6 @@ Extraction trigger: if advisory logic exceeds ~50 lines OR gains external caller
 beyond these three methods, extract to a dedicated adapter class — do not grow
 the getattr seam.
 """
-from __future__ import annotations
 
 
 

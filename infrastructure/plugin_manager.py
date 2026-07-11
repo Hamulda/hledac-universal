@@ -23,7 +23,6 @@ Features:
 
 Integrated from: kernel/plugin_loader.py
 """
-from __future__ import annotations
 
 
 

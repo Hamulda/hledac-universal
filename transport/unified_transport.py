@@ -23,7 +23,6 @@ Invariant:
   [UT-4] Fail-safe: any error returns None, caller has fallback path
   [UT-5] Sessions closed only via close_all() at winddown
 """
-from __future__ import annotations
 
 import asyncio
 import logging

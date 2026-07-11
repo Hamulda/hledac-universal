@@ -8,7 +8,6 @@ Handles: rescue URLs, bootstrap, keyword search, CT/CC/Onion injection,
 DI seam: set `_async_discovery_search_var`, `_ct_scanner_var`,
 and `_async_search_multi_engine_var` via `_patch_*()` helpers to override defaults.
 """
-from __future__ import annotations
 
 
 import asyncio

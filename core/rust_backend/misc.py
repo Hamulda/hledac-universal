@@ -1,5 +1,4 @@
 # misc.py — Miscellaneous domains: graph, hot_edges, aho, evidence, madvise, memory, json, spsc, query, text, int_counter, simd, sprint_policies, metal
-from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Literal
 

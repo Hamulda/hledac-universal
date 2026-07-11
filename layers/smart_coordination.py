@@ -22,7 +22,6 @@ Migration:
          layer = CoordinationLayer()
          layer.enable_smart_mode()
 """
-from __future__ import annotations
 
 
 import asyncio

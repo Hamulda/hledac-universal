@@ -21,7 +21,6 @@ Cleanup invariant (Python 3.14+):
         async for item in ijson.items_casync(...):
             yield item  # leaks if exception between yield and exit
 """
-from __future__ import annotations
 
 
 

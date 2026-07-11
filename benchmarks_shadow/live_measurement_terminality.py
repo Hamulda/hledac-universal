@@ -15,7 +15,6 @@ FUNCTIONS:
   has_scheduler_exit_path(scheduler_exit: dict | None) -> bool
   extract_terminality_summary(data: dict) -> dict
 """
-from __future__ import annotations
 
 
 

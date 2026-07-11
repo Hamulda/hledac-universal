@@ -15,7 +15,6 @@ Example:
     >>> torch.tensor([1, 2, 3])  # Now it's loaded
     >>> print(manager.get_stats())
 """
-from __future__ import annotations
 
 
 

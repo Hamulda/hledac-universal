@@ -21,7 +21,6 @@ Design note:
   CPU-bound Python work; use io_bound() for I/O-bound blocking calls
   (WHOIS, SSL, SQLite, file I/O).
 """
-from __future__ import annotations
 
 import asyncio
 import functools

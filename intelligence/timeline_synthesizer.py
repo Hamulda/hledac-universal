@@ -16,7 +16,6 @@ and optionally persisted as derived findings via async_ingest_findings_batch.
 
 M1 8GB safe: pure Python, no model load, bounded O(n log n) sort.
 """
-from __future__ import annotations
 
 
 import logging

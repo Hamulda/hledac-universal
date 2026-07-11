@@ -1,4 +1,5 @@
 """
+from __future__ import annotations
 Tool Registry — Pure Registration & Discovery.
 
 This module is the CANONICAL registration authority for tools.
@@ -14,6 +15,7 @@ DO NOT:
 - Add async patterns here — keep this synchronous for testability
 - Add audit/logging here — use ToolExecLog for that
 """
+from __future__ import annotations
 
 
 import asyncio

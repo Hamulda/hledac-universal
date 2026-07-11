@@ -1,5 +1,4 @@
 """Approximate prompt cache using trigram-based similarity."""
-from __future__ import annotations
 
 import hashlib
 import logging

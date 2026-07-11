@@ -35,7 +35,6 @@ INVARIANTS:
 
 No new behavior. No intelligence. Pure mechanical boundary extraction.
 """
-from __future__ import annotations
 
 
 

@@ -38,7 +38,6 @@ References:
     - PYTHON314_MODERNIZATION_AUDIT: ~80% are intentional fail-safe fallbacks
     - Ruff BLE001: blind-except detection
 """
-from __future__ import annotations
 
 import asyncio
 import logging

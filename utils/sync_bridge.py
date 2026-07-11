@@ -26,7 +26,6 @@ M1 CRASH VECTORS (CLAUDE.md invariants)
 
 SOLUTION: Domain-specific bounded executors (see domain_executors.py)
 """
-from __future__ import annotations
 
 import asyncio
 import contextlib

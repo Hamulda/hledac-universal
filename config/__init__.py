@@ -4,7 +4,6 @@ hledac.universal.config — canonical config namespace for universal package
 
 All content migrated from hledac/universal/config.py (single-file).
 """
-from __future__ import annotations
 
 from .settings import (
     settings,

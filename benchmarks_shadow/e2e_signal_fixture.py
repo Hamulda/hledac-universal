@@ -13,7 +13,6 @@ Baseline uses async_fetch_public_text (production aiohttp path, F206Y fix).
 No live internet, no external services, no Docker.
 Output: probe_e2e_readiness/e2e_signal_fixture_{run_name}.json
 """
-from __future__ import annotations
 
 
 

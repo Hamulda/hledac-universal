@@ -8,7 +8,6 @@ Always-on, bounded, fail-safe — if scipy/numpy unavailable, falls back gracefu
 Lazy imports: scipy.sparse (~227ms) and numpy loaded only when this module
 is first accessed via HLEDAC_ENABLE_NEURO=1.
 """
-from __future__ import annotations
 
 import hashlib
 import logging

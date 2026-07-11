@@ -15,7 +15,6 @@ Design:
     - Lazy imports avoid M1 Metal init at import time
 """
 
-from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass

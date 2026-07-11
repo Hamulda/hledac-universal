@@ -46,7 +46,6 @@ automaton = get_suspicious_keywords_automaton()
 matches = aho_scan_text(automaton, "This document is classified and secret")
 # Returns normalized list
 """
-from __future__ import annotations
 
 
 

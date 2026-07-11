@@ -1,5 +1,4 @@
 # quality.py — Text quality assessment domain (entropy, dedup fingerprint)
-from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 

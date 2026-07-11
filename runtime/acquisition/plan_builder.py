@@ -11,7 +11,6 @@ MODERNIZATION (Issue #18):
   - Concurrency helpers (_base_concurrency, _lane_concurrency) isolated here
 """
 
-from __future__ import annotations
 
 import re
 from typing import Any

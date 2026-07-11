@@ -12,7 +12,6 @@ Usage:
 
 Bounded for M1 8GB — no swap escalation, CI-safe.
 """
-from __future__ import annotations
 
 
 

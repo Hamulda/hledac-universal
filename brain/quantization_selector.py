@@ -26,7 +26,6 @@ Invariant table:
   select() returns InferenceBudget      | test_select_returns_inference_budget
   free_uma_hint() computed correctly    | test_free_uma_hint
 """
-from __future__ import annotations
 
 
 

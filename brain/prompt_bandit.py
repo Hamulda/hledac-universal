@@ -1,5 +1,4 @@
 """Contextual bandit (LinUCB) for prompt selection."""
-from __future__ import annotations
 
 import asyncio
 

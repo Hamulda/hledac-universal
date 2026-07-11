@@ -12,7 +12,6 @@ Bounded event-driven layer for:
 Design: cascade L0 cheap deterministic → L1 bounded temporal scoring.
 No numpy, no pandas, no mlx, no model loading. Pure Python. M1 8GB safe.
 """
-from __future__ import annotations
 
 
 import heapq

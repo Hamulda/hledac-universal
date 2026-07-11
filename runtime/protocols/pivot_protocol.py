@@ -9,7 +9,6 @@ GHOST_INVARIANTS:
 - Fail-safe: enqueue_pivot is no-op on error
 - Bounded: max_queue_size enforced
 """
-from __future__ import annotations
 
 
 

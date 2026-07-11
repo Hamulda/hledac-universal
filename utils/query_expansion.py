@@ -9,7 +9,6 @@ Generates context-aware search variations using:
 
 M1-Optimized: Minimal dependencies, efficient generation
 """
-from __future__ import annotations
 
 
 

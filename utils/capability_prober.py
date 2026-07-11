@@ -3,7 +3,6 @@ Capability Prober - Runtime dependency detection without boolean flags.
 
 This module provides lazy capability probing without persistent boolean flags.
 """
-from __future__ import annotations
 
 
 import asyncio

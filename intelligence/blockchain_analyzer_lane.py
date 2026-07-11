@@ -8,7 +8,6 @@ LaneSpec:
     concurrent_queries=2 (API rate limits + network I/O per chain)
     cost_estimate_per_query=3 (external API calls + parsing cost)
 """
-from __future__ import annotations
 
 
 import asyncio

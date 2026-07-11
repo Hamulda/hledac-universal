@@ -2,7 +2,6 @@
 Deep Research Utilities for Hledac Universal Platform
 Link rot detection, content extraction, and processing utilities
 """
-from __future__ import annotations
 
 
 

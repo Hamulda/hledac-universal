@@ -1,4 +1,5 @@
 """
+from __future__ import annotations
 Source Attribution — Sprint Facts Tiers 1 & 3
 =============================================
 
@@ -8,6 +9,7 @@ MIGRATION NOTE (Issue #2):
     Extracted from knowledge/duckdb_store.py to enable independent testing
     and reduce monolith size. These are read-heavy, append-only tables.
 """
+from __future__ import annotations
 
 from typing import Any
 

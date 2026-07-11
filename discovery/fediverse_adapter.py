@@ -6,7 +6,6 @@ Uses multiple public instances to avoid rate limits.
 
 M1 constraint: Max 2 concurrent instances at once, 10s timeout per request.
 """
-from __future__ import annotations
 
 
 import asyncio

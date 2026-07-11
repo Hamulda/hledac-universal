@@ -45,7 +45,6 @@ Sprint F150P: Finish-layer truth fields — canonical surfaces from scheduler/co
   - why_this_run_matters: one-liner significance statement
   - No new store reads, no write-back, additive only
 """
-from __future__ import annotations
 
 
 

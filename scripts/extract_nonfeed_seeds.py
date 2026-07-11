@@ -38,7 +38,6 @@ Flags:
     NO_NETWORK_IN_TESTS=true
     SCHEMA_UNRECOGNIZED_FAIL_SOFT=true
 """
-from __future__ import annotations
 
 
 

@@ -25,7 +25,6 @@ Integration:
 M1 8GB: All heavy dependencies are lazy-loaded inside enrichment methods.
 RAM guard via ResourceGovernor.reserve(). Heavy path blocked when UMA is tight.
 """
-from __future__ import annotations
 
 
 

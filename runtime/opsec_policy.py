@@ -19,7 +19,6 @@ Bounds:
 
 No new sprint owner. asyncio.gather return_exceptions=True + _check_gathered() from utils.async_helpers.
 """
-from __future__ import annotations
 
 
 import asyncio

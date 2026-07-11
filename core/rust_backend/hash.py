@@ -1,5 +1,4 @@
 # hash.py — Content hashing domain (xxHash64, blake2, blake3, sha256)
-from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 

@@ -23,8 +23,6 @@ Usage:
     urls = rust.url.classify_url("https://example.com")
 """
 
-from __future__ import annotations
-
 import logging
 import os
 import re
@@ -598,6 +596,7 @@ def _python_extract_iocs(text: str) -> dict[str, list[str]]:
     try:
         # Use forensics/ioc_extractor combined regex for single-pass extraction
         from forensics.ioc_extractor import _IOC_COMBINED
+
         all_hashes: set[str] = set()
         md5s: list[str] = []
         sha1s: list[str] = []
@@ -1925,22 +1924,16 @@ class _PythonHashDomain:
     def blake3_64(data: bytes) -> str:
         """64-bit BLAKE3 fingerprint as 16-char hex string.
 
-        Uses Rust ContentHasher.xxh3_64_hex when Rust is available (NEON-accelerated
-        xxh3-64, same as xxhash Python but via Rust FFI — single path for all xxh3-64).
-        Falls back to xxhash Python package when Rust is unavailable.
+        Uses Rust ContentHasher.blake3_64 when Rust is available (NEON-accelerated
+        BLAKE3). Falls back to pure-Python blake2b (stdlib, always available).
         """
         try:
             from core.rust_backend import rust
 
-            return rust.hash.ContentHasher.xxh3_64_hex(data)
+            return rust.hash.blake3_64(data)
         except Exception:  # noqa: BLE001
             pass
-        try:
-            import xxhash
-
-            return f"{xxhash.xxh3_64(data):016x}"
-        except Exception:  # noqa: BLE001
-            return ""
+        return _python_blake3_64(data)
 
 
 class _PythonRollingHashDomain:
@@ -2029,6 +2022,7 @@ class _PythonIocDomain:
         """
         try:
             from forensics.ioc_extractor import _IOC_COMBINED
+
             results: list[tuple[str, str]] = []
             seen: set[str] = set()
             for m in _IOC_COMBINED.finditer(text):

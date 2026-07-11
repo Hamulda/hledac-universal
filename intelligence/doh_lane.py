@@ -8,7 +8,6 @@ Rate limit: Cloudflare DOH 1000 req/10s per IP — řídíme pomocí Semaphore.
 
 Sprint F234A: DOH intelligence lane.
 """
-from __future__ import annotations
 
 
 

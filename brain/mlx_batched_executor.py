@@ -47,7 +47,6 @@ Invariants (P0-2):
 Always-on, no feature flag, no env var.
 M1 8GB safe: max batch size 4, single-threaded MLX, memory guard active.
 """
-from __future__ import annotations
 
 
 

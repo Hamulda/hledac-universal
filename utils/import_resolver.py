@@ -26,7 +26,6 @@ Použití:
 Python 3.14+: importlib C cesta je 10× rychlejší než try/except ImportError.
 M1 8GB: žádná extra RAM (pouze 1× reference na modul).
 """
-from __future__ import annotations
 
 import importlib
 import sys

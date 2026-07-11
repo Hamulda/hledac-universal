@@ -13,7 +13,6 @@ Conversion: coremltools.convert(model, compute_units=ComputeUnit.ANE)
 
 Canonical import: from hledac.universal.embeddings.coreml_modernbert_embedder import CoreMLModernBERTEmbedder
 """
-from __future__ import annotations
 
 
 import logging

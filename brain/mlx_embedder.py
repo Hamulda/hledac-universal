@@ -6,7 +6,6 @@ No py3.12 subprocess, no CoreML conversion required.
 AdaptiveEmbeddingBatcher is re-exported from core.embeddings.manager
 (consolidated — Issue #35 fix, July 2026).
 """
-from __future__ import annotations
 
 import asyncio
 import logging

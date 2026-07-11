@@ -41,7 +41,6 @@ Example:
 Requires: Python 3.14+ with t-string support (string.templatelib)
 """
 
-from __future__ import annotations
 
 from string.templatelib import Interpolation, Template
 

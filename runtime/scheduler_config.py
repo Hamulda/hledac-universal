@@ -8,7 +8,6 @@ runtime/sprint_scheduler.py and is re-imported / aliased there.
 This file is the canonical home for the type definitions.
 """
 
-from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field

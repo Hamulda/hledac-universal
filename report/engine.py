@@ -4,7 +4,6 @@
 Canonical entry point for the reporting pipeline.
 Coordinates all renderers and provides streaming write for M1 8GB disk bottleneck.
 """
-from __future__ import annotations
 
 from dataclasses import dataclass, field
 import msgspec

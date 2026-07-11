@@ -1,1 +1,1 @@
-Comprehensive exit-code regression testing for Sprint F350M-R validates Unix exit conventions (0=success, 1=runtime error, 2=config/validation, 3=programmer error, 130=SIGINT) via 100 subprocess tests ensuring sys.exit() propagates correctly with log-parser compatibility.
+Sprint F350M-R adds subprocess-based regression tests verifying that CLI failure modes produce deterministic exit codes (0=success, 1=runtime error, 2=config/validation, 3=programmer error, 130=SIGINT).

@@ -41,7 +41,6 @@ INVARIANTS (GHOST_INVARIANTS):
   - Fail-soft: returns minimal plan on any error
   - Deterministic: same inputs always produce same plan
 """
-from __future__ import annotations
 
 
 

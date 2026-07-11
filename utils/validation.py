@@ -4,7 +4,6 @@ Data validation utilities for the Hledac AI Research Platform.
 This module provides robust data validation functions with comprehensive
 error handling, type safety, and performance optimization for M1 systems.
 """
-from __future__ import annotations
 
 
 

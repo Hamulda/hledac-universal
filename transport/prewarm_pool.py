@@ -31,7 +31,6 @@ Design invariants
 * Background probe via ``asyncio.to_thread()`` — never blocks event loop.
 * Circuit-breaker for probe hosts — skip repeatedly failing CDN endpoints.
 """
-from __future__ import annotations
 
 
 import asyncio

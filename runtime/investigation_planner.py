@@ -34,7 +34,6 @@ Rules:
 - Stop when enough independent evidence exists
 - Always bounded
 """
-from __future__ import annotations
 
 
 

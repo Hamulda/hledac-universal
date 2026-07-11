@@ -26,7 +26,6 @@ Canonical path (core/__main__.py → runtime/sprint_scheduler.py):
   ✗ does NOT import coordinator_registry.UniversalMemoryCoordinator
   ✗ does NOT call _MemoryManager or _MemoryCoordinator
 """
-from __future__ import annotations
 
 
 import sys

@@ -23,7 +23,6 @@ Usage:
 Python 3.14: uses stdlib typing.Result (PEP 756), no typing_extensions needed.
 M1 8GB: zero-overhead, no allocations on Ok path.
 """
-from __future__ import annotations
 
 import logging
 from collections.abc import Callable

@@ -3,7 +3,6 @@
 CoreML FastAPI microservice — fully standalone (no hledac imports).
 Runs in coremltools py3.12 venv with full ANE support.
 """
-from __future__ import annotations
 
 
 import asyncio

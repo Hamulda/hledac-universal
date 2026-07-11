@@ -31,7 +31,6 @@ MLX Integration:
 - MLX for batch centrality calculations
 - Use mx.array for adjacency matrices where beneficial
 """
-from __future__ import annotations
 
 
 
