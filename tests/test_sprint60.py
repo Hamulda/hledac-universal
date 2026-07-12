@@ -9,13 +9,8 @@ import numpy as np
 import pytest
 
 # Testuje se pouze pokud je MLX dostupný
-try:
-    import mlx.core as mx  # noqa: F401  # mlx.core
-    MLX_AVAILABLE = True
-except ImportError:
-    MLX_AVAILABLE = False
-
-pytestmark = pytest.mark.skipif(not MLX_AVAILABLE, reason="MLX not available")
+np = pytest.importorskip("numpy")
+mx = pytest.importorskip("mlx").core
 
 
 class TestResourceGovernor:
@@ -24,6 +19,7 @@ class TestResourceGovernor:
     def test_priority_enum(self):
         """Test priority enum hodnot."""
         from hledac.universal.core.resource_governor import Priority
+
         assert Priority.CRITICAL.value == "CRITICAL"
         assert Priority.HIGH.value == "HIGH"
         assert Priority.NORMAL.value == "NORMAL"
@@ -32,6 +28,7 @@ class TestResourceGovernor:
     def test_governor_init(self):
         """Test inicializace ResourceGovernor."""
         from hledac.universal.core.resource_governor import Priority, ResourceGovernor
+
         gov = ResourceGovernor(memory_high_water_mb=5000, thermal_threshold=80.0)
         assert gov.high_water == 5000
         assert gov.thermal_threshold == 80.0
@@ -41,39 +38,42 @@ class TestResourceGovernor:
     def test_can_afford_sync_no_resources(self):
         """Test can_afford_sync když nejsou dostupné zdroje."""
         from hledac.universal.core.resource_governor import Priority, ResourceGovernor, reset_psutil_cache
+
         reset_psutil_cache()
 
-        with patch('hledac.universal.core.resource_governor.psutil.virtual_memory') as mock_mem:
+        with patch("hledac.universal.core.resource_governor.psutil.virtual_memory") as mock_mem:
             mock_mem.return_value = MagicMock(used=7000 * 1024 * 1024)  # 7GB used
 
             gov = ResourceGovernor(memory_high_water_mb=6000)
-            result = gov.can_afford_sync({'ram_mb': 500}, Priority.NORMAL)
+            result = gov.can_afford_sync({"ram_mb": 500}, Priority.NORMAL)
             assert result is False
 
     def test_can_afford_sync_with_resources(self):
         """Test can_afford_sync když jsou dostupné zdroje."""
         from hledac.universal.core.resource_governor import Priority, ResourceGovernor, reset_psutil_cache
+
         reset_psutil_cache()
 
-        with patch('hledac.universal.core.resource_governor.psutil.virtual_memory') as mock_mem:
+        with patch("hledac.universal.core.resource_governor.psutil.virtual_memory") as mock_mem:
             mock_mem.return_value = MagicMock(used=2000 * 1024 * 1024)  # 2GB used
 
             gov = ResourceGovernor(memory_high_water_mb=6000)
-            result = gov.can_afford_sync({'ram_mb': 100}, Priority.NORMAL)
+            result = gov.can_afford_sync({"ram_mb": 100}, Priority.NORMAL)
             assert result is True
 
     @pytest.mark.asyncio
     async def test_reserve_context_manager(self):
         """Test async context manager pro rezervaci."""
         from hledac.universal.core.resource_governor import Priority, ResourceGovernor, reset_psutil_cache
+
         reset_psutil_cache()
 
-        with patch('hledac.universal.core.resource_governor.psutil.virtual_memory') as mock_mem:
+        with patch("hledac.universal.core.resource_governor.psutil.virtual_memory") as mock_mem:
             mock_mem.return_value = MagicMock(used=2000 * 1024 * 1024)
 
             gov = ResourceGovernor(memory_high_water_mb=6000)
 
-            async with gov.reserve({'ram_mb': 100}, Priority.NORMAL) as res:
+            async with gov.reserve({"ram_mb": 100}, Priority.NORMAL) as res:
                 assert res is not None
                 assert gov._active_tasks == 1
 
@@ -114,12 +114,7 @@ class TestCostModel:
         """Test inicializace AdaptiveCostModel."""
         from hledac.universal.planning.cost_model import AdaptiveCostModel
 
-        model = AdaptiveCostModel(
-            governor=None,
-            evidence_log=None,
-            feature_dim=64,
-            hidden_dim=32
-        )
+        model = AdaptiveCostModel(governor=None, evidence_log=None, feature_dim=64, hidden_dim=32)
 
         assert model.feature_dim == 64
         assert model.hidden_dim == 32
@@ -132,7 +127,9 @@ class TestCostModel:
 
         model = AdaptiveCostModel(None, None, feature_dim=64)
 
-        feat = model._build_features('fetch', {'url': 'http://test.com'}, {'active_tasks': 2, 'rss_gb': 4.0, 'avg_latency': 0.5})  # noqa: E501
+        feat = model._build_features(
+            "fetch", {"url": "http://test.com"}, {"active_tasks": 2, "rss_gb": 4.0, "avg_latency": 0.5}
+        )  # noqa: E501
 
         assert feat.shape == (64,)
         assert feat[0] == 1.0  # fetch = 0
@@ -143,7 +140,9 @@ class TestCostModel:
 
         model = AdaptiveCostModel(None, None, feature_dim=16)
 
-        result = model.predict('fetch', {'url': 'http://test.com'}, {'active_tasks': 1, 'rss_gb': 3.0, 'avg_latency': 0.2})  # noqa: E501
+        result = model.predict(
+            "fetch", {"url": "http://test.com"}, {"active_tasks": 1, "rss_gb": 3.0, "avg_latency": 0.2}
+        )  # noqa: E501
 
         assert len(result) == 5  # 4 outputs + uncertainty
         assert isinstance(result[0], float)
@@ -156,10 +155,10 @@ class TestCostModel:
         model = AdaptiveCostModel(None, None, feature_dim=16)
 
         await model.update(
-            'fetch',
-            {'url': 'http://test.com'},
-            {'active_tasks': 1, 'rss_gb': 3.0, 'avg_latency': 0.2},
-            (1.0, 50.0, 0.5, 1.0)
+            "fetch",
+            {"url": "http://test.com"},
+            {"active_tasks": 1, "rss_gb": 3.0, "avg_latency": 0.2},
+            (1.0, 50.0, 0.5, 1.0),
         )
 
         assert model.baseline_ready is True
@@ -210,7 +209,7 @@ class TestSearch:
         """Test SearchNode."""
         from hledac.universal.planning.search import SearchNode
 
-        state = {'pending': [], 'done': []}
+        state = {"pending": [], "done": []}
         node = SearchNode(state, cost=1.0, value=2.0)
 
         assert node.cost == 1.0
@@ -225,26 +224,26 @@ class TestSearch:
         gov = ResourceGovernor(memory_high_water_mb=6000)
 
         # Jednoduchý problém: reach goal
-        initial_state = {'pending': [1, 2, 3], 'done': [], 'cost': 0.0, 'value': 0.0}
+        initial_state = {"pending": [1, 2, 3], "done": [], "cost": 0.0, "value": 0.0}
 
         def goal_check(state):
-            return len(state['pending']) == 0
+            return len(state["pending"]) == 0
 
         def expand(state):
-            if not state['pending']:
+            if not state["pending"]:
                 return []
-            item = state['pending'][0]
+            item = state["pending"][0]
             new_state = {
-                'pending': state['pending'][1:],
-                'done': state['done'] + [item],
-                'cost': state['cost'] + 1.0,
-                'value': state['value'] + 1.0
+                "pending": state["pending"][1:],
+                "done": state["done"] + [item],
+                "cost": state["cost"] + 1.0,
+                "value": state["value"] + 1.0,
             }
             return [(item, new_state, 1.0, 10.0, 1.0, 1.0)]
 
         def heuristic(state):
             # Vracíme zbývající hodnotu - čím méně úkolů, tím menší hodnota zbývá
-            return 0.0, float(len(state['pending'])), float(len(state['pending']))
+            return 0.0, float(len(state["pending"])), float(len(state["pending"]))
 
         plan = anytime_beam_search(
             initial_state=initial_state,
@@ -255,7 +254,7 @@ class TestSearch:
             time_budget=10.0,
             ram_budget_mb=1000.0,
             net_budget_mb=100.0,
-            beam_width=5
+            beam_width=5,
         )
 
         assert plan is not None
@@ -280,12 +279,12 @@ class TestHTNPlanner:
             decomposer = SLMDecomposer(gov, cache)
 
             return {
-                'governor': gov,
-                'cost_model': cost_model,
-                'decomposer': decomposer,
-                'cache': cache,
-                'scheduler': MagicMock(),
-                'evidence_log': MagicMock()
+                "governor": gov,
+                "cost_model": cost_model,
+                "decomposer": decomposer,
+                "cache": cache,
+                "scheduler": MagicMock(),
+                "evidence_log": MagicMock(),
             }
 
     def test_planner_init(self, mock_components):
@@ -293,11 +292,11 @@ class TestHTNPlanner:
         from hledac.universal.planning.htn_planner import HTNPlanner
 
         planner = HTNPlanner(
-            governor=mock_components['governor'],
-            cost_model=mock_components['cost_model'],
-            decomposer=mock_components['decomposer'],
-            scheduler=mock_components['scheduler'],
-            evidence_log=mock_components['evidence_log']
+            governor=mock_components["governor"],
+            cost_model=mock_components["cost_model"],
+            decomposer=mock_components["decomposer"],
+            scheduler=mock_components["scheduler"],
+            evidence_log=mock_components["evidence_log"],
         )
 
         assert planner.governor is not None
@@ -308,20 +307,20 @@ class TestHTNPlanner:
         from hledac.universal.planning.htn_planner import HTNPlanner
 
         planner = HTNPlanner(
-            governor=mock_components['governor'],
-            cost_model=mock_components['cost_model'],
-            decomposer=mock_components['decomposer'],
-            scheduler=mock_components['scheduler'],
-            evidence_log=mock_components['evidence_log']
+            governor=mock_components["governor"],
+            cost_model=mock_components["cost_model"],
+            decomposer=mock_components["decomposer"],
+            scheduler=mock_components["scheduler"],
+            evidence_log=mock_components["evidence_log"],
         )
 
         def dummy_expander(task, context):
             return []
 
-        planner.register_task_type('fetch', dummy_expander, is_primitive=True)
+        planner.register_task_type("fetch", dummy_expander, is_primitive=True)
 
-        assert 'fetch' in planner._task_types
-        assert planner._task_types['fetch']['primitive'] is True
+        assert "fetch" in planner._task_types
+        assert planner._task_types["fetch"]["primitive"] is True
 
 
 class TestHypothesis:
@@ -331,7 +330,7 @@ class TestHypothesis:
         """Test inicializace DempsterShafer."""
         from hledac_hypothesis.dempster_shafer import DempsterShafer
 
-        ds = DempsterShafer({'h1', 'h2', 'h3'})
+        ds = DempsterShafer({"h1", "h2", "h3"})
 
         assert ds.unknown == 1.0
         assert ds.conflict == 0.0
@@ -341,21 +340,21 @@ class TestHypothesis:
         """Test přidávání evidence."""
         from hledac_hypothesis.dempster_shafer import DempsterShafer
 
-        ds = DempsterShafer({'h1', 'h2'})
+        ds = DempsterShafer({"h1", "h2"})
 
-        ds.add_evidence('h1', 0.6)
+        ds.add_evidence("h1", 0.6)
 
-        assert ds.masses['h1'] > 0
+        assert ds.masses["h1"] > 0
 
     def test_dempster_shafer_belief(self):
         """Test belief výpočet."""
         from hledac_hypothesis.dempster_shafer import DempsterShafer
 
-        ds = DempsterShafer({'h1', 'h2'})
+        ds = DempsterShafer({"h1", "h2"})
 
-        ds.add_evidence('h1', 0.5)
+        ds.add_evidence("h1", 0.5)
 
-        assert ds.belief('h1') > 0
+        assert ds.belief("h1") > 0
         assert ds.belief() > 0
 
     def test_eig_calculator(self):
@@ -365,11 +364,11 @@ class TestHypothesis:
 
         calc = EIGCalculator()
 
-        hypotheses = [DempsterShafer({'h1', 'h2'}), DempsterShafer({'h1', 'h2'})]
-        hypotheses[0].add_evidence('h1', 0.6)
-        hypotheses[1].add_evidence('h2', 0.4)
+        hypotheses = [DempsterShafer({"h1", "h2"}), DempsterShafer({"h1", "h2"})]
+        hypotheses[0].add_evidence("h1", 0.6)
+        hypotheses[1].add_evidence("h2", 0.4)
 
-        eig = calc.compute_eig(hypotheses, {'action': 'test'})
+        eig = calc.compute_eig(hypotheses, {"action": "test"})
 
         assert isinstance(eig, float)
 
@@ -381,10 +380,7 @@ class TestExplainer:
     def mock_graph_rag(self):
         """Vytvoří mock GraphRAG."""
         graph = MagicMock()
-        graph.multi_hop_search = AsyncMock(return_value={
-            'nodes': ['A', 'B', 'C'],
-            'edges': [('A', 'B'), ('B', 'C')]
-        })
+        graph.multi_hop_search = AsyncMock(return_value={"nodes": ["A", "B", "C"], "edges": [("A", "B"), ("B", "C")]})
         return graph
 
     def test_fast_explainer_init(self, mock_graph_rag):
@@ -407,7 +403,7 @@ class TestExplainer:
         gov = ResourceGovernor(memory_high_water_mb=6000)
         explainer = FastExplainer(mock_graph_rag, gov)
 
-        result = await explainer.explain_path('A', 'C', max_hops=3)
+        result = await explainer.explain_path("A", "C", max_hops=3)
 
         assert isinstance(result, list)
 
@@ -444,6 +440,7 @@ class TestSLMDecomposer:
             yield decomposer
 
             import asyncio
+
             try:
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
@@ -462,7 +459,7 @@ class TestSLMDecomposer:
 
         assert isinstance(result, list)
         assert result
-        assert result[0]['type'] == 'fetch'
+        assert result[0]["type"] == "fetch"
 
     def test_cache_key(self, decomposer):
         """Test generování cache key."""

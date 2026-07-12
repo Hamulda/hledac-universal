@@ -15,6 +15,7 @@ import pytest
 # Add project root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+
 # =============================================================================
 # IPFS Tests
 # =============================================================================
@@ -25,6 +26,7 @@ class TestIPFSClient:
     def ipfs_client(self):
         """Lazy import IPFS client."""
         from hledac.universal.network import ipfs_client
+
         return ipfs_client
 
     def test_cid_extraction(self, ipfs_client):
@@ -76,6 +78,7 @@ class TestGopherTransport:
     def gopher(self):
         """Import GopherTransport module directly."""
         from hledac.universal.transport import gopher_transport
+
         return gopher_transport
 
     def test_gopher_item_dataclass(self, gopher):
@@ -141,6 +144,7 @@ class TestGeminiTransport:
     def gemini(self):
         """Lazy import Gemini transport."""
         from hledac.universal.network import gemini_transport
+
         return gemini_transport
 
     def test_gemini_response_namedtuple(self, gemini):
@@ -226,6 +230,7 @@ class TestI2PClient:
     def i2p(self):
         """Lazy import I2P client."""
         from hledac.universal.network import i2p_client
+
         return i2p_client
 
     def test_constants(self, i2p):
@@ -267,34 +272,30 @@ class TestAlternativeProtocolFetcher:
     def fetcher(self):
         """Lazy import fetcher."""
         from hledac.universal.fetching import alternative_protocol_fetcher
+
         return alternative_protocol_fetcher
 
-    def test_gate_disabled_by_default(self, fetcher):
+    def test_gate_disabled_by_default(self, monkeypatch: pytest.MonkeyPatch):
         """Test alt protocols disabled by default."""
-        # Clear env var for test
-        original = os.environ.pop("HLEDAC_ENABLE_ALT_PROTOCOLS", None)
-        try:
-            # Re-import to get fresh gate value
-            import importlib
+        monkeypatch.delenv("HLEDAC_ENABLE_ALT_PROTOCOLS", raising=False)
 
-            import hledac.universal.fetching.alternative_protocol_fetcher
-            importlib.reload(hledac.universal.fetching.alternative_protocol_fetcher)
-            assert not hledac.universal.fetching.alternative_protocol_fetcher.ALT_PROTOCOLS_ENABLED
-        finally:
-            if original:
-                os.environ["HLEDAC_ENABLE_ALT_PROTOCOLS"] = original
+        import importlib
 
-    def test_gate_enabled_with_env(self, fetcher):
+        import hledac.universal.fetching.alternative_protocol_fetcher
+
+        importlib.reload(hledac.universal.fetching.alternative_protocol_fetcher)
+        assert not hledac.universal.fetching.alternative_protocol_fetcher.ALT_PROTOCOLS_ENABLED
+
+    def test_gate_enabled_with_env(self, monkeypatch: pytest.MonkeyPatch):
         """Test alt protocols enabled with env var."""
-        os.environ["HLEDAC_ENABLE_ALT_PROTOCOLS"] = "1"
-        try:
-            import importlib
+        monkeypatch.setenv("HLEDAC_ENABLE_ALT_PROTOCOLS", "1")
 
-            import hledac.universal.fetching.alternative_protocol_fetcher
-            importlib.reload(hledac.universal.fetching.alternative_protocol_fetcher)
-            assert hledac.universal.fetching.alternative_protocol_fetcher.ALT_PROTOCOLS_ENABLED
-        finally:
-            os.environ.pop("HLEDAC_ENABLE_ALT_PROTOCOLS", None)
+        import importlib
+
+        import hledac.universal.fetching.alternative_protocol_fetcher
+
+        importlib.reload(hledac.universal.fetching.alternative_protocol_fetcher)
+        assert hledac.universal.fetching.alternative_protocol_fetcher.ALT_PROTOCOLS_ENABLED
 
     def test_alt_protocol_result_namedtuple(self, fetcher):
         """Test AltProtocolResult structure."""

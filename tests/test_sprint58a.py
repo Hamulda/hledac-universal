@@ -7,18 +7,21 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import numpy as np
 import pytest  # noqa: F401 — needed for skip markers on ghost MARLCoordinator tests
 
-sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
+# Lazy import: numpy loaded only when tests run
+pytest.importorskip("numpy")
+import numpy as np  # noqa: E402,F401
+
+sys.path.insert(0, "/Users/vojtechhamada/PycharmProjects/Hledac")
 
 
 # =============================================================================
 # QMIX Tests
 # =============================================================================
 
-class TestQMIX(unittest.IsolatedAsyncioTestCase):
 
+class TestQMIX(unittest.IsolatedAsyncioTestCase):
     async def test_qmix_agent_init(self):
         """Test #1: QMIXAgent – inicializace a forward pass."""
         import mlx.core as mx
@@ -68,8 +71,8 @@ class TestQMIX(unittest.IsolatedAsyncioTestCase):
 # Replay Buffer Tests
 # =============================================================================
 
-class TestReplayBuffer(unittest.IsolatedAsyncioTestCase):
 
+class TestReplayBuffer(unittest.IsolatedAsyncioTestCase):
     async def test_replay_buffer_init(self):
         """Test #5: Replay buffer – inicializace."""
         from hledac.universal.rl.replay_buffer import MARLReplayBuffer
@@ -93,15 +96,15 @@ class TestReplayBuffer(unittest.IsolatedAsyncioTestCase):
             actions = np.random.randint(0, 5, size=3)
             reward = float(i % 3)
             next_state = mx.random.normal(shape=(12,))
-            done = (i == 9)
+            done = i == 9
             buffer.push(state, actions, reward, next_state, done)
 
         self.assertEqual(buffer.size, 10)
 
         # Sample
         batch = buffer.sample(4)
-        self.assertEqual(batch['states'].shape, (4, 12))
-        self.assertEqual(batch['actions'].shape, (4, 3))
+        self.assertEqual(batch["states"].shape, (4, 12))
+        self.assertEqual(batch["actions"].shape, (4, 3))
 
     async def test_replay_persistence(self):
         """Test #6: Replay buffer – perzistence s .npz."""
@@ -116,7 +119,7 @@ class TestReplayBuffer(unittest.IsolatedAsyncioTestCase):
             actions = np.random.randint(0, 5, size=3)
             buffer1.push(state, actions, 0.5, mx.random.normal(shape=(12,)), False)
 
-        with tempfile.NamedTemporaryFile(suffix='.npz', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".npz", delete=False) as f:
             path = f.name
 
         try:
@@ -134,28 +137,22 @@ class TestReplayBuffer(unittest.IsolatedAsyncioTestCase):
 # State Extractor Tests
 # =============================================================================
 
-class TestStateExtractor(unittest.IsolatedAsyncioTestCase):
 
+class TestStateExtractor(unittest.IsolatedAsyncioTestCase):
     async def test_state_extractor(self):
         """Test #7: State extractor – výstup state_dim (včetně GNN)."""
         from hledac.universal.rl.state_extractor import StateExtractor
 
         extractor = StateExtractor(state_dim=12)
-        thread_state = {
-            'entity_centrality': 0.5,
-            'novelty': 0.7,
-            'depth': 2,
-            'contradiction': False,
-            'source_type': 1
-        }
+        thread_state = {"entity_centrality": 0.5, "novelty": 0.7, "depth": 2, "contradiction": False, "source_type": 1}
         global_state = {
-            'queue_size': 10,
-            'memory_pressure': 0.4,
-            'graph_entropy': 0.6,
-            'avg_reward': 0.2,
-            'num_pending_tasks': 5,
-            'time_since_last_finding': 100.0,
-            'resource_concurrency': 0.7
+            "queue_size": 10,
+            "memory_pressure": 0.4,
+            "graph_entropy": 0.6,
+            "avg_reward": 0.2,
+            "num_pending_tasks": 5,
+            "time_since_last_finding": 100.0,
+            "resource_concurrency": 0.7,
         }
 
         state = extractor.extract(thread_state, global_state)
@@ -165,6 +162,7 @@ class TestStateExtractor(unittest.IsolatedAsyncioTestCase):
 # =============================================================================
 # MARLCoordinator tests — SKIPPED (module deleted Sprint F196A)
 # =============================================================================
+
 
 @pytest.mark.skip(reason="MARLCoordinator deleted in Sprint F196A — see git history")
 class TestMARLCoordinator(unittest.IsolatedAsyncioTestCase):
@@ -199,6 +197,7 @@ class TestMARLCoordinator(unittest.IsolatedAsyncioTestCase):
 # Integration Tests
 # =============================================================================
 
+
 @pytest.mark.skip(reason="MARLCoordinator deleted in Sprint F196A — integration depends on it")
 class TestIntegration(unittest.IsolatedAsyncioTestCase):
     """Integrační testy — SKIPPED (depend on deleted MARLCoordinator)."""
@@ -210,5 +209,5 @@ class TestIntegration(unittest.IsolatedAsyncioTestCase):
         pass  # noqa: PLCB101
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

@@ -5,13 +5,14 @@ Migrated from unittest.IsolatedAsyncioTestCase to pytest-asyncio to reuse
 the session-scoped event loop from conftest.py (saves 5-10 MB per test).
 LMDB uses context manager (with lmdb.open(...) as env:) for auto-cleanup.
 """
+
 import asyncio
 import tempfile
-import pytest
 from unittest.mock import AsyncMock, mock_open, patch
-import lmdb
 
-# LMDB context manager: auto-closes env on block exit (lmdb >= 1.3 supports __enter__/__exit__)
+import pytest
+
+# Lazy import: lmdb loaded only when tests that need it actually run
 from hledac.universal.tools.darknet import DarknetConnector  # noqa: E402
 from hledac.universal.tools.osint_frameworks import OSINTFrameworkRunner  # noqa: E402
 from hledac.universal.tools.paywall import PaywallBypass  # noqa: E402

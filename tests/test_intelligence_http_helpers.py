@@ -2,11 +2,13 @@
 
 from unittest.mock import AsyncMock, patch
 
-import httpx
 import pytest
 
-from hledac.universal.intelligence._http_helpers import get_intelligence_session
-from hledac.universal.intelligence.exposure_clients import (
+# Lazy import: httpx loaded only when tests run (skip entire module if unavailable)
+pytest.importorskip("httpx")
+
+from hledac.universal.intelligence._http_helpers import get_intelligence_session  # noqa: E402
+from hledac.universal.intelligence.exposure_clients import (  # noqa: E402
     CensysClient,
     CVIntelligenceClient,
     ShodanClient,
@@ -16,6 +18,8 @@ from hledac.universal.intelligence.exposure_clients import (
 @pytest.mark.asyncio
 async def test_get_intelligence_session_returns_httpx_client():
     """Helper returns an httpx.AsyncClient instance."""
+    import httpx  # noqa: F401 - lazy import
+
     result = await get_intelligence_session()
     assert isinstance(result, httpx.AsyncClient)
 

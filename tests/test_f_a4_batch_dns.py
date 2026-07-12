@@ -19,7 +19,6 @@ from hledac.universal.utils.batch_dns import (
     reset_batch_dns_resolver,
 )
 
-
 # Fixtures + helpers
 
 
@@ -32,16 +31,17 @@ def _reset_singleton():
 
 
 @pytest.fixture(autouse=True)
-def _clean_opt_out_env():
+def _clean_opt_out_env(monkeypatch: pytest.MonkeyPatch):
     """Clear the opt-out env var between tests."""
     prev = os.environ.pop(ENV_OPT_OUT, None)
     yield
     if prev is not None:
-        os.environ[ENV_OPT_OUT] = prev
+        monkeypatch.setenv(ENV_OPT_OUT, prev)
 
 
 def _make_getaddrinfo_mock(mapping: dict[str, list[tuple]]):
     """Build a mock async_getaddrinfo that returns IPs for given hosts."""
+
     async def _mock(host, port, *, family=0, type_=0, proto=0, timeout=None):
         if host in mapping:
             return mapping[host]
@@ -63,9 +63,11 @@ def test_resolver_empty_input_returns_empty_dict():
 
 def test_resolver_dedupes_duplicate_hosts_in_input():
     r = BatchDNSResolver()
-    mock = _make_getaddrinfo_mock({
-        "a.example": [(2, 1, 6, "", ("1.2.3.4", 0))],
-    })
+    mock = _make_getaddrinfo_mock(
+        {
+            "a.example": [(2, 1, 6, "", ("1.2.3.4", 0))],
+        }
+    )
     with patch(
         "hledac.universal.utils.batch_dns.async_getaddrinfo",
         new=mock,
@@ -77,18 +79,18 @@ def test_resolver_dedupes_duplicate_hosts_in_input():
 
 def test_resolver_resolves_multiple_distinct_hosts_in_parallel():
     r = BatchDNSResolver()
-    mock = _make_getaddrinfo_mock({
-        "a.example": [(2, 1, 6, "", ("1.1.1.1", 0))],
-        "b.example": [(2, 1, 6, "", ("2.2.2.2", 0))],
-        "c.example": [(2, 1, 6, "", ("3.3.3.3", 0))],
-    })
+    mock = _make_getaddrinfo_mock(
+        {
+            "a.example": [(2, 1, 6, "", ("1.1.1.1", 0))],
+            "b.example": [(2, 1, 6, "", ("2.2.2.2", 0))],
+            "c.example": [(2, 1, 6, "", ("3.3.3.3", 0))],
+        }
+    )
     with patch(
         "hledac.universal.utils.batch_dns.async_getaddrinfo",
         new=mock,
     ):
-        result = asyncio.run(
-            r.resolve_many(["a.example", "b.example", "c.example"])
-        )
+        result = asyncio.run(r.resolve_many(["a.example", "b.example", "c.example"]))
     assert result == {
         "a.example": ["1.1.1.1"],
         "b.example": ["2.2.2.2"],
@@ -127,9 +129,7 @@ async def test_resolver_cache_hit_avoids_second_dns_call():
 @pytest.mark.asyncio
 async def test_resolver_lru_evicts_oldest_when_capacity_reached():
     r = BatchDNSResolver(max_cache=2, ttl_s=0.0)
-    mock = _make_getaddrinfo_mock({
-        f"h{i}.example": [(2, 1, 6, "", (f"10.0.0.{i}", 0))] for i in range(5)
-    })
+    mock = _make_getaddrinfo_mock({f"h{i}.example": [(2, 1, 6, "", (f"10.0.0.{i}", 0))] for i in range(5)})
     with patch(
         "hledac.universal.utils.batch_dns.async_getaddrinfo",
         new=mock,
@@ -185,6 +185,7 @@ def test_resolver_ttl_zero_means_no_expiry():
 
 # === IPv4/IPv6 literals - sync, no loop needed ===
 
+
 def test_resolver_ipv4_literal_short_circuits():
     r = BatchDNSResolver()
     mock_called = {"n": False}
@@ -212,12 +213,15 @@ def test_resolver_ipv6_literal_short_circuits():
 
 # === Fail-soft tests ===
 
+
 @pytest.mark.asyncio
 async def test_resolver_returns_partial_result_when_some_hosts_fail():
     r = BatchDNSResolver()
-    mock = _make_getaddrinfo_mock({
-        "ok.example": [(2, 1, 6, "", ("8.8.8.8", 0))],
-    })
+    mock = _make_getaddrinfo_mock(
+        {
+            "ok.example": [(2, 1, 6, "", ("8.8.8.8", 0))],
+        }
+    )
     with patch(
         "hledac.universal.utils.batch_dns.async_getaddrinfo",
         new=mock,
@@ -241,6 +245,7 @@ async def test_resolver_does_not_cache_empty_dns_results():
 
 
 # === Concurrency cap - requires async ===
+
 
 @pytest.mark.asyncio
 async def test_resolver_concurrency_cap_observed():
@@ -266,6 +271,7 @@ async def test_resolver_concurrency_cap_observed():
 
 
 # === Singleton + opt-out ===
+
 
 def test_singleton_returns_same_instance():
     a = get_batch_dns_resolver()
@@ -296,6 +302,7 @@ async def test_resolver_handles_empty_and_whitespace_hosts():
 
 # === Stats API ===
 
+
 def test_stats_init_at_zero():
     r = BatchDNSResolver()
     s = r.stats()
@@ -312,9 +319,11 @@ def test_stats_init_at_zero():
 @pytest.mark.asyncio
 async def test_stats_reset_zeros_counters_but_keeps_cache():
     r = BatchDNSResolver()
-    mock = _make_getaddrinfo_mock({
-        "x.example": [(2, 1, 6, "", ("1.1.1.1", 0))],
-    })
+    mock = _make_getaddrinfo_mock(
+        {
+            "x.example": [(2, 1, 6, "", ("1.1.1.1", 0))],
+        }
+    )
     with patch(
         "hledac.universal.utils.batch_dns.async_getaddrinfo",
         new=mock,
@@ -330,9 +339,11 @@ async def test_stats_reset_zeros_counters_but_keeps_cache():
 @pytest.mark.asyncio
 async def test_clear_cache_drops_entries():
     r = BatchDNSResolver()
-    mock = _make_getaddrinfo_mock({
-        "y.example": [(2, 1, 6, "", ("2.2.2.2", 0))],
-    })
+    mock = _make_getaddrinfo_mock(
+        {
+            "y.example": [(2, 1, 6, "", ("2.2.2.2", 0))],
+        }
+    )
     with patch(
         "hledac.universal.utils.batch_dns.async_getaddrinfo",
         new=mock,
@@ -345,6 +356,7 @@ async def test_clear_cache_drops_entries():
 
 # === Bounds safety ===
 
+
 def test_resolver_clamps_constructor_args_to_safe_minimums():
     r = BatchDNSResolver(max_cache=0, max_concurrent=0, ttl_s=-1.0)
     assert r._cache_max == 1
@@ -355,10 +367,7 @@ def test_resolver_clamps_constructor_args_to_safe_minimums():
 @pytest.mark.asyncio
 async def test_resolver_handles_large_batch_in_bounded_time():
     r = BatchDNSResolver(max_cache=10_000, max_concurrent=100, ttl_s=60.0)
-    mapping = {
-        f"h{i}.example": [(2, 1, 6, "", (f"10.0.{i // 256}.{i % 256}", 0))]
-        for i in range(500)
-    }
+    mapping = {f"h{i}.example": [(2, 1, 6, "", (f"10.0.{i // 256}.{i % 256}", 0))] for i in range(500)}
     mock = _make_getaddrinfo_mock(mapping)
     with patch(
         "hledac.universal.utils.batch_dns.async_getaddrinfo",

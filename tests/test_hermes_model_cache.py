@@ -25,8 +25,8 @@ from brain._hermes_cache import (
     _mlx_cache_clear,
     hermes_cache,
 )
-from tests.conftest import joinable_threads
 from brain.deephermes3_engine import _maybe_evict_hermes_cache
+from tests.utils.spec_mocks import joinable_threads
 
 
 class TestHermesModelCacheBasic:
@@ -302,4 +302,3 @@ class TestStats:
 
         cache.put_lora("l3", lm3, lt3)  # l1 evicted
         assert cache.lora_eviction_count == initial + 1
-

@@ -13,64 +13,49 @@ Verifies:
 class TestTP1Invariant:
     """TP-1: T0 (curl_cffi) is always-on regardless of memory pressure."""
 
-    def test_tp1_t0_never_blocked_in_policy_decision(self):
+    def test_tp1_t0_never_blocked_in_policy_decision(self, monkeypatch: pytest.MonkeyPatch):
         """
         [TP-1] get_transport_policy() must NEVER return a decision where T0
         is in blocked_tiers. This is enforced by an assertion at every
         return point in get_transport_policy().
         """
-        # Lazy import to avoid early MLX/hardware deps
-        import os
-
         # Unset all optional gates so we hit the default path
-        _orig_h2 = os.environ.pop("HLEDAC_ENABLE_HTTPX_H2", None)
-        _orig_h3 = os.environ.pop("HLEDAC_ENABLE_HTTPX_H3", None)
-        _orig_h3_legacy = os.environ.pop("HLEDAC_HTTP3", None)
-        try:
-            from hledac.universal.transport.policy import (
-                TransportPolicyDecision,
-                get_transport_policy,
-            )
+        monkeypatch.delenv("HLEDAC_ENABLE_HTTPX_H2", raising=False)
+        monkeypatch.delenv("HLEDAC_ENABLE_HTTPX_H3", raising=False)
+        monkeypatch.delenv("HLEDAC_HTTP3", raising=False)
 
-            # Normal memory: all tiers available, T0 must not be blocked
-            decision: TransportPolicyDecision = get_transport_policy()
-            assert "T0_curl_cffi" not in decision.blocked_tiers, (
-                f"[TP-1] T0 must never be blocked! blocked_tiers={decision.blocked_tiers}"
-            )
-            assert decision.tier == "T0_curl_cffi"
+        from hledac.universal.transport.policy import (
+            TransportPolicyDecision,
+            get_transport_policy,
+        )
 
-            # JS rendering: T0 still not blocked
-            decision_js: TransportPolicyDecision = get_transport_policy(use_js=True)
-            assert "T0_curl_cffi" not in decision_js.blocked_tiers
+        # Normal memory: all tiers available, T0 must not be blocked
+        decision: TransportPolicyDecision = get_transport_policy()
+        assert "T0_curl_cffi" not in decision.blocked_tiers, (
+            f"[TP-1] T0 must never be blocked! blocked_tiers={decision.blocked_tiers}"
+        )
+        assert decision.tier == "T0_curl_cffi"
 
-            # Escalation: 403/429 → T0
-            decision_403: TransportPolicyDecision = get_transport_policy(
-                retry_after_status=403
-            )
-            assert "T0_curl_cffi" not in decision_403.blocked_tiers
-            assert decision_403.tier == "T0_curl_cffi"
+        # JS rendering: T0 still not blocked
+        decision_js: TransportPolicyDecision = get_transport_policy(use_js=True)
+        assert "T0_curl_cffi" not in decision_js.blocked_tiers
 
-            # Explicit stealth → T0
-            decision_stealth: TransportPolicyDecision = get_transport_policy(
-                use_stealth=True
-            )
-            assert "T0_curl_cffi" not in decision_stealth.blocked_tiers
-            assert decision_stealth.tier == "T0_curl_cffi"
-        finally:
-            # Restore env
-            if _orig_h2 is not None:
-                os.environ["HLEDAC_ENABLE_HTTPX_H2"] = _orig_h2
-            if _orig_h3 is not None:
-                os.environ["HLEDAC_ENABLE_HTTPX_H3"] = _orig_h3
-            if _orig_h3_legacy is not None:
-                os.environ["HLEDAC_HTTP3"] = _orig_h3_legacy
+        # Escalation: 403/429 -> T0
+        decision_403: TransportPolicyDecision = get_transport_policy(retry_after_status=403)
+        assert "T0_curl_cffi" not in decision_403.blocked_tiers
+        assert decision_403.tier == "T0_curl_cffi"
+
+        # Explicit stealth -> T0
+        decision_stealth: TransportPolicyDecision = get_transport_policy(use_stealth=True)
+        assert "T0_curl_cffi" not in decision_stealth.blocked_tiers
+        assert decision_stealth.tier == "T0_curl_cffi"
 
     def test_tp1_h2_candidate_bypasses_t0_gate(self):
         """
         When is_httpx_h2_candidate=True AND h2 is available (httpx+h2 installed),
         H2 lane is selected and T0 is NOT blocked.
         Note: HLEDAC_ENABLE_HTTPX_H2 env var is NOT re-checked by policy.py
-        (it's checked by route_transport in transport_router.py before calling policy).
+        (it is checked by route_transport in transport_router.py before calling policy).
         """
         from hledac.universal.transport.policy import get_transport_policy
 
@@ -91,9 +76,9 @@ class TestTP1Invariant:
         from hledac.universal.transport import policy
 
         source = inspect.getsource(policy)
-        assert "_tp1_assert" in source or (
-            "T0_curl_cffi" in source and "assert" in source
-        ), "[TP-1] assertion must be present in get_transport_policy() source"
+        assert "_tp1_assert" in source or ("T0_curl_cffi" in source and "assert" in source), (
+            "[TP-1] assertion must be present in get_transport_policy() source"
+        )
 
 
 class TestPolicyWireInPublicFetcher:
@@ -111,9 +96,7 @@ class TestPolicyWireInPublicFetcher:
         source = inspect.getsource(public_fetcher)
         assert "from hledac.universal.transport.policy import" in source
         assert "get_transport_policy" in source
-        assert "_h2_allowed" in source, (
-            "_h2_allowed from policy decision must be used in transport selection"
-        )
+        assert "_h2_allowed" in source, "_h2_allowed from policy decision must be used in transport selection"
 
     def test_h2_lane_gated_by_policy(self):
         """
@@ -129,9 +112,7 @@ class TestPolicyWireInPublicFetcher:
         # The H2 gate must check _h2_allowed
         assert "_h2_allowed" in source
         # Pattern: _use_httpx_h2: bool = _router_lane == "httpx_h2" and _h2_allowed
-        assert 'and _h2_allowed' in source, (
-            "H2 lane entry must be gated by _h2_allowed policy flag"
-        )
+        assert "and _h2_allowed" in source, "H2 lane entry must be gated by _h2_allowed policy flag"
 
 
 class TestEnvExampleDocs:

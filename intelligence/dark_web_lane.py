@@ -9,9 +9,7 @@ LaneSpec:
     cost_estimate_per_query=3 (Tor circuit setup is expensive)
 """
 
-
 import asyncio
-import hashlib
 import logging
 import re
 import time
@@ -19,14 +17,13 @@ from typing import TYPE_CHECKING, Any
 
 from hledac.universal.intelligence.lane import (
     BTC_ADDRESS_PATTERN,
+    XMR_ADDRESS_PATTERN,
     BaseIntelligenceLane,
-    DedupResult,
     FetchResult,
     LaneContext,
     LaneSpec,
     ParsedResult,
     ResolveResult,
-    XMR_ADDRESS_PATTERN,
 )
 
 if TYPE_CHECKING:
@@ -77,10 +74,10 @@ class DarkWebLane(BaseIntelligenceLane):
         if not super().is_available():
             return False
         try:
-            import aiohttp_socks  # noqa: F401
-            return True
-        except ImportError:
-            logger.warning("dark_web_lane: aiohttp_socks not available")
+            import importlib
+
+            return importlib.util.find_spec("httpx_socks") is not None
+        except Exception:
             return False
 
     # -------------------------------------------------------------------------

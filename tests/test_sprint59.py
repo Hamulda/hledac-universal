@@ -12,13 +12,8 @@ import numpy as np
 import pytest
 
 # Testuje se pouze pokud je MLX dostupný
-try:
-    import mlx.core as mx
-    MLX_AVAILABLE = True
-except ImportError:
-    MLX_AVAILABLE = False
-
-pytestmark = pytest.mark.skipif(not MLX_AVAILABLE, reason="MLX not available")
+np = pytest.importorskip("numpy")
+mx = pytest.importorskip("mlx").core
 
 
 class TestSprint59Prefetch:
@@ -35,10 +30,12 @@ class TestSprint59Prefetch:
     def mock_rel_engine(self):
         """Mock RelationshipDiscoveryEngine."""
         engine = MagicMock()
-        engine.get_common_neighbors = MagicMock(return_value=[
-            {'url': 'http://example.com/1', 'score': 0.9},
-            {'url': 'http://example.com/2', 'score': 0.8},
-        ])
+        engine.get_common_neighbors = MagicMock(
+            return_value=[
+                {"url": "http://example.com/1", "score": 0.9},
+                {"url": "http://example.com/2", "score": 0.8},
+            ]
+        )
         engine.get_entity_embedding = MagicMock(return_value=mx.random.normal((64,)))
         return engine
 
@@ -54,6 +51,7 @@ class TestSprint59Prefetch:
     def prefetch_cache(self):
         """Vytvoří testovací PrefetchCache."""
         from hledac.universal.prefetch.prefetch_cache import PrefetchCache
+
         tmpdir = tempfile.mkdtemp()
         cache = PrefetchCache(db_path=f"{tmpdir}/test_prefetch.lmdb", max_size_mb=10)
         try:
@@ -66,6 +64,7 @@ class TestSprint59Prefetch:
     def oracle(self, mock_scheduler, mock_rel_engine, mock_pq_index, prefetch_cache):
         """Vytvoří PrefetchOracle pro testy."""
         from hledac.universal.prefetch.prefetch_oracle import PrefetchOracle
+
         oracle = PrefetchOracle(
             scheduler=mock_scheduler,
             rel_engine=mock_rel_engine,
@@ -78,7 +77,7 @@ class TestSprint59Prefetch:
             alpha=0.5,
             bandit_weight=0.2,
             lambda_waste=0.01,
-            lambda_prior=1.0
+            lambda_prior=1.0,
         )
         return oracle
 
@@ -88,18 +87,14 @@ class TestSprint59Prefetch:
     async def test_stage_a_candidates(self, oracle, mock_rel_engine):
         """Test generování kandidátů ve Stage A."""
         # Registrujeme node URL pro PQ index
-        oracle.register_node_url(0, 'http://example.com/1')
-        oracle.register_node_url(1, 'http://example.com/2')
+        oracle.register_node_url(0, "http://example.com/1")
+        oracle.register_node_url(1, "http://example.com/2")
 
         # Ověříme, že mock vrací správná data
-        neighbors = oracle._get_common_neighbors('test_entity', 10)
+        neighbors = oracle._get_common_neighbors("test_entity", 10)
         assert neighbors
 
-        candidates = oracle._generate_candidates(
-            url='http://test.com/page',
-            entity='test_entity',
-            source_type='web'
-        )
+        candidates = oracle._generate_candidates(url="http://test.com/page", entity="test_entity", source_type="web")
 
         # Kandidáti mohou být prázdní kvůli deduplikaci - testujeme alespoň že metoda běží
         assert isinstance(candidates, list)
@@ -114,8 +109,8 @@ class TestSprint59Prefetch:
 
         # Zavoláme on_new_candidates - to spustí adaptaci
         # Nejprve musíme mít data
-        with patch.object(oracle, '_generate_candidates', return_value=[]):
-            await oracle.on_new_candidates('http://test.com', 'entity', 'test')
+        with patch.object(oracle, "_generate_candidates", return_value=[]):
+            await oracle.on_new_candidates("http://test.com", "entity", "test")
 
         # Po překročení budgetu by se měly snížit limity
         # (Ale protože jsme patchovali generate_candidates, nemáme kandidáty)
@@ -168,7 +163,7 @@ class TestSprint59Prefetch:
     def test_linucb_cold_start(self, oracle):
         """Test LinUCB cold-start - nové rameno dostává exploraci."""
         # Různá ramena
-        arms = ['google.com', 'facebook.com', 'twitter.com']
+        arms = ["google.com", "facebook.com", "twitter.com"]
 
         for arm in arms:
             x = np.random.randn(131).astype(np.float64)
@@ -184,21 +179,21 @@ class TestSprint59Prefetch:
         await prefetch_cache.start()
 
         # Vlož data s TTL 1 sekunda
-        await prefetch_cache.put('http://test.com', {'content': 'test'}, ttl=1)
+        await prefetch_cache.put("http://test.com", {"content": "test"}, ttl=1)
 
         # Počkat na zápis do fronty
         await asyncio.sleep(0.2)
 
         # Mělo by být dostupné
-        result = await prefetch_cache.get('http://test.com')
+        result = await prefetch_cache.get("http://test.com")
         assert result is not None
-        assert result['content'] == 'test'
+        assert result["content"] == "test"
 
         # Počkej na expiraci
         await asyncio.sleep(1.5)
 
         # Mělo by vypršet
-        result = await prefetch_cache.get('http://test.com')
+        result = await prefetch_cache.get("http://test.com")
         assert result is None
 
         await prefetch_cache.stop()
@@ -209,7 +204,7 @@ class TestSprint59Prefetch:
         await prefetch_cache.start()
 
         # Vlož data
-        await prefetch_cache.put('http://test.com', {'content': 'test'})
+        await prefetch_cache.put("http://test.com", {"content": "test"})
 
         # Stop - měl by zpracovat frontu
         await prefetch_cache.stop()
@@ -217,7 +212,7 @@ class TestSprint59Prefetch:
         # Po stopu by měla být data stále dostupná (byly zapsány)
         # (Ale get je sync, takže to ověříme mimo)
         with prefetch_cache.env.begin() as txn:
-            raw = txn.get(b'http://test.com')
+            raw = txn.get(b"http://test.com")
             assert raw is not None
 
     # ========= Testy Expirace =========
@@ -226,11 +221,11 @@ class TestSprint59Prefetch:
     async def test_expire(self, oracle):
         """Test expirace naplánovaných prefetchů."""
         # Simuluj naplánovaný prefetch
-        url = 'http://test.com/expire'
+        url = "http://test.com/expire"
         oracle._scheduled[url] = {
-            'arm_id': 'test.com',
-            'context': np.random.randn(131).astype(np.float64),
-            'expires': time.time() - 1  # Již vypršelo
+            "arm_id": "test.com",
+            "context": np.random.randn(131).astype(np.float64),
+            "expires": time.time() - 1,  # Již vypršelo
         }
 
         # Zavolej expire
@@ -240,7 +235,7 @@ class TestSprint59Prefetch:
         assert url not in oracle._scheduled
 
         # Měla by být penalizace (miss)
-        assert oracle.prefetch_stats['test.com']['misses'] > 0
+        assert oracle.prefetch_stats["test.com"]["misses"] > 0
 
     @pytest.mark.asyncio
     async def test_expire_shutdown(self, oracle):
@@ -260,11 +255,11 @@ class TestSprint59Prefetch:
         oracle.set_task_embedding(mx.random.normal((64,)))
 
         # Registruj node URL
-        oracle.register_node_url(0, 'http://example.com/1')
-        oracle.register_node_url(1, 'http://example.com/2')
+        oracle.register_node_url(0, "http://example.com/1")
+        oracle.register_node_url(1, "http://example.com/2")
 
         # Spusť on_new_candidates
-        await oracle.on_new_candidates('http://test.com', 'test_entity', 'web')
+        await oracle.on_new_candidates("http://test.com", "test_entity", "web")
 
         # Ověříme že scheduler byl zavolán
         if mock_scheduler.schedule_prefetch.called:

@@ -156,7 +156,11 @@ class TestEvidenceLogCorrelation:
             assert len(events) == 2
 
             # Find event with correlation
-            corr_events = [e for e in events if "_correlation" in e.payload and e.payload["_correlation"]["branch_id"] == "branch_query"]  # noqa: E501
+            corr_events = [
+                e
+                for e in events
+                if "_correlation" in e.payload and e.payload["_correlation"]["branch_id"] == "branch_query"
+            ]  # noqa: E501
             assert len(corr_events) == 1
             assert corr_events[0].payload["key"] == "value1"
 
@@ -396,14 +400,13 @@ class TestAnalyticsHookCorrelation:
 
         Verifies cross-ledger propagation: EvidenceLog → analytics_hook (DuckDB shadow).
         """
-        import os
 
+        # Ensure shadow is disabled so we test the fail-open path
+        os.environ["GHOST_DUCKDB_SHADOW"] = "0"
         from hledac.universal.knowledge.analytics_hook import (
             shadow_reset_failures,
         )
 
-        # Ensure shadow is disabled so we test the fail-open path
-        os.environ["GHOST_DUCKDB_SHADOW"] = "0"
         shadow_reset_failures()
 
         from hledac.universal.evidence_log import EvidenceLog

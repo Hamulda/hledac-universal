@@ -94,7 +94,7 @@ TOR_READ_TIMEOUT_S: float = 75.0
 #     - fetching/public_fetcher.py — passive text/HTML fetcher
 #     - pipeline/live_feed_pipeline.py:_fetch_article_text() — article fallback seam
 #
-#   PROXY BLOCKER: DarknetConnector uses aiohttp_socks.ProxyConnector (SOCKS5).
+#   PROXY BLOCKER: DarknetConnector uses httpx-socks.AsyncProxyTransport (SOCKS5).
 #   MA-2 is BLOCKED — ProxyConnector is incompatible with plain TCPConnector.
 #
 #   PaywallBypass: DEFERRED (not BLOCKED). Uses plain aiohttp.TCPConnector

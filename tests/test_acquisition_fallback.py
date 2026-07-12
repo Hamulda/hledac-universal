@@ -5,7 +5,6 @@ A3-F1 / A3-F2 coverage: verifies fallback behavior when build_acquisition_report
 Run with: python -m pytest tests/test_acquisition_fallback.py -v
 """
 
-
 import unittest.mock
 
 # Import the module under test
@@ -109,9 +108,7 @@ class TestAcquisitionFallback:
             "canonical build must set acquisition_report_fallback_used=False"
         )
         assert report.get("acquisition_profile") == "default"
-        assert "fallback_reason" not in report, (
-            "fallback_reason must not appear in canonical report"
-        )
+        assert "fallback_reason" not in report, "fallback_reason must not appear in canonical report"
 
     def test_build_acquisition_report_nonfeed_diagnostic(self):
         """Canonical path: nonfeed_diagnostic profile sets correct nonfeed_priority_enabled."""
@@ -149,6 +146,7 @@ class TestAcquisitionFallback:
         have correct types even when result has no acquisition data.
         """
         from types import SimpleNamespace
+
         # Simulate a minimal result where no acquisition lanes ran
         result = SimpleNamespace()
         # Build the fallback dict as core.__main__ does (lines 503-562 after F214 fix)
@@ -200,9 +198,7 @@ class TestAcquisitionFallback:
             "ct_storage_attempted": getattr(result, "ct_storage_attempted", False),
             "ct_storage_accepted": getattr(result, "ct_storage_accepted", False),
             "ct_terminal_stage": getattr(result, "ct_terminal_stage", ""),
-            "ct_prelude_missing_but_final_attempted": getattr(
-                result, "ct_prelude_missing_but_final_attempted", False
-            ),
+            "ct_prelude_missing_but_final_attempted": getattr(result, "ct_prelude_missing_but_final_attempted", False),
             "feed_dominance_budget": getattr(_plan, "feed_dominance_budget", None) if _plan else None,
             # F214: DOH acquisition report fields
             "doh_planned": getattr(result, "doh_planned", False),
@@ -219,9 +215,7 @@ class TestAcquisitionFallback:
             "public_bootstrap_prevented_discovery_timeout": getattr(
                 result, "public_bootstrap_prevented_discovery_timeout", False
             ),
-            "public_bootstrap_first_fetch_attempted": getattr(
-                result, "public_bootstrap_first_fetch_attempted", False
-            ),
+            "public_bootstrap_first_fetch_attempted": getattr(result, "public_bootstrap_first_fetch_attempted", False),
             # F234: Critical-33 batch
             "ct_bridge_rejections_count": getattr(result, "ct_bridge_rejections_count", 0),
             "ct_storage_rejected": getattr(result, "ct_storage_rejected", 0),
@@ -232,18 +226,12 @@ class TestAcquisitionFallback:
             "wayback_unchanged_rejected": getattr(result, "wayback_unchanged_rejected", 0),
             "nonfeed_provider_failures": list(getattr(result, "nonfeed_provider_failures", ()) or ()),
             # F216G: Quality/duplicate/low-info rejection ledgers
-            "quality_rejection_summary_by_family": getattr(
-                result, "quality_rejection_summary_by_family", None
-            ),
-            "duplicate_rejection_summary_by_family": getattr(
-                result, "duplicate_rejection_summary_by_family", None
-            ),
+            "quality_rejection_summary_by_family": getattr(result, "quality_rejection_summary_by_family", None),
+            "duplicate_rejection_summary_by_family": getattr(result, "duplicate_rejection_summary_by_family", None),
             "low_information_by_family": getattr(result, "low_information_by_family", None),
             # F228C: Nonfeed surface completeness telemetry
             "nonfeed_expected_lanes": list(getattr(result, "nonfeed_expected_lanes", ()) or ()),
-            "nonfeed_missing_expected_lanes": list(
-                getattr(result, "nonfeed_missing_expected_lanes", ()) or ()
-            ),
+            "nonfeed_missing_expected_lanes": list(getattr(result, "nonfeed_missing_expected_lanes", ()) or ()),
             "wayback_terminal_state": getattr(result, "wayback_terminal_state", ""),
             "passive_dns_terminal_state": getattr(result, "passive_dns_terminal_state", ""),
             "nonfeed_surface_complete": getattr(result, "nonfeed_surface_complete", False),
@@ -272,20 +260,36 @@ class TestAcquisitionFallback:
 
         # All F214 required fields present
         required = [
-            "public_provider_selection_debug", "feed_dominance_budget",
-            "doh_planned", "doh_scheduled", "doh_request_attempted", "doh_domains_attempted",
-            "doh_raw_count", "doh_accepted_findings", "doh_terminal_stage",
-            "doh_provider_errors", "doh_cache_used",
-            "public_bootstrap_order", "public_bootstrap_prevented_discovery_timeout",
+            "public_provider_selection_debug",
+            "feed_dominance_budget",
+            "doh_planned",
+            "doh_scheduled",
+            "doh_request_attempted",
+            "doh_domains_attempted",
+            "doh_raw_count",
+            "doh_accepted_findings",
+            "doh_terminal_stage",
+            "doh_provider_errors",
+            "doh_cache_used",
+            "public_bootstrap_order",
+            "public_bootstrap_prevented_discovery_timeout",
             "public_bootstrap_first_fetch_attempted",
-            "ct_bridge_rejections_count", "ct_storage_rejected",
-            "arrow_last_flush_error", "arrow_batch_dropped",
-            "prewindup_barrier_errors", "return_guard_errors",
-            "wayback_unchanged_rejected", "nonfeed_provider_failures",
-            "quality_rejection_summary_by_family", "duplicate_rejection_summary_by_family",
-            "low_information_by_family", "nonfeed_expected_lanes",
-            "nonfeed_missing_expected_lanes", "wayback_terminal_state",
-            "passive_dns_terminal_state", "nonfeed_surface_complete",
+            "ct_bridge_rejections_count",
+            "ct_storage_rejected",
+            "arrow_last_flush_error",
+            "arrow_batch_dropped",
+            "prewindup_barrier_errors",
+            "return_guard_errors",
+            "wayback_unchanged_rejected",
+            "nonfeed_provider_failures",
+            "quality_rejection_summary_by_family",
+            "duplicate_rejection_summary_by_family",
+            "low_information_by_family",
+            "nonfeed_expected_lanes",
+            "nonfeed_missing_expected_lanes",
+            "wayback_terminal_state",
+            "passive_dns_terminal_state",
+            "nonfeed_surface_complete",
             "nonfeed_candidate_ledger_summary",
         ]
         missing = [k for k in required if k not in fallback_report]
@@ -295,16 +299,32 @@ class TestAcquisitionFallback:
 class TestEnvVarOverrideLogging:
     """A1-F1: Verify env var override logs only when it actually changes the profile."""
 
-    def test_env_var_does_not_log_when_default(self):
+    def test_env_var_does_not_log_when_default(self, monkeypatch: pytest.MonkeyPatch):
         """When HLEDAC_ACQUISITION_PROFILE is absent or 'default', no info log."""
-        import os
-        # Ensure env var is not set
-        orig = os.environ.pop("HLEDAC_ACQUISITION_PROFILE", None)
+        monkeypatch.delenv("HLEDAC_ACQUISITION_PROFILE", raising=False)
+
+        with unittest.mock.patch.object(_acq_mod.logger, "info") as mock_info:
+            _acq_mod.build_acquisition_plan(
+                query="test-query",
+                acquisition_profile="default",
+                duration_s=60.0,
+                aggressive_mode=False,
+                uma_state=None,
+                swap_detected=False,
+                accepted_findings_so_far=0,
+                branch_timeout_count=0,
+                transport_authority_status=None,
+            )
+            f228b_calls = [c for c in mock_info.call_args_list if c.args and "[F228B]" in str(c.args)]
+            assert not f228b_calls, (
+                f"logger.info [F228B] must not be called when env var is absent/default, got calls: {f228b_calls}"
+            )
+
+    def test_env_var_logs_when_actually_overriding(self, monkeypatch: pytest.MonkeyPatch):
+        """When HLEDAC_ACQUISITION_PROFILE differs from 'default', log once."""
+        monkeypatch.setenv("HLEDAC_ACQUISITION_PROFILE", "nonfeed_diagnostic")
         try:
-            # The build_acquisition_plan path hits the env var lookup at line ~2065-2070.
-            # We patch logger to verify it is NOT called when env var is absent or 'default'.
             with unittest.mock.patch.object(_acq_mod.logger, "info") as mock_info:
-                # Call with profile "default" — env var is "default" (missing → "default")
                 _acq_mod.build_acquisition_plan(
                     query="test-query",
                     acquisition_profile="default",
@@ -316,54 +336,16 @@ class TestEnvVarOverrideLogging:
                     branch_timeout_count=0,
                     transport_authority_status=None,
                 )
-                # Check that logger.info was NOT called with [F228B]
-                f228b_calls = [
-                    c for c in mock_info.call_args_list
-                    if c.args and "[F228B]" in str(c.args)
-                ]
-                assert not f228b_calls, (
-                    f"logger.info [F228B] must not be called when env var is absent/default, "
-                    f"got calls: {f228b_calls}"
-                )
-        finally:
-            if orig is not None:
-                os.environ["HLEDAC_ACQUISITION_PROFILE"] = orig
-
-    def test_env_var_logs_when_actually_overriding(self):
-        """When HLEDAC_ACQUISITION_PROFILE differs from 'default', log once."""
-        import os
-        orig = os.environ.get("HLEDAC_ACQUISITION_PROFILE")
-        os.environ["HLEDAC_ACQUISITION_PROFILE"] = "nonfeed_diagnostic"
-        try:
-            with unittest.mock.patch.object(_acq_mod.logger, "info") as mock_info:
-                _acq_mod.build_acquisition_plan(
-                    query="test-query",
-                    acquisition_profile="default",  # triggers env var fallback
-                    duration_s=60.0,
-                    aggressive_mode=False,
-                    uma_state=None,
-                    swap_detected=False,
-                    accepted_findings_so_far=0,
-                    branch_timeout_count=0,
-                    transport_authority_status=None,
-                )
-                f228b_calls = [
-                    c for c in mock_info.call_args_list
-                    if c.args and "[F228B]" in str(c.args)
-                ]
+                f228b_calls = [c for c in mock_info.call_args_list if c.args and "[F228B]" in str(c.args)]
                 assert len(f228b_calls) == 1, (
                     f"logger.info [F228B] must be called exactly once when env var overrides, "
                     f"got {len(f228b_calls)} calls: {f228b_calls}"
                 )
-                # Verify the logged profile value
                 assert "nonfeed_diagnostic" in str(f228b_calls[0].args), (
                     f"logged message must contain 'nonfeed_diagnostic', got {f228b_calls[0].args!r}"
                 )
         finally:
-            if orig is None:
-                os.environ.pop("HLEDAC_ACQUISITION_PROFILE", None)
-            else:
-                os.environ["HLEDAC_ACQUISITION_PROFILE"] = orig
+            monkeypatch.delenv("HLEDAC_ACQUISITION_PROFILE", raising=False)
 
 
 if __name__ == "__main__":

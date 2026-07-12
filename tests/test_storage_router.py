@@ -10,25 +10,20 @@ Coverage:
   - Glob patterns: "embedding.float16.*" matches "embedding.float16[384]"
 """
 
-
-import asyncio
-import copy
-import warnings
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from core.storage_router import (
+    _DECISION_MATRIX,
+    _INVALIDATION_CHAIN,
     StorageKind,
     StoragePolicy,
     StorageRouter,
     _classify,
-    _DECISION_MATRIX,
-    _INVALIDATION_CHAIN,
     get_storage_router,
     reset_storage_router,
 )
-
 
 # ---------------------------------------------------------------------------
 # Decision matrix tests

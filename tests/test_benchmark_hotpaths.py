@@ -9,8 +9,9 @@ import shutil
 import tempfile
 import time
 
-import lmdb
 import pytest
+
+# Lazy import: lmdb loaded only when benchmark tests that need it actually run
 
 # Baseline thresholds (M1 MacBook Air 8GB, measured 2026-07-02)
 # If hardware differs, set env vars to override.
@@ -31,13 +32,14 @@ def _check_regression(name: str, measured_ms: float) -> None:
     if measured_ms > threshold:
         pytest.fail(
             f"BENCHMARK REGRESSION: {name} took {measured_ms:.2f}ms "
-            f"(baseline {baseline:.2f}ms, +{((measured_ms/baseline)-1)*100:.1f}%)"
+            f"(baseline {baseline:.2f}ms, +{((measured_ms / baseline) - 1) * 100:.1f}%)"
         )
 
 
 # ---------------------------------------------------------------------------
 # DuckDB batch ingest
 # ---------------------------------------------------------------------------
+
 
 def test_benchmark_duckdb_ingest_batch(session_duckdb_store):
     """Time: DuckDBShadowStore.async_ingest_findings_batch (100 findings).
@@ -87,6 +89,7 @@ def test_benchmark_duckdb_ingest_batch(session_duckdb_store):
 # LMDB bulk write (put_many)
 # ---------------------------------------------------------------------------
 
+
 def test_benchmark_lmdb_put_many():
     """Time: LMDB cursor.putmany() for 500 key-value pairs."""
     tmp = tempfile.mkdtemp(prefix="bench_lmdb_")
@@ -106,6 +109,7 @@ def test_benchmark_lmdb_put_many():
 # ---------------------------------------------------------------------------
 # RotatingBloomFilter add
 # ---------------------------------------------------------------------------
+
 
 def test_benchmark_rotating_bloom_add():
     """Time: RotatingBloomFilter.add() x100. Primary: Rust BloomFilter (hledac_rust_extensions)."""
@@ -134,6 +138,7 @@ def test_benchmark_rotating_bloom_add():
 # ---------------------------------------------------------------------------
 # MLX eval barrier
 # ---------------------------------------------------------------------------
+
 
 def test_benchmark_mx_eval_barrier():
     """Time: mx.eval([]) + metal.clear_cache() barrier.
@@ -167,6 +172,7 @@ def test_benchmark_mx_eval_barrier():
 # ---------------------------------------------------------------------------
 # curl_cffi fetch
 # ---------------------------------------------------------------------------
+
 
 def test_benchmark_fetch_via_curl():
     """Time: curl_cffi fetch with JA3 fingerprint."""
