@@ -15,18 +15,16 @@ Použití:
     embeddings = manager.encode(["text 1", "text 2"])
 """
 
-
-
 import asyncio
 import json
 import logging
+import threading
 import time
 import warnings
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-import threading
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +33,9 @@ def _get_rss_gb() -> float:
     """Return current RSS in GB, or 0.0 if unavailable."""
     # Delegated to shared implementation to eliminate duplication with embeddings/manager.py
     from core.embeddings._shared import get_rss_gb as _shared_get_rss_gb
+
     return _shared_get_rss_gb()
+
 
 # F275-5: Embedding model persistent cache directory
 # Saves tokenizer state + warmup marker so next sprint skips model loading overhead.
@@ -46,18 +46,16 @@ _PREWARM_LOCK = threading.Lock()  # F275-5: protects marker file R/W
 # MLX importy
 try:
     import mlx.core as mx
+
     MLX_AVAILABLE = True
 except ImportError:
     MLX_AVAILABLE = False
     warnings.warn("MLX not available. Install: pip install mlx>=0.15.0", stacklevel=2)
 
 # mlx-embeddings for ModernBERT (works, mlx-lm.load does NOT support ModernBERT)
-try:
-    from mlx_embeddings import load as mlx_embeddings_load
-    MLX_EMBEDDINGS_AVAILABLE = True
-except ImportError:
-    MLX_EMBEDDINGS_AVAILABLE = False
-    warnings.warn("mlx-embeddings not available. Install: pip install mlx-embeddings", stacklevel=2)
+# FXXX: Migrated to lazy import via __getattr__ to eliminate 6 pytest warnings
+MLX_EMBEDDINGS_LOAD = None  # type: ignore[assignment]
+MLX_EMBEDDINGS_AVAILABLE = None  # type: ignore[assignment]
 
 
 # === Embedding Task Enum (prefix discipline) ===
@@ -115,11 +113,7 @@ class MLXEmbeddingManager:
     # Task safety: track current embedding task
     _current_task: EmbeddingTask | None = None
 
-    def __init__(
-        self,
-        model_path: str | Path | None = None,
-        lazy_load: bool = True
-    ):
+    def __init__(self, model_path: str | Path | None = None, lazy_load: bool = True):
         """
         Inicializace embedding manageru.
 
@@ -128,9 +122,7 @@ class MLXEmbeddingManager:
             lazy_load: Načíst model až při prvním použití
         """
         if not MLX_AVAILABLE:
-            raise RuntimeError(
-                "MLX not available. Install: pip install mlx>=0.15.0 mlx-lm>=0.4.0"
-            )
+            raise RuntimeError("MLX not available. Install: pip install mlx>=0.15.0 mlx-lm>=0.4.0")
 
         self.model_path = Path(model_path) if model_path else Path(self.DEFAULT_MODEL)
         # Type-annotated to silence Pyright reportOptionalCall warnings on the
@@ -171,9 +163,7 @@ class MLXEmbeddingManager:
             logger.info(f"Loading embedding model: {model_name}")
 
             if not MLX_EMBEDDINGS_AVAILABLE:
-                raise RuntimeError(
-                    "mlx-embeddings not available. Install: pip install mlx-embeddings"
-                )
+                raise RuntimeError("mlx-embeddings not available. Install: pip install mlx-embeddings")
 
             try:
                 # Načtení přes mlx-embeddings (mlx_lm.load does NOT support ModernBERT)
@@ -198,10 +188,9 @@ class MLXEmbeddingManager:
                 # eliminating per-batch mx.array() allocation overhead. Expected: ~20% faster.
                 try:
                     from hledac.universal.utils.metal_embedder_buffers import init_metal_embedder_buffers
+
                     result = init_metal_embedder_buffers(
-                        max_batch=self.BATCH_SIZE,
-                        seq_len=self.MAX_LENGTH,
-                        hidden=self.NATIVE_DIM
+                        max_batch=self.BATCH_SIZE, seq_len=self.MAX_LENGTH, hidden=self.NATIVE_DIM
                     )
                     if result.get("success"):
                         logger.info(
@@ -236,9 +225,7 @@ class MLXEmbeddingManager:
             load_dur = time.monotonic() - t0
             rss_gb = _get_rss_gb()
             if load_dur > 1.0:
-                logger.info(
-                    f"[mlx-embed] ensure_loaded completed in {load_dur:.1f}s RSS={rss_gb:.2f}GB"
-                )
+                logger.info(f"[mlx-embed] ensure_loaded completed in {load_dur:.1f}s RSS={rss_gb:.2f}GB")
 
     async def encode_async(
         self,
@@ -279,8 +266,7 @@ class MLXEmbeddingManager:
         encode_dur = time.monotonic() - t1
         if encode_dur > 0.5:
             logger.debug(
-                f"[mlx-embed] encode_async: {encode_dur:.2f}s for "
-                f"{len(texts) if isinstance(texts, list) else 1} texts"
+                f"[mlx-embed] encode_async: {encode_dur:.2f}s for {len(texts) if isinstance(texts, list) else 1} texts"
             )
         return result
 
@@ -352,11 +338,7 @@ class MLXEmbeddingManager:
         return np.vstack(results) if results else np.array([])
 
     def _embed_task(
-        self,
-        text: str,
-        task: EmbeddingTask,
-        truncate_dim: int | None = None,
-        force_normalize: bool = False
+        self, text: str, task: EmbeddingTask, truncate_dim: int | None = None, force_normalize: bool = False
     ) -> np.ndarray:
         """
         Internal task-aware embed method.
@@ -379,10 +361,7 @@ class MLXEmbeddingManager:
         for_indexing = task == EmbeddingTask.SEARCH_DOCUMENT
         try:
             result = self.encode(
-                text,
-                normalize=normalize,
-                truncate_dim=truncate_dim or self.MRL_DIM,
-                _for_indexing=for_indexing
+                text, normalize=normalize, truncate_dim=truncate_dim or self.MRL_DIM, _for_indexing=for_indexing
             )
         finally:
             # Clear task after encoding
@@ -404,7 +383,7 @@ class MLXEmbeddingManager:
         normalize: bool = True,
         show_progress: bool = False,
         truncate_dim: int | None = None,  # Matryoshka truncation
-        _for_indexing: bool = False  # Internal flag for indexing validation
+        _for_indexing: bool = False,  # Internal flag for indexing validation
     ) -> np.ndarray:
         """
         Zakóduje texty do embedding vektorů.
@@ -449,18 +428,14 @@ class MLXEmbeddingManager:
         all_embeddings = []
 
         for i in range(0, len(texts), batch_size):
-            batch = texts[i:i + batch_size]
+            batch = texts[i : i + batch_size]
 
             if show_progress:
-                logger.info(f"Encoding batch {i//batch_size + 1}/{(len(texts)-1)//batch_size + 1}")
+                logger.info(f"Encoding batch {i // batch_size + 1}/{(len(texts) - 1) // batch_size + 1}")
 
             # Tokenizace přes mlx-embeddings processor
             inputs = self._tokenizer(
-                batch,
-                padding=True,
-                truncation=True,
-                max_length=self.MAX_LENGTH,
-                return_tensors="mlx"
+                batch, padding=True, truncation=True, max_length=self.MAX_LENGTH, return_tensors="mlx"
             )
 
             # Forward pass - mlx-embeddings returns pooled text_embeds
@@ -469,11 +444,9 @@ class MLXEmbeddingManager:
             # M218A+: Batched mx.eval() — single ANE/Metal dispatch per batch,
             # not per-item. Avoids ~15-30μs queue overhead per embedding.
             from hledac.universal.utils.mlx_memory import get_metal_stream_context
+
             with get_metal_stream_context():
-                outputs = self._model(
-                    input_ids=inputs.input_ids,
-                    attention_mask=inputs.attention_mask
-                )
+                outputs = self._model(input_ids=inputs.input_ids, attention_mask=inputs.attention_mask)
 
                 # Use pre-pooled embeddings from the model (includes attention mask pooling internally)
                 embeddings = outputs.text_embeds
@@ -506,11 +479,7 @@ class MLXEmbeddingManager:
         # Spojení všech batchů
         return np.vstack(all_embeddings)
 
-    def _mean_pooling(
-        self,
-        token_embeddings: mx.array,
-        attention_mask: mx.array
-    ) -> mx.array:
+    def _mean_pooling(self, token_embeddings: mx.array, attention_mask: mx.array) -> mx.array:
         """
         Mean pooling s ohledem na attention mask.
 
@@ -547,11 +516,7 @@ class MLXEmbeddingManager:
         norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
         return embeddings / np.clip(norms, a_min=1e-12)
 
-    def similarity(
-        self,
-        text1: str | list[str],
-        text2: str | list[str]
-    ) -> float | np.ndarray:
+    def similarity(self, text1: str | list[str], text2: str | list[str]) -> float | np.ndarray:
         """
         Vypočítá kosinovou podobnost mezi texty.
 
@@ -589,6 +554,7 @@ class MLXEmbeddingManager:
             self._is_loaded = False
 
             import gc
+
             gc.collect()
 
             # M218A: Force Metal to release buffers — mx.eval() flushes pending ops,
@@ -597,8 +563,10 @@ class MLXEmbeddingManager:
             if MLX_AVAILABLE:
                 try:
                     import mlx.core as mx
+
                     mx.eval([])
                     import gc
+
                     gc.collect()  # F266: Python GC BEFORE Metal release
                     # Modern-first: mx.clear_cache(), fallback to deprecated mx.metal.clear_cache()
                     try:
@@ -615,6 +583,7 @@ class MLXEmbeddingManager:
             # E.4: Release pre-allocated Metal buffers on unload
             try:
                 from hledac.universal.utils.metal_embedder_buffers import release_metal_embedder_buffers
+
                 release_metal_embedder_buffers()
             except Exception:  # noqa: BLE001
                 pass  # fail-safe
@@ -642,11 +611,15 @@ class MLXEmbeddingManager:
             marker_path = self._prewarm_marker_path(model_name)
             with _PREWARM_LOCK:
                 marker_path.parent.mkdir(parents=True, exist_ok=True)
-                marker_path.write_text(json.dumps({
-                    "model": model_name,
-                    "loaded_at": time.time(),
-                    "version": 1,
-                }))
+                marker_path.write_text(
+                    json.dumps(
+                        {
+                            "model": model_name,
+                            "loaded_at": time.time(),
+                            "version": 1,
+                        }
+                    )
+                )
             self._prewarm_marker_file = marker_path
             logger.debug(f"[MLXEmbed] prewarm marker written: {marker_path}")
         except Exception as e:
@@ -777,7 +750,8 @@ def get_mlx_embedder() -> MLXEmbeddingManager:
             metal_status = "unknown"
             try:
                 import mlx.core as mx
-                metal_status = "yes" if hasattr(mx, 'metal') and mx.metal.is_available() else "no"
+
+                metal_status = "yes" if hasattr(mx, "metal") and mx.metal.is_available() else "no"
             except Exception:  # noqa: BLE001
                 pass
 
@@ -806,7 +780,8 @@ def get_embedding_info() -> dict:
     metal_status = "unknown"
     try:
         import mlx.core as mx
-        metal_status = "yes" if hasattr(mx, 'metal') and mx.metal.is_available() else "no"
+
+        metal_status = "yes" if hasattr(mx, "metal") and mx.metal.is_available() else "no"
     except Exception:  # noqa: BLE001
         pass
 
@@ -817,12 +792,13 @@ def get_embedding_info() -> dict:
         "mrl_dim": _default_manager.MRL_DIM,
         "max_length": _default_manager.MAX_LENGTH,
         "metal": metal_status,
-        "is_loaded": _default_manager.is_loaded
+        "is_loaded": _default_manager.is_loaded,
     }
 
 
 class EmbeddingDimensionError(Exception):
     """Raised when embedding dimension mismatch is detected."""
+
     pass
 
 
@@ -850,15 +826,13 @@ def assert_embedding_dimension(expected_dim: int, context: str = "") -> None:
     global _default_manager
     if _default_manager is None:
         raise EmbeddingDimensionError(
-            f"Embedding provider not initialized. Cannot verify dimension {expected_dim}. "
-            f"Context: {context}"
+            f"Embedding provider not initialized. Cannot verify dimension {expected_dim}. Context: {context}"
         )
 
     actual_dim = _default_manager.EMBEDDING_DIM
     if expected_dim not in _VALID_DIMS:
         raise EmbeddingDimensionError(
-            f"Invalid expected_dim {expected_dim}. Must be 256, 384, 512, or 768. "
-            f"Context: {context}"
+            f"Invalid expected_dim {expected_dim}. Must be 256, 384, 512, or 768. Context: {context}"
         )
 
     if actual_dim != expected_dim:
@@ -899,6 +873,23 @@ def compute_similarity(text1: str, text2: str) -> float | np.ndarray:
     return manager.similarity(text1, text2)
 
 
+# PEP 562: Lazy import for mlx-embeddings
+# FXXX: Deferred import eliminates 6 pytest warnings per test run
+def __getattr__(name: str):
+    if name in ("MLX_EMBEDDINGS_LOAD", "MLX_EMBEDDINGS_AVAILABLE"):
+        global MLX_EMBEDDINGS_LOAD, MLX_EMBEDDINGS_AVAILABLE
+        try:
+            from mlx_embeddings import load as mlx_embeddings_load
+
+            MLX_EMBEDDINGS_LOAD = mlx_embeddings_load
+            MLX_EMBEDDINGS_AVAILABLE = True
+        except ImportError:
+            MLX_EMBEDDINGS_LOAD = None
+            MLX_EMBEDDINGS_AVAILABLE = False
+        return globals()[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 if __name__ == "__main__":
     # Test
     logging.basicConfig(level=logging.INFO)
@@ -907,11 +898,7 @@ if __name__ == "__main__":
 
     manager = MLXEmbeddingManager()
 
-    test_texts = [
-        "Machine learning is fascinating",
-        "Deep learning transforms AI",
-        "The weather is nice today"
-    ]
+    test_texts = ["Machine learning is fascinating", "Deep learning transforms AI", "The weather is nice today"]
 
     print(f"\nEncoding {len(test_texts)} texts...")
     embeddings = manager.encode(test_texts)

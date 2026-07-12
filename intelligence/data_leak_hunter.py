@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 try:
-    import aiohttp
+    import httpx
     AIOHTTP_AVAILABLE = True
 except ImportError:
     AIOHTTP_AVAILABLE = False
@@ -238,7 +238,7 @@ class DataLeakHunter:
                     logger.warning(f"Security components not available: {e}")
 
             # Create HTTP session via shared pool
-            self._session = await session_pool.aiohttp()
+            self._session = await httpx.AsyncClient()
 
             logger.info("✅ DataLeakHunter initialized")
             return True
@@ -603,7 +603,7 @@ class DataLeakHunter:
                 config["url"],
                 headers=headers,
                 json=search_payload,
-                timeout=aiohttp.ClientTimeout(total=30),
+                timeout=httpx.Timeout(total=30),
             ) as resp:
                 self._api_calls += 1
                 if resp.status == 429:
@@ -629,7 +629,7 @@ class DataLeakHunter:
                 async with self._session.get(
                     result_url,
                     headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=30),
+                    timeout=httpx.Timeout(total=30),
                 ) as resp:
                     if resp.status == 429:
                         logger.W(f"IntelligenceX poll attempt {attempt + 1} rate limited")
@@ -677,14 +677,14 @@ class DataLeakHunter:
 
         try:
             url = f"https://grep.app/api/search?q={query}&filter[lang][0]=python"
-            async with curl_cffi.aiohttp.ClientSession(
+            async with curl_cffi.httpx.AsyncClient(
                 headers={
                     "User-Agent": (
                         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                     ),
                 },
-                timeout=aiohttp.ClientTimeout(total=15),
+                timeout=httpx.Timeout(total=15),
             ) as session:
                 async with session.get(url) as resp:
                     if resp.status == 429:
@@ -942,7 +942,7 @@ class PasteMonitorClient:
 
     async def get_recent_pastes(
         self,
-        session: aiohttp.ClientSession,
+        session: httpx.AsyncClient,
         limit: int = 20,
     ) -> list[dict]:
         """Vrátí [{key, date, title, size, syntax, user}]"""
@@ -963,7 +963,7 @@ class PasteMonitorClient:
         try:
             async with session.get(
                 f"{self._SCRAPE_URL}?limit={limit}",
-                timeout=aiohttp.ClientTimeout(total=15),
+                timeout=httpx.Timeout(total=15),
             ) as r:
                 if r.status in (403, 401):
                     logger.debug("Pastebin scraping API: IP not whitelisted (expected in dev)")
@@ -982,13 +982,13 @@ class PasteMonitorClient:
     async def fetch_paste_content(
         self,
         paste_key: str,
-        session: aiohttp.ClientSession,
+        session: httpx.AsyncClient,
     ) -> str:
         """Stáhnout raw obsah pasty."""
         try:
             async with session.get(
                 f"https://pastebin.com/raw/{paste_key}",
-                timeout=aiohttp.ClientTimeout(total=10),
+                timeout=httpx.Timeout(total=10),
             ) as r:
                 if r.status != 200:
                     return ""

@@ -20,22 +20,20 @@ GHOST_INVARIANTS:
   - safe_gather_return_exceptions(...) + _check_gathered()
   - asyncio.sleep() only, no time.sleep()
   - circuit_breaker.domain_breaker_check() before every external call
-  - async_get_aiohttp_session() for all HTTP
+  - async_get_httpx_session() for all HTTP
   - Bounded deques, 50MB response caps, TTL caches
   - Fail-soft: resolver error returns empty list, never raises
 """
 
-
-
 import asyncio
-from utils.async_helpers import safe_gather_ok, safe_gather_return_exceptions
 import logging
 import time
 
-import aiohttp
+import httpx
 
-from hledac.universal.network.session_runtime import async_get_aiohttp_session
+from hledac.universal.network.session_runtime import async_get_httpx_session
 from hledac.universal.utils.async_helpers import _check_gathered
+from utils.async_helpers import safe_gather_return_exceptions
 
 logger = logging.getLogger(__name__)
 
@@ -77,12 +75,12 @@ _DOH_RETRY_DELAY_S: float = 0.5  # initial delay, doubles on each retry
 # F300: Circuit breaker state per resolver — tracks failure count + last_failure_ts
 # Resolver removed from chain after MAX_CONSECUTIVE_FAILURES
 from dataclasses import dataclass  # noqa: E402
-import msgspec  # noqa: E402
 
 
 @dataclass
 class _ResolverHealth:
     """Per-resolver health state for circuit breaker."""
+
     consecutive_failures: int = 0
     last_failure_ts: float = 0.0
     total_requests: int = 0
@@ -105,6 +103,7 @@ _RECOVERY_WINDOW_S: float = 60.0  # Reset failure count after 60s of success
 
 class _ResolverHealthTracker:
     """Thread-safe resolver health tracker with recovery window."""
+
     __slots__ = ("_health", "_lock")
     _health: dict[str, _ResolverHealth]
     _lock: asyncio.Lock
@@ -180,10 +179,13 @@ class _ResolverHealthTracker:
 
 _resolver_health = _ResolverHealthTracker()
 
+
 # ── Token Bucket per resolver ─────────────────────────────────────────────────
 class _TokenBucket:
     """Simple async token bucket with asyncio.Lock."""
+
     __slots__ = ("rate", "burst", "tokens", "_lock", "_last_refill")
+
     def __init__(self, rate: int, burst: int):
         self.rate = rate
         self.burst = burst
@@ -207,10 +209,13 @@ class _TokenBucket:
                 return False
             await asyncio.sleep(0.05)
 
+
 # ── DoH Cache ─────────────────────────────────────────────────────────────────
 class _DoHCache:
     """TTL-cached DoH responses, bounded by MAX_DOH_CACHE_SIZE."""
+
     __slots__ = ("_cache", "_timestamps")
+
     def __init__(self):
         self._cache: dict[str, dict] = {}
         self._timestamps: dict[str, float] = {}
@@ -239,10 +244,10 @@ class _DoHCache:
 
 # ── Per-resolver buckets ──────────────────────────────────────────────────────
 _resolver_buckets: dict[str, _TokenBucket] = {
-    name: _TokenBucket(TOKEN_BUCKET_RATE, TOKEN_BUCKET_BURST)
-    for name in DOH_RESOLVERS
+    name: _TokenBucket(TOKEN_BUCKET_RATE, TOKEN_BUCKET_BURST) for name in DOH_RESOLVERS
 }
 _doh_cache = _DoHCache()
+
 
 # ── Main Class ─────────────────────────────────────────────────────────────────
 class PassiveDNSResolver:
@@ -256,11 +261,11 @@ class PassiveDNSResolver:
     """
 
     def __init__(self):
-        self._session: aiohttp.ClientSession | None = None
+        self._session: httpx.AsyncClient | None = None
 
-    async def _ensure_session(self) -> aiohttp.ClientSession:
-        if self._session is None or self._session.closed:
-            self._session = await async_get_aiohttp_session()
+    async def _ensure_session(self) -> httpx.AsyncClient:
+        if self._session is None or self._session.is_closed:
+            self._session = await async_get_httpx_session()
         return self._session
 
     async def _do_query(
@@ -279,6 +284,7 @@ class PassiveDNSResolver:
         # Check circuit breaker (error swallowing - dominant pattern in network/)
         try:
             from hledac.universal.transport.circuit_breaker import get_breaker
+
             domain = url.split("/")[2] if "//" in url else url
             if not get_breaker(domain).check_circuit().allowed:
                 logger.debug(f"[DoH] Circuit breaker open for {resolver}: {domain}")
@@ -293,28 +299,28 @@ class PassiveDNSResolver:
             return cached.get("answers", [])
 
         session = await self._ensure_session()
-        import aiohttp
+
         for _retry_i in range(_MAX_DOH_RETRIES + 1):
             try:
                 params = {"name": name, "type": rdtype}
-                async with session.get(
+                resp = await session.get(
                     url,
                     params=params,
-                    timeout=aiohttp.ClientTimeout(total=10.0),
+                    timeout=httpx.Timeout(total=10.0),
                     headers={"Accept": "application/dns-json"},
-                ) as resp:
-                    # P1-3: Retry on 5xx server errors (transient DoH degradation)
-                    if resp.status >= 500:
-                        if _retry_i < _MAX_DOH_RETRIES:
-                            await asyncio.sleep(_DOH_RETRY_DELAY_S * (2 ** _retry_i))
-                            continue
-                        return []
-                    if resp.status != 200:
-                        return []
-                    data = await resp.json()
+                )
+                # P1-3: Retry on 5xx server errors (transient DoH degradation)
+                if resp.status_code >= 500:
+                    if _retry_i < _MAX_DOH_RETRIES:
+                        await asyncio.sleep(_DOH_RETRY_DELAY_S * (2**_retry_i))
+                        continue
+                    return []
+                if resp.status_code != 200:
+                    return []
+                data = resp.json()
             except Exception as e:
                 if _retry_i < _MAX_DOH_RETRIES:
-                    await asyncio.sleep(_DOH_RETRY_DELAY_S * (2 ** _retry_i))
+                    await asyncio.sleep(_DOH_RETRY_DELAY_S * (2**_retry_i))
                     continue
                 logger.debug(f"[DoH] Query failed for {resolver}: {e}")
                 return []
@@ -367,10 +373,7 @@ class PassiveDNSResolver:
         if not healthy_resolvers:
             return {}
 
-        tasks = {
-            resolver: self._do_query(name, rdtype, resolver, url)
-            for resolver, url in healthy_resolvers
-        }
+        tasks = {resolver: self._do_query(name, rdtype, resolver, url) for resolver, url in healthy_resolvers}
         # F314: migrated asyncio.gather -> safe_gather_return_exceptions + _check_gathered
         raw = await safe_gather_return_exceptions(*tasks.values(), label="passive_dns:compare_resolvers")
         _ok_results, _errors = _check_gathered(raw, logger, "compare_resolvers")
@@ -381,8 +384,8 @@ class PassiveDNSResolver:
         return comparison
 
     async def close(self) -> None:
-        if self._session and not self._session.closed:
-            await self._session.close()
+        if self._session and not self._session.is_closed:
+            await self._session.aclose()
 
 
 # ── PassiveDNSAdapter for sidecar bus ─────────────────────────────────────────
@@ -391,12 +394,14 @@ class PassiveDNSAdapter:
     Passive DNS adapter for use in sidecar runners.
     Wraps PassiveDNSResolver, returns CanonicalFinding-compatible dicts.
     """
+
     def __init__(self):
         self._resolver = PassiveDNSResolver()
 
     async def query(self, target: str) -> list[dict]:
         """Query passive DNS for a target (domain or IP)."""
         from typing import Any
+
         findings: list[dict[str, Any]] = []
         rdtype = "A"
         if _is_ipv6(target):
@@ -411,15 +416,17 @@ class PassiveDNSAdapter:
 
         ts = time.time()
         for answer in answers[:50]:  # bounded
-            findings.append({
-                "source_type": "passive_dns",
-                "ioc_type": "ipv4" if rdtype == "A" else "ipv6",
-                "ioc_value": answer,
-                "target": target,
-                "confidence": 0.6,
-                "ts": ts,
-                "payload_text": f"passive_dns:{target}:{rdtype}:{answer}",
-            })
+            findings.append(
+                {
+                    "source_type": "passive_dns",
+                    "ioc_type": "ipv4" if rdtype == "A" else "ipv6",
+                    "ioc_value": answer,
+                    "target": target,
+                    "confidence": 0.6,
+                    "ts": ts,
+                    "payload_text": f"passive_dns:{target}:{rdtype}:{answer}",
+                }
+            )
         return findings
 
     async def resolve(self, name: str, rdtype: str = "A") -> list[str]:

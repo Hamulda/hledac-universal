@@ -24,7 +24,6 @@ F206AW Transport Seams:
   - NO import-time session creation
 """
 
-
 import asyncio
 import logging
 import random
@@ -34,18 +33,15 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-import aiohttp
+import httpx
 import orjson
-
-from hledac.universal.network.session_runtime import async_get_aiohttp_session
-from hledac.universal.transport.circuit_breaker import checked_aiohttp_get
 
 logger = logging.getLogger(__name__)
 
 # HackerTarget PDNS fallback constants
 _HACKERTARGET_PDNS_URL = "https://api.hackertarget.com/dnslookup"
 _HACKERTARGET_RATE_LIMIT_SLEEP = 2.0  # Conservative rate limit
-_HACKERTARGET_TIMEOUT = aiohttp.ClientTimeout(total=10)
+_HACKERTARGET_TIMEOUT = httpx.Timeout(10.0)
 
 
 async def _fallback_hackertarget_pdns(
@@ -196,6 +192,7 @@ class PassiveDNSOutcome:
         duration_s:   Wall-clock seconds for the call.
         skip_reason:  Reason for skip or None if attempted.
     """
+
     attempted: bool = False
     query: str = ""
     result_count: int = 0
@@ -203,6 +200,7 @@ class PassiveDNSOutcome:
     timeout: bool = False
     duration_s: float = 0.0
     skip_reason: str | None = None
+
 
 DOH_ENDPOINTS: dict[str, str] = {
     "cloudflare": "https://cloudflare-dns.com/dns-query",
@@ -231,6 +229,7 @@ def get_random_doh_provider() -> str:
     """Return a random DoH provider weighted evenly. Thread-safe via random.choice."""
     providers = list(DOH_PROVIDER_WEIGHTS.keys())
     return random.choice(providers)  # noqa: S311 — no security-sensitive seed needed here
+
 
 CIRCL_PDNS_URL: str = "https://www.circl.lu/pdns/query"
 CIRCL_RATE_LIMIT_SLEEP: float = 2.0  # 30 req/min → 2s between requests
@@ -274,6 +273,7 @@ def _get_circuit_breaker():
     if _circuit_breaker_check is None:
         try:
             from transport.circuit_breaker import domain_breaker_check
+
             _circuit_breaker_check = domain_breaker_check
         except ImportError:
             _circuit_breaker_check = None
@@ -425,6 +425,7 @@ async def resolve_doh(
                 # QDCOUNT (2 bytes, 1), QNAME (variable), QTYPE (2 bytes, A=1), QCLASS (2 bytes, IN=1)
                 import random
                 import struct
+
                 txn_id = random.randint(0, 0xFFFF)
                 # Build QNAME: labels prepended with length bytes
                 qname = b""
@@ -447,7 +448,9 @@ async def resolve_doh(
                 elif session_provider is not None:
                     async with session_provider.get(post_url, headers=post_headers, allow_redirects=True) as resp:
                         if resp.status >= 500:
-                            logger.warning(f"DoH {_attempt_provider} returned HTTP {resp.status} for {domain}, retrying...")
+                            logger.warning(
+                                f"DoH {_attempt_provider} returned HTTP {resp.status} for {domain}, retrying..."
+                            )
                             continue
                         if resp.status != 200:
                             logger.warning(f"DoH {_attempt_provider} failed for {domain}: HTTP {resp.status}")
@@ -461,7 +464,9 @@ async def resolve_doh(
                     async with aiohttp.ClientSession(timeout=timeout) as session:
                         async with session.get(post_url, headers=post_headers, allow_redirects=True) as resp:
                             if resp.status >= 500:
-                                logger.warning(f"DoH {_attempt_provider} returned HTTP {resp.status} for {domain}, retrying...")
+                                logger.warning(
+                                    f"DoH {_attempt_provider} returned HTTP {resp.status} for {domain}, retrying..."
+                                )
                                 continue
                             if resp.status != 200:
                                 logger.warning(f"DoH {_attempt_provider} failed for {domain}: HTTP {resp.status}")
@@ -482,32 +487,38 @@ async def resolve_doh(
                 elif session_provider is not None:
                     async with session_provider.get(_attempt_url, headers=get_headers, allow_redirects=True) as resp:
                         if resp.status >= 500:
-                            logger.warning(f"DoH {_attempt_provider} returned HTTP {resp.status} for {domain}, retrying...")
+                            logger.warning(
+                                f"DoH {_attempt_provider} returned HTTP {resp.status} for {domain}, retrying..."
+                            )
                             continue
                         if resp.status != 200:
                             logger.warning(f"DoH {_attempt_provider} failed for {domain}: HTTP {resp.status}")
                             return []
                         text = await resp.text()
                         import json
+
                         try:
                             data = json.loads(text)
-                        except (json.JSONDecodeError, Exception):
+                        except json.JSONDecodeError, Exception:
                             logger.warning(f"DoH {_attempt_provider} invalid JSON for {domain}")
                             return []
                 else:
                     async with aiohttp.ClientSession(timeout=timeout) as session:
                         async with session.get(_attempt_url, headers=get_headers, allow_redirects=True) as resp:
                             if resp.status >= 500:
-                                logger.warning(f"DoH {_attempt_provider} returned HTTP {resp.status} for {domain}, retrying...")
+                                logger.warning(
+                                    f"DoH {_attempt_provider} returned HTTP {resp.status} for {domain}, retrying..."
+                                )
                                 continue
                             if resp.status != 200:
                                 logger.warning(f"DoH {_attempt_provider} failed for {domain}: HTTP {resp.status}")
                                 return []
                             text = await resp.text()
                             import json
+
                             try:
                                 data = json.loads(text)
-                            except (json.JSONDecodeError, Exception):
+                            except json.JSONDecodeError, Exception:
                                 logger.warning(f"DoH {_attempt_provider} invalid JSON for {domain}")
                                 return []
 

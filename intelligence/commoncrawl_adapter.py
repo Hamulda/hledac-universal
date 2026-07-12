@@ -7,12 +7,10 @@ Pattern: mirrors intelligence/wayback_cdx.py (Sprint F234).
 Sprint F250F
 """
 
-
 import asyncio
 import logging
 import time as time_mod
 from dataclasses import dataclass, field
-import msgspec
 
 try:
     import orjson
@@ -20,20 +18,11 @@ except ImportError:
     orjson = None  # type: ignore[assignment]
 
 try:
-    import aiohttp
+    import httpx
 except ImportError:
-    aiohttp = None  # type: ignore[assignment]
+    httpx = None  # type: ignore[assignment]
 
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-from hledac.universal.transport.session_pool import session_pool
-
-
-async def _aclose_iter_chunks(iter_chunks):
-    """P15: Close aiohttp AsyncStreamIterator on early break."""
-    try:
-        await iter_chunks.aclose()
-    except Exception:  # noqa: BLE001
-        pass
 
 logger = logging.getLogger("hledac")
 
@@ -52,6 +41,7 @@ _WAYBACK_BASE_URL = "https://web.archive.org"
 
 # ── Dataclasses ─────────────────────────────────────────────────────────────
 
+
 @dataclass
 class CCSearchResult:
     """
@@ -59,6 +49,7 @@ class CCSearchResult:
 
     Fields mirror CDXSearchResult from wayback_cdx.py.
     """
+
     url: str
     timestamp: str
     mimetype: str
@@ -93,6 +84,7 @@ class CCSearchResult:
     def _parse_timestamp(self) -> float:
         try:
             from datetime import datetime
+
             return datetime.strptime(self.timestamp[:14], "%Y%m%d%H%M%S").timestamp()  # noqa: DTZ007
         except Exception:
             return 0.0
@@ -141,6 +133,7 @@ class CCSearchResult:
 @dataclass(frozen=True)
 class CommonCrawlResult:
     """Result of a CommonCrawl fetch (mirrors CDXDeepSearchResult)."""
+
     query: str
     match_type: str = "domain"
     total_rows: int = 0
@@ -163,11 +156,12 @@ class CommonCrawlResult:
 
 # ── Main class ────────────────────────────────────────────────────────────────
 
+
 class CommonCrawlAdapter:
     """
     Fetch archived URLs from CommonCrawl CDX index.
 
-    Transport: aiohttp (mirrors wayback_cdx.py pattern).
+    Transport: httpx (mirrors wayback_cdx.py pattern).
     Rate limit: max 3 requests/sprint, 2s between requests.
     Fail-soft: any exception returns empty list.
 
@@ -238,24 +232,17 @@ class CommonCrawlAdapter:
             "fl": "url,timestamp,mimetype,statuscode,length,digest,offset,filename",
         }
 
-        if aiohttp is None:
-            return CommonCrawlResult(query=domain, err="aiohttp_not_available")
+        if httpx is None:
+            return CommonCrawlResult(query=domain, err="httpx_not_available")
 
         try:
-            _sess = await session_pool.aiohttp()
-            async with _sess:
-                async with _sess.get(
+            async with httpx.AsyncClient(timeout=httpx.Timeout(_TIMEOUT_PER_REQUEST)) as client:
+                async with client.get(
                     url,
                     params=params,
-                    timeout=aiohttp.ClientTimeout(total=_TIMEOUT_PER_REQUEST),
-                    headers={
-                        "User-Agent": (
-                            "Mozilla/5.0 (compatible; HledacBot/1.0; "
-                            "+mailto@ investigace)"
-                        )
-                    },
+                    headers={"User-Agent": ("Mozilla/5.0 (compatible; HledacBot/1.0; +mailto@ investigace)")},
                 ) as resp:
-                    if resp.status == 429:
+                    if resp.status_code == 429:
                         self._stats["rate_limited"] += 1
                         return CommonCrawlResult(
                             query=domain,
@@ -263,24 +250,18 @@ class CommonCrawlAdapter:
                             rate_limited=True,
                             duration_s=time_mod.monotonic() - t0,
                         )
-                    if resp.status != 200:
+                    if resp.status_code != 200:
                         return CommonCrawlResult(
                             query=domain,
-                            err=f"HTTP_{resp.status}",
+                            err=f"HTTP_{resp.status_code}",
                             duration_s=time_mod.monotonic() - t0,
                         )
 
-                    # Read with 50 MB cap
                     body = b""
-                    # P15: try/finally guarantees iter_chunks is closed on early break
-                    iter_chunks = resp.content.iter_chunked(65536)
-                    try:
-                        async for chunk in iter_chunks:
-                            body += chunk
-                            if len(body) > _MAX_DATA_BYTES:
-                                break
-                    finally:
-                        await _aclose_iter_chunks(iter_chunks)
+                    async for chunk in resp.iter_bytes(chunk_size=65536):
+                        body += chunk
+                        if len(body) > _MAX_DATA_BYTES:
+                            break
 
                     text = body.decode("utf-8", errors="replace")
 
@@ -356,11 +337,28 @@ class CommonCrawlAdapter:
             return True
         lower = url.lower()
         noise = (
-            ".css?", ".js?", ".ico?", ".png?", ".jpg?", ".jpeg?", ".gif?", ".svg?",
-            ".woff2?", ".woff?", ".ttf?", ".eot?",
-            "/node_modules/", "/dist/", "/build/", "/static/",
-            "cdn.", "static.", "assets.", "media.",
-            ".min.js", ".min.css",
+            ".css?",
+            ".js?",
+            ".ico?",
+            ".png?",
+            ".jpg?",
+            ".jpeg?",
+            ".gif?",
+            ".svg?",
+            ".woff2?",
+            ".woff?",
+            ".ttf?",
+            ".eot?",
+            "/node_modules/",
+            "/dist/",
+            "/build/",
+            "/static/",
+            "cdn.",
+            "static.",
+            "assets.",
+            "media.",
+            ".min.js",
+            ".min.css",
         )
         return any(p in lower for p in noise)
 

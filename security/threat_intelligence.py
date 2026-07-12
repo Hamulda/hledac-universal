@@ -13,8 +13,6 @@ Interface expected by security_coordinator.py:
 - async cleanup()
 """
 
-
-import aiohttp
 import logging
 import os
 import re
@@ -50,7 +48,7 @@ _STATIC_IOC_PATTERNS: dict[str, list[str]] = {
     ],
     "ip": [
         "185.220.101.0/24",  # Known Tor exit nodes (example range)
-        "192.0.2.0/24",      # TEST-NET-1, placeholder
+        "192.0.2.0/24",  # TEST-NET-1, placeholder
     ],
     "hash": [
         # Example malware hashes (sha256)
@@ -107,6 +105,7 @@ class ThreatIntelligence:
         if feed_path.exists():
             try:
                 import json
+
                 with open(feed_path) as f:
                     data = json.load(f)
                 for ioc_type, iocs in data.get("iocs", {}).items():
@@ -173,30 +172,35 @@ class ThreatIntelligence:
                 ioc_type = _ioc_type_from_value(ioc_val)
                 techniques = ioc_to_technique_ids(ioc_type, ioc_val)
                 if techniques:
-                    threats.append({
-                        "type": "kill_chain_match",
-                        "ioc": ioc_val,
-                        "ioc_type": ioc_type,
-                        "techniques": techniques,
-                        "source": "kill_chain_tagger",
-                        "severity": "medium",
-                    })
+                    threats.append(
+                        {
+                            "type": "kill_chain_match",
+                            "ioc": ioc_val,
+                            "ioc_type": ioc_type,
+                            "techniques": techniques,
+                            "source": "kill_chain_tagger",
+                            "severity": "medium",
+                        }
+                    )
             # P1: GreyNoise IP lookup (async, free community API)
             if os.getenv("HLEDAC_ENABLE_GREYNOISE"):
                 try:
                     from intelligence.greynoise_lane import query_greynoise_ip
+
                     for ioc in iocs:
                         ioc_val = str(ioc.get("value", ioc) if isinstance(ioc, dict) else ioc)
                         if _looks_like_ip(ioc_val):
                             _, raw = await query_greynoise_ip(ioc_val, use_community=True)
                             if raw.get("classification") == "malicious":
-                                threats.append({
-                                    "type": "greynoise_malicious_ip",
-                                    "ioc": ioc_val,
-                                    "source": "greynoise",
-                                    "severity": "high",
-                                    "detail": raw,
-                                })
+                                threats.append(
+                                    {
+                                        "type": "greynoise_malicious_ip",
+                                        "ioc": ioc_val,
+                                        "source": "greynoise",
+                                        "severity": "high",
+                                        "detail": raw,
+                                    }
+                                )
                 except Exception:  # noqa: BLE001
                     pass  # fail-safe: greynoise optional
 
@@ -257,6 +261,7 @@ class ThreatIntelligence:
     def _rdap_find_base(ip: str, bootstrap: dict) -> str:
         """Find correct RDAP base URL from IANA bootstrap data."""
         import ipaddress
+
         try:
             addr = ipaddress.ip_address(ip)
             for service in bootstrap.get("services", []):
@@ -299,25 +304,30 @@ class ThreatIntelligence:
         }
 
         if techniques:
-            result.update({
-                "found": True,
-                "severity": "medium",
-                "techniques": techniques,
-                "sources": ["kill_chain_tagger"],
-            })
+            result.update(
+                {
+                    "found": True,
+                    "severity": "medium",
+                    "techniques": techniques,
+                    "sources": ["kill_chain_tagger"],
+                }
+            )
 
         # P1: GreyNoise IP lookup
         if os.getenv("HLEDAC_ENABLE_GREYNOISE") and _looks_like_ip(ioc_str):
             try:
                 from intelligence.greynoise_lane import query_greynoise_ip
+
                 _, raw = await query_greynoise_ip(ioc_str, use_community=True)
                 if raw.get("classification") in ("malicious", "suspicious"):
-                    result.update({
-                        "found": True,
-                        "severity": "high",
-                        "classification": raw["classification"],
-                        "sources": result["sources"] + ["greynoise"],
-                    })
+                    result.update(
+                        {
+                            "found": True,
+                            "severity": "high",
+                            "classification": raw["classification"],
+                            "sources": result["sources"] + ["greynoise"],
+                        }
+                    )
             except Exception:  # noqa: BLE001
                 pass  # fail-safe: greynoise optional
 
@@ -347,13 +357,15 @@ class ThreatIntelligence:
                         org = data.get("name", "")
                         country = data.get("country", "")
                         asn_info = [e.get("handle", "") for e in data.get("entities", [])]
-                        result.update({
-                            "found": True,
-                            "sources": result["sources"] + ["rdap"],
-                            "org": org,
-                            "country": country,
-                            "asn_entities": asn_info[:3],
-                        })
+                        result.update(
+                            {
+                                "found": True,
+                                "sources": result["sources"] + ["rdap"],
+                                "org": org,
+                                "country": country,
+                                "asn_entities": asn_info[:3],
+                            }
+                        )
             except Exception:  # noqa: BLE001
                 pass
 
@@ -373,12 +385,14 @@ class ThreatIntelligence:
                         asn = data.get("asn", "")
                         pfx = data.get("prefix", "")
                         name = data.get("name", "")
-                        result.update({
-                            "sources": result["sources"] + ["bgptools"],
-                            "asn": asn,
-                            "prefix": pfx,
-                            "asn_name": name,
-                        })
+                        result.update(
+                            {
+                                "sources": result["sources"] + ["bgptools"],
+                                "asn": asn,
+                                "prefix": pfx,
+                                "asn_name": name,
+                            }
+                        )
             except Exception:  # noqa: BLE001
                 pass
 

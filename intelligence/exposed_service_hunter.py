@@ -29,7 +29,7 @@ from enum import Enum
 from typing import Any
 from urllib.parse import urlparse
 
-import aiohttp
+import httpx
 
 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
 from hledac.universal.transport.session_pool import session_pool
@@ -185,13 +185,13 @@ class S3BucketEnumerator:
         "ca-central-1", "sa-east-1"
     ]
 
-    def __init__(self, session: aiohttp.ClientSession | None = None):
+    def __init__(self, session: httpx.AsyncClient | None = None):
         self.session = session
         self._owned_session = session is None
 
     async def __aenter__(self):
         if self._owned_session:
-            self.session = await session_pool.aiohttp()
+            self.session = await httpx.AsyncClient()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -267,7 +267,7 @@ class S3BucketEnumerator:
                 else:
                     url = f"https://{bucket_name}.s3.amazonaws.com"
 
-                async with self.session.head(url, allow_redirects=True) as resp:
+                async with self.session.head(url, follow_redirects=True) as resp:
                     if resp.status == 200:
                         # Bucket exists and is listable
                         return ExposedService(
@@ -590,14 +590,14 @@ class GraphQLIntrospector:
     }
     """
 
-    def __init__(self, session: aiohttp.ClientSession | None = None):
+    def __init__(self, session: httpx.AsyncClient | None = None):
         self.session = session
         self._owned_session = session is None
 
     async def __aenter__(self):
         if self._owned_session:
-            self.session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=10)
+            self.session = httpx.AsyncClient(
+                timeout=httpx.Timeout(total=10)
             )
         return self
 
@@ -715,7 +715,7 @@ class GraphQLIntrospector:
                             }
                         )
 
-        except aiohttp.ContentTypeError:
+        except httpx.HTTPError:
             # Not JSON response, probably not GraphQL
             pass
         except Exception as e:
@@ -759,14 +759,14 @@ class CertificateTransparency:
 
     CRTSH_API = "https://crt.sh/json"
 
-    def __init__(self, session: aiohttp.ClientSession | None = None):
+    def __init__(self, session: httpx.AsyncClient | None = None):
         self.session = session
         self._owned_session = session is None
 
     async def __aenter__(self):
         if self._owned_session:
-            self.session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=30)
+            self.session = httpx.AsyncClient(
+                timeout=httpx.Timeout(total=30)
             )
         return self
 
@@ -889,14 +889,14 @@ class ContainerAPIExplorer:
     DOCKER_ENDPOINTS = ["/version", "/info", "/containers/json", "/images/json"]
     K8S_ENDPOINTS = ["/api", "/api/v1", "/apis", "/version", "/healthz"]
 
-    def __init__(self, session: aiohttp.ClientSession | None = None):
+    def __init__(self, session: httpx.AsyncClient | None = None):
         self.session = session
         self._owned_session = session is None
 
     async def __aenter__(self):
         if self._owned_session:
-            self.session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=10)
+            self.session = httpx.AsyncClient(
+                timeout=httpx.Timeout(total=10)
             )
         return self
 
@@ -1099,7 +1099,7 @@ class ExposedServiceHunter:
     """
 
     def __init__(self):
-        self.session: aiohttp.ClientSession | None = None
+        self.session: httpx.AsyncClient | None = None
         self._s3_enumerator: S3BucketEnumerator | None = None
         self._db_scanner = DatabasePortScanner()
         self._graphql_introspector: GraphQLIntrospector | None = None
@@ -1108,8 +1108,8 @@ class ExposedServiceHunter:
 
     async def __aenter__(self):
         """Async context manager entry."""
-        self.session = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=30),
+        self.session = httpx.AsyncClient(
+            timeout=httpx.Timeout(total=30),
             connector=aiohttp.TCPConnector(
                 limit=100,
                 limit_per_host=20,
@@ -1488,10 +1488,10 @@ async def search_shodan(
         except json.JSONDecodeError:
             pass
 
-    timeout = aiohttp.ClientTimeout(total=30)
+    timeout = httpx.Timeout(total=30)
 
     try:
-        _sess = await session_pool.aiohttp()
+        _sess = await httpx.AsyncClient()
         async with _sess as session:
             # Shodan API endpoint (free tier)
             base_url = "https://api.shodan.io/shodan/host/search"
@@ -1587,10 +1587,10 @@ async def search_censys(
         except json.JSONDecodeError:
             pass
 
-    timeout = aiohttp.ClientTimeout(total=30)
+    timeout = httpx.Timeout(total=30)
 
     try:
-        _sess = await session_pool.aiohttp()
+        _sess = await httpx.AsyncClient()
         async with _sess as session:
             # Censys Search API v2
             base_url = "https://search.censys.io/api/v1/search"

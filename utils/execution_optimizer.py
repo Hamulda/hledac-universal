@@ -6,7 +6,6 @@ Advanced parallel execution optimization for Hledač automation systems
 
 import asyncio
 import inspect
-import msgspec.json as _json
 import logging
 import multiprocessing
 import os
@@ -14,7 +13,7 @@ import threading
 import time
 from collections import OrderedDict, defaultdict, deque
 from collections.abc import Callable
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -22,6 +21,7 @@ from enum import Enum
 # Machine learning for optimization - lazy imports to reduce cold-start
 from typing import TYPE_CHECKING, Any
 
+import msgspec.json as _json
 import numpy as np
 import psutil
 
@@ -40,6 +40,7 @@ PSUTIL_AVAILABLE = True
 
 class ExecutionStrategy(Enum):
     """Parallel execution strategies"""
+
     ROUND_ROBIN = "round_robin"
     LOAD_BALANCED = "load_balanced"
     RESOURCE_AWARE = "resource_aware"
@@ -50,6 +51,7 @@ class ExecutionStrategy(Enum):
 
 class TaskType(Enum):
     """Task types for optimization"""
+
     CPU_INTENSIVE = "cpu_intensive"
     MEMORY_INTENSIVE = "memory_intensive"
     IO_INTENSIVE = "io_intensive"
@@ -60,6 +62,7 @@ class TaskType(Enum):
 @dataclass(slots=True)
 class TaskMetrics:
     """Task execution metrics"""
+
     task_id: str
     task_type: TaskType
     start_time: datetime
@@ -75,6 +78,7 @@ class TaskMetrics:
 @dataclass(slots=True)
 class WorkerMetrics:
     """Worker performance metrics"""
+
     worker_id: str
     cpu_cores: int
     memory_gb: float
@@ -88,6 +92,7 @@ class WorkerMetrics:
 @dataclass(slots=True)
 class ParallelGroup:
     """Parallel execution group"""
+
     group_id: str
     tasks: list[Any]
     strategy: ExecutionStrategy
@@ -108,6 +113,7 @@ class _ConcurrencyController:
         self._max_memory_threshold = max_memory_threshold_mb
         self._limit = 2  # Initial safe limit
         from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+
         self._available = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
         self._monitor_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
@@ -189,7 +195,9 @@ class ParallelExecutionOptimizer:
         self._concurrency_controller: _ConcurrencyController = _ConcurrencyController()
         # Pools created lazily in _init_execution_pools
         self.thread_pool: ThreadPoolExecutor | None = None
-        self.process_pool: ProcessPoolExecutor | None = None
+        # F266-U7 DEAD CODE REMOVED: process_pool was ~50MB RSS but never called.
+        # CPU-bound work now routes to Rust rayon pools (cpu_pool_run, io_pool_run)
+        # via _rust_pool_dispatch(), available via rust.pool_run.* functions.
 
     @property
     def _pending_limit(self) -> asyncio.Semaphore:
@@ -200,6 +208,7 @@ class ParallelExecutionOptimizer:
         """
         if self._pending_semaphore is None:
             from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+
             self._pending_semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
         return self._pending_semaphore
 
@@ -220,15 +229,13 @@ class ParallelExecutionOptimizer:
             pass
         return 4  # M1-safe conservative default
 
-    async def _execute_with_semaphore(self, task: Callable, use_process_pool: bool = False) -> Any:
+    async def _execute_with_semaphore(self, task: Callable) -> Any:
         """Execute a single task with semaphore gating.
 
         F214OPT-D: Wraps task execution with pending semaphore to prevent
         unbounded concurrent task creation. Tracks throttling for telemetry.
 
-        F266-U7: use_process_pool=True routes CPU-bound tasks to process_pool
-        (bypasses GIL for pure-Python CPU work). Falls back to thread_pool if
-        process_pool is unavailable.
+        CPU-bound work routes to Rust rayon pools via _rust_pool_dispatch().
         """
         try:
             # F214OPT-D: Check if we need to wait before acquiring
@@ -239,12 +246,7 @@ class ParallelExecutionOptimizer:
                 if inspect.iscoroutinefunction(task):
                     return await task()
                 else:
-                    executor = None
-                    if use_process_pool and self.process_pool is not None:
-                        executor = self.process_pool
-                    else:
-                        executor = self.thread_pool
-                    return await self._run_in_executor_safe(executor, task)
+                    return await self._run_in_executor_safe(self.thread_pool, task)
             finally:
                 self._pending_limit.release()
         except asyncio.CancelledError:
@@ -263,16 +265,15 @@ class ParallelExecutionOptimizer:
 
         # Execution pools
         self.thread_pool = None
-        self.process_pool = None
         self.async_pool = {}
 
         # M1-specific optimizations
         self.m1_optimizations = {
-            'performance_cores': 4,
-            'efficiency_cores': 4,
-            'max_concurrent_threads': 8,
-            'neural_engine_available': True,
-            'unified_memory': True
+            "performance_cores": 4,
+            "efficiency_cores": 4,
+            "max_concurrent_threads": 8,
+            "neural_engine_available": True,
+            "unified_memory": True,
         }
 
         # Initialize execution pools
@@ -287,8 +288,7 @@ class ParallelExecutionOptimizer:
         now = time.time()
         # Remove expired by TTL
         expired = [
-            gid for gid, data in self.parallel_groups.items()
-            if now - data.get('ts', 0) > self.PARALLEL_GROUP_TTL_SECS
+            gid for gid, data in self.parallel_groups.items() if now - data.get("ts", 0) > self.PARALLEL_GROUP_TTL_SECS
         ]
         for gid in expired:
             del self.parallel_groups[gid]
@@ -305,7 +305,7 @@ class ParallelExecutionOptimizer:
     def add_parallel_group(self, group_id: str, group_data: dict) -> None:
         """Add a parallel group with bounded storage and TTL."""
         # Add timestamp
-        group_data['ts'] = time.time()
+        group_data["ts"] = time.time()
 
         # Move to end if exists
         if group_id in self.parallel_groups:
@@ -325,48 +325,47 @@ class ParallelExecutionOptimizer:
 
     def _load_config(self, config_path: str) -> dict[str, Any]:
         """Load parallel execution configuration"""
-        # M1 8GB safe: cpu_count() returns 8 (4E+4P), but RAM limits concurrent workers.
-        # thread_pool: 2 = conservative for CPU-bound on UMA
-        # process_pool: 1 = M1 8GB can't afford 50-100MB/process × 2
-        _M1_SAFE_THREAD_WORKERS = 2
-        _M1_SAFE_PROCESS_WORKERS = 2  # F266-U7: was 1 — M1 has 4E+4P cores, ProcessPoolExecutor bypasses GIL for pure-Python CPU tasks
+        # M1 8GB: thread_pool = 2 workers (I/O-bound)
+        # Rust rayon pools handle CPU-bound: cpu_pool_run (4 P-cores), io_pool_run (2 threads)
+        m1_safe_thread_workers = 2  # noqa: N806
         default_config: dict[str, Any] = {
-            'execution': {
-                'default_strategy': ExecutionStrategy.ADAPTIVE.value,
-                'max_workers': _M1_SAFE_THREAD_WORKERS,
-                'thread_pool_size': _M1_SAFE_THREAD_WORKERS,
-                'process_pool_size': _M1_SAFE_PROCESS_WORKERS,
-                'task_timeout': 300,  # 5 minutes
-                'chunk_size': 100
+            "execution": {
+                "default_strategy": ExecutionStrategy.ADAPTIVE.value,
+                "max_workers": m1_safe_thread_workers,
+                "thread_pool_size": m1_safe_thread_workers,
+                "task_timeout": 300,  # 5 minutes
+                "chunk_size": 100,
             },
-            'optimization': {
-                'enable_prediction': True,
-                'enable_load_balancing': True,
-                'enable_resource_monitoring': True,
-                'm1_specific': True,
-                'auto_tuning': True,
-                'learning_rate': 0.1
+            "optimization": {
+                "enable_prediction": True,
+                "enable_load_balancing": True,
+                "enable_resource_monitoring": True,
+                "m1_specific": True,
+                "auto_tuning": True,
+                "learning_rate": 0.1,
             },
-            'threshnews': {
-                'cpu_threshnew': 0.8,
-                'memory_threshnew': 0.85,
-                'task_time_threshnew': 60,
-                'efficiency_threshnew': 0.7
+            "threshnews": {
+                "cpu_threshnew": 0.8,
+                "memory_threshnew": 0.85,
+                "task_time_threshnew": 60,
+                "efficiency_threshnew": 0.7,
             },
-            'strategies': {
-                'round_robin': {'enabled': True},
-                'load_balanced': {'enabled': True},
-                'resource_aware': {'enabled': True},
-                'predictive': {'enabled': True},
-                'adaptive': {'enabled': True}
-            }
+            "strategies": {
+                "round_robin": {"enabled": True},
+                "load_balanced": {"enabled": True},
+                "resource_aware": {"enabled": True},
+                "predictive": {"enabled": True},
+                "adaptive": {"enabled": True},
+            },
         }
 
         if config_path:
             import os
+
             if os.path.exists(config_path):
                 with open(config_path) as f:
                     import yaml
+
                     config = yaml.safe_load(f)
                     default_config.update(config)
 
@@ -375,49 +374,36 @@ class ParallelExecutionOptimizer:
     def _init_predictor(self):
         """Initialize execution time predictor - lazy import to avoid eager sklearn load."""
         from sklearn.ensemble import RandomForestRegressor
-        return RandomForestRegressor(
-            n_estimators=100,
-            random_state=42,
-            max_depth=10
-        )
+
+        return RandomForestRegressor(n_estimators=100, random_state=42, max_depth=10)
 
     def _init_execution_pools(self):
         """Initialize execution pools"""
-        self.config['execution']['max_workers']
-
         # Thread pool for I/O-bound tasks
         self.thread_pool = ThreadPoolExecutor(
-            max_workers=self.config['execution']['thread_pool_size'],
-            thread_name_prefix="parallel_thread"
+            max_workers=self.config["execution"]["thread_pool_size"], thread_name_prefix="parallel_thread"
         )
-
-        # Process pool for CPU-bound tasks
-        self.process_pool = ProcessPoolExecutor(
-            max_workers=self.config['execution']['process_pool_size']
-        )
-
-        # ty: _max_workers is a private attr; read via getattr for M1-safe logging
+        # CPU-bound work routes to Rust rayon pools (see _rust_pool_dispatch)
         t_max = getattr(self.thread_pool, "_max_workers", "?")
-        p_max = getattr(self.process_pool, "_max_workers", "?")
-        logger.info(
-            f"Initialized execution pools - Threads: {t_max}, Processes: {p_max}"  # noqa: E501
-        )
+        logger.info(f"Initialized execution pools - Threads: {t_max}, CPU-bound: rayon(cpu_pool_run/io_pool_run)")
 
     async def initialize(self) -> None:
         """Initialize async components like concurrency controller."""
         await self._concurrency_controller.start_monitoring()
 
-    async def execute_parallel(self,
-                            tasks: list[Any],
-                            strategy: ExecutionStrategy | None = None,
-                            max_workers: int | None = None,
-                            task_type: TaskType = TaskType.MIXED) -> list[Any]:
+    async def execute_parallel(
+        self,
+        tasks: list[Any],
+        strategy: ExecutionStrategy | None = None,
+        max_workers: int | None = None,
+        task_type: TaskType = TaskType.MIXED,
+    ) -> list[Any]:
         """Execute tasks in parallel with optimal strategy"""
         if not strategy:
-                strategy = ExecutionStrategy(self.config['execution']['default_strategy'])
+            strategy = ExecutionStrategy(self.config["execution"]["default_strategy"])
 
         if not max_workers:
-                max_workers = self._determine_optimal_workers(tasks, task_type)
+            max_workers = self._determine_optimal_workers(tasks, task_type)
 
         logger.info(f"Executing {len(tasks)} tasks with {strategy.value} strategy and {max_workers} workers")
 
@@ -432,24 +418,24 @@ class ParallelExecutionOptimizer:
                 strategy=strategy,
                 max_workers=max_workers,
                 resource_allocation=await self._calculate_resource_allocation(tasks, max_workers),
-                created_at=datetime.now(UTC)  # noqa: DTZ005
+                created_at=datetime.now(UTC),  # noqa: DTZ005
             )
 
             self.add_parallel_group(group_id, {"payload": group, "strategy": strategy})
 
             # Execute based on strategy
             if strategy == ExecutionStrategy.ROUND_ROBIN:
-                    results = await self._execute_round_robin(tasks, max_workers)
+                results = await self._execute_round_robin(tasks, max_workers)
             elif strategy == ExecutionStrategy.LOAD_BALANCED:
-                    results = await self._execute_load_balanced(tasks, max_workers)
+                results = await self._execute_load_balanced(tasks, max_workers)
             elif strategy == ExecutionStrategy.RESOURCE_AWARE:
-                    results = await self._execute_resource_aware(tasks, max_workers)
+                results = await self._execute_resource_aware(tasks, max_workers)
             elif strategy == ExecutionStrategy.PREDICTIVE:
-                    results = await self._execute_predictive(tasks, max_workers)
+                results = await self._execute_predictive(tasks, max_workers)
             elif strategy == ExecutionStrategy.ADAPTIVE:
-                    results = await self._execute_adaptive(tasks, max_workers, task_type)
+                results = await self._execute_adaptive(tasks, max_workers, task_type)
             elif strategy == ExecutionStrategy.INTERPRETER_POOL:
-                    results = await self._execute_interpreter_pool(tasks, max_workers)
+                results = await self._execute_interpreter_pool(tasks, max_workers)
             else:
                 raise ValueError(f"Unknown execution strategy: {strategy}")
 
@@ -472,20 +458,20 @@ class ParallelExecutionOptimizer:
 
         if task_type == TaskType.CPU_INTENSIVE:
             # CPU-bound tasks: use number of CPU cores
-            return min(cpu_count, self.config['execution']['max_workers'])
+            return min(cpu_count, self.config["execution"]["max_workers"])
 
         elif task_type == TaskType.MEMORY_INTENSIVE:
             # Memory-bound tasks: limit based on available memory
             max_memory_workers = int(memory_gb / 2)  # Assume 2GB per worker
-            return min(max_memory_workers, cpu_count, self.config['execution']['max_workers'])
+            return min(max_memory_workers, cpu_count, self.config["execution"]["max_workers"])
 
         elif task_type == TaskType.IO_INTENSIVE:
             # I/O-bound tasks: can use more workers than CPU cores
-            return min(cpu_count * 2, self.config['execution']['max_workers'] * 2)
+            return min(cpu_count * 2, self.config["execution"]["max_workers"] * 2)
 
         else:
             # Mixed tasks: balanced approach
-                return min(cpu_count, self.config['execution']['max_workers'])
+            return min(cpu_count, self.config["execution"]["max_workers"])
 
     def _run_in_executor_safe(self, executor, func):
         """Run coroutine func in executor safely - handles running loop correctly.
@@ -513,7 +499,7 @@ class ParallelExecutionOptimizer:
 
         # Split tasks into chunks
         chunk_size = max(1, len(tasks) // max_workers)
-        task_chunks = [tasks[i:i + chunk_size] for i in range(0, len(tasks), chunk_size)]
+        task_chunks = [tasks[i : i + chunk_size] for i in range(0, len(tasks), chunk_size)]
 
         # Execute chunks in parallel — semaphore gates each task to prevent unbounded pending
         async def execute_chunk(chunk):
@@ -554,10 +540,7 @@ class ParallelExecutionOptimizer:
             return results
 
         # Execute all worker tasks concurrently
-        worker_tasks = [
-            execute_worker_tasks(worker_id, tasks)
-            for worker_id, tasks in task_distribution.items()
-        ]
+        worker_tasks = [execute_worker_tasks(worker_id, tasks) for worker_id, tasks in task_distribution.items()]
 
         worker_results_raw = await safe_gather_ok(*worker_tasks, label="execution_optimizer:521")
         # ty: narrow to list-of-list; safe_gather may yield BaseException entries
@@ -588,8 +571,8 @@ class ParallelExecutionOptimizer:
         logger.info("Using predictive execution strategy")
 
         if not self.task_history:
-                logger.warning("No task history available for prediction, falling back to adaptive strategy")
-                return await self._execute_adaptive(tasks, max_workers, TaskType.MIXED)
+            logger.warning("No task history available for prediction, falling back to adaptive strategy")
+            return await self._execute_adaptive(tasks, max_workers, TaskType.MIXED)
 
         # Train prediction model on historical data
         await self._train_prediction_model()
@@ -618,7 +601,7 @@ class ParallelExecutionOptimizer:
 
         while task_index < len(tasks):
             batch_size = min(current_workers * 2, len(tasks) - task_index)
-            batch = tasks[task_index:task_index + batch_size]
+            batch = tasks[task_index : task_index + batch_size]
 
             batch_start = time.time()
 
@@ -638,21 +621,20 @@ class ParallelExecutionOptimizer:
                 raise batch_result.re_raised
 
             batch_time = time.time() - batch_start
-            performance_samples.append({
-                'workers': current_workers,
-                'time': batch_time,
-                'tasks': len(batch),
-                'throughput': len(batch) / batch_time
-            })
+            performance_samples.append(
+                {
+                    "workers": current_workers,
+                    "time": batch_time,
+                    "tasks": len(batch),
+                    "throughput": len(batch) / batch_time,
+                }
+            )
 
             # Monitor resources and adjust workers
             current_resources = await self.resource_monitor.get_current_resources()
             # _adapt_worker_count may return None; ty widens to int|None — coerce
             adapted = self._adapt_worker_count(
-                current_workers,
-                performance_samples,
-                current_resources,
-                initial_resources
+                current_workers, performance_samples, current_resources, initial_resources
             )
             current_workers = int(adapted) if adapted is not None else current_workers
 
@@ -706,8 +688,7 @@ class ParallelExecutionOptimizer:
                     # Chunk data across workers
                     chunk_size = max(1, len(data) // effective_workers)
                     futures = [
-                        exc.submit(func, data[i * chunk_size:(i + 1) * chunk_size])
-                        for i in range(effective_workers)
+                        exc.submit(func, data[i * chunk_size : (i + 1) * chunk_size]) for i in range(effective_workers)
                     ]
                     results: list[Any] = []
                     for f in futures:
@@ -760,8 +741,7 @@ class ParallelExecutionOptimizer:
             with InterpreterPoolExecutor(max_workers=effective_workers) as exc:
                 chunk_size = max(1, len(data) // effective_workers)
                 futures = [
-                    exc.submit(func, data[i * chunk_size:(i + 1) * chunk_size])
-                    for i in range(effective_workers)
+                    exc.submit(func, data[i * chunk_size : (i + 1) * chunk_size]) for i in range(effective_workers)
                 ]
                 results: list[Any] = []
                 for f in futures:
@@ -782,16 +762,17 @@ class ParallelExecutionOptimizer:
         cpu_cores = multiprocessing.cpu_count()
 
         allocation: dict[str, Any] = {
-            'cpu_cores_per_worker': cpu_cores / max_workers,
-            'memory_gb_per_worker': system_memory / max_workers * 0.8,  # Use 80% of available memory
-            'expected_throughput': total_tasks / max_workers,
-            'estimated_completion_time': self._estimate_completion_time(tasks, max_workers)
+            "cpu_cores_per_worker": cpu_cores / max_workers,
+            "memory_gb_per_worker": system_memory / max_workers * 0.8,  # Use 80% of available memory
+            "expected_throughput": total_tasks / max_workers,
+            "estimated_completion_time": self._estimate_completion_time(tasks, max_workers),
         }
 
         return allocation
 
     def _distribute_tasks_load_balanced(
-        self, tasks: list[Any], worker_loads: dict[str, float], max_workers: int) -> dict[str, list[Any]]:
+        self, tasks: list[Any], worker_loads: dict[str, float], max_workers: int
+    ) -> dict[str, list[Any]]:
         """Distribute tasks among workers based on current loads"""
         # Initialize worker distribution
         distribution = {f"worker_{i}": [] for i in range(max_workers)}
@@ -812,33 +793,31 @@ class ParallelExecutionOptimizer:
 
         for task in tasks:
             # Simple heuristic-based classification
-            task_info = {
-                'task': task,
-                'cpu_intensive': False,
-                'memory_intensive': False,
-                'io_intensive': False
-            }
+            task_info = {"task": task, "cpu_intensive": False, "memory_intensive": False, "io_intensive": False}
 
             # Check if task is CPU intensive
-            if hasattr(task, '__name__') and any(keyword in str(task.__name__).lower()
-                       for keyword in ['compute', 'calculate', 'process']):
-                    task_info['cpu_intensive'] = True
+            if hasattr(task, "__name__") and any(
+                keyword in str(task.__name__).lower() for keyword in ["compute", "calculate", "process"]
+            ):
+                task_info["cpu_intensive"] = True
 
             # Check if task is memory intensive
-            if hasattr(task, '__name__') and any(keyword in str(task.__name__).lower()
-                       for keyword in ['load', 'store', 'cache']):
-                    task_info['memory_intensive'] = True
+            if hasattr(task, "__name__") and any(
+                keyword in str(task.__name__).lower() for keyword in ["load", "store", "cache"]
+            ):
+                task_info["memory_intensive"] = True
 
             # Default classification
-            if not any([task_info['cpu_intensive'], task_info['memory_intensive']]):
-                    task_info['io_intensive'] = True
+            if not any([task_info["cpu_intensive"], task_info["memory_intensive"]]):
+                task_info["io_intensive"] = True
 
             classifications.append(task_info)
 
         return classifications
 
     async def _execute_with_resource_constraints(
-        self, tasks: list[Any], classifications: list[dict[str, Any]], max_workers: int) -> list[Any]:
+        self, tasks: list[Any], classifications: list[dict[str, Any]], max_workers: int
+    ) -> list[Any]:
         """Execute tasks with resource constraints"""
         # Separate tasks by type
         cpu_tasks = []
@@ -846,10 +825,10 @@ class ParallelExecutionOptimizer:
         io_tasks = []
 
         for task, classification in zip(tasks, classifications, strict=False):
-            if classification['cpu_intensive']:
-                    cpu_tasks.append(task)
-            elif classification['memory_intensive']:
-                    memory_tasks.append(task)
+            if classification["cpu_intensive"]:
+                cpu_tasks.append(task)
+            elif classification["memory_intensive"]:
+                memory_tasks.append(task)
             else:
                 io_tasks.append(task)
 
@@ -862,9 +841,9 @@ class ParallelExecutionOptimizer:
 
             # F214OPT-D: semaphore gates CPU tasks too
             # F265C: migrated to safe_gather_shielded (structured TaskGroup concurrency)
-            # F266-U7: CPU-bound tasks → process_pool (GIL bypass for pure-Python)
+            # CPU-bound tasks now route to Rust rayon pools (cpu_pool_run)
             cpu_result = await safe_gather_shielded(
-                *[self._execute_with_semaphore(task, use_process_pool=True) for task in cpu_tasks],
+                *[self._execute_with_semaphore(task) for task in cpu_tasks],
                 label="cpu_optimization",
                 logger_instance=logger,
             )
@@ -917,7 +896,7 @@ class ParallelExecutionOptimizer:
     async def _train_prediction_model(self):
         """Train prediction model on historical task data"""
         if len(self.task_history) < 10:
-                    return
+            return
 
         # Prepare training data
         X = []  # noqa: N806
@@ -927,7 +906,7 @@ class ParallelExecutionOptimizer:
             features = [
                 len(str(metrics.task_id)),  # Task ID length as proxy for complexity
                 metrics.cpu_usage,
-                metrics.memory_usage
+                metrics.memory_usage,
             ]
             X.append(features)
             y.append(metrics.execution_time)
@@ -943,14 +922,14 @@ class ParallelExecutionOptimizer:
     async def _predict_task_times(self, tasks: list[Any]) -> list[float]:
         """Predict execution times for tasks"""
         if len(self.task_history) < 10:
-                    return [1.0] * len(tasks)  # Default prediction
+            return [1.0] * len(tasks)  # Default prediction
 
         predictions = []
         for task in tasks:
             features = [
                 len(str(task)),  # Task complexity proxy
                 0.5,  # Default CPU usage prediction
-                0.5   # Default memory usage prediction
+                0.5,  # Default memory usage prediction
             ]
 
             try:
@@ -970,10 +949,8 @@ class ParallelExecutionOptimizer:
         return [task for task, _ in task_predictions]
 
     async def _execute_with_dynamic_workers(
-    self,
-    tasks: list[Any],
-    predictions: list[float],
-     max_workers: int) -> list[Any]:
+        self, tasks: list[Any], predictions: list[float], max_workers: int
+    ) -> list[Any]:
         """Execute tasks with dynamic worker allocation"""
         results = []
         task_index = 0
@@ -989,12 +966,12 @@ class ParallelExecutionOptimizer:
             # Calculate optimal workers to minimize total time
             optimal_workers = min(
                 max_workers,
-                max(1, int(remaining_tasks / max(estimated_total_time / 60, 1)))  # Aim for 1 minute per batch
+                max(1, int(remaining_tasks / max(estimated_total_time / 60, 1))),  # Aim for 1 minute per batch
             )
 
             # Select batch
             batch_size = min(optimal_workers * 2, len(tasks) - task_index)
-            batch = tasks[task_index:task_index + batch_size]
+            batch = tasks[task_index : task_index + batch_size]
 
             # Execute batch — F214OPT-D: semaphore gates each task to prevent unbounded pending
             # F265C: migrated to safe_gather_shielded (structured TaskGroup concurrency)
@@ -1016,71 +993,69 @@ class ParallelExecutionOptimizer:
 
     def _adjust_workers_for_resources(self, max_workers: int, resources: dict[str, float]) -> int | None:
         """Adjust worker count based on available resources"""
-        cpu_threshnew = self.config['threshnews']['cpu_threshnew']
-        memory_threshnew = self.config['threshnews']['memory_threshnew']
+        cpu_threshnew = self.config["threshnews"]["cpu_threshnew"]
+        memory_threshnew = self.config["threshnews"]["memory_threshnew"]
 
         # Reduce workers if resources are constrained
-        if resources['cpu_usage'] > cpu_threshnew:
-                max_workers = max(1, int(max_workers * (1 - resources['cpu_usage'])))
+        if resources["cpu_usage"] > cpu_threshnew:
+            max_workers = max(1, int(max_workers * (1 - resources["cpu_usage"])))
 
-        if resources['memory_usage'] > memory_threshnew:
-                max_workers = max(1, int(max_workers * (1 - resources['memory_usage'])))
+        if resources["memory_usage"] > memory_threshnew:
+            max_workers = max(1, int(max_workers * (1 - resources["memory_usage"])))
 
-                return max_workers
+            return max_workers
 
-    def _adapt_worker_count(self,
-                            current_workers: int,
-                            performance_samples: list[dict[str, float]],
-                            current_resources: dict[str, float],
-                            initial_resources: dict[str, float]) -> int | None:
+    def _adapt_worker_count(
+        self,
+        current_workers: int,
+        performance_samples: list[dict[str, float]],
+        current_resources: dict[str, float],
+        initial_resources: dict[str, float],
+    ) -> int | None:
         """Adapt worker count based on performance and resources"""
         if len(performance_samples) < 2:
-                    return current_workers
+            return current_workers
         # ty: current_resources values may be int|None (from psutil paths); coerce
-        cpu_val: Any = current_resources.get('cpu_usage', 0.0)
-        mem_val: Any = current_resources.get('memory_usage', 0.0)
+        cpu_val: Any = current_resources.get("cpu_usage", 0.0)
+        mem_val: Any = current_resources.get("memory_usage", 0.0)
         cpu_usage: float = float(cpu_val) if cpu_val is not None else 0.0
         memory_usage: float = float(mem_val) if mem_val is not None else 0.0
 
         # Calculate performance trend
-        recent_throughput = performance_samples[-1]['throughput']
-        previous_throughput = performance_samples[-2]['throughput']
+        recent_throughput = performance_samples[-1]["throughput"]
+        previous_throughput = performance_samples[-2]["throughput"]
 
         throughput_change = (recent_throughput - previous_throughput) / previous_throughput
 
         # Get resource constraints (already narrowed above for ty)
-        cpu_threshnew = self.config['threshnews']['cpu_threshnew']
-        memory_threshnew = self.config['threshnews']['memory_threshnew']
+        cpu_threshnew = self.config["threshnews"]["cpu_threshnew"]
+        memory_threshnew = self.config["threshnews"]["memory_threshnew"]
 
         # Adapt worker count
         new_workers = current_workers
 
         # Increase workers if performance is improving and resources are available
-        if (throughput_change > 0.1 and
-            cpu_usage < cpu_threshnew and
-            memory_usage < memory_threshnew):
-            new_workers = min(current_workers + 1, self.config['execution']['max_workers'])
+        if throughput_change > 0.1 and cpu_usage < cpu_threshnew and memory_usage < memory_threshnew:
+            new_workers = min(current_workers + 1, self.config["execution"]["max_workers"])
 
         # Decrease workers if performance is degrading or resources are constrained
-        elif (throughput_change < -0.1 or
-                cpu_usage > cpu_threshnew or
-                memory_usage > memory_threshnew):
+        elif throughput_change < -0.1 or cpu_usage > cpu_threshnew or memory_usage > memory_threshnew:
             new_workers = max(1, current_workers - 1)
 
         if new_workers != current_workers:
-                logger.info(f"Adapting worker count: {current_workers} -> {new_workers}")
+            logger.info(f"Adapting worker count: {current_workers} -> {new_workers}")
 
-                return new_workers
+            return new_workers
 
     def _estimate_completion_time(self, tasks: list[Any], max_workers: int) -> float | None:
         """Estimate completion time for task group"""
         if not tasks:
-                    return 0.0
+            return 0.0
 
         # Use historical data if available
         if self.task_history:
-                avg_task_time = np.mean([m.execution_time for m in list(self.task_history)[-20:]])
-                estimated_time = (len(tasks) / max_workers) * avg_task_time
+            avg_task_time = np.mean([m.execution_time for m in list(self.task_history)[-20:]])
+            estimated_time = (len(tasks) / max_workers) * avg_task_time
         else:
             # Default estimate
             estimated_time = len(tasks) * 0.1  # Assume 100ms per task
@@ -1108,7 +1083,7 @@ class ParallelExecutionOptimizer:
                 memory_usage=psutil.virtual_memory().percent / 100,
                 execution_time=execution_time,
                 success=True,
-                parallel_group=group_id
+                parallel_group=group_id,
             )
 
             self.task_history.append(metrics)
@@ -1116,18 +1091,18 @@ class ParallelExecutionOptimizer:
     def get_performance_statistics(self) -> dict[str, Any]:
         """Get performance statistics"""
         if not self.task_history:
-                    return {}
+            return {}
 
         recent_metrics = list(self.task_history)[-50:]  # Last 50 executions
 
         stats = {
-            'total_executions': len(self.task_history),
-            'average_execution_time': np.mean([m.execution_time for m in recent_metrics]),
-            'average_cpu_usage': np.mean([m.cpu_usage for m in recent_metrics]),
-            'average_memory_usage': np.mean([m.memory_usage for m in recent_metrics]),
-            'success_rate': np.mean([m.success for m in recent_metrics]),
-            'total_parallel_groups': len(self.parallel_groups),
-            'active_workers': len(self.worker_metrics)
+            "total_executions": len(self.task_history),
+            "average_execution_time": np.mean([m.execution_time for m in recent_metrics]),
+            "average_cpu_usage": np.mean([m.cpu_usage for m in recent_metrics]),
+            "average_memory_usage": np.mean([m.memory_usage for m in recent_metrics]),
+            "success_rate": np.mean([m.success for m in recent_metrics]),
+            "total_parallel_groups": len(self.parallel_groups),
+            "active_workers": len(self.worker_metrics),
         }
 
         return stats
@@ -1146,33 +1121,33 @@ class ParallelExecutionOptimizer:
     def export_performance_report(self, filepath: str):
         """Export detailed performance report"""
         report = {
-            'timestamp': datetime.now(UTC).isoformat(),  # noqa: DTZ005
-            'statistics': self.get_performance_statistics(),
-            'parallel_groups': {
+            "timestamp": datetime.now(UTC).isoformat(),  # noqa: DTZ005
+            "statistics": self.get_performance_statistics(),
+            "parallel_groups": {
                 group_id: {
-                    'strategy': group.strategy.value,  # type: ignore
-                    'max_workers': group.max_workers,  # type: ignore
-                    'task_count': len(group.tasks),  # type: ignore
-                    'resource_allocation': group.resource_allocation,  # type: ignore
-                    'created_at': group.created_at.isoformat()  # type: ignore
+                    "strategy": group.strategy.value,  # type: ignore
+                    "max_workers": group.max_workers,  # type: ignore
+                    "task_count": len(group.tasks),  # type: ignore
+                    "resource_allocation": group.resource_allocation,  # type: ignore
+                    "created_at": group.created_at.isoformat(),  # type: ignore
                 }
                 for group_id, group in self.parallel_groups.items()
             },
-            'recent_executions': [
+            "recent_executions": [
                 {
-                    'task_id': metrics.task_id,
-                    'task_type': metrics.task_type.value,
-                    'execution_time': metrics.execution_time,
-                    'cpu_usage': metrics.cpu_usage,
-                    'memory_usage': metrics.memory_usage,
-                    'success': metrics.success,
-                    'parallel_group': metrics.parallel_group
+                    "task_id": metrics.task_id,
+                    "task_type": metrics.task_type.value,
+                    "execution_time": metrics.execution_time,
+                    "cpu_usage": metrics.cpu_usage,
+                    "memory_usage": metrics.memory_usage,
+                    "success": metrics.success,
+                    "parallel_group": metrics.parallel_group,
                 }
                 for metrics in list(self.task_history)[-20:]
-            ]
+            ],
         }
 
-        with open(filepath, 'w') as f:
+        with open(filepath, "w") as f:
             f.write(_json.encode(report, indent=2).decode("utf-8"))
 
         logger.info(f"Performance report exported to {filepath}")
@@ -1183,21 +1158,15 @@ class ParallelExecutionOptimizer:
         await self._concurrency_controller.stop_monitoring()
 
         if self.thread_pool:
-                # F266-U7 FIX: shutdown(wait=True) blocks the event loop on M1.
-                # Offload to thread so teardown doesn't starve in-flight coroutines.
-                try:
-                    await asyncio.to_thread(self.thread_pool.shutdown, wait=True)
-                except Exception as exc:
-                    logger.debug("[optimizer] thread_pool.shutdown failed: %s", exc)
-                self.thread_pool = None
-        if self.process_pool:
-                try:
-                    await asyncio.to_thread(self.process_pool.shutdown, wait=True)
-                except Exception as exc:
-                    logger.debug("[optimizer] process_pool.shutdown failed: %s", exc)
-                self.process_pool = None
+            try:
+                await asyncio.to_thread(self.thread_pool.shutdown, wait=True)
+            except Exception as exc:
+                logger.debug("[optimizer] thread_pool.shutdown failed: %s", exc)
+            self.thread_pool = None
+        # process_pool removed — CPU-bound now routes to Rust rayon pools
 
         logger.info("Parallel execution optimizer cleaned up")
+
 
 # Supporting classes
 class LoadBalancer:
@@ -1221,10 +1190,10 @@ class ResourceMonitor:
     async def get_current_resources(self) -> dict[str, float]:
         """Get current system resources"""
         return {
-            'cpu_usage': psutil.cpu_percent() / 100,
-            'memory_usage': psutil.virtual_memory().percent / 100,
-            'available_memory_gb': psutil.virtual_memory().available / (1024**3),
-            'cpu_count': multiprocessing.cpu_count()
+            "cpu_usage": psutil.cpu_percent() / 100,
+            "memory_usage": psutil.virtual_memory().percent / 100,
+            "available_memory_gb": psutil.virtual_memory().available / (1024**3),
+            "cpu_count": multiprocessing.cpu_count(),
         }
 
 
@@ -1232,8 +1201,10 @@ class ResourceMonitor:
 # Kernel Optimization Components (Integrated from kernel/optimization.py)
 # ============================================================================
 
+
 class ResourceType(Enum):
     """Types of system resources."""
+
     CPU = "cpu"
     MEMORY = "memory"
     GPU = "gpu"
@@ -1243,6 +1214,7 @@ class ResourceType(Enum):
 
 class OptimizationLevel(Enum):
     """Optimization aggressiveness levels."""
+
     CONSERVATIVE = "conservative"
     BALANCED = "balanced"
     AGGRESSIVE = "aggressive"
@@ -1251,6 +1223,7 @@ class OptimizationLevel(Enum):
 @dataclass(slots=True)
 class ResourceMetrics:
     """Current resource utilization metrics."""
+
     cpu_percent: float = 0.0
     memory_percent: float = 0.0
     memory_used_gb: float = 0.0
@@ -1265,6 +1238,7 @@ class ResourceMetrics:
 @dataclass(slots=True)
 class ResourceLimits:
     """Resource utilization limits for M1 8GB systems."""
+
     max_cpu_percent: float = 80.0
     max_memory_percent: float = 85.0
     max_memory_gb: float = 6.0  # For 8GB M1 Macs
@@ -1308,6 +1282,7 @@ class AnomalyDetector:
             return False
 
         import statistics
+
         mean = sum(values[:-1]) / len(values[:-1])  # Exclude latest
         std_dev = statistics.stdev(values[:-1]) if len(values) > 2 else 0
         latest = values[-1]
@@ -1327,27 +1302,28 @@ class PredictiveScaler:
     and provide recommendations for workload optimization.
     """
 
-    def predict_scaling_needs(self, metrics_history: list[ResourceMetrics],
-                            task_requirements: dict[str, Any]) -> dict[str, Any]:
+    def predict_scaling_needs(
+        self, metrics_history: list[ResourceMetrics], task_requirements: dict[str, Any]
+    ) -> dict[str, Any]:
         """Predict scaling needs based on historical data."""
         if len(metrics_history) < 5:
-            return {'recommendation': 'maintain_current', 'confidence': 0.5}
+            return {"recommendation": "maintain_current", "confidence": 0.5}
 
         # Simple trend analysis
         recent_memory = [m.memory_percent for m in metrics_history[-5:]]
         memory_trend = recent_memory[-1] - recent_memory[0]
 
         if memory_trend > 10:
-            return {'recommendation': 'scale_down', 'confidence': 0.8}
+            return {"recommendation": "scale_down", "confidence": 0.8}
         elif memory_trend < -10:
-            return {'recommendation': 'scale_up', 'confidence': 0.7}
+            return {"recommendation": "scale_up", "confidence": 0.7}
 
-        return {'recommendation': 'maintain_current', 'confidence': 0.6}
+        return {"recommendation": "maintain_current", "confidence": 0.6}
 
     def analyze_workload_pattern(self, metrics_history: list[ResourceMetrics]) -> dict[str, Any]:
         """Analyze workload patterns for optimization recommendations."""
         if len(metrics_history) < 3:
-            return {'pattern': 'insufficient_data', 'confidence': 0.0}
+            return {"pattern": "insufficient_data", "confidence": 0.0}
 
         # Calculate trends
         cpu_values = [m.cpu_percent for m in metrics_history]
@@ -1358,20 +1334,15 @@ class PredictiveScaler:
 
         # Determine pattern
         if cpu_trend > 20 and memory_trend > 20:
-            pattern = 'resource_intensive_increasing'
+            pattern = "resource_intensive_increasing"
         elif cpu_trend < -20 and memory_trend < -20:
-            pattern = 'resource_intensive_decreasing'
+            pattern = "resource_intensive_decreasing"
         elif abs(cpu_trend) < 10 and abs(memory_trend) < 10:
-            pattern = 'stable'
+            pattern = "stable"
         else:
-            pattern = 'mixed'
+            pattern = "mixed"
 
-        return {
-            'pattern': pattern,
-            'cpu_trend': cpu_trend,
-            'memory_trend': memory_trend,
-            'confidence': 0.7
-        }
+        return {"pattern": pattern, "cpu_trend": cpu_trend, "memory_trend": memory_trend, "confidence": 0.7}
 
 
 class IntelligentResourceAllocator:
@@ -1411,8 +1382,7 @@ class IntelligentResourceAllocator:
         try:
             # Check for Apple Silicon
             result = subprocess.run(
-                ["sysctl", "-n", "machdep.cpu.brand_string"],
-                capture_output=True, text=True, timeout=5
+                ["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True, timeout=5
             )
             cpu_brand = result.stdout.strip()
 
@@ -1422,15 +1392,13 @@ class IntelligentResourceAllocator:
 
                 # Get P-core count (Performance cores - perflevel0)
                 p_cores_result = subprocess.run(
-                    ["sysctl", "-n", "hw.perflevel0.logicalcpu"],
-                    capture_output=True, text=True, timeout=5
+                    ["sysctl", "-n", "hw.perflevel0.logicalcpu"], capture_output=True, text=True, timeout=5
                 )
                 p_core_count = int(p_cores_result.stdout.strip())
 
                 # Get E-core count (Efficiency cores - perflevel1)
                 e_cores_result = subprocess.run(
-                    ["sysctl", "-n", "hw.perflevel1.logicalcpu"],
-                    capture_output=True, text=True, timeout=5
+                    ["sysctl", "-n", "hw.perflevel1.logicalcpu"], capture_output=True, text=True, timeout=5
                 )
                 e_core_count = int(e_cores_result.stdout.strip())
 
@@ -1457,6 +1425,7 @@ class IntelligentResourceAllocator:
     def _fallback_to_generic_topology(self) -> None:
         """Fallback to generic CPU topology detection"""
         import os
+
         cpu_count = os.cpu_count() or 4
 
         # Split evenly between "P" and "E" cores conceptually
@@ -1464,10 +1433,11 @@ class IntelligentResourceAllocator:
         self.e_cores = list(range(mid))
         self.p_cores = list(range(mid, cpu_count))
 
-        logger.info(f"Generic topology: {len(self.p_cores)} performance threads, {len(self.e_cores)} efficiency threads")  # noqa: E501
+        logger.info(
+            f"Generic topology: {len(self.p_cores)} performance threads, {len(self.e_cores)} efficiency threads"
+        )  # noqa: E501
 
-    def allocate_task(self, task_priority: str = "normal",
-                     cpu_intensity: float = 0.5) -> dict[str, Any]:
+    def allocate_task(self, task_priority: str = "normal", cpu_intensity: float = 0.5) -> dict[str, Any]:
         """
         Allocate a task to appropriate core type
 
@@ -1501,7 +1471,7 @@ class IntelligentResourceAllocator:
             if self.p_cores and not self._are_p_cores_overloaded():
                 allocation["core_type"] = "performance"
                 allocation["cpu_affinity"] = self.p_cores
-                allocation["priority_boost"] = (task_priority == "critical")
+                allocation["priority_boost"] = task_priority == "critical"
             elif self.e_cores:
                 allocation["core_type"] = "efficiency"
                 allocation["cpu_affinity"] = self.e_cores
@@ -1524,12 +1494,14 @@ class IntelligentResourceAllocator:
                 allocation["cpu_affinity"] = all_cores
 
         # Record allocation
-        self.allocation_history.append({
-            "timestamp": datetime.now(UTC),  # noqa: DTZ005
-            "priority": task_priority,
-            "cpu_intensity": cpu_intensity,
-            "allocation": allocation.copy()
-        })
+        self.allocation_history.append(
+            {
+                "timestamp": datetime.now(UTC),  # noqa: DTZ005
+                "priority": task_priority,
+                "cpu_intensity": cpu_intensity,
+                "allocation": allocation.copy(),
+            }
+        )
 
         return allocation
 
@@ -1540,8 +1512,7 @@ class IntelligentResourceAllocator:
 
         # Count recent allocations to P-cores
         recent_p_allocations = sum(
-            1 for alloc in self.allocation_history
-            if alloc["allocation"]["core_type"] == "performance"
+            1 for alloc in self.allocation_history if alloc["allocation"]["core_type"] == "performance"
         )
 
         # Consider overloaded if >70% of recent allocations are P-core
@@ -1579,7 +1550,7 @@ class IntelligentResourceAllocator:
             "is_apple_silicon": self.is_apple_silicon,
             "thermal_state": self.thermal_state,
             "recent_allocations": len(self.allocation_history),
-            "p_core_allocation_ratio": self._calculate_p_core_ratio()
+            "p_core_allocation_ratio": self._calculate_p_core_ratio(),
         }
 
     def _calculate_p_core_ratio(self) -> float:
@@ -1587,10 +1558,7 @@ class IntelligentResourceAllocator:
         if not self.allocation_history:
             return 0.5  # Default balanced
 
-        p_allocations = sum(
-            1 for alloc in self.allocation_history
-            if alloc["allocation"]["core_type"] == "performance"
-        )
+        p_allocations = sum(1 for alloc in self.allocation_history if alloc["allocation"]["core_type"] == "performance")
         return p_allocations / len(self.allocation_history)
 
     def apply_thermal_throttling(self, state: str) -> None:
@@ -1628,11 +1596,7 @@ async def main():
     tasks = [lambda i=i: example_task(i) for i in range(20)]
 
     # Test different strategies
-    strategies = [
-        ExecutionStrategy.ROUND_ROBIN,
-        ExecutionStrategy.LOAD_BALANCED,
-        ExecutionStrategy.ADAPTIVE
-    ]
+    strategies = [ExecutionStrategy.ROUND_ROBIN, ExecutionStrategy.LOAD_BALANCED, ExecutionStrategy.ADAPTIVE]
 
     for strategy in strategies:
         print(f"\nTesting {strategy.value} strategy:")
@@ -1649,16 +1613,19 @@ async def main():
     # Cleanup
     await optimizer.cleanup()
 
+
 if __name__ == "__main__":
-        asyncio.run(main())
+    asyncio.run(main())
 
 # ============================================================================
 # Predictive Cache Manager (Integrated from cutting_edge/advanced_optimization)
 # ============================================================================
 
+
 @dataclass(slots=True)
 class CacheEntry:
     """Entry in predictive cache."""
+
     key: str
     value: Any
     access_count: int = 0
@@ -1700,10 +1667,7 @@ class PredictiveCacheManager:
             entry.last_access_time = current_time
 
             # Record access for pattern analysis
-            self.access_history.append({
-                'key': key,
-                'time': current_time
-            })
+            self.access_history.append({"key": key, "time": current_time})
             self.access_patterns[key].append(current_time)
 
             # Keep only recent history
@@ -1719,8 +1683,7 @@ class PredictiveCacheManager:
 
         with self._lock:
             # Check if we need to evict
-            while (self._current_size + size_bytes > self.max_size_bytes or
-                   len(self.cache) >= self.max_entries):
+            while self._current_size + size_bytes > self.max_size_bytes or len(self.cache) >= self.max_entries:
                 if not self._evict_one():
                     break
 
@@ -1729,11 +1692,7 @@ class PredictiveCacheManager:
                 old_entry = self.cache[key]
                 self._current_size -= old_entry.size_bytes
 
-            entry = CacheEntry(
-                key=key,
-                value=value,
-                size_bytes=size_bytes
-            )
+            entry = CacheEntry(key=key, value=value, size_bytes=size_bytes)
 
             # Predict next access
             entry.predicted_next_access = self._predict_next_access(key)
@@ -1782,7 +1741,7 @@ class PredictiveCacheManager:
         accesses = self.access_patterns[key]
 
         # Calculate average interval
-        intervals = [accesses[i] - accesses[i-1] for i in range(1, len(accesses))]
+        intervals = [accesses[i] - accesses[i - 1] for i in range(1, len(accesses))]
         avg_interval = sum(intervals) / len(intervals)
 
         # Predict next access
@@ -1798,15 +1757,15 @@ class PredictiveCacheManager:
             if self.access_history:
                 # Approximate hit rate
                 recent_accesses = list(self.access_history)[-100:]
-                hits = sum(1 for a in recent_accesses if a['key'] in self.cache)
+                hits = sum(1 for a in recent_accesses if a["key"] in self.cache)
                 hit_rate = hits / len(recent_accesses) if recent_accesses else 0
 
             return {
-                'entries': len(self.cache),
-                'size_bytes': self._current_size,
-                'max_size_bytes': self.max_size_bytes,
-                'hit_rate': hit_rate,
-                'patterns_tracked': len(self.access_patterns)
+                "entries": len(self.cache),
+                "size_bytes": self._current_size,
+                "max_size_bytes": self.max_size_bytes,
+                "hit_rate": hit_rate,
+                "patterns_tracked": len(self.access_patterns),
             }
 
     def clear(self):
@@ -1821,6 +1780,7 @@ class PredictiveCacheManager:
 # Memory-Aware Task Scheduler
 # ============================================================================
 
+
 class MemoryAwareScheduler:
     """
     Task scheduler that respects memory constraints.
@@ -1831,6 +1791,7 @@ class MemoryAwareScheduler:
         self.max_memory_percent = max_memory_percent
         self.active_tasks: dict[str, dict[str, Any]] = {}
         from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+
         self._semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
 
     async def schedule(self, task_id: str, task_func: Callable, estimated_memory_mb: float = 100):
@@ -1843,10 +1804,7 @@ class MemoryAwareScheduler:
                 await asyncio.sleep(1)  # Wait before retrying
 
         async with self._semaphore:
-            self.active_tasks[task_id] = {
-                'start_time': time.time(),
-                'estimated_memory': estimated_memory_mb
-            }
+            self.active_tasks[task_id] = {"start_time": time.time(), "estimated_memory": estimated_memory_mb}
 
             try:
                 result = await task_func() if inspect.iscoroutinefunction(task_func) else task_func()
@@ -1863,11 +1821,8 @@ class MemoryAwareScheduler:
 # Auto-Optimization Decorator
 # ============================================================================
 
-def auto_optimize(
-    cache_results: bool = True,
-    max_workers: int | None = None,
-    memory_limit_mb: float = 512.0
-):
+
+def auto_optimize(cache_results: bool = True, max_workers: int | None = None, memory_limit_mb: float = 512.0):
     """
     Decorator for automatic function optimization.
 
@@ -1876,6 +1831,7 @@ def auto_optimize(
         max_workers: Max parallel workers (None = auto)
         memory_limit_mb: Memory limit for execution
     """
+
     def decorator(func: Callable) -> Callable:
         cache_manager: Any = PredictiveCacheManager() if cache_results else None
         # ty: Callable may not be a function; getattr() guards missing __name__

@@ -9,16 +9,14 @@ API:
 - Collection: tv (TV News Archive)
 
 Rules:
-- HTTP API only (aiohttp)
+- HTTP API only (httpx)
 - bounded top-k (MAX_RESULTS=20)
 - dedup URLs
 - passive only (žádné ukládání obsahu)
 - fail-soft na všech chybách
-- M1-safe: žádné torch/sklearn, pouze stdlib + aiohttp
+- M1-safe: žádné torch/sklearn, pouze stdlib + httpx
 - env gate: HLEDAC_ENABLE_TV_NEWS=1
 """
-
-
 
 import asyncio
 import logging
@@ -123,16 +121,16 @@ async def async_search_tvnews(
 
     start = time.monotonic()
 
-    # Lazy import aiohttp
+    # Lazy import httpx
     try:
-        import aiohttp
+        import httpx
     except ImportError:
         elapsed = time.monotonic() - start
         return DiscoveryBatchResult(
             hits=(),
             error_type="import_error",
             elapsed_s=elapsed,
-            error="aiohttp_not_available",
+            error="httpx_not_available",
         )
 
     # Build search params — TV News collection
@@ -147,11 +145,11 @@ async def async_search_tvnews(
         # Results are already returned in relevance order by Archive.org
     }
 
-    timeout = aiohttp.ClientTimeout(total=timeout_s)
+    timeout = httpx.Timeout(timeout_s)
 
     try:
         async with asyncio.timeout(timeout_s):
-            async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with httpx.AsyncClient(timeout=timeout) as session:
                 headers = {
                     "User-Agent": "Hledac/1.0 (research bot; OSINT orchestrator)",
                     "Accept": "application/json",
@@ -160,7 +158,6 @@ async def async_search_tvnews(
                     _SEARCH_URL,
                     params=params,
                     headers=headers,
-                    raise_for_status=False,
                 ) as response:
                     elapsed = time.monotonic() - start
                     status = response.status
@@ -352,16 +349,18 @@ async def search_tvnews_for_query(
 
     findings = []
     for hit in result.hits:
-        findings.append({
-            "source_type": "tvnews",
-            "query": query,
-            "ioc_type": "tv_broadcast",
-            "ioc_value": hit.url,
-            "title": hit.title,
-            "url": hit.url,
-            "snippet": hit.snippet,
-            "confidence": hit.score,
-            "retrieved_ts": hit.retrieved_ts,
-            "reason": hit.reason,
-        })
+        findings.append(
+            {
+                "source_type": "tvnews",
+                "query": query,
+                "ioc_type": "tv_broadcast",
+                "ioc_value": hit.url,
+                "title": hit.title,
+                "url": hit.url,
+                "snippet": hit.snippet,
+                "confidence": hit.score,
+                "retrieved_ts": hit.retrieved_ts,
+                "reason": hit.reason,
+            }
+        )
     return findings

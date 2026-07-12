@@ -16,17 +16,14 @@ GHOST_INVARIANTS:
   - Always returns CanonicalFinding list (empty on failure)
 """
 
-
-
 import logging
 import os
 import time
 from typing import Any
 
-import aiohttp
+import httpx
 
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.transport.circuit_breaker import (
     domain_breaker_check,
     domain_breaker_record_failure,
@@ -138,18 +135,18 @@ async def search_shodan_lane(
     params: dict[str, str] = {"key": key, "query": query, "per_page": str(min(limit, 100))}
 
     try:
-        _sess = await session_pool.aiohttp()
+        _sess = httpx.AsyncClient()
         async with _sess as session:
             async with session.get(SHODAN_SEARCH_API, params=params) as resp:
-                if resp.status == 401:
+                if resp.status_code == 401:
                     logger.warning("[SHODAN] API key required or invalid")
                     _record_shodan_failure(kind="auth_error")
                     return [], []
-                if resp.status == 429:
+                if resp.status_code == 429:
                     logger.warning("[SHODAN] Rate limit hit")
                     _record_shodan_failure(kind="rate_limit")
                     return [], []
-                if resp.status != 200:
+                if resp.status_code != 200:
                     logger.warning(f"[SHODAN] API error: {resp.status}")
                     _record_shodan_failure(kind="http_error")
                     return [], []

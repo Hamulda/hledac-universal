@@ -56,7 +56,7 @@ import socket
 import time
 from collections import OrderedDict
 
-from .async_helpers import async_getaddrinfo, safe_gather
+from .async_helpers import async_getaddrinfo, safe_gather, safe_wait_for
 
 logger = logging.getLogger(__name__)
 

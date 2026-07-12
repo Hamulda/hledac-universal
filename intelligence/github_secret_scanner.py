@@ -10,21 +10,17 @@ Anti-patterns:
   - Secrets do logu: _mask_secret() перед jakýmkoliv log/print
 """
 
-
-
 import asyncio
 import logging
 import re
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-import msgspec
 
-import aiohttp
+import httpx
 
 from hledac.universal.transport.circuit_breaker import (
-    checked_aiohttp_get,
+    checked_httpx_get as checked_aiohttp_get,
 )
-from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.utils.async_helpers import safe_gather_shielded
 
 logger = logging.getLogger(__name__)
@@ -42,6 +38,7 @@ def _mask_secret(value: str) -> str:
 
 
 # ---- SecretFinding type (P20 data contract) -------------------------------
+
 
 @dataclass
 class SecretFinding:
@@ -61,9 +58,15 @@ _API_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("google_api_key", re.compile(r"\bAIza[0-9A-Za-z\-_]{35}\b")),
     ("stripe_secret_key", re.compile(r"\bsk_live_[0-9a-zA-Z]{24}\b")),
     ("slack_token", re.compile(r"\bxox[baprs]-[0-9]{10,13}-[0-9]{10,13}-[A-Za-z0-9]{24,32}\b")),
-    ("aws_secret_key", re.compile(r"\b(?:aws)?_?secret_?access?_?key\s*[=:]\s*['\"]?([A-Za-z0-9/+=]{40})['\"]?", re.IGNORECASE)),  # noqa: E501
+    (
+        "aws_secret_key",
+        re.compile(r"\b(?:aws)?_?secret_?access?_?key\s*[=:]\s*['\"]?([A-Za-z0-9/+=]{40})['\"]?", re.IGNORECASE),
+    ),  # noqa: E501
     ("private_key", re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----", re.IGNORECASE)),
-    ("generic_api_key", re.compile(r"\b(?:api[_-]?key|apikey|api_secret)\s*[=:]\s*['\"]?([A-Za-z0-9_\-]{20,64})['\"]?", re.IGNORECASE)),  # noqa: E501
+    (
+        "generic_api_key",
+        re.compile(r"\b(?:api[_-]?key|apikey|api_secret)\s*[=:]\s*['\"]?([A-Za-z0-9_\-]{20,64})['\"]?", re.IGNORECASE),
+    ),  # noqa: E501
     # 2026 high-value patterns
     ("anthropic_api_key", re.compile(r"\bsk-ant-[a-zA-Z0-9\-_]{95}\b")),
     ("openai_api_key_2024", re.compile(r"\bsk-proj-[a-zA-Z0-9\-_]{100}\b")),
@@ -91,7 +94,7 @@ _rate_lock = asyncio.Lock()
 
 async def _gh_search(
     q: str,
-    session: aiohttp.ClientSession,
+    session: httpx.AsyncClient,
     max_results: int = 30,
 ) -> list[dict]:
     """Execute unauthenticated GitHub code search, return items list."""
@@ -99,6 +102,7 @@ async def _gh_search(
 
     async with _rate_lock:
         import time
+
         elapsed = time.time() - _last_request
         if elapsed < _RATELIMIT_S:
             await asyncio.sleep(_RATELIMIT_S - elapsed)
@@ -110,61 +114,58 @@ async def _gh_search(
     }
     params = {"q": q, "per_page": min(max_results, 100), "sort": "indexed"}
 
-    resp, err = await checked_aiohttp_get(
+    data, status_code, err = await checked_aiohttp_get(
         session,
         _GITHUB_SEARCH_API,
         params=params,
         headers=headers,
-        timeout=aiohttp.ClientTimeout(total=30),
+        timeout=httpx.Timeout(total=30),
         failure_kind="github_search",
     )
     if err:
         logger.debug(f"GitHub search circuit/req error for '{q}': {err}")
         return []
-    if resp is None:
+    if data is None:
         return []
-    if resp.status == 403:
+    if status_code == 403:
         logger.warning("GitHub API rate limit hit — backing off 60s")
         await asyncio.sleep(60)
         return []
-    if resp.status == 422:
+    if status_code == 422:
         return []
-    if resp.status != 200:
+    if status_code != 200:
         return []
     try:
-        data = await resp.json()
-        return data.get("items") or []
+        return data.get("items") or [] if isinstance(data, dict) else []
     except Exception as e:
         logger.debug(f"GitHub search failed for '{q}': {e}")
         return []
 
 
-async def _fetch_file_content(
-    raw_url: str | None, session: aiohttp.ClientSession
-) -> str | None:
+async def _fetch_file_content(raw_url: str | None, session: httpx.AsyncClient) -> str | None:
     """Fetch raw file content from GitHub API."""
     if not raw_url:
         return None
-    resp, err = await checked_aiohttp_get(
+    data, status_code, err = await checked_aiohttp_get(
         session,
         raw_url,
         headers={"Accept": "application/vnd.github.v3.raw"},
-        timeout=aiohttp.ClientTimeout(total=15),
+        timeout=httpx.Timeout(total=15),
         failure_kind="github_raw",
     )
     if err:
         return None
-    if resp.status != 200:
+    if status_code != 200:
         return None
     try:
-        return await resp.text()
+        return data if isinstance(data, str) else None
     except Exception:
         return None
 
 
 async def _gh_get(
     url: str,
-    session: aiohttp.ClientSession,
+    session: httpx.AsyncClient,
     params: dict | None = None,
 ) -> dict | None:
     """Execute GET request to GitHub API with rate limiting."""
@@ -172,6 +173,7 @@ async def _gh_get(
 
     async with _rate_lock:
         import time
+
         elapsed = time.time() - _last_request
         if elapsed < _RATELIMIT_S:
             await asyncio.sleep(_RATELIMIT_S - elapsed)
@@ -182,18 +184,18 @@ async def _gh_get(
         "User-Agent": "hledac-osint/1.0",
     }
 
-    resp, err = await checked_aiohttp_get(
+    data, status_code, err = await checked_aiohttp_get(
         session,
         url,
         params=params,
         headers=headers,
-        timeout=aiohttp.ClientTimeout(total=30),
+        timeout=httpx.Timeout(total=30),
         failure_kind="github_api",
     )
-    if err or resp is None or resp.status != 200:
+    if err or data is None or status_code != 200:
         return None
     try:
-        return await resp.json()
+        return data if isinstance(data, dict) else None
     except Exception:
         return None
 
@@ -220,18 +222,20 @@ def _scan_line_for_secrets(line: str, file_path: str, line_no: int) -> list[Secr
         matches = compiled_re.findall(line)
         for _ in matches:
             masked_line = _mask_secret(line.strip())
-            findings.append(SecretFinding(
-                pattern=pattern_label,
-                file_path=file_path,
-                line=line_no,
-                context=masked_line,
-            ))
+            findings.append(
+                SecretFinding(
+                    pattern=pattern_label,
+                    file_path=file_path,
+                    line=line_no,
+                    context=masked_line,
+                )
+            )
     return findings
 
 
 async def _scan_fork_network(
     repo_full_name: str,
-    session: aiohttp.ClientSession,
+    session: httpx.AsyncClient,
 ) -> list[SecretFinding]:
     """Scan fork network for diverged commits containing secrets.
 
@@ -276,8 +280,7 @@ async def _scan_fork_network(
         # If fork has newer commits than parent, it's diverged (potentially sensitive)
         if commit_date > parent_updated:
             logger.debug(
-                f"Fork {fork_full_name} diverged from {repo_full_name} "
-                f"(ahead_by={ahead_by}, latest={commit_date})"
+                f"Fork {fork_full_name} diverged from {repo_full_name} (ahead_by={ahead_by}, latest={commit_date})"
             )
             # Scan the fork's recent commits for secrets
             async for finding in _scan_commit_diffs(fork_full_name, session):
@@ -288,7 +291,7 @@ async def _scan_fork_network(
 
 async def _scan_commit_diffs(
     repo_full_name: str,
-    session: aiohttp.ClientSession,
+    session: httpx.AsyncClient,
 ) -> AsyncGenerator[SecretFinding]:
     """Scan recent commits for secrets in added lines (one at a time).
 
@@ -352,6 +355,7 @@ async def _scan_commit_diffs(
 
 # ---- Public API ------------------------------------------------------------
 
+
 async def scan_repo(repo_full_name: str) -> list[SecretFinding]:
     """Scan veřejný GitHub repozitář pro potenciální secrets.
 
@@ -360,7 +364,7 @@ async def scan_repo(repo_full_name: str) -> list[SecretFinding]:
     """
     findings: list[SecretFinding] = []
 
-    _sess = await session_pool.aiohttp()
+    _sess = await httpx.AsyncClient()
     async with _sess as session:
         repo_q = f"repo:{repo_full_name} "
 
@@ -371,6 +375,7 @@ async def scan_repo(repo_full_name: str) -> list[SecretFinding]:
             # Parallelize file content fetches with bounded concurrency
             # M1 8GB: 5 concurrent = ~50MB extra, respects rate limit via _rate_lock
             from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+
             _fetch_sem = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
 
             async def _fetch_one(item: dict) -> tuple[dict, str | None]:
@@ -402,23 +407,27 @@ async def scan_repo(repo_full_name: str) -> list[SecretFinding]:
                         matches = compiled_re.findall(line)
                         for _secret in matches:
                             masked_line = _mask_secret(line.strip())
-                            findings.append(SecretFinding(
-                                pattern=pattern_label,
-                                file_path=file_path,
-                                line=line_no,
-                                context=masked_line,
-                            ))
+                            findings.append(
+                                SecretFinding(
+                                    pattern=pattern_label,
+                                    file_path=file_path,
+                                    line=line_no,
+                                    context=masked_line,
+                                )
+                            )
                             logger.debug(
                                 f"GitHub secret in {repo_full_name}/{file_path}:{line_no} "
                                 f"pattern={pattern_label} context={masked_line[:80]}"
                             )
                 else:
-                    findings.append(SecretFinding(
-                        pattern=pattern_label,
-                        file_path=file_path,
-                        line=0,
-                        context=f"[found in {html_url}]",
-                    ))
+                    findings.append(
+                        SecretFinding(
+                            pattern=pattern_label,
+                            file_path=file_path,
+                            line=0,
+                            context=f"[found in {html_url}]",
+                        )
+                    )
 
     return findings
 
@@ -431,7 +440,7 @@ async def search_org_secrets(org: str) -> list[SecretFinding]:
     """
     findings: list[SecretFinding] = []
 
-    _sess = await session_pool.aiohttp()
+    _sess = await httpx.AsyncClient()
     async with _sess as session:
         org_url = f"https://api.github.com/orgs/{org}/repos"
         try:
@@ -439,7 +448,7 @@ async def search_org_secrets(org: str) -> list[SecretFinding]:
                 org_url,
                 params={"type": "public", "per_page": 30},
                 headers={"User-Agent": "hledac-osint/1.0"},
-                timeout=aiohttp.ClientTimeout(total=20),
+                timeout=httpx.Timeout(total=20),
             ) as resp:
                 if resp.status != 200:
                     return []

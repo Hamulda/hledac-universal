@@ -17,7 +17,8 @@ and adds integration logic without duplicating code.
 
 
 
-import hashlib
+import hashlib  # noqa: F401 — kept for sha256
+from utils.hashing import xxh3_64_hex
 import logging
 import subprocess
 from typing import Any
@@ -457,7 +458,7 @@ class GhostLayer:
         """Update stagnation tracking based on result"""
         # Hash the result for comparison
         result_str = orjson.dumps(result, option=orjson.OPT_SORT_KEYS).decode()
-        result_hash = hashlib.md5(result_str.encode()).hexdigest()
+        result_hash = xxh3_64_hex(result_str)
 
         # Check if same as last
         if result_hash == self._last_results_hash:

@@ -21,7 +21,6 @@ Invariant table:
 | test_async_queue_is_task_local | asyncio.Queue created per task via ALS |
 """
 
-
 import asyncio
 import threading
 import time
@@ -29,7 +28,6 @@ import time
 import pytest
 
 from utils.lazy_singleton import AsyncLazySingleton, LazySingleton
-
 
 # ---------------------------------------------------------------------------
 # Sync LazySingleton tests
@@ -89,7 +87,7 @@ def test_sync_concurrent() -> None:
         barrier.wait()  # synchronize start
         results.append(singleton())
 
-    threads = [threading.Thread(target=runner) for _ in range(100)]
+    threads = [threading.Thread(target=runner, daemon=True) for _ in range(100)]
     for t in threads:
         t.start()
     for t in threads:
@@ -236,9 +234,7 @@ async def test_async_nested_tasks_share_context() -> None:
     # Same loop + create_task = same ContextVar context → same lock instance
     assert len(set(outer_ids)) == 1
     assert len(set(inner_ids)) == 1
-    assert outer_ids[0] == inner_ids[0], (
-        f"create_task inherits ContextVar — outer and inner must share the lock"
-    )
+    assert outer_ids[0] == inner_ids[0], f"create_task inherits ContextVar — outer and inner must share the lock"
 
 
 def test_async_runs_isolation() -> None:
@@ -265,6 +261,5 @@ def test_async_runs_isolation() -> None:
     asyncio.run(runner(inner_ids))
 
     assert outer_ids[0] != inner_ids[0], (
-        f"separate asyncio.run() calls must get different instances: "
-        f"outer={outer_ids[0]}, inner={inner_ids[0]}"
+        f"separate asyncio.run() calls must get different instances: outer={outer_ids[0]}, inner={inner_ids[0]}"
     )

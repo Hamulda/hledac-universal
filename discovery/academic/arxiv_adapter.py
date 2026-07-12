@@ -12,8 +12,6 @@ Features:
 M1 8GB: asyncio.Semaphore(3), bounded results, fail-soft.
 """
 
-
-
 import asyncio
 import logging
 import time
@@ -43,6 +41,7 @@ MSC_PATTERN = r"\b\d{2}[A-Z]{2}\d{2,3}\b"
 
 class ArxivPaper(NamedTuple):
     """Structured arXiv paper."""
+
     id: str
     title: str
     authors: list[str]
@@ -59,6 +58,7 @@ class ArxivPaper(NamedTuple):
 
 class ArxivResult(NamedTuple):
     """Result of arXiv search."""
+
     papers: list[ArxivPaper]
     error: str | None
     total_harvested: int = 0
@@ -67,6 +67,7 @@ class ArxivResult(NamedTuple):
 # ---------------------------------------------------------------------------
 # OAI-PMH Parsing
 # ---------------------------------------------------------------------------
+
 
 def _parse_oai_response(xml_content: bytes) -> list[dict]:
     """Parse OAI-PMH XML response into record dicts."""
@@ -92,7 +93,9 @@ def _parse_oai_response(xml_content: bytes) -> list[dict]:
             data = {}
 
             # Title
-            title_el = metadata.find(".//arxiv:title", arxiv_ns) or metadata.find(".//{http://arxiv.org/schemas/atom}title")
+            title_el = metadata.find(".//arxiv:title", arxiv_ns) or metadata.find(
+                ".//{http://arxiv.org/schemas/atom}title"
+            )
             if title_el is None:
                 title_el = metadata.find(".//title")
             if title_el is not None:
@@ -100,7 +103,9 @@ def _parse_oai_response(xml_content: bytes) -> list[dict]:
 
             # Authors
             authors = []
-            for author_el in metadata.findall(".//author") + metadata.findall(".//{http://arxiv.org/schemas/atom}author"):
+            for author_el in metadata.findall(".//author") + metadata.findall(
+                ".//{http://arxiv.org/schemas/atom}author"
+            ):
                 name_el = author_el.find("name") or author_el.find(".//keyname") or author_el
                 if name_el is not None and name_el.text:
                     authors.append(name_el.text.strip())
@@ -126,7 +131,9 @@ def _parse_oai_response(xml_content: bytes) -> list[dict]:
 
             # Categories
             categories = []
-            for cat_el in metadata.findall(".//category") + metadata.findall(".//{http://arxiv.org/schemas/atom}category"):
+            for cat_el in metadata.findall(".//category") + metadata.findall(
+                ".//{http://arxiv.org/schemas/atom}category"
+            ):
                 term = cat_el.get("term") or cat_el.get("subject")
                 if term:
                     categories.append(term)
@@ -137,6 +144,7 @@ def _parse_oai_response(xml_content: bytes) -> list[dict]:
             for comm in metadata.findall(".//comment") + metadata.findall(".//{http://arxiv.org/schemas/atom}comment"):
                 if comm.text:
                     import re
+
                     match = re.search(MSC_PATTERN, comm.text)
                     if match:
                         msc = match.group(0)
@@ -144,7 +152,9 @@ def _parse_oai_response(xml_content: bytes) -> list[dict]:
             data["msc_class"] = msc
 
             # Journal reference
-            journal_el = metadata.find(".//journal-ref") or metadata.find(".//{http://arxiv.org/schemas/atom}journal_ref")
+            journal_el = metadata.find(".//journal-ref") or metadata.find(
+                ".//{http://arxiv.org/schemas/atom}journal_ref"
+            )
             if journal_el is not None and journal_el.text:
                 data["journal_ref"] = journal_el.text.strip()
 
@@ -174,11 +184,13 @@ def _parse_oai_response(xml_content: bytes) -> list[dict]:
 # arXiv Client
 # ---------------------------------------------------------------------------
 
+
 class ArxivAdapter:
     """arXiv OAI-PMH bulk access adapter."""
 
     def __init__(self) -> None:
         from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+
         self._semaphore = get_semaphore_for_testing(ConcurrencyCategory.ACADEMIC_SEARCH)
         self._cache: dict[str, tuple[float, list[ArxivPaper]]] = {}
         self._cache_ttl = 900.0  # 15 min
@@ -216,31 +228,32 @@ class ArxivAdapter:
                 url = f"{OAI_PMH_ENDPOINT}?{urllib.parse.urlencode(params)}"
 
                 # Fetch with timeout
-                import aiohttp
-                async with aiohttp.ClientSession() as session:
-                    async with asyncio.timeout(REQUEST_TIMEOUT_S):
-                        async with session.get(url) as resp:
-                            if resp.status != 200:
-                                return ArxivResult([], f"HTTP {resp.status}")
-                            content = await resp.read()
+
+                async with asyncio.timeout(REQUEST_TIMEOUT_S):
+                    async with session.get(url) as resp:
+                        if resp.status_code != 200:
+                            return ArxivResult([], f"HTTP {resp.status_code}")
+                        content = await resp.read()
 
                 records = _parse_oai_response(content)
 
                 for rec in records[:max_results]:
-                    papers.append(ArxivPaper(
-                        id=rec.get("id", ""),
-                        title=rec.get("title", ""),
-                        authors=rec.get("authors", []),
-                        abstract=rec.get("abstract", ""),
-                        categories=rec.get("categories", []),
-                        msc_class=rec.get("msc_class"),
-                        journal_ref=rec.get("journal_ref"),
-                        orcid=rec.get("orcid", []),
-                        published=rec.get("published", ""),
-                        updated=rec.get("updated", ""),
-                        doi=rec.get("doi"),
-                        pdf_url=f"https://arxiv.org/pdf/{rec.get('id', '')}.pdf",
-                    ))
+                    papers.append(
+                        ArxivPaper(
+                            id=rec.get("id", ""),
+                            title=rec.get("title", ""),
+                            authors=rec.get("authors", []),
+                            abstract=rec.get("abstract", ""),
+                            categories=rec.get("categories", []),
+                            msc_class=rec.get("msc_class"),
+                            journal_ref=rec.get("journal_ref"),
+                            orcid=rec.get("orcid", []),
+                            published=rec.get("published", ""),
+                            updated=rec.get("updated", ""),
+                            doi=rec.get("doi"),
+                            pdf_url=f"https://arxiv.org/pdf/{rec.get('id', '')}.pdf",
+                        )
+                    )
 
                 return ArxivResult(papers, None, len(papers))
 
@@ -308,20 +321,22 @@ class ArxivAdapter:
                 entry_id = cast("Element", entry.find("atom:id", ns))
                 paper_id = (entry_id.text or "").split("/")[-1]
 
-                papers.append(ArxivPaper(
-                    id=paper_id,
-                    title=" ".join((title.text or "").split()),
-                    authors=authors,
-                    abstract=" ".join((summary.text or "").split()),
-                    categories=categories,
-                    msc_class=None,  # Available in full Atom feed
-                    journal_ref=None,
-                    orcid=orcid_list,
-                    published=published,
-                    updated=updated,
-                    doi=doi,
-                    pdf_url=f"https://arxiv.org/pdf/{paper_id}.pdf",
-                ))
+                papers.append(
+                    ArxivPaper(
+                        id=paper_id,
+                        title=" ".join((title.text or "").split()),
+                        authors=authors,
+                        abstract=" ".join((summary.text or "").split()),
+                        categories=categories,
+                        msc_class=None,  # Available in full Atom feed
+                        journal_ref=None,
+                        orcid=orcid_list,
+                        published=published,
+                        updated=updated,
+                        doi=doi,
+                        pdf_url=f"https://arxiv.org/pdf/{paper_id}.pdf",
+                    )
+                )
 
             return ArxivResult(papers, None, len(papers))
 
@@ -338,29 +353,32 @@ class ArxivAdapter:
         findings = []
         for paper in papers:
             import hashlib
-            fid = hashlib.sha256(
-                f"{query}\x00{paper.id}\x00arxiv".encode()
-            ).hexdigest()[:16]
 
-            payload = "\n".join([
-                f"title: {paper.title}",
-                f"authors: {', '.join(paper.authors)}",
-                f"categories: {', '.join(paper.categories)}",
-                f"abstract: {paper.abstract[:1000]}",
-                f"msc_class: {paper.msc_class or 'N/A'}",
-                f"journal_ref: {paper.journal_ref or 'N/A'}",
-                f"doi: {paper.doi or 'N/A'}",
-            ])
+            fid = hashlib.sha256(f"{query}\x00{paper.id}\x00arxiv".encode()).hexdigest()[:16]
 
-            findings.append(CanonicalFinding(
-                finding_id=fid,
-                query=query,
-                source_type="arxiv_bulk",
-                confidence=0.8,
-                ts=time.time(),
-                provenance=("arxiv", paper.id, paper.title[:50]),
-                payload_text=payload,
-            ))
+            payload = "\n".join(
+                [
+                    f"title: {paper.title}",
+                    f"authors: {', '.join(paper.authors)}",
+                    f"categories: {', '.join(paper.categories)}",
+                    f"abstract: {paper.abstract[:1000]}",
+                    f"msc_class: {paper.msc_class or 'N/A'}",
+                    f"journal_ref: {paper.journal_ref or 'N/A'}",
+                    f"doi: {paper.doi or 'N/A'}",
+                ]
+            )
+
+            findings.append(
+                CanonicalFinding(
+                    finding_id=fid,
+                    query=query,
+                    source_type="arxiv_bulk",
+                    confidence=0.8,
+                    ts=time.time(),
+                    provenance=("arxiv", paper.id, paper.title[:50]),
+                    payload_text=payload,
+                )
+            )
         return findings
 
 

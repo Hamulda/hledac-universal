@@ -7,15 +7,9 @@ BGP lookup via pybgpstream, DoH via dnspython with Cloudflare/Google resolvers.
 M1 Optimized: Async I/O, bounded RAM (<300MB for BGP data), no blocking sync calls.
 """
 
-
-
 import logging
 import os
 from typing import Any
-
-import aiohttp
-
-from hledac.universal.transport.session_pool import session_pool
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +75,9 @@ async def get_bgp_info(prefix: str) -> dict[str, Any]:
                     if path:
                         asns = path.split()
                         if asns:
-                            result["origin_asn"] = asns[-1] if asns[-1] != "None" else asns[-2] if len(asns) > 1 else None  # noqa: E501
+                            result["origin_asn"] = (
+                                asns[-1] if asns[-1] != "None" else asns[-2] if len(asns) > 1 else None
+                            )  # noqa: E501
                     result["country"] = elem.get("country")
                     break
 
@@ -125,11 +121,10 @@ async def _get_bgp_via_ipinfo(prefix: str) -> dict[str, Any]:
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 
-        timeout = aiohttp.ClientTimeout(total=10)
-        _sess = await session_pool.aiohttp()
-        async with _sess as session:
-            async with session.get(url, headers=headers, timeout=timeout) as resp:
-                if resp.status == 200:
+        timeout = httpx.Timeout(10)
+        async with httpx.AsyncClient(timeout=timeout) as session:
+            async with session.get(url, headers=headers) as resp:
+                if resp.status_code == 200:
                     data = await resp.json()
 
                     # Extract ASN from org field (e.g., "AS15169 Google")
@@ -240,7 +235,7 @@ async def resolve_dns_doh(domain: str) -> dict[str, list[str]]:
                 continue
 
     except ImportError:
-        # Fallback to aiohttp direct DoH queries
+        # Fallback to httpx direct DoH queries
         result = await _resolve_doh_direct(domain)
     except Exception as e:
         logger.debug(f"dnspython DoH failed for {domain}: {e}")
@@ -251,7 +246,7 @@ async def resolve_dns_doh(domain: str) -> dict[str, list[str]]:
 
 async def _resolve_doh_direct(domain: str) -> dict[str, list[str]]:
     """
-    Direct DoH resolution via aiohttp when dnspython is unavailable.
+    Direct DoH resolution via httpx when dnspython is unavailable.
     Uses JSON-mode DoH endpoints.
     """
     result: dict[str, Any] = {
@@ -270,15 +265,14 @@ async def _resolve_doh_direct(domain: str) -> dict[str, list[str]]:
         ("google", f"{GOOGLE_DOH}?name={domain}&type=A"),
     ]
 
-    timeout = aiohttp.ClientTimeout(total=15)
-    _sess = await session_pool.aiohttp()
-    async with _sess as session:
+    timeout = httpx.Timeout(15)
+    async with httpx.AsyncClient(timeout=timeout) as session:
         for provider, url in doh_endpoints:
             try:
                 headers = {"Accept": "application/dns-json"}
 
-                async with session.get(url, headers=headers, timeout=timeout) as resp:
-                    if resp.status == 200:
+                async with session.get(url, headers=headers) as resp:
+                    if resp.status_code == 200:
                         data = await resp.json()
 
                         # Parse DNS JSON response (RFC 8425)
@@ -349,9 +343,7 @@ def integrate_bgp_doh_to_graph(
                     relationship="belongs_to",
                 )
 
-        logger.debug(
-            f"Integrated {len(ip_addresses)} IPs and ASN {asn_info.get('asn')} to graph"
-        )
+        logger.debug(f"Integrated {len(ip_addresses)} IPs and ASN {asn_info.get('asn')} to graph")
 
     except Exception as e:
         logger.debug(f"Failed to integrate BGP/DoH to graph: {e}")

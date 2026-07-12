@@ -20,20 +20,17 @@ Architecture: async-native, compatible with source_finding_bridge.py lane patter
 Rate limiting and deduplication are built-in. No external API keys required.
 """
 
-
-
 import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-import msgspec
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    import aiohttp
+    import httpx
 
-import aiohttp  # runtime import — aiohttp available in execution environment
+import httpx  # F4XX: httpx replaces aiohttp
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +71,7 @@ class CTFinding:
 
 async def fetch_ct_findings(
     query: str,
-    session: aiohttp.ClientSession,
+    session: httpx.AsyncClient,
     *,
     limit: int = MAX_BRIDGE_OUTPUT,
     deduplicate: bool = True,
@@ -87,7 +84,7 @@ async def fetch_ct_findings(
 
     Args:
         query: domain or org to query
-        session: aiohttp.ClientSession for HTTP requests
+        session: httpx.AsyncClient for HTTP requests
         limit: maximum findings to return (capped at MAX_BRIDGE_OUTPUT)
         deduplicate: skip duplicate domains within this batch
 
@@ -99,9 +96,9 @@ async def fetch_ct_findings(
     seen: set[str] = set()
 
     try:
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+        async with session.get(url, timeout=httpx.Timeout(30)) as resp:
             resp.raise_for_status()
-            data: list[dict] = await resp.json(content_type=None)
+            data: list[dict] = await resp.json()
     except Exception as e:
         logger.warning(f"ct_lane fetch failed for {query}: {e}")
         return findings
@@ -150,7 +147,7 @@ async def fetch_ct_findings(
 
 async def stream_ct_findings(
     query: str,
-    session: aiohttp.ClientSession,
+    session: httpx.AsyncClient,
     *,
     rate_limit_s: float = _CT_RATE_LIMIT_S,
     max_findings: int = MAX_BRIDGE_OUTPUT,
@@ -171,9 +168,9 @@ async def stream_ct_findings(
         await asyncio.sleep(rate_limit_s - elapsed)
 
     try:
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+        async with session.get(url, timeout=httpx.Timeout(30)) as resp:
             resp.raise_for_status()
-            data: list[dict] = await resp.json(content_type=None)
+            data: list[dict] = await resp.json()
     except Exception as e:
         logger.warning(f"ct_lane stream failed for {query}: {e}")
         return

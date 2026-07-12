@@ -1,0 +1,4 @@
+# file: /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/core/rust_backend/url.py
+# hypothesis_version: 6.155.7
+
+[b'\n', b'.i2p', b'.onion', b'://([^/]+)', b'freenet', b'hyphanet', 4096, 8192, '.doc', '.docx', '.i2p', '.onion', '.pdf', '/', '^www\\.', '_ext', '_ga', '_gl', 'bitbucket.org', 'clearnet', 'cloud', 'code', 'dclid', 'document', 'drive.google.com', 'dropbox.com', 'fbclid', 'file', 'freenet', 'gclid', 'gclsrc', 'github.com', 'gitlab.com', 'http', 'http://', 'https', 'https://', 'i2p', 'malformed', 'mastodon.social', 'mc_cid', 'mc_eid', 'msclkid', 'old.reddit.com', 'onedrive.live.com', 'onion', 'reddit', 'reddit.com', 'ref', 'replace', 'social', 'storage', 'twclid', 'twitter', 'twitter.com', 'unknown', 'utf-8', 'utm_', 'vcs', 'www.', 'x.com', 'yclid']

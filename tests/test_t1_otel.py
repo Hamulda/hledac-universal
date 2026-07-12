@@ -165,7 +165,7 @@ class TestSprintT1BoundedRing:
             except Exception as e:  # pragma: no cover
                 errors.append(e)
 
-        threads = [threading.Thread(target=worker, args=(t,)) for t in range(8)]
+        threads = [threading.Thread(target=worker, args=(t,), daemon=True) for t in range(8)]
         for t in threads:
             t.start()
         for t in threads:
@@ -245,6 +245,7 @@ class TestSprintT1StdoutExporter:
 
     def test_otlp_json_shape(self) -> None:
         """A real span (from ring) serializes to valid OTLP/JSON."""
+
         # Build a minimal fake ReadableSpan-like object
         class _Ctx:
             trace_id = 0x1234567890ABCDEF1234567890ABCDEF
@@ -263,6 +264,7 @@ class TestSprintT1StdoutExporter:
             events = [_Ev()]
             parent = None
             status = type("S", (), {"status_code": type("C", (), {"__name__": "OK"})()})()
+
             def get_span_context(self):
                 return _Ctx()
 
@@ -296,6 +298,7 @@ class TestSprintT1StdoutExporter:
             events = []
             parent = None
             status = None
+
             def get_span_context(self):
                 return None
 
@@ -316,6 +319,7 @@ class TestSprintT1StdoutExporter:
             events = []
             parent = None
             status = None
+
             def get_span_context(self):
                 return None
 
@@ -327,6 +331,7 @@ class TestSprintT1StdoutExporter:
 
     def test_int_overflow_safe(self) -> None:
         """int64 overflow -> 0 (fail-soft, never crash)."""
+
         class _Sp:
             name = "x"
             start_time = 0
@@ -335,6 +340,7 @@ class TestSprintT1StdoutExporter:
             events = []
             parent = None
             status = None
+
             def get_span_context(self):
                 return None
 
@@ -352,6 +358,7 @@ class TestSprintT1StdoutExporter:
             events = []
             parent = None
             status = None
+
             def get_span_context(self):
                 return None
 
@@ -389,6 +396,7 @@ class TestSprintT1RingExporter:
             end_time = 250
             attributes = {"x": 1}
             status = None
+
             def get_span_context(self):
                 return _Ctx()
 
@@ -410,9 +418,7 @@ class TestSprintT1SpanContext:
 
     def test_basic_open_close(self) -> None:
         ring: BoundedRing = BoundedRing(capacity=16)
-        init_telemetry(
-            TelemetryConfig(exporter_kind="ring", ring_sink=ring, sample_ratio=1.0)
-        )
+        init_telemetry(TelemetryConfig(exporter_kind="ring", ring_sink=ring, sample_ratio=1.0))
         with span("hello") as s:
             assert s is not None
         shutdown_telemetry(timeout_ms=1000)
@@ -420,9 +426,7 @@ class TestSprintT1SpanContext:
 
     def test_nested_spans(self) -> None:
         ring: BoundedRing = BoundedRing(capacity=16)
-        init_telemetry(
-            TelemetryConfig(exporter_kind="ring", ring_sink=ring, sample_ratio=1.0)
-        )
+        init_telemetry(TelemetryConfig(exporter_kind="ring", ring_sink=ring, sample_ratio=1.0))
         with span("outer"):
             with span("inner"):
                 pass
@@ -433,9 +437,7 @@ class TestSprintT1SpanContext:
 
     def test_attributes_recorded(self) -> None:
         ring: BoundedRing = BoundedRing(capacity=16)
-        init_telemetry(
-            TelemetryConfig(exporter_kind="ring", ring_sink=ring, sample_ratio=1.0)
-        )
+        init_telemetry(TelemetryConfig(exporter_kind="ring", ring_sink=ring, sample_ratio=1.0))
         with span("attrs", count=42, mode="aggressive"):
             pass
         shutdown_telemetry(timeout_ms=1000)
@@ -467,9 +469,7 @@ class TestSprintT1Instrumented:
             return a + b
 
         ring: BoundedRing = BoundedRing(capacity=16)
-        init_telemetry(
-            TelemetryConfig(exporter_kind="ring", ring_sink=ring, sample_ratio=1.0)
-        )
+        init_telemetry(TelemetryConfig(exporter_kind="ring", ring_sink=ring, sample_ratio=1.0))
         result = add(2, 3)
         assert result == 5
         shutdown_telemetry(timeout_ms=1000)
@@ -485,9 +485,7 @@ class TestSprintT1Instrumented:
             return f"got {url}"
 
         ring: BoundedRing = BoundedRing(capacity=16)
-        init_telemetry(
-            TelemetryConfig(exporter_kind="ring", ring_sink=ring, sample_ratio=1.0)
-        )
+        init_telemetry(TelemetryConfig(exporter_kind="ring", ring_sink=ring, sample_ratio=1.0))
         result = await fetch("https://example.com")
         assert result == "got https://example.com"
         shutdown_telemetry(timeout_ms=1000)
@@ -500,9 +498,7 @@ class TestSprintT1Instrumented:
             return 42
 
         ring: BoundedRing = BoundedRing(capacity=16)
-        init_telemetry(
-            TelemetryConfig(exporter_kind="ring", ring_sink=ring, sample_ratio=1.0)
-        )
+        init_telemetry(TelemetryConfig(exporter_kind="ring", ring_sink=ring, sample_ratio=1.0))
         assert my_func() == 42
         shutdown_telemetry(timeout_ms=1000)
         recs = [r for r in ring.values() if "my_func" in r["name"]]
@@ -510,9 +506,11 @@ class TestSprintT1Instrumented:
 
     def test_decorator_with_uninitialized_telemetry(self) -> None:
         shutdown_telemetry(timeout_ms=100)
+
         @instrumented("noop.fn")
         def f() -> int:
             return 1
+
         assert f() == 1
 
     def test_decorator_preserves_metadata(self) -> None:
@@ -555,6 +553,7 @@ class TestSprintT1AttributeSanitize:
     def test_unsupported_value_coerced_to_string(self) -> None:
         class Foo:
             pass
+
         out = _filter_attrs({"k": Foo()})
         assert out is not None
         assert isinstance(out["k"], str)
@@ -622,9 +621,7 @@ class TestSprintT1Context:
 
     def test_trace_id_nonzero_in_span(self) -> None:
         ring: BoundedRing = BoundedRing(capacity=16)
-        init_telemetry(
-            TelemetryConfig(exporter_kind="ring", ring_sink=ring, sample_ratio=1.0)
-        )
+        init_telemetry(TelemetryConfig(exporter_kind="ring", ring_sink=ring, sample_ratio=1.0))
         with span("ctxtest") as s:
             tid = current_trace_id()
             sid = current_span_id()
@@ -645,9 +642,7 @@ class TestSprintT1Integration:
             return {"url": url, "count": count, "ts": time.monotonic()}
 
         ring: BoundedRing = BoundedRing(capacity=16)
-        init_telemetry(
-            TelemetryConfig(exporter_kind="ring", ring_sink=ring, sample_ratio=1.0)
-        )
+        init_telemetry(TelemetryConfig(exporter_kind="ring", ring_sink=ring, sample_ratio=1.0))
         result = asyncio.run(my_async_fn("https://x", count=5))
         assert result["url"] == "https://x"
         assert result["count"] == 5
@@ -661,9 +656,7 @@ class TestSprintT1Integration:
         """M1 8GB bound: ring stays <= capacity even under burst."""
         cap = 256
         ring: BoundedRing = BoundedRing(capacity=cap)
-        init_telemetry(
-            TelemetryConfig(exporter_kind="ring", ring_sink=ring, sample_ratio=1.0)
-        )
+        init_telemetry(TelemetryConfig(exporter_kind="ring", ring_sink=ring, sample_ratio=1.0))
         for i in range(1000):
             with span("burst", i=i):
                 pass
@@ -682,9 +675,7 @@ class TestSprintT1M1Safety:
 
     def test_concurrent_spans_thread_safe(self) -> None:
         ring: BoundedRing = BoundedRing(capacity=512)
-        init_telemetry(
-            TelemetryConfig(exporter_kind="ring", ring_sink=ring, sample_ratio=1.0)
-        )
+        init_telemetry(TelemetryConfig(exporter_kind="ring", ring_sink=ring, sample_ratio=1.0))
         errors: list[Exception] = []
 
         def worker(tid: int) -> None:
@@ -695,7 +686,7 @@ class TestSprintT1M1Safety:
             except Exception as e:  # pragma: no cover
                 errors.append(e)
 
-        threads = [threading.Thread(target=worker, args=(t,)) for t in range(8)]
+        threads = [threading.Thread(target=worker, args=(t,), daemon=True) for t in range(8)]
         for t in threads:
             t.start()
         for t in threads:
@@ -707,9 +698,7 @@ class TestSprintT1M1Safety:
     @pytest.mark.asyncio
     async def test_concurrent_spans_async_safe(self) -> None:
         ring: BoundedRing = BoundedRing(capacity=512)
-        init_telemetry(
-            TelemetryConfig(exporter_kind="ring", ring_sink=ring, sample_ratio=1.0)
-        )
+        init_telemetry(TelemetryConfig(exporter_kind="ring", ring_sink=ring, sample_ratio=1.0))
 
         async def task(i: int) -> None:
             async with span("async.burst", i=i):

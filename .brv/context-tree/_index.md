@@ -1,52 +1,50 @@
 ---
-children_hash: aa3e0b3a3396e67713911f706c0c16931361b20a57cc1c9be300950e0322c4f1
-compression_ratio: 0.8203592814371258
+children_hash: dc8211803d074eac978cfdb0bd85663420ddf46d65f35c5a9cd7ae91745b13d3
+compression_ratio: 0.5
 condensation_order: 3
-covers: [testing/_index.md]
-covers_token_total: 501
+covers: [facts/_index.md, testing/_index.md]
+covers_token_total: 1320
 summary_level: d3
-token_count: 411
+token_count: 660
 type: summary
 ---
 <think>
-The user is asking me to create a domain-level structural summary for the "architecture" domain based on the provided context tree structure. They've given me detailed information about what the domain contains and want me to output a concise summary.
+The user wants me to create a domain-level summary (d1) for the `facts/project/` domain. They've provided the child entries and want me to synthesize them into a coherent domain summary that condenses the information while preserving key facts, relationships, and patterns.
 
-Let me craft a clean, concise summary that captures the essence of the architecture domain while being much shorter than the input (~20-30% token reduction).
+Key entries to synthesize:
+1. configuration_constants - DuckDB memory (600MB, 2 threads), Shodan rate limits (360/10s), feature flags, evidence_log timeout issue
+2. hashing_facade_issue_2 - centralized hashing utility at utils/hashing.py
+3. hledac_universal_claude_md - project conventions and entry point
+4. technology_stack - Python 3.14, Rust, PyO3, MLX, DuckDB, LanceDB, LMDB, nodriver, yara-python, igraph
+5. xxhash_rust_implementation - xxhash-rust v0.8 with M1 NEON SIMD acceleration
+
+Let me create a condensed summary that:
+- Provides an overview
+- Condenses key facts
+- Preserves relationships
+- Targets ~20-30% compression
+- Is clean markdown
 </think>
 
-# Domain: architecture
+# Domain: facts/project
 
-Core architecture for hledac.universal — a Rust-extended Python IOC processing engine with multi-lane HTTP transport, DuckDB shadow stores, and adaptive memory management.
+## Overview
+Project configuration, architecture decisions, and technology stack for the Hledac Universal OSINT orchestrator.
 
-## Key Components
+## Core Technology Stack
+- **Python 3.14** with **Rust via PyO3/Maturin** for performance-critical paths
+- **MLX** + mlx-lm for Apple Silicon ML inference
+- **DuckDB** for analytics, **LanceDB** for vectors, **LMDB** for bulk key-value
+- **nodriver** (browser automation), **yara-python** (pattern matching), **igraph** (graph analysis)
 
-**3-Lane HTTP Transport**
-- Cache lane (primary): Redis/sentinel fallback
-- CDN lane (secondary)
-- Public fetcher lane (tertiary)
-- Adaptive circuit breaker per lane
+## DuckDB Configuration
+Memory capped at **600MB** with **2 threads** (optimized for 8GB M1 systems). Feature gates via `HLEDAC_ARROW_INGEST`, `HLEDAC_DUCKDB_QUERY_CACHE`, `HLEDAC_DUCKDB_RAMDISK_TEMP`, `HLEDAC_ARROW_MIN_BATCH`. Known issue: evidence_log timeout mismatch (configured 1000ms vs actual 30000ms).
 
-**Rust Extensions**
-- Async execution via PyO3/Maturin
-- Cross-platform builds: macOS x86/x64, Linux x64
-- Compiled to `hledac_cext-[sys].so`
+## Hashing Architecture
+Centralized facade at `utils/hashing.py` wraps xxhash-rust v0.8 (xxh3/xxh64 with M1 NEON SIMD) and BLAKE3-64. Provides single/batch variants (xxh3_64_hex, batch_xxh3_64_hex, sha256_hex, blake3_64_hex). Dual-lane URL processing uses rayon 2-thread parallelism. Expected 10x speedup on M1 hardware.
 
-**DuckDB Shadow Stores**
-- Query cache with IOC extraction
-- Configurable thread count settings
-- Extended schema for shadow operations
+## Entry Conventions
+Entry point: `python -m hledac.universal --sprint "QUERY" [--duration SECS]`. Async pattern: asyncio.gather with return_exceptions=True. No time.sleep() in async contexts. Call mx.eval([]) before clear_cache(). Storage: async_ingest_findings_batch() for DuckDB, cursor.putmulti() for LMDB bulk ops. RotatingBloomFilter for deduplication.
 
-**Resource Governor**
-- UMA-based memory management
-- Adaptive scheduler with cooldown/retry logic
-- Per-mode resource limits (discover, feed, hunt, trace)
-
-**Sprint Lifecycle Pipeline**
-- Feature flags: `f221_abort_on_windup` guard, `mlx_memory_pressure`
-- Exit code testing and memory leak fixes
-
-## Related Topics
-- `data/duckdb_store` — DuckDB persistence layer
-- `memory/resource_governor` — UMA memory management
-- `facts/project/technology_stack` — Python, Rust, PyO3, Maturin, DuckDB
-- `testing/` — Exit codes, memory leaks, test infrastructure
+## Key Relationships
+Tech stack enables all architectural decisions. Hashing facade depends on xxhash-rust for performance. Project conventions in hledac_universal_claude_md validated by configuration_constants.

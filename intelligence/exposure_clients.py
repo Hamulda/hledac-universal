@@ -20,8 +20,6 @@ Mixed model NENÍ design flaw — je to správné rozdělení:
   - Injected-session klienti: lightweight, sdílená session z pivot dispatch
 """
 
-
-
 import asyncio
 import atexit
 import json
@@ -33,7 +31,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-import aiohttp
+import httpx
 
 from hledac.universal.intelligence._http_helpers import get_intelligence_session
 from hledac.universal.paths import open_lmdb
@@ -74,6 +72,7 @@ atexit.register(_shutdown_db_executor)
 # =============================================================================
 # LMDB Cache Helpers
 # =============================================================================
+
 
 def _default_serializer(obj: Any) -> bytes:
     """Default JSON serializer pro LMDB cache."""
@@ -186,6 +185,7 @@ class ExposureCache:
 # ShodanClient
 # =============================================================================
 
+
 class ShodanClient:
     """
     Shodan API client s LMDB cache.
@@ -198,15 +198,15 @@ class ShodanClient:
 
     def __init__(
         self,
-        session: aiohttp.ClientSession | None = None,
+        session: httpx.AsyncClient | None = None,
     ) -> None:
         self._api_key = os.environ.get("SHODAN_API_KEY", "")
         self._cache = ExposureCache(prefix="shodan")
         # Optional injected session; None triggers lazy own-session fallback
-        self._injected_session: aiohttp.ClientSession | None = session
+        self._injected_session: httpx.AsyncClient | None = session
 
-    async def _get_session(self) -> aiohttp.ClientSession:
-        if self._injected_session is not None and not self._injected_session.closed:
+    async def _get_session(self) -> httpx.AsyncClient:
+        if self._injected_session is not None and not self._injected_session.is_closed:
             return self._injected_session
         return await get_intelligence_session()
 
@@ -280,6 +280,7 @@ class ShodanClient:
 # CensysClient
 # =============================================================================
 
+
 class CensysClient:
     """
     Censys API client s LMDB cache.
@@ -292,16 +293,16 @@ class CensysClient:
 
     def __init__(
         self,
-        session: aiohttp.ClientSession | None = None,
+        session: httpx.AsyncClient | None = None,
     ) -> None:
         self._api_id = os.environ.get("CENSYS_API_ID", "")
         self._api_secret = os.environ.get("CENSYS_API_SECRET", "")
         self._cache = ExposureCache(prefix="censys")
         # Optional injected session; None triggers lazy own-session fallback
-        self._injected_session: aiohttp.ClientSession | None = session
+        self._injected_session: httpx.AsyncClient | None = session
 
-    async def _get_session(self) -> aiohttp.ClientSession:
-        if self._injected_session is not None and not self._injected_session.closed:
+    async def _get_session(self) -> httpx.AsyncClient:
+        if self._injected_session is not None and not self._injected_session.is_closed:
             return self._injected_session
         return await get_intelligence_session()
 
@@ -318,6 +319,7 @@ class CensysClient:
             list of host results nebo None.
         """
         import hashlib
+
         cache_key = hashlib.md5(query.encode()).hexdigest()
 
         # Step 1: LMDB lookup
@@ -336,11 +338,11 @@ class CensysClient:
         try:
             session = await self._get_session()
             url = "https://search.censys.io/api/v1/search/ipv4"
-            auth = aiohttp.BasicAuth(self._api_id, self._api_secret)
+            auth = httpx.BasicAuth(self._api_id, self._api_secret)
             params = {"q": query}
 
             async with session.get(url, auth=auth, params=params) as resp:
-                if resp.status == 200:
+                if resp.status_code == 200:
                     data = await resp.json()
                     results = data.get("results", [])
                     # Write to cache async přes executor
@@ -387,10 +389,10 @@ class CensysClient:
         try:
             session = await self._get_session()
             url = f"https://search.censys.io/api/v1/view/ipv4/{ip}"
-            auth = aiohttp.BasicAuth(self._api_id, self._api_secret)
+            auth = httpx.BasicAuth(self._api_id, self._api_secret)
 
             async with session.get(url, auth=auth) as resp:
-                if resp.status == 200:
+                if resp.status_code == 200:
                     data = await resp.json()
                     loop = asyncio.get_running_loop()
                     await loop.run_in_executor(
@@ -429,8 +431,8 @@ class GitHubCodeSearchClient:
     """
 
     _RATE_UNAUTH = 60.0  # seconds between requests without token (60/h)
-    _RATE_AUTH = 6.0     # seconds between requests with token (10/min)
-    _CACHE_TTL = 3600    # 1 hour
+    _RATE_AUTH = 6.0  # seconds between requests with token (10/min)
+    _CACHE_TTL = 3600  # 1 hour
 
     def __init__(self, cache_dir: Path) -> None:
         self._cache_dir = Path(cache_dir)
@@ -438,9 +440,7 @@ class GitHubCodeSearchClient:
         self._rate_s = self._RATE_AUTH if self._token else self._RATE_UNAUTH
         self._last_req = 0.0
 
-    async def search_cve(
-        self, cve_id: str, session: aiohttp.ClientSession
-    ) -> list[dict]:
+    async def search_cve(self, cve_id: str, session: httpx.AsyncClient) -> list[dict]:
         """
         Search GitHub code for CVE PoC samples.
 
@@ -455,6 +455,7 @@ class GitHubCodeSearchClient:
         if zst_path.exists() and (time.time() - zst_path.stat().st_mtime < self._CACHE_TTL):
             try:
                 import compression.zstd as _zstd
+
                 return decode(_zstd.decompress(zst_path.read_bytes()))
             except (ImportError, Exception):
                 pass
@@ -479,13 +480,13 @@ class GitHubCodeSearchClient:
                 "https://api.github.com/search/code",
                 params=params,
                 headers=headers,
-                timeout=aiohttp.ClientTimeout(total=12),
+                timeout=httpx.Timeout(total=12),
             ) as r:
-                if r.status == 403:
+                if r.status_code == 403:
                     logger.warning(f"GitHub rate limit hit for {cve_id}")
                     return []
                 r.raise_for_status()
-                data = await r.json(content_type=None)
+                data = await r.json()
         except Exception as e:
             logger.warning(f"GitHubCodeSearch {cve_id}: {e}")
             return []
@@ -528,16 +529,14 @@ class MalwareBazaarClient:
     """
 
     _API_URL = "https://mb-api.abuse.ch/api/v1/"
-    _RATE_S = 2.0   # 1 request per 2 seconds
+    _RATE_S = 2.0  # 1 request per 2 seconds
     _CACHE_TTL = 3600
 
     def __init__(self, cache_dir: Path) -> None:
         self._cache_dir = Path(cache_dir)
         self._last_req = 0.0
 
-    async def query_hash(
-        self, file_hash: str, session: aiohttp.ClientSession
-    ) -> dict:
+    async def query_hash(self, file_hash: str, session: httpx.AsyncClient) -> dict:
         """
         Query MalwareBazaar for file hash intelligence.
 
@@ -551,6 +550,7 @@ class MalwareBazaarClient:
         if zst_path.exists() and (time.time() - zst_path.stat().st_mtime < self._CACHE_TTL):
             try:
                 import compression.zstd as _zstd
+
                 return decode(_zstd.decompress(zst_path.read_bytes()))
             except (ImportError, Exception):
                 pass
@@ -562,10 +562,10 @@ class MalwareBazaarClient:
             async with session.post(
                 self._API_URL,
                 json={"query": "get_info", "hash": file_hash},
-                timeout=aiohttp.ClientTimeout(total=12),
+                timeout=httpx.Timeout(total=12),
             ) as r:
                 r.raise_for_status()
-                data = await r.json(content_type=None)
+                data = await r.json()
         except Exception as e:
             logger.warning(f"MalwareBazaar {file_hash}: {e}")
             return {"query_status": "error", "data": []}
@@ -619,6 +619,7 @@ class MalwareBazaarClient:
 # GreyNoiseClient — Sprint 8UB: IP classification bez API klíče
 # =============================================================================
 
+
 class GreyNoiseClient:
     """GreyNoise Community API — IP classification bez API klíče.
     https://api.greynoise.io/v3/community/{ip}
@@ -636,7 +637,7 @@ class GreyNoiseClient:
     async def classify_ip(
         self,
         ip: str,
-        session: aiohttp.ClientSession,
+        session: httpx.AsyncClient,
     ) -> dict:
         """Vrátí {"ip", "classification", "name", "link", "noise", "riot"}"""
         import xxhash
@@ -647,6 +648,7 @@ class GreyNoiseClient:
         if zst_path.exists() and (time.time() - zst_path.stat().st_mtime < self._CACHE_TTL):
             try:
                 import compression.zstd as _zstd
+
                 return decode(_zstd.decompress(zst_path.read_bytes()))
             except (ImportError, Exception):
                 pass
@@ -657,7 +659,7 @@ class GreyNoiseClient:
         try:
             async with session.get(
                 self._API_URL.format(ip=ip),
-                timeout=aiohttp.ClientTimeout(total=8),
+                timeout=httpx.Timeout(total=8),
                 headers={"User-Agent": "Mozilla/5.0 (compatible; OSINT-Research)"},
             ) as r:
                 if r.status == 404:
@@ -666,7 +668,7 @@ class GreyNoiseClient:
                     logger.debug(f"GreyNoise rate limit: {ip}")
                     return {"ip": ip, "classification": "rate_limited"}
                 r.raise_for_status()
-                data = await r.json(content_type=None)
+                data = await r.json()
         except Exception as e:
             logger.debug(f"GreyNoise {ip}: {e}")
             return {"ip": ip, "classification": "error"}
@@ -763,9 +765,7 @@ class CVIntelligenceClient:
         # Try to infer from package patterns
         if lower.startswith("pip ") or lower.startswith("pip-"):
             return "PyPI", pkg.replace("pip ", "").replace("pip-", "")
-        if any(
-            lower.startswith(x) for x in ["npm ", "@", "node-", "jsx", "tsx"]
-        ):
+        if any(lower.startswith(x) for x in ["npm ", "@", "node-", "jsx", "tsx"]):
             return "npm", pkg
         if any(lower.startswith(x) for x in ["maven ", "org.", "com.", "io."]):
             return "Maven", pkg
@@ -776,12 +776,10 @@ class CVIntelligenceClient:
         # Default: treat as PyPI (most common for CVE scanning)
         return "PyPI", pkg
 
-    async def _get_session(self) -> aiohttp.ClientSession:
+    async def _get_session(self) -> httpx.AsyncClient:
         return await get_intelligence_session()
 
-    async def _fetch_osv_batch(
-        self, tech_stack: list[str], session: aiohttp.ClientSession
-    ) -> AsyncIterator[dict]:
+    async def _fetch_osv_batch(self, tech_stack: list[str], session: httpx.AsyncClient) -> AsyncIterator[dict]:
         """
         Fetch CVEs via OSV.dev batch API.
         Yields dicts with CVE data. Falls back to NVD on 0 results.
@@ -792,9 +790,7 @@ class CVIntelligenceClient:
         queries = []
         for pkg in tech_stack:
             eco, name = self._map_ecosystem(pkg)
-            queries.append(
-                {"package": {"name": name, "ecosystem": eco}}
-            )
+            queries.append({"package": {"name": name, "ecosystem": eco}})
 
         cache_key = f"osv_batch:{','.join(sorted(tech_stack))}"
         cached = self._cache.get(cache_key)
@@ -808,14 +804,12 @@ class CVIntelligenceClient:
             async with session.post(
                 self._OSV_BATCH_URL,
                 json={"queries": queries},
-                timeout=aiohttp.ClientTimeout(total=60),
+                timeout=httpx.Timeout(total=60),
             ) as resp:
                 if resp.status != 200:
                     logger.warning(f"OSV batch API error: {resp.status}")
                     # Fallback to NVD
-                    async for cve in self._fetch_nvd_fallback(
-                        tech_stack, session
-                    ):
+                    async for cve in self._fetch_nvd_fallback(tech_stack, session):
                         yield cve
                     return
 
@@ -861,9 +855,7 @@ class CVIntelligenceClient:
             async for cve in self._fetch_nvd_fallback(tech_stack, session):
                 yield cve
 
-    async def _fetch_nvd_fallback(
-        self, tech_stack: list[str], session: aiohttp.ClientSession
-    ) -> AsyncIterator[dict]:
+    async def _fetch_nvd_fallback(self, tech_stack: list[str], session: httpx.AsyncClient) -> AsyncIterator[dict]:
         """
         NVD API 2.0 fallback - rate limited with semaphore + sliding window.
         """
@@ -873,9 +865,7 @@ class CVIntelligenceClient:
             async with self._nvd_semaphore:
                 elapsed = time.time() - self._nvd_last_req
                 if elapsed < self._NVD_WINDOW_S / self._NVD_SEMAPHORE_LIMIT:
-                    await asyncio.sleep(
-                        self._NVD_WINDOW_S / self._NVD_SEMAPHORE_LIMIT - elapsed
-                    )
+                    await asyncio.sleep(self._NVD_WINDOW_S / self._NVD_SEMAPHORE_LIMIT - elapsed)
                 self._nvd_last_req = time.time()
 
             cache_key = f"nvd:{tech}"
@@ -889,7 +879,7 @@ class CVIntelligenceClient:
                 async with session.get(
                     self._NVD_API_URL,
                     params={"keywordSearch": tech, "resultsPerPage": 20},
-                    timeout=aiohttp.ClientTimeout(total=30),
+                    timeout=httpx.Timeout(total=30),
                 ) as resp:
                     if resp.status != 200:
                         logger.warning(f"NVD API error for {tech}: {resp.status}")
@@ -913,9 +903,7 @@ class CVIntelligenceClient:
                 logger.warning(f"NVD fetch error for {tech}: {e}")
                 continue
 
-    async def _enrich_epss(
-        self, cve_id: str, session: aiohttp.ClientSession
-    ) -> dict[str, float] | None:
+    async def _enrich_epss(self, cve_id: str, session: httpx.AsyncClient) -> dict[str, float] | None:
         """
         Fetch EPSS score for a CVE.
         Returns {"epss_score": float, "percentile": float} or None.
@@ -926,7 +914,7 @@ class CVIntelligenceClient:
         try:
             async with session.get(
                 f"{self._EPSS_URL}?cve={cve_id}",
-                timeout=aiohttp.ClientTimeout(total=10),
+                timeout=httpx.Timeout(total=10),
             ) as resp:
                 if resp.status != 200:
                     return None
@@ -983,9 +971,7 @@ class CVIntelligenceClient:
         metrics = cve.get("metrics", {})
 
         # Extract CVSS v3 score
-        cvss_v3 = metrics.get("cvssMetricV31", []) or metrics.get(
-            "cvssMetricV30", []
-        ) or []
+        cvss_v3 = metrics.get("cvssMetricV31", []) or metrics.get("cvssMetricV30", []) or []
         severity = "UNKNOWN"
         if cvss_v3:
             severity = cvss_v3[0].get("cvssData", {}).get("baseSeverity", "UNKNOWN")
@@ -997,9 +983,7 @@ class CVIntelligenceClient:
             "severity": severity,
             "published": cve.get("published", ""),
             "modified": cve.get("lastModified", ""),
-            "references": [
-                r.get("url", "") for r in cve.get("references", []) if r.get("url")
-            ],
+            "references": [r.get("url", "") for r in cve.get("references", []) if r.get("url")],
             "affected": [],
         }
 
@@ -1023,9 +1007,7 @@ class CVIntelligenceClient:
             for a in affected
         ]
 
-    async def fetch_cve_intelligence(
-        self, tech_stack: list[str]
-    ) -> AsyncIterator[dict]:
+    async def fetch_cve_intelligence(self, tech_stack: list[str]) -> AsyncIterator[dict]:
         """
         Fetch CVE intelligence for a tech stack.
 
@@ -1078,4 +1060,3 @@ class CVIntelligenceClient:
 
     async def close(self) -> None:
         self._cache.close()
-

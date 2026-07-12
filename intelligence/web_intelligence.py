@@ -21,9 +21,6 @@ import msgspec
 from enum import Enum, StrEnum
 from typing import Any
 
-import aiohttp
-
-from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.utils.uuid7 import new_runtime_id
 from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_fire_and_forget
 
@@ -1180,7 +1177,7 @@ class UnifiedWebIntelligence:
 
                 encoded_q = urllib.parse.quote_plus(f"{entity_name} engineer")
                 url = f"https://www.indeed.com/rss?q={encoded_q}"
-                session = await async_get_aiohttp_session()
+                session = await httpx.AsyncClient()
                 async with asyncio.timeout(15.0):
                     async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
                         if resp.status != 200:
@@ -1222,7 +1219,7 @@ class UnifiedWebIntelligence:
         async def fetch_hn_jobs() -> None:
             """Fetch from Hacker News 'Who is Hiring' monthly threads via HN API."""
             try:
-                session = await async_get_aiohttp_session()
+                session = await httpx.AsyncClient()
                 # Get topstories to find monthly "Who is Hiring" threads
                 async with asyncio.timeout(15.0):
                     async with session.get(
@@ -1273,7 +1270,7 @@ class UnifiedWebIntelligence:
 
                 encoded_tag = urllib.parse.quote_plus(entity_name)
                 url = f"https://remoteok.io/api?tag={encoded_tag}"
-                session = await async_get_aiohttp_session()
+                session = await httpx.AsyncClient()
                 async with asyncio.timeout(15.0):
                     async with session.get(
                         url,

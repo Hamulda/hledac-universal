@@ -1,0 +1,4 @@
+# file: /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/core/mlx_embeddings.py
+# hypothesis_version: 6.155.7
+
+[1e-12, 1e-09, 0.5, 1.0, 168, 256, 384, 512, 768, 3600, '\nSimilarity matrix:', '-', '.hledac', '/', 'MLXEmbeddingManager', '_', '__main__', 'cache', 'classification', 'clear_cache', 'clustering', 'dim', 'embedding_dim', 'is_loaded', 'loaded_at', 'max_length', 'metal', 'mlx', 'mlx_available', 'mlx_embed', 'model', 'model_max_length', 'model_name', 'model_path', 'mrl_dim', 'no', 'not_initialized', 'padding_side', 'provider', 'right', 'search_document', 'search_query', 'success', 'truncation', 'unknown', 'version', 'vocab_size', 'yes']

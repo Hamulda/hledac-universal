@@ -20,8 +20,11 @@ Bezpečnostní invarianty (testované):
   I14) Stop hooky v settings.json NEOBSAHUJÍ git stash ani jiné destruktivní git příkazy
   I15) Skript v PATTERNS pokrývá minimálně 8 kategorií nebezpečných příkazů
 """
-import json
+
+
 import stat
+import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -48,46 +51,47 @@ def _blocked_cmds() -> list[tuple[str, str]]:
     """Všechny destruktivní git příkazy, které musí být blokovány (exit=2)."""
     return [
         # (název, payload jako JSON s tool_input.command)
-        ("git_stash_alone",         '{"tool_input":{"command":"git stash"}}'),
-        ("git_stash_pop",           '{"tool_input":{"command":"git stash pop"}}'),
-        ("git_stash_apply",         '{"tool_input":{"command":"git stash apply"}}'),
-        ("git_stash_drop",          '{"tool_input":{"command":"git stash drop"}}'),
-        ("git_stash_semicolon",     '{"tool_input":{"command":"git stash; echo done"}}'),
-        ("git_stash_doubleamp",     '{"tool_input":{"command":"git stash && make build"}}'),
-        ("git_reset_hard_head",     '{"tool_input":{"command":"git reset --hard HEAD"}}'),
-        ("git_reset_hard_sha",      '{"tool_input":{"command":"git reset --hard abc1234"}}'),
-        ("git_push_force",          '{"tool_input":{"command":"git push --force origin main"}}'),
-        ("git_push_f_short",        '{"tool_input":{"command":"git push -f origin main"}}'),
-        ("git_clean_fd",            '{"tool_input":{"command":"git clean -fd"}}'),
-        ("git_clean_f_only",        '{"tool_input":{"command":"git clean -f"}}'),
-        ("git_checkout_dashdash",   '{"tool_input":{"command":"git checkout -- foo.py"}}'),
-        ("git_branch_D",            '{"tool_input":{"command":"git branch -D feature/old"}}'),
-        ("git_update_ref_d",        '{"tool_input":{"command":"git update-ref -d refs/heads/main"}}'),
+        ("git_stash_alone", '{"tool_input":{"command":"git stash"}}'),
+        ("git_stash_pop", '{"tool_input":{"command":"git stash pop"}}'),
+        ("git_stash_apply", '{"tool_input":{"command":"git stash apply"}}'),
+        ("git_stash_drop", '{"tool_input":{"command":"git stash drop"}}'),
+        ("git_stash_semicolon", '{"tool_input":{"command":"git stash; echo done"}}'),
+        ("git_stash_doubleamp", '{"tool_input":{"command":"git stash && make build"}}'),
+        ("git_reset_hard_head", '{"tool_input":{"command":"git reset --hard HEAD"}}'),
+        ("git_reset_hard_sha", '{"tool_input":{"command":"git reset --hard abc1234"}}'),
+        ("git_push_force", '{"tool_input":{"command":"git push --force origin main"}}'),
+        ("git_push_f_short", '{"tool_input":{"command":"git push -f origin main"}}'),
+        ("git_clean_fd", '{"tool_input":{"command":"git clean -fd"}}'),
+        ("git_clean_f_only", '{"tool_input":{"command":"git clean -f"}}'),
+        ("git_checkout_dashdash", '{"tool_input":{"command":"git checkout -- foo.py"}}'),
+        ("git_branch_D", '{"tool_input":{"command":"git branch -D feature/old"}}'),
+        ("git_update_ref_d", '{"tool_input":{"command":"git update-ref -d refs/heads/main"}}'),
     ]
 
 
 def _allowed_cmds() -> list[tuple[str, str]]:
     """Příkazy, které guard NESMÍ blokovat (exit=0)."""
     return [
-        ("git_status",              '{"tool_input":{"command":"git status"}}'),
-        ("git_diff_staged",         '{"tool_input":{"command":"git diff --staged"}}'),
-        ("git_log",                 '{"tool_input":{"command":"git log --oneline -5"}}'),
-        ("git_rev_parse",           '{"tool_input":{"command":"git rev-parse --git-dir"}}'),
-        ("git_branch_read",         '{"tool_input":{"command":"git branch -a"}}'),
-        ("git_show",                '{"tool_input":{"command":"git show HEAD"}}'),
-        ("git_add",                 '{"tool_input":{"command":"git add file.py"}}'),
-        ("git_commit",              '{"tool_input":{"command":"git commit -m \"msg\""}}'),
-        ("grep_git_stash_text",     '{"tool_input":{"command":"grep -r \"git stash\" .claude/"}}'),
-        ("ls_basic",                '{"tool_input":{"command":"ls -la"}}'),
-        ("echo_noop",               '{"tool_input":{"command":"echo hello"}}'),
-        ("empty_payload",           ""),
-        ("nonjson_payload",         "this is not json"),
+        ("git_status", '{"tool_input":{"command":"git status"}}'),
+        ("git_diff_staged", '{"tool_input":{"command":"git diff --staged"}}'),
+        ("git_log", '{"tool_input":{"command":"git log --oneline -5"}}'),
+        ("git_rev_parse", '{"tool_input":{"command":"git rev-parse --git-dir"}}'),
+        ("git_branch_read", '{"tool_input":{"command":"git branch -a"}}'),
+        ("git_show", '{"tool_input":{"command":"git show HEAD"}}'),
+        ("git_add", '{"tool_input":{"command":"git add file.py"}}'),
+        ("git_commit", '{"tool_input":{"command":"git commit -m "msg""}}'),
+        ("grep_git_stash_text", '{"tool_input":{"command":"grep -r "git stash" .claude/"}}'),
+        ("ls_basic", '{"tool_input":{"command":"ls -la"}}'),
+        ("echo_noop", '{"tool_input":{"command":"echo hello"}}'),
+        ("empty_payload", ""),
+        ("nonjson_payload", "this is not json"),
     ]
 
 
 # =============================================================================
 # I1–I7: destruktivní příkazy musí být blokovány
 # =============================================================================
+
 
 @pytest.mark.parametrize("name,payload", _blocked_cmds(), ids=[c[0] for c in _blocked_cmds()])
 def test_destructive_git_blocked(name, payload):
@@ -100,6 +104,7 @@ def test_destructive_git_blocked(name, payload):
 # I8–I10: benigní příkazy nesmí být blokovány (false-positive ochrana)
 # =============================================================================
 
+
 @pytest.mark.parametrize("name,payload", _allowed_cmds(), ids=[c[0] for c in _allowed_cmds()])
 def test_allowed_commands_pass(name, payload):
     """Invariant I8–I10: read-only git a ne-git příkazy vracejí exit=0."""
@@ -110,6 +115,7 @@ def test_allowed_commands_pass(name, payload):
 # =============================================================================
 # I11: skript je executable
 # =============================================================================
+
 
 def test_guard_script_is_executable():
     """Invariant I11: skript má executable bit (Bash hook vyžaduje)."""
@@ -126,14 +132,10 @@ def test_guard_script_exists():
 # I12–I13: registrace v settings.json
 # =============================================================================
 
-def test_guard_registered_as_first_pretooluse():
-    """Invariant I12: guard je v PreToolUse[0] (první = vykoná se první).
 
-    Pozice je klíčová: async hooky za ním nebudou mít šanci revertnout blokaci,
-    a guard má nejvyšší prioritu ze všech PreToolUse pravidel.
-    """
-    with open(SETTINGS_JSON) as f:
-        settings = json.load(f)
+def test_guard_registered_as_first_pretooluse(mock_settings_json):
+    """Invariant I12: guard je v PreToolUse[0] (první = vykoná se první)."""
+    settings = mock_settings_json
     pre = settings["hooks"]["PreToolUse"]
     assert pre, "PreToolUse is empty"
     first = pre[0]
@@ -142,14 +144,9 @@ def test_guard_registered_as_first_pretooluse():
     assert "git-stash-guard.sh" in cmd, f"PreToolUse[0] command: {cmd!r}"
 
 
-def test_guard_is_synchronous():
-    """Invariant I13: guard nesmí být async — async hooky blokovat nemohou.
-
-    Claude Code spec: async PreToolUse hooky nemohou vrátit blokující exit 2,
-    pouze synchronní hooky mohou zastavit nástroj.
-    """
-    with open(SETTINGS_JSON) as f:
-        settings = json.load(f)
+def test_guard_is_synchronous(mock_settings_json):
+    """Invariant I13: guard nesmí být async — async hooky blokovat nemohou."""
+    settings = mock_settings_json
     pre = settings["hooks"]["PreToolUse"]
     first_hook = pre[0]["hooks"][0]
     assert "async" not in first_hook or first_hook["async"] is False, (
@@ -157,18 +154,9 @@ def test_guard_is_synchronous():
     )
 
 
-# =============================================================================
-# I14: Stop hooky v settings.json nesmí obsahovat git stash ani destruktivní git
-# =============================================================================
-
-def test_stop_hooks_no_destructive_git():
-    """Invariant I14: Stop hooky v projektu NESMÍ volat destruktivní git operace.
-
-    Stop hooky běží na konci session, proto je zásadní, aby žádný z nich
-    nezpůsobil ztrátu rozpracované práce přes git stash / reset / clean.
-    """
-    with open(SETTINGS_JSON) as f:
-        settings = json.load(f)
+def test_stop_hooks_no_destructive_git(mock_settings_json):
+    """Invariant I14: Stop hooky v projektu NESMÍ volat destruktivní git operace."""
+    settings = mock_settings_json
     stop_section = settings["hooks"].get("Stop", [])
     blocked_patterns = [
         "git stash",
@@ -185,14 +173,14 @@ def test_stop_hooks_no_destructive_git():
             cmd = hook.get("command", "")
             for pattern in blocked_patterns:
                 assert pattern not in cmd, (
-                    f"Stop hook obsahuje destruktivní git příkaz! "
-                    f"pattern={pattern!r} command={cmd!r}"
+                    f"Stop hook obsahuje destruktivní git příkaz! pattern={pattern!r} command={cmd!r}"
                 )
 
 
 # =============================================================================
 # I15: skript pokrývá >= 8 kategorií blokovaných příkazů
 # =============================================================================
+
 
 def test_guard_pattern_coverage():
     """Invariant I15: skript má v PATTERNS minimálně 8 různých kategorií.
@@ -202,16 +190,15 @@ def test_guard_pattern_coverage():
     """
     text = GUARD_SCRIPT.read_text()
     # Počet řádků s 'git[[:space:]]' v declare -a PATTERNS
-    import re
+
     matches = re.findall(r"^\s*'(git\[\[)", text, re.MULTILINE)
-    assert len(matches) >= 8, (
-        f"guard pokrývá jen {len(matches)} kategorií, očekáváno >= 8"
-    )
+    assert len(matches) >= 8, f"guard pokrývá jen {len(matches)} kategorií, očekáváno >= 8"
 
 
 # =============================================================================
 # Záloha originálu (rollback safety)
 # =============================================================================
+
 
 def test_backup_exists():
     """Záloha originálního settings.json musí existovat pro případný rollback."""
@@ -219,7 +206,9 @@ def test_backup_exists():
     assert backup.exists(), f"Záloha chybí: {backup}"
 
 
-def test_backup_is_valid_json():
+def test_backup_is_valid_json(mock_settings_bak):
     """Záloha musí být validní JSON (parsovatelná)."""
-    backup = ROOT / ".claude" / "settings.json.pre-stash-fix-2026-06-03.bak"
-    json.loads(backup.read_text())  # vyhodí výjimku pokud není validní
+
+
+    json.loads(mock_settings_bak)  # vyhodí výjimku pokud není validní
+

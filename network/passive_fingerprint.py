@@ -21,21 +21,19 @@ GHOST_INVARIANTS:
   - asyncio.gather(..., return_exceptions=True) + _check_gathered()
   - asyncio.sleep() only
   - circuit_breaker.domain_breaker_check() before every external call
-  - async_get_aiohttp_session() for all HTTP
+  - async_get_httpx_session() for all HTTP
   - Bounded deques, 50MB response caps
   - Fail-soft: source error returns empty dict, never raises
 """
-
-
 
 import asyncio
 import logging
 import time
 from typing import Any
 
-import aiohttp
+import httpx
 
-from hledac.universal.network.session_runtime import async_get_aiohttp_session
+from hledac.universal.network.session_runtime import async_get_httpx_session
 from hledac.universal.utils.async_helpers import safe_gather_ok
 
 logger = logging.getLogger(__name__)
@@ -45,10 +43,13 @@ MAX_FP_CACHE_SIZE: int = 500
 FP_CACHE_TTL_S: int = 300
 FP_SOURCE_TIMEOUT_S: float = 8.0
 
+
 # ── Fingerprint Cache ─────────────────────────────────────────────────────────
 class _FPCache:
     """TTL-cached fingerprint lookups, bounded by MAX_FP_CACHE_SIZE."""
+
     __slots__ = ("_cache", "_timestamps")
+
     def __init__(self):
         self._cache: dict[str, dict] = {}
         self._timestamps: dict[str, float] = {}
@@ -74,18 +75,22 @@ class _FPCache:
         self._cache[k] = data
         self._timestamps[k] = time.time()
 
+
 _fp_cache = _FPCache()
 
 # ── Per-source rate limiter ───────────────────────────────────────────────────
 _source_rate_limiters: dict[str, asyncio.Semaphore] = {}
 _rate_limit_lock = asyncio.Lock()
 
+
 async def _get_rate_limiter(source: str) -> asyncio.Semaphore:
     async with _rate_limit_lock:
         if source not in _source_rate_limiters:
             from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+
             _source_rate_limiters[source] = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
         return _source_rate_limiters[source]
+
 
 # ── Main Class ─────────────────────────────────────────────────────────────────
 class PassiveFingerprint:
@@ -98,11 +103,11 @@ class PassiveFingerprint:
     """
 
     def __init__(self):
-        self._session: aiohttp.ClientSession | None = None
+        self._session: httpx.AsyncClient | None = None
 
-    async def _ensure_session(self) -> aiohttp.ClientSession:
-        if self._session is None or self._session.closed:
-            self._session = await async_get_aiohttp_session()
+    async def _ensure_session(self) -> httpx.AsyncClient:
+        if self._session is None or self._session.is_closed:
+            self._session = await async_get_httpx_session()
         return self._session
 
     async def _lookup(
@@ -113,7 +118,11 @@ class PassiveFingerprint:
     ) -> dict:
         """Generic lookup with cache, rate limit, circuit breaker."""
         # Check cache
-        cache_key = url.split("/")[-1] if params is None else f"{url}/{params.get('query', params.get('ip', params.get('domain', '')))}"  # noqa: E501
+        cache_key = (
+            url.split("/")[-1]
+            if params is None
+            else f"{url}/{params.get('query', params.get('ip', params.get('domain', '')))}"
+        )  # noqa: E501
         cached = _fp_cache.get(source, cache_key)
         if cached is not None:
             return cached
@@ -124,25 +133,26 @@ class PassiveFingerprint:
             # Circuit breaker
             try:
                 from hledac.universal.transport.circuit_breaker import get_breaker
+
                 domain = url.split("/")[2] if "//" in url else url
-                if not get_breaker(domain).check_circuit().allowed: raise RuntimeError(f"circuit_open: {domain}")  # noqa: E701
+                if not get_breaker(domain).check_circuit().allowed:
+                    raise RuntimeError(f"circuit_open: {domain}")  # noqa: E701
             except Exception as e:
                 logger.debug(f"[FP] Circuit breaker blocked {source}: {e}")
                 return {}
 
             session = await self._ensure_session()
-            import aiohttp
             try:
-                async with session.get(
+                resp = await session.get(
                     url,
                     params=params or {},
-                    timeout=aiohttp.ClientTimeout(total=FP_SOURCE_TIMEOUT_S),
-                ) as resp:
-                    if resp.status == 404:
-                        return {}
-                    if resp.status != 200:
-                        return {}
-                    data = await resp.json()
+                    timeout=httpx.Timeout(total=FP_SOURCE_TIMEOUT_S),
+                )
+                if resp.status_code == 404:
+                    return {}
+                if resp.status_code != 200:
+                    return {}
+                data = resp.json()
             except Exception as e:
                 logger.debug(f"[FP] {source} lookup failed: {e}")
                 return {}
@@ -179,6 +189,7 @@ class PassiveFingerprint:
     async def securitytrails(self, value: str, vtype: str = "domain") -> dict:
         """SecurityTrails — requires API key, fail-soft if not configured."""
         import os
+
         api_key = os.environ.get("SECURITYTRAILS_API_KEY", "")
         if not api_key:
             return {}
@@ -217,8 +228,8 @@ class PassiveFingerprint:
         return merged
 
     async def close(self) -> None:
-        if self._session and not self._session.closed:
-            await self._session.close()
+        if self._session and not self._session.is_closed:
+            await self._session.aclose()
 
 
 # ── PassiveFingerprintAdapter for sidecar bus ─────────────────────────────────
@@ -227,6 +238,7 @@ class PassiveFingerprintAdapter:
     Passive fingerprint adapter for sidecar runners.
     Wraps PassiveFingerprint, returns CanonicalFinding-compatible dicts.
     """
+
     def __init__(self):
         self._fp = PassiveFingerprint()
 
@@ -247,39 +259,45 @@ class PassiveFingerprintAdapter:
         if "shodan_internetdb" in sources:
             shodan = sources["shodan_internetdb"]
             for tag in shodan.get("tags", [])[:20]:
-                findings.append({
-                    "source_type": "passive_fingerprint",
-                    "ioc_type": "ip",
-                    "ioc_value": target,
-                    "target": target,
-                    "confidence": 0.7,
-                    "ts": ts,
-                    "payload_text": f"shodan:tag:{tag}",
-                })
+                findings.append(
+                    {
+                        "source_type": "passive_fingerprint",
+                        "ioc_type": "ip",
+                        "ioc_value": target,
+                        "target": target,
+                        "confidence": 0.7,
+                        "ts": ts,
+                        "payload_text": f"shodan:tag:{tag}",
+                    }
+                )
             for port in shodan.get("ports", [])[:30]:
-                findings.append({
-                    "source_type": "passive_fingerprint",
-                    "ioc_type": "ip",
-                    "ioc_value": target,
-                    "target": target,
-                    "confidence": 0.7,
-                    "ts": ts,
-                    "payload_text": f"shodan:port:{port}",
-                })
+                findings.append(
+                    {
+                        "source_type": "passive_fingerprint",
+                        "ioc_type": "ip",
+                        "ioc_value": target,
+                        "target": target,
+                        "confidence": 0.7,
+                        "ts": ts,
+                        "payload_text": f"shodan:port:{port}",
+                    }
+                )
 
         if "greynoise" in sources:
             gn = sources["greynoise"]
             classification = gn.get("classification", "")
             if classification:
-                findings.append({
-                    "source_type": "passive_fingerprint",
-                    "ioc_type": "ip",
-                    "ioc_value": target,
-                    "target": target,
-                    "confidence": 0.8,
-                    "ts": ts,
-                    "payload_text": f"greynoise:classification:{classification}",
-                })
+                findings.append(
+                    {
+                        "source_type": "passive_fingerprint",
+                        "ioc_type": "ip",
+                        "ioc_value": target,
+                        "target": target,
+                        "confidence": 0.8,
+                        "ts": ts,
+                        "payload_text": f"greynoise:classification:{classification}",
+                    }
+                )
 
         return findings[:100]  # bounded
 

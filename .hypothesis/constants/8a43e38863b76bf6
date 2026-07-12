@@ -1,0 +1,4 @@
+# file: /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/transport/__init__.py
+# hypothesis_version: 6.155.7
+
+['GopherTransport', 'POLICY_CLEARNET_H2', 'POLICY_I2P', 'POLICY_TOR', 'RouteDecision', 'Transport', 'TransportAdapter', 'TransportConfig', 'TransportContext', 'TransportKind', 'TransportPolicy', 'TransportResolver', 'TransportResult', 'close_all_transports', 'fetch_http3_aioquic', 'fetch_via_unified', 'get_gopher_transport', 'get_route_decision', 'get_transport_client', 'http3_lane_enabled', 'is_i2p_available', 'record_h3_support', 'unified_transport']

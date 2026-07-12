@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlparse
 
-import aiohttp
+import httpx
 
 from hledac.universal.transport.session_pool import session_pool
 
@@ -66,7 +66,7 @@ logger = logging.getLogger(__name__)
 MAX_PAYLOAD_BYTES = 5 * 1024 * 1024  # 5 MiB
 
 
-async def _read_text_with_cap(response: aiohttp.ClientResponse, cap: int = MAX_PAYLOAD_BYTES) -> str:
+async def _read_text_with_cap(response: httpx.Response, cap: int = MAX_PAYLOAD_BYTES) -> str:
     """Read response text with payload cap for M1 RAM safety."""
     # Read up to cap bytes; if content exceeds cap, truncate/abort
     try:
@@ -266,7 +266,7 @@ class WaybackMachineClient:
         self.session = None
 
     async def __aenter__(self):
-        self.session = await session_pool.aiohttp()
+        self.session = await httpx.AsyncClient()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -283,7 +283,7 @@ class WaybackMachineClient:
     ) -> list[SnapshotInfo]:
         """Get list of snapshots for a URL."""
         if not self.session:
-            self.session = await session_pool.aiohttp()
+            self.session = await httpx.AsyncClient()
 
         params = {
             "url": url,
@@ -302,7 +302,7 @@ class WaybackMachineClient:
             async with self.session.get(
                 self.CDX_API,
                 params=params,
-                timeout=aiohttp.ClientTimeout(total=self.timeout)
+                timeout=httpx.Timeout(total=self.timeout)
             ) as response:
                 if response.status != 200:
                     logger.warning(f"Wayback CDX API returned {response.status}")
@@ -337,7 +337,7 @@ class WaybackMachineClient:
     ) -> ArchiveResult | None:
         """Get content of a specific snapshot."""
         if not self.session:
-            self.session = await session_pool.aiohttp()
+            self.session = await httpx.AsyncClient()
 
         try:
             if timestamp:
@@ -348,8 +348,8 @@ class WaybackMachineClient:
 
             async with self.session.get(
                 archive_url,
-                timeout=aiohttp.ClientTimeout(total=self.timeout),
-                allow_redirects=True
+                timeout=httpx.Timeout(total=self.timeout),
+                follow_redirects=True
             ) as response:
                 if response.status == 200:
                     content = await _read_text_with_cap(response)
@@ -389,7 +389,7 @@ class ArchiveTodayClient:
         self.session = None
 
     async def __aenter__(self):
-        self.session = await session_pool.aiohttp()
+        self.session = await httpx.AsyncClient()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -400,14 +400,14 @@ class ArchiveTodayClient:
     async def search(self, url: str) -> list[ArchiveResult]:
         """Search for archived versions on Archive.today."""
         if not self.session:
-            self.session = await session_pool.aiohttp()
+            self.session = await httpx.AsyncClient()
 
         try:
             search_url = f"{self.BASE_URL}/search/?q={quote(url)}"
 
             async with self.session.get(
                 search_url,
-                timeout=aiohttp.ClientTimeout(total=self.timeout)
+                timeout=httpx.Timeout(total=self.timeout)
             ) as response:
                 if response.status == 200:
                     html = await response.text()
@@ -453,7 +453,7 @@ class IPFSClient:
         self.session = None
 
     async def __aenter__(self):
-        self.session = await session_pool.aiohttp()
+        self.session = await httpx.AsyncClient()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -464,7 +464,7 @@ class IPFSClient:
     async def fetch_content(self, cid: str) -> ArchiveResult | None:
         """Fetch content from IPFS by CID."""
         if not self.session:
-            self.session = await session_pool.aiohttp()
+            self.session = await httpx.AsyncClient()
 
         for gateway in self.GATEWAYS:
             try:
@@ -472,7 +472,7 @@ class IPFSClient:
 
                 async with self.session.get(
                     url,
-                    timeout=aiohttp.ClientTimeout(total=self.timeout)
+                    timeout=httpx.Timeout(total=self.timeout)
                 ) as response:
                     if response.status == 200:
                         content = await _read_text_with_cap(response)
@@ -508,7 +508,7 @@ class GitHubHistoricalClient:
         if self.token:
             headers["Authorization"] = f"token {self.token}"
 
-        self.session = await session_pool.aiohttp()
+        self.session = await httpx.AsyncClient()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -533,7 +533,7 @@ class GitHubHistoricalClient:
             async with self.session.get(
                 url,
                 params=params,
-                timeout=aiohttp.ClientTimeout(total=self.timeout)
+                timeout=httpx.Timeout(total=self.timeout)
             ) as response:
                 if response.status == 200:
                     commits = await response.json()
@@ -764,7 +764,7 @@ class ArchiveResurrector:
                     logger.warning(f"Security components not available: {e}")
 
             # Create HTTP session
-            self._session = await session_pool.aiohttp()
+            self._session = await httpx.AsyncClient()
 
             logger.info("✅ ArchiveResurrector initialized")
             return True
@@ -1000,7 +1000,7 @@ class ArchiveResurrector:
             try:
                 cache_full_url = f"{cache_url}{quote(url)}"
 
-                async with self._session.head(cache_full_url, allow_redirects=True) as resp:
+                async with self._session.head(cache_full_url, follow_redirects=True) as resp:
                     if resp.status == 200:
                         snapshot = Snapshot(
                             snapshot_id=hashlib.sha256(
@@ -1394,10 +1394,10 @@ class WaybackCDX:
     def __init__(self, cache_dir: str | Path | None = None) -> None:
         self._cache_dir = Path(cache_dir) if cache_dir else Path("/tmp/wayback_cache")
         self._last_req = 0.0
-        self._session: aiohttp.ClientSession | None = None
+        self._session: httpx.AsyncClient | None = None
 
     async def __aenter__(self) -> WaybackCDX:
-        self._session = await session_pool.aiohttp()
+        self._session = await httpx.AsyncClient()
         return self
 
     async def __aexit__(self, *_) -> None:
@@ -1444,7 +1444,7 @@ class WaybackCDX:
         try:
             async with self._session.get(
                 self._CDX_URL, params=params,
-                timeout=aiohttp.ClientTimeout(total=15),
+                timeout=httpx.Timeout(total=15),
             ) as r:
                 if r.status == 429:
                     logger.warning(f"Wayback CDX rate limit: {url_or_domain}")
@@ -1483,7 +1483,7 @@ class WaybackCDX:
         try:
             async with self._session.get(
                 wayback_url,
-                timeout=aiohttp.ClientTimeout(total=20),
+                timeout=httpx.Timeout(total=20),
                 headers={"Accept": "text/html"},
             ) as r:
                 if r.status != 200:
@@ -1554,9 +1554,9 @@ async def query_wayback(url: str, limit: int = 10) -> list[WaybackSnapshot]:
             "fl": "timestamp,original,statuscode,mimetype,length,digest",
             "limit": limit,
         }
-        _sess = await session_pool.aiohttp()
+        _sess = await httpx.AsyncClient()
         async with _sess as sess:
-            async with sess.get(WAYBACK_CDX_API, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            async with sess.get(WAYBACK_CDX_API, params=params, timeout=httpx.Timeout(total=30)) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     for rec in data:
@@ -1604,9 +1604,9 @@ async def query_common_crawl(domain: str, limit: int = 10) -> list[CommonCrawlSn
 
     results: list[CommonCrawlSnapshot] = []
     try:
-        _sess = await session_pool.aiohttp()
+        _sess = await httpx.AsyncClient()
         async with _sess as session:
-            async with session.get(CC_INDEX_API, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            async with session.get(CC_INDEX_API, timeout=httpx.Timeout(total=15)) as resp:
                 if resp.status == 200:
                     col_info = await resp.json()
                     if not col_info:
@@ -1622,7 +1622,7 @@ async def query_common_crawl(domain: str, limit: int = 10) -> list[CommonCrawlSn
                     "limit": limit,
                     "fl": "url,timestamp,status,length,offset",
                 }
-                async with session.get(cdo, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                async with session.get(cdo, params=params, timeout=httpx.Timeout(total=30)) as resp:
                     if resp.status == 200:
                         text = await resp.text()
                         for line in text.strip().split("\n"):
@@ -1683,7 +1683,7 @@ class GitHubDorkingClient:
     async def search(
         self,
         query: str,
-        session: aiohttp.ClientSession,
+        session: httpx.AsyncClient,
         limit: int = 10,
     ) -> list[GitHubDorkResult]:
         """
@@ -1704,7 +1704,7 @@ class GitHubDorkingClient:
                 self._BASE_URL,
                 headers=headers,
                 params=params,
-                timeout=aiohttp.ClientTimeout(total=30),
+                timeout=httpx.Timeout(total=30),
             ) as resp:
                 self._last_req = time.time()
                 if resp.status == 200:
@@ -1764,7 +1764,7 @@ class PastebinMonitorClient:
 
     async def get_recent_pastes(
         self,
-        session: aiohttp.ClientSession,
+        session: httpx.AsyncClient,
         limit: int = 100,
     ) -> list[PastebinResult]:
         """Fetch recent public pastes."""
@@ -1773,7 +1773,7 @@ class PastebinMonitorClient:
         try:
             async with session.get(
                 f"{self._SCRAPE_URL}?limit={limit}",
-                timeout=aiohttp.ClientTimeout(total=15),
+                timeout=httpx.Timeout(total=15),
             ) as resp:
                 if resp.status in (403, 401, 429):
                     logger.debug(f"Pastebin scrape: HTTP {resp.status}")
@@ -1797,7 +1797,7 @@ class PastebinMonitorClient:
 
     async def filter_by_keyword(
         self,
-        session: aiohttp.ClientSession,
+        session: httpx.AsyncClient,
         keyword: str,
         limit: int = 50,
     ) -> list[PastebinResult]:

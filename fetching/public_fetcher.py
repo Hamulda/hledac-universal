@@ -738,12 +738,6 @@ async def get_httpx_session() -> httpx.AsyncClient:
     return _global_httpx_session
 
 
-# ISSUE-007: Backward-compat alias — callers migrate to get_httpx_session()
-async def get_aiohttp_session() -> httpx.AsyncClient:
-    """ISSUE-007 deprecated: Use get_httpx_session() instead."""
-    return await get_httpx_session()
-
-
 async def close_httpx_session() -> None:
     """ISSUE-007: Close the global httpx session if open. Idempotent."""
     global _global_httpx_session

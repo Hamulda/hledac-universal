@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING
 from hledac.universal.utils.async_helpers import safe_gather_ok
 
 if TYPE_CHECKING:
-    import aiohttp
+    import httpx
 
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
     from hledac.universal.network.passive_dns import PassiveDNSResolver
@@ -288,7 +288,7 @@ def _generate_bucket_candidates(entity_name: str) -> Generator[tuple[str, str, s
 
 
 async def _check_bucket_head(
-    session: aiohttp.ClientSession,
+    session: httpx.AsyncClient,
     bucket_name: str,
     provider: str,
     url_template: str,
@@ -299,12 +299,12 @@ async def _check_bucket_head(
     Returns dict with bucket info if accessible (200/403), None if unreachable.
     """
     try:
-        import aiohttp
+        import httpx
         url = url_template.format(bucket=bucket_name)
         async with session.head(
             url,
-            timeout=aiohttp.ClientTimeout(total=10.0),
-            allow_redirects=True,
+            timeout=httpx.Timeout(total=10.0),
+            follow_redirects=True,
         ) as resp:
             status = resp.status
             # 200 = open bucket (HIGH severity)
@@ -341,7 +341,7 @@ async def _detect_open_buckets_async(
         return []
 
     candidates = _generate_bucket_candidates(entity_name)
-    session = await async_get_aiohttp_session()
+    session = await httpx.AsyncClient()
     semaphore = asyncio.Semaphore(MAX_BUCKET_CHECKS_PARALLEL)
 
     async def _check_with_sem(candidate: tuple[str, str, str]) -> dict | None:

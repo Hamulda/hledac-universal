@@ -2,8 +2,6 @@
 OnionSeedManager — curated .onion seed list management + Ahmia discovery.
 """
 
-
-
 import json
 import logging
 import re
@@ -12,10 +10,8 @@ import urllib.parse
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from hledac.universal.transport.session_pool import session_pool
-
 if TYPE_CHECKING:
-    import aiohttp
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +37,7 @@ class OnionSeedManager:
     def __init__(self, seeds_path: Path | None = None) -> None:
         if seeds_path is None:
             from hledac.universal.paths import TOR_ROOT
+
             seeds_path = TOR_ROOT / "onion_seeds.json"
         self._path: Path = seeds_path
         self._seeds: set[str] = set(self.CURATED_SEEDS)
@@ -65,10 +62,7 @@ class OnionSeedManager:
         """Persistovat seeds na disk."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            self._path.write_text(json.dumps({
-                "seeds": list(self._seeds),
-                "ts": time.time()
-            }))
+            self._path.write_text(json.dumps({"seeds": list(self._seeds), "ts": time.time()}))
         except Exception as e:
             logger.warning(f"Seed save failed: {e}")
 
@@ -107,33 +101,32 @@ class OnionSeedManager:
         """
         Přidat nové onion seeds z Ahmia clearnet search.
 
-        Uses the provided aiohttp.ClientSession if given,
+        Uses the provided httpx.AsyncClient if given,
         otherwise creates a temporary one.
         B6: 15s timeout per Ahmia request.
         """
-        import aiohttp
+        import httpx
 
         ahmia_url = f"https://ahmia.fi/search/?q={urllib.parse.quote(query)}"
 
         try:
             if session is None:
-                _sess = await session_pool.aiohttp()
+                _sess = httpx.AsyncClient(timeout=httpx.Timeout(15.0))
                 async with _sess:
                     async with _sess.get(
                         ahmia_url,
-                        timeout=aiohttp.ClientTimeout(total=15),
                         headers={"User-Agent": "Hledac/1.0 OSINT research tool"},
                     ) as resp:
-                        if resp.status != 200:
+                        if resp.status_code != 200:
                             return []
                         html = await resp.text()
             else:
                 async with session.get(
                     ahmia_url,
-                    timeout=aiohttp.ClientTimeout(total=15),
+                    timeout=httpx.Timeout(15.0),
                     headers={"User-Agent": "Hledac/1.0 OSINT research tool"},
                 ) as resp:
-                    if resp.status != 200:
+                    if resp.status_code != 200:
                         return []
                     html = await resp.text()
 
@@ -165,50 +158,40 @@ class OnionSeedManager:
     async def discover_via_tor(
         self,
         query: str,
-        tor_session: aiohttp.ClientSession,
+        tor_session: httpx.AsyncClient,
     ) -> list[str]:
         """Ahmia .onion discovery přes Tor.
         Fallback na clearnet Ahmia pokud Tor nedostupný."""
-        import aiohttp
+        import httpx
 
         AHMIA_ONION = (  # noqa: N806
             "juhanurmihxlp77nkq76byazcldy2hmbbj3j3jbcrpvzmntbxnjbxqd.onion"
         )
         q_enc = urllib.parse.quote_plus(query)
 
-        async def _fetch(url: str, sess: aiohttp.ClientSession) -> str:
-            async with sess.get(
-                url, timeout=aiohttp.ClientTimeout(total=30)
-            ) as r:
+        async def _fetch(url: str, sess: httpx.AsyncClient) -> str:
+            async with sess.get(url, timeout=httpx.Timeout(30.0)) as r:
                 r.raise_for_status()
                 return await r.text()
 
         html = ""
         try:
-            html = await _fetch(
-                f"http://{AHMIA_ONION}/search/?q={q_enc}", tor_session
-            )
+            html = await _fetch(f"http://{AHMIA_ONION}/search/?q={q_enc}", tor_session)
             logger.info(f"Ahmia .onion discovery: got {len(html)} chars")
         except Exception as e:
             logger.warning(f"Ahmia .onion failed: {e} — trying clearnet fallback")
             try:
-                _sess = await session_pool.aiohttp()
+                _sess = httpx.AsyncClient(timeout=httpx.Timeout(30.0))
                 async with _sess:
-                    html = await _fetch(
-                        f"https://ahmia.fi/search/?q={q_enc}", _sess
-                    )
+                    html = await _fetch(f"https://ahmia.fi/search/?q={q_enc}", _sess)
             except Exception as e2:
                 logger.warning(f"Ahmia clearnet also failed: {e2}")
                 return []
 
         # Parse .onion V3 addresses z HTML (56 base32 chars)
-        onion_re = re.compile(
-            r"([a-z2-7]{56}\.onion)", re.IGNORECASE
-        )
+        onion_re = re.compile(r"([a-z2-7]{56}\.onion)", re.IGNORECASE)
         found = list(set(onion_re.findall(html)))
-        logger.info(
-            f"Ahmia discovery '{query}': found {len(found)} .onion addresses"
-        )
+        logger.info(f"Ahmia discovery '{query}': found {len(found)} .onion addresses")
 
         # Přidat do seed manageru a uložit
         for addr in found:

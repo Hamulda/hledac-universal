@@ -29,27 +29,21 @@ Definition:
 """
 
 import asyncio
-from hledac.universal.utils.async_helpers import safe_create_task
-
-
-import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-import msgspec
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-import aiohttp
+import httpx
 
-from hledac.universal.transport.session_pool import session_pool
-from hledac.universal.utils.async_helpers import safe_gather_shielded
 from hledac.universal.transport.circuit_breaker import (
     domain_breaker_check,
     domain_breaker_record_failure,
     domain_breaker_record_success,
 )
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_shielded
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
@@ -91,6 +85,7 @@ class CDXDiffEvent:
         change_type:   "added" | "changed" | "disappeared" | "unchanged"
         evidence_url:  Wayback Machine replay URL for this snapshot
     """
+
     url: str
     timestamp: str
     digest: str
@@ -102,11 +97,12 @@ class CDXDiffEvent:
 @dataclass
 class WaybackDiffResult:
     """Result of a WaybackDiffMiner.mine() call."""
+
     input_count: int
     change_events: list[CDXDiffEvent] = field(default_factory=list)
     stats: dict[str, int] = field(default_factory=dict)
     # F206AX telemetry
-    transport_policy: str = "native_aiohttp"
+    transport_policy: str = "native_httpx"
     circuit_breaker_used: bool = False
     injected_fetch_used: bool = False
     fallback_reason: str | None = None
@@ -122,7 +118,9 @@ class WaybackDiffResult:
     skip_reason: str | None = None
 
     def to_findings(
-        self, query: str, sprint_id: str | None = None  # sprint_id reserved for future graph linkage
+        self,
+        query: str,
+        sprint_id: str | None = None,  # sprint_id reserved for future graph linkage
     ) -> list[Any]:
         """Convert change events to CanonicalFinding list."""
         if CanonicalFinding is None:
@@ -176,11 +174,10 @@ def _extract_archive_domain(url: str = WAYBACK_CDX_API) -> str:
     """Extract netloc from a URL for circuit breaker lookup."""
     try:
         from urllib.parse import urlparse
+
         return urlparse(url).netloc
     except Exception:
         return "archive.org"
-
-
 
 
 # ── Miner ────────────────────────────────────────────────────────────────────────
@@ -210,21 +207,21 @@ class WaybackDiffMiner:
         self,
         *,
         fetch_provider: Callable[..., Awaitable[Any]] | None = None,
-        session_provider: Callable[[], Awaitable[aiohttp.ClientSession]] | None = None,
+        session_provider: Callable[[], Awaitable[httpx.AsyncClient]] | None = None,
     ) -> None:
         """
         Initialize WaybackDiffMiner.
 
         Args:
             fetch_provider: Optional async callable(url, params, timeout) -> response.
-                          If provided, used instead of native aiohttp session.get.
+                          If provided, used instead of native httpx client.get.
                           Enables test seam injection without changing OSINT logic.
-            session_provider: Optional async callable() -> aiohttp.ClientSession.
+            session_provider: Optional async callable() -> httpx.AsyncClient.
                              If provided with fetch_provider, used for session.
                              If only session_provider provided, native fetch with that session.
         """
         self._semaphore: Any | None = None
-        self._session: aiohttp.ClientSession | None = None
+        self._session: httpx.AsyncClient | None = None
         self._last_request_at = 0.0
         # F206AX: injected providers — fail-soft if unavailable
         self._fetch_provider = fetch_provider
@@ -277,9 +274,10 @@ class WaybackDiffMiner:
         if not domains_or_urls:
             elapsed = time.monotonic() - start
             return WaybackDiffResult(
-                input_count=0, change_events=[], stats=self._stats.copy(),
+                input_count=0,
+                change_events=[],
+                stats=self._stats.copy(),
                 transport_policy=self._transport_policy_label(),
-                circuit_breaker_used=True,
                 injected_fetch_used=self._fetch_provider is not None,
                 archive_domain=_extract_archive_domain(),
                 attempted=True,
@@ -298,6 +296,7 @@ class WaybackDiffMiner:
         await self._ensure_session()
         if self._semaphore is None:
             from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+
             self._semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
 
         all_events: list[CDXDiffEvent] = []
@@ -359,9 +358,7 @@ class WaybackDiffMiner:
             # Each diff task is independent — runs at full CPU speed without
             # waiting for I/O or contending for the semaphore slot.
             diff_tasks = [
-                safe_create_task(
-                    asyncio.to_thread(self._diff_snapshots, t, snaps)
-                )
+                safe_create_task(asyncio.to_thread(self._diff_snapshots, t, snaps))
                 for t, snaps in snapshots_map.items()
                 if snaps
             ]
@@ -392,7 +389,11 @@ class WaybackDiffMiner:
             # NOTE: safe_gather_shielded returns re_raised as BaseExceptionGroup
             # (not Exception), so we must catch BaseException here to avoid
             # swallowing TaskGroup exceptions that contain mixed error types.
-            error_msg = str(e) if not isinstance(e, BaseExceptionGroup) else f"BaseExceptionGroup({len(e.exceptions)} sub-exceptions): {e}"
+            error_msg = (
+                str(e)
+                if not isinstance(e, BaseExceptionGroup)
+                else f"BaseExceptionGroup({len(e.exceptions)} sub-exceptions): {e}"
+            )
             logger.error(f"WaybackDiffMiner pipeline error: {error_msg}")
             self._stats["errors"] += 1
 
@@ -438,21 +439,19 @@ class WaybackDiffMiner:
         )
 
     async def close(self) -> None:
-        """Close the aiohttp session."""
-        if self._session is not None and not self._session.closed:
-            await self._session.close()
+        """Close the httpx session."""
+        if self._session is not None and not self._session.is_closed:
+            await self._session.aclose()
             self._session = None
 
     # ── Internal ──────────────────────────────────────────────────────────────
 
     async def _ensure_session(self) -> None:
         """Lazily initialize session from provider or native."""
-        if self._session_provider is not None and (
-            self._session is None or self._session.closed
-        ):
+        if self._session_provider is not None and (self._session is None or self._session.closed):
             self._session = await self._session_provider()
         elif self._session is None or self._session.closed:
-            self._session = await session_pool.aiohttp()
+            self._session = httpx.AsyncClient(timeout=httpx.Timeout(TIMEOUT_PER_REQUEST))
 
     def _transport_policy_label(self) -> str:
         """F206AX telemetry: describe active transport policy."""
@@ -460,7 +459,7 @@ class WaybackDiffMiner:
             return "injected_fetch"
         if self._session_provider is not None:
             return "injected_session"
-        return "native_aiohttp"
+        return "native_httpx"
 
     def _fallback_reason(self) -> str | None:
         """F206AX telemetry: reason for fallback path if any."""
@@ -492,9 +491,7 @@ class WaybackDiffMiner:
             self._stats["cdx_snapshots_collected"] += len(snapshots)
         return (target, snapshots)
 
-    def _diff_snapshots(
-        self, target: str, snapshots: list[dict[str, str]]
-    ) -> list[CDXDiffEvent]:
+    def _diff_snapshots(self, target: str, snapshots: list[dict[str, str]]) -> list[CDXDiffEvent]:
         """Stage 2 (diff): Pure CPU diff — no I/O, no semaphore.
 
         Detects add/change/disappear between consecutive CDX snapshots.
@@ -535,9 +532,7 @@ class WaybackDiffMiner:
 
         return events
 
-    async def _fetch_and_diff_pipeline(
-        self, target: str
-    ) -> list[CDXDiffEvent]:
+    async def _fetch_and_diff_pipeline(self, target: str) -> list[CDXDiffEvent]:
         """Two-stage pipeline: fetch (I/O) -> diff (CPU), fully overlapped.
 
         Uses semaphore only for fetch stage. Diff runs without semaphore
@@ -586,9 +581,7 @@ class WaybackDiffMiner:
             self._stats["errors"] += 1
             return []
 
-    async def _fetch_via_injected(
-        self, params: dict[str, Any]
-    ) -> list[dict[str, str]]:
+    async def _fetch_via_injected(self, params: dict[str, Any]) -> list[dict[str, str]]:
         """F206AX: Use injected fetch provider for testing seam."""
         try:
             # Injected fetch_provider(url, params, timeout) -> response
@@ -596,7 +589,7 @@ class WaybackDiffMiner:
             resp = await self._fetch_provider(
                 WAYBACK_CDX_API,
                 params=params,
-                timeout=aiohttp.ClientTimeout(total=TIMEOUT_PER_REQUEST),
+                timeout=httpx.Timeout(TIMEOUT_PER_REQUEST),
             )
             domain_breaker_record_success(_extract_archive_domain(WAYBACK_CDX_API))
             return await self._parse_cdx_response(resp)
@@ -609,10 +602,8 @@ class WaybackDiffMiner:
             self._stats["errors"] += 1
             return []
 
-    async def _fetch_via_native(
-        self, params: dict[str, Any]
-    ) -> list[dict[str, str]]:
-        """Native aiohttp fetch — original behavior."""
+    async def _fetch_via_native(self, params: dict[str, Any]) -> list[dict[str, str]]:
+        """Native httpx fetch — original behavior."""
         session = self._session
         if session is None:
             return []
@@ -620,20 +611,20 @@ class WaybackDiffMiner:
             async with session.get(
                 WAYBACK_CDX_API,
                 params=params,
-                timeout=aiohttp.ClientTimeout(total=TIMEOUT_PER_REQUEST),
+                timeout=httpx.Timeout(TIMEOUT_PER_REQUEST),
             ) as resp:
                 archive_domain = _extract_archive_domain(WAYBACK_CDX_API)
 
-                if resp.status in (429, 503):
+                if resp.status_code in (429, 503):
                     domain_breaker_record_failure(
                         archive_domain,
                         is_timeout=False,
-                        failure_kind=f"http_{resp.status}",
+                        failure_kind=f"http_{resp.status_code}",
                     )
-                    logger.warning(f"Wayback CDX {resp.status} for {params.get('url', '?')}")
+                    logger.warning(f"Wayback CDX {resp.status_code} for {params.get('url', '?')}")
                     return []
 
-                if resp.status != 200:
+                if resp.status_code != 200:
                     return []
 
                 domain_breaker_record_success(archive_domain)
@@ -644,13 +635,11 @@ class WaybackDiffMiner:
             self._stats["errors"] += 1
             return []
 
-    async def _parse_cdx_response(
-        self, resp: aiohttp.ClientResponse
-    ) -> list[dict[str, str]]:
+    async def _parse_cdx_response(self, resp: httpx.Response) -> list[dict[str, str]]:
         """Parse CDX JSON response into snapshot dicts."""
-        if resp.status in (429, 503):
+        if resp.status_code in (429, 503):
             return []
-        if resp.status != 200:
+        if resp.status_code != 200:
             return []
 
         try:
@@ -660,13 +649,15 @@ class WaybackDiffMiner:
             snapshots = []
             for row in rows:
                 if len(row) >= 4:
-                    snapshots.append({
-                        "timestamp": row[0],
-                        "original": row[1],
-                        "status_code": row[2] if len(row) > 2 else "",
-                        "digest": row[3] if len(row) > 3 else "",
-                        "length": row[4] if len(row) > 4 else "0",
-                    })
+                    snapshots.append(
+                        {
+                            "timestamp": row[0],
+                            "original": row[1],
+                            "status_code": row[2] if len(row) > 2 else "",
+                            "digest": row[3] if len(row) > 3 else "",
+                            "length": row[4] if len(row) > 4 else "0",
+                        }
+                    )
             return snapshots
         except Exception:
             return []

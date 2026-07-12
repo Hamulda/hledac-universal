@@ -8,10 +8,20 @@ Sprint 81 Fáze 3: xxhash support for faster non-crypto hashing.
 Sprint F214AD: DeduplicationStrategy protocol extracted to break concrete coupling.
 """
 
-import hashlib
+import hashlib  # noqa: F401 — kept for third-party
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Protocol, TypeGuard, cast, runtime_checkable
+
+from utils.hashing import xxh3_64_hex
+
+# xxhash for fast non-crypto hashing (10x faster than blake2b)
+try:
+    import xxhash
+
+    xxhash_available = True  # noqa: F811
+except ImportError:
+    xxhash_available = False
 
 if TYPE_CHECKING:
     # Static-only import — never executed at runtime. Resolves MmapBloomFilter
@@ -33,27 +43,29 @@ else:
 # pyprobables; the factory raises ImportError when both are missing,
 # so the `object` sentinel never reaches a real call site. Cast at the
 # call site preserves the DeduplicationStrategy return type for callers.
-try:
-    from probables import RotatingBloomFilter  # type: ignore[import-not-found]
+# F3XX: migrated to optional() — zero-cost lazy chain, no import-time penalty.
+from utils.optional_imports import optional as _optional
 
-    PROBABLES_AVAILABLE = True
-except ImportError:
-    try:
-        from pyprobables import RotatingBloomFilter  # type: ignore[import-not-found,no-redef]
+_ProbablesRBF = _optional(
+    "probables:RotatingBloomFilter",
+    default=_optional("pyprobables:RotatingBloomFilter"),
+)
 
-        PROBABLES_AVAILABLE = True
-    except ImportError:
-        # Sentinel — functions raise ImportError before use.
-        RotatingBloomFilter = object  # type: ignore[assignment,misc]  # ty: ignore[conflicting-declarations]  # noqa: F811
-        PROBABLES_AVAILABLE = False
 
-# xxhash for fast non-crypto hashing (10x faster than blake2b)
-try:
-    import xxhash
+@property
 
-    xxhash_available = True
-except ImportError:
-    xxhash_available = False
+# Backward compat alias — factory function so callers can pass kwargs.
+# _ProbablesRBF() resolves to the class; RotatingBloomFilter() instantiates it.
+def RotatingBloomFilter(*args: Any, **kwargs: Any) -> Any:
+    """Lazy factory — resolves and instantiates RotatingBloomFilter on first call."""
+    return _ProbablesRBF()(*args, **kwargs)
+
+
+@property
+def PROBABLES_AVAILABLE() -> bool:  # noqa: N802
+    """True if either probables or pyprobables RotatingBloomFilter resolved."""
+    return _ProbablesRBF.available
+
 
 # ---------------------------------------------------------------------------
 # F265C: Rust backend — centralized access via core.rust_backend
@@ -272,6 +284,7 @@ class RustUrlSetAdapter:
     Rust implementation: url_set.rs — FNV-1a hashing, O(1) add/contains.
     Falls back to Python set if Rust unavailable (RUST_URL_DEDUP_AVAILABLE=False).
     """
+
     __slots__ = ("_set",)
 
     def __init__(self) -> None:
@@ -346,8 +359,7 @@ class MmapBloomFilterAdapter:
 
         if not _RUST_MMAP_BLOOM_AVAILABLE:
             raise ImportError(
-                "MmapBloomFilter unavailable — Rust extension not built. "
-                "Run `maturin develop` in rust_extensions/."
+                "MmapBloomFilter unavailable — Rust extension not built. Run `maturin develop` in rust_extensions/."
             )
         # Enforce URL_ESTIMATE upper bound (same policy as in-memory filter).
         capacity = min(capacity, MAX_URL_ESTIMATE)
@@ -544,6 +556,7 @@ _PREWARM_SLOTS = 4  # ring buffer size — 4 × ~15 MB = ~60 MB on M1 8GB
 
 class _PrewarmSlot(NamedTuple):
     """Single slot in the prewarm ring buffer."""
+
     filter: MmapBloomFilterAdapter  # type: ignore[valid-type]
     index: int
 
@@ -590,8 +603,7 @@ class CrossProcessBloomFilter:
     ) -> None:
         if not _RUST_MMAP_BLOOM_AVAILABLE:
             raise ImportError(
-                "MmapBloomFilter unavailable — Rust extension not built. "
-                "Run `maturin develop` in rust_extensions/."
+                "MmapBloomFilter unavailable — Rust extension not built. Run `maturin develop` in rust_extensions/."
             )
         self._path = path
         self._capacity = min(capacity, MAX_URL_ESTIMATE)
@@ -738,7 +750,7 @@ class CrossProcessBloomFilter:
 def _prewarm_slot_bg(slot: MmapBloomFilterAdapter) -> None:
     """Background prewarm: single contains to fault in pages."""
     try:
-        slot.contains("")
+        "" in slot  # __contains__
     except Exception:  # noqa: BLE001
         pass  # noqa: BLE001
 
@@ -783,8 +795,8 @@ def fast_hash(text: str) -> str:
     # 2. Python xxhash3-64
     if xxhash_available:
         return xxhash.xxh3_64(text).hexdigest()
-    # 3. blake2b fallback (crypto-grade but slower)
-    return hashlib.blake2b(text.encode(), digest_size=8).hexdigest()
+    # 3. xxh3-64 via centralized facade
+    return xxh3_64_hex(text)
 
 
 # F7.2: Parallel batch fast hash for URL fingerprinting.
@@ -854,6 +866,7 @@ def create_rotating_bloom_filter(
             try:
                 # Lazy import + path compute at call time (not module load).
                 from hledac.universal.paths import LMDB_ROOT
+
                 mmap_path = str(LMDB_ROOT / "bloom" / "mmap_bloom.filter")
                 return cast(
                     DeduplicationStrategy,
@@ -874,14 +887,14 @@ def create_rotating_bloom_filter(
             RustRotatingBloomFilter(est_elements, false_positive_rate),
         )
 
-    if not PROBABLES_AVAILABLE:
+    if not _ProbablesRBF.available:
         raise ImportError(
             "No BloomFilter implementation available — install hledac-rust-extensions "
             "(maturin develop) or probables: pip install probables"
         )
     return cast(
         DeduplicationStrategy,
-        RotatingBloomFilter(
+        _ProbablesRBF()(
             est_elements=est_elements,  # type: ignore[unknown-argument]
             false_positive_rate=false_positive_rate,  # type: ignore[unknown-argument]
         ),
@@ -1000,6 +1013,7 @@ def normalize_url(url: str) -> str:
         # normalization needed for Unicode homograph consistency.
         try:
             import unicodedata
+
             host = unicodedata.normalize("NFC", host)
         except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # NFC failure is non-fatal
@@ -1081,13 +1095,27 @@ def strip_tracking_params(url: str) -> str:
     # Python fallback — Issue #16: use Rust TRACKING_PARAMS for consistency
     from urllib.parse import parse_qsl, urlencode, urlparse
 
-    tracking_params = _RUST_TRACKING_PARAMS if _RUST_TRACKING_PARAMS else {
-        "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
-        "fbclid", "gclid", "gclsrc", "dclid",
-        "msclkid", "twclid",
-        "mc_cid", "mc_eid",
-        "_ga", "_gl",
-    }
+    tracking_params = (
+        _RUST_TRACKING_PARAMS
+        if _RUST_TRACKING_PARAMS
+        else {
+            "utm_source",
+            "utm_medium",
+            "utm_campaign",
+            "utm_term",
+            "utm_content",
+            "fbclid",
+            "gclid",
+            "gclsrc",
+            "dclid",
+            "msclkid",
+            "twclid",
+            "mc_cid",
+            "mc_eid",
+            "_ga",
+            "_gl",
+        }
+    )
 
     try:
         parsed = urlparse(url)

@@ -61,8 +61,6 @@ Used only when:
 Session-only persistence expected — not treated as a bug.
 """
 
-
-
 import asyncio
 import logging
 import os
@@ -96,6 +94,11 @@ _SHADOW_BATCH_SIZE: int = 500  # Aligned with duckdb_store async_record_shadow_f
 _SHADOW_FLUSH_INTERVAL: float = 1.0  # Flush interval in seconds (named constant)
 _SHADOW_INGEST_FAILURES: int = 0
 _QUEUE_FULL_WARNED: bool = False
+_SHADOW_FAILURES_AT_LAST_FLUSH: int = 0  # for rate-computed alert threshold
+
+# LP-1: Alert threshold -- fire when failures accumulate faster than flush clears them.
+# Threshold: >10 new failures since last flush = queue saturating / findings disappearing.
+_SHADOW_ALERT_THRESHOLD: int = 10
 
 
 class _ShadowRecorder:
@@ -178,8 +181,7 @@ class _ShadowRecorder:
             _SHADOW_INGEST_FAILURES += 1
             if not _QUEUE_FULL_WARNED:
                 logger.warning(
-                    f"[SHADOW] queue full ({_MAX_QUEUE_SIZE}), dropping record. "
-                    f"Total drops: {_SHADOW_INGEST_FAILURES}"
+                    f"[SHADOW] queue full ({_MAX_QUEUE_SIZE}), dropping record. Total drops: {_SHADOW_INGEST_FAILURES}"
                 )
                 _QUEUE_FULL_WARNED = True
         except RuntimeError:
@@ -200,6 +202,7 @@ class _ShadowRecorder:
         if self._store is None:
             try:
                 from .duckdb_store import DuckDBShadowStore
+
                 self._store = DuckDBShadowStore()
                 initialized = await self._store.async_initialize()
                 if not initialized:
@@ -222,8 +225,9 @@ class _ShadowRecorder:
                 batch.append(item)
 
                 # Flush when batch full or timeout
-                if len(batch) >= _SHADOW_BATCH_SIZE or \
-                   (batch and (time.monotonic() - last_flush) >= _SHADOW_FLUSH_INTERVAL):
+                if len(batch) >= _SHADOW_BATCH_SIZE or (
+                    batch and (time.monotonic() - last_flush) >= _SHADOW_FLUSH_INTERVAL
+                ):
                     await self._flush_batch(batch)
                     batch = []
                     last_flush = time.monotonic()
@@ -253,14 +257,9 @@ class _ShadowRecorder:
             return
 
         try:
-            inserted = await self._store.async_record_shadow_findings_batch(
-                batch,
-                max_batch_size=_SHADOW_BATCH_SIZE
-            )
+            inserted = await self._store.async_record_shadow_findings_batch(batch, max_batch_size=_SHADOW_BATCH_SIZE)
             if inserted < len(batch):
-                logger.warning(
-                    f"[SHADOW] partial insert: {inserted}/{len(batch)} records"
-                )
+                logger.warning(f"[SHADOW] partial insert: {inserted}/{len(batch)} records")
         except Exception as e:
             global _SHADOW_INGEST_FAILURES
             _SHADOW_INGEST_FAILURES += len(batch)
@@ -306,10 +305,7 @@ class _ShadowRecorder:
             else:
                 # Store never initialized — drained items are lost, count them
                 _SHADOW_INGEST_FAILURES += len(drained)
-                logger.warning(
-                    f"[SHADOW] store was never initialized, "
-                    f"{len(drained)} drained records lost"
-                )
+                logger.warning(f"[SHADOW] store was never initialized, {len(drained)} drained records lost")
 
         if self._store is not None:
             try:
@@ -342,6 +338,7 @@ def _get_recorder() -> _ShadowRecorder:
 # ---------------------------------------------------------------------------
 # Public adapter API
 # ---------------------------------------------------------------------------
+
 
 def shadow_record_finding(
     finding_id: str,
@@ -407,10 +404,16 @@ def shadow_record_finding(
 
 async def shadow_aclose() -> None:
     """Async shutdown of the shadow recorder with final flush."""
-    global _shadow_recorder
+    global _shadow_recorder, _SHADOW_INGEST_FAILURES, _SHADOW_FAILURES_AT_LAST_FLUSH
+
+    # Emit shadow failure telemetry BEFORE shutdown (so attributes survive winddown).
+    # LP-1 fix: emit as OTel span attrs + gauge metric + alert threshold.
+    _emit_shadow_telemetry(_SHADOW_INGEST_FAILURES)
+
     if _shadow_recorder is not None:
         await _shadow_recorder.aclose(timeout=2.0)
         _shadow_recorder = None
+    _SHADOW_FAILURES_AT_LAST_FLUSH = _SHADOW_INGEST_FAILURES  # reset for next sprint
 
 
 def shadow_ingest_failures() -> int:
@@ -424,3 +427,56 @@ def shadow_reset_failures() -> None:
     _SHADOW_INGEST_FAILURES = 0
     _QUEUE_FULL_WARNED = False
 
+
+# ─── OTel metric helpers (fail-open) ──────────────────────────────────────────
+
+
+def _emit_shadow_telemetry(failure_count: int | None = None) -> None:
+    """Emit shadow analytics telemetry via OTel span attrs + gauge metric.
+
+    LP-1 fix: _SHADOW_INGEST_FAILURES tracked but never surfaced to operators.
+    Now emitted as:
+      1. OTel span attributes (for trace-linked telemetry)
+      2. Gauge metric via MetricsRegistry (for dashboard/scrape)
+      3. Alert threshold warning when failures accumulate faster than flush clears
+
+    Fail-safe: OTel / MetricsRegistry unavailable -> no-op, never raises.
+
+    Args:
+        failure_count: Explicit failure count to emit. Defaults to current
+            _SHADOW_INGEST_FAILURES.
+    """
+    if failure_count is None:
+        failure_count = _SHADOW_INGEST_FAILURES
+
+    # OTel span attrs -- works from any context with active span
+    try:
+        from otel._instrumentation import set_attribute
+
+        set_attribute("shadow.ingest_failures", failure_count)
+        set_attribute("shadow.queue_full_warned", _QUEUE_FULL_WARNED)
+    except Exception:
+        pass
+
+    # Gauge metric -- for dashboard / Prometheus scrape / Logfire
+    try:
+        from hledac.universal.metrics_registry import get_metrics_registry
+
+        get_metrics_registry().set_gauge("shadow_ingest_failures", float(failure_count))
+    except Exception:
+        pass
+
+    # LP-1: Alert threshold -- fires when failures accumulate faster than flush clears.
+    # Rate = failures since last flush / 1s flush interval.
+    # >10 failures/s means queue is saturating faster than worker drains it.
+    try:
+        global _SHADOW_FAILURES_AT_LAST_FLUSH
+        _new_failures = failure_count - _SHADOW_FAILURES_AT_LAST_FLUSH
+        if _new_failures > _SHADOW_ALERT_THRESHOLD:
+            logger.warning(
+                f"[SHADOW ALERT] Queue saturating: {_new_failures} new failures "
+                f"since last flush (threshold={_SHADOW_ALERT_THRESHOLD}). "
+                f"Findings may be disappearing."
+            )
+    except Exception:
+        pass

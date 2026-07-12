@@ -1,11 +1,9 @@
-
-
 import sys as _sys  # noqa: E402 — Phase 0 alias before any other imports
 
 # Phase 0 alias: register `utils` as a top-level module so absolute
 # `from utils.X` imports resolve regardless of how the package is launched
 # (python -m hledac.universal, IDE, or direct script). See __main__.py
-_sys.modules.setdefault('utils', _sys.modules[__name__])
+_sys.modules.setdefault("utils", _sys.modules[__name__])
 
 """
 Utility funkce pro UniversalResearchOrchestrator.
@@ -30,7 +28,9 @@ Obsahuje:
 """
 
 from .action_result import ActionResult  # NEW from sprint 68  # noqa: E402
-from .async_utils import TaskResult, bounded_gather, bounded_map, map_as_completed  # Sprint 81 Fáze 2  # noqa: E402
+from .async_utils import TaskResult, bounded_map, map_as_completed  # Sprint 81 Fáze 2  # noqa: E402
+
+# bounded_gather intentionally omitted — canonical source is async_helpers.bounded_gather
 from .bloom_filter import (  # noqa: E402
     BloomFilter,
     BloomFilterStats,
@@ -86,6 +86,16 @@ from .intelligent_cache import (  # noqa: E402
 )
 from .language import LanguageDetector, create_language_detector  # noqa: E402
 from .lazy_imports import LazyImportManager, LazyLoader, lazy_import  # NEW from utils  # noqa: E402
+from .patterns.pattern_matcher import (  # noqa: E402
+    PatternHit,
+    extract_high_precision_entities,
+    get_backend_info,
+    get_default_bootstrap_patterns,
+    get_pattern_matcher,
+    match_text,
+    prewarm,
+    reset_pattern_matcher,
+)
 from .performance_monitor import PerformanceMetrics, PerformanceMonitor, QualityValidator  # noqa: E402
 from .predictive_planner import Prediction, PredictivePlanner, RollbackManager  # noqa: E402
 from .query_expansion import (  # noqa: E402
@@ -130,21 +140,12 @@ from .validation import (  # noqa: E402
     create_sample_schema,
 )
 from .workflow_engine import Task, TaskStatus, TaskType, Workflow, WorkflowEngine  # noqa: E402
-from .patterns.pattern_matcher import (  # noqa: E402
-    PatternHit,
-    extract_high_precision_entities,
-    get_backend_info,
-    get_default_bootstrap_patterns,
-    get_pattern_matcher,
-    match_text,
-    prewarm,
-    reset_pattern_matcher,
-)
 
 
 def _uuid7_stdlib() -> bool:
     """Check if stdlib uuid.uuid7 is available (Python 3.14+)."""
     import uuid as _uuid
+
     return hasattr(_uuid, "uuid7")
 
 
@@ -323,9 +324,9 @@ __all__ = [
     "RateLimitExceeded",
     "with_rate_limit",
     # Sprint 81 Fáze 2 - Bounded Concurrency
+    # bounded_gather intentionally omitted — canonical is async_helpers.bounded_gather
     "bounded_map",
     "map_as_completed",
-    "bounded_gather",
     "TaskResult",
     # UUID7 compat shim (F208N-D)
     "uuid7",

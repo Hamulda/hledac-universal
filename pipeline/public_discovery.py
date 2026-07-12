@@ -9,7 +9,6 @@ DI seam: set `_async_discovery_search_var`, `_ct_scanner_var`,
 and `_async_search_multi_engine_var` via `_patch_*()` helpers to override defaults.
 """
 
-
 import asyncio
 import contextvars
 import logging
@@ -51,11 +50,13 @@ def _ensure_discovery_patched() -> None:
     """Ensure discovery search is patched; fall back to duckduckgo if not."""
     if _async_discovery_search_var.get() is None:
         from hledac.universal.discovery.duckduckgo_adapter import async_search_public_web
+
         _async_discovery_search_var.set(async_search_public_web)
     if _async_search_multi_engine_var.get() is None:
         from hledac.universal.discovery.duckduckgo_adapter import (
             search_multi_engine as _search_multi_engine_bootstrap,
         )
+
         _async_search_multi_engine_var.set(_search_multi_engine_bootstrap)
 
 
@@ -67,6 +68,7 @@ def _ensure_discovery_patched() -> None:
 @dataclass(frozen=True, slots=True)
 class FetchPolicy:
     """Bounded fetch policy for canonical public sprint."""
+
     use_js: bool = False
     use_doh: bool = False
     use_stealth: bool = False
@@ -102,9 +104,18 @@ def _compute_fetch_policy(
     _ensure_patched() from the fetch module.
     """
     # Heavy JS sites get js_capable
-    _JS_DOMAINS = ("google.com", "youtube.com", "twitter.com", "x.com",
-                   "facebook.com", "instagram.com", "reddit.com",
-                   "linkedin.com", "github.com", "stackoverflow.com")
+    _JS_DOMAINS = (
+        "google.com",
+        "youtube.com",
+        "twitter.com",
+        "x.com",
+        "facebook.com",
+        "instagram.com",
+        "reddit.com",
+        "linkedin.com",
+        "github.com",
+        "stackoverflow.com",
+    )
     try:
         parsed = urllib.parse.urlparse(url)
         netloc = parsed.netloc.lower()
@@ -155,25 +166,34 @@ def generate_rescue_urls(query: str, max_urls: int = 8) -> list:
     hits = []
     for name, base_url in _RESGUE_SOURCE_CANDIDATES[:max_urls]:
         url = f"{base_url}{urllib.parse.quote(query.strip())}"
-        hits.append(_make_discovery_hit(
-            query=query,
-            title=f"Rescue: {name}",
-            url=url,
-            snippet=f"Rescue search via {name}: {query}",
-            score=0.70,
-            reason="rescue_candidate",
-            rank=-1,
-            source="rescue",
-        ))
+        hits.append(
+            _make_discovery_hit(
+                query=query,
+                title=f"Rescue: {name}",
+                url=url,
+                snippet=f"Rescue search via {name}: {query}",
+                score=0.70,
+                reason="rescue_candidate",
+                rank=-1,
+                source="rescue",
+            )
+        )
     return hits
 
 
 def _make_discovery_hit(
-    query: str, title: str, url: str, snippet: str,
-    score: float, reason: str, rank: int, source: str,
+    query: str,
+    title: str,
+    url: str,
+    snippet: str,
+    score: float,
+    reason: str,
+    rank: int,
+    source: str,
 ) -> Any:
     """Construct a DiscoveryHit (lazy import to avoid circular deps)."""
     from hledac.universal.discovery.duckduckgo_adapter import DiscoveryHit
+
     return DiscoveryHit(
         query=query,
         title=title,
@@ -202,7 +222,7 @@ def generate_bootstrap_urls(query: str, max_urls: int = 5) -> list[str]:
     clean_query = query.strip()
     for prefix in ("site:", "domain:", "url:"):
         if clean_query.lower().startswith(prefix):
-            clean_query = clean_query[len(prefix):].strip()
+            clean_query = clean_query[len(prefix) :].strip()
             break
 
     domain = _extract_domain_from_query(clean_query)
@@ -225,7 +245,9 @@ def generate_bootstrap_urls(query: str, max_urls: int = 5) -> list[str]:
 _MAX_SEED_CONTEXT_BOOTSTRAP: int = 10
 
 
-def generate_seed_context_bootstrap_urls(seed_context: Any, max_candidates: int = _MAX_SEED_CONTEXT_BOOTSTRAP) -> list[str]:
+def generate_seed_context_bootstrap_urls(
+    seed_context: Any, max_candidates: int = _MAX_SEED_CONTEXT_BOOTSTRAP
+) -> list[str]:
     """
     Generate deterministic bootstrap URLs from NonfeedSeedContext.
 
@@ -236,8 +258,8 @@ def generate_seed_context_bootstrap_urls(seed_context: Any, max_candidates: int 
         return []
 
     urls: list[str] = []
-    _has_domains = bool(getattr(seed_context, 'domains', ()))
-    _has_urls = bool(getattr(seed_context, 'urls', ()))
+    _has_domains = bool(getattr(seed_context, "domains", ()))
+    _has_urls = bool(getattr(seed_context, "urls", ()))
     _both_sources = _has_domains and _has_urls
 
     if _both_sources:
@@ -246,7 +268,7 @@ def generate_seed_context_bootstrap_urls(seed_context: Any, max_candidates: int 
         _max_per_source = max_candidates
 
     if _has_domains:
-        for domain in list(getattr(seed_context, 'domains', ()))[:_max_per_source]:
+        for domain in list(getattr(seed_context, "domains", ()))[:_max_per_source]:
             if len(urls) >= max_candidates:
                 break
             if not domain or "." not in domain:
@@ -261,7 +283,7 @@ def generate_seed_context_bootstrap_urls(seed_context: Any, max_candidates: int 
                 continue
 
     if _has_urls:
-        for url in list(getattr(seed_context, 'urls', ()))[:_max_per_source]:
+        for url in list(getattr(seed_context, "urls", ()))[:_max_per_source]:
             if len(urls) >= max_candidates:
                 break
             if not url:
@@ -306,16 +328,18 @@ async def generate_keyword_bootstrap_urls(
                 snippet = item.get("snippet", "") if isinstance(item, dict) else getattr(item, "snippet", "")
                 if not url:
                     continue
-                hits.append(_make_discovery_hit(
-                    query=query,
-                    title=title or f"{engine.capitalize()} result {i+1}",
-                    url=url,
-                    snippet=snippet or f"Keyword bootstrap via {engine}: {query}",
-                    score=0.75,
-                    reason=f"keyword_bootstrap_{engine}",
-                    rank=i,
-                    source=engine,
-                ))
+                hits.append(
+                    _make_discovery_hit(
+                        query=query,
+                        title=title or f"{engine.capitalize()} result {i + 1}",
+                        url=url,
+                        snippet=snippet or f"Keyword bootstrap via {engine}: {query}",
+                        score=0.75,
+                        reason=f"keyword_bootstrap_{engine}",
+                        rank=i,
+                        source=engine,
+                    )
+                )
             if hits:
                 return hits
         except Exception:
@@ -341,7 +365,7 @@ def _extract_domain_from_query(query: str) -> str | None:
         q = candidate
         for prefix in ("site:", "domain:", "url:"):
             if q.lower().startswith(prefix):
-                q = q[len(prefix):]
+                q = q[len(prefix) :]
                 break
 
         q = q.rstrip("/")
@@ -424,10 +448,16 @@ def _extract_provider_surface(
             skipped_hits.append(hit)
             continue
 
-        if reason in ("rescue_candidate", "bootstrap_root", "bootstrap_www",
-                      "bootstrap_security_txt", "bootstrap_robots",
-                      "bootstrap_sitemap", "seed_context_domain",
-                      "seed_context_url"):
+        if reason in (
+            "rescue_candidate",
+            "bootstrap_root",
+            "bootstrap_www",
+            "bootstrap_security_txt",
+            "bootstrap_robots",
+            "bootstrap_sitemap",
+            "seed_context_domain",
+            "seed_context_url",
+        ):
             stub_hits.append(hit)
             continue
 
@@ -446,9 +476,7 @@ def _extract_provider_surface(
 # ----------------------------------------------------------------------
 # CT subdomain injection
 # ----------------------------------------------------------------------
-_ct_scanner_var: contextvars.ContextVar[Any] = contextvars.ContextVar(
-    "_ct_scanner_var", default=None
-)
+_ct_scanner_var: contextvars.ContextVar[Any] = contextvars.ContextVar("_ct_scanner_var", default=None)
 
 
 def _patch_ct_scanner(get_subdomains_fn: Any) -> None:
@@ -466,6 +494,7 @@ async def _get_subdomains(domain: str, async_session: Any = None) -> list[str]:
     """Default CT subdomain lookup via _CTLogScanner."""
     try:
         from hledac.universal.network.ct_log_scanner import _CTLogScanner
+
         scanner = _CTLogScanner()
         return await scanner.get_subdomains(domain, async_session=async_session)
     except Exception:
@@ -474,6 +503,7 @@ async def _get_subdomains(domain: str, async_session: Any = None) -> list[str]:
 
 class _CTHit:
     """CT-synthesized discovery hit."""
+
     __slots__ = ("url", "rank")
 
     def __init__(self, url: str, rank: int):
@@ -491,7 +521,6 @@ async def _inject_ct_subdomain_hits(hits: tuple, query: str) -> tuple:
     from .public_constants import (
         _CT_QUERY_IS_DOMAIN_RE,
         _CT_SUBDOMAIN_BOUND,
-        _CT_SUBDOMAIN_SCORE,
     )
 
     _ensure_ct_scanner_patched()
@@ -525,6 +554,7 @@ async def _inject_ct_subdomain_hits(hits: tuple, query: str) -> tuple:
 def _query_looks_like_domain_for_cc(query: str) -> bool:
     """Check if query looks like a domain suitable for CommonCrawl lookup."""
     from .public_constants import _CC_QUERY_IS_DOMAIN_RE
+
     return bool(_CC_QUERY_IS_DOMAIN_RE.match(query))
 
 
@@ -535,6 +565,7 @@ def _query_looks_like_domain_for_cc(query: str) -> bool:
 
 class _CCHit:
     """CommonCrawl-synthesized discovery hit."""
+
     __slots__ = ("url", "title", "snippet", "rank")
 
     def __init__(self, url: str, title: str, snippet: str, rank: int):
@@ -546,15 +577,16 @@ class _CCHit:
 
 class _MinimalStealth:
     """Minimal stealth client for CommonCrawl adapter."""
+
     __slots__ = ()
 
     async def get(self, url: str) -> str:
         try:
-            from aiohttp import ClientTimeout
-            from hledac.universal.network.session_runtime import async_get_aiohttp_session
-            session = await async_get_aiohttp_session()
-            async with session.get(url, timeout=ClientTimeout(total=10.0)) as resp:
-                return await resp.text()
+            from hledac.universal.network.session_runtime import async_get_httpx_session
+
+            session = await async_get_httpx_session()
+            resp = await session.get(url, timeout=httpx.Timeout(total=10.0))
+            return resp.text
         except Exception:
             return ""
 
@@ -567,6 +599,7 @@ def _get_cc_adapter() -> Any:
     global _CC_SCANNER_LOOKUP
     if _CC_SCANNER_LOOKUP is None:
         from hledac.universal.tools.commoncrawl_adapter import CommonCrawlAdapter
+
         _CC_SCANNER_LOOKUP = CommonCrawlAdapter(stealth=_MinimalStealth())
     return _CC_SCANNER_LOOKUP
 
@@ -647,6 +680,7 @@ async def _inject_onion_hits(hits: tuple, query: str, store: Any) -> int:
 
     try:
         from hledac.universal.fetching.public_fetcher import async_fetch_public_text
+
         base_url = f"https://ahmia.fi/search/?q={urllib.parse.quote(query)}"
         text = await async_fetch_public_text(
             url=base_url,
@@ -722,7 +756,6 @@ class _DiscoveryEngine:
         """
         from .public_constants import (
             _filter_public_noise,
-            _DISCOVERY_SKIP_THRESHOLD,
         )
 
         _ensure_discovery_patched()
@@ -761,17 +794,31 @@ class _DiscoveryEngine:
         for h in rescue_hits:
             all_hits.append(h)  # DiscoveryHit objects
         for url in bootstrap_urls:
-            all_hits.append(_make_discovery_hit(
-                query=self.query, title="Bootstrap", url=url,
-                snippet=f"Bootstrap: {url}", score=0.5,
-                reason="bootstrap", rank=-1, source="bootstrap",
-            ))
+            all_hits.append(
+                _make_discovery_hit(
+                    query=self.query,
+                    title="Bootstrap",
+                    url=url,
+                    snippet=f"Bootstrap: {url}",
+                    score=0.5,
+                    reason="bootstrap",
+                    rank=-1,
+                    source="bootstrap",
+                )
+            )
         for url in seed_urls:
-            all_hits.append(_make_discovery_hit(
-                query=self.query, title="SeedContext", url=url,
-                snippet=f"SeedContext: {url}", score=0.5,
-                reason="seed_context", rank=-1, source="seed_context",
-            ))
+            all_hits.append(
+                _make_discovery_hit(
+                    query=self.query,
+                    title="SeedContext",
+                    url=url,
+                    snippet=f"SeedContext: {url}",
+                    score=0.5,
+                    reason="seed_context",
+                    rank=-1,
+                    source="seed_context",
+                )
+            )
         for h in keyword_hits:
             all_hits.append(h)
 
@@ -793,22 +840,27 @@ class _DiscoveryEngine:
             score = getattr(hit, "score", 0.0)
             if score <= 0.05:
                 skipped.append(hit)
-            elif reason in ("rescue_candidate", "bootstrap_root", "bootstrap_www",
-                            "bootstrap_security_txt", "bootstrap_robots",
-                            "bootstrap_sitemap", "seed_context_domain",
-                            "seed_context_url"):
+            elif reason in (
+                "rescue_candidate",
+                "bootstrap_root",
+                "bootstrap_www",
+                "bootstrap_security_txt",
+                "bootstrap_robots",
+                "bootstrap_sitemap",
+                "seed_context_domain",
+                "seed_context_url",
+            ):
                 stub.append(hit)
             else:
                 selected.append(hit)
 
         # ---- CT subdomain injection ----
         from .public_constants import _CT_QUERY_IS_DOMAIN_RE
+
         ct_injected = 0
         if self.query and _CT_QUERY_IS_DOMAIN_RE.match(self.query):
             try:
-                selected, *_ = await _inject_ct_subdomain_hits(
-                    tuple(selected), self.query
-                )
+                selected, *_ = await _inject_ct_subdomain_hits(tuple(selected), self.query)
                 ct_injected = len(selected)
             except Exception:  # noqa: BLE001
                 pass
@@ -817,9 +869,7 @@ class _DiscoveryEngine:
         cc_injected = 0
         if _query_looks_like_domain_for_cc(self.query):
             try:
-                selected, *_ = await _inject_commoncrawl_hits(
-                    tuple(selected), self.query
-                )
+                selected, *_ = await _inject_commoncrawl_hits(tuple(selected), self.query)
                 cc_injected = len(selected)
             except Exception:  # noqa: BLE001
                 pass
@@ -864,7 +914,6 @@ async def limited_academic_search(query: str, uma_state: str, telemetry: dict) -
     Extracted from the nested position inside _DiscoveryEngine.run().
     Returns count of academic findings found.
     """
-    from .public_constants import _filter_public_noise
 
     ACADEMIC_ENABLED = False
     try:
@@ -901,6 +950,7 @@ async def run_tot_with_timeout(hypo: str, timeout_s: float = 15.0) -> str:
         tot_layer = None
         try:
             from hledac.universal.tot_integration import TotIntegrationLayer
+
             tot_layer = TotIntegrationLayer()
         except ImportError:
             return ""

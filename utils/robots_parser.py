@@ -22,11 +22,6 @@ from dataclasses import dataclass, field
 import msgspec
 from urllib.parse import urlparse
 
-try:
-    import aiohttp  # type: ignore[import-untyped]
-except ImportError:  # aiohttp is optional — runtime imports are guarded in methods
-    # ty: invalid-assignment is the correct code for "None not assignable to <module>"
-    aiohttp = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +56,7 @@ class RobotsParser:
 
     Features:
     - LRU cache s limitem 128 domén (paměťové limity)
-    - Reuse aiohttp.ClientSession přes async context manager
+    - Reuse httpx.AsyncClient přes async context manager
     - TTL-based cache invalidation
 
     Example:
@@ -87,19 +82,17 @@ class RobotsParser:
         self._cache: dict[str, RobotsDocument] = {}
         self._cache_access_time: dict[str, float] = {}  # Pro LRU eviction
         self._user_agent = "Hledac-Bot/1.0"
-        self._session: aiohttp.ClientSession | None = None
+        self._session: httpx.AsyncClient | None = None
 
     async def __aenter__(self) -> RobotsParser:
         """Async context manager entry - create shared session."""
-        import aiohttp
-        timeout = aiohttp.ClientTimeout(total=10.0)
-        self._session = aiohttp.ClientSession(timeout=timeout)
+        self._session = httpx.AsyncClient(timeout=httpx.Timeout(total=10.0))
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit - cleanup session."""
         if self._session:
-            await self._session.close()
+            await self._session.aclose()
             self._session = None
 
     def _get_cache_key(self, base_url: str) -> str:
@@ -163,11 +156,9 @@ class RobotsParser:
             agent = user_agent or self._user_agent
 
             # Use shared session if available, otherwise create temporary
-            import aiohttp
             session = self._session
-            if session is None or session.closed:
-                timeout = aiohttp.ClientTimeout(total=10.0)
-                session = aiohttp.ClientSession(timeout=timeout)
+            if session is None or session.is_closed:
+                timeout = httpx.Timeout(total=10.0)
                 close_after = True
             else:
                 close_after = False
@@ -177,12 +168,11 @@ class RobotsParser:
                     robots_url,
                     headers={"User-Agent": agent}
                 ) as response:
-
-                    if response.status != 200:
-                        logger.debug(f"Failed to fetch robots.txt: {response.status}")
+                    if response.status_code != 200:
+                        logger.debug(f"Failed to fetch robots.txt: {response.status_code}")
                         return None
 
-                    content = await response.text()
+                    content = await response.text
                     if not content or len(content) > _MAX_ROBOTS_SIZE:
                         logger.warning("Robots.txt too large, ignoring")
                         return None
@@ -198,7 +188,7 @@ class RobotsParser:
                     return doc
             finally:
                 if close_after and session:
-                    await session.close()
+                    await session.aclose()
 
         except Exception as e:
             logger.debug(f"Error fetching robots.txt: {e}")
@@ -335,27 +325,25 @@ class RobotsParser:
             session = self._session
             close_after = False
 
-            if session is None or session.closed:
-                import aiohttp
-                timeout = aiohttp.ClientTimeout(total=30.0)
-                session = aiohttp.ClientSession(timeout=timeout)
+            if session is None or session.is_closed:
+                self._session = httpx.AsyncClient(timeout=httpx.Timeout(total=30.0))
                 close_after = True
 
             try:
-                async with session.get(sitemap_url) as response:
-                    if response.status != 200:
-                        logger.debug(f"Failed to fetch sitemap: {response.status}")
-                        return []
+                resp = await session.get(sitemap_url)
+                if resp.status_code != 200:
+                    logger.debug(f"Failed to fetch sitemap: {resp.status_code}")
+                    return []
 
-                    content = await response.text()
-                    if not content or len(content) > _MAX_SITEMAP_SIZE:
-                        logger.warning("Sitemap too large, ignoring")
-                        return []
+                content = await resp.text
+                if not content or len(content) > _MAX_SITEMAP_SIZE:
+                    logger.warning("Sitemap too large, ignoring")
+                    return []
 
-                    return self._parse_sitemap_content(content, max_urls)
+                return self._parse_sitemap_content(content, max_urls)
             finally:
                 if close_after and session:
-                    await session.close()
+                    await session.aclose()
 
         except Exception as e:
             logger.debug(f"Error fetching sitemap: {e}")

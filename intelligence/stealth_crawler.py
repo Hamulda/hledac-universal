@@ -1238,7 +1238,7 @@ class StealthCrawler:
             return None
         _mark_surface_patched("_fetch_with_requests_async")
         try:
-            _sess = await session_pool.aiohttp()
+            _sess = await httpx.AsyncClient()
             async with _sess as sess:
                 async with sess.get(url, headers=headers, timeout=30) as response:
                     if response.status == 200:
@@ -1856,7 +1856,7 @@ class StealthWebScraper:
                 logger.warning(f"Security components not available: {e}")
 
             # Get shared HTTP session from pool
-            self._session = await session_pool.aiohttp()
+            self._session = await httpx.AsyncClient()
 
             logger.info("✅ StealthWebScraper initialized")
             return True
@@ -2376,7 +2376,7 @@ class StreamingMonitor:
         """Initialize the monitor with HTTP session"""
         try:
             # Get shared HTTP session from pool
-            self._session = await session_pool.aiohttp()
+            self._session = await httpx.AsyncClient()
 
             logger.info("✅ StreamingMonitor initialized")
             return True

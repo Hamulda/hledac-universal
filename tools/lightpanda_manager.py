@@ -5,7 +5,6 @@ Extracted from coordinators/fetch_coordinator.py (Sprint 45 refactor).
 Manages Lightpanda process lifecycle, CDP endpoint, and nodriver-based JS rendering.
 """
 
-
 import asyncio
 import hashlib
 import logging
@@ -13,7 +12,7 @@ import os
 import re
 from typing import Any
 
-import aiohttp
+import httpx
 
 from hledac.universal.paths import DB_ROOT
 
@@ -44,6 +43,7 @@ def get_nodriver_available() -> bool:
     if _NODRIVER_AVAILABLE is None:
         try:
             import nodriver  # noqa: F401
+
             _NODRIVER_AVAILABLE = True
         except (ImportError, SyntaxError):
             _NODRIVER_AVAILABLE = False
@@ -59,7 +59,8 @@ def __getattr__(name: str) -> bool:
         return get_nodriver_available()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-AIOHTTP_AVAILABLE = aiohttp is not None
+
+HTTPX_AVAILABLE = httpx is not None
 
 
 class LightpandaManager:
@@ -67,10 +68,8 @@ class LightpandaManager:
 
     def __init__(self):
         self._proc: asyncio.subprocess.Process | None = None
-        self._endpoint = os.environ.get(
-            "CDP_ENDPOINT", "ws://127.0.0.1:9222"
-        )
-        self._bin_path = DB_ROOT / 'bin' / 'lightpanda'
+        self._endpoint = os.environ.get("CDP_ENDPOINT", "ws://127.0.0.1:9222")
+        self._bin_path = DB_ROOT / "bin" / "lightpanda"
 
     async def _download_if_missing(self) -> None:
         """Download Lightpanda binary if missing."""
@@ -78,20 +77,20 @@ class LightpandaManager:
             return
         os.makedirs(self._bin_path.parent, exist_ok=True)
 
-        if not AIOHTTP_AVAILABLE:
-            logger.warning("[LIGHTPANDA] aiohttp not available, cannot download")
-            raise ImportError("aiohttp not available")
+        if not HTTPX_AVAILABLE:
+            logger.warning("[LIGHTPANDA] httpx not available, cannot download")
+            raise ImportError("httpx not available")
 
         url = "https://github.com/lightpanda-io/browser/releases/latest/download/lightpanda-aarch64-macos"
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as resp:
-                    if resp.status == 200:
-                        content = await resp.read()
+            async with httpx.AsyncClient() as session:
+                async with session.get(url) as response:
+                    if response.status_code == 200:
+                        content = await response.read()
                         # P3-7 fix: compute hash for security auditing
                         # Expected hash from trusted source stored in LIGHTPANDA_SHA256 env var
                         actual_hash = hashlib.sha256(content).hexdigest()
-                        expected_hash = os.environ.get('LIGHTPANDA_SHA256')
+                        expected_hash = os.environ.get("LIGHTPANDA_SHA256")
                         if not expected_hash:
                             raise ValueError(
                                 "[LIGHTPANDA] LIGHTPANDA_SHA256 env var must be set to verify "
@@ -99,11 +98,10 @@ class LightpandaManager:
                             )
                         if actual_hash != expected_hash:
                             raise ValueError(
-                                f"[LIGHTPANDA] Hash mismatch! "
-                                f"expected={expected_hash}, actual={actual_hash}"
+                                f"[LIGHTPANDA] Hash mismatch! expected={expected_hash}, actual={actual_hash}"
                             )
                         logger.info(f"[LIGHTPANDA] Hash verified: {actual_hash[:16]}...")
-                        with open(self._bin_path, 'wb') as f:
+                        with open(self._bin_path, "wb") as f:
                             f.write(content)
                         # SECURITY: 0o755 is correct for a downloaded binary.
                         # The file is verified against LIGHTPANDA_SHA256 (trusted hash
@@ -125,14 +123,17 @@ class LightpandaManager:
         if self._proc is None or self._proc.returncode is not None:
             await self._download_if_missing()
             self._proc = await asyncio.create_subprocess_exec(
-                str(self._bin_path), "serve", "--port", "9222",
+                str(self._bin_path),
+                "serve",
+                "--port",
+                "9222",
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
             )
             # Wait for port to be open
             for _ in range(50):  # max 5s
                 try:
-                    reader, writer = await asyncio.open_connection('127.0.0.1', 9222)
+                    reader, writer = await asyncio.open_connection("127.0.0.1", 9222)
                     writer.close()
                     await writer.wait_closed()
                     break

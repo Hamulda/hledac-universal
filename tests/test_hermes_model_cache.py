@@ -16,20 +16,17 @@ Invariants tested:
   - Singleton hermes_cache() returns same instance
 """
 
-import asyncio
-import gc
 import threading
-import time
-
-import pytest
 
 # Import the module under test
 from brain._hermes_cache import (
     HermesModelCache,
-    hermes_cache,
-    _mlx_cache_clear,
     _get_memory_pressure_level,
+    _mlx_cache_clear,
+    hermes_cache,
 )
+from tests.conftest import joinable_threads
+from brain.deephermes3_engine import _maybe_evict_hermes_cache
 
 
 class TestHermesModelCacheBasic:
@@ -176,22 +173,21 @@ class TestHermesModelCacheThreading:
         cache = HermesModelCache(max_size=10)
         errors: list[Exception] = []
 
-        def putter(i: int) -> None:
-            try:
-                for j in range(50):
-                    cache.put_model(f"k{i}_{j}", f"model_{i}_{j}", f"tok_{i}_{j}")
-            except Exception as e:
-                errors.append(e)
+        # IIFE to capture loop variable for each thread
+        def _putter_factory(i: int):
+            def putter() -> None:
+                try:
+                    for j in range(50):
+                        cache.put_model(f"k{i}_{j}", f"model_{i}_{j}", f"tok_{i}_{j}")
+                except Exception as e:
+                    errors.append(e)
 
-        threads = [threading.Thread(target=putter, args=(i,)) for i in range(8)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+            return putter
+
+        with joinable_threads([_putter_factory(i) for i in range(8)]):
+            pass
 
         assert not errors, f"Threading errors: {errors}"
-        # All entries should be accessible (some may have been evicted, that's OK)
-        # At minimum, no crash and model_count ≤ max_size
         assert cache.model_count <= cache._max_size
 
     def test_concurrent_get_put_no_crash(self):
@@ -199,27 +195,18 @@ class TestHermesModelCacheThreading:
         cache = HermesModelCache(max_size=5)
         errors: list[Exception] = []
 
-        def writer(i: int) -> None:
-            try:
-                for j in range(20):
-                    cache.put_model(f"w{i}_{j}", f"m{i}_{j}", f"t{i}_{j}")
-            except Exception as e:
-                errors.append(e)
+        def _writer_factory(i: int):
+            def writer() -> None:
+                try:
+                    for j in range(20):
+                        cache.put_model(f"w{i}_{j}", f"m{i}_{j}", f"t{i}_{j}")
+                except Exception as e:
+                    errors.append(e)
 
-        def reader() -> None:
-            try:
-                for _ in range(100):
-                    _ = cache.get_model("w0_0")
-                    _ = cache.get_model("nonexistent")
-            except Exception as e:
-                errors.append(e)
+            return writer
 
-        threads = [threading.Thread(target=writer, args=(i,)) for i in range(4)]
-        threads += [threading.Thread(target=reader) for _ in range(4)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+        with joinable_threads([_writer_factory(i) for i in range(4)] + [reader for _ in range(4)]):
+            pass
 
         assert not errors, f"Threading errors: {errors}"
 
@@ -241,8 +228,8 @@ class TestHermesModelCacheSingleton:
             c = hermes_cache()
             results.append(id(c))
 
-        t1 = threading.Thread(target=check)
-        t2 = threading.Thread(target=check)
+        t1 = threading.Thread(target=check, daemon=True)
+        t2 = threading.Thread(target=check, daemon=True)
         t1.start()
         t2.start()
         t1.join()
@@ -258,7 +245,6 @@ class TestMaybeEvictBackwardCompat:
         """The wrapper function can be imported and called without error."""
         # We import the shim function defined in deephermes3_engine
         # It uses hermes_cache() internally
-        from brain.deephermes3_engine import _maybe_evict_hermes_cache
 
         # Calling on empty cache returns False
         cache = hermes_cache()
@@ -316,3 +302,4 @@ class TestStats:
 
         cache.put_lora("l3", lm3, lt3)  # l1 evicted
         assert cache.lora_eviction_count == initial + 1
+

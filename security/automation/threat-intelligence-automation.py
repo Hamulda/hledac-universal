@@ -4,7 +4,6 @@ Hledač Threat Intelligence Automation System
 Advanced security automation with threat intelligence and proactive defense
 """
 
-
 import asyncio
 import hashlib
 import ipaddress
@@ -13,24 +12,20 @@ import logging
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-import msgspec
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-import aiohttp
 import yaml
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class ThreatIntelligence:
     """Threat intelligence data"""
+
     threat_id: str
     threat_type: str
     severity: str
@@ -46,6 +41,7 @@ class ThreatIntelligence:
 @dataclass(frozen=True)
 class SecurityAlert:
     """Security alert generated from threat intelligence"""
+
     alert_id: str
     threat_intelligence: ThreatIntelligence
     affected_assets: list[str]
@@ -58,6 +54,7 @@ class SecurityAlert:
 @dataclass(frozen=True)
 class DefenseAction:
     """Automated defense action"""
+
     action_id: str
     action_type: str
     target: str
@@ -99,7 +96,7 @@ class ThreatIntelligenceAutomation:
                 "sources": ["abuse.ch", "virustotal", "alienvault"],
                 "update_interval": 3600,
                 "retention_days": 90,
-                "confidence_threshnew": 0.7
+                "confidence_threshnew": 0.7,
             },
             "automated_defense": {
                 "enabled": True,
@@ -107,14 +104,14 @@ class ThreatIntelligenceAutomation:
                 "rate_limit_offenders": True,
                 "auto_patch_vulnerabilities": False,
                 "isolate_compromised_systems": True,
-                "defense_timeout": 300
+                "defense_timeout": 300,
             },
             "monitoring": {
                 "log_analysis": True,
                 "network_monitoring": True,
                 "behavior_analysis": True,
-                "anomaly_detection": True
-            }
+                "anomaly_detection": True,
+            },
         }
 
     def _initialize_threat_sources(self) -> dict[str, dict[str, Any]]:
@@ -124,35 +121,31 @@ class ThreatIntelligenceAutomation:
                 "url": "https://feodotracker.abuse.ch/downloads/feodotracker.json",
                 "type": "malware_domains",
                 "enabled": True,
-                "api_key": None
+                "api_key": None,
             },
             "virustotal": {
                 "url": "https://www.virustotal.com/vtapi/v2",
                 "type": "file_reputation",
                 "enabled": True,
-                "api_key": "${VIRUSTOTAL_API_KEY}"
+                "api_key": "${VIRUSTOTAL_API_KEY}",
             },
             "alienvault": {
                 "url": "https://otx.alienvault.com/api/v1",
                 "type": "ioc_indicators",
                 "enabled": True,
-                "api_key": "${OTX_API_KEY}"
+                "api_key": "${OTX_API_KEY}",
             },
             "cve": {
                 "url": "https://services.nvd.nist.gov/rest/json/cves/2.0",
                 "type": "vulnerabilities",
                 "enabled": True,
-                "api_key": None
-            }
+                "api_key": None,
+            },
         }
 
     def _initialize_ml_models(self):
         """Initialize machine learning models for threat analysis"""
-        self.ml_models = {
-            "malware_classifier": None,
-            "phishing_detector": None,
-            "anomaly_detector": None
-        }
+        self.ml_models = {"malware_classifier": None, "phishing_detector": None, "anomaly_detector": None}
 
     async def start_threat_intelligence_service(self):
         """Start continuous threat intelligence gathering"""
@@ -204,12 +197,14 @@ class ThreatIntelligenceAutomation:
                                 threat_type="malware_domain",
                                 severity="high",
                                 source=source_name,
-                                indicators=[entry.get('domain', '')],
-                                description=entry.get('description', f"Malware domain: {entry.get('domain', '')}"),
-                                first_seen=datetime.fromisoformat(entry.get('first_seen', datetime.now(UTC).isoformat())),  # noqa: DTZ005
-                                last_seen=datetime.fromisoformat(entry.get('last_seen', datetime.now(UTC).isoformat())),  # noqa: DTZ005
+                                indicators=[entry.get("domain", "")],
+                                description=entry.get("description", f"Malware domain: {entry.get('domain', '')}"),
+                                first_seen=datetime.fromisoformat(
+                                    entry.get("first_seen", datetime.now(UTC).isoformat())
+                                ),  # noqa: DTZ005
+                                last_seen=datetime.fromisoformat(entry.get("last_seen", datetime.now(UTC).isoformat())),  # noqa: DTZ005
                                 confidence=0.9,
-                                tags=["malware", "domain", "c2"]
+                                tags=["malware", "domain", "c2"],
                             )
 
                             self.threat_intel_db[threat.threat_id] = threat
@@ -244,10 +239,12 @@ class ThreatIntelligenceAutomation:
                                     source=source_name,
                                     indicators=[indicator.get("indicator", "")],
                                     description=pulse.get("description", "IOC indicator"),
-                                    first_seen=datetime.fromisoformat(pulse.get("created", datetime.now(UTC).isoformat())),  # noqa: DTZ005
+                                    first_seen=datetime.fromisoformat(
+                                        pulse.get("created", datetime.now(UTC).isoformat())
+                                    ),  # noqa: DTZ005
                                     last_seen=datetime.now(UTC),  # noqa: DTZ005
                                     confidence=0.8,
-                                    tags=pulse.get("tags", [])
+                                    tags=pulse.get("tags", []),
                                 )
 
                                 self.threat_intel_db[threat.threat_id] = threat
@@ -285,9 +282,11 @@ class ThreatIntelligenceAutomation:
                                 indicators=indicators,
                                 description=cve.get("descriptions", [{}])[0].get("value", ""),
                                 first_seen=datetime.fromisoformat(cve.get("published", datetime.now(UTC).isoformat())),  # noqa: DTZ005
-                                last_seen=datetime.fromisoformat(cve.get("lastModified", datetime.now(UTC).isoformat())),  # noqa: DTZ005
+                                last_seen=datetime.fromisoformat(
+                                    cve.get("lastModified", datetime.now(UTC).isoformat())
+                                ),  # noqa: DTZ005
                                 confidence=1.0,
-                                tags=["vulnerability", "cve"]
+                                tags=["vulnerability", "cve"],
                             )
 
                             self.threat_intel_db[threat.threat_id] = threat
@@ -298,12 +297,7 @@ class ThreatIntelligenceAutomation:
 
     def _map_pulse_severity(self, tlp: str) -> str:
         """Map OTX TLP classification to severity"""
-        tlp_mapping = {
-            "red": "critical",
-            "amber": "high",
-            "green": "medium",
-            "white": "low"
-        }
+        tlp_mapping = {"red": "critical", "amber": "high", "green": "medium", "white": "low"}
         return tlp_mapping.get(tlp.lower(), "medium")
 
     def _map_cvss_severity(self, cvss_metrics: list[dict[str, Any]]) -> str:
@@ -345,11 +339,11 @@ class ThreatIntelligenceAutomation:
                             recommended_actions=[
                                 "Monitor application logs for suspicious activity",
                                 "Enhance endpoint security monitoring",
-                                "Consider IP-based blocking if applicable"
+                                "Consider IP-based blocking if applicable",
                             ],
                             automated_response=self._get_automated_response(threat),
                             timestamp=datetime.now(UTC),  # noqa: DTZ005
-                            status="new"
+                            status="new",
                         )
 
                         self.active_alerts[alert.alert_id] = alert
@@ -364,8 +358,8 @@ class ThreatIntelligenceAutomation:
             try:
                 indicator_ip = ipaddress.ip_address(indicator)
                 for endpoint in endpoints:
-                    if ':' in endpoint:
-                        endpoint_ip = ipaddress.ip_address(endpoint.split(':')[0])
+                    if ":" in endpoint:
+                        endpoint_ip = ipaddress.ip_address(endpoint.split(":")[0])
                         if indicator_ip == endpoint_ip:
                             return True
             except ValueError:
@@ -428,17 +422,17 @@ class ThreatIntelligenceAutomation:
                                     first_seen=datetime.now(UTC),  # noqa: DTZ005
                                     last_seen=datetime.now(UTC),  # noqa: DTZ005
                                     confidence=0.6,
-                                    tags=["log_analysis", "pattern_matching"]
+                                    tags=["log_analysis", "pattern_matching"],
                                 ),
                                 affected_assets=["web_server"],
                                 recommended_actions=[
                                     "Review access logs for similar patterns",
                                     "Investigate source IP addresses",
-                                    "Consider rate limiting or blocking"
+                                    "Consider rate limiting or blocking",
                                 ],
                                 automated_response="rate_limit",
                                 timestamp=datetime.now(UTC),  # noqa: DTZ005
-                                status="new"
+                                status="new",
                             )
 
                             self.active_alerts[alert.alert_id] = alert
@@ -465,17 +459,17 @@ class ThreatIntelligenceAutomation:
                         first_seen=datetime.now(UTC),  # noqa: DTZ005
                         last_seen=datetime.now(UTC),  # noqa: DTZ005
                         confidence=0.7,
-                        tags=["behavior", "anomaly"]
+                        tags=["behavior", "anomaly"],
                     ),
                     affected_assets=["application"],
                     recommended_actions=[
                         "Investigate unusual behavior patterns",
                         "Review system logs for context",
-                        "Consider temporary monitoring enhancement"
+                        "Consider temporary monitoring enhancement",
                     ],
                     automated_response="enhance_monitoring",
                     timestamp=datetime.now(UTC),  # noqa: DTZ005
-                    status="new"
+                    status="new",
                 )
 
                 self.active_alerts[alert.alert_id] = alert
@@ -548,7 +542,7 @@ class ThreatIntelligenceAutomation:
             confidence=alert.threat_intelligence.confidence,
             impact="medium",
             rollback_possible=True,
-            duration=timedelta(hours=24)
+            duration=timedelta(hours=24),
         )
 
         self.defense_actions.append(defense_action)
@@ -611,10 +605,10 @@ class ThreatIntelligenceAutomation:
                     "type": alert.threat_intelligence.threat_type,
                     "severity": alert.threat_intelligence.severity,
                     "indicators": alert.threat_intelligence.indicators,
-                    "last_seen": datetime.now(UTC).isoformat()  # noqa: DTZ005
+                    "last_seen": datetime.now(UTC).isoformat(),  # noqa: DTZ005
                 }
 
-                with open(security_config_path, 'w') as f:
+                with open(security_config_path, "w") as f:
                     yaml.dump(config, f, default_flow_style=False)
 
                 logger.info(f"Security rules updated for threat: {alert.threat_intelligence.threat_id}")
@@ -630,10 +624,7 @@ class ThreatIntelligenceAutomation:
         retention_days = self.config["threat_intelligence"]["retention_days"]
         cutoff_date = datetime.now(UTC) - timedelta(days=retention_days)  # noqa: DTZ005
 
-        new_alerts = [
-            alert_id for alert_id, alert in self.active_alerts.items()
-            if alert.timestamp < cutoff_date
-        ]
+        new_alerts = [alert_id for alert_id, alert in self.active_alerts.items() if alert.timestamp < cutoff_date]
 
         for alert_id in new_alerts:
             del self.active_alerts[alert_id]
@@ -654,7 +645,7 @@ class ThreatIntelligenceAutomation:
                 "defense_actions_applied": len(self.defense_actions),
                 "blocked_ips": len(self.blocked_entities["ips"]),
                 "blocked_domains": len(self.blocked_entities["domains"]),
-                "rate_limited_entities": len(self.blocked_entities["rate_limited"])
+                "rate_limited_entities": len(self.blocked_entities["rate_limited"]),
             },
             "threat_intelligence": {
                 threat_id: {
@@ -665,8 +656,9 @@ class ThreatIntelligenceAutomation:
                     "indicators_count": len(threat.indicators),
                     "first_seen": threat.first_seen.isoformat(),
                     "last_seen": threat.last_seen.isoformat(),
-                    "tags": threat.tags
-                } for threat_id, threat in self.threat_intel_db.items()
+                    "tags": threat.tags,
+                }
+                for threat_id, threat in self.threat_intel_db.items()
             },
             "active_alerts": [
                 {
@@ -676,8 +668,9 @@ class ThreatIntelligenceAutomation:
                     "affected_assets": alert.affected_assets,
                     "status": alert.status,
                     "timestamp": alert.timestamp.isoformat(),
-                    "automated_response": alert.automated_response
-                } for alert in self.active_alerts.values()
+                    "automated_response": alert.automated_response,
+                }
+                for alert in self.active_alerts.values()
             ],
             "defense_actions": [
                 {
@@ -687,18 +680,19 @@ class ThreatIntelligenceAutomation:
                     "confidence": action.confidence,
                     "impact": action.impact,
                     "rollback_possible": action.rollback_possible,
-                    "duration_hours": action.duration.total_seconds() / 3600
-                } for action in self.defense_actions[-50:]
+                    "duration_hours": action.duration.total_seconds() / 3600,
+                }
+                for action in self.defense_actions[-50:]
             ],
             "blocked_entities": {
                 "ips": list(self.blocked_entities["ips"]),
                 "domains": list(self.blocked_entities["domains"]),
-                "rate_limited": list(self.blocked_entities["rate_limited"])
+                "rate_limited": list(self.blocked_entities["rate_limited"]),
             },
-            "recommendations": self._generate_security_recommendations()
+            "recommendations": self._generate_security_recommendations(),
         }
 
-        with open(report_path, 'w') as f:
+        with open(report_path, "w") as f:
             json.dump(report, f, indent=2)
 
         logger.info(f"Threat intelligence report saved to {report_path}")
@@ -707,8 +701,7 @@ class ThreatIntelligenceAutomation:
         """Generate security recommendations based on current state"""
         recommendations = []
 
-        critical_alerts = [a for a in self.active_alerts.values()
-                          if a.threat_intelligence.severity == "critical"]
+        critical_alerts = [a for a in self.active_alerts.values() if a.threat_intelligence.severity == "critical"]
         if critical_alerts:
             recommendations.append("Immediate action required: Review and address critical security alerts")
 
@@ -718,17 +711,20 @@ class ThreatIntelligenceAutomation:
         if len(self.blocked_entities["domains"]) > 50:
             recommendations.append("Review and optimize domain blocking policies")
 
-        recent_actions = [a for a in self.defense_actions
-                        if a.action_id.startswith(f"defense_{datetime.now(UTC).strftime('%Y%m%d')}")]  # noqa: DTZ005
+        recent_actions = [
+            a for a in self.defense_actions if a.action_id.startswith(f"defense_{datetime.now(UTC).strftime('%Y%m%d')}")
+        ]  # noqa: DTZ005
         if len(recent_actions) > 20:
             recommendations.append("High defensive activity detected - investigate potential attack patterns")
 
-        recommendations.extend([
-            "Regularly update threat intelligence feeds",
-            "Implement multi-layered security monitoring",
-            "Conduct regular security assessments",
-            "Maintain incident response procedures"
-        ])
+        recommendations.extend(
+            [
+                "Regularly update threat intelligence feeds",
+                "Implement multi-layered security monitoring",
+                "Conduct regular security assessments",
+                "Maintain incident response procedures",
+            ]
+        )
 
         return recommendations
 

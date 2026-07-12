@@ -34,6 +34,31 @@ __all__ = [
     "CURL_CFFI",
     "ORJSON",
     "OTEL",
+    # ML / Metal
+    "MLX",
+    "MLX_LM",
+    "MLX_VLM",
+    "MLX_EMBEDDINGS",
+    "COREMLTOOLS",
+    "TORCH",
+    # Internal tools
+    "LIGHTPANDA",
+    "SESSION",
+    "PAYWALL_BYPASS",
+    "DARKNET_CONNECTOR",
+    "HINTS",
+    "DEEP_WEB_HINTS",
+    "ZERO_ATTR",
+    "STEALTH_MANAGER",
+    # URL dedup / hashing
+    "XXHASH",
+    "PROBABLES",
+    "PYPROBABLES",
+    "DATASKETCH",
+    "RAPIDFUZZ",
+    "RUST_EXT",
+    # Language detection
+    "FAST_LANGDETECT",
     # Internal tools
     "LIGHTPANDA",
     "SESSION",
@@ -85,6 +110,7 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True, slots=True)
 class Capability:
     """Frozen descriptor for one optional dependency."""
+
     name: str
     import_path: str  # "module" or "module:attr"
     is_optional: bool = True
@@ -215,4 +241,24 @@ TRANSFORMERS = Capability("transformers", "transformers", install_hint="pip inst
 TOKENIZERS = Capability("tokenizers", "tokenizers", install_hint="pip install tokenizers")
 
 # Async
-AIOLMDB = Capability("aiolmdb", "aiolmdb", install_hint="pip install aiolmdb")
+AIOLMDB = Capability("aiolmdb", "aiolmdb", install_hint="uv add aiolmdb")
+
+# URL dedup / hashing
+XXHASH = Capability("xxhash", "xxhash", install_hint="uv add xxhash")
+PROBABLES = Capability("probables", "probables", install_hint="uv add probables")
+PYPROBABLES = Capability("pyprobables", "pyprobables", install_hint="uv add pyprobables")
+DATASKETCH = Capability("datasketch", "datasketch", install_hint="uv add datasketch")
+RAPIDFUZZ = Capability("rapidfuzz", "rapidfuzz", install_hint="uv add rapidfuzz")
+
+# ML embeddings
+MLX_EMBEDDINGS = Capability("mlx_embeddings", "mlx_embeddings", install_hint="uv add mlx-embed")
+TORCH = Capability("torch", "torch", install_hint="uv add torch")
+MODERNGPU = Capability("moderngl", "moderngl", install_hint="uv add moderngl")
+
+# Language detection
+FAST_LANGDETECT = Capability("fast_langdetect", "fast_langdetect", install_hint="uv add fast-langdetect")
+
+# Rust extensions
+RUST_EXT = Capability(
+    "rust_extensions", "hledac_rust_extensions", install_hint="Build rust extensions: uv run maturin develop"
+)

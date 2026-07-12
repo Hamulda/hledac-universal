@@ -1,0 +1,4 @@
+# file: /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/security/threat_intelligence.py
+# hypothesis_version: 6.155.7
+
+[1.0, 200, '.', '/', '0', '1', '185.220.101.0/24', '192.0.2.0/24', '://', 'ThreatIntelligence', 'User-Agent', '^[a-f0-9]{32,}$', 'analyzed_count', 'asn', 'asn_entities', 'asn_name', 'bgptools', 'classification', 'country', 'detail', 'domain', 'entities', 'feed_source', 'file', 'findings', 'found', 'greynoise', 'handle', 'hash', 'high', 'http', 'ioc', 'ioc_matches', 'ioc_type', 'iocs', 'ip', 'kill_chain_match', 'kill_chain_tagger', 'low', 'malicious', 'malware-c2.net', 'medium', 'name', 'none', 'org', 'phishing-site.io', 'prefix', 'rdap', 'services', 'severity', 'source', 'sources', 'static', 'stats', 'suspicious', 'suspicious-cdn.com', 'techniques', 'threat_level', 'threats', 'total', 'type', 'unknown', 'url', 'value']

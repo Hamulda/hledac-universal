@@ -1612,8 +1612,8 @@ async def _cve_lookup_background(
         cache_dir = Path("/tmp/cve_gh_cache")
         client = _GitHubCodeSearchCVEClient(cache_dir)
 
-        import aiohttp
-        _sess = await session_pool.aiohttp()
+        import httpx
+        _sess = await httpx.AsyncClient()
         async with _sess as session:
             results = await client.search_cve(cve_id, session)
 

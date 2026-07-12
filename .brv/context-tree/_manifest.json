@@ -3,25 +3,19 @@
     {
       "order": 3,
       "path": "_index.md",
-      "tokens": 411,
+      "tokens": 660,
+      "type": "summary"
+    },
+    {
+      "order": 2,
+      "path": "facts/_index.md",
+      "tokens": 757,
       "type": "summary"
     },
     {
       "order": 2,
       "path": "testing/_index.md",
       "tokens": 431,
-      "type": "summary"
-    },
-    {
-      "order": 1,
-      "path": "data/duckdb_store/_index.md",
-      "tokens": 923,
-      "type": "summary"
-    },
-    {
-      "order": 1,
-      "path": "knowledge_base/audit/_index.md",
-      "tokens": 187,
       "type": "summary"
     },
     {
@@ -145,6 +139,14 @@
       "type": "context"
     },
     {
+      "abstractPath": "facts/project/hashing_facade_issue_2.abstract.md",
+      "abstractTokens": 57,
+      "importance": 50,
+      "path": "facts/project/hashing_facade_issue_2.md",
+      "tokens": 57,
+      "type": "context"
+    },
+    {
       "abstractPath": "facts/project/hledac_universal_claude_md.abstract.md",
       "abstractTokens": 59,
       "importance": 50,
@@ -247,13 +249,13 @@
       "type": "context"
     }
   ],
-  "generated_at": "2026-07-11T20:24:16.907Z",
+  "generated_at": "2026-07-12T13:48:19.270Z",
   "lane_tokens": {
-    "contexts": 1920,
+    "contexts": 1977,
     "stubs": 0,
-    "summaries": 1952
+    "summaries": 1848
   },
-  "source_fingerprint": "5fe3129d0f7d663320ef16d8ea0bc4efa93c582dec743569794e28a136a24be8",
-  "total_tokens": 3872,
+  "source_fingerprint": "88dd4bcecdeeaef693245d101543e7e0a682dd00f64f5303e4896d3ddf0b97a8",
+  "total_tokens": 3825,
   "version": 1
 }

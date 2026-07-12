@@ -1,22 +1,8 @@
 """
-test_f_a4_batch_dns.py — hermetic tests for utils.batch_dns.
+test_f_a4_batch_dns.py - hermetic tests for utils.batch_dns.
 
-Covers:
-- LRU eviction at capacity
-- TTL expiry
-- IPv4/IPv6 literal short-circuit (no DNS)
-- Concurrency cap (semaphore)
-- Fail-soft on per-host failure (return_exceptions + safe_gather)
-- Stats counters
-- Singleton + reset
-- Env-var opt-out
-- Cache hit synchronous path (no event-loop yield)
-- Empty input / dedup of duplicate hosts
-- Darknet host skip (not used by batch_dns itself, but documented
-  to ensure callers pre-filter .onion/.i2p)
-
-Hermetic: each test uses an in-process resolver with a mocked
-``async_getaddrinfo`` (monkeypatched) so no real DNS traffic.
+Migrated from asyncio.run() to @pytest.mark.asyncio (pytest-asyncio session loop)
+to save 5-10 MB per test x 21 tests = 100-200 MB on full suite.
 """
 
 import asyncio
@@ -33,9 +19,8 @@ from hledac.universal.utils.batch_dns import (
     reset_batch_dns_resolver,
 )
 
-# ---------------------------------------------------------------------------
+
 # Fixtures + helpers
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture(autouse=True)
@@ -56,17 +41,10 @@ def _clean_opt_out_env():
 
 
 def _make_getaddrinfo_mock(mapping: dict[str, list[tuple]]):
-    """Build a mock async_getaddrinfo that returns IPs for given hosts.
-
-    Args:
-        mapping: host → list of (family, type, proto, canonname, sockaddr)
-            tuples (matching the real getaddrinfo shape).
-    """
-
+    """Build a mock async_getaddrinfo that returns IPs for given hosts."""
     async def _mock(host, port, *, family=0, type_=0, proto=0, timeout=None):
         if host in mapping:
             return mapping[host]
-        # Simulate a DNS failure for unknown hosts.
         import socket as _socket
 
         raise _socket.gaierror(f"mock: no entry for {host}")
@@ -74,9 +52,7 @@ def _make_getaddrinfo_mock(mapping: dict[str, list[tuple]]):
     return _mock
 
 
-# ---------------------------------------------------------------------------
-# Basic correctness
-# ---------------------------------------------------------------------------
+# === Sync tests (no event loop needed) ===
 
 
 def test_resolver_empty_input_returns_empty_dict():
@@ -96,7 +72,6 @@ def test_resolver_dedupes_duplicate_hosts_in_input():
     ):
         result = asyncio.run(r.resolve_many(["a.example", "a.example", "a.example"]))
     assert result == {"a.example": ["1.2.3.4"]}
-    # Only one DNS call regardless of how many times the host appeared.
     assert r.stats()["cache_misses"] == 1
 
 
@@ -123,12 +98,11 @@ def test_resolver_resolves_multiple_distinct_hosts_in_parallel():
     assert r.stats()["batch_calls"] == 1
 
 
-# ---------------------------------------------------------------------------
-# Cache behaviour
-# ---------------------------------------------------------------------------
+# === Cache tests - use session-scoped loop (no new loop per test) ===
 
 
-def test_resolver_cache_hit_avoids_second_dns_call():
+@pytest.mark.asyncio
+async def test_resolver_cache_hit_avoids_second_dns_call():
     r = BatchDNSResolver()
     call_count = {"n": 0}
 
@@ -140,17 +114,18 @@ def test_resolver_cache_hit_avoids_second_dns_call():
         "hledac.universal.utils.batch_dns.async_getaddrinfo",
         new=_counting_mock,
     ):
-        # First call → cache miss.
-        asyncio.run(r.resolve_many(["x.example"]))
-        # Second call → cache hit, no extra getaddrinfo.
-        result = asyncio.run(r.resolve_many(["x.example"]))
+        # First call -> cache miss.
+        await r.resolve_many(["x.example"])
+        # Second call -> cache hit, no extra getaddrinfo.
+        result = await r.resolve_many(["x.example"])
     assert result == {"x.example": ["9.9.9.9"]}
     assert call_count["n"] == 1
     assert r.stats()["cache_hits"] == 1
     assert r.stats()["cache_misses"] == 1
 
 
-def test_resolver_lru_evicts_oldest_when_capacity_reached():
+@pytest.mark.asyncio
+async def test_resolver_lru_evicts_oldest_when_capacity_reached():
     r = BatchDNSResolver(max_cache=2, ttl_s=0.0)
     mock = _make_getaddrinfo_mock({
         f"h{i}.example": [(2, 1, 6, "", (f"10.0.0.{i}", 0))] for i in range(5)
@@ -160,18 +135,19 @@ def test_resolver_lru_evicts_oldest_when_capacity_reached():
         new=mock,
     ):
         # Fill cache to capacity.
-        asyncio.run(r.resolve_many(["h0.example", "h1.example"]))
-        # Add a 3rd — should evict h0 (oldest).
-        asyncio.run(r.resolve_many(["h2.example"]))
+        await r.resolve_many(["h0.example", "h1.example"])
+        # Add a 3rd - should evict h0 (oldest).
+        await r.resolve_many(["h2.example"])
         assert r.cache_size() == 2
         assert r.stats()["evictions"] == 1
         # h0 should be re-resolved (cache miss).
         m0 = r.stats()["cache_misses"]
-        asyncio.run(r.resolve_many(["h0.example"]))
+        await r.resolve_many(["h0.example"])
         assert r.stats()["cache_misses"] == m0 + 1
 
 
-def test_resolver_ttl_expiry_re_resolves_host():
+@pytest.mark.asyncio
+async def test_resolver_ttl_expiry_re_resolves_host():
     r = BatchDNSResolver(max_cache=10, ttl_s=0.05)
     call_count = {"n": 0}
 
@@ -183,9 +159,9 @@ def test_resolver_ttl_expiry_re_resolves_host():
         "hledac.universal.utils.batch_dns.async_getaddrinfo",
         new=_counting_mock,
     ):
-        asyncio.run(r.resolve_many(["ttl.example"]))
+        await r.resolve_many(["ttl.example"])
         time.sleep(0.06)  # wait past TTL
-        asyncio.run(r.resolve_many(["ttl.example"]))
+        await r.resolve_many(["ttl.example"])
     assert call_count["n"] == 2
 
 
@@ -207,10 +183,7 @@ def test_resolver_ttl_zero_means_no_expiry():
     assert call_count["n"] == 1
 
 
-# ---------------------------------------------------------------------------
-# IPv4 / IPv6 literal handling
-# ---------------------------------------------------------------------------
-
+# === IPv4/IPv6 literals - sync, no loop needed ===
 
 def test_resolver_ipv4_literal_short_circuits():
     r = BatchDNSResolver()
@@ -237,46 +210,37 @@ def test_resolver_ipv6_literal_short_circuits():
     assert r.stats()["cache_hits"] == 1
 
 
-# ---------------------------------------------------------------------------
-# Fail-soft behaviour
-# ---------------------------------------------------------------------------
+# === Fail-soft tests ===
 
-
-def test_resolver_returns_partial_result_when_some_hosts_fail():
+@pytest.mark.asyncio
+async def test_resolver_returns_partial_result_when_some_hosts_fail():
     r = BatchDNSResolver()
     mock = _make_getaddrinfo_mock({
         "ok.example": [(2, 1, 6, "", ("8.8.8.8", 0))],
-        # "broken.example" missing → mock raises gaierror.
     })
     with patch(
         "hledac.universal.utils.batch_dns.async_getaddrinfo",
         new=mock,
     ):
-        result = asyncio.run(
-            r.resolve_many(["ok.example", "broken.example"])
-        )
-    # ok is in the result, broken is silently absent.
+        result = await r.resolve_many(["ok.example", "broken.example"])
     assert result == {"ok.example": ["8.8.8.8"]}
     assert r.stats()["errors"] == 1
 
 
-def test_resolver_does_not_cache_empty_dns_results():
+@pytest.mark.asyncio
+async def test_resolver_does_not_cache_empty_dns_results():
     r = BatchDNSResolver()
     mock = _make_getaddrinfo_mock({})  # everything fails
     with patch(
         "hledac.universal.utils.batch_dns.async_getaddrinfo",
         new=mock,
     ):
-        asyncio.run(r.resolve_many(["nope1.example", "nope2.example"]))
-    # No entries should be cached (empty results are not retried-from-cache).
+        await r.resolve_many(["nope1.example", "nope2.example"])
     assert r.cache_size() == 0
     assert r.stats()["errors"] == 2
 
 
-# ---------------------------------------------------------------------------
-# Concurrency cap
-# ---------------------------------------------------------------------------
-
+# === Concurrency cap - requires async ===
 
 @pytest.mark.asyncio
 async def test_resolver_concurrency_cap_observed():
@@ -298,14 +262,10 @@ async def test_resolver_concurrency_cap_observed():
     ):
         hosts = [f"h{i}.example" for i in range(10)]
         await r.resolve_many(hosts)
-    # Semaphore caps parallel calls; allow some slack for scheduling.
     assert peak_inflight <= 2, f"peak_inflight={peak_inflight} > semaphore=2"
 
 
-# ---------------------------------------------------------------------------
-# Singleton + opt-out
-# ---------------------------------------------------------------------------
-
+# === Singleton + opt-out ===
 
 def test_singleton_returns_same_instance():
     a = get_batch_dns_resolver()
@@ -323,23 +283,18 @@ def test_reset_drops_singleton():
 def test_resolver_opt_out_returns_empty_dict(monkeypatch):
     monkeypatch.setenv(ENV_OPT_OUT, "1")
     r = BatchDNSResolver()
-    # Even with valid mock, opt-out returns empty.
     result = asyncio.run(r.resolve_many(["anywhere.example"]))
     assert result == {}
 
 
-def test_resolver_handles_empty_and_whitespace_hosts():
+@pytest.mark.asyncio
+async def test_resolver_handles_empty_and_whitespace_hosts():
     r = BatchDNSResolver()
-    result = asyncio.run(r.resolve_many(["", "  ", "\t", "real.example"]))
-    # Empty/whitespace are dropped; real.example goes through (mock will
-    # fail, but the helper itself doesn't crash).
+    result = await r.resolve_many(["", "  ", "\t", "real.example"])
     assert "real.example" not in result or result["real.example"] == []
 
 
-# ---------------------------------------------------------------------------
-# Stats API
-# ---------------------------------------------------------------------------
-
+# === Stats API ===
 
 def test_stats_init_at_zero():
     r = BatchDNSResolver()
@@ -354,7 +309,8 @@ def test_stats_init_at_zero():
     }
 
 
-def test_stats_reset_zeros_counters_but_keeps_cache():
+@pytest.mark.asyncio
+async def test_stats_reset_zeros_counters_but_keeps_cache():
     r = BatchDNSResolver()
     mock = _make_getaddrinfo_mock({
         "x.example": [(2, 1, 6, "", ("1.1.1.1", 0))],
@@ -363,7 +319,7 @@ def test_stats_reset_zeros_counters_but_keeps_cache():
         "hledac.universal.utils.batch_dns.async_getaddrinfo",
         new=mock,
     ):
-        asyncio.run(r.resolve_many(["x.example"]))
+        await r.resolve_many(["x.example"])
     assert r.stats()["batch_calls"] == 1
     assert r.cache_size() == 1
     r.reset_stats()
@@ -371,7 +327,8 @@ def test_stats_reset_zeros_counters_but_keeps_cache():
     assert r.cache_size() == 1  # cache survives
 
 
-def test_clear_cache_drops_entries():
+@pytest.mark.asyncio
+async def test_clear_cache_drops_entries():
     r = BatchDNSResolver()
     mock = _make_getaddrinfo_mock({
         "y.example": [(2, 1, 6, "", ("2.2.2.2", 0))],
@@ -380,28 +337,24 @@ def test_clear_cache_drops_entries():
         "hledac.universal.utils.batch_dns.async_getaddrinfo",
         new=mock,
     ):
-        asyncio.run(r.resolve_many(["y.example"]))
+        await r.resolve_many(["y.example"])
     assert r.cache_size() == 1
     r.clear_cache()
     assert r.cache_size() == 0
 
 
-# ---------------------------------------------------------------------------
-# Bounds safety
-# ---------------------------------------------------------------------------
-
+# === Bounds safety ===
 
 def test_resolver_clamps_constructor_args_to_safe_minimums():
     r = BatchDNSResolver(max_cache=0, max_concurrent=0, ttl_s=-1.0)
-    # No crash, and ttl<0 means "never expire" (≤0 branch).
     assert r._cache_max == 1
     assert r._semaphore_max == 1
     assert r._ttl_s == 0.0  # clamped to 0
 
 
-def test_resolver_handles_large_batch_in_bounded_time():
+@pytest.mark.asyncio
+async def test_resolver_handles_large_batch_in_bounded_time():
     r = BatchDNSResolver(max_cache=10_000, max_concurrent=100, ttl_s=60.0)
-    # Build 500 hosts that all resolve successfully.
     mapping = {
         f"h{i}.example": [(2, 1, 6, "", (f"10.0.{i // 256}.{i % 256}", 0))]
         for i in range(500)
@@ -412,11 +365,7 @@ def test_resolver_handles_large_batch_in_bounded_time():
         new=mock,
     ):
         t0 = time.monotonic()
-        result = asyncio.run(
-            r.resolve_many([f"h{i}.example" for i in range(500)])
-        )
+        result = await r.resolve_many([f"h{i}.example" for i in range(500)])
         elapsed = time.monotonic() - t0
     assert len(result) == 500
-    # Capped by semaphore: with no real DNS latency this is sub-second.
-    # Use a generous bound so CI noise doesn't flake.
     assert elapsed < 5.0, f"500-host batch took {elapsed:.2f}s"

@@ -105,8 +105,7 @@ Fetch timeout constants (`TIMEOUT_CLEARNET_API`, `TIMEOUT_CLEARNET_HTML`, `TIMEO
 ### AIMD concurrency uses `AIMD_*` constants
 Adaptive increase/decrease uses `AIMD_ADDITIVE_INCREMENT`, `AIMD_DECREASE_FACTOR`, `AIMD_MIN_CONCURRENCY`, `AIMD_MAX_CONCURRENCY`, `AIMD_SUCCESS_THRESHOLD`.
 
-### `_resolve_host_ips` is synchronous
-`FetchCoordinator._resolve_host_ips()` is a blocking synchronous method that delegates to `asyncio.to_thread` internally for DNS lookups. The async variant is `_resolve_host_ips_async()`.
+### `async_getaddrinfo` is used instead of `socket.getaddrinfo`
 
 ---
 

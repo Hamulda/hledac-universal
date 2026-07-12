@@ -12,11 +12,9 @@ M1 8GB: Third-party API (2captcha) is primary path.
 Vision/CoreML fallback is secondary. Local OCR is off-by-default.
 """
 
-
 import asyncio
 import logging
 import random
-from abc import abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
@@ -28,6 +26,7 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────────────────────
 # Strategy Protocol
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @runtime_checkable
 class StealthStrategy(Protocol):
@@ -52,28 +51,31 @@ class StealthStrategy(Protocol):
 # 1. UA Rotation Strategy
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @dataclass(slots=True)
 class UARotationConfig:
     rotate_on_each_request: bool = False
     min_rotation_interval: float = 300.0  # 5 minutes
-    pool: tuple[str, ...] = field(default_factory=lambda: (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
-        "(KHTML, like Gecko) Version/17.5 Safari/605.1.15",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    ))
+    pool: tuple[str, ...] = field(
+        default_factory=lambda: (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
+            "(KHTML, like Gecko) Version/17.5 Safari/605.1.15",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        )
+    )
 
 
 class UARotationStrategy:
     """Rotate User-Agent headers per-request or on interval."""
 
-    __slots__ = ('_config', '_current_ua', '_rotation_count', '_last_rotation')
+    __slots__ = ("_config", "_current_ua", "_rotation_count", "_last_rotation")
     strategy_name: str = "ua_rotation"
 
     def __init__(self, config: UARotationConfig | None = None) -> None:
@@ -120,6 +122,7 @@ class UARotationStrategy:
 # 2. Header Randomization Strategy
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @dataclass(slots=True)
 class HeaderRandomizationConfig:
     enabled: bool = True
@@ -131,21 +134,32 @@ class HeaderRandomizationConfig:
 class HeaderRandomizationStrategy:
     """Randomize HTTP request headers to defeat header fingerprinting."""
 
-    __slots__ = ('_config', '_header_count', '_chaff_count')
+    __slots__ = ("_config", "_header_count", "_chaff_count")
     strategy_name: str = "header_randomization"
 
     # Common browser headers to randomize
     _REAL_HEADERS = (
-        "Accept-Language", "Accept-Encoding", "Accept",
-        "Sec-Ch-Ua", "Sec-Ch-Ua-Mobile", "Sec-Ch-Ua-Platform",
-        "Sec-Fetch-Dest", "Sec-Fetch-Mode", "Sec-Fetch-Site",
-        "Sec-Fetch-User", "Sec-Fetch-Cross-Site",
+        "Accept-Language",
+        "Accept-Encoding",
+        "Accept",
+        "Sec-Ch-Ua",
+        "Sec-Ch-Ua-Mobile",
+        "Sec-Ch-Ua-Platform",
+        "Sec-Fetch-Dest",
+        "Sec-Fetch-Mode",
+        "Sec-Fetch-Site",
+        "Sec-Fetch-User",
+        "Sec-Fetch-Cross-Site",
     )
 
     # Chaff headers that look plausible
     _CHAFF_HEADERS = (
-        "X-Requested-With", "X-Forwarded-For", "X-Request-ID",
-        "Cache-Control", "Pragma", "Expires",
+        "X-Requested-With",
+        "X-Forwarded-For",
+        "X-Request-ID",
+        "Cache-Control",
+        "Pragma",
+        "Expires",
     )
 
     def __init__(self, config: HeaderRandomizationConfig | None = None) -> None:
@@ -194,6 +208,7 @@ class HeaderRandomizationStrategy:
 # 3. Circuit / Tor Management Strategy
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @dataclass(slots=True)
 class CircuitManagementConfig:
     enabled: bool = False
@@ -211,7 +226,7 @@ class CircuitManagementStrategy:
     Heavy Tor management lives in transport/tor_transport.py.
     """
 
-    __slots__ = ('_config', '_circuit_id', '_request_count', '_last_circuit_change')
+    __slots__ = ("_config", "_circuit_id", "_request_count", "_last_circuit_change")
     strategy_name: str = "circuit_management"
 
     def __init__(self, config: CircuitManagementConfig | None = None) -> None:
@@ -268,6 +283,7 @@ class CircuitManagementStrategy:
         """Send TOR ControlPort NEWNYM signal (fire-and-forget)."""
         try:
             import socket
+
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(5.0)
             sock.connect((self._config.tor_control_host, self._config.tor_control_port))
@@ -293,6 +309,7 @@ class CircuitManagementStrategy:
 # 4. Fingerprint Muting Strategy
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @dataclass(slots=True)
 class FingerprintMuterConfig:
     enabled: bool = True
@@ -311,8 +328,7 @@ class FingerprintMuterStrategy:
     classes in stealth_layer.py (lazy import inside strategy).
     """
 
-    __slots__ = ('_config', '_fingerprint_randomizer', '_js_evasion',
-                 '_evasions_applied', '_profile_rotations')
+    __slots__ = ("_config", "_fingerprint_randomizer", "_js_evasion", "_evasions_applied", "_profile_rotations")
     strategy_name: str = "fingerprint_muter"
 
     def __init__(self, config: FingerprintMuterConfig | None = None) -> None:
@@ -325,9 +341,9 @@ class FingerprintMuterStrategy:
     async def mount(self, ctx: Any) -> None:
         # Lazy import existing classes — stays inside strategy
         from hledac.universal.layers.stealth_layer import (
+            FingerprintConfig,
             FingerprintRandomizer,
             JavaScriptEvasion,
-            FingerprintConfig,
             JavaScriptEvasionConfig,
         )
 
@@ -341,8 +357,7 @@ class FingerprintMuterStrategy:
 
     async def unmount(self, ctx: Any) -> None:
         logger.debug(
-            f"FingerprintMuterStrategy: {self._evasions_applied} evasions, "
-            f"{self._profile_rotations} rotations"
+            f"FingerprintMuterStrategy: {self._evasions_applied} evasions, {self._profile_rotations} rotations"
         )
 
     async def on_event(self, ctx: Any, event: Any) -> Any:
@@ -355,12 +370,11 @@ class FingerprintMuterStrategy:
         scripts: list[str] = []
 
         if self._fingerprint_randomizer:
-            scripts.append(
-                self._fingerprint_randomizer.get_js_protection_script() or ""
-            )
+            scripts.append(self._fingerprint_randomizer.get_js_protection_script() or "")
         if self._js_evasion:
-            scripts.append(self._js_evasion.get_all_evasion_scripts()[0] if
-                          self._js_evasion.get_all_evasion_scripts() else "")
+            scripts.append(
+                self._js_evasion.get_all_evasion_scripts()[0] if self._js_evasion.get_all_evasion_scripts() else ""
+            )
 
         return "\n".join(s for s in scripts if s)
 
@@ -395,6 +409,7 @@ class FingerprintMuterStrategy:
 # 5. CAPTCHA Solving Strategy
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @dataclass(slots=True)
 class CaptchaSolvingConfig:
     """Configuration for CAPTCHA solving strategy.
@@ -403,6 +418,7 @@ class CaptchaSolvingConfig:
     Local OCR (pytesseract, transformers/torch) is OFF BY DEFAULT.
     Enable with HLEDAC_ENABLE_CAPTCHA_LOCAL=1.
     """
+
     enabled: bool = True
     # Third-party API (primary path on M1 8GB)
     provider_api_key: str | None = None  # 2captcha key
@@ -422,7 +438,7 @@ class CaptchaSolvingStrategy:
     Local OCR is off-by-default — see captcha_solver_local.py to enable.
     """
 
-    __slots__ = ('_config', '_vision_solver', '_initialized', '_solved', '_failed')
+    __slots__ = ("_config", "_vision_solver", "_initialized", "_solved", "_failed")
     strategy_name: str = "captcha_solving"
 
     def __init__(self, config: CaptchaSolvingConfig | None = None) -> None:
@@ -441,7 +457,7 @@ class CaptchaSolvingStrategy:
         self._initialized = True
 
     async def unmount(self, ctx: Any) -> None:
-        if self._vision_solver and hasattr(self._vision_solver, 'clear_cache'):
+        if self._vision_solver and hasattr(self._vision_solver, "clear_cache"):
             self._vision_solver.clear_cache()
         logger.debug(f"CaptchaSolvingStrategy: solved={self._solved}, failed={self._failed}")
 
@@ -452,6 +468,7 @@ class CaptchaSolvingStrategy:
         """Lazily init VisionCaptchaSolver from captcha_solver.py."""
         try:
             from hledac.universal.captcha_solver import VisionCaptchaSolver
+
             self._vision_solver = VisionCaptchaSolver()
             logger.debug("VisionCaptchaSolver initialized")
         except ImportError as e:
@@ -497,21 +514,20 @@ class CaptchaSolvingStrategy:
             return None
 
         try:
-            import aiohttp
+            import httpx
         except ImportError:
             return None
 
         b64 = base64.b64encode(image_bytes).decode()
 
         try:
-            async with aiohttp.ClientSession() as session:
+            async with httpx.AsyncClient(timeout=30.0) as session:
                 # Submit
-                async with session.post(
+                response = await session.post(
                     self._config.provider_endpoint,
                     data={"key": api_key, "method": "base64", "body": b64},
-                    timeout=aiohttp.ClientTimeout(total=30.0),
-                ) as r:
-                    result = await r.text()
+                )
+                result = response.text
 
                 if not result.startswith("OK|"):
                     return None
@@ -521,11 +537,11 @@ class CaptchaSolvingStrategy:
                 # Poll
                 for _ in range(self._config.provider_max_polls):
                     await asyncio.sleep(self._config.provider_poll_interval)
-                    async with session.get(
+                    poll_response = await session.get(
                         f"http://2captcha.com/res.php?key={api_key}&action=get&id={captcha_id}",
-                        timeout=aiohttp.ClientTimeout(total=10.0),
-                    ) as r:
-                        res = await r.text()
+                        timeout=10.0,
+                    )
+                    res = poll_response.text
 
                     if res.startswith("OK|"):
                         return res.split("|")[1]

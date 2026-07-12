@@ -41,7 +41,7 @@ from difflib import SequenceMatcher
 from enum import Enum, StrEnum
 from typing import Any
 
-import aiohttp
+import httpx
 from urllib.parse import quote, urlparse
 
 import numpy as np
@@ -320,7 +320,7 @@ class TemporalArchaeologist:
 
     async def __aenter__(self):
         """Async context manager entry."""
-        self._session = await session_pool.aiohttp()
+        self._session = await httpx.AsyncClient()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -753,7 +753,7 @@ class TemporalArchaeologist:
             return False
 
         try:
-            async with self._session.head(wayback_url, allow_redirects=True) as resp:
+            async with self._session.head(wayback_url, follow_redirects=True) as resp:
                 return resp.status == 200
         except Exception:
             return False

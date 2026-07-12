@@ -34,7 +34,6 @@ WIRE-UP:
     - core/__main__.py: --list-sources [--tier ...] CLI flag
 """
 
-
 import asyncio
 import hashlib
 import logging
@@ -163,28 +162,24 @@ _CURATED_SOURCES: tuple[tuple[str, str, SourceTier, TransportRequired, DataType,
     ("Google Argon CT", "https://ct.googleapis.com/logs/eu1/argon2025h1/", "surface", "none", "ct_logs", 0.90),
     ("Cloudflare Nimbus", "https://ct.cloudflare.com/logs/nimbus2025/", "surface", "none", "ct_logs", 0.92),
     ("Let's Encrypt Oak", "https://oak.ct.letsencrypt.org/", "surface", "none", "ct_logs", 0.95),
-
     # --- Passive DNS (clearnet free tiers) ---
     ("SecurityTrails pDNS", "https://securitytrails.com/list/apex_domain/", "surface", "none", "passive_dns", 0.85),
     ("CIRCL pDNS", "https://www.circl.lu/services/passive-dns/", "surface", "none", "passive_dns", 0.90),
     ("Robtex pDNS", "https://passive.robtex.com/", "surface", "none", "passive_dns", 0.80),
     ("MnemonicPDNS", "https://pdns.circl.lu/", "surface", "none", "passive_dns", 0.85),
     ("DNSlytics", "https://search.dnslytics.com/", "surface", "none", "passive_dns", 0.75),
-
     # --- Archive sources (clearnet) ---
     ("Wayback CDX", "https://web.archive.org/cdx/search/cdx", "surface", "none", "repo", 0.95),
     ("CommonCrawl Index", "https://index.commoncrawl.org/", "surface", "none", "repo", 0.90),
     ("archive.is", "https://archive.is/", "surface", "none", "repo", 0.85),
     ("CachedView", "https://cachedview.nl/", "surface", "none", "repo", 0.65),
     ("Mementos Web", "http://timetravel.mementoweb.org/", "surface", "none", "repo", 0.80),
-
     # --- Paste sites (clearnet) ---
     ("Pastebin (scraping)", "https://pastebin.com/", "surface", "none", "paste", 0.75),
     ("Ghostbin", "https://ghostbin.org/", "surface", "none", "paste", 0.60),
     ("Privatebin (known instance)", "https://privatebin.net/", "surface", "none", "paste", 0.65),
     ("Throwbin", "https://throwbin.io/", "surface", "none", "paste", 0.50),
     ("Rentry", "https://rentry.co/", "surface", "none", "paste", 0.70),
-
     # --- Academic (clearnet) ---
     ("Semantic Scholar", "https://api.semanticscholar.org/graph/v1/", "academic", "none", "academic", 0.95),
     ("arXiv API", "http://export.arxiv.org/api/query?", "academic", "none", "academic", 0.95),
@@ -192,7 +187,6 @@ _CURATED_SOURCES: tuple[tuple[str, str, SourceTier, TransportRequired, DataType,
     ("CrossRef REST", "https://api.crossref.org/", "academic", "none", "academic", 0.95),
     ("OpenAlex", "https://api.openalex.org/", "academic", "none", "academic", 0.90),
     ("PubMed E-utilities", "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/", "academic", "none", "academic", 0.95),
-
     # --- Code intelligence (clearnet) ---
     ("grep.app", "https://grep.app/api/search?", "surface", "none", "repo", 0.90),
     ("Sourcegraph public", "https://sourcegraph.com/.api/search/stream?", "surface", "none", "repo", 0.90),
@@ -200,40 +194,91 @@ _CURATED_SOURCES: tuple[tuple[str, str, SourceTier, TransportRequired, DataType,
     ("GitLab search", "https://gitlab.com/api/v4/search?", "surface", "none", "repo", 0.80),
     ("Codeberg search", "https://codeberg.org/api/v1/repos/search?", "surface", "none", "repo", 0.70),
     ("searchcode", "https://searchcode.com/api/codesearch_I/", "surface", "none", "repo", 0.75),
-
     # --- Leak intelligence (clearnet) ---
     ("Have I Been Pwned", "https://haveibeenpwned.com/api/v3/", "surface", "none", "leak_db", 0.90),
     ("DeHashed (gated)", "https://dehashed.com/", "surface", "none", "leak_db", 0.85),
     ("LeakCheck", "https://leakcheck.io/", "surface", "none", "leak_db", 0.70),
     ("IntelligenceX", "https://intelx.io/", "surface", "none", "leak_db", 0.85),
     ("Leak-Lookup", "https://leak-lookup.com/", "surface", "none", "leak_db", 0.60),
-
     # --- Dark web index — clearnet mirrors (require .onion resolve, not tor) ---
     ("Ahmia.fi (Tor search mirror)", "https://ahmia.fi/", "surface", "none", "forum", 0.80),
     ("dark.fail", "https://dark.fail/", "surface", "none", "forum", 0.75),
     ("onion.live", "https://onion.live/", "surface", "none", "forum", 0.60),
     ("DarkOwl Vision (commercial)", "https://www.darkowl.com/", "surface", "none", "leak_db", 0.85),
     ("TorBot (clearnet link list)", "https://github.com/DedSecInside/TorBot", "surface", "none", "forum", 0.55),
-
     # --- P2P intelligence (clearnet gateways + DHT) ---
     ("IPFS public gateway (ipfs.io)", "https://ipfs.io/", "p2p", "none", "repo", 0.90),
     ("IPFS gateway (dweb.link)", "https://dweb.link/", "p2p", "none", "repo", 0.85),
     ("IPFS gateway (cloudflare)", "https://cf-ipfs.com/", "p2p", "none", "repo", 0.80),
     ("IPFS gateway (nftstorage)", "https://nftstorage.link/", "p2p", "none", "repo", 0.70),
     ("DHT bootstrap (already wired)", "dht://bootstrap/", "p2p", "none", "repo", 0.95),
-
     # --- Dark web — actual .onion (transport=tor required) ---
-    ("Ahmia .onion", "http://juhanurmihxlp77nkq76byazcldy2hlmovfu2epvl5ankdibsot4csyd.onion/", "dark", "tor", "forum", 0.70),  # noqa: E501
-    ("Dark.fail .onion", "http://darkfailenbsdla5mal2mxn2uz66od5vtzd5q5slngbgx6wvpfzh7umtid.onion/", "dark", "tor", "forum", 0.55),  # noqa: E501
-    ("ProtonMail .onion", "https://protonmailrmez3lotccipshtkleegetolb73fuirgj7r4o4vfu7ozyd.onion/", "dark", "tor", "paste", 0.85),  # noqa: E501
-    ("BBC .onion", "https://www.bbcnewsd73hkzno2ini43t4gblxvycyac5aw4gnv7t2rccijh7745uqd.onion/", "dark", "tor", "forum", 0.80),  # noqa: E501
-    ("NYT .onion", "https://www.nytimesn7cgmftshazwhfgzm37qxb44r64ytbb2dj3x62d2lljsciiyd.onion/", "dark", "tor", "forum", 0.80),  # noqa: E501
-    ("Facebook .onion", "https://www.facebookwkhpilnemxj7asaniu7vnjjbiltxjqhye3mhbshg7kx5tfyd.onion/", "dark", "tor", "forum", 0.85),  # noqa: E501
-    ("Dread .onion", "http://dreadytofatroptsdj6c7mkr3q62p5l3qb66pfnhlfnn3gg4g4nh2qd.onion/", "dark", "tor", "forum", 0.65),  # noqa: E501
+    (
+        "Ahmia .onion",
+        "http://juhanurmihxlp77nkq76byazcldy2hlmovfu2epvl5ankdibsot4csyd.onion/",
+        "dark",
+        "tor",
+        "forum",
+        0.70,
+    ),  # noqa: E501
+    (
+        "Dark.fail .onion",
+        "http://darkfailenbsdla5mal2mxn2uz66od5vtzd5q5slngbgx6wvpfzh7umtid.onion/",
+        "dark",
+        "tor",
+        "forum",
+        0.55,
+    ),  # noqa: E501
+    (
+        "ProtonMail .onion",
+        "https://protonmailrmez3lotccipshtkleegetolb73fuirgj7r4o4vfu7ozyd.onion/",
+        "dark",
+        "tor",
+        "paste",
+        0.85,
+    ),  # noqa: E501
+    (
+        "BBC .onion",
+        "https://www.bbcnewsd73hkzno2ini43t4gblxvycyac5aw4gnv7t2rccijh7745uqd.onion/",
+        "dark",
+        "tor",
+        "forum",
+        0.80,
+    ),  # noqa: E501
+    (
+        "NYT .onion",
+        "https://www.nytimesn7cgmftshazwhfgzm37qxb44r64ytbb2dj3x62d2lljsciiyd.onion/",
+        "dark",
+        "tor",
+        "forum",
+        0.80,
+    ),  # noqa: E501
+    (
+        "Facebook .onion",
+        "https://www.facebookwkhpilnemxj7asaniu7vnjjbiltxjqhye3mhbshg7kx5tfyd.onion/",
+        "dark",
+        "tor",
+        "forum",
+        0.85,
+    ),  # noqa: E501
+    (
+        "Dread .onion",
+        "http://dreadytofatroptsdj6c7mkr3q62p5l3qb66pfnhlfnn3gg4g4nh2qd.onion/",
+        "dark",
+        "tor",
+        "forum",
+        0.65,
+    ),  # noqa: E501
     ("Hidden Wiki .onion", "http://zqktlwi4fecvo6ri.onion/wiki/index.php/Main_Page", "dark", "tor", "forum", 0.55),
-    ("Tor Metrics .onion", "http://hctxrmjzvyvmadqzhf7j5wga67vjwfuw7jirzkrom2pgjyt5xv7i5jid.onion/", "dark", "tor", "repo", 0.80),  # noqa: E501
+    (
+        "Tor Metrics .onion",
+        "http://hctxrmjzvyvmadqzhf7j5wga67vjwfuw7jirzkrom2pgjyt5xv7i5jid.onion/",
+        "dark",
+        "tor",
+        "repo",
+        0.80,
+    ),  # noqa: E501
     ("IntelX .onion", "http://intelexioou7w3mp.onion/", "dark", "tor", "leak_db", 0.75),
-
     # --- I2P eepsites (transport=i2p required) ---
     ("I2P Project", "http://i2p-projekt.i2p/", "dark", "i2p", "forum", 0.75),
     ("I2P Pastebin", "http://paste.i2p/", "dark", "i2p", "paste", 0.60),
@@ -273,8 +318,7 @@ class DeepSourceRegistry:
             # Enforce hard cap.
             if len(self._sources) >= MAX_SOURCES_IN_REGISTRY:
                 logger.warning(
-                    "DeepSourceRegistry: MAX_SOURCES_IN_REGISTRY (%d) reached, "
-                    "dropping %s",
+                    "DeepSourceRegistry: MAX_SOURCES_IN_REGISTRY (%d) reached, dropping %s",
                     MAX_SOURCES_IN_REGISTRY,
                     name,
                 )
@@ -320,6 +364,7 @@ class DeepSourceRegistry:
             return None
         try:
             from pathlib import Path
+
             # F270 bugfix: max_dbs=2 (1 main + 1 sub-DB "deep_sources") prevents
             # MDB_DBS_FULL when LMDB env is opened on shared paths. Without this,
             # any second open_db() call after the env was opened with default
@@ -479,9 +524,9 @@ class DeepSourceRegistry:
         network errors count as unreachable.
         """
         try:
-            import aiohttp
+            import httpx
         except Exception as exc:
-            logger.debug("_head_probe: aiohttp unavailable: %s", exc)
+            logger.debug("_head_probe: httpx unavailable: %s", exc)
             return False
 
         # Reject non-HTTP schemes (DHT bootstrap, .onion handled by tor transport).
@@ -490,12 +535,10 @@ class DeepSourceRegistry:
 
         try:
             async with self._get_semaphore():
-                async with aiohttp.ClientSession(
-                    timeout=aiohttp.ClientTimeout(total=HEAD_TIMEOUT_S)
-                ) as session:
-                    async with session.head(url, allow_redirects=True) as resp:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(total=HEAD_TIMEOUT_S)) as session:
+                    async with session.head(url, follow_redirects=True) as resp:
                         # 2xx, 3xx, 4xx → reachable; 5xx → unreachable
-                        return resp.status < 500
+                        return resp.status_code < 500
         except TimeoutError:
             return False
         except asyncio.CancelledError:
@@ -548,6 +591,7 @@ class DeepSourceRegistry:
         # safe_gather pattern: bounded concurrency is already in the semaphore.
         # We use asyncio.gather with return_exceptions=True to absorb cancellations.
         from hledac.universal.utils.async_helpers import safe_gather_ok
+
         outcomes = await safe_gather_ok(*tasks, return_exceptions=True)
         for outcome in outcomes:
             if isinstance(outcome, BaseException):

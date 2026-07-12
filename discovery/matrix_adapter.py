@@ -7,16 +7,14 @@ Uses matrix.org homeserver for public room directory.
 M1 constraint: Max 50 messages per room, 10s timeout per request.
 """
 
-
 import asyncio
 import logging
 import os
 import time
 from dataclasses import dataclass, field
-import msgspec
 from typing import Any
 
-from aiohttp import ClientSession
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +32,7 @@ MATRIX_RATE_LIMIT_DELAY = 2.0  # seconds between requests
 @dataclass
 class MatrixRoom:
     """Represents a Matrix public room."""
+
     room_id: str
     name: str | None
     topic: str | None
@@ -51,23 +50,24 @@ class MatrixPublicAdapter:
     Public rooms can be searched via matrix.org's public directory.
     Requires guest access token for reading room messages.
     """
+
     _homeserver: str = field(default=MATRIX_HOMESERVER)
     _access_token: str | None = field(default=None, repr=False)
     _token_acquired_at: float = field(default=0.0, repr=False)
     _session: ClientSession | None = field(default=None, repr=False)
-    _last_request_time: float = field(default=0.0, repr=False)
+    _session: httpx.AsyncClient | None = field(default=None, repr=False)
 
     @property
-    def session(self) -> ClientSession:
+    def session(self) -> httpx.AsyncClient:
         """Lazy session getter."""
-        if self._session is None or self._session.closed:
-            self._session = ClientSession()
+        if self._session is None or self._session.is_closed:
+            self._session = httpx.AsyncClient()
         return self._session
 
     async def close(self) -> None:
         """Close HTTP session."""
-        if self._session and not self._session.closed:
-            await self._session.close()
+        if self._session and not self._session.is_closed:
+            await self._session.aclose()
 
     async def _rate_limit(self) -> None:
         """Enforce rate limiting.
@@ -89,15 +89,9 @@ class MatrixPublicAdapter:
 
         try:
             api_url = f"{self._homeserver}/_matrix/client/v3/register"
-            data = {
-                "kind": "guest"
-            }
+            data = {"kind": "guest"}
 
-            async with self.session.post(
-                api_url,
-                json=data,
-                timeout=MATRIX_TIMEOUT
-            ) as resp:
+            async with self.session.post(api_url, json=data, timeout=httpx.Timeout(MATRIX_TIMEOUT)) as resp:
                 if resp.status == 200:
                     result = await resp.json()
                     self._access_token = result.get("access_token")
@@ -108,11 +102,7 @@ class MatrixPublicAdapter:
             logger.debug(f"Guest registration failed: {e}")
             return False
 
-    async def search_public_rooms(
-        self,
-        search_term: str,
-        limit: int = MAX_ROOMS_TO_SEARCH
-    ) -> list[MatrixRoom]:
+    async def search_public_rooms(self, search_term: str, limit: int = MAX_ROOMS_TO_SEARCH) -> list[MatrixRoom]:
         """Search public rooms by term.
 
         Args:
@@ -129,19 +119,18 @@ class MatrixPublicAdapter:
             params: dict[str, Any] = {"limit": limit}
             if search_term:
                 import json
+
                 params["filter"] = json.dumps({"generic_search_term": search_term})
 
-            async with self.session.get(
-                api_url,
-                params=params,
-                timeout=MATRIX_TIMEOUT
-            ) as resp:
+            async with self.session.get(api_url, params=params, timeout=httpx.Timeout(MATRIX_TIMEOUT)) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     chunk = data.get("chunk", [])
                     from hledac.universal.transport.circuit_breaker import get_breaker
+
                     try:
                         from urllib.parse import urlparse as _urlparse
+
                         get_breaker(_urlparse(api_url).netloc).record_success()
                     except Exception:  # noqa: BLE001
                         pass
@@ -153,17 +142,17 @@ class MatrixPublicAdapter:
                             canonical_alias=r.get("canonical_alias"),
                             num_joined_members=r.get("num_joined_members", 0),
                             world_readable=r.get("world_readable", False),
-                            guest_can_join=r.get("guest_can_join", False)
+                            guest_can_join=r.get("guest_can_join", False),
                         )
                         for r in chunk
                     ]
                 elif resp.status == 429:
                     from hledac.universal.transport.circuit_breaker import get_breaker
+
                     try:
                         from urllib.parse import urlparse as _urlparse
-                        get_breaker(_urlparse(api_url).netloc).record_failure(
-                            failure_kind="matrix_search:429"
-                        )
+
+                        get_breaker(_urlparse(api_url).netloc).record_failure(failure_kind="matrix_search:429")
                     except Exception:  # noqa: BLE001
                         pass
                 return []
@@ -171,11 +160,7 @@ class MatrixPublicAdapter:
             logger.debug(f"Public rooms search failed: {e}")
             return []
 
-    async def get_room_messages(
-        self,
-        room_id: str,
-        limit: int = MAX_ROOM_MESSAGES
-    ) -> list[dict]:
+    async def get_room_messages(self, room_id: str, limit: int = MAX_ROOM_MESSAGES) -> list[dict]:
         """Get recent messages from a public room.
 
         Requires guest access token.
@@ -197,17 +182,12 @@ class MatrixPublicAdapter:
             api_url = f"{self._homeserver}/_matrix/client/v3/rooms/{room_id}/messages"
             params = {
                 "dir": "b",  # backwards (older messages first)
-                "limit": min(limit, MAX_ROOM_MESSAGES)
+                "limit": min(limit, MAX_ROOM_MESSAGES),
             }
-            headers = {
-                "Authorization": f"Bearer {self._access_token}"
-            }
+            headers = {"Authorization": f"Bearer {self._access_token}"}
 
             async with self.session.get(
-                api_url,
-                params=params,
-                headers=headers,
-                timeout=MATRIX_TIMEOUT
+                api_url, params=params, headers=headers, timeout=httpx.Timeout(MATRIX_TIMEOUT)
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
@@ -236,15 +216,9 @@ class MatrixPublicAdapter:
 
         try:
             api_url = f"{self._homeserver}/_matrix/client/v3/rooms/{room_id}"
-            headers = {
-                "Authorization": f"Bearer {self._access_token}"
-            }
+            headers = {"Authorization": f"Bearer {self._access_token}"}
 
-            async with self.session.get(
-                api_url,
-                headers=headers,
-                timeout=MATRIX_TIMEOUT
-            ) as resp:
+            async with self.session.get(api_url, headers=headers, timeout=httpx.Timeout(MATRIX_TIMEOUT)) as resp:
                 if resp.status == 200:
                     return await resp.json()
                 return None
@@ -252,11 +226,7 @@ class MatrixPublicAdapter:
             logger.debug(f"Room info fetch failed for {room_id}: {e}")
             return None
 
-    async def search_and_fetch_rooms(
-        self,
-        search_term: str,
-        max_messages: int = 30
-    ) -> list[dict]:
+    async def search_and_fetch_rooms(self, search_term: str, max_messages: int = 30) -> list[dict]:
         """Convenience method: search rooms and fetch messages from top matches.
 
         Args:

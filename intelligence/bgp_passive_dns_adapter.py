@@ -25,7 +25,6 @@ INVARIANTS:
   - Rate limiting enforced per request
 """
 
-
 import asyncio
 import hashlib
 import logging
@@ -33,13 +32,12 @@ import os
 import re
 import time
 from dataclasses import dataclass
-import msgspec
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    import aiohttp
+    import httpx
 else:
-    import aiohttp
+    import httpx
 
 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
 
@@ -49,14 +47,13 @@ logger = logging.getLogger(__name__)
 _CanonicalFinding = None
 try:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding as _CF  # noqa: N814
+
     _CanonicalFinding = _CF
 except ImportError:
     pass
 
 # ── Environment gating ─────────────────────────────────────────────────────────
-_ENABLED: bool = os.environ.get("HLEDAC_ENABLE_BGP_PDNS", "0").lower() in (
-    "1", "true", "yes", "on"
-)
+_ENABLED: bool = os.environ.get("HLEDAC_ENABLE_BGP_PDNS", "0").lower() in ("1", "true", "yes", "on")
 
 # ── Capability flags (for capabilities.py) ─────────────────────────────────────
 BGP_LOOKUP_AVAILABLE: bool = _ENABLED
@@ -75,9 +72,7 @@ _BGP_TOOLS_URL = "https://bgp.tools/api"
 _HACKER_TARGET_DNS = "https://api.hackertarget.com/dnslookup"
 
 # ── Private IP filter ─────────────────────────────────────────────────────────
-_PRIVATE_IP_RE = re.compile(
-    r'^(?:10\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.|127\.|::1|fe80)'
-)
+_PRIVATE_IP_RE = re.compile(r"^(?:10\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.|127\.|::1|fe80)")
 
 
 def _is_private_ip(ip: str) -> bool:
@@ -91,6 +86,7 @@ def _is_private_ip(ip: str) -> bool:
 @dataclass
 class BGPFinding:
     """BGP intelligence finding from RIPE/BGP.tools."""
+
     ip: str = ""
     asn: int = 0
     asn_name: str = ""
@@ -105,9 +101,7 @@ class BGPFinding:
         try:
             if _CanonicalFinding is None:
                 return None
-            content_hash = hashlib.sha256(
-                f"{self.ip or ''}:{self.asn}:{self.source}".encode()
-            ).hexdigest()[:16]
+            content_hash = hashlib.sha256(f"{self.ip or ''}:{self.asn}:{self.source}".encode()).hexdigest()[:16]
             finding_id = f"bgp_{self.asn}_{content_hash}"
 
             metadata = {
@@ -140,6 +134,7 @@ class BGPFinding:
 @dataclass(frozen=True)
 class PDNSRecord:
     """Passive DNS record."""
+
     domain: str = ""
     record_type: str = ""
     value: str = ""
@@ -153,9 +148,7 @@ class PDNSRecord:
         try:
             if _CanonicalFinding is None:
                 return None
-            content_hash = hashlib.sha256(
-                f"{self.domain}:{self.record_type}:{self.value}".encode()
-            ).hexdigest()[:16]
+            content_hash = hashlib.sha256(f"{self.domain}:{self.record_type}:{self.value}".encode()).hexdigest()[:16]
             finding_id = f"pdns_{self.domain}_{self.record_type}_{content_hash[:8]}"
 
             metadata = {
@@ -195,7 +188,7 @@ _DEFAULT_HEADERS = {
 
 
 async def _rate_limited_request(
-    session: aiohttp.ClientSession,
+    session: httpx.AsyncClient,
     url: str,
     last_request: float,
     timeout: float = TIMEOUT_PER_REQUEST,
@@ -205,26 +198,24 @@ async def _rate_limited_request(
     elapsed = time.monotonic() - last_request
     if elapsed < RATE_LIMIT_S:
         await asyncio.sleep(RATE_LIMIT_S - elapsed)
-
     headers = dict(_DEFAULT_HEADERS)
     if extra_headers:
         headers.update(extra_headers)
-
     try:
         async with session.get(
             url,
-            timeout=aiohttp.ClientTimeout(total=timeout),
+            timeout=httpx.Timeout(timeout),
             headers=headers,
         ) as resp:
-            if resp.status == 200:
-                return await resp.json()
+            if resp.status_code == 200:
+                return resp.json()
     except Exception:  # noqa: BLE001
         pass
     return None
 
 
 async def _rate_limited_text(
-    session: aiohttp.ClientSession,
+    session: httpx.AsyncClient,
     url: str,
     last_request: float,
     timeout: float = TIMEOUT_PER_REQUEST,
@@ -233,15 +224,14 @@ async def _rate_limited_text(
     elapsed = time.monotonic() - last_request
     if elapsed < RATE_LIMIT_S:
         await asyncio.sleep(RATE_LIMIT_S - elapsed)
-
     try:
         async with session.get(
             url,
-            timeout=aiohttp.ClientTimeout(total=timeout),
+            timeout=httpx.Timeout(timeout),
             headers=_DEFAULT_HEADERS,
         ) as resp:
-            if resp.status == 200:
-                return await resp.text()
+            if resp.status_code == 200:
+                return resp.text()
     except Exception:  # noqa: BLE001
         pass
     return None
@@ -249,7 +239,7 @@ async def _rate_limited_text(
 
 async def ripestat_lookup_ip(
     ip: str,
-    session: aiohttp.ClientSession,
+    session: httpx.AsyncClient,
     rate_limit_ref: float | None = None,
 ) -> BGPFinding | None:
     """
@@ -309,7 +299,7 @@ async def ripestat_lookup_ip(
 
 async def bgptools_prefix_history(
     prefix: str,
-    session: aiohttp.ClientSession,
+    session: httpx.AsyncClient,
     rate_limit_ref: float = 0.0,
 ) -> list[BGPFinding]:
     """
@@ -328,22 +318,24 @@ async def bgptools_prefix_history(
     for entry in data.get("asns", [])[:20]:
         asn = entry.get("asn", 0)
         if asn:
-            findings.append(BGPFinding(
-                ip="",
-                asn=asn,
-                asn_name=entry.get("name", ""),
-                country_code=entry.get("country", "") or "",
-                prefix=prefix,
-                holder="",
-                source="bgp_tools",
-                ts=time.time(),
-            ))
+            findings.append(
+                BGPFinding(
+                    ip="",
+                    asn=asn,
+                    asn_name=entry.get("name", ""),
+                    country_code=entry.get("country", "") or "",
+                    prefix=prefix,
+                    holder="",
+                    source="bgp_tools",
+                    ts=time.time(),
+                )
+            )
     return findings
 
 
 async def bgptools_sibling_prefixes(
     asn: str,
-    session: aiohttp.ClientSession,
+    session: httpx.AsyncClient,
     rate_limit_ref: float = 0.0,
 ) -> list[str]:
     """
@@ -372,7 +364,7 @@ async def bgptools_sibling_prefixes(
 
 async def hackertarget_pdns(
     domain: str,
-    session: aiohttp.ClientSession,
+    session: httpx.AsyncClient,
     rate_limit_ref: float = 0.0,
 ) -> list[PDNSRecord]:
     """
@@ -381,57 +373,51 @@ async def hackertarget_pdns(
     """
     if not _ENABLED:
         return []
-
     url = f"{_HACKER_TARGET_DNS}?q={domain}"
     try:
         elapsed = time.monotonic() - rate_limit_ref
         if elapsed < RATE_LIMIT_S:
             await asyncio.sleep(RATE_LIMIT_S - elapsed)
-
         async with session.get(
             url,
-            timeout=aiohttp.ClientTimeout(total=TIMEOUT_PER_REQUEST),
+            timeout=httpx.Timeout(TIMEOUT_PER_REQUEST),
         ) as resp:
-            if resp.status != 200:
+            if resp.status_code != 200:
                 return []
             if resp.headers.get("Content-Type", "").startswith("application/json"):
-                return []  # Error response
-
-            text = await resp.text()
+                return []
+            text = resp.text()
             if "error" in text.lower() or "quota" in text.lower():
-                # F265-FIX: Log PDNS error for credential/API diagnostics
                 logger.debug(
                     "PassiveDNS HackerTarget error response for domain=%r: %r",
                     domain,
                     text[:200] if text else "",
                 )
-                return []  # Error/quota response
-
+                return []
             if not text or text.startswith("#"):
-                # F265-FIX: Log empty response for diagnostics
                 logger.debug(
-                    "PassiveDNS HackerTarget empty response for domain=%r (status=%d)",
+                    "PassiveDNS HackerTarget empty response for domain=%r (status_code=%d)",
                     domain,
-                    resp.status,
+                    resp.status_code,
                 )
                 return []
-
             records = []
             for line in text.splitlines()[:MAX_PDNS_RECORDS]:
-                # HackerTarget format: "A : 1.2.3.4" or "A|1.2.3.4"
                 parts = re.split(r"\s*:\s*|\|", line.strip(), maxsplit=1)
                 if len(parts) < 2:
                     continue
                 rec_type = parts[0].strip()
                 value = parts[1].strip()
                 if rec_type in ("A", "AAAA", "MX", "NS", "TXT", "CNAME", "PTR"):
-                    records.append(PDNSRecord(
-                        domain=domain,
-                        record_type=rec_type,
-                        value=value,
-                        source="hackertarget",
-                        ts=time.time(),
-                    ))
+                    records.append(
+                        PDNSRecord(
+                            domain=domain,
+                            record_type=rec_type,
+                            value=value,
+                            source="hackertarget",
+                            ts=time.time(),
+                        )
+                    )
             return records
     except Exception:
         return []
@@ -439,7 +425,7 @@ async def hackertarget_pdns(
 
 async def hackertarget_reverse_dns(
     ip: str,
-    session: aiohttp.ClientSession,
+    session: httpx.AsyncClient,
     rate_limit_ref: float = 0.0,
 ) -> list[str]:
     """
@@ -448,20 +434,18 @@ async def hackertarget_reverse_dns(
     """
     if not _ENABLED or _is_private_ip(ip):
         return []
-
     url = f"{_HACKER_TARGET_DNS}?q={ip}"
     try:
         elapsed = time.monotonic() - rate_limit_ref
         if elapsed < RATE_LIMIT_S:
             await asyncio.sleep(RATE_LIMIT_S - elapsed)
-
         async with session.get(
             url,
-            timeout=aiohttp.ClientTimeout(total=TIMEOUT_PER_REQUEST),
+            timeout=httpx.Timeout(TIMEOUT_PER_REQUEST),
         ) as resp:
-            if resp.status != 200:
+            if resp.status_code != 200:
                 return []
-            text = await resp.text()
+            text = resp.text()
 
             domains = []
             for line in text.splitlines()[:50]:
@@ -484,13 +468,14 @@ class BGPAdapter:
 
     Usage:
         adapter = BGPAdapter()
-        adapter.set_session(aiohttp_session)
+        adapter.set_session(httpx_session)
         finding = await adapter.lookup_asn("8.8.8.8")
     """
+
     __slots__ = ("_session", "_stats", "_semaphore", "_last_request")
 
     def __init__(self) -> None:
-        self._session: aiohttp.ClientSession | None = None
+        self._session: httpx.AsyncClient | None = None
         self._stats: dict[str, int] = {
             "ips_processed": 0,
             "asns_resolved": 0,
@@ -500,8 +485,8 @@ class BGPAdapter:
         self._semaphore = get_semaphore_for_testing(ConcurrencyCategory.BGP_QUERY)
         self._last_request: float = 0.0
 
-    def set_session(self, session: aiohttp.ClientSession) -> None:
-        """Inject aiohttp session."""
+    def set_session(self, session: httpx.AsyncClient) -> None:
+        """Inject httpx session."""
         self._session = session
 
     async def lookup_asn(self, ip: str) -> BGPFinding | None:
@@ -547,13 +532,14 @@ class PassiveDNSAdapter:
 
     Usage:
         adapter = PassiveDNSAdapter()
-        adapter.set_session(aiohttp_session)
+        adapter.set_session(httpx_session)
         records = await adapter.query_pdns("example.com")
     """
+
     __slots__ = ("_session", "_stats", "_semaphore", "_last_request")
 
     def __init__(self) -> None:
-        self._session: aiohttp.ClientSession | None = None
+        self._session: httpx.AsyncClient | None = None
         self._stats: dict[str, int] = {
             "domains_processed": 0,
             "records_collected": 0,
@@ -562,8 +548,8 @@ class PassiveDNSAdapter:
         self._semaphore = get_semaphore_for_testing(ConcurrencyCategory.IP_QUERY)
         self._last_request: float = 0.0
 
-    def set_session(self, session: aiohttp.ClientSession) -> None:
-        """Inject aiohttp session."""
+    def set_session(self, session: httpx.AsyncClient) -> None:
+        """Inject httpx session."""
         self._session = session
 
     async def query_pdns(self, domain: str) -> list[PDNSRecord]:

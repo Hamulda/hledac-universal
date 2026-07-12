@@ -36,8 +36,6 @@ ARCHITECTURAL NOTE (F360):
     fallback for M1 hardware that benefits from ANE acceleration.
 """
 
-
-
 import asyncio
 import hashlib
 import logging
@@ -75,6 +73,7 @@ def _get_vn_core_ml_model():
     if _VN_AVAILABLE:
         try:
             from Vision import VNCoreMLModel
+
             return VNCoreMLModel
         except ImportError:
             _VN_AVAILABLE = False
@@ -88,6 +87,7 @@ def _get_vn_request():
     if _VN_AVAILABLE:
         try:
             from Vision import VNCoreMLRequest
+
             return VNCoreMLRequest
         except ImportError:
             _VN_AVAILABLE = False
@@ -108,6 +108,7 @@ def _ensure_vision():
         return True
     try:
         from Vision import VNCoreMLModel, VNCoreMLRequest, VNImageRequestHandler  # noqa: F401
+
         _VNCoreMLModel = VNCoreMLModel
         _VNCoreMLRequest = VNCoreMLRequest
         _VNImageRequestHandler = VNImageRequestHandler
@@ -134,11 +135,7 @@ class VisionCaptchaSolver:
     CACHE_TTL = 3600  # 1 hour in seconds
     MAX_CACHE_SIZE = 100
 
-    def __init__(
-        self,
-        model_path: str | None = None,
-        use_ane: bool = True
-    ):
+    def __init__(self, model_path: str | None = None, use_ane: bool = True):
         """
         Initialize VisionCaptchaSolver.
 
@@ -151,10 +148,7 @@ class VisionCaptchaSolver:
         self._model = None
         self._vn_model = None
 
-        logger.info(
-            f"VisionCaptchaSolver initialized: model={model_path}, "
-            f"ane={self.use_ane}"
-        )
+        logger.info(f"VisionCaptchaSolver initialized: model={model_path}, ane={self.use_ane}")
 
     def _load_model(self):
         """Load the CoreML model if not already loaded. Lazy import in py3.14."""
@@ -171,11 +165,12 @@ class VisionCaptchaSolver:
         if _ct is None:
             try:
                 import coremltools as _ct_module
+
                 _ct = _ct_module
                 _COREML_AVAILABLE = True
                 try:
                     _COREMLTOOLS_VERSION = float(_ct.__version__)
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     _COREMLTOOLS_VERSION = 6.0
             except ImportError:
                 _COREML_AVAILABLE = False
@@ -230,10 +225,7 @@ class VisionCaptchaSolver:
         self._result_cache[cache_key] = result
         self._cache_timestamps[cache_key] = time.time()
 
-    def solve_grid(
-        self,
-        image_bytes: bytes
-    ) -> list[int]:
+    def solve_grid(self, image_bytes: bytes) -> list[int]:
         """
         Solve grid CAPTCHA (e.g., "select all images with traffic lights").
 
@@ -278,10 +270,7 @@ class VisionCaptchaSolver:
         self._set_cached_result(cache_key, result)
         return result
 
-    def solve_text(
-        self,
-        image_bytes: bytes
-    ) -> str:
+    def solve_text(self, image_bytes: bytes) -> str:
         """
         Solve text-based CAPTCHA.
 
@@ -328,11 +317,7 @@ class VisionCaptchaSolver:
     @classmethod
     def get_cache_stats(cls) -> dict:
         """Get cache statistics."""
-        return {
-            'size': len(cls._result_cache),
-            'max_size': cls.MAX_CACHE_SIZE,
-            'ttl_seconds': cls.CACHE_TTL
-        }
+        return {"size": len(cls._result_cache), "max_size": cls.MAX_CACHE_SIZE, "ttl_seconds": cls.CACHE_TTL}
 
     # ========================================================================
     # P7: OCR and 2Captcha integration
@@ -381,20 +366,19 @@ class VisionCaptchaSolver:
         try:
             import base64
 
-            import aiohttp
+            import httpx
         except ImportError:
-            logger.warning("aiohttp not available for 2captcha")
+            logger.warning("httpx not available for 2captcha")
             return None
 
         b64 = base64.b64encode(image_bytes).decode()
         try:
-            async with aiohttp.ClientSession() as session:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as session:
                 # Submit CAPTCHA
                 async with session.post(
-                    "http://2captcha.com/in.php",
-                    data={"key": api_key, "method": "base64", "body": b64}
+                    "http://2captcha.com/in.php", data={"key": api_key, "method": "base64", "body": b64}
                 ) as r:
-                    result = await r.text()
+                    result = r.text
                 if not result.startswith("OK|"):
                     logger.warning(f"2Captcha submit failed: {result}")
                     return None
@@ -406,7 +390,7 @@ class VisionCaptchaSolver:
                     async with session.get(
                         f"http://2captcha.com/res.php?key={api_key}&action=get&id={captcha_id}"
                     ) as r:
-                        res = await r.text()
+                        res = r.text
                     if res.startswith("OK|"):
                         solution = res.split("|")[1]
                         logger.debug(f"2Captcha solved: {solution[:50]}...")
@@ -452,6 +436,7 @@ class VisionCaptchaSolver:
 # ========================================================================
 # P7: Legacy function-based API for compatibility
 # ========================================================================
+
 
 async def solve_captcha(image_bytes: bytes, api_key: str | None = None) -> str | None:
     """

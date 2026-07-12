@@ -4602,6 +4602,42 @@ class DuckDBShadowStore:
         except Exception:
             return []
 
+    # -- Issue #1 Fix: Non-blocking raw SQL execution ---------------------------
+
+    def _sync_execute_raw_sql(self, sql: str) -> list[Any]:
+        """
+        Execute raw SQL and return all rows.
+
+        MUST be called on duckdb worker thread (inside run_in_executor).
+        Thread-safe: uses _file_conn/_persistent_conn.
+        """
+        conn = self._file_conn if self._db_path else self._persistent_conn
+        if conn is None:
+            return []
+        try:
+            return list(conn.execute(sql).fetchall())
+        except Exception:
+            return []
+
+    async def async_execute_raw_sql(self, sql: str) -> list[Any]:
+        """
+        Execute raw SQL query asynchronously (non-blocking).
+
+        Thread-safe, non-blocking - runs on duckdb_worker via run_in_executor.
+        Use this instead of direct _conn.cursor().execute() in async contexts.
+
+        Args:
+            sql: Raw SQL query string
+
+        Returns:
+            List of row tuples from fetchall()
+        """
+        if not self._initialized or self._closed:
+            return []
+        self.ensure_connected()
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(self._executor, self._sync_execute_raw_sql, sql)
+
     async def aiter_recent_findings(
         self,
         batch_size: int = 500,

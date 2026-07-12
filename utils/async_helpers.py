@@ -42,6 +42,7 @@ if TYPE_CHECKING:
 __all__ = [
     "_check_gathered",
     "async_getaddrinfo",
+    "bounded_parallel_map",  # ISSUE-005: parallel map with bounded concurrency
     "bounded_gather",
     "chunked_taskgroup",
     "gather_taskgroup",
@@ -899,6 +900,103 @@ async def bounded_gather[T](
         raise re_raise
 
     return ok, list(errors)  # type: ignore[return-value]
+
+
+# ISSUE-005: bounded_parallel_map — parallel map with bounded concurrency
+#
+# Problem: sequential `for x in xs: await f(x)` wastes N×latency serial.
+# bounded_gather takes a list of coros (pre-built), but callers must write:
+#   [coro_fn(x) for x in items]
+#
+# bounded_parallel_map takes (items, coro_fn) directly — cleaner API:
+#   results = await bounded_parallel_map(emails[:3], hunter.check_target, concurrency=3)
+#
+# Invariants:
+#   [BPM1] Concurrency capped by semaphore — M1 8GB safe
+#   [BPM2] Results ordered by input order (ordered=True default)
+#   [BPM3] Exceptions → None in output (fail-soft, caller decides)
+#   [BPM4] CancelledError / BaseException → re-raised (GHOST I6/I7)
+
+
+async def bounded_parallel_map[T, R](
+    items: list[T],
+    coro_fn: Callable[[T], Awaitable[R]],
+    *,
+    concurrency: int = 10,
+    ordered: bool = True,
+    ctx: str = "",
+    logger_instance: logging.Logger | None = None,
+) -> list[R | None]:
+    """ISSUE-005: Parallel async map with bounded concurrency.
+
+    Transforms a list of items concurrently with explicit concurrency cap.
+    Clean replacement for sequential `for x in xs: await f(x)`.
+
+    Args:
+        items: List of items to process.
+        coro_fn: Async function to apply to each item, e.g. `lambda e: check(e)`.
+        concurrency: Max simultaneous tasks (default 10). M1 8GB: 10×50MB = 500MB.
+        ordered: If True (default), results in input order. False = faster (no sort).
+        ctx: Context label for log messages.
+        logger_instance: Optional logger override.
+
+    Returns:
+        List of results in input order (or completion order if ordered=False).
+        Items that raised exceptions are None in the output (fail-soft).
+
+    Raises:
+        asyncio.CancelledError: if the caller's task is cancelled.
+        BaseException (not Exception): KeyboardInterrupt, SystemExit, etc.
+
+    Example:
+        # OLD (sequential):
+        for email in emails[:3]:
+            result = await hunter.check_target(email, 'email')
+            results.append(result)
+
+        # NEW (parallel):
+        raw = await bounded_parallel_map(
+            emails[:3],
+            lambda e: hunter.check_target(e, 'email'),
+            concurrency=3,
+        )
+        results = [r for r in raw if r is not None]
+    """
+    _log = logger_instance or logger
+    if not items:
+        return []
+    if concurrency < 1:
+        concurrency = 1
+
+    sem = asyncio.Semaphore(concurrency)
+
+    async def _run(idx: int, item: T) -> tuple[int, R | BaseException]:
+        async with sem:
+            try:
+                return idx, await coro_fn(item)
+            except BaseException as e:
+                _log.debug(
+                    f"[GHOST] bounded_parallel_map{' ' + ctx if ctx else ''} "
+                    f"item[{idx}] raised {type(e).__name__}: {e}"
+                )
+                return idx, e  # noqa: RET504
+
+    tasks = [asyncio.create_task(_run(i, item)) for i, item in enumerate(items)]
+    raw = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Check for CancelledError / BaseException — re-raise per GHOST I6/I7
+    for item in raw:
+        if isinstance(item, asyncio.CancelledError):
+            _log.debug("[GHOST] bounded_parallel_map CancelledError — re-raising")
+            raise item
+        if isinstance(item, BaseException) and not isinstance(item, Exception):
+            _log.debug(f"[GHOST] bounded_parallel_map {type(item).__name__} — re-raising")
+            raise item
+
+    if ordered:
+        raw.sort(key=lambda x: x[0])
+
+    return [result if not isinstance(result, Exception) else None for _, result in raw]
 
 
 async def safe_gather_return_exceptions(

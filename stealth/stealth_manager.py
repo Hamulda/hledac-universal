@@ -12,8 +12,6 @@ Provides unified stealth interface for research operations.
 Migrated from: hledac/stealth_toolkit/
 """
 
-
-
 import asyncio
 import logging
 import random
@@ -22,15 +20,13 @@ from collections import OrderedDict
 from collections.abc import Coroutine
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-import msgspec
 from typing import Any
 from urllib.parse import urlparse
-
-import aiohttp
 
 # Sprint 80: curl_cffi per-profil sessions
 try:
     from curl_cffi.requests import AsyncSession
+
     CURL_CFFI_AVAILABLE = True
 except ImportError:
     CURL_CFFI_AVAILABLE = False
@@ -94,6 +90,7 @@ TCP_KEEPALIVE_TIMEOUT = 30
 @dataclass
 class StealthManagerConfig:
     """Configuration for complete stealth system"""
+
     # Enable/disable components
     enable_rate_limiter: bool = True
     enable_header_spoofer: bool = True
@@ -145,9 +142,7 @@ class StealthManager:
             self.header_spoofer = HeaderSpoofer(self.config.header_config)
 
         if self.config.enable_fingerprint_randomizer:
-            self.fingerprint_randomizer = FingerprintRandomizer(
-                self.config.fingerprint_config
-            )
+            self.fingerprint_randomizer = FingerprintRandomizer(self.config.fingerprint_config)
 
         # Sprint 80: Per-profil sessions (LRU cache)
         self._sessions: OrderedDict[str, AsyncSession] = OrderedDict()
@@ -191,10 +186,7 @@ class StealthManager:
             return False
 
     def get_headers(
-        self,
-        domain: str = 'default',
-        content_type: str = 'html',
-        preserve: dict[str, str] | None = None
+        self, domain: str = "default", content_type: str = "html", preserve: dict[str, str] | None = None
     ) -> dict[str, str]:
         """
         Get stealth headers for request.
@@ -210,15 +202,11 @@ class StealthManager:
         if not self.header_spoofer:
             return {}
 
-        headers = self.header_spoofer.get_headers(
-            content_type=content_type,
-            preserve=preserve
-        )
+        headers = self.header_spoofer.get_headers(content_type=content_type, preserve=preserve)
 
         # Maybe rotate
         self._request_count += 1
-        if (self.config.auto_rotate and
-            self._request_count % self.config.rotation_interval == 0):
+        if self.config.auto_rotate and self._request_count % self.config.rotation_interval == 0:
             logger.info(f"Auto-rotating stealth profile (request #{self._request_count})")
             if self.fingerprint_randomizer:
                 self.fingerprint_randomizer.rotate()
@@ -227,17 +215,14 @@ class StealthManager:
 
         return headers
 
-    async def acquire_rate_limit(self, domain: str = 'default') -> bool:
+    async def acquire_rate_limit(self, domain: str = "default") -> bool:
         """Acquire rate limit permission"""
         if self.rate_limiter:
             return await self.rate_limiter.acquire(domain)
         return True
 
     async def execute(
-        self,
-        coro: Coroutine[Any, Any, Any],
-        domain: str = 'default',
-        timeout: float | None = None
+        self, coro: Coroutine[Any, Any, Any], domain: str = "default", timeout: float | None = None
     ) -> Any:
         """
         Execute request with full stealth protection.
@@ -270,13 +255,9 @@ class StealthManager:
 
             # Update domain stats
             if domain not in self._domain_stats:
-                self._domain_stats[domain] = {
-                    'requests': 0,
-                    'success': 0,
-                    'failure': 0
-                }
-            self._domain_stats[domain]['requests'] += 1
-            self._domain_stats[domain]['success'] += 1
+                self._domain_stats[domain] = {"requests": 0, "success": 0, "failure": 0}
+            self._domain_stats[domain]["requests"] += 1
+            self._domain_stats[domain]["success"] += 1
 
             return result
 
@@ -284,7 +265,7 @@ class StealthManager:
             self._failure_count += 1
 
             if domain in self._domain_stats:
-                self._domain_stats[domain]['failure'] += 1
+                self._domain_stats[domain]["failure"] += 1
 
             # In safety mode, back off on failure
             if self.config.safety_mode and self.rate_limiter:
@@ -311,7 +292,7 @@ class StealthManager:
         """Get JavaScript fingerprint protection"""
         if self.fingerprint_randomizer:
             return self.fingerprint_randomizer.get_js_protection_script()
-        return ''
+        return ""
 
     def get_browser_profile(self) -> BrowserProfile | None:
         """Get current browser fingerprint profile"""
@@ -330,29 +311,26 @@ class StealthManager:
     def get_statistics(self) -> dict[str, Any]:
         """Get comprehensive stealth statistics"""
         stats = {
-            'requests_total': self._request_count,
-            'success_count': self._success_count,
-            'failure_count': self._failure_count,
-            'success_rate': (
-                self._success_count / self._request_count
-                if self._request_count > 0 else 1.0
-            ),
-            'domain_stats': self._domain_stats,
-            'components': {
-                'rate_limiter': self.rate_limiter is not None,
-                'header_spoofer': self.header_spoofer is not None,
-                'fingerprint_randomizer': self.fingerprint_randomizer is not None,
-            }
+            "requests_total": self._request_count,
+            "success_count": self._success_count,
+            "failure_count": self._failure_count,
+            "success_rate": (self._success_count / self._request_count if self._request_count > 0 else 1.0),
+            "domain_stats": self._domain_stats,
+            "components": {
+                "rate_limiter": self.rate_limiter is not None,
+                "header_spoofer": self.header_spoofer is not None,
+                "fingerprint_randomizer": self.fingerprint_randomizer is not None,
+            },
         }
 
         if self.rate_limiter:
-            stats['rate_limits'] = {'tokens': self.rate_limiter.available_tokens}
+            stats["rate_limits"] = {"tokens": self.rate_limiter.available_tokens}
 
         if self.header_spoofer:
-            stats['headers'] = self.header_spoofer.get_statistics()
+            stats["headers"] = self.header_spoofer.get_statistics()
 
         if self.fingerprint_randomizer:
-            stats['fingerprint'] = self.fingerprint_randomizer.get_statistics()
+            stats["fingerprint"] = self.fingerprint_randomizer.get_statistics()
 
         return stats
 
@@ -364,11 +342,11 @@ class StealthManager:
         No live network calls. No session creation.
         """
         # Session pool telemetry
-        session_count = len(self._sessions) if hasattr(self, '_sessions') else 0
-        max_sessions = getattr(self, '_max_sessions', MAX_SESSION_POOL_SIZE)
+        session_count = len(self._sessions) if hasattr(self, "_sessions") else 0
+        max_sessions = getattr(self, "_max_sessions", MAX_SESSION_POOL_SIZE)
 
         # Cache telemetry (BoundedHostState)
-        cache_count = len(self._cache) if hasattr(self, '_cache') and isinstance(self._cache, dict) else 0
+        cache_count = len(self._cache) if hasattr(self, "_cache") and isinstance(self._cache, dict) else 0
 
         # Estimated cache bytes (rough: avg 50KB per text entry)
         estimated_cache_bytes = cache_count * 50 * 1024
@@ -439,6 +417,7 @@ class StealthManager:
         if self._cb_available is None:
             try:
                 from transport.circuit_breaker import domain_breaker_check
+
                 self._cb_available = True
             except ImportError:
                 self._cb_available = False
@@ -450,6 +429,7 @@ class StealthManager:
         # Perform the check
         try:
             from transport.circuit_breaker import domain_breaker_check
+
             decision = domain_breaker_check(domain)
             if decision.allowed:
                 return (True, None)
@@ -466,10 +446,10 @@ class StealthManager:
         """Cleanup resources"""
         logger.info("Closing StealthManager...")
         # Sprint 80: Cleanup per-profil sessions
-        if hasattr(self, '_sessions'):
+        if hasattr(self, "_sessions"):
             for session in self._sessions.values():
                 try:
-                    if hasattr(session, 'aclose'):
+                    if hasattr(session, "aclose"):
                         await session.aclose()
                 except Exception as e:
                     logger.debug(f"Failed to close session during cleanup: {e}")
@@ -485,12 +465,14 @@ class SkipFetch(Exception):  # noqa: N818
     prevented the attempt. Fail-soft callers should catch and handle
     without incrementing failure counters.
     """
+
     pass
 
 
 @dataclass(frozen=True)
 class StealthResponse:
     """Response from stealth HTTP request - M1 8GB optimized (no large bodies in RAM)."""
+
     status: int
     final_url: str
     headers: dict[str, str]
@@ -503,7 +485,7 @@ class StealthResponse:
         """Vrátí textový preview - dekóduje jen potřebnou část pro RAM šetření."""
         try:
             # Zkus UTF-8
-            text = self.body_bytes[:max_chars * 2].decode('utf-8', errors='ignore')
+            text = self.body_bytes[: max_chars * 2].decode("utf-8", errors="ignore")
             if len(text) > max_chars:
                 return text[:max_chars] + "..."
             return text
@@ -557,9 +539,7 @@ class StealthSession:
         # Detect HTTP/3 support via HEAD probe (cheap, 2s timeout).
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.head(
-                    url, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=2.0)
-                ) as resp:
+                async with session.head(url, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=2.0)) as resp:
                     alt_svc = resp.headers.get("Alt-Svc", "")
                     supports_http3 = "h3" in alt_svc.lower()
                     record_h3_support(url, supports_http3)
@@ -590,31 +570,23 @@ class StealthSession:
         """Lazy initialization of shared ClientSession with TCP tuning."""
         if self._session is None or self._session.closed:
             timeout = aiohttp.ClientTimeout(
-                connect=DEFAULT_CONNECT_TIMEOUT,
-                sock_read=DEFAULT_READ_TIMEOUT,
-                total=DEFAULT_TOTAL_TIMEOUT
+                connect=DEFAULT_CONNECT_TIMEOUT, sock_read=DEFAULT_READ_TIMEOUT, total=DEFAULT_TOTAL_TIMEOUT
             )
             connector = aiohttp.TCPConnector(
                 ttl_dns_cache=TCP_TTL_DNS_CACHE,
                 limit=TCP_LIMIT,
                 limit_per_host=TCP_LIMIT_PER_HOST,
                 keepalive_timeout=TCP_KEEPALIVE_TIMEOUT,
-                enable_cleanup_closed=True
+                enable_cleanup_closed=True,
             )
-            self._session = aiohttp.ClientSession(
-                timeout=timeout,
-                cookie_jar=aiohttp.CookieJar(),
-                connector=connector
-            )
+            self._session = aiohttp.ClientSession(timeout=timeout, cookie_jar=aiohttp.CookieJar(), connector=connector)
         return self._session
 
-    def get_headers(self, domain: str = 'default') -> dict[str, str]:
+    def get_headers(self, domain: str = "default") -> dict[str, str]:
         """Get headers for request"""
         preserve = {}
         if self._cookies:
-            preserve['Cookie'] = '; '.join(
-                f"{k}={v}" for k, v in self._cookies.items()
-            )
+            preserve["Cookie"] = "; ".join(f"{k}={v}" for k, v in self._cookies.items())
 
         return self.manager.get_headers(domain, preserve=preserve)
 
@@ -630,9 +602,14 @@ class StealthSession:
         if exception is not None:
             error_str = str(exception).lower()
             transient_network_errors = [
-                'connection reset', 'connection refused', 'broken pipe',
-                'temporary failure', 'name resolution', 'dns',
-                'connect timeout', 'read timeout'
+                "connection reset",
+                "connection refused",
+                "broken pipe",
+                "temporary failure",
+                "name resolution",
+                "dns",
+                "connect timeout",
+                "read timeout",
             ]
             return any(err in error_str for err in transient_network_errors)
         return False
@@ -645,11 +622,11 @@ class StealthSession:
                 # Retry-After can be seconds or HTTP date
                 delay = float(retry_after)
                 return delay
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 pass  # Fall back to exponential backoff
 
         # Exponential backoff: 1s, 2s, 4s
-        base_delay = BASE_RETRY_DELAY * (2 ** attempt)
+        base_delay = BASE_RETRY_DELAY * (2**attempt)
 
         # Add jitter: +/- 20%
         jitter = base_delay * RETRY_JITTER_PCT * (2 * random.random() - 1)
@@ -664,7 +641,7 @@ class StealthSession:
         allow_redirects: bool = True,
         headers: dict[str, str] | None = None,
         data: Any = None,
-        **kwargs
+        **kwargs,
     ) -> StealthResponse:
         """
         Make real stealth HTTP request with M1 8GB constraints and retry policy.
@@ -683,7 +660,7 @@ class StealthSession:
         if self._closed:
             raise RuntimeError("Session is closed")
 
-        domain = urlparse(url).netloc or 'default'
+        domain = urlparse(url).netloc or "default"
         last_exception: Exception | None = None
 
         # Sprint 50: HTTP/3 autodetection - try HTTP/3 first for GET requests
@@ -699,8 +676,8 @@ class StealthSession:
                         final_url=url,
                         headers={"X-Protocol": "HTTP/3"},
                         body_bytes=body_bytes,
-                        content_type='application/octet-stream',
-                        truncated=truncated
+                        content_type="application/octet-stream",
+                        truncated=truncated,
                     )
                 # HTTP/3 failed - fall through to aiohttp
 
@@ -732,7 +709,9 @@ class StealthSession:
             if headers:
                 stealth_headers.update(headers)
 
-            logger.debug(f"Stealth {method} request to {url} (attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS}, max_bytes={max_bytes})")  # noqa: E501
+            logger.debug(
+                f"Stealth {method} request to {url} (attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS}, max_bytes={max_bytes})"
+            )  # noqa: E501
 
             try:
                 session = await self._get_session()
@@ -743,14 +722,15 @@ class StealthSession:
                     headers=stealth_headers,
                     allow_redirects=allow_redirects,
                     data=data,
-                    **kwargs
+                    **kwargs,
                 ) as response:
-
                     # Check for transient error status codes
                     if self._is_transient_error(response.status) and attempt < MAX_RETRY_ATTEMPTS - 1:
-                        retry_after = response.headers.get('Retry-After')
+                        retry_after = response.headers.get("Retry-After")
                         delay = self._calculate_retry_delay(attempt, retry_after)
-                        logger.warning(f"Transient error {response.status}, retrying in {delay:.2f}s (attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS})")  # noqa: E501
+                        logger.warning(
+                            f"Transient error {response.status}, retrying in {delay:.2f}s (attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS})"
+                        )  # noqa: E501
                         await asyncio.sleep(delay)
                         continue
 
@@ -786,8 +766,8 @@ class StealthSession:
                         final_url=str(response.url),
                         headers=dict(response.headers),
                         body_bytes=body_bytes,
-                        content_type=response.headers.get('Content-Type'),
-                        truncated=truncated
+                        content_type=response.headers.get("Content-Type"),
+                        truncated=truncated,
                     )
 
                     # Update stats
@@ -804,7 +784,9 @@ class StealthSession:
                 last_exception = e
                 if attempt < MAX_RETRY_ATTEMPTS - 1 and self._is_transient_error(0, e):
                     delay = self._calculate_retry_delay(attempt)
-                    logger.warning(f"Timeout error, retrying in {delay:.2f}s (attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS})")  # noqa: E501
+                    logger.warning(
+                        f"Timeout error, retrying in {delay:.2f}s (attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS})"
+                    )  # noqa: E501
                     await asyncio.sleep(delay)
                     continue
                 logger.warning(f"Request timeout: {url}")
@@ -815,7 +797,9 @@ class StealthSession:
                 last_exception = e
                 if attempt < MAX_RETRY_ATTEMPTS - 1 and self._is_transient_error(0, e):
                     delay = self._calculate_retry_delay(attempt)
-                    logger.warning(f"Transient error {e}, retrying in {delay:.2f}s (attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS})")  # noqa: E501
+                    logger.warning(
+                        f"Transient error {e}, retrying in {delay:.2f}s (attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS})"
+                    )  # noqa: E501
                     await asyncio.sleep(delay)
                     continue
                 logger.warning(f"Request failed: {e}")
@@ -827,30 +811,16 @@ class StealthSession:
             raise last_exception
         raise RuntimeError(f"Request failed after {MAX_RETRY_ATTEMPTS} attempts")
 
-    async def get(
-        self,
-        url: str,
-        max_bytes: int = DEFAULT_MAX_BYTES,
-        **kwargs
-    ) -> StealthResponse:
+    async def get(self, url: str, max_bytes: int = DEFAULT_MAX_BYTES, **kwargs) -> StealthResponse:
         """Convenience method for GET requests."""
-        return await self.request('GET', url, max_bytes=max_bytes, **kwargs)
+        return await self.request("GET", url, max_bytes=max_bytes, **kwargs)
 
-    async def post(
-        self,
-        url: str,
-        data: Any = None,
-        max_bytes: int = DEFAULT_MAX_BYTES,
-        **kwargs
-    ) -> StealthResponse:
+    async def post(self, url: str, data: Any = None, max_bytes: int = DEFAULT_MAX_BYTES, **kwargs) -> StealthResponse:
         """Convenience method for POST requests."""
-        return await self.request('POST', url, data=data, max_bytes=max_bytes, **kwargs)
+        return await self.request("POST", url, data=data, max_bytes=max_bytes, **kwargs)
 
     async def head(
-        self,
-        url: str,
-        headers: dict[str, str] | None = None,
-        timeout: float | None = None
+        self, url: str, headers: dict[str, str] | None = None, timeout: float | None = None
     ) -> tuple[int, dict[str, str], str]:
         """
         Lightweight HEAD request with redirect following.
@@ -866,7 +836,7 @@ class StealthSession:
         if self._closed:
             raise RuntimeError("Session is closed")
 
-        domain = urlparse(url).netloc or 'default'
+        domain = urlparse(url).netloc or "default"
 
         # Rate limiting
         if self.manager.rate_limiter:
@@ -889,14 +859,9 @@ class StealthSession:
             # Use custom timeout if provided
             req_kwargs = {}
             if timeout is not None:
-                req_kwargs['timeout'] = aiohttp.ClientTimeout(total=timeout)
+                req_kwargs["timeout"] = aiohttp.ClientTimeout(total=timeout)
 
-            async with session.head(
-                url=url,
-                headers=stealth_headers,
-                allow_redirects=True,
-                **req_kwargs
-            ) as response:
+            async with session.head(url=url, headers=stealth_headers, allow_redirects=True, **req_kwargs) as response:
                 self.manager._request_count += 1
 
                 if 200 <= response.status < 300:
@@ -904,11 +869,7 @@ class StealthSession:
                 else:
                     self.manager._failure_count += 1
 
-                return (
-                    response.status,
-                    dict(response.headers),
-                    str(response.url)
-                )
+                return (response.status, dict(response.headers), str(response.url))
 
         except TimeoutError:
             logger.warning(f"HEAD request timeout: {url}")
@@ -920,11 +881,7 @@ class StealthSession:
             raise
 
     async def get_preview(
-        self,
-        url: str,
-        max_bytes: int = DEFAULT_MAX_BYTES,
-        range_bytes: int = 65536,
-        **kwargs
+        self, url: str, max_bytes: int = DEFAULT_MAX_BYTES, range_bytes: int = 65536, **kwargs
     ) -> dict[str, Any]:
         """
         Fetch partial content with Range header for preview.
@@ -941,7 +898,7 @@ class StealthSession:
         if self._closed:
             raise RuntimeError("Session is closed")
 
-        domain = urlparse(url).netloc or 'default'
+        domain = urlparse(url).netloc or "default"
 
         # Rate limiting
         if self.manager.rate_limiter:
@@ -954,10 +911,10 @@ class StealthSession:
         # Prepare headers with Range
         stealth_headers = self.get_headers(domain)
         if range_bytes > 0:
-            stealth_headers['Range'] = f'bytes=0-{range_bytes - 1}'
+            stealth_headers["Range"] = f"bytes=0-{range_bytes - 1}"
 
         # Merge additional headers from kwargs
-        extra_headers = kwargs.pop('headers', None)
+        extra_headers = kwargs.pop("headers", None)
         if extra_headers:
             stealth_headers.update(extra_headers)
 
@@ -966,12 +923,7 @@ class StealthSession:
         try:
             session = await self._get_session()
 
-            async with session.get(
-                url=url,
-                headers=stealth_headers,
-                allow_redirects=True,
-                **kwargs
-            ) as response:
+            async with session.get(url=url, headers=stealth_headers, allow_redirects=True, **kwargs) as response:
                 # Streaming read with hard max_bytes limit
                 # F196A: Use bytearray.extend() — O(1) amortized vs bytes += O(n²)
                 body_bytes = bytearray()
@@ -1007,11 +959,11 @@ class StealthSession:
                     self.manager._failure_count += 1
 
                 return {
-                    'body_bytes': body_bytes,
-                    'headers': dict(response.headers),
-                    'final_url': str(response.url),
-                    'status': response.status,
-                    'truncated': truncated
+                    "body_bytes": body_bytes,
+                    "headers": dict(response.headers),
+                    "final_url": str(response.url),
+                    "status": response.status,
+                    "truncated": truncated,
                 }
 
         except TimeoutError:
@@ -1042,6 +994,7 @@ class StealthSession:
             from stem import Signal
             from stem.control import Controller
             from stem.protocol import ProtocolError
+
             # Explicitly connect to localhost to avoid accidental exposure
             with Controller.from_port(address="127.0.0.1", port=9051) as controller:
                 try:
@@ -1075,6 +1028,7 @@ class StealthSession:
 # Sprint 80: Helper Classes
 # =============================================================================
 
+
 class BoundedHostState(OrderedDict):
     """LRU bounded dictionary s maxlen."""
 
@@ -1091,7 +1045,7 @@ class BoundedHostState(OrderedDict):
 class HostTelemetry:
     """Host telemetry pro backoff a retry rozhodování."""
 
-    __slots__ = ('semaphore', 'errors', 'latencies', 'last_success', 'last_error')
+    __slots__ = ("semaphore", "errors", "latencies", "last_success", "last_error")
 
     def __init__(self, semaphore: asyncio.Semaphore):
         self.semaphore = semaphore
@@ -1133,6 +1087,7 @@ class TokenBucketController:
 # Sprint 80: StealthManager Extensions
 # =============================================================================
 
+
 class StealthManagerExtensions:
     """Rozšíření StealthManager o per-profil sessions a ETag cache."""
 
@@ -1151,11 +1106,7 @@ class StealthManagerExtensions:
                     logger.debug(f"Failed to close oldest session for profile {oldest_profile}: {e}")
 
             if CURL_CFFI_AVAILABLE and AsyncSession:
-                new_session = AsyncSession(
-                    impersonate=profile,
-                    timeout=10.0,
-                    max_clients=15
-                )
+                new_session = AsyncSession(impersonate=profile, timeout=10.0, max_clients=15)
             else:
                 raise RuntimeError("curl_cffi not available")
 
@@ -1172,6 +1123,7 @@ class StealthManagerExtensions:
         """Získat telemetry pro host."""
         if host not in self._hosts:
             from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+
             sem = get_semaphore_for_testing(ConcurrencyCategory.HTTP_LANE)
             self._hosts[host] = HostTelemetry(sem)
         self._hosts.move_to_end(host)
@@ -1191,7 +1143,7 @@ class StealthManagerExtensions:
         ht = await self._get_host_telemetry(domain)
 
         if ht.errors > 0:
-            backoff = min(60, 2 ** ht.errors)
+            backoff = min(60, 2**ht.errors)
             jitter = random.uniform(0.5, 1.5) * backoff
             await asyncio.sleep(jitter)
 
@@ -1208,9 +1160,9 @@ class StealthManagerExtensions:
                 if url in self._cache:
                     _, _, etag, last_modified = self._cache[url]
                     if etag:
-                        headers['If-None-Match'] = etag
+                        headers["If-None-Match"] = etag
                     elif last_modified:
-                        headers['If-Modified-Since'] = last_modified
+                        headers["If-Modified-Since"] = last_modified
 
             resp = await session.get(url, headers=headers, follow_redirects=True, **kwargs)
 
@@ -1230,7 +1182,7 @@ class StealthManagerExtensions:
             ht.last_success = time.time()
 
             async with self._cache_lock:
-                self._cache[url] = (text, time.time(), resp.headers.get('etag'), resp.headers.get('last-modified'))
+                self._cache[url] = (text, time.time(), resp.headers.get("etag"), resp.headers.get("last-modified"))
             return text
         except Exception:
             ht.errors += 1
@@ -1242,11 +1194,7 @@ class StealthManagerExtensions:
 
 
 # Convenience function
-async def with_stealth(
-    coro,
-    domain: str = 'default',
-    config: StealthManagerConfig | None = None
-):
+async def with_stealth(coro, domain: str = "default", config: StealthManagerConfig | None = None):
     """
     Execute coroutine with stealth protection.
 

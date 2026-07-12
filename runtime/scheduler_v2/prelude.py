@@ -15,11 +15,9 @@ Design:
     - Lazy imports avoid M1 Metal init at import time
 """
 
-
 import asyncio
 from dataclasses import dataclass
 from typing import Any
-
 
 # ── Prelude Result Types ──────────────────────────────────────────────────────
 
@@ -358,11 +356,11 @@ async def run_doh_prelude_lane(
         result.doh_provider_errors = (f"doh_adapter_init_failed:{type(_init_exc).__name__}:{_init_exc}",)
         return LaneResult(lane="DOH", attempted=False, skipped=True)
 
-    import aiohttp
+    import httpx
 
     _doh_session = None
     try:
-        _doh_session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False))
+        _doh_session = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
         result.doh_domains_attempted = 1
 
         _doh_findings = await _doh_adapter.run(domain=str(_doh_query), session=_doh_session)

@@ -31,7 +31,7 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Any
 
-import aiohttp
+import httpx
 
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.transport.session_pool import session_pool
@@ -304,7 +304,7 @@ class ArxivAdapter(BaseSourceAdapter):
         query: str,
         max_results: int = 10,
         analysis: QueryAnalysis | None = None,
-        async_session: aiohttp.ClientSession | None = None
+        async_session: httpx.AsyncClient | None = None
     ) -> list[SearchResult]:
         """Search ArXiv for papers.
 
@@ -328,12 +328,12 @@ class ArxivAdapter(BaseSourceAdapter):
 
             headers = {"User-Agent": "Hledac-Research/1.0"}
 
-            async def _do_search(session: aiohttp.ClientSession) -> list[SearchResult]:
+            async def _do_search(session: httpx.AsyncClient) -> list[SearchResult]:
                 nonlocal url, headers
                 async with session.get(
                     url,
                     headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=self.config.timeout_seconds)
+                    timeout=httpx.Timeout(total=self.config.timeout_seconds)
                 ) as response:
                     if response.status != 200:
                         self.logger.warning(f"ArXiv API returned status {response.status}")
@@ -345,7 +345,7 @@ class ArxivAdapter(BaseSourceAdapter):
             if async_session is not None:
                 return await _do_search(async_session)
             else:
-                shared = await async_get_aiohttp_session()
+                shared = await httpx.AsyncClient()
                 return await _do_search(shared)
 
         except TimeoutError:
@@ -436,9 +436,9 @@ class ArxivAdapter(BaseSourceAdapter):
         try:
             url = f"{self.base_url}?id_list={arxiv_id}"
 
-            _sess = await session_pool.aiohttp()
+            _sess = await httpx.AsyncClient()
             async with _sess as sess:
-                async with sess.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                async with sess.get(url, timeout=httpx.Timeout(total=10)) as response:
                     if response.status == 200:
                         xml_content = await response.text()
                         results = self._parse_results(xml_content)
@@ -466,7 +466,7 @@ class CrossrefAdapter(BaseSourceAdapter):
         query: str,
         max_results: int = 10,
         analysis: QueryAnalysis | None = None,
-        async_session: aiohttp.ClientSession | None = None
+        async_session: httpx.AsyncClient | None = None
     ) -> list[SearchResult]:
         """Search Crossref for academic papers.
 
@@ -492,13 +492,13 @@ class CrossrefAdapter(BaseSourceAdapter):
             if self.config.api_key:
                 headers["Crossref-Plus-API-Token"] = f"Bearer {self.config.api_key}"
 
-            async def _do_search(session: aiohttp.ClientSession) -> list[SearchResult]:
+            async def _do_search(session: httpx.AsyncClient) -> list[SearchResult]:
                 nonlocal params, headers
                 async with session.get(
                     self.base_url,
                     params=params,
                     headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=self.config.timeout_seconds)
+                    timeout=httpx.Timeout(total=self.config.timeout_seconds)
                 ) as response:
                     if response.status != 200:
                         self.logger.warning(f"Crossref API returned status {response.status}")
@@ -510,7 +510,7 @@ class CrossrefAdapter(BaseSourceAdapter):
             if async_session is not None:
                 return await _do_search(async_session)
             else:
-                shared = await async_get_aiohttp_session()
+                shared = await httpx.AsyncClient()
                 return await _do_search(shared)
 
         except TimeoutError:
@@ -595,9 +595,9 @@ class CrossrefAdapter(BaseSourceAdapter):
                 "User-Agent": "Hledac-Research/1.0 (mailto:research@hledac.local)"
             }
 
-            _sess = await session_pool.aiohttp()
+            _sess = await httpx.AsyncClient()
             async with _sess as sess:
-                async with sess.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                async with sess.get(url, headers=headers, timeout=httpx.Timeout(total=10)) as response:
                     if response.status == 200:
                         data = await response.json()
                         message = data.get("message", {})
@@ -631,7 +631,7 @@ class SemanticScholarAdapter(BaseSourceAdapter):
         query: str,
         max_results: int = 10,
         analysis: QueryAnalysis | None = None,
-        async_session: aiohttp.ClientSession | None = None
+        async_session: httpx.AsyncClient | None = None
     ) -> list[SearchResult]:
         """Search Semantic Scholar for papers.
 
@@ -656,13 +656,13 @@ class SemanticScholarAdapter(BaseSourceAdapter):
             if self.config.api_key:
                 headers["x-api-key"] = self.config.api_key
 
-            async def _do_search(session: aiohttp.ClientSession) -> list[SearchResult]:
+            async def _do_search(session: httpx.AsyncClient) -> list[SearchResult]:
                 nonlocal url, params, headers
                 async with session.get(
                     url,
                     params=params,
                     headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=self.config.timeout_seconds)
+                    timeout=httpx.Timeout(total=self.config.timeout_seconds)
                 ) as response:
                     if response.status == 429:
                         self.logger.warning("Semantic Scholar rate limit hit")
@@ -678,7 +678,7 @@ class SemanticScholarAdapter(BaseSourceAdapter):
             if async_session is not None:
                 return await _do_search(async_session)
             else:
-                shared = await async_get_aiohttp_session()
+                shared = await httpx.AsyncClient()
                 return await _do_search(shared)
 
         except TimeoutError:
@@ -764,9 +764,9 @@ class SemanticScholarAdapter(BaseSourceAdapter):
             if self.config.api_key:
                 headers["x-api-key"] = self.config.api_key
 
-            _sess = await session_pool.aiohttp()
+            _sess = await httpx.AsyncClient()
             async with _sess as sess:
-                async with sess.get(url, params=params, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as response:  # noqa: E501
+                async with sess.get(url, params=params, headers=headers, timeout=httpx.Timeout(total=10)) as response:  # noqa: E501
                     if response.status == 200:
                         return await response.json()
                     return {}
@@ -788,9 +788,9 @@ class SemanticScholarAdapter(BaseSourceAdapter):
             if self.config.api_key:
                 headers["x-api-key"] = self.config.api_key
 
-            _sess = await session_pool.aiohttp()
+            _sess = await httpx.AsyncClient()
             async with _sess as sess:
-                async with sess.get(url, params=params, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as response:  # noqa: E501
+                async with sess.get(url, params=params, headers=headers, timeout=httpx.Timeout(total=10)) as response:  # noqa: E501
                     if response.status == 200:
                         data = await response.json()
                         return data.get("data", [])
@@ -896,7 +896,7 @@ class AcademicSearchEngine:
         max_results: int = 20,
         enable_expansion: bool | None = None,
         sources: list[str] | None = None,
-        async_session: aiohttp.ClientSession | None = None,
+        async_session: httpx.AsyncClient | None = None,
     ) -> AcademicSearchResult:
         """
         Execute multi-source academic search.
@@ -1002,7 +1002,7 @@ class AcademicSearchEngine:
         queries: list[str],
         analysis: QueryAnalysis,
         sources: list[str] | None = None,
-        async_session: aiohttp.ClientSession | None = None,
+        async_session: httpx.AsyncClient | None = None,
     ) -> dict[str, SourceResult]:
         """Execute searches across all sources."""
         source_results = {}
@@ -1511,7 +1511,7 @@ class SemanticScholarClient:
     async def search_ss(
         self,
         query: str,
-        session: aiohttp.ClientSession,
+        session: httpx.AsyncClient,
         limit: int = 10,
     ) -> list[dict]:
         """Semantic Scholar: [{title, abstract, year, doi, authors}]"""
@@ -1538,7 +1538,7 @@ class SemanticScholarClient:
         try:
             async with session.get(
                 self._SS_URL, params=params,
-                timeout=aiohttp.ClientTimeout(total=12),
+                timeout=httpx.Timeout(total=12),
             ) as r:
                 if r.status == 429:
                     await asyncio.sleep(60)
@@ -1564,7 +1564,7 @@ class SemanticScholarClient:
     async def search_arxiv(
         self,
         query: str,
-        session: aiohttp.ClientSession,
+        session: httpx.AsyncClient,
         max_results: int = 5,
     ) -> list[dict]:
         """ArXiv API — security preprints. [{title, summary, published, link}]"""
@@ -1592,7 +1592,7 @@ class SemanticScholarClient:
         try:
             async with session.get(
                 self._ARXIV_URL, params=params,
-                timeout=aiohttp.ClientTimeout(total=12),
+                timeout=httpx.Timeout(total=12),
             ) as r:
                 r.raise_for_status()
                 text = await r.text()

@@ -2012,5 +2012,5 @@ from hledac.universal.utils.html_parse_pool import parse_html_links as _parse_ht
 
 
 async def parse_html_async(html: str) -> list[dict]:
-    """Async wrapper — uses centralized M1-safe ProcessPoolExecutor from html_parse_pool."""
+    """Async wrapper — uses centralized M1-safe ThreadPoolExecutor from html_parse_pool."""
     return await _parse_html_links(html)

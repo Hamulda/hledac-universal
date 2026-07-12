@@ -209,6 +209,7 @@ ImportError, KeyboardInterrupt, SystemExit, F221-ABORT guard, and
 - **Nepoužívej `asyncio.run()` v ThreadPoolExecutor** — M1 crash, použij `loop.run_until_complete()`
 - **Neobcházej `mx.eval([])` před `clear_cache()`** — clear_cache je no-op bez barrier
 - **Nepoužívej `ScalableBloomFilter`** — roste bez limitu, nahrazeno `RotatingBloomFilter`
+- **Nepiš raw `try/except ImportError` na module level** — použij `utils.optional_imports.optional()` nebo `core.capabilities.CAP` (777× exists, migrace viz CLAUDE.md sekce "Lazy Import Anti-Pattern")
 - **Nepoužívej `bytes()` na LMDB buffer** — ničí zero-copy přenos
 - **Nikdy nepřidávej `--disable-gpu` do nodriver args** — na M1 je GPU=CPU, zpomalí to
 - **Nepvolávej `aggressive_cleanup` bez `()`** — musí být `await self.orch.memory_mgr.aggressive_cleanup()`
@@ -233,6 +234,49 @@ ImportError, KeyboardInterrupt, SystemExit, F221-ABORT guard, and
 - M1 8GB: ~50-80 MB resident (cryptography + OpenSSL)
 - Default install does NOT include it — opt-in via `uv sync --extra http3`
 - Used only for stealth/DA+ profile lanes when real QUIC is required
+
+---
+
+## Lazy Import Anti-Pattern (Issue #3)
+
+### Current State
+- **777× `except ImportError`** across **361 files**
+- Infrastructure EXISTS but underutilized:
+  - `core/capabilities.py` — CapabilityRegistry (only 3 files use it!)
+  - `utils/optional_imports.py` — `optional()` pattern (0 files use it!)
+  - `utils/lazy_singleton.py` — LazySingleton/AsyncLazySingleton (15 files)
+  - `core/lazy_imports.py` — PEP 810 lazy imports
+
+### PEP 562 `__getattr__` Already Working
+- `brain/__init__.py` — 12 engines lazy-loaded
+- `core/__init__.py` — PEP 810
+- `intelligence/__init__.py` — PEP 810
+- `runtime/__init__.py` — PEP 810
+
+### Migration Pattern
+
+**NEVER** raw `try/except ImportError` at module level:
+
+```python
+# WRONG (7µs cold-start penalty per file):
+try:
+    from otel import instrumented as _otel_instrumented
+except ImportError:
+    from hledac.universal.otel._instrumentation import instrumented as _otel_instrumented
+
+# RIGHT (zero-cost until first use):
+from hledac.universal.utils.optional_imports import optional
+_otel_instrumented = optional("otel:instrumented",
+    default=optional("hledac.universal.otel._instrumentation:instrumented"))
+```
+
+**ALLOWED:** `except ImportError` inside methods — legitimate runtime deferral.
+
+### Top Migration Targets
+1. `__main__.py` — 4× module-level deferred
+2. `utils/platform_info.py` — 6× module-level deferred  
+3. `tools/url_dedup.py` — 7× module-level deferred
+4. `knowledge/lancedb_store.py` — 5× module-level deferred
 
 ---
 

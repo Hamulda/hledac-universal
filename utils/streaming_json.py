@@ -30,8 +30,10 @@ import sys
 from collections.abc import AsyncIterator, Iterator
 from typing import TYPE_CHECKING, Any
 
+import httpx
+
 if TYPE_CHECKING:
-    import aiohttp
+    import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -49,17 +51,17 @@ except ImportError:
 
 
 async def stream_json_array(
-    response: aiohttp.ClientResponse,
+    response: httpx.Response,
     path: str = "item",
 ) -> AsyncIterator[Any]:
     """
-    Stream JSON array elements from aiohttp response without loading full JSON.
+    Stream JSON array elements from httpx response without loading full JSON.
 
     Uses ijson for incremental parsing — memory efficient for large feeds.
     First item available immediately after headers + minimal JSON parsed.
 
     Args:
-        response: aiohttp response with JSON body
+        response: httpx response with JSON body
         path: JSONPath to array elements (e.g. "item", "items.item", "data.records")
 
     Yields:
@@ -118,10 +120,10 @@ async def stream_json_array(
 
 
 async def stream_ndjson(
-    response: aiohttp.ClientResponse,
+    response: httpx.Response,
 ) -> AsyncIterator[dict]:
     """
-    Stream NDJSON (newline-delimited JSON) from aiohttp response.
+    Stream NDJSON (newline-delimited JSON) from httpx response.
 
     Each line is a valid JSON object on its own line.
     Used by: CT logs, CommonCrawl CDX, many TI feeds.
@@ -129,7 +131,7 @@ async def stream_ndjson(
     Memory: O(1) per item instead of O(n) for full parse.
 
     Args:
-        response: aiohttp response with NDJSON body
+        response: httpx response with NDJSON body
 
     Yields:
         Individual JSON objects (dicts)
@@ -156,16 +158,16 @@ async def stream_ndjson(
 
 
 async def stream_jsonlines(
-    response: aiohttp.ClientResponse,
+    response: httpx.Response,
 ) -> AsyncIterator[dict]:
     """
-    Stream JSON Lines format from aiohttp response.
+    Stream JSON Lines format from httpx response.
 
     Alias for stream_ndjson — both handle newline-delimited JSON.
     Memory: O(1) per item.
 
     Args:
-        response: aiohttp response with JSON Lines body
+        response: httpx response with JSON Lines body
 
     Yields:
         Individual JSON objects (dicts)
@@ -175,7 +177,7 @@ async def stream_jsonlines(
 
 
 async def stream_json_array_by_key(
-    response: aiohttp.ClientResponse,
+    response: httpx.Response,
     wrapper_key: str = "data",
 ) -> AsyncIterator[Any]:
     """
@@ -185,7 +187,7 @@ async def stream_json_array_by_key(
     This streams the inner array without loading full response.
 
     Args:
-        response: aiohttp response
+        response: httpx response
         wrapper_key: Key containing the array (default: "data")
 
     Yields:
@@ -204,7 +206,7 @@ def parse_json_chunks(
     Parse JSON from text in chunks (sync version for testing/replay).
 
     Use when you already have full text but want incremental yield.
-    For truly large JSON, prefer stream_json_array with aiohttp response.
+    For truly large JSON, prefer stream_json_array with httpx response.
 
     Args:
         text: Full JSON text
@@ -259,7 +261,7 @@ def parse_json_chunks(
 # -----------------------------------------------------------------------------
 
 async def stream_json_array_bounded(
-    response: aiohttp.ClientResponse,
+    response: httpx.Response,
     path: str = "item",
     max_items: int = 1000,
 ) -> AsyncIterator[Any]:
@@ -269,7 +271,7 @@ async def stream_json_array_bounded(
     M1 8GB safety: hard cap prevents unbounded memory growth.
 
     Args:
-        response: aiohttp response
+        response: httpx response
         path: JSONPath to array elements
         max_items: Maximum items to yield (default: 1000)
 
@@ -285,7 +287,7 @@ async def stream_json_array_bounded(
 
 
 async def stream_ndjson_bounded(
-    response: aiohttp.ClientResponse,
+    response: httpx.Response,
     max_items: int = 1000,
 ) -> AsyncIterator[dict]:
     """
@@ -294,7 +296,7 @@ async def stream_ndjson_bounded(
     M1 8GB safety: hard cap prevents unbounded memory growth.
 
     Args:
-        response: aiohttp response
+        response: httpx response
         max_items: Maximum items to yield (default: 1000)
 
     Yields:

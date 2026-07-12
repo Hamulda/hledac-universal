@@ -1,0 +1,4 @@
+# file: /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/transport/base.py
+# hypothesis_version: 6.155.7
+
+[0.0, 35.0, 2000000, 'CircuitBreaker', 'CircuitDecision', 'Lane', 'Transport', 'TransportAdapter', 'TransportConfig', 'TransportDecision', 'TransportResult', 'fetch_via_curl_cffi', 'fetch_via_httpx_h2', 'get_breaker', 'medium', 'route_transport', 'should_use_curl_cffi', 'should_use_httpx_h2']

@@ -21,20 +21,14 @@ Run:
     pytest tests/test_regex_python314_compat.py -v
 """
 
-
-import asyncio
 import re
 import sys
 import threading
-from concurrent.futures import ThreadPoolExecutor
-from typing import Any
 
 import pytest
 
 from hledac.universal.tools.regex_cache import (
     MultiPatternCache,
-    PatternHit,
-    cached_compile,
     check_btc_address,
     check_cve,
     check_domain,
@@ -53,17 +47,16 @@ from hledac.universal.tools.regex_cache import (
     extract_ips,
     extract_md5,
     extract_sha256,
-    extract_urls,
     get_compiled_pattern,
     make_cached_compiler,
     normalize_whitespace,
     strip_html_tags,
 )
 
-
 # ==============================================================================
 # Invariant tests: get_compiled_pattern returns cached Pattern
 # ==============================================================================
+
 
 class TestGetCompiledPatternCaching:
     """Test that get_compiled_pattern() caches correctly."""
@@ -91,6 +84,7 @@ class TestGetCompiledPatternCaching:
 # Invariant tests: Pattern objects are reusable
 # ==============================================================================
 
+
 class TestPatternReuse:
     """Test that compiled Pattern objects can be reused across matches."""
 
@@ -116,6 +110,7 @@ class TestPatternReuse:
 # ==============================================================================
 # Invariant tests: MultiPatternCache
 # ==============================================================================
+
 
 class TestMultiPatternCache:
     """Test MultiPatternCache O(n) multi-pattern matching."""
@@ -162,6 +157,7 @@ class TestMultiPatternCache:
 # ==============================================================================
 # Invariant tests: Pre-compiled convenience functions
 # ==============================================================================
+
 
 class TestConvenienceFunctions:
     """Test pre-compiled convenience functions."""
@@ -255,6 +251,7 @@ class TestConvenienceFunctions:
 # Invariant tests: Thread safety
 # ==============================================================================
 
+
 class TestThreadSafety:
     """Test that regex cache is thread-safe."""
 
@@ -270,7 +267,7 @@ class TestThreadSafety:
             except Exception as e:  # noqa: BLE001
                 errors.append(str(e))
 
-        threads = [threading.Thread(target=worker) for _ in range(10)]
+        threads = [threading.Thread(target=worker, daemon=True) for _ in range(10)]
         for t in threads:
             t.start()
         for t in threads:
@@ -293,7 +290,7 @@ class TestThreadSafety:
             except Exception as e:  # noqa: BLE001
                 errors.append(str(e))
 
-        threads = [threading.Thread(target=worker) for _ in range(5)]
+        threads = [threading.Thread(target=worker, daemon=True) for _ in range(5)]
         for t in threads:
             t.start()
         for t in threads:
@@ -305,6 +302,7 @@ class TestThreadSafety:
 # ==============================================================================
 # Invariant tests: Cache bounds
 # ==============================================================================
+
 
 class TestCacheBounds:
     """Test that LRU eviction works correctly."""
@@ -326,6 +324,7 @@ class TestCacheBounds:
 # Invariant tests: make_cached_compiler
 # ==============================================================================
 
+
 class TestMakeCachedCompiler:
     """Test make_cached_compiler() factory."""
 
@@ -344,6 +343,7 @@ class TestMakeCachedCompiler:
 # ==============================================================================
 # Integration: end-to-end IoC extraction
 # ==============================================================================
+
 
 class TestIoCIntegration:
     """Integration test: extract multiple IoC types from text."""
@@ -379,6 +379,7 @@ class TestIoCIntegration:
 # ==============================================================================
 # Python version check
 # ==============================================================================
+
 
 def test_python_version_awareness() -> None:
     """Document Python version requirements."""

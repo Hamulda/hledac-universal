@@ -1,0 +1,4 @@
+# file: /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/core/constants.py
+# hypothesis_version: 6.155.7
+
+[0.001, 0.05, 0.1, 0.15, 0.25, 0.3, 0.4, 0.5, 0.7, 0.75, 0.8, 0.85, 0.88, 0.95, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 6.5, 7.0, 8.0, 10.0, 20.0, 30.0, 35.0, 45.0, 75.0, 100.0, 150.0, 180.0, 256.0, 300.0, 100, 192, 200, 256, 299, 300, 399, 401, 403, 429, 443, 500, 502, 503, 504, 512, 520, 600, 1000, 1024, 2048, 7654, 7656, 8192, 8888, 9050, 9051, 10000, 12000, 86400, 'DUCKDB', 'DuckDBStorage', 'HTTP', 'HTTPCodes', 'M1MemoryBounds', 'M1_BOUNDS', 'MLX', 'MLXInference', 'NETWORK', 'NetworkTimeouts', 'PORTS', 'ProtocolPorts', 'RATIOS', 'SemanticRatios', 'get_m1_uma_mb']

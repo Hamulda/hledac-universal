@@ -1,0 +1,1 @@
+A centralized hashing facade (utils/hashing.py) replaces hashlib with xxh3 via Rust NEON SIMD for ~10x speedup in hot paths (deduplication), while preserving crypto-grade hashing for security-sensitive forensics/vault operations.

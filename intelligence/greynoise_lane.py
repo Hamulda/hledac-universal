@@ -16,14 +16,12 @@ GHOST_INVARIANTS:
   - Always returns CanonicalFinding list (empty on failure)
 """
 
-
-
 import logging
 import os
 import time
 from typing import Any
 
-import aiohttp
+import httpx
 
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 from hledac.universal.transport.circuit_breaker import (
@@ -31,7 +29,7 @@ from hledac.universal.transport.circuit_breaker import (
     domain_breaker_record_failure,
     domain_breaker_record_success,
 )
-from hledac.universal.transport.session_pool import session_pool
+from hledac.universal.utils.async_helpers import bounded_parallel_map
 from hledac.universal.utils.rate_limiters import get_limiter
 
 logger = logging.getLogger(__name__)
@@ -141,10 +139,10 @@ async def query_greynoise_ip(
         if use_community and not key:
             logger.debug("[GREYNOISE] Using community API (no key)")
             url = GREYNOISE_COMMUNITY_API.format(ip=ip)
-            _sess = await session_pool.aiohttp()
+            _sess = httpx.AsyncClient()
             async with _sess as sess:
-                async with sess.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                    if resp.status == 404:
+                async with sess.get(url, timeout=httpx.Timeout(15.0)) as resp:
+                    if resp.status_code == 404:
                         ts_now = time.time()
                         _record_greynoise_success()
                         return [
@@ -158,12 +156,12 @@ async def query_greynoise_ip(
                                 payload_text=f"{ip} classification=not_found message='IP not in GreyNoise database'",
                             )
                         ], {}
-                    if resp.status == 429:
+                    if resp.status_code == 429:
                         logger.warning("[GREYNOISE] Community API rate limit hit")
                         _record_greynoise_failure(kind="rate_limit")
                         return [], {}
-                    if resp.status != 200:
-                        logger.warning(f"[GREYNOISE] Community API error: {resp.status}")
+                    if resp.status_code != 200:
+                        logger.warning(f"[GREYNOISE] Community API error: {resp.status_code}")
                         _record_greynoise_failure(kind="http_error")
                         return [], {}
 
@@ -175,22 +173,22 @@ async def query_greynoise_ip(
 
         else:
             headers: dict[str, str] = {"key": key or "", "Accept": "application/json"}
-            _sess = await session_pool.aiohttp()
+            _sess = httpx.AsyncClient()
             async with _sess as sess:
                 async with sess.get(
                     GREYNOISE_FULL_API.format(ip=ip),
                     headers=headers,
                 ) as resp:
-                    if resp.status == 401:
+                    if resp.status_code == 401:
                         logger.warning("[GREYNOISE] API key required or invalid")
                         _record_greynoise_failure(kind="auth_error")
                         return [], {}
-                    if resp.status == 429:
+                    if resp.status_code == 429:
                         logger.warning("[GREYNOISE] Rate limit hit")
                         _record_greynoise_failure(kind="rate_limit")
                         return [], {}
-                    if resp.status != 200:
-                        logger.warning(f"[GREYNOISE] API error: {resp.status}")
+                    if resp.status_code != 200:
+                        logger.warning(f"[GREYNOISE] API error: {resp.status_code}")
                         _record_greynoise_failure(kind="http_error")
                         return [], {}
 
@@ -234,13 +232,18 @@ async def search_greynoise_lane(
 
     ips = ips[:limit]
 
+    async def _query_one(ip: str) -> tuple[list[CanonicalFinding], dict]:
+        return await query_greynoise_ip(ip, api_key=key)
+
+    results = await bounded_parallel_map(ips, _query_one, concurrency=5, ctx="greynoise_lane")
+
     all_findings = []
     all_raw = []
-
-    for ip in ips:
-        findings, raw = await query_greynoise_ip(ip, api_key=key)
-        all_findings.extend(findings)
-        all_raw.append(raw)
+    for result in results:
+        if result is not None:
+            findings, raw = result
+            all_findings.extend(findings)
+            all_raw.append(raw)
 
     logger.debug(f"[GREYNOISE] target='{target}' → {len(all_findings)} findings")
     return all_findings, all_raw

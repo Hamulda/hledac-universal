@@ -13,14 +13,11 @@ Features:
 M1 8GB: async, bounded, fail-soft.
 """
 
-
-
 import asyncio
 import logging
 import os
 import time
 from dataclasses import dataclass
-import msgspec
 from typing import NamedTuple
 
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
@@ -45,6 +42,7 @@ def _get_api_key() -> str | None:
 @dataclass
 class COREWork:
     """CORE.ac.uk academic work."""
+
     id: int
     title: str
     authors: list[str]
@@ -62,6 +60,7 @@ class COREWork:
 @dataclass(frozen=True)
 class COREPageResult:
     """A page of text with highlight markers."""
+
     text: str
     score: float
     source: str
@@ -69,6 +68,7 @@ class COREPageResult:
 
 class COREResult(NamedTuple):
     """Result of CORE search."""
+
     works: list[COREWork]
     page_results: list[COREPageResult]
     total_hits: int
@@ -79,12 +79,14 @@ class COREResult(NamedTuple):
 # CORE Adapter
 # ---------------------------------------------------------------------------
 
+
 class COREAdapter:
     """CORE.ac.uk API adapter with full-text search."""
 
     def __init__(self) -> None:
         self._api_key = _get_api_key()
         from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+
         self._semaphore = get_semaphore_for_testing(ConcurrencyCategory.ACADEMIC_SEARCH)
         self._cache: dict[str, tuple[float, list[COREWork]]] = {}
         self._cache_ttl = 1800.0  # 30 min
@@ -109,27 +111,27 @@ class COREAdapter:
         """Fetch from CORE API."""
         async with self._semaphore:
             try:
-
                 url = f"{CORE_API_BASE}{endpoint}"
                 headers = self._auth_headers()
                 headers["Content-Type"] = "application/json"
 
-                import aiohttp
-                async with aiohttp.ClientSession() as session:
+                import httpx
+
+                async with httpx.AsyncClient() as session:
                     if method == "POST" and data:
                         async with asyncio.timeout(REQUEST_TIMEOUT_S):
                             async with session.post(url, json=data, headers=headers) as resp:
-                                if resp.status != 200:
+                                if resp.status_code != 200:
                                     text = await resp.text()
-                                    logger.warning(f"CORE API error {resp.status}: {text[:200]}")
+                                    logger.warning(f"CORE API error {resp.status_code}: {text[:200]}")
                                     return None
                                 return await resp.json()
                     else:
                         async with asyncio.timeout(REQUEST_TIMEOUT_S):
                             async with session.get(url, headers=headers) as resp:
-                                if resp.status != 200:
+                                if resp.status_code != 200:
                                     text = await resp.text()
-                                    logger.warning(f"CORE API error {resp.status}: {text[:200]}")
+                                    logger.warning(f"CORE API error {resp.status_code}: {text[:200]}")
                                     return None
                                 return await resp.json()
 
@@ -219,28 +221,32 @@ class COREAdapter:
                     else:
                         repos.append(str(repo))
 
-                works.append(COREWork(
-                    id=item.get("id", 0),
-                    title=item.get("title", ""),
-                    authors=authors,
-                    year=item.get("year"),
-                    abstract=item.get("abstract"),
-                    doi=item.get("doi"),
-                    fulltext=fulltext,
-                    highlight=highlight_text,
-                    download_url=download_url,
-                    repositories=repos,
-                    topics=item.get("topics", []),
-                    oai_ids=item.get("oaiIds", []),
-                ))
+                works.append(
+                    COREWork(
+                        id=item.get("id", 0),
+                        title=item.get("title", ""),
+                        authors=authors,
+                        year=item.get("year"),
+                        abstract=item.get("abstract"),
+                        doi=item.get("doi"),
+                        fulltext=fulltext,
+                        highlight=highlight_text,
+                        download_url=download_url,
+                        repositories=repos,
+                        topics=item.get("topics", []),
+                        oai_ids=item.get("oaiIds", []),
+                    )
+                )
 
                 # Page-level results for full-text search
                 if highlight_text and highlight_text != item.get("abstract"):
-                    page_results.append(COREPageResult(
-                        text=highlight_text[:300],
-                        score=item.get("fullText", {}).get("score", 0.0) or item.get("score", 0.0),
-                        source=f"CORE:{item.get('id', 0)}",
-                    ))
+                    page_results.append(
+                        COREPageResult(
+                            text=highlight_text[:300],
+                            score=item.get("fullText", {}).get("score", 0.0) or item.get("score", 0.0),
+                            source=f"CORE:{item.get('id', 0)}",
+                        )
+                    )
 
             return COREResult(works, page_results, total_hits, None)
 
@@ -253,6 +259,7 @@ class COREAdapter:
         try:
             # URL encode DOI
             import urllib.parse
+
             encoded_doi = urllib.parse.quote(doi, safe="")
 
             data = await self._fetch(f"/works/doi:{encoded_doi}")
@@ -296,9 +303,8 @@ class COREAdapter:
         findings = []
         for work in works:
             import hashlib
-            fid = hashlib.sha256(
-                f"{query}\x00{work.id}\x00core".encode()
-            ).hexdigest()[:16]
+
+            fid = hashlib.sha256(f"{query}\x00{work.id}\x00core".encode()).hexdigest()[:16]
 
             payload_parts = [
                 f"title: {work.title}",
@@ -316,15 +322,17 @@ class COREAdapter:
             elif work.abstract:
                 payload_parts.append(f"abstract: {work.abstract[:400]}")
 
-            findings.append(CanonicalFinding(
-                finding_id=fid,
-                query=query,
-                source_type="core_fulltext",
-                confidence=0.85,
-                ts=time.time(),
-                provenance=("core", str(work.id), work.title[:50]),
-                payload_text="\n".join(payload_parts),
-            ))
+            findings.append(
+                CanonicalFinding(
+                    finding_id=fid,
+                    query=query,
+                    source_type="core_fulltext",
+                    confidence=0.85,
+                    ts=time.time(),
+                    provenance=("core", str(work.id), work.title[:50]),
+                    payload_text="\n".join(payload_parts),
+                )
+            )
         return findings
 
 

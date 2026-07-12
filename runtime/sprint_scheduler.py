@@ -5555,7 +5555,7 @@ class SprintScheduler:
         self._hypothesis_pack_cache: dict | None = None
         self._branch_value_summary: dict | None = None
         self._acquisition_plan: Any = None
-        # Issue 4.1: IOC co-occurrence miner — Rust engine + ProcessPoolExecutor(max_workers=2)
+        # Issue 4.1: IOC co-occurrence miner — Rust engine via asyncio.to_thread()
         self._ioc_cooccurrence_miner: Any = None
 
     def _init_graph_and_ioc_state(self, ioc_graph: Any = None) -> None:
@@ -7433,7 +7433,7 @@ class SprintScheduler:
 
                         await self._flush_dedup()
 
-                        # Issue 4.1: IOC co-occurrence analysis — CPU-bound Rust+ProcessPoolEngine.
+                        # Issue 4.1: IOC co-occurrence analysis — Rust engine via asyncio.to_thread().
                         # Runs concurrently with synthesis via safe_create_task fire-and-forget.
                         # finding_pipeline ∥ live_public_pipeline ∥ IOCooccurrenceMiner all parallel in WINDUP.
                         safe_create_task(
@@ -11687,10 +11687,9 @@ class SprintScheduler:
                                 ORDER BY discovered_at DESC
                                 LIMIT 10
                             """
+                            # Issue #1 Fix: Use async wrapper instead of blocking _conn.cursor()
                             try:
-                                _cur = duckdb_store._conn.cursor()
-                                _hist_rows = _cur.execute(_hist_sql).fetchall()
-                                _cur.close()
+                                _hist_rows = await duckdb_store.async_execute_raw_sql(_hist_sql)
                                 _historical_domains = [r[0] for r in _hist_rows if r[0]]
                                 if _historical_domains:
                                     _cleaned_domains = _historical_domains
@@ -20978,15 +20977,14 @@ class SprintScheduler:
 
         Wired in WINDUP phase — runs after all acquisition lanes complete so the
         full finding set is available. Uses:
-          - Rust engine (compute_cooccurrence_edges_py) when rust_extensions available
-          - ProcessPoolExecutor(max_workers=2) for CPU-bound computation
-          - msgspec.to_builtins() for cheap inter-process serialization
+          - Rust engine (compute_cooccurrence_edges_py) via asyncio.to_thread()
+          - msgspec.to_builtins() for cheap serialization
 
         Architecture:
           finding_pipeline (async enrich+store) ∥ live_public_pipeline ∥ IOCooccurrenceMiner
 
-        M1 8GB: ProcessPoolExecutor isolates CPU-bound work; Rust engine in-process
-        via asyncio.to_thread avoids blocking the event loop.
+        M1 8GB: asyncio.to_thread() runs Rust engine without blocking event loop.
+        No ProcessPoolExecutor — rayon CPU pool handles multi-core parallelism.
         """
         try:
             from hledac.universal.pipeline.ioc_cooccurrence_miner import (
@@ -22370,15 +22368,17 @@ class SprintScheduler:
                 if not _domain_m:
                     return
                 _domain = _domain_m.group(1)
-                _prefixes = ["www", "api", "cdn", "static", "assets"]
+                _hosts = [f"{p}.{_domain}" for p in _prefixes]
                 _loop = asyncio.get_running_loop()
-                for _prefix in _prefixes:
+
+                # ISSUE-005: Parallelize DNS prefetch — bounded_parallel_map
+                async def _resolve_dns(host: str) -> None:
                     try:
-                        _host = f"{_prefix}.{_domain}"
-                        # Non-blocking DNS via run_in_executor -- yields during I/O wait
-                        await _loop.run_in_executor(None, lambda h=_host: socket.getaddrinfo(h, 443))
+                        await _loop.run_in_executor(None, lambda h=host: socket.getaddrinfo(h, 443))
                     except Exception:
                         pass
+
+                await bounded_parallel_map(_hosts, _resolve_dns, concurrency=5, ctx="dns_prefetch")
             except Exception:  # noqa: BLE001
                 pass
 

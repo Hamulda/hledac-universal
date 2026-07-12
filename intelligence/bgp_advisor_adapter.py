@@ -9,7 +9,6 @@ BGP analysis is non-blocking and fail-soft — errors never crash the sprint.
 M1 8GB: No model load, pure I/O with bounded results.
 """
 
-
 import asyncio
 import logging
 from typing import TYPE_CHECKING
@@ -48,7 +47,8 @@ class BGPAdvisorAdapter:
             result: SprintSchedulerResult with accepted_findings from the sprint.
         """
         try:
-            import aiohttp
+            import httpx
+
             from hledac.universal.intelligence.bgp_lane import BGPAdapter
         except ImportError:
             logger.debug("[BGPAdvisor] bgp_lane unavailable, skipping")
@@ -57,9 +57,7 @@ class BGPAdvisorAdapter:
         try:
             findings: list = getattr(result, "accepted_findings", None) or []
             ip_values = [
-                getattr(f, "ioc_value", "")
-                for f in findings
-                if getattr(f, "ioc_type", None) in ("ip", "ipv4")
+                getattr(f, "ioc_value", "") for f in findings if getattr(f, "ioc_type", None) in ("ip", "ipv4")
             ]
             if not ip_values:
                 return

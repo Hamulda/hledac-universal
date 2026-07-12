@@ -1733,7 +1733,7 @@ async def dry_run_sprint(query: str, duration_s: float = 300.0) -> None:
     try:
         _ = float(duration_s)
         assert duration_s > 0
-    except TypeError, ValueError, AssertionError:
+    except (TypeError, ValueError, AssertionError):
         issues.append(f"duration ({duration_s}) is not a valid positive float")
         verdict = "ABORT_RECOMMENDED"
 
@@ -2105,7 +2105,6 @@ async def run_sprint(
         # Remove any lock whose owning PID is dead (crash, SIGKILL, orphaned).
         # Uses psutil.pid_exists() for cross-platform liveness check.
         try:
-
             import psutil
 
             lock_dir = _sprint_lock_path.parent

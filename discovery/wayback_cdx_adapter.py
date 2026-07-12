@@ -2,7 +2,7 @@
 Wayback CDX — Internet Archive CDX API fallback.
 
 Sprint F206AM: Providerless Discovery Mesh Phase 1
-Sprint F206AS: Transport Alignment — uses shared aiohttp session + circuit breaker.
+Sprint F206AS: Transport Alignment — uses shared httpx session + circuit breaker.
 
 Rules:
 - HTTP API only
@@ -13,8 +13,6 @@ Rules:
 - fail-soft
 """
 
-
-
 import asyncio
 import time
 
@@ -22,8 +20,7 @@ from hledac.universal.discovery.duckduckgo_adapter import (
     DiscoveryBatchResult,
     DiscoveryHit,
 )
-from hledac.universal.network.session_runtime import async_get_aiohttp_session
-from hledac.universal.transport.circuit_breaker import checked_aiohttp_get
+from hledac.universal.transport.circuit_breaker import get_breaker
 
 # ---------------------------------------------------------------------------
 # Wayback CDX API
@@ -62,14 +59,14 @@ async def async_search_wayback_cdx(
     start = time.monotonic()
 
     try:
-        import aiohttp
+        import httpx
     except ImportError:
         elapsed = time.monotonic() - start
         return DiscoveryBatchResult(
             hits=(),
             error_type="import_error",
             elapsed_s=elapsed,
-            error="aiohttp_not_available",
+            error="httpx_not_available",
         )
 
     params = {
@@ -82,19 +79,32 @@ async def async_search_wayback_cdx(
         "to": "2026",
     }
 
-    session = await async_get_aiohttp_session()
-    timeout = aiohttp.ClientTimeout(total=timeout_s)
-
+    timeout = httpx.Timeout(total=timeout_s)
     try:
         async with asyncio.timeout(timeout_s):
-            data, status, err = await checked_aiohttp_get(
-                session,
-                _WAYBACK_CDX_URL,
-                params=params,
-                headers={"User-Agent": "Hledac/1.0 (research bot)"},
-                timeout=timeout,
-                failure_kind="wayback_cdx",
-            )
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                try:
+                    response = await client.get(
+                        _WAYBACK_CDX_URL,
+                        params=params,
+                        headers={"User-Agent": "Hledac/1.0 (research bot)"},
+                    )
+                    status = response.status_code
+                    data = response.json() if status == 200 else None
+                    err = None
+                    from urllib.parse import urlparse as _urlparse
+
+                    get_breaker(_urlparse(_WAYBACK_CDX_URL).netloc).record_success()
+                except Exception as e:
+                    err = str(e)
+                    data = None
+                    status = 0
+                    from urllib.parse import urlparse as _urlparse
+
+                    try:
+                        get_breaker(_urlparse(_WAYBACK_CDX_URL).netloc).record_failure(failure_kind="wayback_cdx")
+                    except Exception:
+                        pass
             if err:
                 elapsed = time.monotonic() - start
                 # Map circuit_breaker error strings to taxonomy

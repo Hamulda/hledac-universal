@@ -21,23 +21,21 @@ Anti-patterns:
   - Secret do logu: mask_secret() before any log/print
 """
 
-
-
 import asyncio
 import logging
 import re
 import time
 from dataclasses import dataclass, field
-import msgspec
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    from aiohttp import ClientSession
+import httpx
 
-from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.utils.async_helpers import safe_gather_ok
 
 logger = logging.getLogger(__name__)
+
+_TIMEOUT_10 = httpx.Timeout(10.0)
+_TIMEOUT_15 = httpx.Timeout(15.0)
 
 # ---- Secrets masking -------------------------------------------------------
 
@@ -53,9 +51,11 @@ def _mask_secret(value: str) -> str:
 
 # ---- Finding type ----------------------------------------------------------
 
+
 @dataclass
 class PasteFinding:
     """Structured paste finding result."""
+
     uri: str
     source: str  # "pastebin" | "paste_gg" | "rentry"
     extracted_secrets: list[str] = field(default_factory=list)
@@ -73,7 +73,10 @@ class PasteFinding:
 _RE_EMAIL = re.compile(r"\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b")
 _RE_IPV4 = re.compile(r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b")
 _RE_IPV6 = re.compile(r"\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b")
-_RE_URLSAFE_TOKEN = re.compile(r"\b(?:token|key|secret|password|passwd|pwd|auth|credential)['\"]?[:=]?\s*['\"]?([A-Za-z0-9_\-]{16,64})['\"]?\b", re.IGNORECASE)  # noqa: E501
+_RE_URLSAFE_TOKEN = re.compile(
+    r"\b(?:token|key|secret|password|passwd|pwd|auth|credential)['\"]?[:=]?\s*['\"]?([A-Za-z0-9_\-]{16,64})['\"]?\b",
+    re.IGNORECASE,
+)  # noqa: E501
 _RE_AWS_KEY = re.compile(r"\bAKIA[0-9A-Z]{16}\b")
 _RE_BEARER = re.compile(r"\bBearer\s+[A-Za-z0-9_\.\-]{20,}\b", re.IGNORECASE)
 _RE_PKEY = re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----", re.IGNORECASE)
@@ -97,16 +100,18 @@ def _get_paste_bloom() -> Any:
     global _BLOOM
     if _BLOOM is None:
         try:
+            import os
+            import pathlib
+
             from rust_extensions import RotatingMmapBloomFilter
-            import os, pathlib
+
             path_a = os.path.expanduser(_PASTE_BLOOM_PATH_A)
             path_b = os.path.expanduser(_PASTE_BLOOM_PATH_B)
             pathlib.Path(path_a).parent.mkdir(parents=True, exist_ok=True)
-            _BLOOM = RotatingMmapBloomFilter(
-                path_a, path_b, capacity=_PASTE_BLOOM_CAPACITY, fp_rate=0.01
-            )
+            _BLOOM = RotatingMmapBloomFilter(path_a, path_b, capacity=_PASTE_BLOOM_CAPACITY, fp_rate=0.01)
         except Exception:  # noqa: BLE001
             from rust_extensions import BloomFilter
+
             _BLOOM = BloomFilter(capacity=_PASTE_BLOOM_CAPACITY, fp_rate=0.01)
     return _BLOOM
 
@@ -122,6 +127,7 @@ def _get_zstd_compress():
     if _ZSTD_AVAILABLE is None:
         try:
             import zstd
+
             _ZSTD_AVAILABLE = True
             return zstd.compress
         except Exception:  # noqa: BLE001
@@ -129,6 +135,7 @@ def _get_zstd_compress():
             return None
     if _ZSTD_AVAILABLE:
         import zstd
+
         return zstd.compress
     return None
 
@@ -160,6 +167,7 @@ _circuit = _CircuitState()
 
 # ---- Text analysis ---------------------------------------------------------
 
+
 def _extract_secrets(text: str) -> tuple[list[str], list[str], list[str]]:
     """Extract e-mails, IP addresses, and secrets from raw text.
 
@@ -190,13 +198,13 @@ def _make_snippet(text: str, max_len: int = 200) -> str:
 
 # ---- Per-source scrapers ---------------------------------------------------
 
-async def _scrape_pastebin_raw(paste_id: str, session: ClientSession) -> str | None:
+
+async def _scrape_pastebin_raw(paste_id: str, session: httpx.AsyncClient) -> str | None:
     """Stáhnout obsah pastebin.com/raw/{id}."""
-    import aiohttp
     url = f"https://pastebin.com/raw/{paste_id}"
     try:
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-            if resp.status == 404:
+        async with session.get(url, timeout=_TIMEOUT_10) as resp:
+            if resp.status_code == 404:
                 return None
             resp.raise_for_status()
             return await resp.text()
@@ -204,13 +212,12 @@ async def _scrape_pastebin_raw(paste_id: str, session: ClientSession) -> str | N
         return None
 
 
-async def _scrape_paste_gg(paste_id: str, session: ClientSession) -> str | None:
+async def _scrape_paste_gg(paste_id: str, session: httpx.AsyncClient) -> str | None:
     """Stáhnout obsah paste.gg/api/v1/pastes/{id}."""
-    import aiohttp
     url = f"https://paste.gg/api/v1/pastes/{paste_id}"
     try:
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-            if resp.status == 404:
+        async with session.get(url, timeout=_TIMEOUT_10) as resp:
+            if resp.status_code == 404:
                 return None
             resp.raise_for_status()
             data = await resp.json()
@@ -223,13 +230,12 @@ async def _scrape_paste_gg(paste_id: str, session: ClientSession) -> str | None:
         return None
 
 
-async def _scrape_rentry(raw_path: str, session: ClientSession) -> str | None:
+async def _scrape_rentry(raw_path: str, session: httpx.AsyncClient) -> str | None:
     """Stáhnout obsah rentry.co/{raw_path}/raw."""
-    import aiohttp
     url = f"https://rentry.co/{raw_path}/raw"
     try:
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-            if resp.status == 404:
+        async with session.get(url, timeout=_TIMEOUT_10) as resp:
+            if resp.status_code == 404:
                 return None
             resp.raise_for_status()
             return await resp.text()
@@ -259,7 +265,8 @@ async def run(query: str) -> list[PasteFinding]:
     - 10s timeout per scrape
     - Circuit breaker after 5 consecutive failures
     """
-    import aiohttp
+    import httpx
+
     global _last_request
 
     findings: list[PasteFinding] = []
@@ -276,7 +283,7 @@ async def run(query: str) -> list[PasteFinding]:
         _last_request = time.time()
 
     try:
-        _sess = await session_pool.aiohttp()
+        _sess = httpx.AsyncClient(timeout=_TIMEOUT_15)
         async with _sess as session:
             pb_findings = await _search_pastebin(query, session)
             findings.extend(pb_findings)
@@ -294,15 +301,14 @@ async def run(query: str) -> list[PasteFinding]:
     return findings
 
 
-async def _search_pastebin(query: str, session: ClientSession) -> list[PasteFinding]:
+async def _search_pastebin(query: str, session: httpx.AsyncClient) -> list[PasteFinding]:
     """Search pastebin.com for query, scrape matching pastes."""
-    import aiohttp
     findings: list[PasteFinding] = []
 
     try:
         search_url = f"https://pastebin.com/search?q={query}"
-        async with session.get(search_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-            if resp.status != 200:
+        async with session.get(search_url, timeout=_TIMEOUT_15) as resp:
+            if resp.status_code != 200:
                 return []
             html = await resp.text()
 
@@ -364,7 +370,7 @@ async def _search_pastebin(query: str, session: ClientSession) -> list[PasteFind
 
 async def _search_paste_gg(query: str, session: ClientSession) -> list[PasteFinding]:
     """Search paste.gg for query via their API."""
-    import aiohttp
+
     findings: list[PasteFinding] = []
 
     try:
@@ -372,9 +378,9 @@ async def _search_paste_gg(query: str, session: ClientSession) -> list[PasteFind
         async with session.post(
             search_url,
             json={"query": query, "limit": _MAX_PASTES_PER_SOURCE},
-            timeout=aiohttp.ClientTimeout(total=15),
+            timeout=_TIMEOUT_15,
         ) as resp:
-            if resp.status != 200:
+            if resp.status_code != 200:
                 return []
             data = await resp.json()
 
@@ -420,15 +426,14 @@ async def _search_paste_gg(query: str, session: ClientSession) -> list[PasteFind
     return findings
 
 
-async def _search_rentry(query: str, session: ClientSession) -> list[PasteFinding]:
+async def _search_rentry(query: str, session: httpx.AsyncClient) -> list[PasteFinding]:
     """Search rentry.co for query via HTML parsing."""
-    import aiohttp
     findings: list[PasteFinding] = []
 
     try:
         search_url = f"https://rentry.co/search?query={query}"
-        async with session.get(search_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-            if resp.status != 200:
+        async with session.get(search_url, timeout=_TIMEOUT_15) as resp:
+            if resp.status_code != 200:
                 return []
             html = await resp.text()
 
@@ -489,6 +494,6 @@ async def _search_rentry(query: str, session: ClientSession) -> list[PasteFindin
 # =============================================================================
 
 __all__ = [
-    'PasteFinding',
-    'run',
+    "PasteFinding",
+    "run",
 ]

@@ -25,13 +25,12 @@ Usage:
     reset_all_session_managers()
 """
 
-
 import asyncio
 import contextvars
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    import aiohttp
+    pass
 
 # =============================================================================
 # CONTEXTVAR — Request-scoped telemetry
@@ -342,9 +341,7 @@ class SessionManager:
 import threading  # noqa: E402
 import weakref  # noqa: E402
 
-_session_managers: weakref.WeakValueDictionary[str, SessionManager] = (
-    weakref.WeakValueDictionary()
-)
+_session_managers: weakref.WeakValueDictionary[str, SessionManager] = weakref.WeakValueDictionary()
 _session_managers_lock = threading.Lock()
 
 

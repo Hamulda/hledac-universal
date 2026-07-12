@@ -998,24 +998,6 @@ class FetchCoordinator(UniversalCoordinator):
         for n in ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "169.254.0.0/16", "100.64.0.0/10"]
     ]
 
-    async def _resolve_host_ips_async(self, host: str) -> list[str]:
-        """Resolve hostname to IPs (deterministically sorted) using async DNS."""
-        try:
-            results = await async_getaddrinfo(host, 0, proto=socket.IPPROTO_TCP)
-            ips = sorted({str(r[4][0]) for r in results})
-            return ips
-        except Exception:
-            return []
-
-    def _resolve_host_ips(self, host: str) -> list[str]:
-        """Resolve hostname to IPs synchronously using blocking socket.getaddrinfo."""
-        try:
-            results = socket.getaddrinfo(host, 0, proto=socket.IPPROTO_TCP)
-            ips = sorted({str(r[4][0]) for r in results})
-            return ips
-        except Exception:
-            return []
-
     def _is_ip_public(self, ip_str: str) -> bool:
         """Check if IP is public (not private/reserved)."""
         try:

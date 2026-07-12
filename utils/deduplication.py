@@ -9,10 +9,9 @@ Multi-strategy deduplication combining:
 Optimized for M1 Mac with memory-efficient implementations.
 """
 
-
-
 import asyncio
-import hashlib
+import hashlib  # noqa: F401 — kept for type stubs / third-party callers
+from utils.hashing import xxh3_64_hex, sha256_hex, blake3_64_hex
 import json
 import logging
 import os
@@ -38,6 +37,7 @@ from typing import Any
 # Vzor: core/resource_governor.py:33-41.
 try:
     import numpy as np  # type: ignore[import-not-found]
+
     _NUMPY_AVAILABLE = True
 except ImportError:
     # ty 0.0.42 does not respect `[invalid-assignment]` in this position — use
@@ -52,8 +52,10 @@ logger = logging.getLogger(__name__)
 # ENUMS AND CONFIGURATION
 # =============================================================================
 
+
 class DeduplicationStrategy(Enum):
     """Deduplication strategy types."""
+
     SEMANTIC = "semantic"
     CONTENT = "content"
     METADATA = "metadata"
@@ -63,17 +65,20 @@ class DeduplicationStrategy(Enum):
 @dataclass(slots=True)
 class DeduplicationConfig:
     """Configuration for deduplication engine."""
+
     # Thresholds
     semantic_threshold: float = 0.85
     content_threshold: float = 0.90
     metadata_threshold: float = 0.95
 
     # Strategy settings
-    strategies: list[DeduplicationStrategy] = field(default_factory=lambda: [
-        DeduplicationStrategy.SEMANTIC,
-        DeduplicationStrategy.CONTENT,
-        DeduplicationStrategy.METADATA
-    ])
+    strategies: list[DeduplicationStrategy] = field(
+        default_factory=lambda: [
+            DeduplicationStrategy.SEMANTIC,
+            DeduplicationStrategy.CONTENT,
+            DeduplicationStrategy.METADATA,
+        ]
+    )
 
     # MinHash settings
     enable_minhash: bool = True
@@ -104,9 +109,11 @@ class DeduplicationConfig:
 # DATA CLASSES
 # =============================================================================
 
+
 @dataclass(slots=True)
 class QueryItem:
     """Item for deduplication processing."""
+
     id: str
     title: str
     content: str
@@ -118,13 +125,14 @@ class QueryItem:
     @property
     def content_hash(self) -> str:
         """Generate content hash."""
-        content = f"{self.title}{self.content}".encode()
-        return hashlib.md5(content).hexdigest()[:12]
+        combined = f"{self.title}{self.content}"
+        return xxh3_64_hex(combined)[:12]
 
 
 @dataclass(slots=True)
 class SimilarityScore:
     """Similarity score with details."""
+
     score: float
     strategy: DeduplicationStrategy
     confidence: float
@@ -134,6 +142,7 @@ class SimilarityScore:
 @dataclass(slots=True)
 class DeduplicationMatch:
     """Match between two items."""
+
     original_item: QueryItem
     matched_item: QueryItem
     similarity_score: SimilarityScore
@@ -144,6 +153,7 @@ class DeduplicationMatch:
 @dataclass(slots=True)
 class DeduplicationResult:
     """Result of deduplication process."""
+
     original_items: list[QueryItem]
     unique_items: list[QueryItem]
     duplicates_removed: list[QueryItem]
@@ -162,6 +172,7 @@ class DeduplicationResult:
 @dataclass(slots=True)
 class DeduplicationStats:
     """Statistics for deduplication."""
+
     total_items_processed: int = 0
     items_kept: int = 0
     items_removed: int = 0
@@ -182,6 +193,7 @@ class DeduplicationStats:
 # BASE DEDUPLICATOR
 # =============================================================================
 
+
 class BaseDeduplicator(ABC):
     """Abstract base class for deduplicators."""
 
@@ -190,9 +202,7 @@ class BaseDeduplicator(ABC):
         self.logger = logging.getLogger(f"dedup.{self.__class__.__name__}")
 
     @abstractmethod
-    async def find_duplicates(
-        self, item: QueryItem, candidates: list[QueryItem]
-    ) -> list[DeduplicationMatch]:
+    async def find_duplicates(self, item: QueryItem, candidates: list[QueryItem]) -> list[DeduplicationMatch]:
         """Find duplicates for an item among candidates."""
         pass
 
@@ -205,6 +215,7 @@ class BaseDeduplicator(ABC):
 # =============================================================================
 # SEMANTIC DEDUPLICATOR
 # =============================================================================
+
 
 class SemanticDeduplicator(BaseDeduplicator):
     """Semantic deduplication using vector embeddings."""
@@ -232,9 +243,7 @@ class SemanticDeduplicator(BaseDeduplicator):
             clusters[bucket].append(item)
         return clusters
 
-    async def find_duplicates(
-        self, item: QueryItem, candidates: list[QueryItem]
-    ) -> list[DeduplicationMatch]:
+    async def find_duplicates(self, item: QueryItem, candidates: list[QueryItem]) -> list[DeduplicationMatch]:
         """Find semantically similar items."""
         if not candidates:
             return []
@@ -257,15 +266,15 @@ class SemanticDeduplicator(BaseDeduplicator):
                             details={
                                 "embedding_dim": self.config.embedding_dim,
                                 "model": self.config.embedding_model,
-                                "similarity_metric": "cosine"
-                            }
+                                "similarity_metric": "cosine",
+                            },
                         )
                         match = DeduplicationMatch(
                             original_item=item,
                             matched_item=candidate,
                             similarity_score=score,
                             match_type=DeduplicationStrategy.SEMANTIC,
-                            decision="pending"
+                            decision="pending",
                         )
                         matches.append(match)
 
@@ -296,9 +305,7 @@ class SemanticDeduplicator(BaseDeduplicator):
 
         return embedding
 
-    async def _get_batch_embeddings(
-        self, items: list[QueryItem]
-    ) -> list[np.ndarray | None]:
+    async def _get_batch_embeddings(self, items: list[QueryItem]) -> list[np.ndarray | None]:
         """Get embeddings for a batch of items."""
         if not items:
             return []
@@ -341,7 +348,7 @@ class SemanticDeduplicator(BaseDeduplicator):
             model: Any = self._embedding_model
             if model is not None:
                 # Sprint 87B: Use embed_for_dedup() for proper task semantics (CLUSTERING + normalize)
-                if hasattr(model, 'embed_for_dedup'):
+                if hasattr(model, "embed_for_dedup"):
                     return model.embed_for_dedup(content)
                 # Fallback for sentence-transformers
                 return model.encode([content])[0]
@@ -350,9 +357,7 @@ class SemanticDeduplicator(BaseDeduplicator):
 
         return self._fallback_embedding(content)
 
-    async def _generate_batch_embeddings(
-        self, contents: list[str]
-    ) -> list[Any | None]:
+    async def _generate_batch_embeddings(self, contents: list[str]) -> list[Any | None]:
         """Generate embeddings for batch of contents using dedup-specific task."""
         try:
             if not self._model_loaded:
@@ -360,7 +365,7 @@ class SemanticDeduplicator(BaseDeduplicator):
             model: Any = self._embedding_model
             if model is not None:
                 # Sprint 87B: Use embed_for_dedup() for proper task semantics (CLUSTERING + normalize)
-                if hasattr(model, 'embed_for_dedup'):
+                if hasattr(model, "embed_for_dedup"):
                     return [model.embed_for_dedup(c) for c in contents]
                 # Fallback for sentence-transformers
                 batch_embeddings = model.encode(contents)
@@ -411,10 +416,7 @@ class SemanticDeduplicator(BaseDeduplicator):
     def _fallback_embedding(self, content: str) -> np.ndarray:
         """Generate fallback embedding using hash-based approach."""
         if not _NUMPY_AVAILABLE:
-            raise RuntimeError(
-                "numpy is required for deduplication. "
-                "Install: uv pip install numpy"
-            )
+            raise RuntimeError("numpy is required for deduplication. Install: uv pip install numpy")
         words = content.split()[:100]
         embedding = np.zeros(self.config.embedding_dim, dtype=np.float32)
 
@@ -422,14 +424,14 @@ class SemanticDeduplicator(BaseDeduplicator):
             if i >= self.config.embedding_dim:
                 break
 
-            word_hash = hashlib.md5(word.encode()).hexdigest()
-            word_vector = float(int(word_hash[:8], 16)) / (2**32 - 1)
+            word_hash = xxh3_64_hex(word)
+            word_vector = float(int(word_hash[:8], 16), 16) / (2**128 - 1)
             embedding[i] = word_vector * (1.0 - i / len(words))
 
         # F214OPT-J: Deterministic noise — same content always produces same embedding
-        content_bytes = content.encode("utf-8")
-        hash_digest = hashlib.blake2b(content_bytes, digest_size=16).digest()
-        seed = int.from_bytes(hash_digest[:4], "little")
+        # Use xxh3-64 for fast non-crypto seeding
+        seed_bytes = xxh3_64_hex(content).encode()
+        seed = int.from_bytes(seed_bytes[:4], "little")
         rng = np.random.RandomState(seed)
         embedding += rng.normal(0, 0.01, self.config.embedding_dim)
 
@@ -442,10 +444,7 @@ class SemanticDeduplicator(BaseDeduplicator):
     def _compute_cosine_similarity(self, emb1: np.ndarray, emb2: np.ndarray) -> float:
         """Compute cosine similarity between two embeddings."""
         if not _NUMPY_AVAILABLE:
-            raise RuntimeError(
-                "numpy is required for deduplication. "
-                "Install: uv pip install numpy"
-            )
+            raise RuntimeError("numpy is required for deduplication. Install: uv pip install numpy")
         dot_product = np.dot(emb1, emb2)
         norm1 = np.linalg.norm(emb1)
         norm2 = np.linalg.norm(emb2)
@@ -487,6 +486,7 @@ class SemanticDeduplicator(BaseDeduplicator):
 # CONTENT DEDUPLICATOR
 # =============================================================================
 
+
 class ContentDeduplicator(BaseDeduplicator):
     """Content-based deduplication using hashing and MinHash."""
 
@@ -495,10 +495,7 @@ class ContentDeduplicator(BaseDeduplicator):
         self.content_cache: dict[str, dict[str, Any]] = {}
         self.cache_size = 0
         self.max_cache_size_mb = 128
-        self.executor = ThreadPoolExecutor(
-            max_workers=4,
-            thread_name_prefix="content-hash"
-        )
+        self.executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="content-hash")
         # SimHash for LSH clustering
         self._simhash = SimHash(hashbits=64)
 
@@ -511,9 +508,7 @@ class ContentDeduplicator(BaseDeduplicator):
             clusters[bucket].append(item)
         return clusters
 
-    async def find_duplicates(
-        self, item: QueryItem, candidates: list[QueryItem]
-    ) -> list[DeduplicationMatch]:
+    async def find_duplicates(self, item: QueryItem, candidates: list[QueryItem]) -> list[DeduplicationMatch]:
         """Find content-based duplicates using LSH clustering for O(n) performance."""
         if not candidates:
             return []
@@ -543,8 +538,7 @@ class ContentDeduplicator(BaseDeduplicator):
                 minhash_similarity = 0.0
                 if self.config.enable_minhash:
                     minhash_similarity = self._compute_minhash_similarity(
-                        item_signature.get("minhash"),
-                        candidate_signature.get("minhash")
+                        item_signature.get("minhash"), candidate_signature.get("minhash")
                     )
 
                 overall_similarity = max(hash_similarity, minhash_similarity)
@@ -558,15 +552,15 @@ class ContentDeduplicator(BaseDeduplicator):
                             "hash_similarity": hash_similarity,
                             "minhash_similarity": minhash_similarity,
                             "hash_algorithm": self.config.hash_algorithm,
-                            "exact_hash_match": item_signature["hash"] == candidate_signature["hash"]
-                        }
+                            "exact_hash_match": item_signature["hash"] == candidate_signature["hash"],
+                        },
                     )
                     match = DeduplicationMatch(
-                            original_item=item,
-                            matched_item=candidate,
-                            similarity_score=score,
-                            match_type=DeduplicationStrategy.CONTENT,
-                            decision="pending"
+                        original_item=item,
+                        matched_item=candidate,
+                        similarity_score=score,
+                        match_type=DeduplicationStrategy.CONTENT,
+                        decision="pending",
                     )
                     matches.append(match)
 
@@ -583,9 +577,7 @@ class ContentDeduplicator(BaseDeduplicator):
         if content in self.content_cache:
             return self.content_cache[content]
 
-        signature = await asyncio.get_running_loop().run_in_executor(
-            self.executor, self._generate_signature, content
-        )
+        signature = await asyncio.get_running_loop().run_in_executor(self.executor, self._generate_signature, content)
 
         signature_size = len(str(signature)) / (1024 * 1024)
         if (self.cache_size + signature_size) <= self.max_cache_size_mb:
@@ -618,11 +610,11 @@ class ContentDeduplicator(BaseDeduplicator):
     def _compute_hash(self, content: str) -> str:
         """Compute exact content hash."""
         if self.config.hash_algorithm == "sha256":
-            return hashlib.sha256(content.encode()).hexdigest()
+            return sha256_hex(content)
         elif self.config.hash_algorithm == "md5":
-            return hashlib.md5(content.encode()).hexdigest()
+            return xxh3_64_hex(content)
         else:
-            return hashlib.sha256(content.encode()).hexdigest()
+            return sha256_hex(content)
 
     # F214OPT-J: ngram cap to limit extreme texts
     _DEFAULT_MAX_NGRAMS = 50000
@@ -637,7 +629,7 @@ class ContentDeduplicator(BaseDeduplicator):
     def _compute_character_hash(self, content: str) -> str:
         """Compute character-level hash."""
         normalized = " ".join(content.lower().split())
-        return hashlib.sha256(normalized.encode()).hexdigest()
+        return xxh3_64_hex(normalized)
 
     def _compute_minhash(self, content: str) -> list[int]:
         """
@@ -662,9 +654,7 @@ class ContentDeduplicator(BaseDeduplicator):
 
         # F214OPT-J: cap ngram count to limit memory/CPU for extreme texts
         if len(ngrams) > max_ngrams:
-            self.logger.debug(
-                f"[DEDUP] Ngram count {len(ngrams)} exceeds cap {max_ngrams}, truncating"
-            )
+            self.logger.debug(f"[DEDUP] Ngram count {len(ngrams)} exceeds cap {max_ngrams}, truncating")
             ngrams = ngrams[:max_ngrams]
 
         if not ngrams:
@@ -691,13 +681,11 @@ class ContentDeduplicator(BaseDeduplicator):
         if len(content) < n:
             return [content]
 
-        ngrams = [''.join(t) for t in zip(*[content[i:] for i in range(n)]) if ''.join(t).strip()]
+        ngrams = ["".join(t) for t in zip(*[content[i:] for i in range(n)]) if "".join(t).strip()]
 
         return ngrams
 
-    def _compute_hash_similarity(
-        self, sig1: dict[str, Any], sig2: dict[str, Any]
-    ) -> float:
+    def _compute_hash_similarity(self, sig1: dict[str, Any], sig2: dict[str, Any]) -> float:
         """Compute hash-based similarity."""
         if sig1["hash"] == sig2["hash"]:
             return 1.0
@@ -715,9 +703,7 @@ class ContentDeduplicator(BaseDeduplicator):
 
         return length_similarity * 0.4 + word_similarity * 0.3 + 0.3
 
-    def _compute_minhash_similarity(
-        self, minhash1: list[int] | None, minhash2: list[int] | None
-    ) -> float:
+    def _compute_minhash_similarity(self, minhash1: list[int] | None, minhash2: list[int] | None) -> float:
         """Compute MinHash Jaccard similarity."""
         if not minhash1 or not minhash2:
             return 0.0
@@ -743,25 +729,18 @@ class ContentDeduplicator(BaseDeduplicator):
 # METADATA DEDUPLICATOR
 # =============================================================================
 
+
 class MetadataDeduplicator(BaseDeduplicator):
     """Metadata-based deduplication using field comparison."""
 
     def __init__(self, config: DeduplicationConfig):
         super().__init__(config)
-        self.field_weights = {
-            "title": 0.4,
-            "url": 0.3,
-            "source": 0.1,
-            "timestamp": 0.1,
-            "author": 0.1
-        }
+        self.field_weights = {"title": 0.4, "url": 0.3, "source": 0.1, "timestamp": 0.1, "author": 0.1}
         self.stop_words = self._get_stop_words()
         self.normalization_cache: dict[str, str] = {}
         self.executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="metadata-process")
 
-    async def find_duplicates(
-        self, item: QueryItem, candidates: list[QueryItem]
-    ) -> list[DeduplicationMatch]:
+    async def find_duplicates(self, item: QueryItem, candidates: list[QueryItem]) -> list[DeduplicationMatch]:
         """Find metadata-based duplicates."""
         if not candidates:
             return []
@@ -774,9 +753,7 @@ class MetadataDeduplicator(BaseDeduplicator):
             for candidate in candidates:
                 candidate_metadata = await self._extract_and_normalize_metadata(candidate)
 
-                field_similarities = await self._compute_field_similarities(
-                    item_metadata, candidate_metadata
-                )
+                field_similarities = await self._compute_field_similarities(item_metadata, candidate_metadata)
 
                 overall_similarity = self._compute_weighted_similarity(field_similarities)
 
@@ -785,17 +762,14 @@ class MetadataDeduplicator(BaseDeduplicator):
                         score=overall_similarity,
                         strategy=DeduplicationStrategy.METADATA,
                         confidence=min(1.0, overall_similarity + 0.1),
-                        details={
-                            "field_similarities": field_similarities,
-                            "weights": self.field_weights
-                        }
+                        details={"field_similarities": field_similarities, "weights": self.field_weights},
                     )
                     match = DeduplicationMatch(
                         original_item=item,
                         matched_item=candidate,
                         similarity_score=score,
                         match_type=DeduplicationStrategy.METADATA,
-                        decision="pending"
+                        decision="pending",
                     )
                     matches.append(match)
 
@@ -812,7 +786,7 @@ class MetadataDeduplicator(BaseDeduplicator):
             "url": item.url,
             "source": item.source,
             "content_length": len(item.content),
-            "timestamp": item.timestamp.isoformat() if item.timestamp else ""
+            "timestamp": item.timestamp.isoformat() if item.timestamp else "",
         }
         metadata.update(item.metadata)
 
@@ -839,9 +813,7 @@ class MetadataDeduplicator(BaseDeduplicator):
         if text in self.normalization_cache:
             return self.normalization_cache[text]
 
-        normalized = await asyncio.get_running_loop().run_in_executor(
-            self.executor, self._normalize_text_sync, text
-        )
+        normalized = await asyncio.get_running_loop().run_in_executor(self.executor, self._normalize_text_sync, text)
 
         if len(self.normalization_cache) < 10000:
             self.normalization_cache[text] = normalized
@@ -928,14 +900,66 @@ class MetadataDeduplicator(BaseDeduplicator):
     def _get_stop_words(self) -> set[str]:
         """Get common stop words."""
         return {
-            "a", "an", "and", "are", "as", "at", "be", "by", "for",
-            "from", "has", "he", "in", "is", "it", "its", "of", "on",
-            "that", "the", "to", "was", "will", "with", "this",
-            "but", "they", "have", "had", "what", "said", "each",
-            "which", "their", "time", "if", "about", "up", "out",
-            "many", "then", "them", "these", "so", "some", "her",
-            "would", "make", "like", "into", "him", "two", "more",
-            "very", "after", "words", "long", "than", "first", "been"
+            "a",
+            "an",
+            "and",
+            "are",
+            "as",
+            "at",
+            "be",
+            "by",
+            "for",
+            "from",
+            "has",
+            "he",
+            "in",
+            "is",
+            "it",
+            "its",
+            "of",
+            "on",
+            "that",
+            "the",
+            "to",
+            "was",
+            "will",
+            "with",
+            "this",
+            "but",
+            "they",
+            "have",
+            "had",
+            "what",
+            "said",
+            "each",
+            "which",
+            "their",
+            "time",
+            "if",
+            "about",
+            "up",
+            "out",
+            "many",
+            "then",
+            "them",
+            "these",
+            "so",
+            "some",
+            "her",
+            "would",
+            "make",
+            "like",
+            "into",
+            "him",
+            "two",
+            "more",
+            "very",
+            "after",
+            "words",
+            "long",
+            "than",
+            "first",
+            "been",
         }
 
     async def cleanup(self):
@@ -952,6 +976,7 @@ class MetadataDeduplicator(BaseDeduplicator):
 # =============================================================================
 # MAIN DEDUPLICATION ENGINE
 # =============================================================================
+
 
 class DeduplicationEngine:
     """Main deduplication engine with multi-strategy support."""
@@ -998,7 +1023,7 @@ class DeduplicationEngine:
             duplicates_removed = []
 
             for i in range(0, len(items), batch_size):
-                batch = items[i:i + batch_size]
+                batch = items[i : i + batch_size]
                 batch_result = await self._process_batch(batch)
 
                 for item in batch:
@@ -1021,7 +1046,7 @@ class DeduplicationEngine:
                 duplicates_removed=duplicates_removed,
                 matches=all_matches,
                 processing_time=processing_time,
-                stats=self.stats
+                stats=self.stats,
             )
 
             self.logger.info(
@@ -1040,14 +1065,12 @@ class DeduplicationEngine:
         matches = []
 
         for i, current_item in enumerate(batch):
-            item_matches = await self._find_duplicates(current_item, batch[i + 1:])
+            item_matches = await self._find_duplicates(current_item, batch[i + 1 :])
             matches.extend(item_matches)
 
         return matches
 
-    async def _find_duplicates(
-        self, item: QueryItem, candidates: list[QueryItem]
-    ) -> list[DeduplicationMatch]:
+    async def _find_duplicates(self, item: QueryItem, candidates: list[QueryItem]) -> list[DeduplicationMatch]:
         """Find duplicates for an item."""
         all_matches = []
 
@@ -1123,9 +1146,11 @@ class DeduplicationEngine:
 # DOMAIN STATS - Per-domain tracking for frontier learning
 # =============================================================================
 
+
 @dataclass(slots=True)
 class DomainStats:
     """Per-domain statistiky pro yield tracking a domain diversity - M1 8GB."""
+
     domain: str
     requests: int = 0
     new_docs: int = 0
@@ -1165,9 +1190,9 @@ class DomainStats:
         if self.stale_cache_hits > 10:
             stale_penalty = 10000  # 10 seconds for domains with many stale hits
         elif self.stale_cache_hits > 5:
-            stale_penalty = 5000   # 5 seconds
+            stale_penalty = 5000  # 5 seconds
         elif self.stale_cache_hits > 0:
-            stale_penalty = 1000   # 1 second
+            stale_penalty = 1000  # 1 second
 
         # Recent stale hit bonus (within last hour)
         if self.last_stale_hit_at:
@@ -1177,9 +1202,15 @@ class DomainStats:
 
         return base_delay + stale_penalty
 
-    def record_request(self, latency_ms: float, is_new: bool = False, is_dedup: bool = False,
-                       is_error: bool = False, blocked_by_robots: bool = False,
-                       stale_cache_hit: bool = False):
+    def record_request(
+        self,
+        latency_ms: float,
+        is_new: bool = False,
+        is_dedup: bool = False,
+        is_error: bool = False,
+        blocked_by_robots: bool = False,
+        stale_cache_hit: bool = False,
+    ):
         """Zaznamena vysledek requestu a aktualizuje yield."""
         self.requests += 1
         self.total_latency_ms += latency_ms
@@ -1209,35 +1240,35 @@ class DomainStats:
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dict for persistence."""
         return {
-            'domain': self.domain,
-            'requests': self.requests,
-            'new_docs': self.new_docs,
-            'dedup_hits': self.dedup_hits,
-            'total_latency_ms': self.total_latency_ms,
-            'http_errors': self.http_errors,
-            'robots_blocked': self.robots_blocked,
-            'last_request_at': self.last_request_at,
-            'yield_score': self.yield_score,
-            'first_seen_at': self.first_seen_at,
-            'stale_cache_hits': self.stale_cache_hits,
-            'last_stale_hit_at': self.last_stale_hit_at,
+            "domain": self.domain,
+            "requests": self.requests,
+            "new_docs": self.new_docs,
+            "dedup_hits": self.dedup_hits,
+            "total_latency_ms": self.total_latency_ms,
+            "http_errors": self.http_errors,
+            "robots_blocked": self.robots_blocked,
+            "last_request_at": self.last_request_at,
+            "yield_score": self.yield_score,
+            "first_seen_at": self.first_seen_at,
+            "stale_cache_hits": self.stale_cache_hits,
+            "last_stale_hit_at": self.last_stale_hit_at,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DomainStats:
         """Create from dict."""
-        stats = cls(domain=data['domain'])
-        stats.requests = data.get('requests', 0)
-        stats.new_docs = data.get('new_docs', 0)
-        stats.dedup_hits = data.get('dedup_hits', 0)
-        stats.total_latency_ms = data.get('total_latency_ms', 0.0)
-        stats.http_errors = data.get('http_errors', 0)
-        stats.robots_blocked = data.get('robots_blocked', 0)
-        stats.last_request_at = data.get('last_request_at')
-        stats.yield_score = data.get('yield_score', 1.0)
-        stats.first_seen_at = data.get('first_seen_at', time.time())
-        stats.stale_cache_hits = data.get('stale_cache_hits', 0)
-        stats.last_stale_hit_at = data.get('last_stale_hit_at')
+        stats = cls(domain=data["domain"])
+        stats.requests = data.get("requests", 0)
+        stats.new_docs = data.get("new_docs", 0)
+        stats.dedup_hits = data.get("dedup_hits", 0)
+        stats.total_latency_ms = data.get("total_latency_ms", 0.0)
+        stats.http_errors = data.get("http_errors", 0)
+        stats.robots_blocked = data.get("robots_blocked", 0)
+        stats.last_request_at = data.get("last_request_at")
+        stats.yield_score = data.get("yield_score", 1.0)
+        stats.first_seen_at = data.get("first_seen_at", time.time())
+        stats.stale_cache_hits = data.get("stale_cache_hits", 0)
+        stats.last_stale_hit_at = data.get("last_stale_hit_at")
         return stats
 
 
@@ -1246,14 +1277,15 @@ class DomainStatsManager:
 
     def __init__(self, storage_dir: Path | None = None, max_domains: int = 500):
         from pathlib import Path
-        self._storage_dir = storage_dir or Path.home() / '.hledac' / 'domain_stats'
+
+        self._storage_dir = storage_dir or Path.home() / ".hledac" / "domain_stats"
         self._storage_dir.mkdir(parents=True, exist_ok=True)
         self._max_domains = max_domains
         self._stats: dict[str, DomainStats] = {}
         self._load_stats()
 
     def _get_storage_path(self) -> Path:
-        return self._storage_dir / 'domain_stats.json'
+        return self._storage_dir / "domain_stats.json"
 
     def _load_stats(self) -> None:
         """Nacte statistiky z disku."""
@@ -1273,7 +1305,7 @@ class DomainStatsManager:
         try:
             path = self._get_storage_path()
             data = {domain: stats.to_dict() for domain, stats in self._stats.items()}
-            with open(path, 'w') as f:
+            with open(path, "w") as f:
                 json.dump(data, f)
             logger.debug(f"[DOMAIN STATS] Saved {len(self._stats)} domains to disk")
         except Exception as e:
@@ -1305,15 +1337,15 @@ class DomainStatsManager:
     def get_summary(self) -> dict[str, Any]:
         """Get summary stats for all domains."""
         if not self._stats:
-            return {'total_domains': 0}
+            return {"total_domains": 0}
         total_requests = sum(s.requests for s in self._stats.values())
         total_new = sum(s.new_docs for s in self._stats.values())
         return {
-            'total_domains': len(self._stats),
-            'total_requests': total_requests,
-            'total_new_docs': total_new,
-            'overall_yield': total_new / max(1, total_requests),
-            'avg_errors': sum(s.http_errors for s in self._stats.values()) / len(self._stats),
+            "total_domains": len(self._stats),
+            "total_requests": total_requests,
+            "total_new_docs": total_new,
+            "overall_yield": total_new / max(1, total_requests),
+            "avg_errors": sum(s.http_errors for s in self._stats.values()) / len(self._stats),
         }
 
 
@@ -1330,9 +1362,7 @@ _MAX_TOKEN_CACHE = 10000
 try:
     import hledac_rust_extensions as _rust_ext
 
-    _rust_hamming_dist: Callable[[int, int], int] | None = getattr(
-        _rust_ext, "hamming_dist", None
-    )
+    _rust_hamming_dist: Callable[[int, int], int] | None = getattr(_rust_ext, "hamming_dist", None)
 except Exception:
     _rust_hamming_dist = None
 
@@ -1436,15 +1466,15 @@ class SimHash:
             threshold=simhash_threshold,
         )
         if seed is None:
-            seed_file = Path.home() / '.hledac' / 'simhash_seed.txt'
+            seed_file = Path.home() / ".hledac" / "simhash_seed.txt"
             if seed_file.exists():
                 with open(seed_file) as f:
                     seed = int(f.read().strip())
             else:
                 seed = secrets.randbits(64)
                 seed_file.parent.mkdir(parents=True, exist_ok=True)
-                temp = seed_file.with_suffix('.tmp')
-                with open(temp, 'w') as f:
+                temp = seed_file.with_suffix(".tmp")
+                with open(temp, "w") as f:
                     f.write(str(seed))
                     f.flush()
                     os.fsync(f.fileno())
@@ -1456,7 +1486,7 @@ class SimHash:
         words = text.lower().split()
         if len(words) < 3:
             return words
-        return [' '.join(t) for t in zip(words, words[1:], words[2:])]
+        return [" ".join(t) for t in zip(words, words[1:], words[2:])]
 
     def _token_hash(self, token: str) -> int:
         """64-bit hash of token (seeded), with cache for repeated tokens."""
@@ -1466,11 +1496,8 @@ class SimHash:
             if key in _TOKEN_HASH_CACHE:
                 return _TOKEN_HASH_CACHE[key]
 
-            h = hashlib.blake2b(
-                (token + str(self.seed)).encode(),
-                digest_size=8
-            )
-            result = struct.unpack('<Q', h.digest())[0]
+            token_hash = xxh3_64_hex(token + str(self.seed))
+            result = int(token_hash[:16], 16)
 
             # Bounded FIFO cache eviction
             if len(_TOKEN_HASH_CACHE) >= _MAX_TOKEN_CACHE:
@@ -1501,7 +1528,7 @@ class SimHash:
         fingerprint = 0
         for i in range(self.hashbits):
             if v[i] > 0:
-                fingerprint |= (1 << i)
+                fingerprint |= 1 << i
 
         return fingerprint
 
@@ -1527,21 +1554,14 @@ class SimHash:
         Lazy import MLX, fallback to numpy.
         """
         if not _NUMPY_AVAILABLE:
-            raise RuntimeError(
-                "numpy is required for deduplication. "
-                "Install: uv pip install numpy"
-            )
+            raise RuntimeError("numpy is required for deduplication. Install: uv pip install numpy")
         try:
             import mlx.core as mx  # type: ignore[import-not-found]
 
             # Try different API variants for compatibility
             try:
                 key = mx.random.key(self.seed)
-                hyperplanes = mx.random.normal(
-                    shape=(self.hashbits, embeddings.shape[1]),
-                    dtype=mx.bfloat16,
-                    key=key
-                )
+                hyperplanes = mx.random.normal(shape=(self.hashbits, embeddings.shape[1]), dtype=mx.bfloat16, key=key)
             except TypeError:
                 # Fallback for older API (positional args) — ty widens dtype/shape Any
                 key = mx.random.key(self.seed)
@@ -1586,18 +1606,18 @@ class SimHash:
 # =============================================================================
 
 __all__ = [
-    'DeduplicationStrategy',
-    'DeduplicationConfig',
-    'QueryItem',
-    'SimilarityScore',
-    'DeduplicationMatch',
-    'DeduplicationResult',
-    'DeduplicationStats',
-    'SemanticDeduplicator',
-    'ContentDeduplicator',
-    'MetadataDeduplicator',
-    'DeduplicationEngine',
-    'SimHash',
-    'DomainStats',
-    'DomainStatsManager',
+    "DeduplicationStrategy",
+    "DeduplicationConfig",
+    "QueryItem",
+    "SimilarityScore",
+    "DeduplicationMatch",
+    "DeduplicationResult",
+    "DeduplicationStats",
+    "SemanticDeduplicator",
+    "ContentDeduplicator",
+    "MetadataDeduplicator",
+    "DeduplicationEngine",
+    "SimHash",
+    "DomainStats",
+    "DomainStatsManager",
 ]

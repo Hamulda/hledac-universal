@@ -18,23 +18,20 @@ GHOST_INVARIANTS:
   - asyncio.gather(..., return_exceptions=True) + _check_gathered()
   - asyncio.sleep() only
   - circuit_breaker.domain_breaker_check() before every external call
-  - async_get_aiohttp_session() for all HTTP
+  - async_get_httpx_session() for all HTTP
   - asyncio.open_connection() for WHOIS (no run_in_executor)
   - Bounded deques, 50MB response caps, TTL caches
   - Fail-soft: source error returns empty dict, never raises
 """
 
-
-
 import asyncio
 import logging
 import time
 from dataclasses import dataclass
-import msgspec
 from typing import Any
+import httpx
 
-import aiohttp
-
+from hledac.universal.network.session_runtime import async_get_httpx_session
 from hledac.universal.utils.async_helpers import safe_gather_ok, safe_gather_shielded
 
 logger = logging.getLogger(__name__)
@@ -46,10 +43,13 @@ WHOIS_TIMEOUT_S: float = 10.0
 MAX_RDAP_CACHE_SIZE: int = 500
 RDAP_CACHE_TTL_S: int = 3600  # 1 hour
 
+
 # ── RDAP Cache ────────────────────────────────────────────────────────────────
 class _RDAPCache:
     """TTL-cached RDAP/WHOIS responses."""
+
     __slots__ = ("_cache", "_timestamps")
+
     def __init__(self):
         self._cache: dict[str, dict] = {}
         self._timestamps: dict[str, float] = {}
@@ -74,6 +74,7 @@ class _RDAPCache:
             self._timestamps.pop(oldest, None)
         self._cache[k] = data
         self._timestamps[k] = time.time()
+
 
 _rdap_cache = _RDAPCache()
 
@@ -119,12 +120,11 @@ class IPv6Recon:
     """
 
     def __init__(self):
-        self._session: aiohttp.ClientSession | None = None
+        self._session: httpx.AsyncClient | None = None
 
-    async def _ensure_session(self) -> aiohttp.ClientSession:
-        if self._session is None or self._session.closed:
-            from hledac.universal.network.session_runtime import async_get_aiohttp_session
-            self._session = await async_get_aiohttp_session()
+    async def _ensure_session(self) -> httpx.AsyncClient:
+        if self._session is None or self._session.is_closed:
+            self._session = await async_get_httpx_session()
         return self._session
 
     # ── RDAP ──────────────────────────────────────────────────────────────────
@@ -139,31 +139,34 @@ class IPv6Recon:
         # Circuit breaker
         try:
             from hledac.universal.transport.circuit_breaker import get_breaker
-            if not get_breaker("rdap.arin.net").check_circuit().allowed: raise RuntimeError(f"circuit_open: {"rdap.arin.net"}")  # noqa: E501
-            if not get_breaker("rdap.ripe.net").check_circuit().allowed: raise RuntimeError(f"circuit_open: {"rdap.ripe.net"}")  # noqa: E701
-            if not get_breaker("rdap.apnic.net").check_circuit().allowed: raise RuntimeError(f"circuit_open: {"rdap.apnic.net"}")  # noqa: E701
+
+            if not get_breaker("rdap.arin.net").check_circuit().allowed:
+                raise RuntimeError(f"circuit_open: {'rdap.arin.net'}")  # noqa: E501
+            if not get_breaker("rdap.ripe.net").check_circuit().allowed:
+                raise RuntimeError(f"circuit_open: {'rdap.ripe.net'}")  # noqa: E701
+            if not get_breaker("rdap.apnic.net").check_circuit().allowed:
+                raise RuntimeError(f"circuit_open: {'rdap.apnic.net'}")  # noqa: E701
         except Exception as e:
             logger.debug(f"[IPv6] RDAP circuit breaker: {e}")
 
         session = await self._ensure_session()
-        import aiohttp
 
         # Try each RDAP server until one works
         for name, rdap_url in RDAP_BOOTSTRAP.items():
             try:
                 url = f"{rdap_url}/{ip}"
-                async with session.get(
+                resp = await session.get(
                     url,
-                    timeout=aiohttp.ClientTimeout(total=RDAP_TIMEOUT_S),
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        _rdap_cache.set(rdap_url, ip, data)
-                        return data
-                    elif resp.status == 404:
-                        continue  # Try next server
-                    else:
-                        continue
+                    timeout=httpx.Timeout(total=RDAP_TIMEOUT_S),
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    _rdap_cache.set(rdap_url, ip, data)
+                    return data
+                elif resp.status_code == 404:
+                    continue  # Try next server
+                else:
+                    continue
             except Exception as e:
                 logger.debug(f"[IPv6] RDAP {name} failed: {e}")
                 continue
@@ -252,17 +255,17 @@ class IPv6Recon:
         async def _query(url: str) -> list[str]:
             try:
                 session = await self._ensure_session()
-                import aiohttp
+
                 params = {"name": domain, "type": "AAAA"}
-                async with session.get(
+                resp = await session.get(
                     url,
                     params=params,
-                    timeout=aiohttp.ClientTimeout(total=8.0),
+                    timeout=httpx.Timeout(total=8.0),
                     headers={"Accept": "application/dns-json"},
-                ) as resp:
-                    if resp.status != 200:
-                        return []
-                    data = await resp.json()
+                )
+                if resp.status_code != 200:
+                    return []
+                data = resp.json()
             except Exception:
                 return []
             answers: list[str] = []
@@ -293,22 +296,22 @@ class IPv6Recon:
         # Check circuit breaker
         try:
             from hledac.universal.transport.circuit_breaker import get_breaker
-            if not get_breaker("bgpkit.com").check_circuit().allowed: raise RuntimeError(f"circuit_open: {"bgpkit.com"}")  # noqa: E701
+
+            if not get_breaker("bgpkit.com").check_circuit().allowed:
+                raise RuntimeError(f"circuit_open: {'bgpkit.com'}")  # noqa: E701
         except Exception:
             return {}
 
         session = await self._ensure_session()
-        import aiohttp
         url = f"https://bgpkit.com/v4/peer/{ip}"
-
         try:
-            async with session.get(
+            resp = await session.get(
                 url,
-                timeout=aiohttp.ClientTimeout(total=RDAP_TIMEOUT_S),
-            ) as resp:
-                if resp.status != 200:
-                    return {}
-                return await resp.json()
+                timeout=httpx.Timeout(total=RDAP_TIMEOUT_S),
+            )
+            if resp.status_code != 200:
+                return {}
+            return resp.json()
         except Exception as e:
             logger.debug(f"[IPv6] BGP peer lookup failed: {e}")
             return {}
@@ -403,8 +406,8 @@ class IPv6Recon:
         )
 
     async def close(self) -> None:
-        if self._session and not self._session.closed:
-            await self._session.close()
+        if self._session and not self._session.is_closed:
+            await self._session.aclose()
 
 
 # ── IPv6ReconAdapter for sidecar bus ─────────────────────────────────────────
@@ -413,6 +416,7 @@ class IPv6ReconAdapter:
     IPv6 recon adapter for sidecar runners.
     Wraps IPv6Recon, returns CanonicalFinding-compatible dicts.
     """
+
     def __init__(self):
         self._recon = IPv6Recon()
 
@@ -424,27 +428,31 @@ class IPv6ReconAdapter:
             if _is_ip(target):
                 result = await self._recon.recon_ip(target)
                 if result.bgp_peer:
-                    findings.append({
-                        "source_type": "ipv6_recon",
-                        "ioc_type": "ipv4",
-                        "ioc_value": target,
-                        "target": target,
-                        "confidence": 0.7,
-                        "ts": time.time(),
-                        "payload_text": f"bgp_peer:{result.bgp_peer.get('asn', 'unknown')}",
-                    })
+                    findings.append(
+                        {
+                            "source_type": "ipv6_recon",
+                            "ioc_type": "ipv4",
+                            "ioc_value": target,
+                            "target": target,
+                            "confidence": 0.7,
+                            "ts": time.time(),
+                            "payload_text": f"bgp_peer:{result.bgp_peer.get('asn', 'unknown')}",
+                        }
+                    )
             else:
                 result = await self._recon.recon_domain(target)
                 for aaaa in result.aaaa_records[:50]:
-                    findings.append({
-                        "source_type": "ipv6_recon",
-                        "ioc_type": "ipv6",
-                        "ioc_value": aaaa,
-                        "target": target,
-                        "confidence": 0.6,
-                        "ts": time.time(),
-                        "payload_text": f"aaaa:{target}:{aaaa}",
-                    })
+                    findings.append(
+                        {
+                            "source_type": "ipv6_recon",
+                            "ioc_type": "ipv6",
+                            "ioc_value": aaaa,
+                            "target": target,
+                            "confidence": 0.6,
+                            "ts": time.time(),
+                            "payload_text": f"aaaa:{target}:{aaaa}",
+                        }
+                    )
         except Exception as e:
             logger.debug(f"[IPv6Recon] Error: {e}")
 

@@ -1,0 +1,4 @@
+# file: /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/advanced_rag/rag_orchestrator.py
+# hypothesis_version: 6.155.7
+
+[0.0, 0.5, 0.7, 1.0, 1.5, 500, 1024, 4093, 4096, '...', '; ', 'RAGOrchestrator', '_embedding', 'all backends failed', 'answer', 'auto', 'backend_mode', 'compressed', 'confidence', 'default', 'distance', 'embed', 'embed returned empty', 'embedding', 'empty query', 'error', 'fallback_used', 'filter', 'id', 'init_failed', 'item_id', 'lancedb', 'lancedb_fallback', 'metadata', 'no backend available', 'processing_time', 'sanitize', 'search', 'search_errors', 'similarity', 'sources', 'sqlite_vec_search', 'sqlitevec', 'stages_completed', 'synthesize', 'text', 'tokens_used', 'validation_score']

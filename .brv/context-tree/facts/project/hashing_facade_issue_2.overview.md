@@ -1,0 +1,6 @@
+- Created centralized hashing facade at utils/hashing.py with 4 functions: xxh3_64_hex, batch_xxh3_64_hex, sha256_hex, blake3_64_hex
+- Migrated 7 hashlib calls in utils/deduplication.py and 1 blake2b call in tools/url_dedup.py to xxh3 for ~10x speedup via Rust NEON SIMD
+- Crypto-grade hashing (SHA256, blake3) preserved for security-sensitive operations: forensics/metadata_extractor.py, security_layer.py, stealth_layer.py, vault IDs
+- Batch operation function batch_xxh3_64_hex added for bulk hashing efficiency
+- Flow: import facade → call xxh3_64_hex → Rust NEON SIMD → 64-bit hex output
+- Related implementation: xxhash_rust_implementation.md for Rust backend details

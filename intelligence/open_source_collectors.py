@@ -12,7 +12,7 @@ SOURCES:
 - Court records: CourtListener + RECAP archive
 
 INTEGRATION:
-- Session: network.session_runtime.async_get_aiohttp_session()
+- Session: network.session_runtime.httpx.AsyncClient()
 - Transport: fetching.public_fetcher.async_fetch_public_text()
 - Confidence: intelligence.confidence_policy source_family tagging
 - Memory: runtime.resource_governor.M1ResourceGovernor.sidecar_admission()
@@ -33,24 +33,19 @@ GHOST_INVARIANTS:
 - mx.eval([]) before clear_cache if MLX used
 """
 
-
-
 import asyncio
 import logging
 import re
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
-import msgspec
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     pass
 
-import httpx
 
 from hledac.universal.fetching.public_fetcher import FetchResult, async_fetch_public_text
-from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.runtime.resource_governor import M1ResourceGovernor
 from hledac.universal.utils.async_helpers import safe_gather, safe_gather_ok
 
@@ -70,6 +65,7 @@ TIMEOUT_S: float = 30.0
 # =============================================================================
 # Finding Types
 # =============================================================================
+
 
 @dataclass(slots=True)
 class PasteFinding:
@@ -227,7 +223,10 @@ _RE_IPV6 = re.compile(r"\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b")
 _RE_AWS_KEY = re.compile(r"\bAKIA[0-9A-Z]{16}\b")
 _RE_BEARER = re.compile(r"\bBearer\s+[A-Za-z0-9_\.\-]{20,}\b", re.IGNORECASE)
 _RE_PKEY = re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----", re.IGNORECASE)
-_RE_TOKEN = re.compile(r"\b(?:token|key|secret|password|passwd|pwd|auth|credential)['\"]?[:=]?\s*['\"]?([A-Za-z0-9_\-]{16,64})['\"]?\b", re.IGNORECASE)  # noqa: E501
+_RE_TOKEN = re.compile(
+    r"\b(?:token|key|secret|password|passwd|pwd|auth|credential)['\"]?[:=]?\s*['\"]?([A-Za-z0-9_\-]{16,64})['\"]?\b",
+    re.IGNORECASE,
+)  # noqa: E501
 
 
 def _mask_secret(value: str) -> str:
@@ -247,7 +246,6 @@ def _extract_secrets(text: str) -> tuple[list[str], list[str], list[str]]:
     for m in _RE_TOKEN.finditer(text):
         secrets.append(m.group(1))
     return emails, ip_addresses, secrets
-
 
 
 # =============================================================================
@@ -280,6 +278,7 @@ async def _scrape_paste_gg(paste_id: str) -> str | None:
             return None
         data = re.sub(r"<!--[\s\S]*?-->", "", result.text)
         import json
+
         parsed = json.loads(data)
         files = (parsed.get("data") or {}).get("files") or []
         return files[0].get("content") or "" if files else ""
@@ -331,6 +330,7 @@ class PasteSiteAdapter(Protocol):
         build_url(paste_id) -> str | list[str]
         parse(body, paste_id) -> str | None
     """
+
     site_id: str
     host: str
     timeout_s: float
@@ -348,6 +348,7 @@ class PasteSiteAdapter(Protocol):
 @dataclass(slots=True, frozen=True)
 class _RawPasteAdapter:
     """Trivial adapter: response body IS the paste text (ghostbin, rentry, pastebin_raw)."""
+
     site_id: str
     host: str
     url_template: str
@@ -371,6 +372,7 @@ class _PrivateBinAdapter:
     - if response has 'content' → return its value
     - on any exception in the parse of v2 → fall through to v1
     """
+
     site_id: str = "privatebin"
     host: str = "privatebin.net"
     timeout_s: float = 10.0
@@ -384,6 +386,7 @@ class _PrivateBinAdapter:
 
     def parse(self, body: str, paste_id: str) -> str | None:
         import json
+
         try:
             data = json.loads(body)
         except (json.JSONDecodeError, ValueError):
@@ -398,6 +401,7 @@ class _PrivateBinAdapter:
 @dataclass(slots=True, frozen=True)
 class _ZeroBinAdapter:
     """0bin HTML page → extract <pre class='paste-content'> with len > 10."""
+
     site_id: str = "0bin"
     host: str = "0bin.net"
     timeout_s: float = 10.0
@@ -588,6 +592,7 @@ async def _scrape_paste_site(
 # Thin wrappers preserving original function signatures (backward-compatible)
 # -----------------------------------------------------------------------------
 
+
 async def _scrape_privatebin(paste_id: str) -> str | None:
     return await _scrape_paste_site(PRIVATEBIN_ADAPTER, paste_id)
 
@@ -611,7 +616,7 @@ async def search_paste_sites(query: str, max_results: int = MAX_PASTE_RESULTS) -
         _last_paste_request = time.time()
 
     findings: list[PasteFinding] = []
-    session = await async_get_aiohttp_session()
+    session = await httpx.AsyncClient()
 
     async def search_pastebin() -> list[PasteFinding]:
         try:
@@ -641,8 +646,11 @@ async def search_paste_sites(query: str, max_results: int = MAX_PASTE_RESULTS) -
                 if not (emails or ips or secrets):
                     return None
                 return PasteFinding(
-                    uri=f"https://pastebin.com/{pid}", source="pastebin",
-                    extracted_secrets=secrets, emails=emails, ip_addresses=ips,
+                    uri=f"https://pastebin.com/{pid}",
+                    source="pastebin",
+                    extracted_secrets=secrets,
+                    emails=emails,
+                    ip_addresses=ips,
                     context_snippet=text[:200],
                 )
 
@@ -678,8 +686,11 @@ async def search_paste_sites(query: str, max_results: int = MAX_PASTE_RESULTS) -
                 if not (emails or ips or secrets):
                     return None
                 return PasteFinding(
-                    uri=f"https://paste.gg/{paste_id}", source="paste_gg",
-                    extracted_secrets=secrets, emails=emails, ip_addresses=ips,
+                    uri=f"https://paste.gg/{paste_id}",
+                    source="paste_gg",
+                    extracted_secrets=secrets,
+                    emails=emails,
+                    ip_addresses=ips,
                     context_snippet=text[:200],
                 )
 
@@ -722,8 +733,11 @@ async def search_paste_sites(query: str, max_results: int = MAX_PASTE_RESULTS) -
                 if not (emails or ips or secrets):
                     return None
                 return PasteFinding(
-                    uri=f"https://rentry.co/{path}", source="rentry",
-                    extracted_secrets=secrets, emails=emails, ip_addresses=ips,
+                    uri=f"https://rentry.co/{path}",
+                    source="rentry",
+                    extracted_secrets=secrets,
+                    emails=emails,
+                    ip_addresses=ips,
                     context_snippet=text[:200],
                 )
 
@@ -773,15 +787,16 @@ async def search_usenet(query: str, max_results: int = MAX_USENET_ARTICLES) -> l
         _last_usenet_request = time.time()
 
     articles: list[UsenetArticle] = []
-    session = await async_get_aiohttp_session()
+    session = await httpx.AsyncClient()
 
     async def search_google_groups() -> list[UsenetArticle]:
         try:
-            import aiohttp
+            import httpx
+
             async with session.get(
                 "https://groups.google.com/d/msg",
                 params={"q": query, "num": str(min(max_results, 50))},
-                timeout=aiohttp.ClientTimeout(total=TIMEOUT_S),
+                timeout=httpx.Timeout(total=TIMEOUT_S),
             ) as resp:
                 if resp.status != 200:
                     return []
@@ -801,15 +816,17 @@ async def search_usenet(query: str, max_results: int = MAX_USENET_ARTICLES) -> l
                     continue
                 msg_match = re.search(r"/msg/([^/]+)/(\d+)", href)
                 if msg_match:
-                    results.append(UsenetArticle(
-                        message_id=msg_match.group(2),
-                        subject=subject,
-                        from_addr="",
-                        date="",
-                        newsgroup=msg_match.group(1),
-                        body="",
-                        url=f"https://groups.google.com{href}",
-                    ))
+                    results.append(
+                        UsenetArticle(
+                            message_id=msg_match.group(2),
+                            subject=subject,
+                            from_addr="",
+                            date="",
+                            newsgroup=msg_match.group(1),
+                            body="",
+                            url=f"https://groups.google.com{href}",
+                        )
+                    )
             return results
         except Exception as e:
             logger.debug(f"Google Groups search failed: {e}")
@@ -817,11 +834,12 @@ async def search_usenet(query: str, max_results: int = MAX_USENET_ARTICLES) -> l
 
     async def search_gmane() -> list[UsenetArticle]:
         try:
-            import aiohttp
+            import httpx
+
             async with session.get(
                 "https://news.gmane.io/search",
                 params={"query": query, "num": str(min(max_results, 50))},
-                timeout=aiohttp.ClientTimeout(total=TIMEOUT_S),
+                timeout=httpx.Timeout(total=TIMEOUT_S),
             ) as resp:
                 if resp.status != 200:
                     return []
@@ -837,15 +855,17 @@ async def search_usenet(query: str, max_results: int = MAX_USENET_ARTICLES) -> l
                 subject = a.text().strip()
                 if not subject:
                     continue
-                results.append(UsenetArticle(
-                    message_id=href.split("/")[-1],
-                    subject=subject,
-                    from_addr="",
-                    date="",
-                    newsgroup="",
-                    body="",
-                    url=f"https://news.gmane.io{href}",
-                ))
+                results.append(
+                    UsenetArticle(
+                        message_id=href.split("/")[-1],
+                        subject=subject,
+                        from_addr="",
+                        date="",
+                        newsgroup="",
+                        body="",
+                        url=f"https://news.gmane.io{href}",
+                    )
+                )
             return results
         except Exception as e:
             logger.debug(f"GMane search failed: {e}")
@@ -890,15 +910,16 @@ async def search_matrix(query: str, max_results: int = MAX_CHAT_MESSAGES) -> lis
         _last_matrix_request = time.time()
 
     messages: list[ChatMessage] = []
-    session = await async_get_aiohttp_session()
+    session = await httpx.AsyncClient()
 
     async def search_public_rooms() -> list[str]:
         try:
-            import aiohttp
+            import httpx
+
             async with session.get(
                 "https://matrix.org/_matrix/client/r0/publicRooms",
                 params={"limit": "50"},
-                timeout=aiohttp.ClientTimeout(total=TIMEOUT_S),
+                timeout=httpx.Timeout(total=TIMEOUT_S),
             ) as resp:
                 if resp.status != 200:
                     return []
@@ -915,11 +936,12 @@ async def search_matrix(query: str, max_results: int = MAX_CHAT_MESSAGES) -> lis
 
     async def fetch_room_messages(room_id: str) -> list[ChatMessage]:
         try:
-            import aiohttp
+            import httpx
+
             async with session.get(
                 f"https://matrix.org/_matrix/client/r0/rooms/{room_id}/messages",
                 params={"dir": "b", "limit": "50", "filter": '{"types":["m.room.message"]}'},
-                timeout=aiohttp.ClientTimeout(total=TIMEOUT_S),
+                timeout=httpx.Timeout(total=TIMEOUT_S),
             ) as resp:
                 if resp.status == 403:
                     return []
@@ -935,14 +957,16 @@ async def search_matrix(query: str, max_results: int = MAX_CHAT_MESSAGES) -> lis
                     continue
                 body = content.get("body", "")
                 if query.lower() in body.lower():
-                    results.append(ChatMessage(
-                        platform="matrix",
-                        channel=room_id,
-                        user=event.get("sender", ""),
-                        timestamp=str(event.get("origin_server_ts", "")),
-                        content=body,
-                        message_id=event.get("event_id", ""),
-                    ))
+                    results.append(
+                        ChatMessage(
+                            platform="matrix",
+                            channel=room_id,
+                            user=event.get("sender", ""),
+                            timestamp=str(event.get("origin_server_ts", "")),
+                            content=body,
+                            message_id=event.get("event_id", ""),
+                        )
+                    )
             return results
         except Exception as e:
             logger.debug(f"Matrix room fetch failed: {e}")
@@ -985,32 +1009,35 @@ async def search_academic(query: str, max_results: int = MAX_ACADEMIC_PAPERS) ->
         _last_academic_request = time.time()
 
     papers: list[AcademicPaper] = []
-    session = await async_get_aiohttp_session()
+    session = await httpx.AsyncClient()
 
     async def search_biorxiv() -> list[AcademicPaper]:
         try:
-            import aiohttp
+            import httpx
+
             async with session.get(
                 "https://api.biorxiv.org/details/biorxiv/0/1/50",
                 params={"q": query},
-                timeout=aiohttp.ClientTimeout(total=TIMEOUT_S),
+                timeout=httpx.Timeout(total=TIMEOUT_S),
             ) as resp:
                 if resp.status != 200:
                     return []
                 data = await resp.json(content_type=None)
             results: list[AcademicPaper] = []
             for item in data.get("collection", []):
-                results.append(AcademicPaper(
-                    title=item.get("title", ""),
-                    authors=item.get("authors", "").split(";"),
-                    year=item.get("year"),
-                    link=f"https://doi.org/{item['doi']}" if item.get("doi") else "",
-                    source="biorxiv",
-                    abstract=item.get("abstract", ""),
-                    doi=item.get("doi"),
-                    citations=0,
-                    tags=item.get("categories", []),
-                ))
+                results.append(
+                    AcademicPaper(
+                        title=item.get("title", ""),
+                        authors=item.get("authors", "").split(";"),
+                        year=item.get("year"),
+                        link=f"https://doi.org/{item['doi']}" if item.get("doi") else "",
+                        source="biorxiv",
+                        abstract=item.get("abstract", ""),
+                        doi=item.get("doi"),
+                        citations=0,
+                        tags=item.get("categories", []),
+                    )
+                )
             return results
         except Exception as e:
             logger.debug(f"bioRxiv search failed: {e}")
@@ -1018,28 +1045,31 @@ async def search_academic(query: str, max_results: int = MAX_ACADEMIC_PAPERS) ->
 
     async def search_medrxiv() -> list[AcademicPaper]:
         try:
-            import aiohttp
+            import httpx
+
             async with session.get(
                 "https://api.medrxiv.org/details/medrxiv/0/1/50",
                 params={"q": query},
-                timeout=aiohttp.ClientTimeout(total=TIMEOUT_S),
+                timeout=httpx.Timeout(total=TIMEOUT_S),
             ) as resp:
                 if resp.status != 200:
                     return []
                 data = await resp.json(content_type=None)
             results: list[AcademicPaper] = []
             for item in data.get("collection", []):
-                results.append(AcademicPaper(
-                    title=item.get("title", ""),
-                    authors=item.get("authors", "").split(";"),
-                    year=item.get("year"),
-                    link=f"https://doi.org/{item['doi']}" if item.get("doi") else "",
-                    source="medrxiv",
-                    abstract=item.get("abstract", ""),
-                    doi=item.get("doi"),
-                    citations=0,
-                    tags=item.get("categories", []),
-                ))
+                results.append(
+                    AcademicPaper(
+                        title=item.get("title", ""),
+                        authors=item.get("authors", "").split(";"),
+                        year=item.get("year"),
+                        link=f"https://doi.org/{item['doi']}" if item.get("doi") else "",
+                        source="medrxiv",
+                        abstract=item.get("abstract", ""),
+                        doi=item.get("doi"),
+                        citations=0,
+                        tags=item.get("categories", []),
+                    )
+                )
             return results
         except Exception as e:
             logger.debug(f"medRxiv search failed: {e}")
@@ -1047,11 +1077,12 @@ async def search_academic(query: str, max_results: int = MAX_ACADEMIC_PAPERS) ->
 
     async def search_ssrn() -> list[AcademicPaper]:
         try:
-            import aiohttp
+            import httpx
+
             async with session.get(
                 "https://api.ssrn.com/content/search",
                 params={"q": query, "topdf": "false", "numResults": "50"},
-                timeout=aiohttp.ClientTimeout(total=TIMEOUT_S),
+                timeout=httpx.Timeout(total=TIMEOUT_S),
             ) as resp:
                 if resp.status != 200:
                     return []
@@ -1060,17 +1091,19 @@ async def search_academic(query: str, max_results: int = MAX_ACADEMIC_PAPERS) ->
             for item in data.get("results", []):
                 authors_data = item.get("authors", [])
                 authors = [a.get("name", "") for a in authors_data] if isinstance(authors_data, list) else []
-                results.append(AcademicPaper(
-                    title=item.get("title", ""),
-                    authors=authors,
-                    year=item.get("year"),
-                    link=item.get("url", ""),
-                    source="ssrn",
-                    abstract=item.get("abstract", ""),
-                    doi=None,
-                    citations=item.get("downloadCount", 0),
-                    tags=[],
-                ))
+                results.append(
+                    AcademicPaper(
+                        title=item.get("title", ""),
+                        authors=authors,
+                        year=item.get("year"),
+                        link=item.get("url", ""),
+                        source="ssrn",
+                        abstract=item.get("abstract", ""),
+                        doi=None,
+                        citations=item.get("downloadCount", 0),
+                        tags=[],
+                    )
+                )
             return results
         except Exception as e:
             logger.debug(f"SSRN search failed: {e}")
@@ -1078,11 +1111,12 @@ async def search_academic(query: str, max_results: int = MAX_ACADEMIC_PAPERS) ->
 
     async def search_repec() -> list[AcademicPaper]:
         try:
-            import aiohttp
+            import httpx
+
             async with session.get(
                 "https://econpapers.repec.org/search/",
                 params={"q": query, "limit": "50"},
-                timeout=aiohttp.ClientTimeout(total=TIMEOUT_S),
+                timeout=httpx.Timeout(total=TIMEOUT_S),
             ) as resp:
                 if resp.status != 200:
                     return []
@@ -1108,17 +1142,19 @@ async def search_academic(query: str, max_results: int = MAX_ACADEMIC_PAPERS) ->
                         year = int(year_elem.text())
                     except (ValueError, TypeError):
                         pass
-                results.append(AcademicPaper(
-                    title=title,
-                    authors=authors,
-                    year=year,
-                    link=url,
-                    source="repec",
-                    abstract="",
-                    doi=None,
-                    citations=0,
-                    tags=[],
-                ))
+                results.append(
+                    AcademicPaper(
+                        title=title,
+                        authors=authors,
+                        year=year,
+                        link=url,
+                        source="repec",
+                        abstract="",
+                        doi=None,
+                        citations=0,
+                        tags=[],
+                    )
+                )
             return results[:20]
         except Exception as e:
             logger.debug(f"RePEc search failed: {e}")
@@ -1161,16 +1197,17 @@ async def search_sec_edgar(query: str, max_results: int = MAX_SEC_FILINGS) -> li
         _last_sec_request = time.time()
 
     filings: list[EdgarFiling] = []
-    session = await async_get_aiohttp_session()
+    session = await httpx.AsyncClient()
 
     try:
-        import aiohttp
+        import httpx
+
         headers = {"User-Agent": "Mozilla/5.0 (compatible; research bot)"}
         async with session.get(
             "https://efts.sec.gov/LATEST/search-index",
             params={"q": query, "dateRange": "custom"},
             headers=headers,
-            timeout=aiohttp.ClientTimeout(total=TIMEOUT_S),
+            timeout=httpx.Timeout(total=TIMEOUT_S),
         ) as resp:
             if resp.status in (403, 429):
                 return []
@@ -1180,15 +1217,17 @@ async def search_sec_edgar(query: str, max_results: int = MAX_SEC_FILINGS) -> li
 
         for hit in data.get("hits", {}).get("hits", []):
             source = hit.get("_source", {})
-            filings.append(EdgarFiling(
-                cik=source.get("cik", ""),
-                company_name=source.get("company_name", ""),
-                form_type=source.get("form_type", ""),
-                filing_date=source.get("filing_date", ""),
-                accession_number=source.get("accession_number", ""),
-                document_url=source.get("document_url", ""),
-                description=source.get("description", ""),
-            ))
+            filings.append(
+                EdgarFiling(
+                    cik=source.get("cik", ""),
+                    company_name=source.get("company_name", ""),
+                    form_type=source.get("form_type", ""),
+                    filing_date=source.get("filing_date", ""),
+                    accession_number=source.get("accession_number", ""),
+                    document_url=source.get("document_url", ""),
+                    description=source.get("description", ""),
+                )
+            )
 
     except Exception as e:
         logger.debug(f"SEC EDGAR search failed: {e}")
@@ -1216,15 +1255,16 @@ async def search_court_records(query: str, max_results: int = MAX_COURT_CASES) -
         _last_court_request = time.time()
 
     cases: list[CourtCase] = []
-    session = await async_get_aiohttp_session()
+    session = await httpx.AsyncClient()
 
     try:
-        import aiohttp
+        import httpx
+
         async with session.get(
             "https://www.courtlistener.com/api/rest/v3/docket/",
             params={"q": query, "order_by": "dateFiled desc", "page_size": str(min(max_results, 50))},
             headers={"User-Agent": "research-bot/1.0"},
-            timeout=aiohttp.ClientTimeout(total=TIMEOUT_S),
+            timeout=httpx.Timeout(total=TIMEOUT_S),
         ) as resp:
             if resp.status == 429:
                 return []
@@ -1233,16 +1273,18 @@ async def search_court_records(query: str, max_results: int = MAX_COURT_CASES) -
             data = await resp.json(content_type=None)
 
         for result in data.get("results", []):
-            cases.append(CourtCase(
-                case_id=str(result.get("id", "")),
-                docket_number=result.get("docket_number", ""),
-                court=result.get("court", {}).get("short_name", ""),
-                case_name=result.get("case_name", ""),
-                date_filed=result.get("date_filed", ""),
-                status=result.get("status", ""),
-                nature_of_suit=result.get("nature_of_suit", ""),
-                docket_url=result.get("absolute_url", ""),
-            ))
+            cases.append(
+                CourtCase(
+                    case_id=str(result.get("id", "")),
+                    docket_number=result.get("docket_number", ""),
+                    court=result.get("court", {}).get("short_name", ""),
+                    case_name=result.get("case_name", ""),
+                    date_filed=result.get("date_filed", ""),
+                    status=result.get("status", ""),
+                    nature_of_suit=result.get("nature_of_suit", ""),
+                    docket_url=result.get("absolute_url", ""),
+                )
+            )
 
     except Exception as e:
         logger.debug(f"Court records search failed: {e}")
@@ -1254,12 +1296,13 @@ async def search_court_records(query: str, max_results: int = MAX_COURT_CASES) -
 # Unified Open Source Collectors
 # =============================================================================
 
+
 class OpenSourceCollectors:
     """
     Unified collector for open-source intelligence sources.
 
     Integrates with:
-    - Session: async_get_aiohttp_session()
+    - Session: httpx.AsyncClient()
     - Transport: async_fetch_public_text()
     - Memory: M1ResourceGovernor.sidecar_admission()
     - Confidence: source_family tagging in all findings
@@ -1273,6 +1316,7 @@ class OpenSourceCollectors:
         if self._governor is None:
             try:
                 from hledac.universal.core.protocols import get_governor
+
                 self._governor = get_governor()
             except Exception:  # noqa: BLE001
                 pass

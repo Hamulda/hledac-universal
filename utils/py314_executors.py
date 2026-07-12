@@ -1,98 +1,38 @@
 """
-py314_executors — Python 3.14+ Optimized Executor Utilities
-============================================================
+py314_executors — DEPRECATED (2026-07-12)
+============================================
 
-M1 8GB-safe parallel execution with smart executor selection.
+This module is DEPRECATED. All functionality has been consolidated into:
 
-ARCHITECTURE
-------------
-Three-tier executor strategy based on workload characteristics:
+  runtime/worker_pool.py — SharedWorkerPool singleton (M1 8GB-safe)
 
-  ┌──────────────────────────────────────────────────────────────┐
-  │  Tier 1: ThreadPoolExecutor  (I/O-bound, GIL-friendly)       │
-  │  Tier 2: ChunkedThreadPool    (CPU-bound, amortized overhead) │
-  │  Tier 3: ProcessPoolExecutor  (heavy CPU, bypass GIL)         │
-  └──────────────────────────────────────────────────────────────┘
+MIGRATION:
+  OLD:
+    from utils.py314_executors import ChunkedExecutor, smart_executor
 
-PY314 INTERPRETERPOOLEXECUTOR REALITY
--------------------------------------
-InterpreterPoolExecutor (PEP 756, Python 3.14) provides true parallelism
-via subinterpreters — but per-call overhead is HIGH for small tasks.
+  NEW:
+    from runtime.worker_pool import get_shared_pool, io_bound
+    # For CPU-bound work:
+    await get_shared_pool().run(cpu_intensive_fn, *args)
+    # For I/O-bound work:
+    await io_bound(io_heavy_fn, *args)
 
-  Overhead sources:
-    1. Subinterpreter startup/teardown per call (~1-5ms)
-    2. GIL contention at call boundary
-    3. Data serialization across interpreter boundaries
-    4. No batch chunking in ex.map (submits 1 item at a time)
+For Rust rayon pools (NEON SIMD on M1):
+    from hledac.universal.core.rust_backend import rust
+    # cpu_pool_run (4 P-cores), io_pool_run (2 threads)
+    rust.pool_run.cpu_pool_run(func, args)
 
-  When InterpreterPoolExecutor WINS:
-    - Large chunks (>10K items per chunk)
-    - Heavy pure-Python CPU work (>100ms per chunk)
-    - Workers pre-warmed with module imports
-
-  When ThreadPoolExecutor WINS:
-    - Small to medium CPU tasks (GIL releases in C extensions)
-    - I/O-bound tasks (network, disk)
-    - Tasks with shared state (no serialization needed)
-    - M1 8GB: lower RSS than subinterpreters
-
-  When ProcessPoolExecutor WINS:
-    - Truly heavy CPU (>500ms per task)
-    - Numerical/scientific Python (numpy, pandas)
-    - Isolation requirements
-
-CHUNKING STRATEGY
------------------
-Instead of ex.map(fn, items) [1 item per call],
-we chunk items into N bundles and submit chunks [chunksize items per call]:
-
-  Before (high overhead):
-    with InterpreterPoolExecutor(max_workers=4) as ex:
-      list(ex.map(fn, [tiny_item] * 10000))  # 10000 subinterpreter calls
-
-  After (amortized overhead):
-    with ChunkedExecutor(max_workers=4, chunksize=2500) as ex:
-      list(ex.map(fn, items))  # 4 subinterpreter calls (2500 items each)
-
-CHUNKSIZE SELECTION
--------------------
-  workers=4, items=10000:
-    chunksize=2500  → 4 calls  ← optimal for InterpreterPoolExecutor
-    chunksize=100   → 100 calls ← still too many
-    chunksize=10    → 1000 calls ← no improvement
-
-  Rule: chunksize = max(1, len(items) // (workers * 4))
-
-M1 8GB CONSTRAINTS
-------------------
-- ThreadPoolExecutor: ~few MB overhead per worker
-- ProcessPoolExecutor: ~50-100MB per worker (fork start)
-- InterpreterPoolExecutor: ~15-30MB per subinterpreter
-- Max concurrent: ThreadPoolExecutor(25), others(4)
-
-USAGE
------
-  from utils.py314_executors import ChunkedExecutor, smart_executor
-
-  # Chunked execution for CPU-bound pure Python
-  with ChunkedExecutor(max_workers=4, chunksize=2500) as ex:
-      results = list(ex.map(cpu_intensive_fn, large_item_list))
-
-  # Smart selection based on workload type
-  executor = smart_executor(workload_type="cpu", n_items=10000)
-  with executor as ex:
-      results = list(ex.map(fn, items))
+RATIONALE:
+  - ProcessPoolExecutor: ~50MB RSS per worker, never actually used (dead code)
+  - InterpreterPoolExecutor: PEP 756 unstable, MLX incompatible (single interpreter)
+  - Rust rayon: GIL-free via PyO3 allow_threads, NEON SIMD on M1
 """
-
-
 
 import math
 import os
-import sys
 from collections.abc import Callable, Iterator
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
-import msgspec
 from typing import Any, TypeVar
 
 __all__ = [
@@ -109,6 +49,7 @@ R = TypeVar("R")
 # ------------------------------------------------------------------|
 # Executor type enumeration                                          |
 # ------------------------------------------------------------------|
+
 
 class ExecutorType:
     THREAD = "thread"
@@ -143,6 +84,7 @@ class ExecutorConfig:
 # ------------------------------------------------------------------|
 # Chunk size calculator                                              |
 # ------------------------------------------------------------------|
+
 
 def get_optimal_chunksize(n_items: int, n_workers: int, executor_type: str = ExecutorType.THREAD) -> int:
     """
@@ -191,6 +133,7 @@ def get_optimal_chunksize(n_items: int, n_workers: int, executor_type: str = Exe
 # ------------------------------------------------------------------|
 # ChunkedExecutor — amortizes subinterpreter overhead               |
 # ------------------------------------------------------------------|
+
 
 class ChunkedExecutor:
     """
@@ -249,6 +192,7 @@ class ChunkedExecutor:
             # Pool stays warm during context lifetime → amortizes ~1-5ms startup overhead.
             # M1 8GB: ~15-30MB per subinterpreter, cap workers at 2 for safety.
             from concurrent.futures import InterpreterPoolExecutor
+
             self._executor = InterpreterPoolExecutor(max_workers=self.max_workers)
         else:
             self._executor = ThreadPoolExecutor(max_workers=self.max_workers)
@@ -293,6 +237,7 @@ class ChunkedExecutor:
 # ------------------------------------------------------------------|
 # Smart executor selection                                           |
 # ------------------------------------------------------------------|
+
 
 @dataclass(frozen=True)
 class WorkloadProfile:
@@ -409,6 +354,7 @@ def smart_executor(
 # Convenience batch processors                                       |
 # ------------------------------------------------------------------|
 
+
 def batch_map[T, R](
     fn: Callable[[T], R],
     items: list[T],
@@ -443,10 +389,12 @@ def batch_map[T, R](
 # Version detection                                                  |
 # ------------------------------------------------------------------|
 
+
 def interpreter_pool_available() -> bool:
     """Check if InterpreterPoolExecutor is available (Python 3.14+)."""
     try:
         from concurrent.futures import InterpreterPoolExecutor  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -455,6 +403,7 @@ def interpreter_pool_available() -> bool:
 # ------------------------------------------------------------------|
 # Benchmark utilities                                                 |
 # ------------------------------------------------------------------|
+
 
 @dataclass
 class BenchmarkResult:

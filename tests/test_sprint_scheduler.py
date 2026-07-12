@@ -33,7 +33,19 @@ import pytest
 @pytest.fixture
 def mock_lifecycle():
     """Minimal lifecycle mock for run() entry point."""
-    lc = MagicMock()
+    lc = MagicMock(
+        spec=[
+            "sprint_id",
+            "start",
+            "tick",
+            "phase",
+            "remaining_time",
+            "is_terminal",
+            "should_enter_windup",
+            "request_abort",
+            "mark_teardown_started",
+        ]
+    )
     lc.sprint_id = "test-sprint-001"
     lc.start = MagicMock()
     lc.tick.return_value = "ACTIVE"
@@ -49,7 +61,19 @@ def mock_lifecycle():
 @pytest.fixture
 def mock_adapter():
     """Lifecycle adapter mock — converts runtime.lifecycle to adapter interface."""
-    adapter = MagicMock()
+    adapter = MagicMock(
+        spec=[
+            "start",
+            "tick",
+            "phase",
+            "remaining_time",
+            "is_terminal",
+            "should_enter_windup",
+            "request_abort",
+            "_abort_requested",
+            "recommended_tool_mode",
+        ]
+    )
     adapter.start = MagicMock()
     adapter.tick.return_value = "ACTIVE"
     adapter.phase.return_value = "ACTIVE"
@@ -86,7 +110,9 @@ def mock_store():
 @pytest.fixture
 def mock_public_fetcher():
     """Public fetcher mock."""
-    pf = MagicMock()
+    from hledac.universal.fetching.public_fetcher import PublicFetcher
+
+    pf = MagicMock(spec=PublicFetcher)
     pf.sessions = {"default": MagicMock()}
     return pf
 
@@ -156,7 +182,7 @@ async def test_prefetch_oracle_suggest_scores_failsoft_returns_empty(minimal_con
     sched = SprintScheduler(minimal_config, ct_log_client=None)
 
     # Simulate oracle with broken suggest_scores
-    broken_oracle = MagicMock()
+    broken_oracle = MagicMock(spec=["suggest_scores"])
     broken_oracle.suggest_scores.side_effect = RuntimeError("oracle broken")
     sched._prefetch_oracle = broken_oracle
 
@@ -181,7 +207,7 @@ async def test_prefetch_oracle_suggest_scores_fallback_preserves_ordering(minima
     SprintScheduler = _import_scheduler()  # noqa: N806
     sched = SprintScheduler(minimal_config, ct_log_client=None)
 
-    broken_oracle = MagicMock()
+    broken_oracle = MagicMock(spec=["suggest_scores"])
     broken_oracle.suggest_scores.side_effect = RuntimeError("oracle broken")
     sched._prefetch_oracle = broken_oracle
 
@@ -211,8 +237,8 @@ async def test_privacy_context_init_failsoft_does_not_crash(minimal_config, mock
     sched = SprintScheduler(minimal_config, ct_log_client=None)
 
     # Mock layer_manager with broken privacy
-    mock_lm = MagicMock()
-    mock_lm.privacy = MagicMock()
+    mock_lm = MagicMock(spec=["privacy"])
+    mock_lm.privacy = MagicMock(spec=["create_privacy_context"])
     mock_lm.privacy.create_privacy_context = AsyncMock(side_effect=RuntimeError("privacy service unavailable"))
     sched._layer_manager = mock_lm
 

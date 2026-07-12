@@ -16,18 +16,15 @@ GHOST_INVARIANTS:
   - Always returns CanonicalFinding list (empty on failure)
 """
 
-
-
 import base64
 import logging
 import os
 import time
 from typing import Any
 
-import aiohttp
+import httpx
 
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.transport.circuit_breaker import (
     domain_breaker_check,
     domain_breaker_record_failure,
@@ -144,26 +141,26 @@ async def search_censys_lane(
     auth = base64.b64encode(f"{id_}:{secret}".encode()).decode()
 
     try:
-        _sess = await session_pool.aiohttp()
+        _sess = httpx.AsyncClient()
         async with _sess as sess:
             async with sess.get(
                 CENSYS_SEARCH_API,
                 params={"q": query, "per_page": min(limit, 50)},
                 headers={"Authorization": f"Basic {auth}"},
             ) as resp:
-                if resp.status == 401:
+                if resp.status_code == 401:
                     logger.warning("[CENSYS] API credentials invalid or required")
                     _record_censys_failure(kind="auth_error")
                     return [], []
-                if resp.status == 403:
+                if resp.status_code == 403:
                     logger.warning("[CENSYS] API forbidden — check quota")
                     _record_censys_failure(kind="forbidden")
                     return [], []
-                if resp.status == 429:
+                if resp.status_code == 429:
                     logger.warning("[CENSYS] Rate limit hit")
                     _record_censys_failure(kind="rate_limit")
                     return [], []
-                if resp.status != 200:
+                if resp.status_code != 200:
                     logger.warning(f"[CENSYS] API error: {resp.status}")
                     _record_censys_failure(kind="http_error")
                     return [], []

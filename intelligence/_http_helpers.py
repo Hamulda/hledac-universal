@@ -17,22 +17,15 @@ up — callers already handle session-acquisition failure in their existing
 """
 
 
-async def get_intelligence_session():  # type: ignore[no-any-import]
-    """
-    Resolve the shared ``aiohttp.ClientSession`` for intelligence clients.
+import httpx
 
-    Thin wrapper over
-    ``hledac.universal.network.session_runtime::async_get_aiohttp_session``
-    (lazy singleton, [I2] no session until first await, [I3] repeated awaits
-    return the same instance). Centralizes the import boundary so the
-    intelligence layer does not couple directly to the network layer.
-
-    Clients that support an injected test session keep their own
-    short-circuit and call this only on the fallback path.
+async def get_intelligence_session() -> httpx.AsyncClient:
     """
-    # Lazy import keeps the network-layer symbol out of this module's namespace.
-    # Tests must patch at the source: network.session_runtime.async_get_aiohttp_session.
-    from hledac.universal.network.session_runtime import (  # noqa: PLC0415
-        async_get_aiohttp_session,
-    )
-    return await async_get_aiohttp_session()
+    Create a new ``httpx.AsyncClient`` for intelligence clients.
+
+    Each call returns a fresh client — callers are responsible for managing
+    the session lifecycle (open/close). Intelligence clients that support
+    injected test sessions check their own injected session first and only
+    call this helper on the fallback path.
+    """
+    return httpx.AsyncClient()

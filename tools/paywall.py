@@ -8,7 +8,7 @@ import asyncio
 import logging
 import re
 
-import aiohttp
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -18,23 +18,22 @@ class PaywallBypass:
 
     def __init__(self):
         self.patterns = {
-            'nytimes': re.compile(r'<div[^>]+class=["\']gateway["\']|subscribe\s+to\s+continue', re.I),
-            'wsj': re.compile(r'<section[^>]+class=["\']wsj-paywall["\']|wsj.*subscriber\s+exclusive', re.I),
-            'medium': re.compile(r'member-only story|medium\.com.*signin', re.I),
-            'ft': re.compile(r'ft\.com.*paywall|financial-times.*subscription', re.I),
-            'economist': re.compile(r'economist\.com.*premium|subscribers?\s+only', re.I),
-            'bloomberg': re.compile(r'bloomberg\.com.*paywall|subscription\s+required', re.I),
+            "nytimes": re.compile(r'<div[^>]+class=["\']gateway["\']|subscribe\s+to\s+continue', re.I),
+            "wsj": re.compile(r'<section[^>]+class=["\']wsj-paywall["\']|wsj.*subscriber\s+exclusive', re.I),
+            "medium": re.compile(r"member-only story|medium\.com.*signin", re.I),
+            "ft": re.compile(r"ft\.com.*paywall|financial-times.*subscription", re.I),
+            "economist": re.compile(r"economist\.com.*premium|subscribers?\s+only", re.I),
+            "bloomberg": re.compile(r"bloomberg\.com.*paywall|subscription\s+required", re.I),
         }
         # S49-D: ClientSession pool for connection reuse
-        self._session: aiohttp.ClientSession | None = None
+        self._session: httpx.AsyncClient | None = None
         self._lock = asyncio.Lock()
 
-    async def _get_session(self) -> aiohttp.ClientSession:
+    async def _get_session(self) -> httpx.AsyncClient:
         """S49-D: Get or create reusable session."""
         async with self._lock:
-            if self._session is None or self._session.closed:
-                connector = aiohttp.TCPConnector(limit=10, limit_per_host=3)
-                self._session = aiohttp.ClientSession(connector=connector)
+            if self._session is None or self._session.is_closed:
+                self._session = httpx.AsyncClient()
             return self._session
 
     def detect(self, html: str) -> str | None:
@@ -52,9 +51,9 @@ class PaywallBypass:
         try:
             # S49-D: Use shared session for connection reuse
             session = await self._get_session()
-            async with session.get(archive_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                if resp.status == 200:
-                    return await resp.text()
+            async with session.get(archive_url, timeout=httpx.Timeout(15)) as response:
+                if response.status_code == 200:
+                    return await response.text()
         except Exception as e:
             logger.warning(f"[PAYWALL] archive.is failed: {e}")
         return None
@@ -65,17 +64,17 @@ class PaywallBypass:
         try:
             # S49-D: Use shared session for connection reuse
             session = await self._get_session()
-            async with session.get(proxy_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                if resp.status == 200:
-                    return await resp.text()
+            async with session.get(proxy_url, timeout=httpx.Timeout(15)) as response:
+                if response.status_code == 200:
+                    return await response.text()
         except Exception as e:
             logger.warning(f"[PAYWALL] 12ft.io failed: {e}")
         return None
 
     async def close(self) -> None:
         """S49-D: Cleanup session on shutdown."""
-        if self._session and not self._session.closed:
-            await self._session.close()
+        if self._session and not self._session.is_closed:
+            await self._session.aclose()
 
     async def bypass(self, url: str, html: str) -> dict[str, str] | None:
         """
@@ -91,11 +90,11 @@ class PaywallBypass:
         # Try archive.is first
         content = await self.fetch_via_archive(url)
         if content:
-            return {'content': content, 'bypassed': 'archive.is', 'paywall': detected}
+            return {"content": content, "bypassed": "archive.is", "paywall": detected}
 
         # Try 12ft.io
         content = await self.fetch_via_12ft(url)
         if content:
-            return {'content': content, 'bypassed': '12ft.io', 'paywall': detected}
+            return {"content": content, "bypassed": "12ft.io", "paywall": detected}
 
         return None

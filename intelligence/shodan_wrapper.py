@@ -6,7 +6,8 @@ import logging
 import time
 from typing import TYPE_CHECKING, Final
 
-import aiohttp
+import httpx
+
 from hledac.universal.transport.session_pool import session_pool
 
 if TYPE_CHECKING:
@@ -77,14 +78,10 @@ async def search_shodan(
     results: list[dict] = []
     seen_ips: set[str] = set()
 
-    # Build connector (Tor if requested)
-    connector: aiohttp.TCPConnector | None = None
+    # Build proxy URL (Tor if requested)
+    proxy_url: str | None = None
     if use_tor:
-        try:
-            from aiohttp_socks import ProxyConnector
-            connector = ProxyConnector.from_url("socks5://127.0.0.1:9050", rdns=True)
-        except ImportError:
-            logger.warning("aiohttp_socks not available for Tor routing")
+        proxy_url = "socks5://127.0.0.1:9050"
 
     # Determine API endpoint and auth
     if api_key:
@@ -96,25 +93,25 @@ async def search_shodan(
         url = SHODAN_FREE_API
         params = {"key": "free", "query": query, "per_page": min(limit, 100)}
 
-    client_timeout = aiohttp.ClientTimeout(total=30)
+    client_timeout = httpx.Timeout(30)
 
     async def _do_request() -> dict | None:
         """Perform one HTTP request to Shodan."""
-        nonlocal connector
-        session_kwargs: dict = {"timeout": client_timeout}
-        if connector is not None:
-            session_kwargs["connector"] = connector
-        _sess = await session_pool.aiohttp()
+        _sess: httpx.AsyncClient
+        if proxy_url:
+            _sess = await session_pool.httpx_socks(proxy_url)
+        else:
+            _sess = await session_pool.httpx()
         async with _sess as session:
             async with session.get(url, params=params) as resp:
-                if resp.status == 401:
+                if resp.status_code == 401:
                     logger.warning("Shodan API key required")
                     return None
-                if resp.status == 429:
+                if resp.status_code == 429:
                     logger.warning("Shodan rate limit hit — backing off")
                     return {"error": "rate_limited"}
-                if resp.status != 200:
-                    logger.warning(f"Shodan API error: {resp.status}")
+                if resp.status_code != 200:
+                    logger.warning(f"Shodan API error: {resp.status_code}")
                     return None
 
                 data = await resp.json()
@@ -138,7 +135,7 @@ async def search_shodan(
 
         matches = data.get("matches", []) if isinstance(data, dict) else []
         for host in matches:
-            ip = (host.get("ip_str") or host.get("ip") or "")
+            ip = host.get("ip_str") or host.get("ip") or ""
             if ip in seen_ips:
                 continue
             seen_ips.add(ip)
@@ -181,7 +178,6 @@ async def search_shodan_to_findings(
         - payload_text: ip:port banner snippet
     """
     raw_results = await search_shodan(query, limit=limit, api_key=api_key, use_tor=use_tor)
-
 
     findings: list[CanonicalFinding] = []
     ts_now = time.time()

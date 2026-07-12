@@ -1,0 +1,4 @@
+# file: /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/compat/core_unified_ai_orchestrator.py
+# hypothesis_version: 6.155.7
+
+[0.0, 0.5, 'cleanup', 'confidence', 'confidence_score', 'coverage_score', 'depth', 'error', 'findings', 'fused_results', 'max_results', 'query', 'research_depth', 'sources_used', 'summary', 'total_sources_found']

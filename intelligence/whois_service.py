@@ -219,11 +219,11 @@ async def _get_session() -> tuple[Any, bool]:
     """
     try:
         from hledac.universal.network.session_runtime import async_get_aiohttp_session
-        session = await async_get_aiohttp_session()
+        session = await httpx.AsyncClient()
         return session, False
     except Exception:
         from hledac.universal.transport.session_pool import session_pool
-        _sess = await session_pool.aiohttp()
+        _sess = await httpx.AsyncClient()
         return _sess, False
 
 
@@ -236,7 +236,7 @@ async def _rdap_lookup_domain(domain: str) -> dict[str, Any]:
     RDAP lookup for domain — tries RDAP bootstrap servers.
     Returns raw RDAP JSON dict or {} on failure.
     """
-    import aiohttp
+    import httpx
 
     # Check cache
     cached = _whois_cache.get(domain)
@@ -266,7 +266,7 @@ async def _rdap_lookup_domain(domain: str) -> dict[str, Any]:
                 url = f"{rdap_base}{domain}" if not rdap_base.endswith("/") else f"{rdap_base}{domain}"
                 async with session.get(
                     url,
-                    timeout=aiohttp.ClientTimeout(total=RDAP_TIMEOUT_S),
+                    timeout=httpx.Timeout(total=RDAP_TIMEOUT_S),
                     headers={"Accept": "application/rdap+json, application/json"},
                 ) as resp:
                     if resp.status == 200:
@@ -293,7 +293,7 @@ async def _rdap_lookup_domain(domain: str) -> dict[str, Any]:
                 url = f"https://rdap.iana.org/domain/{domain}"
                 async with session.get(
                     url,
-                    timeout=aiohttp.ClientTimeout(total=RDAP_TIMEOUT_S),
+                    timeout=httpx.Timeout(total=RDAP_TIMEOUT_S),
                     headers={"Accept": "application/rdap+json"},
                 ) as resp:
                     if resp.status == 200:
@@ -535,7 +535,7 @@ async def _historical_whois_lookup(domain: str, api_name: str, api_key: str) -> 
     Query historical WHOIS API.
     Returns WhoisResult with historical=True, or None on failure.
     """
-    import aiohttp
+    import httpx
 
     if not api_key:
         return None
@@ -578,7 +578,7 @@ async def _historical_whois_lookup(domain: str, api_name: str, api_key: str) -> 
             url,
             params=params,
             headers=headers,
-            timeout=aiohttp.ClientTimeout(total=15.0),
+            timeout=httpx.Timeout(total=15.0),
         ) as resp:
             if resp.status != 200:
                 result.errors.append(f"http_{resp.status}")  # noqa: RUF001 — protocol prefix

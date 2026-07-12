@@ -69,7 +69,7 @@ from datetime import UTC, datetime
 from enum import Enum, auto
 from typing import Any
 
-from hledac.universal.utils.async_helpers import safe_gather_ok, chunked_taskgroup
+from hledac.universal.utils.async_helpers import chunked_taskgroup, safe_gather_ok
 
 from .knowledge.rag_engine import Document
 from .layers.stealth_layer import BehaviorPattern, BehaviorSimulator, SimulationConfig
@@ -104,6 +104,7 @@ try:
         search_academic,  # noqa: F401  # .intelligence.search_academic
         search_archives,  # noqa: F401  # .intelligence.search_archives
     )
+
     INTELLIGENCE_AVAILABLE = True
 except ImportError:
     INTELLIGENCE_AVAILABLE = False
@@ -116,8 +117,8 @@ logger = logging.getLogger(__name__)
 # Module-level compile avoids parse-on-call overhead in hot paths.
 # Python re cache = 512 entries; pattern complexity causes cache evictions.
 
-_EMAIL_PATTERN = re.compile(r'[\w\.-]+@[\w\.-]+\.\w+')
-_DOMAIN_PATTERN = re.compile(r'(?:https?://)?([\w\.-]+\.\w{2,})')
+_EMAIL_PATTERN = re.compile(r"[\w\.-]+@[\w\.-]+\.\w+")
+_DOMAIN_PATTERN = re.compile(r"(?:https?://)?([\w\.-]+\.\w{2,})")
 
 # =============================================================================
 # ADVANCED MODULE CAPABILITY FLAGS (Sprint F-ADV)
@@ -139,6 +140,7 @@ _STRUCTURED_ENV = "HLEDAC_ENABLE_STRUCTURED"
 def _env_flag(name: str, default: bool = False) -> bool:
     """Read boolean env var with explicit values (1, true, yes)."""
     import os
+
     raw = os.environ.get(name, "").strip().lower()
     if raw in ("1", "true", "yes", "on"):
         return True
@@ -148,33 +150,36 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 
 # Bounded limits for advanced providers (M1 8GB UMA safe)
-_MAX_ADVANCED_RAG_FINDINGS = 20   # Hard cap on RAG-augmented findings
-_MAX_STRUCTURED_ENTITIES = 30   # Hard cap on structured-data findings per sprint
-_MAX_STEALTH_FETCHES = 5          # Cap on per-sprint stealth fetches
-_MAX_STEALTH_DEPTH = 1            # Stealth crawl depth (no recursive)
+_MAX_ADVANCED_RAG_FINDINGS = 20  # Hard cap on RAG-augmented findings
+_MAX_STRUCTURED_ENTITIES = 30  # Hard cap on structured-data findings per sprint
+_MAX_STEALTH_FETCHES = 5  # Cap on per-sprint stealth fetches
+_MAX_STEALTH_DEPTH = 1  # Stealth crawl depth (no recursive)
 
 
 # =============================================================================
 # ENUMS AND CONFIGURATION
 # =============================================================================
 
+
 class ResearchDepth(Enum):
     """Research depth levels - each adds more tools and thoroughness."""
-    BASIC = auto()       # Web + Academic search
-    ADVANCED = auto()    # + Archives + Stealth crawling
+
+    BASIC = auto()  # Web + Academic search
+    ADVANCED = auto()  # + Archives + Stealth crawling
     EXHAUSTIVE = auto()  # + Data leaks + Temporal analysis + Full OSINT
 
 
 class QueryType(Enum):
     """Types of queries for intelligent routing."""
-    ACADEMIC = "academic"           # Research papers, citations
-    TECHNICAL = "technical"         # Code, documentation, APIs
-    NEWS = "news"                   # Current events, recent developments
-    HISTORICAL = "historical"       # Past events, archives
-    PERSON = "person"               # OSINT on individuals
-    ORGANIZATION = "organization"   # Company, institution research
-    SECURITY = "security"           # Vulnerabilities, breaches
-    GENERAL = "general"             # Broad information gathering
+
+    ACADEMIC = "academic"  # Research papers, citations
+    TECHNICAL = "technical"  # Code, documentation, APIs
+    NEWS = "news"  # Current events, recent developments
+    HISTORICAL = "historical"  # Past events, archives
+    PERSON = "person"  # OSINT on individuals
+    ORGANIZATION = "organization"  # Company, institution research
+    SECURITY = "security"  # Vulnerabilities, breaches
+    GENERAL = "general"  # Broad information gathering
 
 
 class SourceFamily(Enum):
@@ -188,13 +193,14 @@ class SourceFamily(Enum):
     It merely declares that it WOULD consume local corpus results if the plane
     existed. This is NOT a new retrieval authority (per F8 invariant).
     """
-    WEB = "web"                       # StealthCrawler, UnifiedWebIntelligence
-    ACADEMIC = "academic"             # AcademicSearchEngine (ArXiv, CrossRef, Semantic)
-    ARCHIVE = "archive"               # ArchiveDiscovery, ArchiveResurrector
-    SECURITY = "security"             # DataLeakHunter, StealthWebScraper
-    TEMPORAL = "temporal"             # TemporalAnalyzer (EXHAUSTIVE only)
-    OSINT = "osint"                   # DataLeakHunter + cross-reference (EXHAUSTIVE)
-    LOCAL_CORPUS = "local_corpus"     # LOCAL CONSUMER SEAM — search plane consumer, NOT owner
+
+    WEB = "web"  # StealthCrawler, UnifiedWebIntelligence
+    ACADEMIC = "academic"  # AcademicSearchEngine (ArXiv, CrossRef, Semantic)
+    ARCHIVE = "archive"  # ArchiveDiscovery, ArchiveResurrector
+    SECURITY = "security"  # DataLeakHunter, StealthWebScraper
+    TEMPORAL = "temporal"  # TemporalAnalyzer (EXHAUSTIVE only)
+    OSINT = "osint"  # DataLeakHunter + cross-reference (EXHAUSTIVE)
+    LOCAL_CORPUS = "local_corpus"  # LOCAL CONSUMER SEAM — search plane consumer, NOT owner
 
 
 @dataclass(slots=True)
@@ -224,6 +230,7 @@ class UnifiedResearchConfig:
         """Get adaptive memory and concurrency limits from SystemDetector."""
         try:
             from core.system_detector import get_system_detector
+
             detector = get_system_detector()
             return detector.max_memory_mb, detector.max_concurrent_tools
         except Exception:
@@ -259,17 +266,13 @@ class UnifiedResearchConfig:
     cache_ttl_seconds: int = 3600
 
     # Sources configuration
-    academic_sources: list[str] = field(default_factory=lambda: [
-        'arxiv', 'crossref', 'semantic_scholar'
-    ])
-    archive_sources: list[str] = field(default_factory=lambda: [
-        'wayback', 'archive_today'
-    ])
+    academic_sources: list[str] = field(default_factory=lambda: ["arxiv", "crossref", "semantic_scholar"])
+    archive_sources: list[str] = field(default_factory=lambda: ["wayback", "archive_today"])
 
     # Advanced module providers (capability-flag gated, off by default)
     # These are dormant when their respective HLEDAC_ENABLE_* env vars are unset.
-    enable_advanced_rag: bool = False       # HLEDAC_ENABLE_ADVANCED_RAG
-    enable_stealth_browser: bool = False   # HLEDAC_ENABLE_ADVANCED_STEALTH
+    enable_advanced_rag: bool = False  # HLEDAC_ENABLE_ADVANCED_RAG
+    enable_stealth_browser: bool = False  # HLEDAC_ENABLE_ADVANCED_STEALTH
     enable_evidence_analyzer: bool = False  # HLEDAC_ENABLE_EVIDENCE_ANALYZER
     enable_structured_extraction: bool = False  # HLEDAC_ENABLE_STRUCTURED
     max_advanced_findings: int = _MAX_ADVANCED_RAG_FINDINGS
@@ -277,13 +280,13 @@ class UnifiedResearchConfig:
     def should_use_tool(self, tool_name: str) -> bool:
         """Check if a tool should be used based on depth config."""
         tool_depth_map = {
-            'academic': ResearchDepth.BASIC,
-            'web': ResearchDepth.BASIC,
-            'stealth_crawler': ResearchDepth.ADVANCED,
-            'archives': ResearchDepth.ADVANCED,
-            'temporal': ResearchDepth.EXHAUSTIVE,
-            'data_leak': ResearchDepth.EXHAUSTIVE,
-            'osint': ResearchDepth.EXHAUSTIVE,
+            "academic": ResearchDepth.BASIC,
+            "web": ResearchDepth.BASIC,
+            "stealth_crawler": ResearchDepth.ADVANCED,
+            "archives": ResearchDepth.ADVANCED,
+            "temporal": ResearchDepth.EXHAUSTIVE,
+            "data_leak": ResearchDepth.EXHAUSTIVE,
+            "osint": ResearchDepth.EXHAUSTIVE,
         }
         required_depth = tool_depth_map.get(tool_name, ResearchDepth.BASIC)
         return self.depth.value >= required_depth.value
@@ -292,6 +295,7 @@ class UnifiedResearchConfig:
 @dataclass(slots=True)
 class ResearchFinding:
     """A single research finding with rich metadata."""
+
     id: str
     title: str
     content: str
@@ -306,22 +310,23 @@ class ResearchFinding:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            'id': self.id,
-            'title': self.title,
-            'content': self.content[:500] if self.content else '',
-            'url': self.url,
-            'source': self.source,
-            'source_type': self.source_type,
-            'timestamp': self.timestamp.isoformat(),
-            'relevance_score': self.relevance_score,
-            'credibility_score': self.credibility_score,
-            'metadata': self.metadata,
+            "id": self.id,
+            "title": self.title,
+            "content": self.content[:500] if self.content else "",
+            "url": self.url,
+            "source": self.source,
+            "source_type": self.source_type,
+            "timestamp": self.timestamp.isoformat(),
+            "relevance_score": self.relevance_score,
+            "credibility_score": self.credibility_score,
+            "metadata": self.metadata,
         }
 
 
 @dataclass(slots=True)
 class UnifiedResearchResult:
     """Complete result from unified research."""
+
     query: str
     depth: ResearchDepth
     query_type: QueryType
@@ -359,17 +364,17 @@ class UnifiedResearchResult:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            'query': self.query,
-            'depth': self.depth.name,
-            'query_type': self.query_type.value,
-            'findings_count': len(self.findings),
-            'sources_used': self.sources_used,
-            'total_sources': self.total_sources_found,
-            'unique_sources': self.unique_sources,
-            'execution_time': self.execution_time_seconds,
-            'confidence': self.confidence_score,
-            'coverage': self.coverage_score,
-            'completed_at': self.completed_at.isoformat(),
+            "query": self.query,
+            "depth": self.depth.name,
+            "query_type": self.query_type.value,
+            "findings_count": len(self.findings),
+            "sources_used": self.sources_used,
+            "total_sources": self.total_sources_found,
+            "unique_sources": self.unique_sources,
+            "execution_time": self.execution_time_seconds,
+            "confidence": self.confidence_score,
+            "coverage": self.coverage_score,
+            "completed_at": self.completed_at.isoformat(),
         }
 
 
@@ -390,6 +395,7 @@ class EnhancedResearchConfig:
         behavior_pattern: Behavior pattern for stealth mode (default: RESEARCHER)
         sources: List of research sources to use
     """
+
     # RRF Configuration
     enable_fusion: bool = True
     rrf_k: int = 60
@@ -407,14 +413,13 @@ class EnhancedResearchConfig:
     behavior_pattern: BehaviorPattern = BehaviorPattern.RESEARCHER
 
     # Sources configuration
-    sources: list[str] = field(default_factory=lambda: [
-        'web', 'scholar', 'arxiv', 'semantic_scholar', 'news'
-    ])
+    sources: list[str] = field(default_factory=lambda: ["web", "scholar", "arxiv", "semantic_scholar", "news"])
 
 
 # =============================================================================
 # UNIFIED RESEARCH ENGINE - MAIN IMPLEMENTATION
 # =============================================================================
+
 
 class UnifiedResearchEngine:
     """
@@ -453,11 +458,7 @@ class UnifiedResearchEngine:
         >>> print(f"Confidence: {result.confidence_score:.2%}")
     """
 
-    def __init__(
-        self,
-        config: UnifiedResearchConfig | None = None,
-        research_config: ResearchConfig | None = None
-    ):
+    def __init__(self, config: UnifiedResearchConfig | None = None, research_config: ResearchConfig | None = None):
         """
         Initialize Unified Research Engine.
 
@@ -474,18 +475,10 @@ class UnifiedResearchEngine:
         # Apply capability flags from env ONLY if the user did not pass a
         # config object. This keeps the contract: explicit config wins.
         if cfg_from_caller is _SENTINEL or cfg_from_caller is None:
-            self.config.enable_advanced_rag = _env_flag(
-                _ADVANCED_RAG_ENV, default=False
-            )
-            self.config.enable_stealth_browser = _env_flag(
-                _ADVANCED_STEALTH_ENV, default=False
-            )
-            self.config.enable_evidence_analyzer = _env_flag(
-                _EVIDENCE_ANALYZER_ENV, default=False
-            )
-            self.config.enable_structured_extraction = _env_flag(
-                _STRUCTURED_ENV, default=False
-            )
+            self.config.enable_advanced_rag = _env_flag(_ADVANCED_RAG_ENV, default=False)
+            self.config.enable_stealth_browser = _env_flag(_ADVANCED_STEALTH_ENV, default=False)
+            self.config.enable_evidence_analyzer = _env_flag(_EVIDENCE_ANALYZER_ENV, default=False)
+            self.config.enable_structured_extraction = _env_flag(_STRUCTURED_ENV, default=False)
         self.research_config = research_config
 
         # Performance monitoring
@@ -520,19 +513,20 @@ class UnifiedResearchEngine:
 
         # Statistics
         self._stats = {
-            'queries_processed': 0,
-            'tools_initialized': 0,
-            'total_findings': 0,
-            'cache_hits': 0,
-            'advanced_rag_queries': 0,
-            'stealth_fetches': 0,
-            'evidence_analyses': 0,
-            'structured_entities': 0,
+            "queries_processed": 0,
+            "tools_initialized": 0,
+            "total_findings": 0,
+            "cache_hits": 0,
+            "advanced_rag_queries": 0,
+            "stealth_fetches": 0,
+            "evidence_analyses": 0,
+            "structured_entities": 0,
         }
 
         logger.info(f"UnifiedResearchEngine initialized (depth: {self.config.depth.name})")
-        logger.info(f"M1 Optimized: max_concurrent={self.config.max_concurrent_tools}, "
-                   f"chunk_size={self.config.chunk_size}")
+        logger.info(
+            f"M1 Optimized: max_concurrent={self.config.max_concurrent_tools}, chunk_size={self.config.chunk_size}"
+        )
 
     # ========================================================================
     # LAZY LOADING - M1 Memory Optimization
@@ -543,11 +537,8 @@ class UnifiedResearchEngine:
         if self._academic_engine is None:
             if not INTELLIGENCE_AVAILABLE:
                 raise RuntimeError("Intelligence tools not available")
-            self._academic_engine = AcademicSearchEngine(
-                enable_expansion=True,
-                enable_deduplication=True
-            )
-            self._stats['tools_initialized'] += 1
+            self._academic_engine = AcademicSearchEngine(enable_expansion=True, enable_deduplication=True)
+            self._stats["tools_initialized"] += 1
             logger.debug("AcademicSearchEngine initialized")
         return self._academic_engine
 
@@ -557,7 +548,7 @@ class UnifiedResearchEngine:
             if not INTELLIGENCE_AVAILABLE:
                 raise RuntimeError("Intelligence tools not available")
             self._archive_discovery = ArchiveDiscovery()
-            self._stats['tools_initialized'] += 1
+            self._stats["tools_initialized"] += 1
             logger.debug("ArchiveDiscovery initialized")
         return self._archive_discovery
 
@@ -568,7 +559,7 @@ class UnifiedResearchEngine:
                 raise RuntimeError("Intelligence tools not available")
             self._archive_resurrector = ArchiveResurrector()
             await self._archive_resurrector.initialize()
-            self._stats['tools_initialized'] += 1
+            self._stats["tools_initialized"] += 1
             logger.debug("ArchiveResurrector initialized")
         return self._archive_resurrector
 
@@ -578,7 +569,7 @@ class UnifiedResearchEngine:
             if not INTELLIGENCE_AVAILABLE:
                 raise RuntimeError("Intelligence tools not available")
             self._stealth_crawler = StealthCrawler()
-            self._stats['tools_initialized'] += 1
+            self._stats["tools_initialized"] += 1
             logger.debug("StealthCrawler initialized")
         return self._stealth_crawler
 
@@ -589,7 +580,7 @@ class UnifiedResearchEngine:
                 raise RuntimeError("Intelligence tools not available")
             self._stealth_scraper = StealthWebScraper()
             await self._stealth_scraper.initialize()
-            self._stats['tools_initialized'] += 1
+            self._stats["tools_initialized"] += 1
             logger.debug("StealthWebScraper initialized")
         return self._stealth_scraper
 
@@ -599,7 +590,7 @@ class UnifiedResearchEngine:
             if not INTELLIGENCE_AVAILABLE:
                 raise RuntimeError("Intelligence tools not available")
             self._web_intelligence = UnifiedWebIntelligence()
-            self._stats['tools_initialized'] += 1
+            self._stats["tools_initialized"] += 1
             logger.debug("UnifiedWebIntelligence initialized")
         return self._web_intelligence
 
@@ -610,7 +601,7 @@ class UnifiedResearchEngine:
                 raise RuntimeError("Intelligence tools not available")
             self._data_leak_hunter = DataLeakHunter()
             await self._data_leak_hunter.initialize()
-            self._stats['tools_initialized'] += 1
+            self._stats["tools_initialized"] += 1
             logger.debug("DataLeakHunter initialized")
         return self._data_leak_hunter
 
@@ -620,7 +611,7 @@ class UnifiedResearchEngine:
             if not INTELLIGENCE_AVAILABLE:
                 raise RuntimeError("Intelligence tools not available")
             self._temporal_analyzer = TemporalAnalyzer()
-            self._stats['tools_initialized'] += 1
+            self._stats["tools_initialized"] += 1
             logger.debug("TemporalAnalyzer initialized")
         return self._temporal_analyzer
 
@@ -646,9 +637,10 @@ class UnifiedResearchEngine:
         if self._advanced_rag is None:
             try:
                 from .advanced_rag.rag_orchestrator import RAGOrchestrator
+
                 self._advanced_rag = RAGOrchestrator()
                 await self._advanced_rag.initialize()
-                self._stats['tools_initialized'] += 1
+                self._stats["tools_initialized"] += 1
                 logger.info("Advanced RAG orchestrator initialized (LanceDB-backed)")
             except Exception as e:
                 logger.warning(f"Advanced RAG init failed: {e}")
@@ -667,8 +659,9 @@ class UnifiedResearchEngine:
         if self._stealth_browser is None:
             try:
                 from .advanced_web.stealth_browser import StealthBrowser
+
                 self._stealth_browser = StealthBrowser()
-                self._stats['tools_initialized'] += 1
+                self._stats["tools_initialized"] += 1
                 logger.info("Stealth browser initialized (max 2 concurrent tabs)")
             except Exception as e:
                 logger.warning(f"Stealth browser init failed: {e}")
@@ -686,11 +679,10 @@ class UnifiedResearchEngine:
         if self._evidence_analyzer is None:
             try:
                 from .advanced_web.evidence_network_analyzer import EvidenceNetworkAnalyzer
+
                 self._evidence_analyzer = EvidenceNetworkAnalyzer()
-                self._stats['tools_initialized'] += 1
-                logger.debug(
-                    "Evidence network analyzer initialized (NOT_IMPLEMENTED stub)"
-                )
+                self._stats["tools_initialized"] += 1
+                logger.debug("Evidence network analyzer initialized (NOT_IMPLEMENTED stub)")
             except Exception as e:
                 logger.warning(f"Evidence analyzer init failed: {e}")
                 self._evidence_analyzer = None
@@ -711,57 +703,122 @@ class UnifiedResearchEngine:
 
         # Academic indicators
         academic_keywords = [
-            'paper', 'research', 'study', 'journal', 'arxiv', 'doi',
-            'citation', 'publication', 'conference', 'thesis', 'dissertation',
-            'peer-reviewed', 'methodology', 'hypothesis', 'experiment'
+            "paper",
+            "research",
+            "study",
+            "journal",
+            "arxiv",
+            "doi",
+            "citation",
+            "publication",
+            "conference",
+            "thesis",
+            "dissertation",
+            "peer-reviewed",
+            "methodology",
+            "hypothesis",
+            "experiment",
         ]
         if any(kw in query_lower for kw in academic_keywords):
             return QueryType.ACADEMIC
 
         # Technical indicators
         technical_keywords = [
-            'api', 'code', 'github', 'documentation', 'sdk', 'library',
-            'framework', 'tutorial', 'how to', 'implementation', 'algorithm'
+            "api",
+            "code",
+            "github",
+            "documentation",
+            "sdk",
+            "library",
+            "framework",
+            "tutorial",
+            "how to",
+            "implementation",
+            "algorithm",
         ]
         if any(kw in query_lower for kw in technical_keywords):
             return QueryType.TECHNICAL
 
         # News indicators
         news_keywords = [
-            'news', 'latest', 'recent', 'today', 'yesterday', 'this week',
-            'breaking', 'update', 'announcement', 'launch', 'release'
+            "news",
+            "latest",
+            "recent",
+            "today",
+            "yesterday",
+            "this week",
+            "breaking",
+            "update",
+            "announcement",
+            "launch",
+            "release",
         ]
         if any(kw in query_lower for kw in news_keywords):
             return QueryType.NEWS
 
         # Historical indicators
         historical_keywords = [
-            'history', 'archived', 'past', 'wayback', 'old', 'former',
-            'vintage', 'retro', 'legacy', 'deprecated', 'original'
+            "history",
+            "archived",
+            "past",
+            "wayback",
+            "old",
+            "former",
+            "vintage",
+            "retro",
+            "legacy",
+            "deprecated",
+            "original",
         ]
         if any(kw in query_lower for kw in historical_keywords):
             return QueryType.HISTORICAL
 
         # Person indicators
         person_keywords = [
-            'person', 'people', 'biography', 'profile', 'who is', 'founder',
-            'ceo', 'author', 'researcher', 'developer', 'contact'
+            "person",
+            "people",
+            "biography",
+            "profile",
+            "who is",
+            "founder",
+            "ceo",
+            "author",
+            "researcher",
+            "developer",
+            "contact",
         ]
         if any(kw in query_lower for kw in person_keywords):
             return QueryType.PERSON
 
         # Organization indicators
         org_keywords = [
-            'company', 'organization', 'corp', 'inc', 'ltd', 'startup',
-            'enterprise', 'business', 'firm', 'agency', 'institute'
+            "company",
+            "organization",
+            "corp",
+            "inc",
+            "ltd",
+            "startup",
+            "enterprise",
+            "business",
+            "firm",
+            "agency",
+            "institute",
         ]
         if any(kw in query_lower for kw in org_keywords):
             return QueryType.ORGANIZATION
 
         # Security indicators
         security_keywords = [
-            'vulnerability', 'exploit', 'breach', 'hack', 'security',
-            'cve', 'malware', 'ransomware', 'phishing', 'leak'
+            "vulnerability",
+            "exploit",
+            "breach",
+            "hack",
+            "security",
+            "cve",
+            "malware",
+            "ransomware",
+            "phishing",
+            "leak",
         ]
         if any(kw in query_lower for kw in security_keywords):
             return QueryType.SECURITY
@@ -777,35 +834,35 @@ class UnifiedResearchEngine:
         tools = []
 
         # Basic tools (always used)
-        if self.config.should_use_tool('academic'):
-            tools.append('academic')
-        if self.config.should_use_tool('web'):
-            tools.append('stealth_crawler')
+        if self.config.should_use_tool("academic"):
+            tools.append("academic")
+        if self.config.should_use_tool("web"):
+            tools.append("stealth_crawler")
 
         # Advanced tools
         if self.config.depth.value >= ResearchDepth.ADVANCED.value:
-            if self.config.should_use_tool('archives'):
-                tools.append('archives')
+            if self.config.should_use_tool("archives"):
+                tools.append("archives")
 
         # Exhaustive tools
         if self.config.depth.value >= ResearchDepth.EXHAUSTIVE.value:
-            if self.config.should_use_tool('temporal'):
-                tools.append('temporal')
-            if self.config.should_use_tool('data_leak'):
-                tools.append('data_leak')
-            if self.config.should_use_tool('osint'):
-                tools.append('osint')
+            if self.config.should_use_tool("temporal"):
+                tools.append("temporal")
+            if self.config.should_use_tool("data_leak"):
+                tools.append("data_leak")
+            if self.config.should_use_tool("osint"):
+                tools.append("osint")
 
         # Query-type specific additions
         if query_type == QueryType.ACADEMIC:
-            if 'academic' not in tools:
-                tools.append('academic')
+            if "academic" not in tools:
+                tools.append("academic")
         elif query_type == QueryType.HISTORICAL:
-            if 'archives' not in tools:
-                tools.append('archives')
+            if "archives" not in tools:
+                tools.append("archives")
         elif query_type == QueryType.SECURITY:
-            if 'data_leak' not in tools and self.config.depth.value >= ResearchDepth.ADVANCED.value:
-                tools.append('data_leak')
+            if "data_leak" not in tools and self.config.depth.value >= ResearchDepth.ADVANCED.value:
+                tools.append("data_leak")
 
         return tools
 
@@ -871,11 +928,11 @@ class UnifiedResearchEngine:
             # Phase 1: Search (Academic + Web) - can run in parallel
             search_tasks = []
 
-            if 'academic' in tools_to_use:
-                search_tasks.append(self._task_search(query, 'academic'))
+            if "academic" in tools_to_use:
+                search_tasks.append(self._task_search(query, "academic"))
 
-            if 'stealth_crawler' in tools_to_use:
-                search_tasks.append(self._task_search(query, 'web'))
+            if "stealth_crawler" in tools_to_use:
+                search_tasks.append(self._task_search(query, "web"))
 
             # Execute search tasks with semaphore control
             async with self._semaphore:
@@ -902,10 +959,10 @@ class UnifiedResearchEngine:
             if research_depth == ResearchDepth.EXHAUSTIVE:
                 cross_ref_tasks = []
 
-                if 'archives' in tools_to_use:
+                if "archives" in tools_to_use:
                     cross_ref_tasks.append(self._task_cross_reference(query, all_findings))
 
-                if 'data_leak' in tools_to_use:
+                if "data_leak" in tools_to_use:
                     cross_ref_tasks.append(self._task_data_leak_check(query))
 
                 if cross_ref_tasks:
@@ -933,15 +990,13 @@ class UnifiedResearchEngine:
             # Also runs standalone on any web finding for which we have HTML.
             # Bounded: MAX_STRUCTURED_PER_SPRINT entities ingested as findings.
             if self.config.enable_stealth_browser or self.config.enable_structured_extraction:
-                structured_findings = await self._task_structured_extraction(
-                    all_findings
-                )
+                structured_findings = await self._task_structured_extraction(all_findings)
                 if structured_findings:
                     all_findings.extend(structured_findings)
                     self._context_swap()
 
             # Phase 3: Analyze (Temporal analysis)
-            if 'temporal' in tools_to_use and len(all_findings) > 5:
+            if "temporal" in tools_to_use and len(all_findings) > 5:
                 temporal_result = await self._task_analyze(query, all_findings)
                 result.temporal_analysis = temporal_result
 
@@ -960,9 +1015,7 @@ class UnifiedResearchEngine:
                 evidence_result = await self._task_evidence_analysis(all_findings)
                 if evidence_result:
                     # Stash on the result metadata; downstream reporters can render.
-                    result.cross_references = evidence_result.get(
-                        'edges', result.cross_references
-                    )
+                    result.cross_references = evidence_result.get("edges", result.cross_references)
 
             # Phase 5: Synthesize with RRF fusion
             fused = await self._task_synthesize(query, all_findings)
@@ -997,8 +1050,8 @@ class UnifiedResearchEngine:
             if self._start_time:
                 result.execution_time_seconds = time.time() - self._start_time
 
-            self._stats['queries_processed'] += 1
-            self._stats['total_findings'] += len(result.findings)
+            self._stats["queries_processed"] += 1
+            self._stats["total_findings"] += len(result.findings)
 
             logger.info(f"Deep research completed in {result.execution_time_seconds:.2f}s")
             logger.info(f"Found {len(result.findings)} findings from {len(result.sources_used)} sources")
@@ -1023,7 +1076,7 @@ class UnifiedResearchEngine:
         findings = []
 
         try:
-            if source_type == 'academic':
+            if source_type == "academic":
                 # Academic search
                 engine = await self._get_academic_engine()
                 result = await engine.search(query, max_results=20)
@@ -1034,23 +1087,23 @@ class UnifiedResearchEngine:
                         title=r.title,
                         content=r.snippet,
                         url=r.url,
-                        source='academic_search',
-                        source_type='academic',
+                        source="academic_search",
+                        source_type="academic",
                         timestamp=datetime.now(UTC),  # noqa: DTZ005
                         relevance_score=r.relevance_score,
-                        credibility_score=0.8 if r.source in ['arxiv', 'crossref'] else 0.6,
+                        credibility_score=0.8 if r.source in ["arxiv", "crossref"] else 0.6,
                         metadata={
-                            'authors': r.metadata.get('authors', []),
-                            'published': r.metadata.get('published', ''),
-                            'citations': r.metadata.get('citation_count', 0),
-                            'source_name': r.source,
-                        }
+                            "authors": r.metadata.get("authors", []),
+                            "published": r.metadata.get("published", ""),
+                            "citations": r.metadata.get("citation_count", 0),
+                            "source_name": r.source,
+                        },
                     )
                     findings.append(finding)
 
                 logger.info(f"Academic search: {len(findings)} results")
 
-            elif source_type == 'web':
+            elif source_type == "web":
                 # Web search via stealth crawler
                 crawler = await self._get_stealth_crawler()
                 results = crawler.search(query, num_results=15)
@@ -1061,12 +1114,12 @@ class UnifiedResearchEngine:
                         title=r.title,
                         content=r.snippet,
                         url=r.url,
-                        source='stealth_crawler',
-                        source_type='web',
+                        source="stealth_crawler",
+                        source_type="web",
                         timestamp=datetime.now(UTC),  # noqa: DTZ005
                         relevance_score=0.5,  # Will be re-ranked
                         credibility_score=0.5,
-                        metadata={'rank': r.rank}
+                        metadata={"rank": r.rank},
                     )
                     findings.append(finding)
 
@@ -1077,11 +1130,7 @@ class UnifiedResearchEngine:
 
         return findings
 
-    async def _task_analyze(
-        self,
-        query: str,
-        findings: list[ResearchFinding]
-    ) -> dict[str, Any]:
+    async def _task_analyze(self, query: str, findings: list[ResearchFinding]) -> dict[str, Any]:
         """
         Perform temporal and content analysis on findings.
 
@@ -1107,35 +1156,28 @@ class UnifiedResearchEngine:
                 values.append(f.relevance_score)
 
             if len(timestamps) < 5:
-                return {'error': 'Insufficient data for temporal analysis'}
+                return {"error": "Insufficient data for temporal analysis"}
 
             # Run temporal analysis
             analysis = analyzer.analyze(
-                query=query,
-                timestamps=timestamps,
-                values=values,
-                analysis_types=['trend', 'patterns', 'scenarios']
+                query=query, timestamps=timestamps, values=values, analysis_types=["trend", "patterns", "scenarios"]
             )
 
             return {
-                'trend_direction': analysis.trend.direction.value if analysis.trend else None,
-                'trend_confidence': analysis.trend.confidence if analysis.trend else 0,
-                'patterns_detected': len(analysis.patterns),
-                'scenarios_generated': len(analysis.scenarios),
-                'overall_confidence': analysis.overall_confidence,
-                'insights': analysis.insights,
-                'recommendations': analysis.recommendations,
+                "trend_direction": analysis.trend.direction.value if analysis.trend else None,
+                "trend_confidence": analysis.trend.confidence if analysis.trend else 0,
+                "patterns_detected": len(analysis.patterns),
+                "scenarios_generated": len(analysis.scenarios),
+                "overall_confidence": analysis.overall_confidence,
+                "insights": analysis.insights,
+                "recommendations": analysis.recommendations,
             }
 
         except Exception as e:
             logger.warning(f"Analysis task failed: {e}")
-            return {'error': str(e)}
+            return {"error": str(e)}
 
-    async def _task_synthesize(
-        self,
-        query: str,
-        findings: list[ResearchFinding]
-    ) -> list[dict[str, Any]]:
+    async def _task_synthesize(self, query: str, findings: list[ResearchFinding]) -> list[dict[str, Any]]:
         """
         Synthesize findings using RRF fusion and knowledge extraction.
 
@@ -1158,16 +1200,18 @@ class UnifiedResearchEngine:
                 if source not in source_results:
                     source_results[source] = []
 
-                source_results[source].append(SearchResult(
-                    id=f.id,
-                    title=f.title,
-                    content=f.content,
-                    url=f.url,
-                    source=source,
-                    score=f.relevance_score,
-                    rank=i + 1,
-                    metadata=f.metadata
-                ))
+                source_results[source].append(
+                    SearchResult(
+                        id=f.id,
+                        title=f.title,
+                        content=f.content,
+                        url=f.url,
+                        source=source,
+                        score=f.relevance_score,
+                        rank=i + 1,
+                        metadata=f.metadata,
+                    )
+                )
 
             # Apply RRF fusion
             if self.config.enable_rrf and len(source_results) > 1:
@@ -1182,14 +1226,14 @@ class UnifiedResearchEngine:
             # Convert back to dict format
             return [
                 {
-                    'id': r.id,
-                    'title': r.title,
-                    'content': r.content[:500] if r.content else '',
-                    'url': r.url,
-                    'source': r.source,
-                    'score': r.score,
-                    'rank': r.rank,
-                    'metadata': r.metadata
+                    "id": r.id,
+                    "title": r.title,
+                    "content": r.content[:500] if r.content else "",
+                    "url": r.url,
+                    "source": r.source,
+                    "score": r.score,
+                    "rank": r.rank,
+                    "metadata": r.metadata,
                 }
                 for r in fused[:50]  # Limit fused results
             ]
@@ -1199,20 +1243,18 @@ class UnifiedResearchEngine:
             # Return simple ranking as fallback
             return [
                 {
-                    'id': f.id,
-                    'title': f.title,
-                    'content': f.content[:500] if f.content else '',
-                    'url': f.url,
-                    'source': f.source_type,
-                    'score': f.relevance_score,
+                    "id": f.id,
+                    "title": f.title,
+                    "content": f.content[:500] if f.content else "",
+                    "url": f.url,
+                    "source": f.source_type,
+                    "score": f.relevance_score,
                 }
                 for f in sorted(findings, key=lambda x: x.relevance_score, reverse=True)[:50]
             ]
 
     async def _task_cross_reference(
-        self,
-        query: str,
-        existing_findings: list[ResearchFinding]
+        self, query: str, existing_findings: list[ResearchFinding]
     ) -> list[ResearchFinding]:
         """
         Cross-reference findings with archive sources.
@@ -1228,10 +1270,7 @@ class UnifiedResearchEngine:
 
         try:
             # Get top URLs to check in archives
-            urls_to_check = [
-                f.url for f in existing_findings[:10]
-                if f.url and f.source_type == 'web'
-            ]
+            urls_to_check = [f.url for f in existing_findings[:10] if f.url and f.source_type == "web"]
 
             if not urls_to_check:
                 return []
@@ -1246,19 +1285,19 @@ class UnifiedResearchEngine:
                         return ResearchFinding(
                             id=f"arch_{res_result.request_id}",
                             title=res_result.title or f"Archive: {url}",
-                            content=res_result.content[:1000] if res_result.content else '',
+                            content=res_result.content[:1000] if res_result.content else "",
                             url=res_result.best_snapshot.archived_url,
-                            source='archive_resurrector',
-                            source_type='archive',
+                            source="archive_resurrector",
+                            source_type="archive",
                             timestamp=res_result.best_snapshot.timestamp,
                             relevance_score=0.6,
                             credibility_score=0.7,
                             metadata={
-                                'original_url': url,
-                                'snapshot_timestamp': res_result.best_snapshot.timestamp.isoformat(),
-                                'content_type': res_result.best_snapshot.content_type.value,
-                                'quality_score': res_result.best_snapshot.quality_score,
-                            }
+                                "original_url": url,
+                                "snapshot_timestamp": res_result.best_snapshot.timestamp.isoformat(),
+                                "content_type": res_result.best_snapshot.content_type.value,
+                                "quality_score": res_result.best_snapshot.quality_score,
+                            },
                         )
                 except Exception as e:
                     logger.debug(f"Cross-reference failed for {url}: {e}")
@@ -1303,27 +1342,34 @@ class UnifiedResearchEngine:
 
             hunter = await self._get_data_leak_hunter()
 
-            # Check emails
-            for email in emails[:3]:  # Limit checks
-                alerts = await hunter.check_target(email, 'email')
+            # ISSUE-005: Parallelize email checks — bounded_parallel_map
+            raw_alerts = await bounded_parallel_map(
+                emails[:3],
+                lambda e: hunter.check_target(e, "email"),
+                concurrency=3,
+                ctx="data_leak_email",
+            )
 
+            for alerts in raw_alerts:
+                if alerts is None:
+                    continue
                 for alert in alerts:
                     finding = ResearchFinding(
                         id=f"leak_{alert.alert_id}",
                         title=f"Data Leak: {alert.breach_name}",
                         content=f"Target found in breach: {alert.breach_name}",
                         url=alert.url,
-                        source='data_leak_hunter',
-                        source_type='security',
+                        source="data_leak_hunter",
+                        source_type="security",
                         timestamp=alert.timestamp,
-                        relevance_score=0.9 if alert.severity.value in ['high', 'critical'] else 0.7,
+                        relevance_score=0.9 if alert.severity.value in ["high", "critical"] else 0.7,
                         credibility_score=0.8,
                         metadata={
-                            'target': alert.target,
-                            'breach_name': alert.breach_name,
-                            'severity': alert.severity.value,
-                            'leaked_data_types': alert.leaked_data.get('compromised_data', []),
-                        }
+                            "target": alert.target,
+                            "breach_name": alert.breach_name,
+                            "severity": alert.severity.value,
+                            "leaked_data_types": alert.leaked_data.get("compromised_data", []),
+                        },
                     )
                     leak_findings.append(finding)
 
@@ -1355,32 +1401,28 @@ class UnifiedResearchEngine:
                 priority=5,
             )
 
-            self._stats['advanced_rag_queries'] += 1
+            self._stats["advanced_rag_queries"] += 1
             cap = min(self.config.max_advanced_findings, _MAX_ADVANCED_RAG_FINDINGS)
-            sources = result.get('sources', []) or []
+            sources = result.get("sources", []) or []
             for src in sources[:cap]:
-                text = (src.get('text') or '').strip()
+                text = (src.get("text") or "").strip()
                 if not text:
                     continue
-                sim = float(src.get('similarity', 0.0))
+                sim = float(src.get("similarity", 0.0))
                 finding = ResearchFinding(
-                    id=hashlib.blake2b(
-                        f"rag:{text[:80]}".encode(), digest_size=8
-                    ).hexdigest(),
+                    id=hashlib.blake2b(f"rag:{text[:80]}".encode(), digest_size=8).hexdigest(),
                     title=f"RAG source (sim={sim:.2f})",
                     content=text[:500],
                     url=None,
-                    source='advanced_rag',
-                    source_type='rag',
+                    source="advanced_rag",
+                    source_type="rag",
                     timestamp=datetime.now(UTC),  # noqa: DTZ005
                     relevance_score=sim,
                     credibility_score=0.7,
                     metadata={
-                        'stages_completed': result.get('stages_completed', []),
-                        'confidence': result.get('confidence', 0.0),
-                        'processing_time': (result.get('metadata') or {}).get(
-                            'processing_time', 0.0
-                        ),
+                        "stages_completed": result.get("stages_completed", []),
+                        "confidence": result.get("confidence", 0.0),
+                        "processing_time": (result.get("metadata") or {}).get("processing_time", 0.0),
                     },
                 )
                 findings.append(finding)
@@ -1423,7 +1465,7 @@ class UnifiedResearchEngine:
             urls: list[str] = []
             seen: set[str] = set()
             for f in existing_findings:
-                if f.url and f.source_type == 'web' and f.url not in seen:
+                if f.url and f.source_type == "web" and f.url not in seen:
                     seen.add(f.url)
                     urls.append(f.url)
                 if len(urls) >= _MAX_STEALTH_FETCHES:
@@ -1438,35 +1480,32 @@ class UnifiedResearchEngine:
             async def _fetch_one(url: str) -> ResearchFinding | None:
                 """ISSUE-006 parallel fetch — was sequential browser.fetch()."""
                 self._stealth_fetch_count += 1
-                self._stats['stealth_fetches'] += 1
+                self._stats["stealth_fetches"] += 1
                 try:
                     result = await browser.fetch(url, depth=_MAX_STEALTH_DEPTH)
                 except Exception as e:
                     logger.debug(f"Stealth fetch failed for {url}: {e}")
                     return None
-                if not isinstance(result, dict) or result.get('status') != 200:
+                if not isinstance(result, dict) or result.get("status") != 200:
                     return None
-                content = (result.get('content') or '').strip()[:1000]
+                content = (result.get("content") or "").strip()[:1000]
                 if not content:
                     return None
-                title = (result.get('title') or '').strip() or f"Stealth: {url}"
+                title = (result.get("title") or "").strip() or f"Stealth: {url}"
                 return ResearchFinding(
-                    id=hashlib.blake2b(
-                        f"stealth:{url}".encode(), digest_size=8
-                    ).hexdigest(),
+                    id=hashlib.blake2b(f"stealth:{url}".encode(), digest_size=8).hexdigest(),
                     title=title[:200],
                     content=content,
                     url=url,
-                    source='stealth_browser',
-                    source_type='web_stealth',
+                    source="stealth_browser",
+                    source_type="web_stealth",
                     timestamp=datetime.now(UTC),  # noqa: DTZ005
                     relevance_score=0.6,
                     credibility_score=0.7,
                     metadata={
-                        'js_rendered': bool(result.get('js_rendered', False)),
-                        'links': (result.get('links') or [])[:10],
-                        'budget_remaining': _MAX_STEALTH_FETCHES
-                        - self._stealth_fetch_count,
+                        "js_rendered": bool(result.get("js_rendered", False)),
+                        "links": (result.get("links") or [])[:10],
+                        "budget_remaining": _MAX_STEALTH_FETCHES - self._stealth_fetch_count,
                     },
                 )
 
@@ -1504,16 +1543,18 @@ class UnifiedResearchEngine:
             analyzer = await self._get_evidence_analyzer()
             if analyzer is None:
                 return None
-            self._stats['evidence_analyses'] += 1
+            self._stats["evidence_analyses"] += 1
             # Build minimal entity list from findings (bounded)
             entities: list[dict[str, Any]] = []
             for f in findings[:50]:  # bounded input
                 if f.url:
-                    entities.append({
-                        'type': 'url',
-                        'value': f.url,
-                        'sources': [f.source],
-                    })
+                    entities.append(
+                        {
+                            "type": "url",
+                            "value": f.url,
+                            "sources": [f.source],
+                        }
+                    )
             return await analyzer.analyze_network(entities)
         except Exception as e:
             logger.warning(f"_task_evidence_analysis failed: {e}")
@@ -1540,6 +1581,7 @@ class UnifiedResearchEngine:
             from .advanced_web.structured_extractor import (  # type: ignore[import-not-found]
                 StructuredExtractor,
             )
+
             extractor = StructuredExtractor()
         except Exception as e:
             logger.warning(f"_task_structured_extraction: import failed: {e}")
@@ -1565,39 +1607,35 @@ class UnifiedResearchEngine:
                 if not html:
                     continue
                 extraction = extractor.extract(html, source_url=url)
-                self._stats['structured_entities'] = (
-                    self._stats.get('structured_entities', 0) + len(extraction.entities)
+                self._stats["structured_entities"] = self._stats.get("structured_entities", 0) + len(
+                    extraction.entities
                 )
                 for ent in extraction.entities:
                     if len(findings) >= _MAX_STRUCTURED_ENTITIES:
                         break
-                    findings.append(ResearchFinding(
-                        id=hashlib.blake2b(
-                            f"structured:{ent.entity_id}".encode(), digest_size=8
-                        ).hexdigest(),
-                        title=f"[{ent.ioc_kind}] {ent.entity_type}: {ent.value}",
-                        content=ent.value[:500],
-                        url=ent.url or url,
-                        source="structured_extractor",
-                        source_type=ent.ioc_kind,
-                        timestamp=datetime.now(UTC),  # noqa: DTZ005
-                        relevance_score=0.6,
-                        credibility_score=0.7,
-                        metadata={
-                            "entity_type": ent.entity_type,
-                            "entity_id": ent.entity_id,
-                            "properties": dict(ent.properties),
-                        },
-                    ))
+                    findings.append(
+                        ResearchFinding(
+                            id=hashlib.blake2b(f"structured:{ent.entity_id}".encode(), digest_size=8).hexdigest(),
+                            title=f"[{ent.ioc_kind}] {ent.entity_type}: {ent.value}",
+                            content=ent.value[:500],
+                            url=ent.url or url,
+                            source="structured_extractor",
+                            source_type=ent.ioc_kind,
+                            timestamp=datetime.now(UTC),  # noqa: DTZ005
+                            relevance_score=0.6,
+                            credibility_score=0.7,
+                            metadata={
+                                "entity_type": ent.entity_type,
+                                "entity_id": ent.entity_id,
+                                "properties": dict(ent.properties),
+                            },
+                        )
+                    )
             except Exception as e:
                 logger.debug(f"_task_structured_extraction: {url} failed: {e}")
         return findings
 
-    async def _task_validate(
-        self,
-        query: str,
-        findings: list[ResearchFinding]
-    ) -> dict[str, Any]:
+    async def _task_validate(self, query: str, findings: list[ResearchFinding]) -> dict[str, Any]:
         """
         Validate findings across multiple sources.
 
@@ -1609,7 +1647,7 @@ class UnifiedResearchEngine:
             Validation report
         """
         if not findings:
-            return {'valid': False, 'reason': 'No findings to validate'}
+            return {"valid": False, "reason": "No findings to validate"}
 
         try:
             # Group by URL for cross-validation
@@ -1625,29 +1663,31 @@ class UnifiedResearchEngine:
             for url, group in url_groups.items():
                 if len(group) > 1:  # Found by multiple sources
                     validated_count += 1
-                    cross_validated.append({
-                        'url': url,
-                        'sources': [f.source for f in group],
-                        'agreement_score': len(group) / len({f.source for f in findings})
-                    })
+                    cross_validated.append(
+                        {
+                            "url": url,
+                            "sources": [f.source for f in group],
+                            "agreement_score": len(group) / len({f.source for f in findings}),
+                        }
+                    )
 
             # Calculate overall validity
             total_with_url = len([f for f in findings if f.url])
             validation_rate = validated_count / total_with_url if total_with_url > 0 else 0
 
             return {
-                'valid': validation_rate > 0.1,  # At least 10% cross-validated
-                'validation_rate': validation_rate,
-                'total_findings': len(findings),
-                'cross_validated_count': validated_count,
-                'cross_validated_urls': cross_validated[:10],
-                'source_diversity': len({f.source for f in findings}),
-                'high_credibility_count': len([f for f in findings if f.credibility_score > 0.7]),
+                "valid": validation_rate > 0.1,  # At least 10% cross-validated
+                "validation_rate": validation_rate,
+                "total_findings": len(findings),
+                "cross_validated_count": validated_count,
+                "cross_validated_urls": cross_validated[:10],
+                "source_diversity": len({f.source for f in findings}),
+                "high_credibility_count": len([f for f in findings if f.credibility_score > 0.7]),
             }
 
         except Exception as e:
             logger.warning(f"Validation task failed: {e}")
-            return {'valid': False, 'error': str(e)}
+            return {"valid": False, "error": str(e)}
 
     async def _task_enhance(self, query: str, context: dict[str, Any]) -> str:
         """
@@ -1664,11 +1704,11 @@ class UnifiedResearchEngine:
         enhancements = []
 
         # Add context-based terms
-        if 'key_terms' in context:
-            enhancements.extend(context['key_terms'][:2])
+        if "key_terms" in context:
+            enhancements.extend(context["key_terms"][:2])
 
         # Add year for recent results
-        if 'temporal_analysis' in context:
+        if "temporal_analysis" in context:
             current_year = datetime.now(UTC).year  # noqa: DTZ005
             enhancements.append(str(current_year))
 
@@ -1750,7 +1790,7 @@ class UnifiedResearchEngine:
         for f in findings:
             # URL-based dedup
             if f.url:
-                normalized_url = f.url.lower().rstrip('/')
+                normalized_url = f.url.lower().rstrip("/")
                 if normalized_url in seen_urls:
                     continue
                 seen_urls.add(normalized_url)
@@ -1765,11 +1805,7 @@ class UnifiedResearchEngine:
 
         return unique
 
-    def _rank_findings(
-        self,
-        findings: list[ResearchFinding],
-        query: str
-    ) -> list[ResearchFinding]:
+    def _rank_findings(self, findings: list[ResearchFinding], query: str) -> list[ResearchFinding]:
         """Rank findings by relevance to query."""
         query_terms = set(query.lower().split())
 
@@ -1783,10 +1819,10 @@ class UnifiedResearchEngine:
 
             # Update relevance score
             f.relevance_score = (
-                f.relevance_score * 0.3 +  # Original score
-                (title_matches / len(query_terms)) * 0.4 +  # Title match
-                (content_matches / len(query_terms)) * 0.2 +  # Content match
-                f.credibility_score * 0.1  # Credibility bonus
+                f.relevance_score * 0.3  # Original score
+                + (title_matches / len(query_terms)) * 0.4  # Title match
+                + (content_matches / len(query_terms)) * 0.2  # Content match
+                + f.credibility_score * 0.1  # Credibility bonus
             )
 
         return sorted(findings, key=lambda x: x.relevance_score, reverse=True)
@@ -1803,14 +1839,10 @@ class UnifiedResearchEngine:
         avg_credibility = sum(f.credibility_score for f in result.findings) / len(result.findings)
 
         # Factor 3: Cross-validation
-        validation_factor = result.validation_report.get('validation_rate', 0) if result.validation_report else 0
+        validation_factor = result.validation_report.get("validation_rate", 0) if result.validation_report else 0
 
         # Weighted average
-        confidence = (
-            source_factor * 0.3 +
-            avg_credibility * 0.4 +
-            validation_factor * 0.3
-        )
+        confidence = source_factor * 0.3 + avg_credibility * 0.4 + validation_factor * 0.3
 
         return min(1.0, confidence)
 
@@ -1835,7 +1867,7 @@ class UnifiedResearchEngine:
         ]
 
         for tool in tools:
-            if tool and hasattr(tool, 'cleanup'):
+            if tool and hasattr(tool, "cleanup"):
                 try:
                     await tool.cleanup()
                 except Exception as e:
@@ -1847,7 +1879,7 @@ class UnifiedResearchEngine:
             self._stealth_browser,
             self._evidence_analyzer,
         ):
-            if provider and hasattr(provider, 'cleanup'):
+            if provider and hasattr(provider, "cleanup"):
                 try:
                     await provider.cleanup()
                 except Exception as e:
@@ -1869,15 +1901,15 @@ class UnifiedResearchEngine:
         """Get engine statistics."""
         return {
             **self._stats,
-            'config': {
-                'depth': self.config.depth.name,
-                'max_concurrent': self.config.max_concurrent_tools,
-                'parallel_enabled': self.config.enable_parallel,
-                'advanced_rag_enabled': self.config.enable_advanced_rag,
-                'stealth_browser_enabled': self.config.enable_stealth_browser,
-                'evidence_analyzer_enabled': self.config.enable_evidence_analyzer,
+            "config": {
+                "depth": self.config.depth.name,
+                "max_concurrent": self.config.max_concurrent_tools,
+                "parallel_enabled": self.config.enable_parallel,
+                "advanced_rag_enabled": self.config.enable_advanced_rag,
+                "stealth_browser_enabled": self.config.enable_stealth_browser,
+                "evidence_analyzer_enabled": self.config.enable_evidence_analyzer,
             },
-            'tools_initialized': self._stats['tools_initialized'],
+            "tools_initialized": self._stats["tools_initialized"],
         }
 
 
@@ -1908,11 +1940,7 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
         >>> result = await orchestrator.research("machine learning", domain="academic")
     """
 
-    def __init__(
-        self,
-        config: ResearchConfig | None = None,
-        enhanced_config: EnhancedResearchConfig | None = None
-    ):
+    def __init__(self, config: ResearchConfig | None = None, enhanced_config: EnhancedResearchConfig | None = None):
         super().__init__(config)
 
         # Store enhanced configuration
@@ -1928,10 +1956,10 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
 
         # Statistics tracking
         self._stats: dict[str, Any] = {
-            'queries_expanded': 0,
-            'sources_fused': 0,
-            'documents_retrieved': 0,
-            'stealth_operations': 0,
+            "queries_expanded": 0,
+            "sources_fused": 0,
+            "documents_retrieved": 0,
+            "stealth_operations": 0,
         }
 
         logger.info("EnhancedResearchOrchestrator initialized")
@@ -1951,32 +1979,26 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
         # Hybrid RAG for context retrieval
         if cfg.enable_rag:
             from .knowledge.rag_engine import RAGConfig, RAGEngine
+
             self.rag = RAGEngine(RAGConfig())
         else:
             self.rag = None
 
         # Query expansion with intelligent wordlist
         if cfg.enable_expansion:
-            self.wordlist = IntelligentWordlistGenerator(WordlistConfig(
-                max_variations=cfg.max_query_variations,
-                domain_context='academic'
-            ))
+            self.wordlist = IntelligentWordlistGenerator(
+                WordlistConfig(max_variations=cfg.max_query_variations, domain_context="academic")
+            )
         else:
             self.wordlist = None
 
         # Behavior simulator for stealth operations
         if cfg.enable_stealth:
-            self.behavior = BehaviorSimulator(SimulationConfig(
-                pattern=cfg.behavior_pattern
-            ))
+            self.behavior = BehaviorSimulator(SimulationConfig(pattern=cfg.behavior_pattern))
         else:
             self.behavior = None
 
-    async def expand_research_query(
-        self,
-        query: str,
-        domain: str | None = None
-    ) -> list[str]:
+    async def expand_research_query(self, query: str, domain: str | None = None) -> list[str]:
         """
         Expand research query into multiple variations for broader coverage.
 
@@ -2004,26 +2026,29 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
 
         # Add domain-specific variations
         if domain:
-            domain_variations = []
-            for var in variations[:5]:  # Limit to avoid explosion
-                domain_variations.extend(self.wordlist.generate_for_discovery(
-                    [var],
+            # ISSUE-005: Parallelize domain variations — bounded_parallel_map
+            domain_variations = await bounded_parallel_map(
+                variations[:5],
+                lambda v: self.wordlist.generate_for_discovery(
+                    [v],
                     modifiers=['paper', 'research', 'study', 'review']
-                ))
-            variations.extend(domain_variations)
+                ),
+                concurrency=5,
+                ctx="domain_variations",
+            )
+            for ext_result in domain_variations:
+                if ext_result is not None:
+                    variations.extend(ext_result)
 
         # Remove duplicates and limit
         unique = list(dict.fromkeys(variations))
 
-        self._stats['queries_expanded'] += len(unique)
+        self._stats["queries_expanded"] += len(unique)
 
         logger.info(f"Expanded query '{query}' into {len(unique)} variations")
-        return unique[:self.enhanced_config.max_query_variations]
+        return unique[: self.enhanced_config.max_query_variations]
 
-    async def fuse_research_results(
-        self,
-        source_results: dict[str, list[dict[str, Any]]]
-    ) -> list[SearchResult]:
+    async def fuse_research_results(self, source_results: dict[str, list[dict[str, Any]]]) -> list[SearchResult]:
         """
         Fuse results from multiple research sources using Reciprocal Rank Fusion.
 
@@ -2051,14 +2076,16 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
             all_results = []
             for source, results in source_results.items():
                 for r in results:
-                    all_results.append(SearchResult(
-                        id=r.get('url', '') or r.get('title', ''),
-                        title=r.get('title', ''),
-                        content=r.get('content', ''),
-                        url=r.get('url'),
-                        source=source,
-                        score=r.get('score', 0.0)
-                    ))
+                    all_results.append(
+                        SearchResult(
+                            id=r.get("url", "") or r.get("title", ""),
+                            title=r.get("title", ""),
+                            content=r.get("content", ""),
+                            url=r.get("url"),
+                            source=source,
+                            score=r.get("score", 0.0),
+                        )
+                    )
             return all_results
 
         # Convert to SearchResult objects
@@ -2068,33 +2095,27 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
             search_results[source] = []
             for i, r in enumerate(results):
                 result = SearchResult(
-                    id=r.get('url', f'{source}_{i}'),
-                    title=r.get('title', ''),
-                    content=r.get('content', ''),
-                    url=r.get('url'),
+                    id=r.get("url", f"{source}_{i}"),
+                    title=r.get("title", ""),
+                    content=r.get("content", ""),
+                    url=r.get("url"),
                     source=source,
-                    score=r.get('score', 0.0),
+                    score=r.get("score", 0.0),
                     rank=i + 1,
-                    metadata=r.get('metadata', {})
+                    metadata=r.get("metadata", {}),
                 )
                 search_results[source].append(result)
 
         # Apply RRF
         fused = await self.rrf.fuse(search_results)
 
-        self._stats['sources_fused'] += len(source_results)
+        self._stats["sources_fused"] += len(source_results)
 
-        logger.info(
-            f"Fused {len(source_results)} sources into {len(fused)} unique results"
-        )
+        logger.info(f"Fused {len(source_results)} sources into {len(fused)} unique results")
 
         return fused
 
-    async def retrieve_research_context(
-        self,
-        query: str,
-        documents: list[dict[str, Any]]
-    ) -> list[str]:
+    async def retrieve_research_context(self, query: str, documents: list[dict[str, Any]]) -> list[str]:
         """
         Retrieve relevant context from research documents using Hybrid RAG.
 
@@ -2122,31 +2143,22 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
 
         if not cfg.enable_rag or self.rag is None:
             # Return first N documents as-is when RAG is disabled
-            return [d.get('content', '') for d in documents[:cfg.rag_top_k]]
+            return [d.get("content", "") for d in documents[: cfg.rag_top_k]]
 
         # Convert to Document objects
         docs = []
         for i, d in enumerate(documents):
-            doc = Document(
-                id=d.get('id', f'doc_{i}'),
-                content=d.get('content', ''),
-                metadata=d.get('metadata', {})
-            )
+            doc = Document(id=d.get("id", f"doc_{i}"), content=d.get("content", ""), metadata=d.get("metadata", {}))
             docs.append(doc)
 
         # Retrieve relevant chunks using hybrid retrieval
         results = await self.rag.hybrid_retrieve(query, docs, top_k=cfg.rag_top_k)
 
-        self._stats['documents_retrieved'] += len(results)
+        self._stats["documents_retrieved"] += len(results)
 
         return [r.chunk_text for r in results]
 
-    async def stealth_research(
-        self,
-        query: str,
-        url: str,
-        scrape_func: Callable | None = None
-    ) -> dict[str, Any]:
+    async def stealth_research(self, query: str, url: str, scrape_func: Callable | None = None) -> dict[str, Any]:
         """
         Perform stealth research on protected or academic sites.
 
@@ -2183,8 +2195,7 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
 
         # Simulate human behavior before accessing
         behavior_stats = await self.behavior.simulate_page_visit(
-            num_scrolls=random.randint(2, 5),
-            read_time=random.uniform(10, 20)
+            num_scrolls=random.randint(2, 5), read_time=random.uniform(10, 20)
         )
 
         content = None
@@ -2195,21 +2206,18 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
             except Exception as e:
                 logger.error(f"Stealth scrape failed: {e}")
 
-        self._stats['stealth_operations'] += 1
+        self._stats["stealth_operations"] += 1
 
         return {
-            'query': query,
-            'url': url,
-            'content': content,
-            'behavior_simulation': behavior_stats,
-            'success': content is not None
+            "query": query,
+            "url": url,
+            "content": content,
+            "behavior_simulation": behavior_stats,
+            "success": content is not None,
         }
 
     async def research(
-        self,
-        query: str,
-        search_func: Callable | None = None,
-        domain: str | None = None
+        self, query: str, search_func: Callable | None = None, domain: str | None = None
     ) -> dict[str, Any]:
         """
         Execute enhanced research workflow with all available features.
@@ -2254,16 +2262,23 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
         all_results: dict[str, list[dict[str, Any]]] = {}
 
         if search_func:
-            # Limit to top variations to avoid overwhelming the search function
-            for q in queries[:3]:
+            # ISSUE-005: Parallelize search queries — bounded_parallel_map
+            search_results = await bounded_parallel_map(
+                queries[:3],
+                search_func,
+                concurrency=3,
+                ctx="search_queries",
+            )
+            for results in search_results:
+                if results is None:
+                    continue
                 try:
-                    results = await search_func(q)
                     source = results.get('source', 'unknown')
                     if source not in all_results:
                         all_results[source] = []
                     all_results[source].extend(results.get('results', []))
                 except Exception as e:
-                    logger.warning(f"Search failed for '{q}': {e}")
+                    logger.warning(f"Search failed for query: {e}")
 
         # 3. Fuse results from multiple sources
         fused_results = []
@@ -2274,11 +2289,7 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
         context = []
         if fused_results:
             documents = [
-                {
-                    'id': r.id,
-                    'content': r.content,
-                    'metadata': {'title': r.title, 'url': r.url, 'source': r.source}
-                }
+                {"id": r.id, "content": r.content, "metadata": {"title": r.title, "url": r.url, "source": r.source}}
                 for r in fused_results[:20]  # Top 20 for context
             ]
             context = await self.retrieve_research_context(query, documents)
@@ -2293,35 +2304,31 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
 
         # 5. Compile final results
         return {
-            'query': query,
-            'expanded_queries': queries,
-            'fused_results': [
+            "query": query,
+            "expanded_queries": queries,
+            "fused_results": [
                 {
-                    'title': r.title,
-                    'content': r.content[:500],  # Truncate for brevity
-                    'url': r.url,
-                    'source': r.source,
-                    'score': r.score,
-                    'rank': r.rank
+                    "title": r.title,
+                    "content": r.content[:500],  # Truncate for brevity
+                    "url": r.url,
+                    "source": r.source,
+                    "score": r.score,
+                    "rank": r.rank,
                 }
                 for r in fused_results[:10]  # Top 10
             ],
-            'context': context,
-            'statistics': {
-                'queries_expanded': len(queries),
-                'sources_searched': len(all_results),
-                'results_fused': len(fused_results),
-                'context_chunks': len(context),
-                'duration_seconds': perf_stats.get('duration', 0),
-                'tokens_processed': perf_stats.get('tokens', 0),
-            }
+            "context": context,
+            "statistics": {
+                "queries_expanded": len(queries),
+                "sources_searched": len(all_results),
+                "results_fused": len(fused_results),
+                "context_chunks": len(context),
+                "duration_seconds": perf_stats.get("duration", 0),
+                "tokens_processed": perf_stats.get("tokens", 0),
+            },
         }
 
-    def create_research_workflow(
-        self,
-        query: str,
-        mode: ResearchMode = None
-    ) -> Workflow:
+    def create_research_workflow(self, query: str, mode: ResearchMode = None) -> Workflow:
         """
         Vytvořit výzkumný workflow.
 
@@ -2401,11 +2408,7 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
 
         return workflow
 
-    async def execute_workflow(
-        self,
-        workflow: Workflow,
-        use_predictions: bool = True
-    ) -> ResearchResult:
+    async def execute_workflow(self, workflow: Workflow, use_predictions: bool = True) -> ResearchResult:
         """
         Vykonat workflow s prediktivním plánováním.
 
@@ -2444,10 +2447,7 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
 
         async def planner(ctx):
             # Jednoduchý plán z workflow
-            return [
-                {"action": task.id, "params": task.params}
-                for task in workflow.tasks.values()
-            ]
+            return [{"action": task.id, "params": task.params} for task in workflow.tasks.values()]
 
         async def executor(action, params, ctx):
             # Vykonat úkol
@@ -2466,11 +2466,7 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
         # Zkompilovat výsledky
         return self._compile_results(workflow, predictive_result.get("results", {}))
 
-    def _compile_results(
-        self,
-        workflow: Workflow,
-        results: dict[str, Any]
-    ) -> ResearchResult:
+    def _compile_results(self, workflow: Workflow, results: dict[str, Any]) -> ResearchResult:
         """Zkompilovat výsledky do ResearchResult"""
 
         # Získat syntézu
@@ -2480,11 +2476,13 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
         sources = []
         for task_id, result in results.items():
             if isinstance(result, dict) and "url" in result:
-                sources.append({
-                    "url": result["url"],
-                    "title": result.get("title", ""),
-                    "type": task_id,
-                })
+                sources.append(
+                    {
+                        "url": result["url"],
+                        "title": result.get("title", ""),
+                        "type": task_id,
+                    }
+                )
 
         return ResearchResult(
             success=True,
@@ -2493,13 +2491,8 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
             final_answer=synthesis if synthesis else "Research completed",
             sources=sources,
             statistics={
-                "workflow_duration": sum(
-                    t.duration() or 0 for t in workflow.tasks.values()
-                ),
-                "tasks_completed": sum(
-                    1 for t in workflow.tasks.values()
-                    if t.status.value == "completed"
-                ),
+                "workflow_duration": sum(t.duration() or 0 for t in workflow.tasks.values()),
+                "tasks_completed": sum(1 for t in workflow.tasks.values() if t.status.value == "completed"),
             },
         )
 
@@ -2524,9 +2517,16 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
         # Use RAG for retrieval if available
         if self.rag is not None:
             try:
-                for var in variations[:3]:  # Limit to avoid overload
-                    rag_results = await self.rag.retrieve(var, top_k=5)
-                    results.extend(rag_results)
+                # ISSUE-005: Parallelize RAG retrieval — bounded_parallel_map
+                rag_results_list = await bounded_parallel_map(
+                    variations[:3],
+                    lambda v: self.rag.retrieve(v, top_k=5),  # type: ignore[misc]
+                    concurrency=3,
+                    ctx="rag_retrieval",
+                )
+                for rag_results in rag_results_list:
+                    if rag_results is not None:
+                        results.extend(rag_results)
             except Exception as e:
                 logger.warning(f"RAG retrieval failed: {e}")
 
@@ -2552,26 +2552,26 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
         sources = {}
 
         # Try to use web intelligence if available in parent
-        if hasattr(self, '_search_web'):
+        if hasattr(self, "_search_web"):
             try:
                 web_results = await self._search_web(query)
-                for result in web_results.get('results', []):
-                    if 'url' in result:
-                        urls.append(result['url'])
-                    elif 'link' in result:
-                        urls.append(result['link'])
-                sources['web'] = len(web_results.get('results', []))
+                for result in web_results.get("results", []):
+                    if "url" in result:
+                        urls.append(result["url"])
+                    elif "link" in result:
+                        urls.append(result["link"])
+                sources["web"] = len(web_results.get("results", []))
             except Exception as e:
                 logger.warning(f"Web search failed: {e}")
 
         # Use archive discovery if available
-        if hasattr(self, '_search_archives'):
+        if hasattr(self, "_search_archives"):
             try:
                 archive_results = await self._search_archives(query)
-                for result in archive_results.get('results', []):
-                    if 'url' in result:
-                        urls.append(result['url'])
-                sources['archives'] = len(archive_results.get('results', []))
+                for result in archive_results.get("results", []):
+                    if "url" in result:
+                        urls.append(result["url"])
+                sources["archives"] = len(archive_results.get("results", []))
             except Exception as e:
                 logger.debug(f"Archive search skipped: {e}")
 
@@ -2599,15 +2599,17 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
             search_results = await engine.search(query, max_results=10)
 
             for result in search_results:
-                papers.append({
-                    "title": getattr(result, 'title', 'Unknown'),
-                    "authors": getattr(result, 'authors', []),
-                    "year": getattr(result, 'year', None),
-                    "url": getattr(result, 'url', None),
-                    "pdf_url": getattr(result, 'pdf_url', None),
-                    "source": getattr(result, 'source', 'unknown'),
-                    "score": getattr(result, 'score', 0.0),
-                })
+                papers.append(
+                    {
+                        "title": getattr(result, "title", "Unknown"),
+                        "authors": getattr(result, "authors", []),
+                        "year": getattr(result, "year", None),
+                        "url": getattr(result, "url", None),
+                        "pdf_url": getattr(result, "pdf_url", None),
+                        "source": getattr(result, "source", "unknown"),
+                        "score": getattr(result, "score", 0.0),
+                    }
+                )
         except ImportError:
             logger.debug("Academic search engine not available")
         except Exception as e:
@@ -2618,11 +2620,13 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
             try:
                 rag_results = await self.rag.retrieve(query, top_k=5)
                 for doc in rag_results:
-                    papers.append({
-                        "title": getattr(doc, 'title', 'Document'),
-                        "content": getattr(doc, 'content', '')[:500],
-                        "source": "rag",
-                    })
+                    papers.append(
+                        {
+                            "title": getattr(doc, "title", "Document"),
+                            "content": getattr(doc, "content", "")[:500],
+                            "source": "rag",
+                        }
+                    )
             except Exception as e:
                 logger.debug(f"RAG fallback failed: {e}")
 
@@ -2646,15 +2650,18 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
                     docs = await self.rag.retrieve(f"site:{url}", top_k=3)
                     contents = []
                     for doc in docs:
-                        contents.append({
-                            "url": url,
-                            "title": getattr(doc, 'title', ''),
-                            "content": getattr(doc, 'content', '')[:2000],
-                            "source": getattr(doc, 'source', 'unknown'),
-                        })
+                        contents.append(
+                            {
+                                "url": url,
+                                "title": getattr(doc, "title", ""),
+                                "content": getattr(doc, "content", "")[:2000],
+                                "source": getattr(doc, "source", "unknown"),
+                            }
+                        )
                     # Stealth delay if enabled
                     if self.behavior is not None and self.enhanced_config.enable_stealth:
                         import asyncio
+
                         await asyncio.sleep(0.5)
                     return url, contents
             except Exception as e:
@@ -2691,8 +2698,8 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
         verified = []
 
         # Get claims from context
-        claims = context.get('claims', [])
-        sources = context.get('sources', [])
+        claims = context.get("claims", [])
+        sources = context.get("sources", [])
 
         if not claims:
             return {"claims_checked": 0, "verified": [], "status": "no_claims"}
@@ -2712,7 +2719,7 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
                     # Search for claim in RAG
                     results = await self.rag.retrieve(claim, top_k=3)
                     if results:
-                        scores = [getattr(r, 'score', 0) for r in results]
+                        scores = [getattr(r, "score", 0) for r in results]
                         avg_score = sum(scores) / len(scores) if scores else 0
 
                         if avg_score > 0.8:
@@ -2722,9 +2729,7 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
                             verification["status"] = "partial"
                             verification["confidence"] = avg_score
 
-                        verification["sources"] = [
-                            getattr(r, 'source', 'unknown') for r in results[:3]
-                        ]
+                        verification["sources"] = [getattr(r, "source", "unknown") for r in results[:3]]
                 except Exception as e:
                     logger.debug(f"Fact check verification failed: {e}")
 
@@ -2744,19 +2749,18 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
         all_results = {}
 
         # Add search results
-        if 'search_results' in context:
-            all_results['search'] = context['search_results']
+        if "search_results" in context:
+            all_results["search"] = context["search_results"]
 
         # Add academic papers
-        if 'papers' in context:
-            all_results['academic'] = [
-                {"title": p.get('title', ''), "content": p.get('abstract', '')}
-                for p in context['papers']
+        if "papers" in context:
+            all_results["academic"] = [
+                {"title": p.get("title", ""), "content": p.get("abstract", "")} for p in context["papers"]
             ]
 
         # Add deep read content
-        if 'deep_read_content' in context:
-            all_results['deep_read'] = context['deep_read_content']
+        if "deep_read_content" in context:
+            all_results["deep_read"] = context["deep_read_content"]
 
         # Use RRF fusion if available and enabled
         if self.rrf is not None and self.enhanced_config.enable_fusion:
@@ -2765,19 +2769,16 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
                 top_results = fused[:5]
 
                 # Build synthesis from top results
-                synthesis_parts = [
-                    f"## Synthesis for: {query}\n"
-                ]
+                synthesis_parts = [f"## Synthesis for: {query}\n"]
 
                 for i, result in enumerate(top_results, 1):
-                    title = getattr(result, 'title', 'Untitled')
-                    content = getattr(result, 'content', '')[:500]
-                    source = getattr(result, 'source', 'unknown')
-                    score = getattr(result, 'score', 0)
+                    title = getattr(result, "title", "Untitled")
+                    content = getattr(result, "content", "")[:500]
+                    source = getattr(result, "source", "unknown")
+                    score = getattr(result, "score", 0)
 
                     synthesis_parts.append(
-                        f"\n### Source {i} ({source}, score: {score:.2f})\n"
-                        f"**{title}**\n{content}...\n"
+                        f"\n### Source {i} ({source}, score: {score:.2f})\n**{title}**\n{content}...\n"
                     )
 
                 return "\n".join(synthesis_parts)
@@ -2791,7 +2792,7 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
             parts.append(f"\n### From {source}:\n")
             for i, result in enumerate(results[:3], 1):
                 if isinstance(result, dict):
-                    title = result.get('title', result.get('url', 'Untitled'))
+                    title = result.get("title", result.get("url", "Untitled"))
                     parts.append(f"{i}. {title}\n")
         return "".join(parts)
 
@@ -2812,14 +2813,14 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
         """
         return {
             **self._stats,
-            'config': {
-                'fusion_enabled': self.enhanced_config.enable_fusion,
-                'rag_enabled': self.enhanced_config.enable_rag,
-                'expansion_enabled': self.enhanced_config.enable_expansion,
-                'stealth_enabled': self.enhanced_config.enable_stealth,
+            "config": {
+                "fusion_enabled": self.enhanced_config.enable_fusion,
+                "rag_enabled": self.enhanced_config.enable_rag,
+                "expansion_enabled": self.enhanced_config.enable_expansion,
+                "stealth_enabled": self.enhanced_config.enable_stealth,
             },
-            'performance': self.performance_monitor.get_stats(),
-            'predictions': self.predictive_planner.get_stats(),
+            "performance": self.performance_monitor.get_stats(),
+            "predictions": self.predictive_planner.get_stats(),
         }
 
 
@@ -2827,8 +2828,8 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
 async def enhanced_research(
     query: str,
     search_func: Callable | None = None,
-    domain: str = 'academic',
-    config: EnhancedResearchConfig | None = None
+    domain: str = "academic",
+    config: EnhancedResearchConfig | None = None,
 ) -> dict[str, Any]:
     """
     Convenience helper — NON-CANONICAL, backward-compat only.
@@ -2862,10 +2863,9 @@ async def enhanced_research(
 # UNIFIED RESEARCH ENGINE - CONVENIENCE FUNCTIONS
 # =============================================================================
 
+
 async def deep_research(
-    query: str,
-    depth: ResearchDepth = ResearchDepth.ADVANCED,
-    max_results: int = 50
+    query: str, depth: ResearchDepth = ResearchDepth.ADVANCED, max_results: int = 50
 ) -> UnifiedResearchResult:
     """
     Convenience helper — NON-CANONICAL.
@@ -2897,10 +2897,7 @@ async def deep_research(
         await engine.cleanup()
 
 
-def create_unified_research_engine(
-    depth: ResearchDepth = ResearchDepth.ADVANCED,
-    **kwargs
-) -> UnifiedResearchEngine:
+def create_unified_research_engine(depth: ResearchDepth = ResearchDepth.ADVANCED, **kwargs) -> UnifiedResearchEngine:
     """
     NON-CANONICAL factory function — backward-compat only.
     Will be removed in v2.0. Use UnifiedResearchEngine(config=UnifiedResearchConfig(...)) directly.
@@ -2943,6 +2940,7 @@ def create_unified_research_engine(
 #              Reuseuje _classify_query() a _select_tools_for_query().
 # =============================================================================
 
+
 @dataclass(frozen=True, slots=True)
 class SourcePlan:
     """Immutable source plan — which families, engines, why, and conditions.
@@ -2958,6 +2956,7 @@ class SourcePlan:
         conditions: Runtime conditions that trigger inclusion
         excluded: SourceFamily values explicitly excluded and why
     """
+
     families: tuple[SourceFamily, ...]
     engines: tuple[str, ...]
     reasoning: str
@@ -2967,11 +2966,11 @@ class SourcePlan:
     def to_display_dict(self) -> dict[str, Any]:
         """Human-readable dict for debugging/logging."""
         return {
-            'families': [f.value for f in self.families],
-            'engines': list(self.engines),
-            'reasoning': self.reasoning,
-            'conditions': list(self.conditions),
-            'excluded': [f.value for f in self.excluded],
+            "families": [f.value for f in self.families],
+            "engines": list(self.engines),
+            "reasoning": self.reasoning,
+            "conditions": list(self.conditions),
+            "excluded": [f.value for f in self.excluded],
         }
 
 
@@ -3019,11 +3018,11 @@ def _build_source_plan(
     # Determine base families by depth
     if depth == ResearchDepth.BASIC:
         base_families = [SourceFamily.WEB, SourceFamily.ACADEMIC]
-        base_engines = ('stealth_crawler', 'academic')
+        base_engines = ("stealth_crawler", "academic")
 
     elif depth == ResearchDepth.ADVANCED:
         base_families = [SourceFamily.WEB, SourceFamily.ACADEMIC, SourceFamily.ARCHIVE]
-        base_engines = ('stealth_crawler', 'academic', 'archives')
+        base_engines = ("stealth_crawler", "academic", "archives")
 
     else:  # EXHAUSTIVE
         base_families = [
@@ -3034,71 +3033,65 @@ def _build_source_plan(
             SourceFamily.TEMPORAL,
             SourceFamily.OSINT,
         ]
-        base_engines = (
-            'stealth_crawler', 'academic', 'archives',
-            'data_leak', 'temporal', 'osint'
-        )
+        base_engines = ("stealth_crawler", "academic", "archives", "data_leak", "temporal", "osint")
 
     families = list(base_families)
     engines = list(base_engines)
     excluded: list[SourceFamily] = []
-    conditions: list[str] = [f'depth={depth.name}']
+    conditions: list[str] = [f"depth={depth.name}"]
 
     # Query-type specific routing
     if query_type == QueryType.ACADEMIC:
         if SourceFamily.ACADEMIC not in families:
             families.insert(0, SourceFamily.ACADEMIC)
-            engines = ['academic'] + list(engines)
-        conditions.append('query_type=ACADEMIC')
+            engines = ["academic"] + list(engines)
+        conditions.append("query_type=ACADEMIC")
 
     elif query_type == QueryType.HISTORICAL:
         if SourceFamily.ARCHIVE not in families:
             families.insert(0, SourceFamily.ARCHIVE)
-            engines = ['archives'] + list(engines)
-        conditions.append('query_type=HISTORICAL')
+            engines = ["archives"] + list(engines)
+        conditions.append("query_type=HISTORICAL")
 
     elif query_type == QueryType.SECURITY:
         if depth.value >= ResearchDepth.ADVANCED.value:
             if SourceFamily.SECURITY not in families:
                 families.append(SourceFamily.SECURITY)
-                engines = list(engines) + ['data_leak']
-        conditions.append('query_type=SECURITY')
+                engines = list(engines) + ["data_leak"]
+        conditions.append("query_type=SECURITY")
 
     elif query_type == QueryType.PERSON:
         # PERSON benefits from OSINT family at EXHAUSTIVE
         if depth == ResearchDepth.EXHAUSTIVE and SourceFamily.OSINT not in families:
             families.append(SourceFamily.OSINT)
-            engines = list(engines) + ['osint']
-        conditions.append('query_type=PERSON')
+            engines = list(engines) + ["osint"]
+        conditions.append("query_type=PERSON")
 
     elif query_type == QueryType.ORGANIZATION:
         # ORGANIZATION benefits from ARCHIVE at ADVANCED+
         if depth.value >= ResearchDepth.ADVANCED.value:
             if SourceFamily.ARCHIVE not in families:
                 families.append(SourceFamily.ARCHIVE)
-                engines = list(engines) + ['archives']
-        conditions.append('query_type=ORGANIZATION')
+                engines = list(engines) + ["archives"]
+        conditions.append("query_type=ORGANIZATION")
 
     else:  # GENERAL, TECHNICAL, NEWS
-        conditions.append(f'query_type={query_type.value}')
+        conditions.append(f"query_type={query_type.value}")
 
     # Apply config-level tool exclusions
     if config:
-        if not cfg.should_use_tool('academic') and SourceFamily.ACADEMIC in families:
+        if not cfg.should_use_tool("academic") and SourceFamily.ACADEMIC in families:
             families.remove(SourceFamily.ACADEMIC)
-            engines = [e for e in engines if e != 'academic']
+            engines = [e for e in engines if e != "academic"]
             excluded.append(SourceFamily.ACADEMIC)
 
-        if not cfg.should_use_tool('archives') and SourceFamily.ARCHIVE in families:
+        if not cfg.should_use_tool("archives") and SourceFamily.ARCHIVE in families:
             families.remove(SourceFamily.ARCHIVE)
-            engines = [e for e in engines if e != 'archives']
+            engines = [e for e in engines if e != "archives"]
             excluded.append(SourceFamily.ARCHIVE)
 
     # Build reasoning string
-    reasoning = (
-        f"depth={depth.name}, query_type={query_type.value}, "
-        f"families={len(families)}, engines={len(engines)}"
-    )
+    reasoning = f"depth={depth.name}, query_type={query_type.value}, families={len(families)}, engines={len(engines)}"
 
     return SourcePlan(
         families=tuple(families),
@@ -3120,6 +3113,7 @@ def _build_source_plan(
 # USAGE: Pouze přes explicitní ProviderRequest/ProviderResult handoff
 # =============================================================================
 
+
 @dataclass(slots=True)
 class DeepResearchRequest:
     """
@@ -3138,6 +3132,7 @@ class DeepResearchRequest:
         Currently discarded in to_engine_kwargs(); activation would
         wire this to engine's grounding parameter once F11 is ready.
     """
+
     query: str
     depth: ResearchDepth = ResearchDepth.ADVANCED
     query_type: QueryType | None = None
@@ -3150,10 +3145,10 @@ class DeepResearchRequest:
     def to_engine_kwargs(self) -> dict[str, Any]:
         """Convert to UnifiedResearchEngine.deep_research() kwargs."""
         kwargs = {
-            'query': self.query,
-            'depth': self.depth,
-            'query_type': self.query_type,
-            'max_results': self.max_results,
+            "query": self.query,
+            "depth": self.depth,
+            "query_type": self.query_type,
+            "max_results": self.max_results,
         }
         # GROUNDING SEAM TRUTH: grounding_hints flow to engine.
         # Migration direction (additive-only, non-activating):
@@ -3162,15 +3157,16 @@ class DeepResearchRequest:
         # propagation — engine receives but does not yet apply it (TBD).
         if self.grounding_hints:
             from .project_types import CanonicalGroundingHints
+
             _canonical_hints = CanonicalGroundingHints.from_shim(
-                topic_hints=tuple(self.grounding_hints.get('topics', [])),
-                domain_tags=tuple(self.grounding_hints.get('domains', [])),
+                topic_hints=tuple(self.grounding_hints.get("topics", [])),
+                domain_tags=tuple(self.grounding_hints.get("domains", [])),
             )
             # Propagation: engine.deep_research() receives grounding_hints kwarg
             # but engine implementation is TBD for F11 activation.
             # For now, store in kwargs so seam IS propagating (not discarding).
             if not _canonical_hints.is_empty():
-                kwargs['grounding_hints'] = _canonical_hints
+                kwargs["grounding_hints"] = _canonical_hints
         return kwargs
 
 
@@ -3185,6 +3181,7 @@ class DeepResearchResponse:
     Canonical ProviderRequest/ProviderResult z types.py bude použito
     AŽ PO napojení na triádu a session seams.
     """
+
     findings: list[ResearchFinding]
     fused_results: list[dict[str, Any]]
     confidence_score: float
@@ -3212,12 +3209,14 @@ class DeepResearchResponse:
 # Not exported — internal to enhanced_research.py seam only.
 # =============================================================================
 
+
 @dataclass(frozen=True, slots=True)
 class _BudgetHints:
     """Internal budget hints for DeepResearch session.
 
     Not a canonical contract — internal to enhanced_research.py.
     """
+
     stagnation_tolerance: int = 0  # Extra iterations before stagnation triggers
     confidence_boost: float = 0.0  # Adjust confidence threshold (delta)
 
@@ -3228,6 +3227,7 @@ class _EvidenceHints:
 
     Not a canonical contract — internal to enhanced_research.py.
     """
+
     log_level: str = "INFO"  # DEBUG, INFO, WARNING
     detail_depth: str = "standard"  # minimal, standard, verbose
 
@@ -3238,6 +3238,7 @@ class _PolicyFlags:
 
     Not a canonical contract — internal to enhanced_research.py.
     """
+
     skip_stagnation_check: bool = False
     force_exhaustive: bool = False
 
@@ -3270,6 +3271,7 @@ class DeepResearchGroundingShim:
     Shrink wrap: This is intentionally minimal. Do NOT expand unless
     activation blockers are resolved.
     """
+
     topic_hints: list[str] = field(default_factory=list)
     domain_tags: list[str] = field(default_factory=list)
     correlation: RunCorrelation | None = None
@@ -3336,14 +3338,12 @@ async def deep_research_provider_seam(
         >>> resp = await deep_research_provider_seam(req, shim)
         >>> print(f"Found {len(resp.findings)} findings")
     """
-    engine = UnifiedResearchEngine(
-        config=UnifiedResearchConfig(depth=request.depth)
-    )
+    engine = UnifiedResearchEngine(config=UnifiedResearchConfig(depth=request.depth))
     try:
         # Extract correlation from grounding shim if provided
         correlation = grounding.correlation if grounding else None
         kwargs = request.to_engine_kwargs()
-        kwargs['correlation'] = correlation
+        kwargs["correlation"] = correlation
         result = await engine.deep_research(**kwargs)
         return DeepResearchResponse.from_unified_result(result)
     finally:
@@ -3369,6 +3369,7 @@ async def deep_research_provider_seam(
 #   - NO new public provider framework
 # =============================================================================
 
+
 @dataclass(frozen=True, slots=True)
 class TriadAdmissionDescriptor:
     """
@@ -3386,17 +3387,18 @@ class TriadAdmissionDescriptor:
     The triad remains the canonical authority. This descriptor is a
     declaration of intent and readiness, not execution permission.
     """
+
     # Identity
     provider_candidate: str = "UnifiedResearchEngine"
     owning_module: str = "enhanced_research"
 
     # Triad integration state
     triad_authority_exists: bool = True  # AnalyzerResult, CapabilityRouter, ToolRegistry exist
-    deepresearch_napojen: bool = False   # DeepResearch NOT wired to triad
+    deepresearch_napojen: bool = False  # DeepResearch NOT wired to triad
 
     # Capability expectations (what DeepResearch expects from triad)
-    expects_analyzer: bool = True   # Expects AnalyzerResult from AutonomousAnalyzer
-    expects_router: bool = True     # Expects CapabilityRouter routing
+    expects_analyzer: bool = True  # Expects AnalyzerResult from AutonomousAnalyzer
+    expects_router: bool = True  # Expects CapabilityRouter routing
     expects_registry: bool = True  # Expects ToolRegistry.execute_with_limits()
 
     # Admission blockers (what must be resolved before F11 activation)
@@ -3476,6 +3478,7 @@ class LocalCorpusConsumerDescriptor:
     - No new provider framework, no new execution path, no eager init
     - Consumer declaration is read-only planning metadata
     """
+
     # Identity
     consumer_name: str = "UnifiedResearchEngine"
     owning_module: str = "enhanced_research"
@@ -3486,25 +3489,25 @@ class LocalCorpusConsumerDescriptor:
 
     # What the consumer wants from local corpus
     would_query_for_depths: tuple[str, ...] = (
-        "BASIC",    # Light corpus touch for factual queries
-        "ADVANCED", # Deeper corpus for investigative queries
+        "BASIC",  # Light corpus touch for factual queries
+        "ADVANCED",  # Deeper corpus for investigative queries
         "EXHAUSTIVE",  # Full corpus sweep for exhaustive research
     )
 
     would_query_for_query_types: tuple[str, ...] = (
-        "GENERAL",      # Factual lookup with local grounding
-        "ACADEMIC",     # Literature comparison with corpus
-        "PERSON",       # Entity-centric with local context
-        "ORGANIZATION", # Org-centric with local documents
+        "GENERAL",  # Factual lookup with local grounding
+        "ACADEMIC",  # Literature comparison with corpus
+        "PERSON",  # Entity-centric with local context
+        "ORGANIZATION",  # Org-centric with local documents
     )
 
     # What conditions trigger consumer interest
     conditions_for_consumption: tuple[str, ...] = (
-        "local_corpus_plane_exists=True",       # Search plane is initialized
-        "corpus_populated=True",                # At least one document ingested
-        "query_has_local_context=True",         # Query benefits from local grounding
+        "local_corpus_plane_exists=True",  # Search plane is initialized
+        "corpus_populated=True",  # At least one document ingested
+        "query_has_local_context=True",  # Query benefits from local grounding
         "no_better_external_source_available",  # External source would be overkill
-        "budget_allows_local_only=True",        # BudgetManager allows corpus-only path
+        "budget_allows_local_only=True",  # BudgetManager allows corpus-only path
     )
 
     # What blocks wiring (pre-F11 activation)
@@ -3576,57 +3579,51 @@ __all__ = [
     #   6. Minimal grounding seam (ProviderRequest/ProviderResult): exists, not wired to DeepResearch
     #
     # USAGE: Only via deep_research_provider_seam() after F11 activation.
-    'UnifiedResearchEngine',
-    'UnifiedResearchResult',
-    'deep_research_provider_seam',
-
+    "UnifiedResearchEngine",
+    "UnifiedResearchResult",
+    "deep_research_provider_seam",
     # ========================================================================
     # ORCHESTRATOR RESIDUE - EnhancedResearchOrchestrator (DEPRECATED F187A)
     # ========================================================================
     # DEPRECATED: backward-compat only, NOT canonical orchestrator.
     # Do NOT use for new runtime — use SprintScheduler instead.
-    'EnhancedResearchOrchestrator',
-    'EnhancedResearchConfig',
-    'DEPRECATED_ENHANCED_ORCHESTRATOR_RESIDUE',
-
+    "EnhancedResearchOrchestrator",
+    "EnhancedResearchConfig",
+    "DEPRECATED_ENHANCED_ORCHESTRATOR_RESIDUE",
     # ========================================================================
     # LOCAL TYPED SEAM (Sprint F11 - Pre-activation bridge)
     # ========================================================================
     # NON-CANONICAL LOCAL SEAM: pre-activation bridge for F11.
     # types.py ProviderRequest/ProviderResult are LLM-centric DTOs that
     # don't semantically fit OSINT search provider output structures.
-    'DeepResearchRequest',
-    'DeepResearchResponse',
-    'DeepResearchGroundingShim',
-
+    "DeepResearchRequest",
+    "DeepResearchResponse",
+    "DeepResearchGroundingShim",
     # ========================================================================
     # CONVENIENCE FUNCTIONS (NON-CANONICAL HELPERS)
     # ========================================================================
     # DEPRECATED F187A: backward-compat helpers only.
     # For new code, use deep_research_provider_seam() after F11 activation.
-    'enhanced_research',
-    'deep_research',
-    'create_unified_research_engine',  # deprecated, removal: v2.0
-
+    "enhanced_research",
+    "deep_research",
+    "create_unified_research_engine",  # deprecated, removal: v2.0
     # ========================================================================
     # ENUMS AND DATA CLASSES
     # ========================================================================
-    'ResearchDepth',
-    'QueryType',
+    "ResearchDepth",
+    "QueryType",
     # ResearchFinding — REMOVED F187A: COLLISION with legacy/autonomous_orchestrator.py
     # Use ResearchFinding from autonomous_orchestrator facade for compatibility.
-
     # ========================================================================
     # TRIAD ADMISSION SEAM (Sprint F11 - Read-Only Descriptor)
     # ========================================================================
-    'TriadAdmissionDescriptor',
-    'DEEP_RESEARCH_ADMISSION',
-
+    "TriadAdmissionDescriptor",
+    "DEEP_RESEARCH_ADMISSION",
     # ========================================================================
     # LOCAL CORPUS CONSUMER SEAM (Sprint F8/F11 - Read-Only Descriptor)
     # ========================================================================
-    'LocalCorpusConsumerDescriptor',
-    'LOCAL_CORPUS_CONSUMER',
+    "LocalCorpusConsumerDescriptor",
+    "LOCAL_CORPUS_CONSUMER",
 ]
 
 # DEPRECATED F187A: flag for orchestrator residue detection
@@ -3651,6 +3648,7 @@ def _detect_transport_capabilities() -> set[str]:
         from hledac.universal.transport.transport_resolver import (
             TransportResolver,
         )
+
         resolver = TransportResolver()
         # _check_transports populates _tor_class / _nym_class.
         resolver._check_transports()
@@ -3771,9 +3769,7 @@ def discover_deep_sources(
             )
             findings.append(finding)
         except Exception as exc:
-            logger.debug(
-                "discover_deep_sources: skip %s (%s)", src.source_id, exc
-            )
+            logger.debug("discover_deep_sources: skip %s (%s)", src.source_id, exc)
             continue
 
     return findings

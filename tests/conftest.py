@@ -249,9 +249,12 @@ _ensure_r0_artifacts()
 # instead of per-test. Reduces 10+ min suite to ~3-4 min on M1 4-core.
 
 import asyncio  # noqa: E402
+import json  # noqa: E402
 import tempfile  # noqa: E402
 from collections.abc import Generator  # noqa: E402
 from pathlib import Path  # noqa: E402
+from typing import Any  # noqa: E402
+from unittest.mock import MagicMock, mock_open, patch  # noqa: E402
 
 import pytest  # noqa: E402
 
@@ -451,13 +454,169 @@ def assert_memory_leak():
     """
     if assert_no_leak is None:
         return lambda *a, **k: None  # type: ignore[return-value]
-    return assert_no_leak
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SprintScheduler Mock Fixtures (Issue 5.6)
+# Eliminuje 30+ opakujících se MagicMock atributů na test.
+# Úspora: 30–50 MB při 10 testech v souboru.
+# ─────────────────────────────────────────────────────────────────────────────
+def _make_lifecycle_mock(remaining: float = 30.0) -> MagicMock:
+    """Lifecycle mock pro _run_one_cycle testy."""
+    lc = MagicMock()
+    lc.remaining_time = MagicMock(return_value=remaining)
+    lc.recommended_tool_mode = MagicMock(return_value="normal")
+    lc.is_active = MagicMock(return_value=True)
+    return lc
+
+
+def _make_runner_mock() -> MagicMock:
+    """Runner mock s konzistentními default return hodnotami."""
+    runner = MagicMock()
+    runner.is_terminal = MagicMock(return_value=False)
+    runner.tick = MagicMock()
+    runner.post_sleep_gate = MagicMock(return_value=False)
+    runner.windup_guard = MagicMock(return_value=False)
+    runner.last_guard_observation = {}
+    runner.current_phase = "ACTIVE"
+    runner.abort_requested = False
+    runner.abort_reason = None
+    runner.should_enter_windup = MagicMock(return_value=False)
+    return runner
+
+
+def _make_scheduler_base(
+    sprint_duration_s: int = 60,
+) -> tuple[Any, Any, MagicMock]:
+    """Vytvoří (scheduler, result, runner) s přednastavenými mocky."""
+    from hledac.universal.runtime.sprint_scheduler import (
+        SprintScheduler,
+        SprintSchedulerConfig,
+        SprintSchedulerResult,
+    )
+
+    cfg = SprintSchedulerConfig(sprint_duration_s=sprint_duration_s)
+    result = SprintSchedulerResult()
+    scheduler = SprintScheduler.__new__(SprintScheduler)
+    scheduler._config = cfg
+    scheduler._result = result
+    scheduler._layer_manager = MagicMock()
+    scheduler._enrichment_services = None
+    scheduler._governor = None
+    scheduler._bg_tasks: set[asyncio.Task] = set()
+    scheduler._int_counter_layout = MagicMock()
+    scheduler._lc_adapter = MagicMock()
+    scheduler._pivot_ioc_graph = MagicMock()
+    scheduler._pivot_stats = {}
+    scheduler._query = ""
+    scheduler._sprint_depth = 0
+    scheduler._nonfeed_predispatch_done = True
+    scheduler._prewindup_barrier_delayed = False
+    scheduler._cycle_timeout_count = 0
+    scheduler._wall_clock_start = 0.0
+    scheduler._last_cycle_start = None
+    scheduler._cycle_time_ema = 1.0
+    scheduler._effective_max_cycles = 100
+    scheduler._last_sources: list = []
+    scheduler._stop_requested = False
+    scheduler._runner = _make_runner_mock()
+    scheduler._acquisition_plan = MagicMock()
+    scheduler._inject_ioc_graph = MagicMock()
+    return scheduler, result, scheduler._runner
+
+
+@pytest.fixture
+def scheduler_mocks() -> Generator[tuple[Any, Any, MagicMock], None, None]:
+    """Per-test fixture vracející (scheduler, result, runner)."""
+    scheduler, result, runner = _make_scheduler_base()
+    yield scheduler, result, runner
+
+
+@pytest.fixture
+def lifecycle_mock() -> Generator[MagicMock, None, None]:
+    """Standard lifecycle mock pro OODA loop testy."""
+    yield _make_lifecycle_mock(remaining=30.0)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Git Stash Guard Mock Fixtures (Issue 5.8: mock_open pro velké soubory)
+# Hermetizuje testy — žádné disk I/O, izolace od reálného settings.json
+
+_REPO_ROOT_TEST = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
+_SETTINGS_JSON_PRE_BAK = _REPO_ROOT_TEST / ".claude" / "settings.json.pre-stash-fix-2026-06-03.bak"
+
+
+def _read_settings_json() -> str:
+    """Read settings.json at fixture invocation time (not load/collection time).
+
+    Avoids global mutable cache — safe for parallel test execution where each
+    worker may see a different file state at the moment the fixture runs.
+    """
+    return (_REPO_ROOT_TEST / ".claude" / "settings.json").read_text()
+
+
+def _read_settings_bak() -> str:
+    """Read settings backup at fixture invocation time."""
+    return _SETTINGS_JSON_PRE_BAK.read_text()
+
+
+@pytest.fixture
+def mock_settings_json() -> Generator[dict, None, None]:
+    """Hermetický settings.json mock — fresh read per invocation, no global cache."""
+    content = _read_settings_json()
+    data = json.loads(content)
+    m = mock_open(read_data=content)
+    with patch("builtins.open", m):
+        yield data
+
+
+@pytest.fixture
+def mock_settings_bak() -> Generator[str, None, None]:
+    """Hermetický backup settings.json mock."""
+    yield _read_settings_bak()
+
+
+@pytest.fixture(scope="session")
+def event_loop_policy() -> asyncio.AbstractEventLoopPolicy:
+    return asyncio.DefaultEventLoopPolicy()
+
+
+@pytest.fixture(scope="session")
+def event_loop(event_loop_policy: asyncio.AbstractEventLoopPolicy) -> Generator[asyncio.AbstractEventLoop, None, None]:
+    loop = event_loop_policy.new_event_loop()
+    yield loop
+    loop.close()
+
+
+# ---------------------------------------------------------------------------
+# Base Mock Fixtures (Issue 4.5: MagicMock() without spec= overhead)
+# Provides spec-limited mocks — saves ~500 KB session overhead
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def base_sprint_scheduler_mock() -> MagicMock:
+    from hledac.universal.runtime.sprint_scheduler import SprintScheduler
+
+    return MagicMock(spec=SprintScheduler)
+
+
+@pytest.fixture
+def base_resource_governor_mock() -> MagicMock:
+    from hledac.universal.runtime.resource_governor import M1ResourceGovernor
+
+    mock = MagicMock(spec=M1ResourceGovernor)
+    mock.state = "normal"
+    mock.system_used_gib = 0.0
+    mock.system_available_gib = 8.0
+    mock.is_critical = False
+    mock.is_emergency = False
+    mock.is_warn = False
+    mock.high_water = 0.5
+    return mock
 
 
 # ---------------------------------------------------------------------------
 # MLX Memory Cleanup Fixtures (F350M-R: Memory Leak Fixes)
 # ---------------------------------------------------------------------------
-
 _MLX_AVAILABLE: bool = False
 _mlx_core: Any = None
 
@@ -564,11 +723,27 @@ def _asyncio_task_leak_guard(request: pytest.FixtureRequest) -> None:
             except Exception:
                 pass
         # Warn but don't fail — cleanup should happen in fixture teardown
-        import warnings
-
         warnings.warn(
             f"[F350M-R] {leaked} task(s) leaked in {request.node.name}. "
             f"Ensure all coroutines are awaited or explicitly cancelled.",
             RuntimeWarning,
             stacklevel=2,
         )
+
+
+@pytest.fixture(autouse=True)
+def _gc_after_heavy_tests(request: pytest.FixtureRequest) -> None:
+    """
+    Run GC after tests that use MLX/DuckDB/LMDB.
+
+    CRITICAL FIX 5.9: MLX/DuckDB/LMDB allocate via Rust FFI / Metal /
+    mmap; Python's cyclic GC cannot see into those allocations. Calling
+    gc.collect() after the test forces the interpreter to check reachable
+    objects and break reference cycles that hold FFI handles.
+    2-pass collection handles cyclic-ref chains (A→B→C→A).
+    """
+    yield
+    markers = {m.name for m in request.node.iter_markers()}
+    if markers & {"mlx", "duckdb", "lmdb", "heavy"}:
+        gc.collect()
+        gc.collect()  # 2-pass for cyclic refs

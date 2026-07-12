@@ -43,18 +43,17 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.utils.async_helpers import (
-    safe_create_task,
-    safe_gather_ok,
-    safe_gather_fire_and_forget,
-)
 from hledac.universal.core.protocols import (
     safe_get_finding_field,
     safe_get_payload_text,
 )
 from hledac.universal.runtime.sidecar_runner_decorator import (
-    BaseSidecarRunner,
     _store_ingest_and_count,
+)
+from hledac.universal.utils.async_helpers import (
+    safe_create_task,
+    safe_gather_fire_and_forget,
+    safe_gather_ok,
 )
 
 if TYPE_CHECKING:
@@ -67,6 +66,7 @@ def _safe_payload_json(obj: Any) -> str:
 
     try:
         import orjson
+
         with silenced(Exception, name="orjson_dumps"):
             return orjson.dumps(obj).decode("utf-8")
     except Exception:
@@ -89,19 +89,23 @@ MAX_SIDECAR_RESULT_RECORDS: int = 32
 SIDECAR_TIMEOUT_S: float = 20.0
 SIDECAR_DEFAULT_ESTIMATE_MB: int = 50
 
-_HEAVY_SIDECARS: frozenset[str] = frozenset({
-    "identity_stitching",
-    "embedding",
-    "sprint_diff",
-    "banner_grab",
-    "ipv6_recon",
-    "pattern_mining",
-})
+_HEAVY_SIDECARS: frozenset[str] = frozenset(
+    {
+        "identity_stitching",
+        "embedding",
+        "sprint_diff",
+        "banner_grab",
+        "ipv6_recon",
+        "pattern_mining",
+    }
+)
 
-_ACTIVE_NETWORK_SIDECARS: frozenset[str] = frozenset({
-    "network_intel",
-    "banner_grab",
-})
+_ACTIVE_NETWORK_SIDECARS: frozenset[str] = frozenset(
+    {
+        "network_intel",
+        "banner_grab",
+    }
+)
 
 # F250C: Network + risk classification maps — single source of truth for dispatcher.
 # Replace scattered if/elif chains with O(1) dict lookups.
@@ -188,9 +192,11 @@ def _sidecar_profile_allows(sidecar_name: str, profile: str | None) -> tuple[boo
 
 # ── Dataclasses ───────────────────────────────────────────────────────────────
 
+
 @dataclass
 class SidecarBatch:
     """Batch of accepted findings submitted to the sidecar bus."""
+
     findings: list
     query: str
     results: list | None = None
@@ -237,13 +243,20 @@ SidecarRunner = Callable[[list, "DuckDBShadowStore", str], Any]
 
 SIDECAR_STAGES: list[list[str]] = [
     ["leak_sentinel", "passive_fingerprint", "evidence_triage", "temporal_archaeology"],
-    ["exposure_correlator", "identity_stitching", "sprint_diff", "rir_correlator",
-     "social_identity_surface", "wayback_diff"],
+    [
+        "exposure_correlator",
+        "identity_stitching",
+        "sprint_diff",
+        "rir_correlator",
+        "social_identity_surface",
+        "wayback_diff",
+    ],
     ["kill_chain_tagging", "embedding"],
 ]
 
 
 # ── Stage 1 Runners ───────────────────────────────────────────────────────────
+
 
 async def _evidence_triage_runner(
     findings: list,
@@ -267,6 +280,7 @@ async def _evidence_triage_runner(
 
 
 # ── Stage 2 Runners ───────────────────────────────────────────────────────────
+
 
 async def _identity_stitching_runner(
     findings: list,
@@ -353,15 +367,17 @@ async def _sprint_diff_runner(
     current_findings: list[dict] = []
     for f in findings:
         try:
-            current_findings.append({
-                "finding_id": safe_get_finding_field(f, "finding_id", "") or "",
-                "source_type": safe_get_finding_field(f, "source_type", "") or "",
-                "ioc_type": safe_get_finding_field(f, "ioc_type", "") or "",
-                "ioc_value": safe_get_finding_field(f, "ioc_value", "") or "",
-                "confidence": safe_get_finding_field(f, "confidence", 0.5) or 0.5,
-                "ts": safe_get_finding_field(f, "ts", 0.0) or 0.0,
-                "payload_text": safe_get_payload_text(f) or "",
-            })
+            current_findings.append(
+                {
+                    "finding_id": safe_get_finding_field(f, "finding_id", "") or "",
+                    "source_type": safe_get_finding_field(f, "source_type", "") or "",
+                    "ioc_type": safe_get_finding_field(f, "ioc_type", "") or "",
+                    "ioc_value": safe_get_finding_field(f, "ioc_value", "") or "",
+                    "confidence": safe_get_finding_field(f, "confidence", 0.5) or 0.5,
+                    "ts": safe_get_finding_field(f, "ts", 0.0) or 0.0,
+                    "payload_text": safe_get_payload_text(f) or "",
+                }
+            )
         except Exception:
             continue
 
@@ -376,8 +392,18 @@ async def _sprint_diff_runner(
         )
 
         class _DiffFinding:
-            __slots__ = ('finding_id', 'source_type', 'query', 'target_id',
-                         'ioc_type', 'ioc_value', 'confidence', 'ts', 'payload_text')
+            __slots__ = (
+                "finding_id",
+                "source_type",
+                "query",
+                "target_id",
+                "ioc_type",
+                "ioc_value",
+                "confidence",
+                "ts",
+                "payload_text",
+            )
+
             def __init__(self, **kw):
                 for k, v in kw.items():
                     setattr(self, k, v)
@@ -388,33 +414,37 @@ async def _sprint_diff_runner(
         SourceType = _SourceType
         for nf in diff_result.new_findings[:50]:
             try:
-                derived_findings.append(_DiffFinding(
-                    finding_id=f"diff-new-{nf.get('finding_id', 'unknown')[:32]}",
-                    source_type=SourceType.SPRINT_DIFF if SourceType else "sprint_diff",
-                    query=query,
-                    target_id=target_id,
-                    ioc_type=nf.get("ioc_type") or "unknown",
-                    ioc_value=nf.get("ioc_value") or "unknown",
-                    confidence=nf.get("confidence", 0.5),
-                    ts=ts_now,
-                    payload_text=_safe_payload_json({"diff_action": "new", **nf}),
-                ))
+                derived_findings.append(
+                    _DiffFinding(
+                        finding_id=f"diff-new-{nf.get('finding_id', 'unknown')[:32]}",
+                        source_type=SourceType.SPRINT_DIFF if SourceType else "sprint_diff",
+                        query=query,
+                        target_id=target_id,
+                        ioc_type=nf.get("ioc_type") or "unknown",
+                        ioc_value=nf.get("ioc_value") or "unknown",
+                        confidence=nf.get("confidence", 0.5),
+                        ts=ts_now,
+                        payload_text=_safe_payload_json({"diff_action": "new", **nf}),
+                    )
+                )
             except Exception:
                 continue
 
         for df in diff_result.disappeared_findings[:50]:
             try:
-                derived_findings.append(_DiffFinding(
-                    finding_id=f"diff-gone-{df.get('finding_id', 'unknown')[:32]}",
-                    source_type=SourceType.SPRINT_DIFF if SourceType else "sprint_diff",
-                    query=query,
-                    target_id=target_id,
-                    ioc_type=df.get("ioc_type") or "unknown",
-                    ioc_value=df.get("ioc_value") or "unknown",
-                    confidence=df.get("confidence", 0.5),
-                    ts=ts_now,
-                    payload_text=_safe_payload_json({"diff_action": "disappeared", **df}),
-                ))
+                derived_findings.append(
+                    _DiffFinding(
+                        finding_id=f"diff-gone-{df.get('finding_id', 'unknown')[:32]}",
+                        source_type=SourceType.SPRINT_DIFF if SourceType else "sprint_diff",
+                        query=query,
+                        target_id=target_id,
+                        ioc_type=df.get("ioc_type") or "unknown",
+                        ioc_value=df.get("ioc_value") or "unknown",
+                        confidence=df.get("confidence", 0.5),
+                        ts=ts_now,
+                        payload_text=_safe_payload_json({"diff_action": "disappeared", **df}),
+                    )
+                )
             except Exception:
                 continue
 
@@ -491,6 +521,7 @@ async def _social_identity_surface_runner(
 
 # ── Stage 3 Runners ───────────────────────────────────────────────────────────
 
+
 async def _kill_chain_tagging_runner(
     findings: list,
     store: DuckDBShadowStore,
@@ -521,9 +552,17 @@ async def _kill_chain_tagging_runner(
 
         class _KCTFinding:
             __slots__ = (
-                "finding_id", "source_type", "query", "target_id",
-                "ioc_type", "ioc_value", "confidence", "ts", "payload_text",
+                "finding_id",
+                "source_type",
+                "query",
+                "target_id",
+                "ioc_type",
+                "ioc_value",
+                "confidence",
+                "ts",
+                "payload_text",
             )
+
             def __init__(self, **kw: Any) -> None:
                 for k, v in kw.items():
                     setattr(self, k, v)
@@ -535,17 +574,19 @@ async def _kill_chain_tagging_runner(
         for fid, tags_list in tagged_results.items():
             for tag_dict in tags_list:
                 try:
-                    derived_findings.append(_KCTFinding(
-                        finding_id=f"kct-{fid[:24]}-{tag_dict.get('technique_id', 'unknown')[:16]}",
-                        source_type=SourceType.KILLCHAIN_TAG if SourceType else "killchain_tag",
-                        query=query,
-                        target_id="",
-                        ioc_type="kill_chain_tag",
-                        ioc_value=tag_dict.get("technique_id", "unknown"),
-                        confidence=tag_dict.get("confidence", 0.5),
-                        ts=ts_now,
-                        payload_text=_safe_payload_json(tag_dict),
-                    ))
+                    derived_findings.append(
+                        _KCTFinding(
+                            finding_id=f"kct-{fid[:24]}-{tag_dict.get('technique_id', 'unknown')[:16]}",
+                            source_type=SourceType.KILLCHAIN_TAG if SourceType else "killchain_tag",
+                            query=query,
+                            target_id="",
+                            ioc_type="kill_chain_tag",
+                            ioc_value=tag_dict.get("technique_id", "unknown"),
+                            confidence=tag_dict.get("confidence", 0.5),
+                            ts=ts_now,
+                            payload_text=_safe_payload_json(tag_dict),
+                        )
+                    )
                 except Exception:
                     continue
 
@@ -584,21 +625,22 @@ async def _embedding_runner(
         if not embeddable:
             _sidecarlogger.debug(
                 "[embedding] no embeddable findings: total=%d embeddable=%d",
-                len(findings), 0,
+                len(findings),
+                0,
             )
             return 0
 
         async for ids, embeddings in embedder.embed_findings(embeddable, batch_size=8):
             if embedder.aborted:
-                _sidecarlogger.warning(
-                    "[embedding] aborted mid-stream due to memory pressure"
-                )
+                _sidecarlogger.warning("[embedding] aborted mid-stream due to memory pressure")
                 break
             if ids and embeddings is not None and embeddings.shape[0] > 0:
                 try:
                     from hledac.universal.knowledge.ann_index import get_ann_index_async
+
                     ann = await get_ann_index_async()
                     import hashlib
+
                     for idx, finding_id in enumerate(ids):
                         emb = embeddings[idx]
                         if emb.shape[-1] == 256:
@@ -610,6 +652,7 @@ async def _embedding_runner(
 
         try:
             from hledac.universal.knowledge.ann_index import get_ann_index_async
+
             ann = await get_ann_index_async()
             ann.prewarm(top_k=128)
         except Exception:  # noqa: BLE001
@@ -625,6 +668,7 @@ async def _embedding_runner(
 
 # ── Active-network runners ─────────────────────────────────────────────────────
 
+
 async def _banner_grab_runner(
     findings: list,
     store: DuckDBShadowStore,
@@ -635,6 +679,7 @@ async def _banner_grab_runner(
         return None
     try:
         from hledac.universal.network import BANNER_GRABBER_AVAILABLE
+
         if not BANNER_GRABBER_AVAILABLE:
             return None
         from hledac.universal.network.banner_grabber import BannerGrabberAdapter
@@ -653,9 +698,14 @@ async def _banner_grab_runner(
             if not targets:
                 return None
             derived_findings: list = []
-            for target in targets[:20]:
-                findings_batch = await adapter.query(target)
-                derived_findings.extend(findings_batch)
+
+            async def _query_one(target: str) -> list:  # type: ignore[type-arg]
+                return await adapter.query(target)
+
+            batches = await bounded_parallel_map(targets[:20], _query_one, concurrency=5, ctx="banner_grab")
+            for batch in batches:
+                if batch is not None:
+                    derived_findings.extend(batch)
             return await _store_ingest_and_count(store, derived_findings)
         finally:
             await adapter.close()
@@ -673,6 +723,7 @@ async def _ipv6_recon_runner(
         return None
     try:
         from hledac.universal.network import IPV6_RECON_AVAILABLE
+
         if not IPV6_RECON_AVAILABLE:
             return None
         from hledac.universal.network.ipv6_recon import IPv6ReconAdapter
@@ -691,9 +742,14 @@ async def _ipv6_recon_runner(
             if not targets:
                 return None
             derived_findings: list = []
-            for target in targets[:20]:
-                findings_batch = await adapter.query(target)
-                derived_findings.extend(findings_batch)
+
+            async def _query_one(target: str) -> list:  # type: ignore[type-arg]
+                return await adapter.query(target)
+
+            batches = await bounded_parallel_map(targets[:20], _query_one, concurrency=5, ctx="ipv6_recon")
+            for batch in batches:
+                if batch is not None:
+                    derived_findings.extend(batch)
             return await _store_ingest_and_count(store, derived_findings)
         finally:
             await adapter.close()
@@ -735,11 +791,17 @@ async def _network_intel_runner(
         adapter = NetworkReconnaissance()
         try:
             derived_findings: list = []
-            for target in targets:
+
+            async def _recon_one(target: str) -> list:  # type: ignore[type-arg]
                 results = await adapter.recon_target(target)
                 if results:
-                    findings_batch = network_recon_result_to_findings(target, results)
-                    derived_findings.extend(findings_batch)
+                    return network_recon_result_to_findings(target, results)
+                return []
+
+            batches = await bounded_parallel_map(targets, _recon_one, concurrency=3, ctx="network_intel")
+            for batch in batches:
+                if batch is not None:
+                    derived_findings.extend(batch)
             return await _store_ingest_and_count(store, derived_findings)
         finally:
             await adapter.close()
@@ -781,6 +843,7 @@ from hledac.universal.runtime.sidecar_runner_decorator import (  # noqa: E402
     sidecar_runner,
     sidecar_runner_await,
 )
+from hledac.universal.utils.async_helpers import bounded_parallel_map
 
 _ExposureCorrelatorRunner = sidecar_runner(
     name="exposure_correlator",
@@ -845,6 +908,7 @@ DEFAULT_SIDECAR_RUNNERS: list[tuple[str, SidecarRunner]] = [
 
 
 # ── FindingSidecarBus ──────────────────────────────────────────────────────────
+
 
 class FindingSidecarBus:
     """
@@ -991,6 +1055,7 @@ class FindingSidecarBus:
             except asyncio.CancelledError:
                 raise
             except BaseException as exc:
+
                 def _is_cancelled_tree(e: BaseException) -> bool:
                     if isinstance(e, asyncio.CancelledError):
                         return True
@@ -1016,10 +1081,12 @@ class FindingSidecarBus:
             stage_tasks: list[asyncio.Task[SidecarRunResult]] = []
             for name in stage_names:
                 if name in self._runners:
-                    stage_tasks.append(safe_create_task(
-                        _run_one(name, self._runners[name]),
-                        name=f"sidecar_bus:stage_runner:{name}",
-                    ))
+                    stage_tasks.append(
+                        safe_create_task(
+                            _run_one(name, self._runners[name]),
+                            name=f"sidecar_bus:stage_runner:{name}",
+                        )
+                    )
                     runners_executed.add(name)
 
             if not stage_tasks:
@@ -1032,12 +1099,14 @@ class FindingSidecarBus:
                     if isinstance(item, SidecarRunResult):
                         all_results.append(item)
                     elif isinstance(item, BaseException):
+
                         def _is_cancelled_tree(e: BaseException) -> bool:
                             if isinstance(e, asyncio.CancelledError):
                                 return True
                             if isinstance(e, ExceptionGroup):
                                 return any(_is_cancelled_tree(s) for s in e.exceptions)
                             return False
+
                         if _is_cancelled_tree(item):
                             raise item
             except asyncio.CancelledError:
@@ -1050,10 +1119,12 @@ class FindingSidecarBus:
         remaining_tasks: list[asyncio.Task[SidecarRunResult]] = []
         for name, runner in self._runners.items():
             if name not in runners_executed:
-                remaining_tasks.append(safe_create_task(
-                    _run_one(name, runner),
-                    name=f"sidecar_bus:remaining_runner:{name}",
-                ))
+                remaining_tasks.append(
+                    safe_create_task(
+                        _run_one(name, runner),
+                        name=f"sidecar_bus:remaining_runner:{name}",
+                    )
+                )
                 runners_executed.add(name)
 
         if remaining_tasks:
