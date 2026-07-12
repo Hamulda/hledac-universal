@@ -59,7 +59,7 @@ class OperationStatus(Enum):
     FAILED = 'failed'
     CANCELLED = 'cancelled'
 
-@dataclass(True)
+@dataclass(slots=True)
 class IntelligenceTarget:
     """Unified intelligence target configuration."""
     target_id: str

@@ -31,7 +31,7 @@ CRAWL_TIMEOUT_S: float = 30.0
 MAX_CONCURRENT: int = 4
 SEED_SERVERS: list[tuple[str, int]] = [('gopher.floodgap.com', 70), ('gopher.quux.org', 70)]
 
-@dataclass(True)
+@dataclass(slots=True)
 class GopherCrawlResult:
     """Result from a single gopher crawl operation."""
     host: str

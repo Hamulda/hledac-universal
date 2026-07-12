@@ -31,7 +31,7 @@ REPO_ROOT = Path(__file__).parent.parent
 PROBE_DIR = REPO_ROOT / 'tools' / 'probe_f214zstd2_transient_artifacts'
 PROBE_DIR.mkdir(parents=True, exist_ok=True)
 
-@dataclass(True)
+@dataclass(slots=True)
 class CompressionResult:
     """Result of one compression configuration."""
     name: str
@@ -45,7 +45,7 @@ class CompressionResult:
     rss_peak_kb: int
     verdict: str
 
-@dataclass(True)
+@dataclass(slots=True)
 class CandidateReport:
     """Full report for one transient artifact candidate."""
     file_line: str

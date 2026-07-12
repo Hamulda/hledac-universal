@@ -40,7 +40,7 @@ BM25_K = 60
 _WAL_SUFFIX = '.wal'
 _WAL_MAX_SIZE_MB = 64
 
-@dataclass(True)
+@dataclass(slots=True)
 class FTSDocument:
     """Jeden dokument k indexaci."""
     doc_id: str
@@ -51,7 +51,7 @@ class FTSDocument:
     fetched_at: float = field(default_factory=time.time)
     metadata_json: str = '{}'
 
-@dataclass(True)
+@dataclass(slots=True)
 class FTSSearchResult:
     """Jeden vysledek FTS dotazu."""
     doc_id: str

@@ -13,7 +13,7 @@ import msgspec
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal')
 from hledac.universal.utils.ranking import RankedResult, ReciprocalRankFusion, RRFConfig
 
-@dataclass(True)
+@dataclass(slots=True)
 class BenchmarkResult:
     size: int
     time_seconds: float

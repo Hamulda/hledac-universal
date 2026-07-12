@@ -30,7 +30,7 @@ _MAX_REQUESTS_PER_SPRINT = 3
 _SOURCE_TYPE = 'commoncrawl_cdx'
 _WAYBACK_BASE_URL = 'https://web.archive.org'
 
-@dataclass(True)
+@dataclass(slots=True)
 class CCSearchResult:
     """
     Single row from CommonCrawl CDX.

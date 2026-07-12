@@ -44,7 +44,7 @@ TIMEOUT_PER_REQUEST: float = 60.0
 CDX_API = 'https://web.archive.org/cdx/search/cdx'
 WAYBACK_BASE_URL = 'https://web.archive.org'
 
-@dataclass(True)
+@dataclass(slots=True)
 class CDXSearchResult:
     """
     Single row from CDX deep search.

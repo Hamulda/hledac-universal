@@ -62,7 +62,7 @@ class RiskLevel(Enum):
     HIGH = 'high'
     CRITICAL = 'critical'
 
-@dataclass(True)
+@dataclass(slots=True)
 class ExposedService:
     """Represents a discovered exposed service."""
     service_type: str

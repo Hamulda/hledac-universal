@@ -219,7 +219,7 @@ class Relationship:
             return False
         return self.source == other.source and self.target == other.target and (self.type == other.type)
 
-@dataclass(True)
+@dataclass(slots=True)
 class ConnectionPath:
     """Represents a path between two entities through the graph."""
     entities: list[str]

@@ -83,7 +83,7 @@ def _normalize_ioc_value(value: str, ioc_type: str) -> str:
         return value.lower()
     return value
 
-@dataclass(True)
+@dataclass(slots=True)
 class _IocEntryPython:
     """Python fallback entry matching ioc_dedup.rs::IocEntry."""
     normalized_value: str

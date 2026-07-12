@@ -41,7 +41,7 @@ from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
 
-@dataclass(True)
+@dataclass(slots=True)
 class CandidateResult:
     name: str
     module_path: str

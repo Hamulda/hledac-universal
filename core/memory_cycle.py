@@ -51,7 +51,7 @@ _GC_GEN2_REFREEZE_THRESHOLD: int = 3
 _PRESSURE_RELIEF_INTERVAL_S: float = 300.0
 _PRESSURE_RELIEF_MIN_INTERVAL_S: float = 60.0
 
-@dataclass(True)
+@dataclass(slots=True)
 class MemoryCycleStats:
     """Snapshot of GC + pressure-relief state — for telemetry / debug."""
     gc_freeze_supported: bool

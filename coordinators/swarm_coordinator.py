@@ -41,7 +41,7 @@ class SwarmState(Enum):
     DIVERSE = 'diverse'
     COORDINATED = 'coordinated'
 
-@dataclass(True)
+@dataclass(slots=True)
 class SwarmMetrics:
     """Metrics for swarm behavior analysis."""
     diversity: float = 0.0

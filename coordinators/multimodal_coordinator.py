@@ -49,7 +49,7 @@ class ModalityType(Enum):
     MOLECULAR = 'molecular'
     MIXED = 'mixed'
 
-@dataclass(True)
+@dataclass(slots=True)
 class ModalityInput:
     """Input with modality information."""
     content: Any

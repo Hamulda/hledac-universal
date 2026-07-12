@@ -31,7 +31,7 @@ def _get_email() -> str:
     """Get email for polite pool."""
     return os.environ.get('HLEDAC_CONTACT_EMAIL', 'research@hledac.ai')
 
-@dataclass(True)
+@dataclass(slots=True)
 class OAPaper:
     """Open Access paper info from Unpaywall."""
     doi: str
@@ -47,7 +47,7 @@ class OAPaper:
     publisher: str | None
     repository: str | None
 
-@dataclass(True)
+@dataclass(slots=True)
 class UnpaywallResult(NamedTuple):
     """Result of Unpaywall DOI lookup."""
     paper: OAPaper | None

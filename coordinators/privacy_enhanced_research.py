@@ -28,7 +28,7 @@ class DataRetention(Enum):
     MEDIUM = 'medium'
     LONG = 'long'
 
-@dataclass(True)
+@dataclass(slots=True)
 class PrivacyConfig:
     """Configuration for privacy-enhanced research."""
     level: PrivacyLevel = PrivacyLevel.ENHANCED

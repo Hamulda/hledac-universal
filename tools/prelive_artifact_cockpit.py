@@ -27,7 +27,7 @@ from enum import StrEnum
 from pathlib import Path
 _SPRINT_ID_RE = re.compile('^F(\\d{3,})[A-Z]?(?:_[A-Z_]+)?$')
 
-@dataclass(True)
+@dataclass(slots=True)
 class SprintIdCollision:
     sprint_id: str
     aliases: list[str] = field(default_factory=list)

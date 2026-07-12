@@ -770,7 +770,7 @@ allowed-unresolved-imports = [
 # Consolidated from pytest.ini
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
+pythonpath = [".", "tests"]
 
 python_files = [
     "test_*.py",

@@ -27,7 +27,7 @@ import msgspec
 __all__ = ['apple_fm_probe', 'is_afm_available', 'AFMProbeResult']
 _AFM_MIN_MACOS_VERSION = (26, 0)
 
-@dataclass(True)
+@dataclass(slots=True)
 class AFMProbeResult:
     """Výsledek AFM probe."""
     available: bool

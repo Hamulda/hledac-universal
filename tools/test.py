@@ -37,7 +37,7 @@ class TestResult(NamedTuple):
     passed: bool
     error: str = ''
 
-@dataclass(True)
+@dataclass(slots=True)
 class BaselineResult:
     profile: str
     commands: list[dict]

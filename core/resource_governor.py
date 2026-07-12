@@ -18,7 +18,9 @@ AUTHORITY BOUNDARY:
 Sprint 8AB: Unified UMA accountant surface (WARN/CRITICAL/EMERGENCY + I/O-only mode).
 Threshold driver: system_used_gib (total - available), NOT process rss_gib.
 """
+
 from __future__ import annotations
+
 import asyncio
 import contextlib
 import inspect
@@ -28,10 +30,13 @@ import time
 from collections.abc import Callable
 from enum import Enum, IntEnum
 from typing import Any, TypeVar
-_KT = TypeVar('_KT')
-_VT = TypeVar('_VT')
+
+_KT = TypeVar("_KT")
+_VT = TypeVar("_VT")
 import msgspec
+
 from hledac.universal.utils.async_helpers import safe_create_task, stop_task
+
 if True:
     from enum import StrEnum
 
@@ -48,24 +53,30 @@ if True:
         Values match string constants: UMA_STATE_OK, UMA_STATE_WARN, etc.
         Keep using string literals for serialization (DuckDB, JSON, LMDB).
         """
-        OK = 'ok'
-        SOFT_WARN = 'soft_warn'
-        WARN = 'warn'
-        CRITICAL = 'critical'
-        EMERGENCY = 'emergency'
+
+        OK = "ok"
+        SOFT_WARN = "soft_warn"
+        WARN = "warn"
+        CRITICAL = "critical"
+        EMERGENCY = "emergency"
 else:
     UMAState = str
+
 
 class LockOrder(IntEnum):
     MPC = 1
     IO_LATCH = 2
     TELEMETRY = 3
     DECISION = 4
+
+
 _LOCK_REGISTRY: dict[LockOrder, threading.Lock | _threading.RLock] = {}
+
 
 def _register_lock(order: LockOrder, lock: threading.Lock | _threading.RLock) -> None:
     """Register a lock in the ordering registry."""
     _LOCK_REGISTRY[order] = lock
+
 
 def acquire_in_order(*orders: LockOrder) -> list[contextlib.AbstractContextManager]:
     """
@@ -82,6 +93,7 @@ def acquire_in_order(*orders: LockOrder) -> list[contextlib.AbstractContextManag
     """
     sorted_orders = sorted(set(orders), key=lambda x: x.value)
     return [contextlib.nullcontext(_LOCK_REGISTRY[o]) for o in sorted_orders]
+
 
 class ConcurrencyPreset(msgspec.Struct, frozen=True):
     """
@@ -100,6 +112,7 @@ class ConcurrencyPreset(msgspec.Struct, frozen=True):
         soft_warn:  5 workers, 10 fetch, block_model_load=False — approaching limit
         ok:         5 workers, 20 fetch, block_model_load=False — normal operation
     """
+
     max_workers: int
     fetch_limit: int
     block_model_load: bool
@@ -115,20 +128,55 @@ class ConcurrencyPreset(msgspec.Struct, frozen=True):
         ordering. This is the canonical pattern for range-based matches.
         """
         match state:
-            case 'emergency':
-                return cls(max_workers=0, fetch_limit=1, block_model_load=True, cache_ttl_seconds=0.1, aimd_decrease_factor=0.0)
-            case 'critical':
-                return cls(max_workers=1, fetch_limit=2, block_model_load=True, cache_ttl_seconds=0.25, aimd_decrease_factor=0.25)
-            case 'warn':
-                return cls(max_workers=3, fetch_limit=5, block_model_load=False, cache_ttl_seconds=1.0, aimd_decrease_factor=0.5)
-            case 'soft_warn':
-                return cls(max_workers=5, fetch_limit=10, block_model_load=False, cache_ttl_seconds=2.0, aimd_decrease_factor=0.75)
-            case 'ok':
-                return cls(max_workers=5, fetch_limit=20, block_model_load=False, cache_ttl_seconds=5.0, aimd_decrease_factor=1.0)
+            case "emergency":
+                return cls(
+                    max_workers=0, fetch_limit=1, block_model_load=True, cache_ttl_seconds=0.1, aimd_decrease_factor=0.0
+                )
+            case "critical":
+                return cls(
+                    max_workers=1,
+                    fetch_limit=2,
+                    block_model_load=True,
+                    cache_ttl_seconds=0.25,
+                    aimd_decrease_factor=0.25,
+                )
+            case "warn":
+                return cls(
+                    max_workers=3,
+                    fetch_limit=5,
+                    block_model_load=False,
+                    cache_ttl_seconds=1.0,
+                    aimd_decrease_factor=0.5,
+                )
+            case "soft_warn":
+                return cls(
+                    max_workers=5,
+                    fetch_limit=10,
+                    block_model_load=False,
+                    cache_ttl_seconds=2.0,
+                    aimd_decrease_factor=0.75,
+                )
+            case "ok":
+                return cls(
+                    max_workers=5,
+                    fetch_limit=20,
+                    block_model_load=False,
+                    cache_ttl_seconds=5.0,
+                    aimd_decrease_factor=1.0,
+                )
             case _:
-                return cls(max_workers=5, fetch_limit=20, block_model_load=False, cache_ttl_seconds=5.0, aimd_decrease_factor=1.0)
+                return cls(
+                    max_workers=5,
+                    fetch_limit=20,
+                    block_model_load=False,
+                    cache_ttl_seconds=5.0,
+                    aimd_decrease_factor=1.0,
+                )
+
+
 try:
     import psutil
+
     _PSUTIL_AVAILABLE = True
 except ImportError:
     psutil = None
@@ -136,18 +184,25 @@ except ImportError:
 _mx = None
 _process_cache: Any = None
 
+
 def _get_cached_process() -> Any:
     """Lazy psutil.Process() accessor. Raises RuntimeError if psutil unavailable."""
     global _process_cache
     if _process_cache is None:
         if psutil is None:
-            raise RuntimeError('psutil not available in this environment')
+            raise RuntimeError("psutil not available in this environment")
         _process_cache = psutil.Process()
     return _process_cache
+
+
 import contextvars as _contextvars
 import threading as _threading
 import time as _time_module
-_thread_local_locks: _contextvars.ContextVar[dict[str, _threading.Lock] | None] = _contextvars.ContextVar('_thread_local_locks', default=None)
+
+_thread_local_locks: _contextvars.ContextVar[dict[str, _threading.Lock] | None] = _contextvars.ContextVar(
+    "_thread_local_locks", default=None
+)
+
 
 def _get_key_lock(key: str) -> _threading.Lock:
     """Return per-key lock, lazily created in thread-local dict.
@@ -172,15 +227,19 @@ def _get_key_lock(key: str) -> _threading.Lock:
         lock = _threading.Lock()
         locks[key] = lock
     return lock
+
+
 _MAX_PSUTIL_CACHE_SIZE: int = 32
 _psutil_cache: dict[str, tuple[Any, float]] = {}
 _psutil_meta_lock: _threading.Lock = _threading.Lock()
 _PSUTIL_CACHE_TTL_S: float = 2.0
 
+
 def reset_psutil_cache() -> None:
     """Reset psutil TTL cache. For testing only — clears all cached readings."""
     with _psutil_meta_lock:
         _psutil_cache.clear()
+
 
 def _read_virtual_memory_sync() -> Any:
     """Blocking psutil.virtual_memory(). MUST run in a thread, not the event loop."""
@@ -188,11 +247,13 @@ def _read_virtual_memory_sync() -> Any:
         return None
     return psutil.virtual_memory()
 
+
 def _read_swap_memory_sync() -> Any:
     """Blocking psutil.swap_memory(). MUST run in a thread, not the event loop."""
     if psutil is None:
         return None
     return psutil.swap_memory()
+
 
 def _read_memory_pressure_sync() -> dict[str, Any]:
     """
@@ -210,24 +271,25 @@ def _read_memory_pressure_sync() -> dict[str, Any]:
         dict with keys: status (str), free_pct (int), compressor_pages (int|None)
     """
     if psutil is None:
-        return {'status': 'UNKNOWN', 'free_pct': 0, 'compressor_pages': None}
+        return {"status": "UNKNOWN", "free_pct": 0, "compressor_pages": None}
     try:
         vm = psutil.virtual_memory()
-        total = getattr(vm, 'total', 0)
-        used = getattr(vm, 'used', 0)
+        total = getattr(vm, "total", 0)
+        used = getattr(vm, "used", 0)
         if total > 0:
             free_pct = int((total - used) / total * 100)
         else:
             free_pct = 100
         if free_pct < 15:
-            status = 'RED'
+            status = "RED"
         elif free_pct < 30:
-            status = 'YELLOW'
+            status = "YELLOW"
         else:
-            status = 'GREEN'
-        return {'status': status, 'free_pct': free_pct, 'compressor_pages': None}
+            status = "GREEN"
+        return {"status": status, "free_pct": free_pct, "compressor_pages": None}
     except Exception:
-        return {'status': 'UNKNOWN', 'free_pct': 0, 'compressor_pages': None}
+        return {"status": "UNKNOWN", "free_pct": 0, "compressor_pages": None}
+
 
 def _get_cached_psutil(key: str, reader_fn: Callable[[], Any]) -> Any:
     """
@@ -275,6 +337,7 @@ def _get_cached_psutil(key: str, reader_fn: Callable[[], Any]) -> Any:
         _psutil_cache[key] = (result, _time_module.monotonic())
     return result
 
+
 async def _get_cached_psutil_async(key: str, reader_fn: Callable[[], Any]) -> Any:
     """
     Async wrapper: offloads blocking reader_fn to a thread, caches result.
@@ -282,6 +345,7 @@ async def _get_cached_psutil_async(key: str, reader_fn: Callable[[], Any]) -> An
     """
     result = await asyncio.to_thread(_get_cached_psutil, key, reader_fn)
     return result
+
 
 def _refresh_psutil_cache_sync() -> None:
     """
@@ -296,28 +360,41 @@ def _refresh_psutil_cache_sync() -> None:
         return
     now = _time_module.monotonic()
     with _psutil_meta_lock:
-        _psutil_cache['virtual_memory'] = (psutil.virtual_memory(), now)
-        _psutil_cache['swap_memory'] = (psutil.swap_memory(), now)
-        _psutil_cache['memory_pressure'] = (_read_memory_pressure_sync(), now)
+        _psutil_cache["virtual_memory"] = (psutil.virtual_memory(), now)
+        _psutil_cache["swap_memory"] = (psutil.swap_memory(), now)
+        _psutil_cache["memory_pressure"] = (_read_memory_pressure_sync(), now)
+
 
 def _get_mx():
     global _mx
     if _mx is None:
         import mlx.core as _mx_module
+
         _mx = _mx_module
     return _mx
+
+
 logger = logging.getLogger(__name__)
-_RATIO_TABLE = {(0, 10): (0.85, 0.875, 0.9375, 0.975), (10, 18): (0.8, 0.85, 0.9, 0.95), (18, 32): (0.75, 0.8, 0.87, 0.92), (32, 128): (0.7, 0.75, 0.85, 0.9)}
+_RATIO_TABLE = {
+    (0, 10): (0.85, 0.875, 0.9375, 0.975),
+    (10, 18): (0.8, 0.85, 0.9, 0.95),
+    (18, 32): (0.75, 0.8, 0.87, 0.92),
+    (32, 128): (0.7, 0.75, 0.85, 0.9),
+}
+
 
 def _detect_total_memory_gib() -> float:
     """Detect real system RAM in GiB. Floor 4 GiB, ceil 128 GiB, fallback 8 GiB."""
     try:
         import psutil as _ps
+
         mem = _ps.virtual_memory()
-        detected_gib = mem.total / 1024 ** 3
+        detected_gib = mem.total / 1024**3
         return max(4.0, min(128.0, detected_gib))
     except Exception:
         return 8.0
+
+
 _DETECTED_TOTAL_GIB: float = _detect_total_memory_gib()
 _SOC_RATIOS: tuple[float, float, float, float] = (0.85, 0.875, 0.9375, 0.975)
 for (_min, _max), _ratios in _RATIO_TABLE.items():
@@ -326,25 +403,30 @@ for (_min, _max), _ratios in _RATIO_TABLE.items():
         break
 _SOFT_WARN_RATIO, _WARN_RATIO, _CRITICAL_RATIO, _EMERGENCY_RATIO = _SOC_RATIOS
 
+
 def _adaptive_threshold(ratio: float) -> float:
     """Compute GiB threshold from ratio: detected_ram_gib * ratio, rounded to 2 dp."""
     return round(_DETECTED_TOTAL_GIB * ratio, 2)
+
+
 from core.env_config import ENV as _ENV
-_RG_USE_RATIOS: bool = _ENV.get_bool('HLEDAC_RG_USE_RATIOS', default=True)
+
+_RG_USE_RATIOS: bool = _ENV.get_bool("HLEDAC_RG_USE_RATIOS", default=True)
 try:
     from hledac.universal.config import _rg_float
+
     if _RG_USE_RATIOS:
         _THRESHOLD_SOFT_WARN_GIB: float = _adaptive_threshold(_SOFT_WARN_RATIO)
         _THRESHOLD_WARN_GIB: float = _adaptive_threshold(_WARN_RATIO)
         _THRESHOLD_CRITICAL_GIB: float = _adaptive_threshold(_CRITICAL_RATIO)
         _THRESHOLD_EMERGENCY_GIB: float = _adaptive_threshold(_EMERGENCY_RATIO)
     else:
-        _THRESHOLD_SOFT_WARN_GIB = _rg_float('THRESHOLD_SOFT_WARN_GIB')
-        _THRESHOLD_WARN_GIB = _rg_float('THRESHOLD_WARN_GIB')
-        _THRESHOLD_CRITICAL_GIB = _rg_float('THRESHOLD_CRITICAL_GIB')
-        _THRESHOLD_EMERGENCY_GIB = _rg_float('THRESHOLD_EMERGENCY_GIB')
-    _HYSTERESIS_EXIT_GIB: float = _rg_float('HYSTERESIS_EXIT_GIB')
-except (ImportError, NameError):
+        _THRESHOLD_SOFT_WARN_GIB = _rg_float("THRESHOLD_SOFT_WARN_GIB")
+        _THRESHOLD_WARN_GIB = _rg_float("THRESHOLD_WARN_GIB")
+        _THRESHOLD_CRITICAL_GIB = _rg_float("THRESHOLD_CRITICAL_GIB")
+        _THRESHOLD_EMERGENCY_GIB = _rg_float("THRESHOLD_EMERGENCY_GIB")
+    _HYSTERESIS_EXIT_GIB: float = _rg_float("HYSTERESIS_EXIT_GIB")
+except ImportError, NameError:
     _THRESHOLD_SOFT_WARN_GIB = round(_DETECTED_TOTAL_GIB * _SOFT_WARN_RATIO, 2)
     _THRESHOLD_WARN_GIB = round(_DETECTED_TOTAL_GIB * _WARN_RATIO, 2)
     _THRESHOLD_CRITICAL_GIB = round(_DETECTED_TOTAL_GIB * _CRITICAL_RATIO, 2)
@@ -352,19 +434,20 @@ except (ImportError, NameError):
     _HYSTERESIS_EXIT_GIB = round(_DETECTED_TOTAL_GIB * _SOFT_WARN_RATIO, 2)
 RATIOS_USED: tuple[float, float, float, float] = _SOC_RATIOS
 DETECTED_TOTAL_GIB: float = _DETECTED_TOTAL_GIB
-UMA_STATE_SOFT_WARN: str = 'soft_warn'
-UMA_STATE_OK: str = 'ok'
-UMA_STATE_WARN: str = 'warn'
-UMA_STATE_CRITICAL: str = 'critical'
-UMA_STATE_EMERGENCY: str = 'emergency'
+UMA_STATE_SOFT_WARN: str = "soft_warn"
+UMA_STATE_OK: str = "ok"
+UMA_STATE_WARN: str = "warn"
+UMA_STATE_CRITICAL: str = "critical"
+UMA_STATE_EMERGENCY: str = "emergency"
 try:
-    CLEAN_SWAP_MAX_GIB: float = _rg_float('CLEAN_SWAP_MAX_GIB')
-    DIAGNOSTIC_SWAP_MAX_GIB: float = _rg_float('DIAGNOSTIC_SWAP_MAX_GIB')
-    HARD_BLOCK_SWAP_GIB: float = _rg_float('HARD_BLOCK_SWAP_GIB')
+    CLEAN_SWAP_MAX_GIB: float = _rg_float("CLEAN_SWAP_MAX_GIB")
+    DIAGNOSTIC_SWAP_MAX_GIB: float = _rg_float("DIAGNOSTIC_SWAP_MAX_GIB")
+    HARD_BLOCK_SWAP_GIB: float = _rg_float("HARD_BLOCK_SWAP_GIB")
 except NameError:
     CLEAN_SWAP_MAX_GIB = 3.0
     DIAGNOSTIC_SWAP_MAX_GIB = 5.0
     HARD_BLOCK_SWAP_GIB = 6.0
+
 
 def get_swap_policy_tier(swap_gib: float) -> tuple[str, str]:
     """
@@ -378,20 +461,28 @@ def get_swap_policy_tier(swap_gib: float) -> tuple[str, str]:
     prelive decision gate and cockpit use.
     """
     if swap_gib <= CLEAN_SWAP_MAX_GIB:
-        return ('clean', f'swap={swap_gib:.2f}GiB <= {CLEAN_SWAP_MAX_GIB:.1f}GiB threshold')
+        return ("clean", f"swap={swap_gib:.2f}GiB <= {CLEAN_SWAP_MAX_GIB:.1f}GiB threshold")
     elif swap_gib <= DIAGNOSTIC_SWAP_MAX_GIB:
-        return ('diagnostic', f'swap={swap_gib:.2f}GiB in ({CLEAN_SWAP_MAX_GIB:.1f}GiB, {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB] — hardware taint')
+        return (
+            "diagnostic",
+            f"swap={swap_gib:.2f}GiB in ({CLEAN_SWAP_MAX_GIB:.1f}GiB, {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB] — hardware taint",
+        )
     else:
-        return ('hard_block', f'swap={swap_gib:.2f}GiB > {HARD_BLOCK_SWAP_GIB:.1f}GiB — restart required')
+        return ("hard_block", f"swap={swap_gib:.2f}GiB > {HARD_BLOCK_SWAP_GIB:.1f}GiB — restart required")
+
+
 import threading as _threading
+
 from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
+
 _io_only_latch: bool = False
 _io_only_latch_lock: _threading.Lock = _threading.Lock()
 _UMA_TELEMETRY_LOCK: _threading.RLock = _threading.RLock()
 _register_lock(LockOrder.IO_LATCH, _io_only_latch_lock)
 _register_lock(LockOrder.TELEMETRY, _UMA_TELEMETRY_LOCK)
 
-def _compute_io_only_latch(system_used_gib: float, current_latch: bool, swap_detected: bool=False) -> bool:
+
+def _compute_io_only_latch(system_used_gib: float, current_latch: bool, swap_detected: bool = False) -> bool:
     """
     Compute next io_only value based on hysteresis rules.
     Returns the new latch value (True = stay in io_only, False = exit).
@@ -404,7 +495,8 @@ def _compute_io_only_latch(system_used_gib: float, current_latch: bool, swap_det
     else:
         return current_latch
 
-def _update_io_only_latch_with_lock(system_used_gib: float, swap_detected: bool=False) -> tuple[bool, bool]:
+
+def _update_io_only_latch_with_lock(system_used_gib: float, swap_detected: bool = False) -> tuple[bool, bool]:
     """
     Sprint 8AK: Atomically read latch, compute new value, write back.
     Returns (prev_latch, new_latch).
@@ -418,6 +510,7 @@ def _update_io_only_latch_with_lock(system_used_gib: float, swap_detected: bool=
         _io_only_latch = new_val
         return (current, new_val)
 
+
 def _reset_uma_hysteresis_for_testing() -> None:
     """
     Sprint 8AK: Reset the shared io_only latch to False.
@@ -426,7 +519,15 @@ def _reset_uma_hysteresis_for_testing() -> None:
     global _io_only_latch
     with _io_only_latch_lock:
         _io_only_latch = False
-_telemetry: dict[str, Any] = {'transition_count': 0, 'io_only_enter_count': 0, 'io_only_exit_count': 0, 'last_state': 'ok'}
+
+
+_telemetry: dict[str, Any] = {
+    "transition_count": 0,
+    "io_only_enter_count": 0,
+    "io_only_exit_count": 0,
+    "last_state": "ok",
+}
+
 
 def _record_transition(state: str, prev_io_only: bool, io_only: bool) -> None:
     """
@@ -443,13 +544,14 @@ def _record_transition(state: str, prev_io_only: bool, io_only: bool) -> None:
     """
     global _telemetry
     with _UMA_TELEMETRY_LOCK:
-        if _telemetry['last_state'] != state:
-            _telemetry['transition_count'] += 1
-            _telemetry['last_state'] = state
+        if _telemetry["last_state"] != state:
+            _telemetry["transition_count"] += 1
+            _telemetry["last_state"] = state
         if io_only and (not prev_io_only):
-            _telemetry['io_only_enter_count'] += 1
+            _telemetry["io_only_enter_count"] += 1
         elif not io_only and prev_io_only:
-            _telemetry['io_only_exit_count'] += 1
+            _telemetry["io_only_exit_count"] += 1
+
 
 class UMAStatus(msgspec.Struct, frozen=True):
     """
@@ -480,6 +582,7 @@ class UMAStatus(msgspec.Struct, frozen=True):
     are independent signals — tiered policy applies to prelive/cockpit,
     swap_detected applies to io_only acceleration and governor decisions.
     """
+
     rss_gib: float
     system_used_gib: float
     system_available_gib: float
@@ -492,6 +595,7 @@ class UMAStatus(msgspec.Struct, frozen=True):
     metal_peak_gib: float = 0.0
     swap_detected: bool = False
     last_error: str | None = None
+
 
 class MemoryPressureHysteresis:
     """
@@ -520,15 +624,16 @@ class MemoryPressureHysteresis:
     Integration: instantiated by M1ResourceGovernor and called from
     evaluate() before constructing GovernorDecision.
     """
-    THRESHOLDS: dict[str, tuple[float, float]] = {'normal_to_warning': (0.7, 5.0), 'warning_to_critical': (0.85, 3.0)}
+
+    THRESHOLDS: dict[str, tuple[float, float]] = {"normal_to_warning": (0.7, 5.0), "warning_to_critical": (0.85, 3.0)}
     EXIT_FLOOR_CRITICAL = 0.75
     EXIT_FLOOR_WARNING = 0.6
     EXIT_DWELL_CRITICAL = 10.0
     EXIT_DWELL_WARNING = 15.0
-    __slots__ = ('_state', '_enter_time', '_exit_enter_time', '_exit_floor_gib', '_total_gib')
+    __slots__ = ("_state", "_enter_time", "_exit_enter_time", "_exit_floor_gib", "_total_gib")
 
-    def __init__(self, total_gib: float | None=None) -> None:
-        self._state = 'normal'
+    def __init__(self, total_gib: float | None = None) -> None:
+        self._state = "normal"
         self._enter_time: float | None = None
         self._exit_enter_time: float | None = None
         self._exit_floor_gib: float = 0.0
@@ -554,49 +659,49 @@ class MemoryPressureHysteresis:
             "normal" | "warning" | "critical".
         """
         total = self._total_gib
-        enter_warn_ratio, dwell_warn = self.THRESHOLDS['normal_to_warning']
-        enter_crit_ratio, dwell_crit = self.THRESHOLDS['warning_to_critical']
+        enter_warn_ratio, dwell_warn = self.THRESHOLDS["normal_to_warning"]
+        enter_crit_ratio, dwell_crit = self.THRESHOLDS["warning_to_critical"]
         enter_warn_gib = enter_warn_ratio * total
         enter_crit_gib = enter_crit_ratio * total
         exit_warn_gib = self.EXIT_FLOOR_WARNING * total
         exit_crit_gib = self.EXIT_FLOOR_CRITICAL * total
         current = self._state
-        if current == 'critical':
+        if current == "critical":
             if system_used_gib < exit_crit_gib:
                 if self._exit_enter_time is None:
                     self._exit_enter_time = now
                 elif now - self._exit_enter_time >= self.EXIT_DWELL_CRITICAL:
-                    self._state = 'warning'
+                    self._state = "warning"
                     self._enter_time = now
                     self._exit_enter_time = None
                     return self._state
             else:
                 self._exit_enter_time = None
-        elif current == 'warning':
+        elif current == "warning":
             if system_used_gib < exit_warn_gib:
                 if self._exit_enter_time is None:
                     self._exit_enter_time = now
                 elif now - self._exit_enter_time >= self.EXIT_DWELL_WARNING:
-                    self._state = 'normal'
+                    self._state = "normal"
                     self._enter_time = now
                     self._exit_enter_time = None
                     return self._state
             else:
                 self._exit_enter_time = None
-        if current == 'normal':
+        if current == "normal":
             if system_used_gib >= enter_warn_gib:
                 if self._enter_time is None:
                     self._enter_time = now
                 elif now - self._enter_time >= dwell_warn:
-                    self._state = 'warning'
+                    self._state = "warning"
                     self._enter_time = now
                     return self._state
-        elif current == 'warning':
+        elif current == "warning":
             if system_used_gib >= enter_crit_gib:
                 if self._enter_time is None:
                     self._enter_time = now
                 elif now - self._enter_time >= dwell_crit:
-                    self._state = 'critical'
+                    self._state = "critical"
                     self._enter_time = now
                     return self._state
         return self._state
@@ -608,9 +713,10 @@ class MemoryPressureHysteresis:
 
     def reset(self) -> None:
         """Reset to normal state. For testing or sprint re-initialisation."""
-        self._state = 'normal'
+        self._state = "normal"
         self._enter_time = None
         self._exit_enter_time = None
+
 
 class GovernorDecision(msgspec.Struct, frozen=True):
     """
@@ -627,10 +733,12 @@ class GovernorDecision(msgspec.Struct, frozen=True):
         fetch_limit:      MAX souběžných fetch operací.
         block_model_load: True pokud by se neměl load nový MLX model.
     """
+
     uma_state: str
     io_only: bool
     fetch_limit: int
     block_model_load: bool = False
+
 
 class M1ResourceGovernor:
     """
@@ -642,6 +750,7 @@ class M1ResourceGovernor:
     Používá backpressure_monitor (backpressure.py) a acquisition_strategy.py.
     Pro plnou specifikaci viz SYSTEM_ANALYSIS_2026.md §G-1.
     """
+
     IO_ONLY_TTL_S: float = 0.5
     FETCH_LIMIT_TTL_S: float = 5.0
     BLOCK_MODEL_LOAD_TTL_S: float = 30.0
@@ -654,9 +763,9 @@ class M1ResourceGovernor:
     _last_evaluated_memory_ratio: float = 0.0
     _decision_lock_factory: threading.Lock = threading.Lock()
     _decision_lock: asyncio.Lock | None = None
-    __slots__ = tuple(('_hysteresis', '_last_evaluated_memory_ratio', '_legacy_cache_ttl_s', '_mpc_controller'))
+    __slots__ = tuple(("_hysteresis", "_legacy_cache_ttl_s", "_mpc_controller"))
 
-    def __init__(self, cache_ttl_s: float=5.0):
+    def __init__(self, cache_ttl_s: float = 5.0):
         self._legacy_cache_ttl_s = cache_ttl_s
         self._hysteresis = MemoryPressureHysteresis(total_gib=None)
         self._mpc_controller = AdaptiveMPCController()
@@ -696,9 +805,19 @@ class M1ResourceGovernor:
                 await self.apply_decision(decision)
                 self._update_cached_timestamps(now, decision)
                 return decision
-            io_only_valid = M1ResourceGovernor._cached_decision is not None and now - M1ResourceGovernor._cached_io_only_timestamp < M1ResourceGovernor.IO_ONLY_TTL_S
-            fetch_limit_valid = M1ResourceGovernor._cached_decision is not None and now - M1ResourceGovernor._cached_fetch_limit_timestamp < M1ResourceGovernor.FETCH_LIMIT_TTL_S
-            block_model_load_valid = M1ResourceGovernor._cached_decision is not None and now - M1ResourceGovernor._cached_block_model_load_timestamp < M1ResourceGovernor.BLOCK_MODEL_LOAD_TTL_S
+            io_only_valid = (
+                M1ResourceGovernor._cached_decision is not None
+                and now - M1ResourceGovernor._cached_io_only_timestamp < M1ResourceGovernor.IO_ONLY_TTL_S
+            )
+            fetch_limit_valid = (
+                M1ResourceGovernor._cached_decision is not None
+                and now - M1ResourceGovernor._cached_fetch_limit_timestamp < M1ResourceGovernor.FETCH_LIMIT_TTL_S
+            )
+            block_model_load_valid = (
+                M1ResourceGovernor._cached_decision is not None
+                and now - M1ResourceGovernor._cached_block_model_load_timestamp
+                < M1ResourceGovernor.BLOCK_MODEL_LOAD_TTL_S
+            )
             if io_only_valid and fetch_limit_valid and block_model_load_valid:
                 return M1ResourceGovernor._cached_decision
             decision = await self._evaluate_impl()
@@ -722,7 +841,12 @@ class M1ResourceGovernor:
             uma = await sample_uma_status_async()
         except Exception:
             preset = ConcurrencyPreset.from_state(UMAState.OK)
-            return GovernorDecision(uma_state=UMAState.OK, io_only=False, fetch_limit=preset.fetch_limit, block_model_load=preset.block_model_load)
+            return GovernorDecision(
+                uma_state=UMAState.OK,
+                io_only=False,
+                fetch_limit=preset.fetch_limit,
+                block_model_load=preset.block_model_load,
+            )
         preset = ConcurrencyPreset.from_state(uma.state)
         now = time.monotonic()
         memory_ratio = uma.system_used_gib / max(uma.system_used_gib + uma.system_available_gib, 1.0)
@@ -731,16 +855,22 @@ class M1ResourceGovernor:
                 M1ResourceGovernor._spike_detected = True
         self._last_evaluated_memory_ratio = memory_ratio
         hysteresis_state = self._hysteresis.update(memory_ratio, uma.system_used_gib, now)
-        state_map = {'normal': 'ok', 'warning': 'warn', 'critical': 'critical'}
+        state_map = {"normal": "ok", "warning": "warn", "critical": "critical"}
         gated_state = state_map.get(hysteresis_state, uma.state)
         mpc_control, _mpc_metrics = await self._mpc_controller.compute_control(uma.system_used_gib, uma.state)
         scaled_fetch_limit = max(1, int(preset.fetch_limit * mpc_control))
         try:
             from hledac.universal.metrics_registry import get_metrics_registry
-            get_metrics_registry().set_gauge('memory_layer_pressure_pct', memory_ratio * 100.0)
+
+            get_metrics_registry().set_gauge("memory_layer_pressure_pct", memory_ratio * 100.0)
         except Exception:
             pass
-        return GovernorDecision(uma_state=gated_state, io_only=uma.io_only, fetch_limit=scaled_fetch_limit, block_model_load=preset.block_model_load)
+        return GovernorDecision(
+            uma_state=gated_state,
+            io_only=uma.io_only,
+            fetch_limit=scaled_fetch_limit,
+            block_model_load=preset.block_model_load,
+        )
 
     async def apply_decision(self, decision: GovernorDecision) -> None:
         """
@@ -759,17 +889,18 @@ class M1ResourceGovernor:
                 current_latch = _io_only_latch
                 _io_only_latch = decision.io_only
             with _UMA_TELEMETRY_LOCK:
-                last_state = _telemetry['last_state']
+                last_state = _telemetry["last_state"]
             _record_transition(last_state, current_latch, decision.io_only)
         except Exception:
             pass
 
     class SidecarAdmission(msgspec.Struct, frozen=True):
         """Sidecar admission result. Migrated from @dataclass → msgspec.Struct."""
+
         allowed: bool
         reason: str
 
-    def sidecar_admission(self, sidecar_name: str, est_mb: int=30) -> SidecarAdmission:
+    def sidecar_admission(self, sidecar_name: str, est_mb: int = 30) -> SidecarAdmission:
         """
         G-1 companion: Bounded sidecar admission check.
 
@@ -779,26 +910,43 @@ class M1ResourceGovernor:
         try:
             uma = sample_uma_status()
         except Exception:
-            return M1ResourceGovernor.SidecarAdmission(allowed=True, reason='governor_unavailable')
-        if uma.state in ('emergency', 'critical'):
+            return M1ResourceGovernor.SidecarAdmission(allowed=True, reason="governor_unavailable")
+        if uma.state in ("emergency", "critical"):
             if est_mb > 50:
-                return M1ResourceGovernor.SidecarAdmission(allowed=False, reason=f'{uma.state}: {sidecar_name} est={est_mb}MB blocked')
-            return M1ResourceGovernor.SidecarAdmission(allowed=True, reason=f'{uma.state}: {sidecar_name} est={est_mb}MB low-cost-allowed')
-        return M1ResourceGovernor.SidecarAdmission(allowed=True, reason=f'{uma.state}: {sidecar_name} admitted')
+                return M1ResourceGovernor.SidecarAdmission(
+                    allowed=False, reason=f"{uma.state}: {sidecar_name} est={est_mb}MB blocked"
+                )
+            return M1ResourceGovernor.SidecarAdmission(
+                allowed=True, reason=f"{uma.state}: {sidecar_name} est={est_mb}MB low-cost-allowed"
+            )
+        return M1ResourceGovernor.SidecarAdmission(allowed=True, reason=f"{uma.state}: {sidecar_name} admitted")
+
 
 class Priority(Enum):
-    CRITICAL = 'CRITICAL'
-    HIGH = 'HIGH'
-    NORMAL = 'NORMAL'
-    LOW = 'LOW'
+    CRITICAL = "CRITICAL"
+    HIGH = "HIGH"
+    NORMAL = "NORMAL"
+    LOW = "LOW"
+
 
 class ResourceGovernor:
     """
     Hlídá zdroje a rozhoduje, zda je možné provést náročnou operaci.
     """
-    __slots__ = tuple(('__lock', '_active_tasks', '_cost_model', '_lock_factory', '_priority_factor', 'high_water', 'thermal_threshold'))
 
-    def __init__(self, memory_high_water_mb: float=5632, thermal_threshold: float=82.0):
+    __slots__ = tuple(
+        (
+            "__lock",
+            "_active_tasks",
+            "_cost_model",
+            "_lock_factory",
+            "_priority_factor",
+            "high_water",
+            "thermal_threshold",
+        )
+    )
+
+    def __init__(self, memory_high_water_mb: float = 5632, thermal_threshold: float = 82.0):
         self.high_water = memory_high_water_mb
         self.thermal_threshold = thermal_threshold
         self._active_tasks = 0
@@ -827,47 +975,47 @@ class ResourceGovernor:
         """Nastaví cost model pro predikci rizika překročení budgetu."""
         self._cost_model = cost_model
 
-    def can_afford_sync(self, cost_estimate: dict[str, Any], priority: Priority=Priority.NORMAL) -> bool:
+    def can_afford_sync(self, cost_estimate: dict[str, Any], priority: Priority = Priority.NORMAL) -> bool:
         """
         Synchronní kontrola zdrojů bez rezervace.
         """
         ram_used = 0.0
         if psutil is not None:
             try:
-                vm = _get_cached_psutil('virtual_memory', _read_virtual_memory_sync)
+                vm = _get_cached_psutil("virtual_memory", _read_virtual_memory_sync)
                 if vm is not None:
                     ram_used = vm.used / (1024 * 1024)
             except Exception:
                 ram_used = 0.0
-        ram_needed = cost_estimate.get('ram_mb', 0)
+        ram_needed = cost_estimate.get("ram_mb", 0)
         factor = self._priority_factor[priority]
         if ram_used + ram_needed > self.high_water * factor:
             return False
-        if cost_estimate.get('gpu', False):
+        if cost_estimate.get("gpu", False):
             try:
-                if hasattr(_get_mx(), 'get_active_memory'):
+                if hasattr(_get_mx(), "get_active_memory"):
                     gpu_used = _get_mx().get_active_memory() / (1024 * 1024)
-                elif hasattr(_get_mx().metal, 'get_active_memory'):
+                elif hasattr(_get_mx().metal, "get_active_memory"):
                     gpu_used = _get_mx().metal.get_active_memory() / (1024 * 1024)
                 else:
                     gpu_used = 0
-                gpu_total = float('inf')
-                if hasattr(_get_mx().metal, 'get_recommended_max_memory'):
+                gpu_total = float("inf")
+                if hasattr(_get_mx().metal, "get_recommended_max_memory"):
                     gpu_total = _get_mx().metal.get_recommended_max_memory() / (1024 * 1024)
                 if gpu_used + ram_needed > gpu_total * factor:
                     return False
             except Exception:
                 pass
         try:
-            if hasattr(_get_mx().metal, 'get_device_temperature'):
+            if hasattr(_get_mx().metal, "get_device_temperature"):
                 gpu_temp = _get_mx().metal.get_device_temperature()
                 if gpu_temp > self.thermal_threshold and priority != Priority.CRITICAL:
-                    logger.warning(f'GPU thermal limit reached: {gpu_temp}°C > {self.thermal_threshold}°C')
+                    logger.warning(f"GPU thermal limit reached: {gpu_temp}°C > {self.thermal_threshold}°C")
                     return False
         except AttributeError:
             pass
         try:
-            if hasattr(_get_mx().metal, 'get_ane_utilization'):
+            if hasattr(_get_mx().metal, "get_ane_utilization"):
                 ane = _get_mx().metal.get_ane_utilization()
                 if ane > 0.9 and priority == Priority.LOW:
                     return False
@@ -879,13 +1027,13 @@ class ResourceGovernor:
                 return False
         return True
 
-    def reserve(self, cost_estimate: dict[str, Any], priority: Priority=Priority.NORMAL):
+    def reserve(self, cost_estimate: dict[str, Any], priority: Priority = Priority.NORMAL):
         """
         Vrací async context manager pro rezervaci zdrojů. Samotná metoda je synchronní.
         """
 
         class _Reservation:
-            __slots__ = tuple(('cost', 'gov', 'prio'))
+            __slots__ = tuple(("cost", "gov", "prio"))
 
             def __init__(self, gov, cost, prio):
                 self.gov = gov
@@ -894,7 +1042,7 @@ class ResourceGovernor:
 
             async def __aenter__(self):
                 if not self.gov.can_afford_sync(self.cost, self.prio):
-                    raise RuntimeError('ResourceGovernor: cannot afford operation')
+                    raise RuntimeError("ResourceGovernor: cannot afford operation")
                 async with self.gov._lock():
                     self.gov._active_tasks += 1
                 return self
@@ -902,7 +1050,9 @@ class ResourceGovernor:
             async def __aexit__(self, *args):
                 async with self.gov._lock():
                     self.gov._active_tasks -= 1
+
         return _Reservation(self, cost_estimate, priority)
+
 
 def evaluate_uma_state(system_used_gib: float) -> str:
     """
@@ -936,7 +1086,10 @@ def evaluate_uma_state(system_used_gib: float) -> str:
         case _:
             return UMAState.OK
 
-def should_enter_io_only_mode(system_used_gib: float, previous_io_only: bool=False, swap_detected: bool=False) -> bool:
+
+def should_enter_io_only_mode(
+    system_used_gib: float, previous_io_only: bool = False, swap_detected: bool = False
+) -> bool:
     """
     Sprint 8AB + F165E: Hysteresis-based I/O-only mode gate.
 
@@ -970,6 +1123,7 @@ def should_enter_io_only_mode(system_used_gib: float, previous_io_only: bool=Fal
         return system_used_gib >= _THRESHOLD_WARN_GIB
     return system_used_gib >= _THRESHOLD_CRITICAL_GIB
 
+
 def _get_metal_limits_status_8ab() -> tuple[int | None, int | None]:
     """
     Sprint 8AB: Read-only diagnostic surface from 8T mlx_cache.
@@ -977,10 +1131,12 @@ def _get_metal_limits_status_8ab() -> tuple[int | None, int | None]:
     """
     try:
         from ..utils.mlx_cache import get_metal_limits_status
+
         status = get_metal_limits_status()
-        return (status.get('cache_limit_bytes'), status.get('wired_limit_bytes'))
+        return (status.get("cache_limit_bytes"), status.get("wired_limit_bytes"))
     except Exception:
         return (None, None)
+
 
 def _get_memory_pressure_status() -> str:
     """
@@ -1001,29 +1157,31 @@ def _get_memory_pressure_status() -> str:
     try:
         import re
         import subprocess
-        proc = subprocess.run(['memory_pressure'], capture_output=True, text=True, timeout=2)
+
+        proc = subprocess.run(["memory_pressure"], capture_output=True, text=True, timeout=2)
         if proc.returncode != 0:
-            return 'UNKNOWN'
+            return "UNKNOWN"
         output = proc.stdout
-        m = re.search('free percentage:\\s*(\\d+)%', output)
+        m = re.search("free percentage:\\s*(\\d+)%", output)
         if m:
             free_pct = int(m.group(1))
             if free_pct < 30:
-                return 'RED'
+                return "RED"
             elif free_pct < 50:
-                return 'YELLOW'
+                return "YELLOW"
             else:
-                return 'GREEN'
-        cm = re.search('Pages used by compressor:\\s*(\\d+)', output)
+                return "GREEN"
+        cm = re.search("Pages used by compressor:\\s*(\\d+)", output)
         if cm:
             compressor_pages = int(cm.group(1))
             if compressor_pages >= 250000:
-                return 'RED'
+                return "RED"
             elif compressor_pages >= 200000:
-                return 'YELLOW'
-        return 'UNKNOWN'
+                return "YELLOW"
+        return "UNKNOWN"
     except Exception:
-        return 'UNKNOWN'
+        return "UNKNOWN"
+
 
 def sample_uma_status() -> UMAStatus:
     """
@@ -1053,25 +1211,25 @@ def sample_uma_status() -> UMAStatus:
     rss_gib: float = 0.0
     try:
         proc = _get_cached_process()
-        rss_gib = proc.memory_info().rss / 1024 ** 3
+        rss_gib = proc.memory_info().rss / 1024**3
     except Exception as exc:
-        last_error = f'psutil.Process: {exc}'
+        last_error = f"psutil.Process: {exc}"
     system_used_gib: float = 0.0
     system_available_gib: float = 0.0
     try:
-        vm = _get_cached_psutil('virtual_memory', _read_virtual_memory_sync)
+        vm = _get_cached_psutil("virtual_memory", _read_virtual_memory_sync)
         if vm is not None:
-            system_used_gib = (vm.total - vm.available) / 1024 ** 3
-            system_available_gib = vm.available / 1024 ** 3
+            system_used_gib = (vm.total - vm.available) / 1024**3
+            system_available_gib = vm.available / 1024**3
     except Exception as exc:
-        last_error = f'virtual_memory: {exc}'
+        last_error = f"virtual_memory: {exc}"
         system_used_gib = 0.0
         system_available_gib = 0.0
     swap_used_gib: float = 0.0
     try:
-        sm = _get_cached_psutil('swap_memory', _read_swap_memory_sync)
+        sm = _get_cached_psutil("swap_memory", _read_swap_memory_sync)
         if sm is not None:
-            swap_used_gib = sm.used / 1024 ** 3
+            swap_used_gib = sm.used / 1024**3
     except Exception:
         pass
     metal_cache_limit_bytes, metal_wired_limit_bytes = _get_metal_limits_status_8ab()
@@ -1080,23 +1238,37 @@ def sample_uma_status() -> UMAStatus:
     try:
         mx = _get_mx()
         if mx is not None:
-            if hasattr(mx, 'get_active_memory'):
-                metal_active_gib = mx.get_active_memory() / 1024 ** 3
-            elif hasattr(mx.metal, 'get_active_memory'):
-                metal_active_gib = mx.metal.get_active_memory() / 1024 ** 3
-            if hasattr(mx, 'get_peak_memory'):
-                metal_peak_gib = mx.get_peak_memory() / 1024 ** 3
-            elif hasattr(mx.metal, 'get_peak_memory'):
-                metal_peak_gib = mx.metal.get_peak_memory() / 1024 ** 3
+            if hasattr(mx, "get_active_memory"):
+                metal_active_gib = mx.get_active_memory() / 1024**3
+            elif hasattr(mx.metal, "get_active_memory"):
+                metal_active_gib = mx.metal.get_active_memory() / 1024**3
+            if hasattr(mx, "get_peak_memory"):
+                metal_peak_gib = mx.get_peak_memory() / 1024**3
+            elif hasattr(mx.metal, "get_peak_memory"):
+                metal_peak_gib = mx.metal.get_peak_memory() / 1024**3
     except Exception:
         pass
     state = evaluate_uma_state(system_used_gib)
-    _pressure_result = _get_cached_psutil('memory_pressure', _read_memory_pressure_sync)
-    _pressure_status = _pressure_result.get('status', 'UNKNOWN') if _pressure_result else 'UNKNOWN'
-    swap_detected = swap_used_gib > 5.0 or _pressure_status in ('CRITICAL', 'RED')
+    _pressure_result = _get_cached_psutil("memory_pressure", _read_memory_pressure_sync)
+    _pressure_status = _pressure_result.get("status", "UNKNOWN") if _pressure_result else "UNKNOWN"
+    swap_detected = swap_used_gib > 5.0 or _pressure_status in ("CRITICAL", "RED")
     prev_io_only, io_only = _update_io_only_latch_with_lock(system_used_gib, swap_detected=swap_detected)
     _record_transition(state, prev_io_only, io_only)
-    return UMAStatus(rss_gib=rss_gib, system_used_gib=system_used_gib, system_available_gib=system_available_gib, swap_used_gib=swap_used_gib, metal_cache_limit_bytes=metal_cache_limit_bytes, metal_wired_limit_bytes=metal_wired_limit_bytes, state=state, io_only=io_only, metal_active_gib=metal_active_gib, metal_peak_gib=metal_peak_gib, swap_detected=swap_detected, last_error=last_error)
+    return UMAStatus(
+        rss_gib=rss_gib,
+        system_used_gib=system_used_gib,
+        system_available_gib=system_available_gib,
+        swap_used_gib=swap_used_gib,
+        metal_cache_limit_bytes=metal_cache_limit_bytes,
+        metal_wired_limit_bytes=metal_wired_limit_bytes,
+        state=state,
+        io_only=io_only,
+        metal_active_gib=metal_active_gib,
+        metal_peak_gib=metal_peak_gib,
+        swap_detected=swap_detected,
+        last_error=last_error,
+    )
+
 
 async def sample_uma_status_async() -> UMAStatus:
     """
@@ -1113,13 +1285,17 @@ async def sample_uma_status_async() -> UMAStatus:
     """
     return await asyncio.to_thread(sample_uma_status)
 
+
 def get_uma_telemetry() -> dict[str, Any]:
     """Sprint 8AB: Read-only telemetry snapshot (transition counts, last state)."""
     return dict(_telemetry)
+
+
 try:
-    _HYSTERESIS_COOLDOWN_SEC: float = _rg_float('HYSTERESIS_COOLDOWN_SEC')
+    _HYSTERESIS_COOLDOWN_SEC: float = _rg_float("HYSTERESIS_COOLDOWN_SEC")
 except NameError:
     _HYSTERESIS_COOLDOWN_SEC = 2.0
+
 
 async def _dispatch_one(cb: Callable[[], Any], logger_instance: logging.Logger) -> None:
     """Fire-and-forget callback dispatcher with explicit logger injection."""
@@ -1131,7 +1307,8 @@ async def _dispatch_one(cb: Callable[[], Any], logger_instance: logging.Logger) 
         elif callable(cb):
             cb()
     except Exception as e:
-        logger_instance.debug(f'[alarm] callback error: {e!r}')
+        logger_instance.debug(f"[alarm] callback error: {e!r}")
+
 
 class UMAAlarmDispatcher:
     """
@@ -1146,7 +1323,10 @@ class UMAAlarmDispatcher:
         - Hysteresis: same alarm not re-sent within 2s (B.2)
         - All callbacks are gathered with return_exceptions=True (fail-safe)
     """
-    __slots__ = tuple(('__lock', '_callbacks', '_interval_s', '_last_dispatch_time', '_lock_factory', '_running', '_task'))
+
+    __slots__ = tuple(
+        ("__lock", "_callbacks", "_interval_s", "_last_dispatch_time", "_lock_factory", "_running", "_task")
+    )
 
     def __init__(self) -> None:
         self._lock_factory = threading.Lock()
@@ -1155,7 +1335,10 @@ class UMAAlarmDispatcher:
         self._task: asyncio.Task | None = None
         self._running = False
         self._interval_s: float = 5.0
-        self._last_dispatch_time: dict[str, float] = {UMA_STATE_CRITICAL: float('-inf'), UMA_STATE_EMERGENCY: float('-inf')}
+        self._last_dispatch_time: dict[str, float] = {
+            UMA_STATE_CRITICAL: float("-inf"),
+            UMA_STATE_EMERGENCY: float("-inf"),
+        }
 
     def _lock(self) -> asyncio.Lock:
         """Thread-safe lazy init pro asyncio.Lock — double-checked locking chráněný threading.Lock."""
@@ -1187,7 +1370,7 @@ class UMAAlarmDispatcher:
             return
         self._callbacks[state].append(callback)
 
-    async def start_monitoring(self, interval_s: float=5.0) -> None:
+    async def start_monitoring(self, interval_s: float = 5.0) -> None:
         """
         Start the monitoring loop. Idempotent.
 
@@ -1246,11 +1429,17 @@ class UMAAlarmDispatcher:
             if not callbacks:
                 return
             self._last_dispatch_time[current_state] = now
-        await safe_gather_fire_and_forget(*[_dispatch_one(cb, logger) for cb in callbacks], label='resource_governor:648')
+        await safe_gather_fire_and_forget(
+            *[_dispatch_one(cb, logger) for cb in callbacks], label="resource_governor:648"
+        )
+
+
 from collections import deque
+
 _MPC_HISTORY: deque[tuple[float, float, float, float, float]] = deque(maxlen=32)
 _mpc_lock: threading.Lock = threading.Lock()
 _register_lock(LockOrder.MPC, _mpc_lock)
+
 
 class MPCMetrics(msgspec.Struct, frozen=True):
     """
@@ -1260,6 +1449,7 @@ class MPCMetrics(msgspec.Struct, frozen=True):
     All values are measured/derived at computation time.
     Use for telemetry, debugging, and regression testing.
     """
+
     predicted_memory_gib: float
     velocity_gib_per_sec: float
     acceleration_gib_per_sec2: float
@@ -1268,6 +1458,7 @@ class MPCMetrics(msgspec.Struct, frozen=True):
     safe_headroom_gib: float
     control_input: float
     predicted_state: str
+
 
 class AdaptiveMPCController:
     """
@@ -1297,19 +1488,20 @@ class AdaptiveMPCController:
         - Fail-safe: returns control=1.0 (nominal) on any error
         - Async-safe via _mpc_lock
     """
+
     try:
-        _ALPHA_FAST: float = _rg_float('ALPHA_FAST')
-        _ALPHA_SLOW: float = _rg_float('ALPHA_SLOW')
-        _MPC_HORIZON_S: float = _rg_float('MPC_HORIZON_S')
-        _TARGET_HEADROOM_GIB: float = _rg_float('TARGET_HEADROOM_GIB')
-        _EMERGENCY_THRESHOLD_GIB: float = _rg_float('EMERGENCY_THRESHOLD_GIB')
+        _ALPHA_FAST: float = _rg_float("ALPHA_FAST")
+        _ALPHA_SLOW: float = _rg_float("ALPHA_SLOW")
+        _MPC_HORIZON_S: float = _rg_float("MPC_HORIZON_S")
+        _TARGET_HEADROOM_GIB: float = _rg_float("TARGET_HEADROOM_GIB")
+        _EMERGENCY_THRESHOLD_GIB: float = _rg_float("EMERGENCY_THRESHOLD_GIB")
     except NameError:
         _ALPHA_FAST = 0.4
         _ALPHA_SLOW = 0.15
         _MPC_HORIZON_S = 10.0
         _TARGET_HEADROOM_GIB = 0.5
         _EMERGENCY_THRESHOLD_GIB = 7.8
-    __slots__ = ('_ema_v', '_ema_a', '_last_t', '_last_mem', '_enabled')
+    __slots__ = ("_ema_v", "_ema_a", "_last_t", "_last_mem", "_enabled")
 
     def __init__(self) -> None:
         self._ema_v: float = 0.0
@@ -1318,7 +1510,9 @@ class AdaptiveMPCController:
         self._last_mem: float | None = None
         self._enabled: bool = True
 
-    async def compute_control(self, current_memory_gib: float, current_state: str, sample_interval_s: float=5.0) -> tuple[float, MPCMetrics]:
+    async def compute_control(
+        self, current_memory_gib: float, current_state: str, sample_interval_s: float = 5.0
+    ) -> tuple[float, MPCMetrics]:
         """
         F290: Compute MPC control input for memory pressure.
 
@@ -1343,7 +1537,16 @@ class AdaptiveMPCController:
                 self._ema_v = 0.0
                 self._ema_a = 0.0
                 safe_headroom = self._EMERGENCY_THRESHOLD_GIB - current_memory_gib
-                metrics = MPCMetrics(predicted_memory_gib=current_memory_gib, velocity_gib_per_sec=0.0, acceleration_gib_per_sec2=0.0, ema_velocity=0.0, ema_acceleration=0.0, safe_headroom_gib=safe_headroom, control_input=1.0, predicted_state=current_state)
+                metrics = MPCMetrics(
+                    predicted_memory_gib=current_memory_gib,
+                    velocity_gib_per_sec=0.0,
+                    acceleration_gib_per_sec2=0.0,
+                    ema_velocity=0.0,
+                    ema_acceleration=0.0,
+                    safe_headroom_gib=safe_headroom,
+                    control_input=1.0,
+                    predicted_state=current_state,
+                )
                 _MPC_HISTORY.append((now, current_memory_gib, 0.0, 0.0, 1.0))
                 return (1.0, metrics)
             raw_dt = now - self._last_t
@@ -1372,7 +1575,16 @@ class AdaptiveMPCController:
                 control = min(control, 0.1)
             _MPC_HISTORY.append((now, current_memory_gib, raw_v, raw_a, control))
             predicted_state = evaluate_uma_state(predicted)
-            metrics = MPCMetrics(predicted_memory_gib=predicted, velocity_gib_per_sec=raw_v, acceleration_gib_per_sec2=raw_a, ema_velocity=self._ema_v, ema_acceleration=self._ema_a, safe_headroom_gib=safe_headroom, control_input=control, predicted_state=predicted_state)
+            metrics = MPCMetrics(
+                predicted_memory_gib=predicted,
+                velocity_gib_per_sec=raw_v,
+                acceleration_gib_per_sec2=raw_a,
+                ema_velocity=self._ema_v,
+                ema_acceleration=self._ema_a,
+                safe_headroom_gib=safe_headroom,
+                control_input=control,
+                predicted_state=predicted_state,
+            )
             return (control, metrics)
 
     def reset(self) -> None:
@@ -1382,6 +1594,7 @@ class AdaptiveMPCController:
         self._last_t = None
         self._last_mem = None
 
+
 def get_mpc_telemetry() -> dict[str, Any]:
     """
     F290: Read-only MPC telemetry snapshot.
@@ -1389,10 +1602,25 @@ def get_mpc_telemetry() -> dict[str, Any]:
     Returns:
         dict with 'history' (last 32 samples) and 'enabled' flag.
     """
-    return {'enabled': True, 'history_count': len(_MPC_HISTORY), 'latest': {'timestamp': _MPC_HISTORY[-1][0] if _MPC_HISTORY else None, 'memory_gib': _MPC_HISTORY[-1][1] if _MPC_HISTORY else None, 'velocity_gib_s': _MPC_HISTORY[-1][2] if _MPC_HISTORY else None, 'acceleration_gib_s2': _MPC_HISTORY[-1][3] if _MPC_HISTORY else None, 'control_input': _MPC_HISTORY[-1][4] if _MPC_HISTORY else None} if _MPC_HISTORY else None}
+    return {
+        "enabled": True,
+        "history_count": len(_MPC_HISTORY),
+        "latest": {
+            "timestamp": _MPC_HISTORY[-1][0] if _MPC_HISTORY else None,
+            "memory_gib": _MPC_HISTORY[-1][1] if _MPC_HISTORY else None,
+            "velocity_gib_s": _MPC_HISTORY[-1][2] if _MPC_HISTORY else None,
+            "acceleration_gib_s2": _MPC_HISTORY[-1][3] if _MPC_HISTORY else None,
+            "control_input": _MPC_HISTORY[-1][4] if _MPC_HISTORY else None,
+        }
+        if _MPC_HISTORY
+        else None,
+    }
+
+
 _QOS_USER_INITIATED: int = 25
 _QOS_UTILITY: int = 17
 _QOS_BACKGROUND: int = 9
+
 
 def set_thread_qos(qos_level: int) -> None:
     """
@@ -1413,7 +1641,8 @@ def set_thread_qos(qos_level: int) -> None:
     try:
         import ctypes
         import ctypes.util
+
         libc = ctypes.CDLL(None)
         libc.syscall(366, qos_level, 0)
     except Exception as exc:
-        logger.debug(f'[QoS] pthread_set_qos_class_self_np failed (non-macOS or permission): {exc}')
+        logger.debug(f"[QoS] pthread_set_qos_class_self_np failed (non-macOS or permission): {exc}")

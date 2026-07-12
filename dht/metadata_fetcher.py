@@ -23,7 +23,7 @@ BT_HEADER_SIZE = 68
 PROTOCOL_STRING = b'BitTorrent protocol'
 BT_EXTENDED_FLAG = 16
 
-@dataclass(True)
+@dataclass(slots=True)
 class TorrentInfo:
     """Parsed torrent metadata."""
     name: str

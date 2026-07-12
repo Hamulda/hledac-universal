@@ -64,7 +64,7 @@ class TemporalEdgeCandidate:
     window_end: float
     reason: str
 
-@dataclass(True)
+@dataclass(slots=True)
 class _KeyState:
     last_ts: float = 0.0
     event_count: int = 0

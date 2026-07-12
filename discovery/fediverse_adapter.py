@@ -22,7 +22,7 @@ RATE_LIMIT_DELAY = 5.0
 OSINT_INSTANCES = ['https://infosec.exchange', 'https://mastodon.social', 'https://scholar.social', 'https://fosstodon.org', 'https://hachyderm.io']
 DEFAULT_INSTANCES = OSINT_INSTANCES[:2]
 
-@dataclass(True)
+@dataclass(slots=True)
 class FediversePost:
     """Single Mastodon/Fediverse status, normalised to OSINT-friendly fields.
 

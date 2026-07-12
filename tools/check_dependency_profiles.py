@@ -36,7 +36,7 @@ from pathlib import Path
 _PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 _VENV_PYTHON = _PROJECT_ROOT / '.venv/bin/python'
 
-@dataclass(True)
+@dataclass(slots=True)
 class ProfileCheck:
     name: str
     uv_sync_args: list[str] = field(default_factory=list)

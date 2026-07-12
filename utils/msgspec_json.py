@@ -35,9 +35,8 @@ Fall-back chain
 The fall-back activates only on type errors (e.g. ``set``, custom objects)
 or when ``msgspec`` is unavailable at import time.
 """
+
 from __future__ import annotations
-
-
 
 import logging
 import struct
@@ -66,6 +65,7 @@ logger = logging.getLogger(__name__)
 
 class SearchResult(msgspec.Struct, frozen=True):
     """Typed result for ANN / hybrid search hot paths."""
+
     id: str
     score: float
     content: str | None = None
@@ -74,6 +74,7 @@ class SearchResult(msgspec.Struct, frozen=True):
 
 class SprintSeed(msgspec.Struct, frozen=True):
     """Typed seed for knowledge/sprint_seeds_store.py hot path."""
+
     url: str
     title: str | None = None
     domain: str | None = None
@@ -82,6 +83,7 @@ class SprintSeed(msgspec.Struct, frozen=True):
 
 class CacheEntry(msgspec.Struct, frozen=True):
     """Typed entry for context_optimization/context_cache.py."""
+
     key: str
     value: str
     ttl: int = 3600
@@ -362,9 +364,7 @@ def decode_zstd(data: bytes | memoryview | bytearray) -> Any:
     raw_len = struct.unpack("<I", data[:4])[0]
     raw = _zstd.decompress(data[4:])
     if len(raw) != raw_len:
-        raise ValueError(
-            f"decode_zstd: length mismatch (prefix={raw_len}, actual={len(raw)})"
-        )
+        raise ValueError(f"decode_zstd: length mismatch (prefix={raw_len}, actual={len(raw)})")
     return decode(raw)
 
 
@@ -379,9 +379,20 @@ def json_dumps(obj: Any) -> bytes:
     return encode(obj)
 
 
+def dumps_str(obj: Any, *, ensure_ascii: bool = False, indent: int | None = None) -> str:
+    """Encode to JSON string (not bytes) with optional formatting."""
+    if indent is not None:
+        return msgspec.json.format(encode(obj), indent=indent).decode("utf-8", errors="replace")
+    return encode(obj).decode("utf-8", errors="replace")
+
+
 def json_loads(data: bytes | str) -> Any:
     """Alias for :func:`decode` (legacy naming)."""
     return decode(data)
+
+
+# Aliases for msgspec naming convention
+loads = decode  # type: ignore[assignment]
 
 
 def encode_for_arrow(obj: Any) -> bytes | None:

@@ -34,7 +34,7 @@ try:
 except Exception:
     _mlx_embeddings_ok = False
 
-@dataclass(True)
+@dataclass(slots=True)
 class ModernBertConfig:
     """Configuration for ModernBertEngine."""
     mlx_model: str = 'nomic-ai/modernbert-embed-base'

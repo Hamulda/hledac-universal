@@ -16,7 +16,7 @@ import msgspec
 from typing import Any
 logger = logging.getLogger(__name__)
 
-@dataclass(True)
+@dataclass(slots=True)
 class PerformanceMetrics:
     """Metriky výkonu"""
     generation_count: int = 0

@@ -36,7 +36,7 @@ class SecurityLevel(Enum):
     HIGH = 3
     MAXIMUM = 4
 
-@dataclass(True)
+@dataclass(slots=True)
 class SecurityContext:
     """Security context for operations."""
     operation_id: str

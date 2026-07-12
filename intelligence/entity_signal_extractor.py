@@ -45,7 +45,7 @@ _DOMAIN_HANDLE_RE = re.compile('\\b([a-zA-Z0-9][a-zA-Z0-9_.-]{2,20})@([a-zA-Z0-9
 _HANDLE_RE = re.compile('@([a-zA-Z0-9][a-zA-Z0-9_.-]{1,30})')
 _URL_HOST_RE = re.compile('https?://([a-zA-Z0-9][a-zA-Z0-9-]*\\.[a-zA-Z]{2,})')
 
-@dataclass(True)
+@dataclass(slots=True)
 class ExtractedEntity:
     """A single extracted entity from a finding."""
     entity_type: str

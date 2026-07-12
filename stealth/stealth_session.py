@@ -17,7 +17,7 @@ _STEALTH_UA_POOL: tuple[str, ...] = ('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_
 _JITTER_MIN_S: float = 0.05
 _JITTER_MAX_S: float = 0.5
 
-@dataclass(True)
+@dataclass(slots=True)
 class StealthResponse:
     """Response from stealth HTTP request."""
     status: int

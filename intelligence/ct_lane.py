@@ -35,7 +35,7 @@ except ImportError:
     MAX_BRIDGE_OUTPUT = 500
 _CT_RATE_LIMIT_S = 1.0
 
-@dataclass(True)
+@dataclass(slots=True)
 class CTFinding:
     """Single Certificate Transparency log entry."""
     domain: str

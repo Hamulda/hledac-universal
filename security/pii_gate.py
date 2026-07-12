@@ -43,7 +43,7 @@ class PIICategory(Enum):
     DRIVER_LICENSE = 'driver_license'
     ADDRESS = 'address'
 
-@dataclass(True)
+@dataclass(slots=True)
 class PIIMatch:
     """A single PII match found in text"""
     text: str

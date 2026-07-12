@@ -55,7 +55,7 @@ TCP_LIMIT = 20
 TCP_LIMIT_PER_HOST = 4
 TCP_KEEPALIVE_TIMEOUT = 30
 
-@dataclass(True)
+@dataclass(slots=True)
 class StealthManagerConfig:
     """Configuration for complete stealth system"""
     enable_rate_limiter: bool = True

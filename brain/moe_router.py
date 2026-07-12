@@ -39,7 +39,7 @@ except ImportError:
 _torch_nn = None
 logger = logging.getLogger(__name__)
 
-@dataclass(True)
+@dataclass(slots=True)
 class MoERouterConfig:
     """Konfigurace pro MoE Router"""
     expert_names: list[str] = field(default_factory=lambda: ['osint', 'security', 'temporal', 'graph', 'synthesis'])

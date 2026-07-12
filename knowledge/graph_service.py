@@ -146,8 +146,12 @@ class GraphService:
         Returns:
             True if IOC was newly upserted, False if it already existed or on error.
         """
-        if _RUST_IOC_DEDUP_AVAILABLE and self._seen_iocs.contains(value, ioc_type):
-            return False
+        if _RUST_IOC_DEDUP_AVAILABLE:
+            if self._seen_iocs.contains(value, ioc_type):
+                return False
+        else:
+            if (value, ioc_type) in self._seen_iocs:
+                return False
 
         # Sprint F214Q: Validate ioc_type against canonical taxonomy
         # Sprint F320: unknown IOC types → "pending" (awaiting manual classification)

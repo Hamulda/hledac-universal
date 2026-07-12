@@ -29,7 +29,7 @@ import msgspec
 from typing import Any
 logger = logging.getLogger(__name__)
 
-@dataclass(True)
+@dataclass(slots=True)
 class AutoResearchProfile:
     """
     Autonomous research configuration profile.

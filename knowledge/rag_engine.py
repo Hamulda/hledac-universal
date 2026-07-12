@@ -66,7 +66,7 @@ class RAGConfig:
     hnsw_index_path: str | None = os.environ.get('HLEDAC_RAG_HNSW_INDEX_PATH')
     hnsw_space: str = os.environ.get('HLEDAC_RAG_HNSW_SPACE', 'cosine')
 
-@dataclass(True)
+@dataclass(slots=True)
 class Document:
     """Document for retrieval"""
     id: str

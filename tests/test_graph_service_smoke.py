@@ -43,8 +43,8 @@ class TestDuckPGQGraphPersistence:
         dst_values = [n["value"] for n in neighbors]
         assert "smoke.dst.test" in dst_values, f"Relation not persisted: dst={dst_values}"
 
-    def test_path_query_finds_path(self):
-        """find_paths_between_iocs returns path after reinit."""
+    def test_path_query_finds_path(self, session_event_loop: asyncio.AbstractEventLoop):
+        """FIX F350M-R: Use session_event_loop fixture instead of asyncio.run()."""
         g1 = DuckPGQGraph()
         g1.add_ioc("path.src.test", "domain", 0.9, "smoke_path")
         g1.add_ioc("path.dst.test", "domain", 0.85, "smoke_path")
@@ -52,7 +52,7 @@ class TestDuckPGQGraphPersistence:
         g1.checkpoint()
 
         g2 = DuckPGQGraph()
-        paths = asyncio.run(
+        paths = session_event_loop.run_until_complete(
             g2.find_paths_between_iocs("path.src.test", "path.dst.test", max_hops=4)
         )
         assert len(paths) >= 1, f"No path found between src and dst: {paths}"
@@ -75,9 +75,11 @@ class TestGraphServicePythonSetDedup:
     def test_upsert_ioc_adds_to_seen_set(self):
         """upsert_ioc adds (value, ioc_type) tuple to _seen_iocs Python set."""
         import hledac.universal.knowledge.graph_service as gs
+
         gs._RUST_IOC_DEDUP_AVAILABLE = False  # Force Python path
 
         from hledac.universal.knowledge.graph_service import GraphService
+
         svc = GraphService()
         svc._seen_iocs = set()
         svc._seen_rels = set()
@@ -89,9 +91,11 @@ class TestGraphServicePythonSetDedup:
     def test_find_entity_history_returns_list(self):
         """find_entity_history returns list (empty or populated)."""
         import hledac.universal.knowledge.graph_service as gs
+
         gs._RUST_IOC_DEDUP_AVAILABLE = False
 
         from hledac.universal.knowledge.graph_service import GraphService
+
         svc = GraphService()
         svc._seen_iocs = set()
         svc._seen_rels = set()

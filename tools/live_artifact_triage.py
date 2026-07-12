@@ -48,7 +48,7 @@ class SprintFamily(StrEnum):
     F219 = 'F219'
     NONE = 'NONE'
 
-@dataclass(True)
+@dataclass(slots=True)
 class TriageResult:
     root_cause_class: RootCause
     confidence: float

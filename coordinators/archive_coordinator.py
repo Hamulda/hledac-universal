@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 MAX_ARCHIVE_RESULTS = 20
 MAX_PENDING_URLS = 2000
 
-@dataclass(True)
+@dataclass(slots=True)
 class ArchiveCoordinatorConfig:
     """Configuration for ArchiveCoordinator."""
     max_escalations_per_step: int = 2

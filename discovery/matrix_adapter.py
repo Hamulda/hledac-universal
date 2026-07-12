@@ -21,7 +21,7 @@ MAX_ROOMS_TO_SEARCH = 20
 MAX_GUEST_TOKEN_AGE = 3600
 MATRIX_RATE_LIMIT_DELAY = 2.0
 
-@dataclass(True)
+@dataclass(slots=True)
 class MatrixRoom:
     """Represents a Matrix public room."""
     room_id: str

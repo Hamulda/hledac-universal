@@ -31,7 +31,7 @@ def _get_mlx() -> Any | None:
             _mlx = None
     return _mlx
 
-@dataclass(True)
+@dataclass(slots=True)
 class ModelEntry:
     model: Any
     tokenizer: Any | None = None
@@ -39,7 +39,7 @@ class ModelEntry:
     loaded_at: float = 0.0
     access_count: int = 0
 
-@dataclass(True)
+@dataclass(slots=True)
 class MLXModelPoolConfig:
     budget_gb: float = 4.0
     min_eviction_interval_s: float = 1.0

@@ -259,7 +259,7 @@ def _disabled_reason(lane: str, ctx: AcquisitionContext) -> str:
     return 'lane_disabled'
 LANE_RULES: tuple[LaneRule, ...] = (_lane_rule(AcquisitionLane.FEED, LaneSpecFeed, lambda ctx: ctx.uma_state not in ('critical', 'emergency'), lambda ctx: 'always_allowed', lambda ctx: _lc(AcquisitionLane.FEED, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.PUBLIC, LaneSpecPublic, lambda ctx: not ctx.hardware_critical and (not ctx.transport_degraded) if ctx.is_deep_osint_m1 else ctx.is_nonfeed_diagnostic and ctx.has_domain and (not ctx.transport_degraded) if ctx.is_nonfeed_diagnostic else ctx.uma_state not in ('critical', 'emergency') and (not ctx.transport_degraded), lambda ctx: 'deep_osint_m1_stage1' if ctx.is_deep_osint_m1 else 'nonfeed_diagnostic_domain' if ctx.is_nonfeed_diagnostic and ctx.has_domain else 'transport_degraded' if ctx.transport_degraded else 'hardware_critical' if ctx.uma_state in ('critical', 'emergency') else 'query_eligible', lambda ctx: _lc(AcquisitionLane.PUBLIC, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.CT, LaneSpecCT, lambda ctx: (ctx.has_domain or ctx.aggressive_mode or ctx.is_nonfeed_diagnostic) and (not ctx.hardware_critical or ctx.aggressive_mode) and (not ctx.is_deep_osint_m1), lambda ctx: 'domain_or_aggressive_or_nonfeed_diagnostic', lambda ctx: _lc(AcquisitionLane.CT, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.DOH, LaneSpecDOH, lambda ctx: (ctx.has_domain or (ctx.is_nonfeed_diagnostic and ctx.has_domain)) and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic or ctx.aggressive_mode) and (not ctx.is_deep_osint_m1), lambda ctx: 'domain_or_ip_or_nonfeed_diagnostic', lambda ctx: _lc(AcquisitionLane.DOH, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.WAYBACK, LaneSpecWayback, lambda ctx: (ctx.has_url or ctx.has_long_duration or (ctx.is_nonfeed_diagnostic and ctx.has_domain)) and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic or ctx.aggressive_mode) and (not ctx.is_deep_osint_m1), lambda ctx: 'has_url_or_long_duration_or_nonfeed_domain', lambda ctx: _lc(AcquisitionLane.WAYBACK, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.PASSIVE_DNS, LaneSpecPDNS, lambda ctx: ctx.has_domain and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic or ctx.aggressive_mode) and (not ctx.is_deep_osint_m1), lambda ctx: 'has_domain_or_ip', lambda ctx: _lc(AcquisitionLane.PASSIVE_DNS, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.BLOCKCHAIN, LaneSpecBlockchain, lambda ctx: ctx.has_crypto and (not ctx.hardware_critical or ctx.aggressive_mode), lambda ctx: 'has_crypto_indicator', lambda ctx: _lc(AcquisitionLane.BLOCKCHAIN, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.STEALTH, LaneSpecStealth, lambda ctx: ctx.stealth_ready and (not ctx.hardware_critical or ctx.aggressive_mode) and (not ctx.is_nonfeed_diagnostic), lambda ctx: 'stealth_ready', lambda ctx: 1), _lane_rule(AcquisitionLane.PIVOT_EXECUTOR, LaneSpecPivot, lambda ctx: True, lambda ctx: 'always_allowed_lightweight', lambda ctx: ctx.base_concurrency + 1), _lane_rule(AcquisitionLane.ACADEMIC, LaneSpecAcademic, lambda ctx: ctx.is_academic and (not ctx.hardware_critical or ctx.aggressive_mode), lambda ctx: 'academic_profile', lambda ctx: 1), _lane_rule(AcquisitionLane.IPFS, LaneSpecIPFS, lambda ctx: ctx.cid_present and (not ctx.hardware_critical or ctx.aggressive_mode), lambda ctx: 'explicit_cid_in_query', lambda ctx: 1), _lane_rule(AcquisitionLane.OPEN_SOURCE, LaneSpecOpenSrc, lambda ctx: ctx.is_academic and (not ctx.hardware_critical or ctx.aggressive_mode), lambda ctx: 'academic_profile', lambda ctx: 1), _lane_rule(AcquisitionLane.SHODAN, LaneSpecShodan, lambda ctx: ctx.has_ip and (not ctx.hardware_critical or ctx.aggressive_mode), lambda ctx: 'ip_or_cidr_indicator', lambda ctx: _lc(AcquisitionLane.SHODAN, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.CENSYS, LaneSpecCensys, lambda ctx: ctx.has_domain and (not ctx.hardware_critical or ctx.aggressive_mode), lambda ctx: 'domain_or_cert_indicator', lambda ctx: _lc(AcquisitionLane.CENSYS, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.GREYNOISE, LaneSpecGreyNoise, lambda ctx: ctx.has_ip and (not ctx.hardware_critical or ctx.aggressive_mode), lambda ctx: 'ip_or_cidr_indicator', lambda ctx: _lc(AcquisitionLane.GREYNOISE, ctx.base_concurrency, ctx.uma_state)))
 
-@dataclass(True)
+@dataclass(slots=True)
 class NonfeedPlanDebug:
     """[F207L] Diagnostic snapshot of nonfeed lane planning for live KPI debugging.
 
@@ -357,7 +357,7 @@ class NonfeedSeedContext:
         """Return counts by non-empty seed kind."""
         return {k: len(v) for k, v in [('domains', self.domains), ('ips', self.ips), ('urls', self.urls), ('hashes', self.hashes), ('cves', self.cves)] if v}
 
-@dataclass(True)
+@dataclass(slots=True)
 class AcquisitionStrategySnapshot:
     """Full acquisition strategy snapshot for one sprint/cycle."""
     query: str = ''
@@ -375,7 +375,7 @@ class AcquisitionStrategySnapshot:
     nonfeed_candidate_ledger_summary: dict = field(default_factory=dict)
     has_domain: bool = False
 
-@dataclass(True)
+@dataclass(slots=True)
 class MandatoryLaneTerminality:
     """[F208A] Canonical terminality contract for mandatory lanes.
 
@@ -874,7 +874,7 @@ class AcquisitionLaneOutcome:
 _NONFEED_LANE_FAMILY_MAP = {'PUBLIC': AcquisitionLane.PUBLIC, 'CT': AcquisitionLane.CT, 'PIVOT_EXECUTOR': AcquisitionLane.PIVOT_EXECUTOR, 'WAYBACK': AcquisitionLane.WAYBACK, 'PASSIVE_DNS': AcquisitionLane.PASSIVE_DNS}
 _ACCEPTED_TERMINAL_STATES = frozenset(['success', 'success_empty', 'empty'])
 
-@dataclass(True)
+@dataclass(slots=True)
 class NonfeedMissionSnapshot:
     """F217B: Snapshot of nonfeed mission controller state at a point in time.
 

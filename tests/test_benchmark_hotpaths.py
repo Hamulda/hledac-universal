@@ -69,11 +69,9 @@ def test_benchmark_duckdb_ingest_batch(session_duckdb_store):
     ]
 
     loop = getattr(session_duckdb_store, "_loop", None)
-    close_loop = False
     if loop is None or loop.is_closed():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        close_loop = True
 
     try:
         t0 = time.perf_counter()
@@ -81,7 +79,7 @@ def test_benchmark_duckdb_ingest_batch(session_duckdb_store):
         elapsed_ms = (time.perf_counter() - t0) * 1000
         _check_regression("duckdb_ingest_batch", elapsed_ms)
     finally:
-        if close_loop:
+        if loop and not loop.is_closed():
             loop.close()
 
 
@@ -174,8 +172,14 @@ def test_benchmark_mx_eval_barrier():
 # ---------------------------------------------------------------------------
 
 
-def test_benchmark_fetch_via_curl():
-    """Time: curl_cffi fetch with JA3 fingerprint."""
+def test_benchmark_fetch_via_curl(
+    session_event_loop: asyncio.AbstractEventLoop,
+) -> None:
+    """Time: curl_cffi fetch with JA3 fingerprint.
+
+    FIX F350M-R: Use session_event_loop fixture instead of asyncio.run()
+    to avoid orphaning the session-scoped loop.
+    """
     if os.environ.get("HLEDAC_ENABLE_CURL_CFFI") != "1":
         pytest.skip("curl_cffi not enabled (HLEDAC_ENABLE_CURL_CFFI=1)")
 
@@ -189,7 +193,7 @@ def test_benchmark_fetch_via_curl():
 
     t0 = time.perf_counter()
     try:
-        asyncio.run(_fetch())
+        session_event_loop.run_until_complete(_fetch())
     except Exception:
         pass
     elapsed_ms = (time.perf_counter() - t0) * 1000

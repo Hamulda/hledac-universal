@@ -113,7 +113,7 @@ class LedgerRecord:
         if len(self.candidate_id) > CANDIDATE_ID_TRUNC:
             object.__setattr__(self, 'candidate_id', self.candidate_id[:CANDIDATE_ID_TRUNC])
 
-@dataclass(True)
+@dataclass(slots=True)
 class NonfeedCandidateLedger:
     """
     Sprint F217E: Bounded in-memory nonfeed candidate evidence ledger.

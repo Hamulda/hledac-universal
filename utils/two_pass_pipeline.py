@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 logger = logging.getLogger(__name__)
 
-@dataclass(True)
+@dataclass(slots=True)
 class TwoPassPipelineConfig:
     """Configuration for a two-pass pipeline."""
     queue_size: int = 512

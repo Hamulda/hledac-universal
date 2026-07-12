@@ -26,7 +26,7 @@ TOP_K = 200
 MAX_COMPARISONS = 50000
 MAX_FIELD_REASONS = 5
 
-@dataclass(True)
+@dataclass(slots=True)
 class MetadataEntry:
     """A single metadata entry for deduplication."""
     url: str

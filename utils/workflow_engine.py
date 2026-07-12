@@ -37,7 +37,7 @@ class TaskStatus(Enum):
     FAILED = 'failed'
     SKIPPED = 'skipped'
 
-@dataclass(True)
+@dataclass(slots=True)
 class Task:
     """Úkol ve workflow"""
     id: str

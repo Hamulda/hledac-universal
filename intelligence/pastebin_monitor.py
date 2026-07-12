@@ -39,7 +39,7 @@ def _mask_secret(value: str) -> str:
         return '*' * len(value)
     return value[:-_SECRET_REDACT_LEN] + '*' * _SECRET_REDACT_LEN
 
-@dataclass(True)
+@dataclass(slots=True)
 class PasteFinding:
     """Structured paste finding result."""
     uri: str

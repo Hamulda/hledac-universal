@@ -345,7 +345,7 @@ def _classify_jarm_hosting(jarm_hash: str, http_status: int) -> str:
         return 'real_content'
     return 'unknown'
 
-@dataclass(True)
+@dataclass(slots=True)
 class OpenStorageResult:
     """Normalized DTO for open storage scan results."""
     url: str

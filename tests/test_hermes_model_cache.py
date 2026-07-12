@@ -16,7 +16,33 @@ Invariants tested:
   - Singleton hermes_cache() returns same instance
 """
 
+import sys
+from pathlib import Path
+
+# Ensure project root is on path for imports
+_project_root = Path(__file__).resolve().parents[1]
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
+
 import threading
+from collections.abc import Callable, Generator, Sequence
+from contextlib import contextmanager
+
+
+@contextmanager
+def joinable_threads(targets: Sequence[Callable[[], object]]) -> Generator[list[threading.Thread], object, object]:
+    """Context manager: start daemon threads, join on exit with timeout."""
+    threads: list[threading.Thread] = []
+    for target in targets:
+        t = threading.Thread(target=target, daemon=True)
+        threads.append(t)
+        t.start()
+    try:
+        yield threads
+    finally:
+        for t in threads:
+            t.join(timeout=10.0)
+
 
 # Import the module under test
 from brain._hermes_cache import (
@@ -26,7 +52,6 @@ from brain._hermes_cache import (
     hermes_cache,
 )
 from brain.deephermes3_engine import _maybe_evict_hermes_cache
-from tests.utils.spec_mocks import joinable_threads
 
 
 class TestHermesModelCacheBasic:
@@ -205,7 +230,17 @@ class TestHermesModelCacheThreading:
 
             return writer
 
-        with joinable_threads([_writer_factory(i) for i in range(4)] + [reader for _ in range(4)]):
+        def _reader_factory():
+            def reader() -> None:
+                try:
+                    for _ in range(50):
+                        cache.get_model("any_key")
+                except Exception:
+                    pass
+
+            return reader
+
+        with joinable_threads([_writer_factory(i) for i in range(4)] + [_reader_factory() for _ in range(4)]):
             pass
 
         assert not errors, f"Threading errors: {errors}"

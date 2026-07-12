@@ -1,7 +1,6 @@
 # tests/test_harness.py
 """Unit tests for BenchmarkHarness and benchmarks/migrate_schema.py."""
 
-
 import asyncio
 import json
 import sys
@@ -19,6 +18,7 @@ from benchmarks.migrate_schema import migrate_record
 # ---------------------------------------------------------------------------
 # _percentile
 # ---------------------------------------------------------------------------
+
 
 class TestPercentile:
     def test_empty(self):
@@ -46,34 +46,33 @@ class TestPercentile:
 # BenchmarkHarness — validation
 # ---------------------------------------------------------------------------
 
+
 class TestBenchmarkHarnessValidation:
     """Validation errors are raised synchronously before the event loop is touched."""
 
     def setup_method(self):
         self.harness = BenchmarkHarness()
 
-    def test_warmup_negative_raises(self):
+    @pytest.mark.asyncio
+    async def test_warmup_negative_raises(self):
         with pytest.raises(ValueError, match="warmup"):
-            asyncio.run(
-                self.harness.run(warmup=-1, iterations=5, query="test", output_path=Path("/tmp/x"))
-            )
+            await self.harness.run(warmup=-1, iterations=5, query="test", output_path=Path("/tmp/x"))
 
-    def test_iterations_zero_raises(self):
+    @pytest.mark.asyncio
+    async def test_iterations_zero_raises(self):
         with pytest.raises(ValueError, match="iterations"):
-            asyncio.run(
-                self.harness.run(warmup=0, iterations=0, query="test", output_path=Path("/tmp/x"))
-            )
+            await self.harness.run(warmup=0, iterations=0, query="test", output_path=Path("/tmp/x"))
 
-    def test_warmup_ge_iterations_raises(self):
+    @pytest.mark.asyncio
+    async def test_warmup_ge_iterations_raises(self):
         with pytest.raises(ValueError, match="warmup"):
-            asyncio.run(
-                self.harness.run(warmup=5, iterations=3, query="test", output_path=Path("/tmp/x"))
-            )
+            await self.harness.run(warmup=5, iterations=3, query="test", output_path=Path("/tmp/x"))
 
 
 # ---------------------------------------------------------------------------
 # BenchmarkHarness.run — mock integration
 # ---------------------------------------------------------------------------
+
 
 class TestBenchmarkHarnessRun:
     @pytest.mark.asyncio
@@ -191,6 +190,7 @@ class TestBenchmarkHarnessRun:
 # _run_single_sprint_unsafe
 # ---------------------------------------------------------------------------
 
+
 class TestRunSingleSprintUnsafe:
     @pytest.mark.asyncio
     async def test_returns_error_on_exception(self):
@@ -218,6 +218,7 @@ class TestRunSingleSprintUnsafe:
 # ---------------------------------------------------------------------------
 # migrate_schema
 # ---------------------------------------------------------------------------
+
 
 class TestMigrateSchema:
     def test_rename_wall_clock(self):
@@ -268,6 +269,7 @@ class TestMigrateSchema:
 # ---------------------------------------------------------------------------
 # asyncio fixture
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def tmp_path(tmp_path_factory):

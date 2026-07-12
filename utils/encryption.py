@@ -9,7 +9,7 @@ import secrets
 from dataclasses import dataclass
 logger = logging.getLogger(__name__)
 
-@dataclass(True)
+@dataclass(slots=True)
 class EncryptionResult:
     """Result of encryption operation"""
     ciphertext: str
@@ -18,7 +18,7 @@ class EncryptionResult:
     success: bool = True
     error: str | None = None
 
-@dataclass(True)
+@dataclass(slots=True)
 class DecryptionResult:
     """Result of decryption operation"""
     plaintext: str

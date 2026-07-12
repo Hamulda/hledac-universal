@@ -14,8 +14,9 @@ Verifies the changes to ``FetchCoordinator`` actually work end-to-end:
 Hermetic: every external I/O surface is monkeypatched.
 """
 
-import asyncio
 from unittest.mock import patch
+
+import pytest
 
 from hledac.universal.coordinators.fetch_coordinator import FetchCoordinator
 from hledac.universal.tools.url_dedup import dedupe_url_list
@@ -43,26 +44,26 @@ def test_fetch_coordinator_host_ips_cache_is_per_instance():
 # ---------------------------------------------------------------------------
 
 
-def test_validate_fetch_target_cache_hit_skips_getaddrinfo():
+@pytest.mark.asyncio
+async def test_validate_fetch_target_cache_hit_skips_getaddrinfo():
+    """Cache hit must skip async_getaddrinfo and return cached IPs."""
     fc = FetchCoordinator()
     fc._host_ips_cache = {"cached.example": ["8.8.8.8", "1.1.1.1"]}
 
     async def _fail(host, port, **kw):
         raise RuntimeError("getaddrinfo should not be called on cache hit")
 
-    async def _run():
-        with patch(
-            "hledac.universal.coordinators.fetch_coordinator.async_getaddrinfo",
-            new=_fail,
-        ):
-            return await fc._validate_fetch_target("https://cached.example/path")
-
-    is_safe, meta = asyncio.run(_run())
+    with patch(
+        "hledac.universal.coordinators.fetch_coordinator.async_getaddrinfo",
+        new=_fail,
+    ):
+        is_safe, meta = await fc._validate_fetch_target("https://cached.example/path")
     assert is_safe is True
     assert sorted(meta["resolved_ips"]) == ["1.1.1.1", "8.8.8.8"]
 
 
-def test_validate_fetch_target_cache_hit_empty_blocked():
+@pytest.mark.asyncio
+async def test_validate_fetch_target_cache_hit_empty_blocked():
     """A cached empty IP list means DNS already failed for this host."""
     fc = FetchCoordinator()
     fc._host_ips_cache = {"dead.example": []}
@@ -70,39 +71,36 @@ def test_validate_fetch_target_cache_hit_empty_blocked():
     async def _fail(host, port, **kw):
         raise RuntimeError("getaddrinfo should not be called on cache hit")
 
-    async def _run():
-        with patch(
-            "hledac.universal.coordinators.fetch_coordinator.async_getaddrinfo",
-            new=_fail,
-        ):
-            return await fc._validate_fetch_target("https://dead.example/path")
-
-    is_safe, meta = asyncio.run(_run())
+    with patch(
+        "hledac.universal.coordinators.fetch_coordinator.async_getaddrinfo",
+        new=_fail,
+    ):
+        is_safe, meta = await fc._validate_fetch_target("https://dead.example/path")
     assert is_safe is False
     assert meta["blocked_reason"] == "dns_resolution_failed"
 
 
-def test_validate_fetch_target_cache_hit_private_blocked():
+@pytest.mark.asyncio
+async def test_validate_fetch_target_cache_hit_private_blocked():
+    """Cached private IP must be blocked."""
     fc = FetchCoordinator()
     fc._host_ips_cache = {"internal.example": ["192.168.1.1"]}
 
     async def _fail(host, port, **kw):
         raise RuntimeError("getaddrinfo should not be called on cache hit")
 
-    async def _run():
-        with patch(
-            "hledac.universal.coordinators.fetch_coordinator.async_getaddrinfo",
-            new=_fail,
-        ):
-            return await fc._validate_fetch_target("https://internal.example/path")
-
-    is_safe, meta = asyncio.run(_run())
+    with patch(
+        "hledac.universal.coordinators.fetch_coordinator.async_getaddrinfo",
+        new=_fail,
+    ):
+        is_safe, meta = await fc._validate_fetch_target("https://internal.example/path")
     assert is_safe is False
     assert meta["blocked_reason"] == "private_ip_resolved"
     assert meta["blocked_ip"] == "192.168.1.1"
 
 
-def test_validate_fetch_target_cache_miss_falls_through():
+@pytest.mark.asyncio
+async def test_validate_fetch_target_cache_miss_falls_through():
     """Cache miss → real async_getaddrinfo runs and the result is returned."""
     fc = FetchCoordinator()
     fc._host_ips_cache = {}  # miss
@@ -110,26 +108,21 @@ def test_validate_fetch_target_cache_miss_falls_through():
     async def _real_getaddrinfo(host, port, **kw):
         return [(2, 1, 6, "", ("8.8.4.4", 0))]
 
-    async def _run():
-        with patch(
-            "hledac.universal.coordinators.fetch_coordinator.async_getaddrinfo",
-            new=_real_getaddrinfo,
-        ):
-            return await fc._validate_fetch_target("https://uncached.example/path")
-
-    is_safe, meta = asyncio.run(_run())
+    with patch(
+        "hledac.universal.coordinators.fetch_coordinator.async_getaddrinfo",
+        new=_real_getaddrinfo,
+    ):
+        is_safe, meta = await fc._validate_fetch_target("https://uncached.example/path")
     assert is_safe is True
     assert meta["resolved_ips"] == ["8.8.4.4"]
 
 
-def test_validate_fetch_target_ip_literal_still_short_circuits():
+@pytest.mark.asyncio
+async def test_validate_fetch_target_ip_literal_still_short_circuits():
     """IP literal URLs skip the cache and go straight to the IP check."""
     fc = FetchCoordinator()
     # No cache populated, and a public IP literal should still pass.
-    async def _run():
-        return await fc._validate_fetch_target("https://8.8.8.8/path")
-
-    is_safe, meta = asyncio.run(_run())
+    is_safe, meta = await fc._validate_fetch_target("https://8.8.8.8/path")
     assert is_safe is True
     assert meta["resolved_ips"] == ["8.8.8.8"]
 
@@ -196,8 +189,8 @@ def test_run_step_batch_dns_excludes_onion_i2p():
     urls_to_fetch = [
         "https://a.example/page",
         "https://b.example/page",
-        "http://abcxyzyzabc.onion",       # base, no path
-        "http://abcdabcd.i2p",            # base, no path
+        "http://abcxyzyzabc.onion",  # base, no path
+        "http://abcdabcd.i2p",  # base, no path
     ]
     from urllib.parse import urlparse
 

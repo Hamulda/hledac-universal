@@ -43,7 +43,7 @@ class TaskPriority(Enum):
     LOW = 4
     BACKGROUND = 5
 
-@dataclass(True)
+@dataclass(slots=True)
 class AgentCapability:
     """Capability definition for an agent."""
     agent_type: AgentType

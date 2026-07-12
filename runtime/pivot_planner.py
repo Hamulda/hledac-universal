@@ -81,7 +81,7 @@ class Pivot:
     estimated_cost: float = field(compare=False, default=0.5)
     mission_boost: float = field(compare=False, default=1.0)
 
-@dataclass(True)
+@dataclass(slots=True)
 class PivotStats:
     """
     Tracks pivot usage history for exponential decay scoring.

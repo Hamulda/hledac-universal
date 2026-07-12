@@ -3,23 +3,29 @@ Async Generators Pipeline Utilities — F275
 
 Modern streaming pipeline pro M1 8GB: constant memory místo list accumulation.
 """
+
 import asyncio
-from utils.async_helpers import safe_create_task, safe_gather_ok
 import inspect
 import typing
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable
 from dataclasses import dataclass
-T = typing.TypeVar('T', default=object)
-R = typing.TypeVar('R', default=object)
+
+from utils.async_helpers import safe_create_task, safe_gather_ok
+
+T = typing.TypeVar("T", default=object)
+R = typing.TypeVar("R", default=object)
+
 
 @dataclass(frozen=True, slots=True)
 class BatchStats:
     """Statistics pro batch processing."""
+
     items_processed: int = 0
     batches_yielded: int = 0
     items_filtered: int = 0
 
-async def async_batched[T](source: AsyncIterator[T], batch_size: int=1024) -> AsyncGenerator[list[T]]:
+
+async def async_batched[T](source: AsyncIterator[T], batch_size: int = 1024) -> AsyncGenerator[list[T]]:
     """
     Yield items from async iterator as bounded batches.
 
@@ -41,7 +47,10 @@ async def async_batched[T](source: AsyncIterator[T], batch_size: int=1024) -> As
     if batch:
         yield batch
 
-async def async_transform[T, R](source: AsyncIterator[T], transform: Callable[[T], R | Awaitable[R]], concurrency: int=1) -> AsyncGenerator[R]:
+
+async def async_transform[T, R](
+    source: AsyncIterator[T], transform: Callable[[T], R | Awaitable[R]], concurrency: int = 1
+) -> AsyncGenerator[R]:
     """
     Transform items from async iterator through async function.
 
@@ -55,13 +64,14 @@ async def async_transform[T, R](source: AsyncIterator[T], transform: Callable[[T
     """
     if concurrency == 1:
         async for item in source:
-            if asyncio.iscoroutinefunction(transform):
+            if inspect.iscoroutinefunction(transform):
                 result = await transform(item)
             else:
                 result = transform(item)
             yield result
     else:
         from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+
         semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
         pending: list[asyncio.Task[typing.Any]] = []
 
@@ -71,6 +81,7 @@ async def async_transform[T, R](source: AsyncIterator[T], transform: Callable[[T
                 if isinstance(val, Awaitable):
                     return await val
                 return val
+
         async for item in source:
             task = safe_create_task(transform_with_sem(item))
             pending.append(task)
@@ -83,12 +94,15 @@ async def async_transform[T, R](source: AsyncIterator[T], transform: Callable[[T
                     except Exception:
                         pass
         if pending:
-            results = await safe_gather_ok(*pending, label='async_generators:pending')
+            results = await safe_gather_ok(*pending, label="async_generators:pending")
             for r in results:
                 if not isinstance(r, Exception):
                     yield r
 
-async def async_filter[T](source: AsyncIterator[T], predicate: Callable[[T], bool | Awaitable[bool]]) -> AsyncGenerator[T]:
+
+async def async_filter[T](
+    source: AsyncIterator[T], predicate: Callable[[T], bool | Awaitable[bool]]
+) -> AsyncGenerator[T]:
     """
     Filter items from async iterator through async predicate.
 
@@ -100,12 +114,13 @@ async def async_filter[T](source: AsyncIterator[T], predicate: Callable[[T], boo
         Items where predicate(item) is True
     """
     async for item in source:
-        if asyncio.iscoroutinefunction(predicate):
+        if inspect.iscoroutinefunction(predicate):
             keep = await predicate(item)
         else:
             keep = predicate(item)
         if keep:
             yield item
+
 
 async def async_flatmap[T](source: AsyncIterator[Iterable[T] | AsyncIterator[T]]) -> AsyncGenerator[T]:
     """
@@ -125,7 +140,13 @@ async def async_flatmap[T](source: AsyncIterator[Iterable[T] | AsyncIterator[T]]
             for subitem in item:
                 yield subitem
 
-async def async_chunked_pipeline[T, R](source: AsyncIterator[T], processor: Callable[[list[T]], Awaitable[list[R]]], batch_size: int=1024, max_pending_batches: int=2) -> AsyncGenerator[list[R], BatchStats]:
+
+async def async_chunked_pipeline[T, R](
+    source: AsyncIterator[T],
+    processor: Callable[[list[T]], Awaitable[list[R]]],
+    batch_size: int = 1024,
+    max_pending_batches: int = 2,
+) -> AsyncGenerator[list[R], BatchStats]:
     """
     Pipeline: batch source items, process with async function, yield results.
 
@@ -153,7 +174,10 @@ async def async_chunked_pipeline[T, R](source: AsyncIterator[T], processor: Call
         except Exception:
             yield []
 
-async def findings_to_duckdb_pipeline(findings_source: AsyncIterator[dict], duckdb_store, batch_size: int=1024, max_pending: int=2) -> AsyncGenerator[list[dict], BatchStats]:
+
+async def findings_to_duckdb_pipeline(
+    findings_source: AsyncIterator[dict], duckdb_store, batch_size: int = 1024, max_pending: int = 2
+) -> AsyncGenerator[list[dict], BatchStats]:
     """
     F275 canonical pipeline: Stream findings to DuckDB with quality gate.
 
@@ -171,14 +195,19 @@ async def findings_to_duckdb_pipeline(findings_source: AsyncIterator[dict], duck
 
     async def process_batch(findings: list[dict]) -> list[dict]:
         return await duckdb_store.async_ingest_findings_batch(findings)
-    async for batch_results in async_chunked_pipeline(findings_source, process_batch, batch_size=batch_size, max_pending_batches=max_pending):
+
+    async for batch_results in async_chunked_pipeline(
+        findings_source, process_batch, batch_size=batch_size, max_pending_batches=max_pending
+    ):
         yield batch_results
+
 
 class BackpressureMonitor:
     """Monitor for async generator backpressure."""
-    __slots__ = tuple(('max_pending', 'name', 'pending_count', 'total_processed'))
 
-    def __init__(self, name: str='unknown'):
+    __slots__ = tuple(("max_pending", "name", "pending_count", "total_processed"))
+
+    def __init__(self, name: str = "unknown"):
         self.name = name
         self.pending_count = 0
         self.max_pending = 0
@@ -200,4 +229,67 @@ class BackpressureMonitor:
         return self.pending_count / self.max_pending
 
     def __repr__(self) -> str:
-        return f'<BackpressureMonitor {self.name} pending={self.pending_count} max={self.max_pending}>'
+        return f"<BackpressureMonitor {self.name} pending={self.pending_count} max={self.max_pending}>"
+
+
+async def aclose_safe(agen: AsyncIterator) -> None:
+    """
+    Safely close an async generator, ignoring AlreadyClosedError.
+
+    Pattern for preventing coroutine leaks when breaking early from
+    `async for` loops:
+
+    ```python
+    gen = async_range_slow(1000)
+    try:
+        async for item in gen:
+            if stop_condition:
+                break
+    finally:
+        await aclose_safe(gen)  # Prevents memory leak
+    ```
+
+    Args:
+        agen: Async iterator to close
+    """
+    try:
+        if hasattr(agen, "aclose"):
+            await agen.aclose()
+    except AttributeError, StopAsyncIteration, RuntimeError:
+        # Already closed or doesn't support aclose
+        pass
+
+
+class AsyncIteratorContext:
+    """
+    Context manager for async iterators that ensures cleanup.
+
+    Usage:
+    ```python
+    async with AsyncIteratorContext(async_range_slow(1000)) as agen:
+        async for item in agen:
+            if stop_condition:
+                break
+    # aclose() called automatically on exit
+    ```
+    """
+
+    __slots__ = ("_agen",)
+
+    def __init__(self, agen: AsyncIterator) -> None:
+        self._agen = agen
+
+    def __aiter__(self):
+        return self._agen
+
+    async def __aenter__(self) -> AsyncIterator:
+        return self._agen
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        await aclose_safe(self._agen)
+        return False  # Don't suppress exceptions
+
+
+def async_iter_context(agen: AsyncIterator) -> AsyncIteratorContext:
+    """Create a context manager wrapper for an async iterator."""
+    return AsyncIteratorContext(agen)

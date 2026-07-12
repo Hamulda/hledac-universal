@@ -25,7 +25,7 @@ class ValidationSeverity(Enum):
     ERROR = 'error'
     CRITICAL = 'critical'
 
-@dataclass(True)
+@dataclass(slots=True)
 class ValidationError:
     """Structured validation error information."""
     field: str

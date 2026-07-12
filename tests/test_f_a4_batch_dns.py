@@ -55,13 +55,17 @@ def _make_getaddrinfo_mock(mapping: dict[str, list[tuple]]):
 # === Sync tests (no event loop needed) ===
 
 
-def test_resolver_empty_input_returns_empty_dict():
+@pytest.mark.asyncio
+async def test_resolver_empty_input_returns_empty_dict():
+    """FIX F350M-R: Use @pytest.mark.asyncio instead of asyncio.run()."""
     r = BatchDNSResolver()
-    result = asyncio.run(r.resolve_many([]))
+    result = await r.resolve_many([])
     assert result == {}
 
 
-def test_resolver_dedupes_duplicate_hosts_in_input():
+@pytest.mark.asyncio
+async def test_resolver_dedupes_duplicate_hosts_in_input():
+    """FIX F350M-R: Use @pytest.mark.asyncio instead of asyncio.run()."""
     r = BatchDNSResolver()
     mock = _make_getaddrinfo_mock(
         {
@@ -72,12 +76,14 @@ def test_resolver_dedupes_duplicate_hosts_in_input():
         "hledac.universal.utils.batch_dns.async_getaddrinfo",
         new=mock,
     ):
-        result = asyncio.run(r.resolve_many(["a.example", "a.example", "a.example"]))
-    assert result == {"a.example": ["1.2.3.4"]}
+        result = await r.resolve_many(["a.example", "a.example", "a.example"])
+    assert result == {"a.example": ["1.2.3.4"]}, f"Got {result}"
     assert r.stats()["cache_misses"] == 1
 
 
-def test_resolver_resolves_multiple_distinct_hosts_in_parallel():
+@pytest.mark.asyncio
+async def test_resolver_resolves_multiple_distinct_hosts_in_parallel():
+    """FIX F350M-R: Use @pytest.mark.asyncio instead of asyncio.run()."""
     r = BatchDNSResolver()
     mock = _make_getaddrinfo_mock(
         {
@@ -90,7 +96,7 @@ def test_resolver_resolves_multiple_distinct_hosts_in_parallel():
         "hledac.universal.utils.batch_dns.async_getaddrinfo",
         new=mock,
     ):
-        result = asyncio.run(r.resolve_many(["a.example", "b.example", "c.example"]))
+        result = await r.resolve_many(["a.example", "b.example", "c.example"])
     assert result == {
         "a.example": ["1.1.1.1"],
         "b.example": ["2.2.2.2"],
@@ -165,7 +171,9 @@ async def test_resolver_ttl_expiry_re_resolves_host():
     assert call_count["n"] == 2
 
 
-def test_resolver_ttl_zero_means_no_expiry():
+@pytest.mark.asyncio
+async def test_resolver_ttl_zero_means_no_expiry():
+    """FIX F350M-R: Use @pytest.mark.asyncio instead of asyncio.run()."""
     r = BatchDNSResolver(max_cache=10, ttl_s=0.0)
     call_count = {"n": 0}
 
@@ -177,16 +185,18 @@ def test_resolver_ttl_zero_means_no_expiry():
         "hledac.universal.utils.batch_dns.async_getaddrinfo",
         new=_counting_mock,
     ):
-        asyncio.run(r.resolve_many(["never-expire.example"]))
+        await r.resolve_many(["never-expire.example"])
         time.sleep(0.05)
-        asyncio.run(r.resolve_many(["never-expire.example"]))
+        await r.resolve_many(["never-expire.example"])
     assert call_count["n"] == 1
 
 
 # === IPv4/IPv6 literals - sync, no loop needed ===
 
 
-def test_resolver_ipv4_literal_short_circuits():
+@pytest.mark.asyncio
+async def test_resolver_ipv4_literal_short_circuits():
+    """FIX F350M-R: Use @pytest.mark.asyncio instead of asyncio.run()."""
     r = BatchDNSResolver()
     mock_called = {"n": False}
 
@@ -198,15 +208,17 @@ def test_resolver_ipv4_literal_short_circuits():
         "hledac.universal.utils.batch_dns.async_getaddrinfo",
         new=_fail_mock,
     ):
-        result = asyncio.run(r.resolve_many(["192.168.1.1"]))
+        result = await r.resolve_many(["192.168.1.1"])
     assert result == {"192.168.1.1": ["192.168.1.1"]}
     assert mock_called["n"] is False
     assert r.stats()["cache_hits"] == 1  # literal counts as a hit
 
 
-def test_resolver_ipv6_literal_short_circuits():
+@pytest.mark.asyncio
+async def test_resolver_ipv6_literal_short_circuits():
+    """FIX F350M-R: Use @pytest.mark.asyncio instead of asyncio.run()."""
     r = BatchDNSResolver()
-    result = asyncio.run(r.resolve_many(["::1"]))
+    result = await r.resolve_many(["::1"])
     assert result == {"::1": ["::1"]}
     assert r.stats()["cache_hits"] == 1
 
@@ -286,10 +298,11 @@ def test_reset_drops_singleton():
     assert a is not b
 
 
-def test_resolver_opt_out_returns_empty_dict(monkeypatch):
+@pytest.mark.asyncio
+async def test_resolver_opt_out_returns_empty_dict(monkeypatch):
     monkeypatch.setenv(ENV_OPT_OUT, "1")
     r = BatchDNSResolver()
-    result = asyncio.run(r.resolve_many(["anywhere.example"]))
+    result = await r.resolve_many(["anywhere.example"])
     assert result == {}
 
 

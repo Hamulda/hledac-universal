@@ -27,7 +27,7 @@ _F231_BLOCKING_PROBES = ['probe_f231a_public_candidate_ledger', 'probe_f231b_ct_
 _CLEAN_SWAP_MAX_GIB = 2.0
 _DIAGNOSTIC_SWAP_MAX_GIB = 4.0
 
-@dataclass(True)
+@dataclass(slots=True)
 class ReadinessResult:
     verdict: str
     next_action: str

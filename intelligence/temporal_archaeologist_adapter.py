@@ -47,7 +47,7 @@ try:
 except ImportError:
     CanonicalFinding = None
 
-@dataclass(True)
+@dataclass(slots=True)
 class TimelineFindingResult:
     """
     Result of timeline synthesis containing events and derived findings.

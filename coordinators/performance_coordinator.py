@@ -38,7 +38,7 @@ CircuitBreakerOpen = CircuitBreakerOpenError
 logger = logging.getLogger(__name__)
 from core.sys_metrics import get_memory_usage_mb
 
-@dataclass(True)
+@dataclass(slots=True)
 class AgentMetrics:
     """Performance metrics for individual agents."""
     name: str

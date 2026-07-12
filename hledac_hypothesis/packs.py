@@ -46,7 +46,7 @@ from dataclasses import dataclass, field
 import msgspec
 from typing import Any
 
-@dataclass(True)
+@dataclass(slots=True)
 class SourceHint:
     """Source recommendation with quality score."""
     source: str

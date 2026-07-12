@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any
 _UNSET: Any = object()
 
-@dataclass(True)
+@dataclass(slots=True)
 class SprintSchedulerResult:
     """Outcome of one sprint run.
 
@@ -438,7 +438,7 @@ class SprintSchedulerResult:
             return layout.bump(name, n)
         return 0
 
-@dataclass(True)
+@dataclass(slots=True)
 class SprintResultBuilder:
     """Fluent builder for SprintSchedulerResult (F350M-R / Issue #6).
 

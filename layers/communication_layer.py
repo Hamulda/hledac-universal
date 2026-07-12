@@ -232,7 +232,7 @@ class _BatchItem:
     future: asyncio.Future = field(default=None, compare=False)
     wait_since: float = field(default_factory=time.time, compare=False)
 
-@dataclass(True)
+@dataclass(slots=True)
 class ModelQuery:
     """Model query with metadata."""
     query_id: str

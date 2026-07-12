@@ -40,7 +40,7 @@ class MetricType(Enum):
     LOAD = 'load'
     TEMPERATURE = 'temperature'
 
-@dataclass(True)
+@dataclass(slots=True)
 class SystemMetrics:
     """System metrics snapshot."""
     timestamp: float

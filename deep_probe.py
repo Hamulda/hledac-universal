@@ -29,7 +29,7 @@ MAX_IPFS_RESULTS: int = 20
 IPFS_TIMEOUT_S: float = 10.0
 SCAN_TIMEOUT_S: float = 30.0
 
-@dataclass(True)
+@dataclass(slots=True)
 class DiscoveredEndpoint:
     """Represents a discovered endpoint with metadata."""
     url: str

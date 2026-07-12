@@ -29,7 +29,7 @@ from .quantum_safe import EncryptedContainer, QuantumSafeVault, SecurityLevel
 from .stealth_communicator import StealthCommunicator
 logger = logging.getLogger(__name__)
 
-@dataclass(True)
+@dataclass(slots=True)
 class DeepSecurityConfig:
     """Konfigurace pro deep research security"""
     security_level: SecurityLevel = SecurityLevel.HIGH

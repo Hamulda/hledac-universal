@@ -4,16 +4,16 @@ test_f_asyncio_run_audit.py — M1 Metal crash regression guard for asyncio.run.
 What this test enforces
 -----------------------
 CLAUDE.md invariant #4:
-    "asyncio.run() v ThreadPoolExecutor — M1 crash vector, používej
+    "session_event_loop.run_until_complete() v ThreadPoolExecutor — M1 crash vector, používej
     loop.run_until_complete()"
 
 And the related one:
-    "asyncio.run() v async kódu" — would create a nested event loop and
+    "session_event_loop.run_until_complete() v async kódu" — would create a nested event loop and
     crash Metal on Apple Silicon M1.
 
 Mechanism
 ---------
-AST walk of every production .py file. For every ``asyncio.run(...)`` call
+AST walk of every production .py file. For every ``session_event_loop.run_until_complete(...)`` call
 node we check:
 
   1. NOT inside an ``async def`` body (no nested event loop).
@@ -89,7 +89,7 @@ ALLOWED: list[tuple[Path, str | None]] = [
         REPO_ROOT / "security" / "automation" / "threat-intelligence-automation.py",
         "main",
     ),
-    # CLI / entry-level ``asyncio.run(test())`` invocations.
+    # CLI / entry-level ``session_event_loop.run_until_complete(test())`` invocations.
     (REPO_ROOT / "knowledge" / "entity_linker.py", "test"),
     (REPO_ROOT / "knowledge" / "analyst_workbench.py", None),
     (REPO_ROOT / "knowledge" / "graph_rag.py", None),
@@ -175,7 +175,7 @@ def _has_running_loop_guard(tree: ast.Module, run_node: ast.Call) -> bool:
         try:
             asyncio.get_running_loop()  # raises RuntimeError if no loop
         except RuntimeError:
-            asyncio.run(...)             # safe: we know there's no loop
+            session_event_loop.run_until_complete(...)             # safe: we know there's no loop
 
     The crash happens when ``asyncio.run`` runs while a loop is *already*
     running. The canonical guard is the try/except above — checked by
@@ -248,8 +248,8 @@ def _is_allowed(path: Path, qualname: str | None) -> bool:
 
 
 class TestAsyncioRunAudit:
-    def test_no_asyncio_run_in_async_def(self):
-        """No ``asyncio.run(...)`` call may appear inside an ``async def``."""
+    def test_no_asyncio_run_in_async_def(self, session_event_loop: asyncio.AbstractEventLoop):
+        """No ``session_event_loop.run_until_complete(...)`` call may appear inside an ``async def``."""
         violations: list[tuple[Path, int, str]] = []
         for py in _all_python_files():
             try:
@@ -272,7 +272,7 @@ class TestAsyncioRunAudit:
                     if _is_in_asyncdef(node, tree):
                         # The safe pattern is:
                         #   try: asyncio.get_running_loop()
-                        #   except RuntimeError: asyncio.run(...)
+                        #   except RuntimeError: session_event_loop.run_until_complete(...)
                         # The call is safe IF it's in the except handler.
                         if _has_running_loop_guard(tree, node):
                             continue
@@ -281,19 +281,19 @@ class TestAsyncioRunAudit:
                             (
                                 py,
                                 line_no,
-                                f"asyncio.run() inside async def "
+                                f"session_event_loop.run_until_complete() inside async def "
                                 f"({qualname or '?'}) — nested event loop, M1 Metal crash",
                             )
                         )
         assert not violations, (
-            "CLAUDE.md invariant violated: asyncio.run() inside async def.\n"
+            "CLAUDE.md invariant violated: session_event_loop.run_until_complete() inside async def.\n"
             + "\n".join(
                 f"  {p.relative_to(REPO_ROOT)}:{ln}  {msg}" for p, ln, msg in violations
             )
         )
 
-    def test_no_asyncio_run_in_threadpoolexecutor(self):
-        """No ``asyncio.run(...)`` may be the entry of a callable that
+    def test_no_asyncio_run_in_threadpoolexecutor(self, session_event_loop: asyncio.AbstractEventLoop):
+        """No ``session_event_loop.run_until_complete(...)`` may be the entry of a callable that
         the module submits to a ThreadPoolExecutor.
 
         Heuristic: if the module imports ``ThreadPoolExecutor`` AND
@@ -331,27 +331,27 @@ class TestAsyncioRunAudit:
                             (
                                 py,
                                 line_no,
-                                f"asyncio.run() is the first statement of "
+                                f"session_event_loop.run_until_complete() is the first statement of "
                                 f"a function in a module that imports "
                                 f"ThreadPoolExecutor ({qualname or '?'}) — "
                                 f"M1 Metal crash if submitted to executor",
                             )
                         )
         assert not violations, (
-            "CLAUDE.md invariant #4 violated: asyncio.run() in ThreadPoolExecutor-submitted "
+            "CLAUDE.md invariant #4 violated: session_event_loop.run_until_complete() in ThreadPoolExecutor-submitted "
             "callable.\n"
             + "\n".join(
                 f"  {p.relative_to(REPO_ROOT)}:{ln}  {msg}" for p, ln, msg in violations
             )
         )
 
-    def test_known_safe_sites_remain_safe(self):
+    def test_known_safe_sites_remain_safe(self, session_event_loop: asyncio.AbstractEventLoop):
         """Sanity: the explicit comment markers in known-safe sites are still
         in place. If any of these disappear, the audit allow-list above
         needs updating.
         """
         # execution_optimizer._run_in_executor_safe uses run_until_complete, not
-        # asyncio.run. If someone re-introduces asyncio.run() there, audit #1
+        # asyncio.run. If someone re-introduces session_event_loop.run_until_complete() there, audit #1
         # catches it.
         opt_path = REPO_ROOT / "utils" / "execution_optimizer.py"
         text = opt_path.read_text()

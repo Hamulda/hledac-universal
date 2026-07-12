@@ -78,7 +78,7 @@ RECENCY_BONUS_PER_CYCLE = 0.05
 RECENCY_BONUS_MAX = 0.3
 NOVELTY_BONUS = 0.15
 
-@dataclass(True)
+@dataclass(slots=True)
 class _SourceSignal:
     """Per-source signal tracking (bounded)."""
     feed_url: str

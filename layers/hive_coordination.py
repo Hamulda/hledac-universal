@@ -46,7 +46,7 @@ class TopologyType(Enum):
     HYBRID = 'hybrid'
     ADAPTIVE = 'adaptive'
 
-@dataclass(True)
+@dataclass(slots=True)
 class CoordinationNode:
     """Represents a node in the coordination network"""
     node_id: str
@@ -57,7 +57,7 @@ class CoordinationNode:
     connected_nodes: list[str]
     performance_metrics: dict[str, float]
 
-@dataclass(True)
+@dataclass(slots=True)
 class CoordinationTask:
     """Represents a task flowing through the coordination system"""
     task_id: str

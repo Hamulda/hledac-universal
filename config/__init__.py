@@ -35,7 +35,7 @@ class ResearchPresets:
     def get_preset(cls, mode: ResearchMode) -> dict[str, Any]:
         return {ResearchMode.QUICK: cls.QUICK, ResearchMode.STANDARD: cls.STANDARD, ResearchMode.DEEP: cls.DEEP, ResearchMode.EXTREME: cls.EXTREME, ResearchMode.AUTONOMOUS: cls.AUTONOMOUS}.get(mode, cls.STANDARD)
 
-@dataclass(True)
+@dataclass(slots=True)
 class SecurityConfig:
     obfuscation_level: str = 'medium'
     generate_decoys: bool = True

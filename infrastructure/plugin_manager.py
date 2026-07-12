@@ -53,7 +53,7 @@ class PluginType(Enum):
     UTILITY = 'utility'
     INTEGRATION = 'integration'
 
-@dataclass(True)
+@dataclass(slots=True)
 class PluginMetadata:
     """Plugin metadata structure"""
     name: str

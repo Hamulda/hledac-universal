@@ -47,7 +47,7 @@ class PrivacyLaneConfig:
     env_gate: str
     ram_per_session_mb: int = 80
 
-@dataclass(True)
+@dataclass(slots=True)
 class PrivacyBudgetAllocator:
     """
     Allocates privacy lane semaphores from total fetch worker budget.

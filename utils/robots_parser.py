@@ -25,7 +25,7 @@ _MAX_CACHE_SIZE = 128
 _MAX_SITEMAP_SIZE = 2 * 1024 * 1024
 _MAX_SITEMAP_URLS = 200
 
-@dataclass(True)
+@dataclass(slots=True)
 class Rule:
     """Single robots.txt rule."""
     path: str

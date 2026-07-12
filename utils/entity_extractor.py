@@ -50,7 +50,7 @@ class PatternType(Enum):
     URL = 'url'
     PHONE = 'phone'
 
-@dataclass(True)
+@dataclass(slots=True)
 class ExtractedEntity:
     """Extracted entity with metadata."""
     pattern_type: PatternType

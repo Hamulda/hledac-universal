@@ -187,7 +187,7 @@ class WindupLocalPhase:
     error_encountered: bool = False
     synthesis_engine: str = 'unknown'
 
-@dataclass(True)
+@dataclass(slots=True)
 class LifecycleSnapshotBundle:
     """
     Bundle všech lifecycle-related shadow inputs.

@@ -43,7 +43,7 @@ class IOCPrediction:
     predicted_at: float
     expires_at: float
 
-@dataclass(True)
+@dataclass(slots=True)
 class _PatternStats:
     """Per-(ioc_type, source) rolling pattern statistics."""
     hour_counts: list[int] = field(default_factory=lambda: [0] * 24)

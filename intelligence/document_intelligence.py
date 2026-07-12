@@ -109,7 +109,7 @@ class MetadataCategory(Enum):
     DEVICE = 'device'
     CUSTOM = 'custom'
 
-@dataclass(True)
+@dataclass(slots=True)
 class GeoLocation:
     """GPS coordinates extracted from EXIF."""
     latitude: float

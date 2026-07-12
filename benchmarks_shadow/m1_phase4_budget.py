@@ -43,7 +43,7 @@ def get_rss_gib() -> float:
     except Exception:
         return 0.0
 
-@dataclass(True)
+@dataclass(slots=True)
 class BudgetBenchmarkResult:
     """Result of the M1 mission budget benchmark."""
     status: str

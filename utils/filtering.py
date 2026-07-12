@@ -40,7 +40,7 @@ except ImportError:
     ORJSON_AVAILABLE = False
 logger = logging.getLogger(__name__)
 
-@dataclass(True)
+@dataclass(slots=True)
 class FilterStats:
     """Statistics for fast filter."""
     total_checked: int = 0

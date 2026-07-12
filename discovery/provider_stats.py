@@ -24,7 +24,7 @@ _EWMA_ALPHA = 0.3
 _MAX_ERRORS_STORED = 50
 _MIN_RELIABILITY = 0.01
 
-@dataclass(True)
+@dataclass(slots=True)
 class ProviderStats:
     """
     Per-provider EWMA statistics.

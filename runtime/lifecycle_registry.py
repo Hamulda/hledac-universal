@@ -9,7 +9,7 @@ M1 8GB: No GC overhead — objects released deterministically.
 from dataclasses import dataclass, field
 from typing import Any, Callable, Final
 
-@dataclass(True)
+@dataclass(slots=True)
 class OwnedResource:
     """Explicit lifecycle: acquire → use → release. Zero weakref.
 

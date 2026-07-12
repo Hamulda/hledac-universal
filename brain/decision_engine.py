@@ -27,7 +27,7 @@ class DecisionType(Enum):
     ERROR = 'error'
     COMPLETE = 'complete'
 
-@dataclass(True)
+@dataclass(slots=True)
 class Decision:
     """Rozhodnutí orchestrátoru"""
     decision_type: DecisionType

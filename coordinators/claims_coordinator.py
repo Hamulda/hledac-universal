@@ -29,7 +29,7 @@ PROVENANCE_BONUS = 0.1
 TITLE_AGREEMENT_BONUS = 0.1
 MAX_CONFIDENCE = 0.75
 
-@dataclass(True)
+@dataclass(slots=True)
 class ClaimsCoordinatorConfig:
     """Configuration for ClaimsCoordinator."""
     max_evidence_per_step: int = 10

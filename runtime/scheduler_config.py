@@ -37,7 +37,7 @@ class SourceTier(Enum):
         return f'SourceTier.{self.name}'
 _TIER_ORDER = [SourceTier.SURFACE, SourceTier.STRUCTURED_TI, SourceTier.DEEP, SourceTier.ARCHIVE, SourceTier.OTHER]
 
-@dataclass(True)
+@dataclass(slots=True)
 class EarlyExitClass:
     """Canonical early-exit classification labels."""
     NATURAL = 'natural'
@@ -48,7 +48,7 @@ class EarlyExitClass:
     UNKNOWN = 'unknown'
 _UNSET: Any = object()
 
-@dataclass(True)
+@dataclass(slots=True)
 class SprintSchedulerConfig:
     """Configuration for one sprint run.
 

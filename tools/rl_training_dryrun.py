@@ -35,7 +35,7 @@ PRODUCTION_STATE = PROJECT_ROOT / 'rl' / '.sprint_policy_state.json'
 DEFAULT_NUM_SPRINTS = 90
 DEFAULT_TRAIN_INTERVAL = 10
 
-@dataclass(True)
+@dataclass(slots=True)
 class SyntheticResult:
     """Minimal SprintSchedulerResult surface used by _compute_reward() and
     StateExtractor. Fields are populated randomly; reward math stays realistic

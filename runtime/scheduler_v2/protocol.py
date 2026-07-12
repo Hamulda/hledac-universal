@@ -96,7 +96,7 @@ class InitResult(Generic[T]):
         """Construct a failure result."""
         return cls(value=None, error=error, elapsed_ms=elapsed_ms)
 
-@dataclass(True)
+@dataclass(slots=True)
 class PreludePhaseResult:
     """Result from the prelude phase."""
     lanes_attempted: list[str]
@@ -105,7 +105,7 @@ class PreludePhaseResult:
     prelude_duration_s: float | None = None
     error: str | None = None
 
-@dataclass(True)
+@dataclass(slots=True)
 class AcquisitionPhaseResult:
     """Result from one acquisition cycle."""
     cycles_started: int = 0
@@ -116,7 +116,7 @@ class AcquisitionPhaseResult:
     exit_path: str | None = None
     error: str | None = None
 
-@dataclass(True)
+@dataclass(slots=True)
 class WinddownPhaseResult:
     """Result from the winddown phase."""
     export_paths: list[str] = field(default_factory=list)

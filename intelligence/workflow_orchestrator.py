@@ -16,7 +16,7 @@ from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_o
 logger = logging.getLogger(__name__)
 MODULE_TIMEOUT = 60
 
-@dataclass(True)
+@dataclass(slots=True)
 class Finding:
     """Represents a finding from cross-module analysis.
 

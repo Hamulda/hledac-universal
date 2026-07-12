@@ -30,7 +30,7 @@ MAX_NETWORKINTEL_TARGETS: int = 20
 NETWORKINTEL_TIMEOUT_S: float = 30.0
 MAX_FINDINGS_PER_TARGET: int = 100
 
-@dataclass(True)
+@dataclass(slots=True)
 class NetworkIntelResult:
     target: str
     passive_dns: list[dict]

@@ -209,7 +209,7 @@ async def test_async_nested_tasks_share_context() -> None:
 
     This is correct asyncio behaviour: ContextVar is task-local, and
     create_task() runs the child in the same ContextVar context as the parent.
-    The real loop-boundary problem occurs with nested asyncio.run() calls
+    The real loop-boundary problem occurs with nested session_event_loop.run_until_complete() calls
     (separate event loops), not with create_task() within one loop.
     """
     outer_ids: list[int] = []
@@ -237,11 +237,11 @@ async def test_async_nested_tasks_share_context() -> None:
     assert outer_ids[0] == inner_ids[0], f"create_task inherits ContextVar — outer and inner must share the lock"
 
 
-def test_async_runs_isolation() -> None:
-    """Separate asyncio.run() calls get different instances (separate loops).
+def test_async_runs_isolation(session_event_loop: asyncio.AbstractEventLoop) -> None:
+    """Separate session_event_loop.run_until_complete() calls get different instances (separate loops).
 
     This is the actual problem AsyncLazySingleton solves: if you call
-    asyncio.run() twice (nested), each loop creates its own ContextVar copy,
+    session_event_loop.run_until_complete() twice (nested), each loop creates its own ContextVar copy,
     so each gets its own instance.
     """
     outer_ids: list[int] = []
@@ -256,10 +256,10 @@ def test_async_runs_isolation() -> None:
         lock = singleton()
         ids.append(id(lock))
 
-    # Two separate asyncio.run() = two separate event loops
-    asyncio.run(runner(outer_ids))
-    asyncio.run(runner(inner_ids))
+    # Two separate session_event_loop.run_until_complete() = two separate event loops
+    session_event_loop.run_until_complete(runner(outer_ids))
+    session_event_loop.run_until_complete(runner(inner_ids))
 
     assert outer_ids[0] != inner_ids[0], (
-        f"separate asyncio.run() calls must get different instances: outer={outer_ids[0]}, inner={inner_ids[0]}"
+        f"separate session_event_loop.run_until_complete() calls must get different instances: outer={outer_ids[0]}, inner={inner_ids[0]}"
     )

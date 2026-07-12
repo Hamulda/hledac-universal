@@ -25,7 +25,7 @@ class SanityVerdict(Enum):
     SANITY_FAIL_BENCHMARK_SHAPE_GAP = 'SANITY_FAIL_BENCHMARK_SHAPE_GAP'
     SANITY_FAIL_RESEARCH_QUALITY = 'SANITY_FAIL_RESEARCH_QUALITY'
 
-@dataclass(True)
+@dataclass(slots=True)
 class BenchmarkSurface:
     """Parsed benchmark surface."""
     run_quality_verdict: str | None = None

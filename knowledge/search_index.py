@@ -9,7 +9,7 @@ from typing import Any
 _dd_int_int_factory: defaultdict[int, int] = defaultdict(int)
 logger = logging.getLogger(__name__)
 
-@dataclass(True)
+@dataclass(slots=True)
 class SearchDocument:
     """OSINT document for BM25 indexing."""
     url: str

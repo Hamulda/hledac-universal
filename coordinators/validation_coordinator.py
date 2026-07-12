@@ -42,7 +42,7 @@ class OutputFormat(Enum):
     JSON = 'json'
     TEXT = 'text'
 
-@dataclass(True)
+@dataclass(slots=True)
 class ValidationResult:
     """Result of validation operation."""
     valid: bool

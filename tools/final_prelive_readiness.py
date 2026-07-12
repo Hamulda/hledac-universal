@@ -42,7 +42,7 @@ class NextAction(StrEnum):
     RUN_MISSING_PROBE = 'RUN_MISSING_PROBE'
     FIX_CONTRACT_GATE = 'FIX_CONTRACT_GATE'
 
-@dataclass(True)
+@dataclass(slots=True)
 class Blocker:
     category: str
     severity: str

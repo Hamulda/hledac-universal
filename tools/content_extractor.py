@@ -130,7 +130,7 @@ def extract_structured_snippet(data: str, max_chars: int=20000) -> str:
         pass
     return data[:max_chars]
 
-@dataclass(True)
+@dataclass(slots=True)
 class ExtractedContent:
     """Structured extracted content."""
     url: str

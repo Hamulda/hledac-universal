@@ -35,7 +35,7 @@ class CachePolicy(Enum):
     MEMORY_ONLY = 'memory_only'
     PERSISTENT = 'persistent'
 
-@dataclass(True)
+@dataclass(slots=True)
 class OptimizationConfig:
     """Configuration for research optimization."""
     strategy: OptimizationStrategy = OptimizationStrategy.BALANCED

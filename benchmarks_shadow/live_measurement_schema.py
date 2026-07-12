@@ -41,7 +41,7 @@ class RunQualityVerdict(Enum):
     FAIL_SCHEDULER_EXIT_MISSING = 'FAIL_SCHEDULER_EXIT_MISSING'
     FAIL_WALLCLOCK_BUDGET_EXCEEDED = 'FAIL_WALLCLOCK_BUDGET_EXCEEDED'
 
-@dataclass(True)
+@dataclass(slots=True)
 class LiveMeasurementResult:
     measurement_id: str
     sprint_id: str | None

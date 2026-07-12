@@ -43,7 +43,7 @@ class ConcurrencyHint:
     max_workers: int
     timeout_s: float
 
-@dataclass(True)
+@dataclass(slots=True)
 class TransportPolicy:
     """Composite transport policy."""
     renderer: RendererPolicy

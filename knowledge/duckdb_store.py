@@ -21,17 +21,21 @@ TIER 2 -- SHADOW FINDINGS (DuckDB, durable):
 TIER 3 -- CROSS-SPRINT (DuckDB, append-only, pruneable):
     temporal_events    -- time-indexed events for temporal archaeology
 """
+
 from __future__ import annotations
+
 import asyncio
 import atexit
 import sys
 import weakref
+
 from core.env_config import ENV
 from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
 from hledac.universal.utils.async_task import BoundedTaskSet
 from hledac.universal.utils.optional_imports import lazy_decorator, optional
-_otel_instrumented = lazy_decorator('otel:instrumented', default=lazy_decorator('hledac.universal.otel:instrumented'))
-_instrument_duckdb_connection = optional('runtime._telemetry_setup:instrument_duckdb_connection')
+
+_otel_instrumented = lazy_decorator("otel:instrumented", default=lazy_decorator("hledac.universal.otel:instrumented"))
+_instrument_duckdb_connection = optional("runtime._telemetry_setup:instrument_duckdb_connection")
 import datetime as _dt
 import logging
 import os
@@ -41,12 +45,15 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
+
 from hledac.universal.transport.circuit_breaker import CBState
-_SourceType = optional('hledac.universal.utils.source_types:SourceType')
-_canonical_source_type = optional('hledac.universal.utils.source_types:canonical_source_type')
-_BoundedTaskSet = optional('hledac.universal.utils.async_utils:BoundedTaskSet')
+
+_SourceType = optional("hledac.universal.utils.source_types:SourceType")
+_canonical_source_type = optional("hledac.universal.utils.source_types:canonical_source_type")
+_BoundedTaskSet = optional("hledac.universal.utils.async_utils:BoundedTaskSet")
 import msgspec
-_orjson_mod = optional('orjson')
+
+_orjson_mod = optional("orjson")
 _HAS_ORJSON = bool(_orjson_mod)
 if _HAS_ORJSON:
     _ORJSON_DECODER = _orjson_mod().loads
@@ -54,12 +61,15 @@ else:
     import json as _stdjson
 
     def _ORJSON_DECODER(b: Any) -> Any:
-        return _stdjson.loads(b.decode('utf-8') if isinstance(b, (bytes, bytearray)) else b)
+        return _stdjson.loads(b.decode("utf-8") if isinstance(b, (bytes, bytearray)) else b)
+
+
 if TYPE_CHECKING:
     import polars as pl
 
     class _DuckDBQueryExecutor:
         """Stubs for dynamic attributes set via object.__setattr__ in _DuckDBQueryExecutor."""
+
         _store: DuckDBShadowStore
         _stmt_insert_finding: Any
         _stmt_insert_finding_conn_id: int | None
@@ -67,8 +77,10 @@ if TYPE_CHECKING:
 
     class _DuckDBShadowStore:
         """Stubs for dynamic attributes set via object.__setattr__ in DuckDBShadowStore."""
+
         _query_executor: _DuckDBQueryExecutor
         _graph_store: Any
+
 
 def _provenance_to_arrow_native(provenance: tuple[str, ...]) -> bytes | None:
     """
@@ -83,6 +95,7 @@ def _provenance_to_arrow_native(provenance: tuple[str, ...]) -> bytes | None:
     """
     return encode_for_arrow(provenance)
 
+
 def _json_dumps_str(value: Any) -> str:
     """P1-11: Single canonical encode for DuckDB VARCHAR parameters.
 
@@ -94,8 +107,9 @@ def _json_dumps_str(value: Any) -> str:
     Used at: DHT metadata INSERT (L1950-1951).
     """
     if value is None:
-        return '{}'
-    return _msgspec_encode(value).decode('utf-8')
+        return "{}"
+    return _msgspec_encode(value).decode("utf-8")
+
 
 def _json_loads_flexible(raw: Any) -> Any:
     """Sprint F26X: Single-shot JSON decode that handles str | bytes | None | empty.
@@ -103,17 +117,21 @@ def _json_loads_flexible(raw: Any) -> Any:
     Replaces the 6 hand-rolled ``orjson.loads(r[N]) if r[N] else {}`` patterns
     that previously littered this module (lines 3038-3041, 4452-4455).
     """
-    if raw is None or raw == b'' or raw == '':
+    if raw is None or raw == b"" or raw == "":
         return {}
     if isinstance(raw, (bytes, bytearray)):
         return _ORJSON_DECODER(raw)
     if isinstance(raw, str):
         if _HAS_ORJSON:
-            return _orjson_mod().loads(raw.encode('utf-8'))
+            return _orjson_mod().loads(raw.encode("utf-8"))
         import json as _stdjson
+
         return _stdjson.loads(raw)
     return raw
-_TargetProfileSummary = optional('hledac.universal.knowledge.sprint_diff_engine:TargetProfileSummary', default=None)
+
+
+_TargetProfileSummary = optional("hledac.universal.knowledge.sprint_diff_engine:TargetProfileSummary", default=None)
+
 
 def _get_TargetProfileSummary():
     """Lazy loader for TargetProfileSummary with inline fallback."""
@@ -122,16 +140,20 @@ def _get_TargetProfileSummary():
         return cls
     from dataclasses import dataclass
 
-    @dataclass(True)
+    @dataclass(slots=True)
     class TargetProfileSummary:
-        target_id: str = ''
+        target_id: str = ""
         first_seen: float = 0.0
         last_seen: float = 0.0
         cumulative_finding_count: int = 0
-        entity_summary_json: str = '{}'
+        entity_summary_json: str = "{}"
+
     return TargetProfileSummary
-_TargetMemory = optional('hledac.universal.knowledge.target_memory:TargetMemory', default=None)
-_TargetMemoryUpdate = optional('hledac.universal.knowledge.target_memory:TargetMemoryUpdate', default=None)
+
+
+_TargetMemory = optional("hledac.universal.knowledge.target_memory:TargetMemory", default=None)
+_TargetMemoryUpdate = optional("hledac.universal.knowledge.target_memory:TargetMemoryUpdate", default=None)
+
 
 def _get_TargetMemory():
     """Lazy loader for TargetMemory."""
@@ -140,23 +162,52 @@ def _get_TargetMemory():
         return cls
     return None
 
+
 def _get_TargetMemoryUpdate():
     """Lazy loader for TargetMemoryUpdate."""
     cls = _TargetMemoryUpdate()
     if cls is not None:
         return cls
     return None
-__all__ = ['DuckDBShadowStore', 'ActivationResult', 'ReplayResult', 'CanonicalFinding', 'FindingQualityDecision', 'QualityRejectionRecord', '_normalize_osint_url', 'ParquetHistoryReader', 'export_findings_to_parquet']
+
+
+__all__ = [
+    "DuckDBShadowStore",
+    "ActivationResult",
+    "ReplayResult",
+    "CanonicalFinding",
+    "FindingQualityDecision",
+    "QualityRejectionRecord",
+    "_normalize_osint_url",
+    "ParquetHistoryReader",
+    "export_findings_to_parquet",
+]
 from hledac.universal.tools.file_cache import apply_nocache_to_path, madv_free_reusable_on_path
 from hledac.universal.utils.async_helpers import safe_gather_return_exceptions
+
 from .dedup import DedupManager
-from .quality_assessment import _HIGH_CONF_IOC_RE, _QUALITY_ENTROPY_THRESHOLD, _QUALITY_MIN_ENTROPY_LEN, QualityAssessmentState, QualityRejectionRecord, _compute_dedup_fingerprint, _compute_entropy, _compute_url_fingerprint, _normalize_for_quality, _normalize_osint_url
-_rust_backend_opt = optional('core.rust_backend:rust')
+from .quality_assessment import (
+    _HIGH_CONF_IOC_RE,
+    _QUALITY_ENTROPY_THRESHOLD,
+    _QUALITY_MIN_ENTROPY_LEN,
+    QualityAssessmentState,
+    QualityRejectionRecord,
+    _compute_dedup_fingerprint,
+    _compute_entropy,
+    _compute_url_fingerprint,
+    _normalize_for_quality,
+    _normalize_osint_url,
+)
+
+_rust_backend_opt = optional("core.rust_backend:rust")
+
 
 def _is_quality_gate_available() -> bool:
     """Check if Rust quality gate is available at runtime."""
     rust = _rust_backend_opt()
     return rust is not None and rust.is_available and (rust.quality is not None)
+
+
 _QUALITY_GATE_BATCH_AVAILABLE = _is_quality_gate_available()
 if not _QUALITY_GATE_BATCH_AVAILABLE:
     _rust_batch_entropy = None
@@ -166,39 +217,53 @@ if not _QUALITY_GATE_BATCH_AVAILABLE:
     _rust_dedup_fingerprint = None
     _rust_url_fingerprint_b2b = None
     _rust_normalize_quality_text = None
-_rust_arrow_opt = optional('hledac_rust_extensions:build_arrow_batch_from_findings')
+_rust_arrow_opt = optional("hledac_rust_extensions:build_arrow_batch_from_findings")
+
 
 def _get_rust_build_arrow_batch():
     """Lazy getter for Rust Arrow batch builder."""
     return _rust_arrow_opt()
+
+
 _RUST_ARROW_AVAILABLE = _rust_arrow_opt.available
-_rust_batch_ioc_extract_opt = optional('hledac_rust_extensions:batch_ioc_extract_unified')
-_rust_batch_ioc_extract_python_opt = optional('hledac_rust_extensions:batch_ioc_extract_unified_python')
+_rust_batch_ioc_extract_opt = optional("hledac_rust_extensions:batch_ioc_extract_unified")
+_rust_batch_ioc_extract_python_opt = optional("hledac_rust_extensions:batch_ioc_extract_unified_python")
+
 
 def _get_rust_batch_ioc_extract():
     return _rust_batch_ioc_extract_opt()
 
+
 def _get_rust_batch_ioc_extract_python():
     return _rust_batch_ioc_extract_python_opt()
+
+
 _IOC_EXTRACT_BATCH_AVAILABLE = _rust_batch_ioc_extract_opt.available
 _IOC_EXTRACT_PYTHON_ZERO_COPY_AVAILABLE = _rust_batch_ioc_extract_python_opt.available
-_parquet_get_metadata_opt = optional('hledac_rust_extensions:parquet_get_metadata')
-_parquet_read_row_group_ipc_opt = optional('hledac_rust_extensions:parquet_read_row_group_ipc')
-_parquet_iter_all_row_groups_opt = optional('hledac_rust_extensions:parquet_iter_all_row_groups')
-_parquet_read_table_opt = optional('hledac_rust_extensions:parquet_read_table')
+_parquet_get_metadata_opt = optional("hledac_rust_extensions:parquet_get_metadata")
+_parquet_read_row_group_ipc_opt = optional("hledac_rust_extensions:parquet_read_row_group_ipc")
+_parquet_iter_all_row_groups_opt = optional("hledac_rust_extensions:parquet_iter_all_row_groups")
+_parquet_read_table_opt = optional("hledac_rust_extensions:parquet_read_table")
+
 
 def _get_parquet_get_metadata():
     return _parquet_get_metadata_opt()
 
+
 def _get_parquet_read_row_group_ipc():
     return _parquet_read_row_group_ipc_opt()
+
 
 def _get_parquet_iter_all_row_groups():
     return _parquet_iter_all_row_groups_opt()
 
+
 def _get_parquet_read_table():
     return _parquet_read_table_opt()
+
+
 _RUST_PARQUET_AVAILABLE = _parquet_get_metadata_opt.available
+
 
 def extract_iocs_from_texts(texts: list[str]):
     """
@@ -247,10 +312,12 @@ def extract_iocs_from_texts(texts: list[str]):
             pass
     try:
         from intelligence import ioc_qs
+
         for text in texts:
             yield from ioc_qs.extract_iocs_from_text(text)
     except Exception:
         return
+
 
 class ParquetHistoryReader:
     """
@@ -267,11 +334,12 @@ class ParquetHistoryReader:
 
     Fallback: if Rust parquet_reader unavailable, falls back to pure PyArrow.
     """
-    __slots__ = tuple(('_current_rg', '_num_rg', '_total_rows', 'batch_size', 'columns', 'path'))
 
-    def __init__(self, path: str, columns: list[str] | None=None, batch_size: int=50000) -> None:
+    __slots__ = tuple(("_current_rg", "_num_rg", "_total_rows", "batch_size", "columns", "path"))
+
+    def __init__(self, path: str, columns: list[str] | None = None, batch_size: int = 50000) -> None:
         self.path = path
-        self.columns = columns or ['id', 'query', 'source_type', 'confidence', 'ts', 'provenance_json']
+        self.columns = columns or ["id", "query", "source_type", "confidence", "ts", "provenance_json"]
         self.batch_size = min(batch_size, 100000)
         self._num_rg: int | None = None
         self._total_rows: int | None = None
@@ -292,6 +360,7 @@ class ParquetHistoryReader:
                 pass
         try:
             import pyarrow.parquet as pq
+
             pf = pq.ParquetFile(self.path)
             self._num_rg = pf.num_row_groups
             self._total_rows = pf.metadata.num_rows
@@ -334,6 +403,7 @@ class ParquetHistoryReader:
                 if len(ipc_bytes) == 0:
                     break
                 import pyarrow as pa
+
                 reader = pa.ipc.open_record_batch(ipc_bytes)
                 batch = reader.read_next_batch()
                 yield batch
@@ -344,6 +414,7 @@ class ParquetHistoryReader:
         """Pure PyArrow fallback for row-group iteration."""
         try:
             import pyarrow.parquet as pq
+
             pf = pq.ParquetFile(self.path)
             for rg_idx in range(pf.num_row_groups):
                 try:
@@ -369,6 +440,7 @@ class ParquetHistoryReader:
                 pass
         try:
             import pyarrow.parquet as pq
+
             return pq.read_table(self.path)
         except Exception:
             return None
@@ -377,9 +449,14 @@ class ParquetHistoryReader:
         return self.num_row_groups
 
     def __repr__(self) -> str:
-        return f'ParquetHistoryReader(path={self.path!r}, row_groups={self.num_row_groups}, total_rows={self.total_rows}, batch_size={self.batch_size})'
+        return f"ParquetHistoryReader(path={self.path!r}, row_groups={self.num_row_groups}, total_rows={self.total_rows}, batch_size={self.batch_size})"
 
-def export_findings_to_parquet(path: str, query: str='SELECT id, query, source_type, confidence, ts, provenance_json FROM canonical_findings', batch_size: int=100000) -> bool:
+
+def export_findings_to_parquet(
+    path: str,
+    query: str = "SELECT id, query, source_type, confidence, ts, provenance_json FROM canonical_findings",
+    batch_size: int = 100000,
+) -> bool:
     """
     Export DuckDB canonical_findings to a parquet file using DuckDB's COPY TO.
 
@@ -395,12 +472,14 @@ def export_findings_to_parquet(path: str, query: str='SELECT id, query, source_t
     """
     try:
         import duckdb
-        conn = duckdb.connect(':memory:')
+
+        conn = duckdb.connect(":memory:")
         import os
-        db_path = os.environ.get('HLEDAC_DUCKDB_PATH', 'hledac.duckdb')
+
+        db_path = os.environ.get("HLEDAC_DUCKDB_PATH", "hledac.duckdb")
         if not os.path.isabs(db_path):
             if not os.path.exists(db_path):
-                possible = ['./hledac.duckdb', '../hledac.duckdb', '~/.hledac/hledac.duckdb']
+                possible = ["./hledac.duckdb", "../hledac.duckdb", "~/.hledac/hledac.duckdb"]
                 for p in possible:
                     if os.path.exists(os.path.expanduser(p)):
                         db_path = os.path.expanduser(p)
@@ -409,13 +488,17 @@ def export_findings_to_parquet(path: str, query: str='SELECT id, query, source_t
             conn.execute(f"ATTACH '{db_path}' AS source_db")
         except Exception:
             return False
-        conn.execute('USE source_db')
+        conn.execute("USE source_db")
         conn.execute(f"COPY ({query}) TO '{path}' (FORMAT PARQUET)")
         return True
     except Exception:
         return False
+
+
 from .wal import WALManager
+
 logger = logging.getLogger(__name__)
+
 
 class ActivationResult(msgspec.Struct):
     """
@@ -431,6 +514,7 @@ class ActivationResult(msgspec.Struct):
         error:          Error message if there was an exception, None otherwise
         accepted:       True when finding passed quality gate and was stored
     """
+
     finding_id: str
     lmdb_success: bool | list[bool]
     duckdb_success: bool | None
@@ -438,6 +522,7 @@ class ActivationResult(msgspec.Struct):
     desync: bool
     error: str | None
     accepted: bool = False
+
 
 class ReplayResult(msgspec.Struct):
     """
@@ -454,6 +539,7 @@ class ReplayResult(msgspec.Struct):
         retry_count:          Number of retry attempts made
         error:                Error message if there was an exception, None otherwise
     """
+
     finding_id: str
     marker_found: bool
     wal_truth_found: bool
@@ -463,6 +549,7 @@ class ReplayResult(msgspec.Struct):
     deadlettered: bool
     retry_count: int
     error: str | None
+
 
 class CanonicalFinding(msgspec.Struct, frozen=True):
     """
@@ -489,6 +576,7 @@ class CanonicalFinding(msgspec.Struct, frozen=True):
         extra import cyklus break (storage → DTO → callers). Aktuálně jeadržován
         in-process přes async_ingest_findings_batch(), což je dostatečné.
     """
+
     finding_id: str
     query: str
     source_type: str
@@ -509,6 +597,7 @@ class CanonicalFinding(msgspec.Struct, frozen=True):
         """
         return msgspec.json.schema(cls)
 
+
 class FindingQualityDecision(msgspec.Struct, frozen=True):
     """
     Sprint 8W: Quality decision contract for CanonicalFinding ingest.
@@ -520,12 +609,16 @@ class FindingQualityDecision(msgspec.Struct, frozen=True):
         normalized_hash: BLAKE2b fingerprint of normalized text (hex, 32 chars)
         duplicate:       True if exact-content duplicate detected
     """
+
     accepted: bool
     reason: str | None
     entropy: float
     normalized_hash: str | None
     duplicate: bool
+
+
 _DuckDBModule: Any | None = None
+
 
 class _DuckDBQueryCache:
     """
@@ -547,58 +640,65 @@ class _DuckDBQueryCache:
         - :memory: DuckDB mode bypasses L2 (no persistence path available)
         - TTL-based LRU eviction keeps memory bounded
     """
-    __slots__ = ('_l1', '_l2_env', '_l2_path', '_max_l1', '_max_l2', '_ttl_s', '_enabled')
 
-    def __init__(self, lmdb_path: Path, *, max_l1: int=500, max_l2: int=5000, ttl_s: int=300) -> None:
+    __slots__ = ("_l1", "_l2_env", "_l2_path", "_max_l1", "_max_l2", "_ttl_s", "_enabled")
+
+    def __init__(self, lmdb_path: Path, *, max_l1: int = 500, max_l2: int = 5000, ttl_s: int = 300) -> None:
         from collections import OrderedDict
-        object.__setattr__(self, '_l1', OrderedDict())
-        object.__setattr__(self, '_max_l1', max_l1)
-        object.__setattr__(self, '_max_l2', max_l2)
-        object.__setattr__(self, '_ttl_s', ttl_s)
-        object.__setattr__(self, '_enabled', _DUCKDB_QUERY_CACHE_ENABLED)
-        object.__setattr__(self, '_l2_path', lmdb_path)
+
+        object.__setattr__(self, "_l1", OrderedDict())
+        object.__setattr__(self, "_max_l1", max_l1)
+        object.__setattr__(self, "_max_l2", max_l2)
+        object.__setattr__(self, "_ttl_s", ttl_s)
+        object.__setattr__(self, "_enabled", _DUCKDB_QUERY_CACHE_ENABLED)
+        object.__setattr__(self, "_l2_path", lmdb_path)
         if not _DUCKDB_QUERY_CACHE_ENABLED:
-            object.__setattr__(self, '_l2_env', None)
+            object.__setattr__(self, "_l2_env", None)
             return
         try:
             import lmdb
+
             lmdb_path.parent.mkdir(parents=True, exist_ok=True)
             env = lmdb.open(str(lmdb_path), map_size=16 * 1024 * 1024, writemap=False, readahead=False, meminit=False)
-            object.__setattr__(self, '_l2_env', env)
+            object.__setattr__(self, "_l2_env", env)
         except Exception:
-            object.__setattr__(self, '_l2_env', None)
+            object.__setattr__(self, "_l2_env", None)
 
     @staticmethod
     def _key(sql: str, params: tuple) -> str:
         """Stable cache key: sha256(sql + "|" + json(params))."""
         import hashlib
         import json as _json
-        data = sql + '|' + _json.dumps(params, sort_keys=True)
+
+        data = sql + "|" + _json.dumps(params, sort_keys=True)
         return hashlib.sha256(data.encode()).hexdigest()[:32]
 
     def _l1_get(self, key: str) -> list | None:
         import time
-        l1: dict = object.__getattribute__(self, '_l1')
+
+        l1: dict = object.__getattribute__(self, "_l1")
         if key not in l1:
             return None
         entry = l1[key]
-        if time.monotonic() - entry['ts'] > object.__getattribute__(self, '_ttl_s'):
+        if time.monotonic() - entry["ts"] > object.__getattribute__(self, "_ttl_s"):
             l1.pop(key, None)
             return None
         l1.move_to_end(key)
-        return entry['rows']
+        return entry["rows"]
 
     def _l1_set(self, key: str, rows: list) -> None:
         import time
-        l1: dict = object.__getattribute__(self, '_l1')
-        max_l1: int = object.__getattribute__(self, '_max_l1')
-        l1[key] = {'rows': rows, 'ts': time.monotonic()}
+
+        l1: dict = object.__getattribute__(self, "_l1")
+        max_l1: int = object.__getattribute__(self, "_max_l1")
+        l1[key] = {"rows": rows, "ts": time.monotonic()}
         while len(l1) > max_l1:
             l1.popitem(last=False)
 
     def _l2_get(self, key: str) -> list | None:
         import time
-        env = object.__getattribute__(self, '_l2_env')
+
+        env = object.__getattribute__(self, "_l2_env")
         if env is None:
             return None
         try:
@@ -607,24 +707,27 @@ class _DuckDBQueryCache:
             if raw is None:
                 return None
             import orjson as _orjson
+
             entry = _orjson.loads(raw)
-            if time.monotonic() - entry['ts'] > object.__getattribute__(self, '_ttl_s'):
+            if time.monotonic() - entry["ts"] > object.__getattribute__(self, "_ttl_s"):
                 return None
-            return entry['rows']
+            return entry["rows"]
         except Exception:
             return None
 
     def _l2_set(self, key: str, rows: list) -> None:
         import time
+
         import orjson as _orjson
-        env = object.__getattribute__(self, '_l2_env')
+
+        env = object.__getattribute__(self, "_l2_env")
         if env is None:
             return
-        entry_bytes = _orjson.dumps({'rows': rows, 'ts': time.monotonic()})
+        entry_bytes = _orjson.dumps({"rows": rows, "ts": time.monotonic()})
         try:
             with env.begin(write=True) as txn:
                 cursor = txn.cursor()
-                if txn.stat()['entries'] >= object.__getattribute__(self, '_max_l2'):
+                if txn.stat()["entries"] >= object.__getattribute__(self, "_max_l2"):
                     for k, _ in cursor.iternext():
                         txn.delete(k)
                         break
@@ -653,9 +756,9 @@ class _DuckDBQueryCache:
 
     def invalidate(self) -> None:
         """Clear L1 and L2. Called after schema migration."""
-        l1: dict = object.__getattribute__(self, '_l1')
+        l1: dict = object.__getattribute__(self, "_l1")
         l1.clear()
-        env = object.__getattribute__(self, '_l2_env')
+        env = object.__getattribute__(self, "_l2_env")
         if env is not None:
             try:
                 with env.begin(write=True) as txn:
@@ -664,13 +767,13 @@ class _DuckDBQueryCache:
                 pass
 
     def close(self) -> None:
-        env = object.__getattribute__(self, '_l2_env')
+        env = object.__getattribute__(self, "_l2_env")
         if env is not None:
             try:
                 env.close()
             except Exception:
                 pass
-            object.__setattr__(self, '_l2_env', None)
+            object.__setattr__(self, "_l2_env", None)
 
     def advance_ioc_sprint(self, sprint_id: int) -> None:
         """
@@ -685,25 +788,33 @@ class _DuckDBQueryCache:
                 self._dedup_manager.advance_ioc_sprint(sprint_id)
             except Exception:
                 pass
+
+
 _query_cache: _DuckDBQueryCache | None = None
+
 
 def _get_duckdb() -> Any:
     """Lazy import of duckdb - only loaded when sidecar is actually used."""
     global _DuckDBModule
     if _DuckDBModule is None:
         import duckdb
+
         _DuckDBModule = duckdb
     return _DuckDBModule
+
+
 from core.env_config import ENV
-_DUCKDB_MEMORY_LIMIT: str = ENV.get('GHOST_DUCKDB_MEMORY', default='600MB')
-_DUCKDB_MAX_TEMP: str = ENV.get('GHOST_DUCKDB_MAX_TEMP', default='1GB')
-_ARROW_INGEST_ENABLED: bool = ENV.get_bool('HLEDAC_ARROW_INGEST')
-_DUCKDB_RAMDISK_TEMP: str | None = ENV.get_str('HLEDAC_DUCKDB_RAMDISK_TEMP') or None
-_ARROW_MIN_BATCH: int = ENV.get_int('HLEDAC_ARROW_MIN_BATCH', default=5)
-_DUCKDB_QUERY_CACHE_ENABLED: bool = ENV.get_bool('HLEDAC_DUCKDB_QUERY_CACHE')
-_DUCKDB_QUERY_CACHE_L1_MAX: int = ENV.get_int('HLEDAC_DUCKDB_QUERY_CACHE_L1_MAX', default=500)
-_DUCKDB_QUERY_CACHE_L2_MAX: int = ENV.get_int('HLEDAC_DUCKDB_QUERY_CACHE_L2_MAX', default=5000)
-_DUCKDB_QUERY_CACHE_TTL_S: int = ENV.get_int('HLEDAC_DUCKDB_QUERY_CACHE_TTL_S', default=300)
+
+_DUCKDB_MEMORY_LIMIT: str = ENV.get("GHOST_DUCKDB_MEMORY", default="600MB")
+_DUCKDB_MAX_TEMP: str = ENV.get("GHOST_DUCKDB_MAX_TEMP", default="1GB")
+_ARROW_INGEST_ENABLED: bool = ENV.get_bool("HLEDAC_ARROW_INGEST")
+_DUCKDB_RAMDISK_TEMP: str | None = ENV.get_str("HLEDAC_DUCKDB_RAMDISK_TEMP") or None
+_ARROW_MIN_BATCH: int = ENV.get_int("HLEDAC_ARROW_MIN_BATCH", default=5)
+_DUCKDB_QUERY_CACHE_ENABLED: bool = ENV.get_bool("HLEDAC_DUCKDB_QUERY_CACHE")
+_DUCKDB_QUERY_CACHE_L1_MAX: int = ENV.get_int("HLEDAC_DUCKDB_QUERY_CACHE_L1_MAX", default=500)
+_DUCKDB_QUERY_CACHE_L2_MAX: int = ENV.get_int("HLEDAC_DUCKDB_QUERY_CACHE_L2_MAX", default=5000)
+_DUCKDB_QUERY_CACHE_TTL_S: int = ENV.get_int("HLEDAC_DUCKDB_QUERY_CACHE_TTL_S", default=300)
+
 
 def _check_pyarrow_available() -> bool:
     """
@@ -716,16 +827,18 @@ def _check_pyarrow_available() -> bool:
     Caches result in module-level _PYARROW_AVAILABLE so repeated calls in the
     same process are always O(1).
     """
-    if 'pyarrow' in sys.modules:
+    if "pyarrow" in sys.modules:
         return True
-    cached = getattr(_check_pyarrow_available, '_cached', None)
+    cached = getattr(_check_pyarrow_available, "_cached", None)
     if cached is not None:
         return cached
     import importlib.util
-    spec = importlib.util.find_spec('pyarrow')
+
+    spec = importlib.util.find_spec("pyarrow")
     result = spec is not None
-    object.__setattr__(_check_pyarrow_available, '_cached', result)
+    object.__setattr__(_check_pyarrow_available, "_cached", result)
     return result
+
 
 def get_arrow_metrics() -> dict[str, int]:
     """
@@ -739,7 +852,8 @@ def get_arrow_metrics() -> dict[str, int]:
     """
     return {}
 
-def _resolve_duckdb_runtime_settings(uma_state: str | None=None, swap_detected: bool=False) -> dict[str, str | int]:
+
+def _resolve_duckdb_runtime_settings(uma_state: str | None = None, swap_detected: bool = False) -> dict[str, str | int]:
     """
     Resolve DuckDB runtime settings based on UMA memory pressure state.
 
@@ -759,50 +873,64 @@ def _resolve_duckdb_runtime_settings(uma_state: str | None=None, swap_detected: 
                         enable_fsst_vectors (bool),
                         temp_file_encryption (bool).
     """
-    base_mem = ENV.get_str('GHOST_DUCKDB_MEMORY', default='4GB')
-    base_threads = ENV.get_int('HLEDAC_DUCKDB_THREADS', default=4)
-    settings: dict[str, str | int | bool] = {'memory_limit': base_mem, 'max_temp': _DUCKDB_MAX_TEMP, 'threads': base_threads, 'preserve_insertion_order': False, 'safe_mode': False, 'chunk_size': 1024, 'pipeline_maxsize': 4, 'write_buffer_limit': '64MiB', 'allocator_flush_threshold': '64MiB', 'allocator_bulk_dealloc_threshold': '256MiB', 'enable_fsst_vectors': True, 'temp_file_encryption': False}
+    base_mem = ENV.get_str("GHOST_DUCKDB_MEMORY", default="4GB")
+    base_threads = ENV.get_int("HLEDAC_DUCKDB_THREADS", default=4)
+    settings: dict[str, str | int | bool] = {
+        "memory_limit": base_mem,
+        "max_temp": _DUCKDB_MAX_TEMP,
+        "threads": base_threads,
+        "preserve_insertion_order": False,
+        "safe_mode": False,
+        "chunk_size": 1024,
+        "pipeline_maxsize": 4,
+        "write_buffer_limit": "64MiB",
+        "allocator_flush_threshold": "64MiB",
+        "allocator_bulk_dealloc_threshold": "256MiB",
+        "enable_fsst_vectors": True,
+        "temp_file_encryption": False,
+    }
     if swap_detected:
-        settings['memory_limit'] = '200MB'
-        settings['threads'] = 1
-        settings['safe_mode'] = True
-        settings['enable_fsst_vectors'] = False
-        settings['write_buffer_limit'] = '32MiB'
-        settings['allocator_flush_threshold'] = '32MiB'
-        settings['allocator_bulk_dealloc_threshold'] = '128MiB'
-        settings['chunk_size'] = 256
-        settings['pipeline_maxsize'] = 2
-    elif uma_state == 'EMERGENCY':
-        settings['memory_limit'] = '200MB'
-        settings['threads'] = 1
-        settings['safe_mode'] = True
-        settings['enable_fsst_vectors'] = False
-        settings['write_buffer_limit'] = '32MiB'
-        settings['allocator_flush_threshold'] = '32MiB'
-        settings['allocator_bulk_dealloc_threshold'] = '128MiB'
-        settings['chunk_size'] = 256
-        settings['pipeline_maxsize'] = 2
-    elif uma_state == 'CRITICAL':
-        settings['memory_limit'] = '250MB'
-        settings['threads'] = 1
-        settings['enable_fsst_vectors'] = False
-        settings['write_buffer_limit'] = '48MiB'
-        settings['allocator_flush_threshold'] = '48MiB'
-        settings['allocator_bulk_dealloc_threshold'] = '192MiB'
-        settings['chunk_size'] = 512
-        settings['pipeline_maxsize'] = 2
-    elif uma_state == 'WARN':
-        settings['memory_limit'] = '250MB'
-        settings['threads'] = 2
-        settings['write_buffer_limit'] = '64MiB'
-        settings['allocator_flush_threshold'] = '64MiB'
-        settings['allocator_bulk_dealloc_threshold'] = '256MiB'
-        settings['chunk_size'] = 768
-        settings['pipeline_maxsize'] = 3
+        settings["memory_limit"] = "200MB"
+        settings["threads"] = 1
+        settings["safe_mode"] = True
+        settings["enable_fsst_vectors"] = False
+        settings["write_buffer_limit"] = "32MiB"
+        settings["allocator_flush_threshold"] = "32MiB"
+        settings["allocator_bulk_dealloc_threshold"] = "128MiB"
+        settings["chunk_size"] = 256
+        settings["pipeline_maxsize"] = 2
+    elif uma_state == "EMERGENCY":
+        settings["memory_limit"] = "200MB"
+        settings["threads"] = 1
+        settings["safe_mode"] = True
+        settings["enable_fsst_vectors"] = False
+        settings["write_buffer_limit"] = "32MiB"
+        settings["allocator_flush_threshold"] = "32MiB"
+        settings["allocator_bulk_dealloc_threshold"] = "128MiB"
+        settings["chunk_size"] = 256
+        settings["pipeline_maxsize"] = 2
+    elif uma_state == "CRITICAL":
+        settings["memory_limit"] = "250MB"
+        settings["threads"] = 1
+        settings["enable_fsst_vectors"] = False
+        settings["write_buffer_limit"] = "48MiB"
+        settings["allocator_flush_threshold"] = "48MiB"
+        settings["allocator_bulk_dealloc_threshold"] = "192MiB"
+        settings["chunk_size"] = 512
+        settings["pipeline_maxsize"] = 2
+    elif uma_state == "WARN":
+        settings["memory_limit"] = "250MB"
+        settings["threads"] = 2
+        settings["write_buffer_limit"] = "64MiB"
+        settings["allocator_flush_threshold"] = "64MiB"
+        settings["allocator_bulk_dealloc_threshold"] = "256MiB"
+        settings["chunk_size"] = 768
+        settings["pipeline_maxsize"] = 3
     else:
-        settings['chunk_size'] = 1536
-        settings['pipeline_maxsize'] = 6
+        settings["chunk_size"] = 1536
+        settings["pipeline_maxsize"] = 6
     return settings
+
 
 def _validate_duckdb_setting(value: str, setting_name: str) -> str:
     """
@@ -812,9 +940,11 @@ def _validate_duckdb_setting(value: str, setting_name: str) -> str:
     Only allows alphanumeric, GB/MB/KB/TB/MiB/GiB/KiB suffixes, and basic punctuation.
     """
     import re
-    if not re.match('^[\\d.]+\\s*(GB|MB|KB|TB|MiB|GiB|KiB)?\\s*$', value.strip(), re.IGNORECASE):
-        raise ValueError(f'Invalid DuckDB setting {setting_name}: {value!r}')
+
+    if not re.match("^[\\d.]+\\s*(GB|MB|KB|TB|MiB|GiB|KiB)?\\s*$", value.strip(), re.IGNORECASE):
+        raise ValueError(f"Invalid DuckDB setting {setting_name}: {value!r}")
     return value.strip()
+
 
 def _validate_path_setting(value: Path, setting_name: str) -> str:
     """
@@ -824,14 +954,15 @@ def _validate_path_setting(value: Path, setting_name: str) -> str:
     """
     value_str = str(value)
     if not value.is_absolute():
-        raise ValueError(f'Invalid DuckDB {setting_name}: must be absolute path, got {value_str!r}')
-    dangerous = ["'", '"', ';', '$', '`', '\\', '\n', '\r']
+        raise ValueError(f"Invalid DuckDB {setting_name}: must be absolute path, got {value_str!r}")
+    dangerous = ["'", '"', ";", "$", "`", "\\", "\n", "\r"]
     for char in dangerous:
         if char in value_str:
-            raise ValueError(f'Invalid DuckDB {setting_name}: dangerous char {char!r} in {value_str!r}')
+            raise ValueError(f"Invalid DuckDB {setting_name}: dangerous char {char!r} in {value_str!r}")
     return value_str
 
-def _validate_duckdb_threads(value: str | int, setting_name: str='threads') -> int:
+
+def _validate_duckdb_threads(value: str | int, setting_name: str = "threads") -> int:
     """
     Validate threads is a safe positive integer in DuckDB-supported range.
 
@@ -842,14 +973,18 @@ def _validate_duckdb_threads(value: str | int, setting_name: str='threads') -> i
     try:
         int_val = int(value)
     except (ValueError, TypeError) as err:
-        raise ValueError(f'Invalid DuckDB {setting_name}: cannot convert {value!r} to int') from err
+        raise ValueError(f"Invalid DuckDB {setting_name}: cannot convert {value!r} to int") from err
     max_threads = min(os.cpu_count() or 4, 8)
     if not 1 <= int_val <= max_threads:
-        raise ValueError(f'Invalid DuckDB {setting_name}: {int_val} out of safe range [1, {max_threads}]')
+        raise ValueError(f"Invalid DuckDB {setting_name}: {int_val} out of safe range [1, {max_threads}]")
     return int_val
+
+
 from hledac.universal.config.dedup_config import DEDUP_LMDB_MAP_SIZE
+
 _DEDUP_LMDB_MAP_SIZE: int = DEDUP_LMDB_MAP_SIZE
 _SCHEMA_SQL = '\n    CREATE TABLE IF NOT EXISTS canonical_findings (\n        id              VARCHAR PRIMARY KEY,\n        query           VARCHAR,\n        source_type     VARCHAR,\n        confidence      DOUBLE,\n        ts              DOUBLE,\n        provenance_json TEXT,\n        payload_text    TEXT,\n        UNIQUE (id),\n        UNIQUE (query, source_type)\n    );\n    -- Sprint STORAGE-FIX-1: time-range + per-query lookups\n    -- canonical_findings is queried with WHERE query LIKE ? ORDER BY ts DESC LIMIT N (6+ sites).\n    -- time-range + per-query lookups, indexes for performance\n    CREATE INDEX IF NOT EXISTS idx_canonical_findings_ts ON canonical_findings(ts DESC);\n    CREATE INDEX IF NOT EXISTS idx_canonical_findings_query ON canonical_findings(query);\n    CREATE TABLE IF NOT EXISTS shadow_runs (\n        run_id      VARCHAR PRIMARY KEY,\n        started_at  TIMESTAMP,\n        ended_at    TIMESTAMP,\n        total_fds   INTEGER,\n        rss_mb      INTEGER\n    );\n    CREATE TABLE IF NOT EXISTS sprint_delta (\n        sprint_id TEXT PRIMARY KEY,\n        ts DOUBLE NOT NULL,\n        query TEXT,\n        duration_s REAL DEFAULT 0,\n        new_findings INT DEFAULT 0,\n        dedup_hits INT DEFAULT 0,\n        ioc_nodes INT DEFAULT 0,\n        ioc_new_this_sprint INT DEFAULT 0,\n        uma_peak_gib REAL DEFAULT 0,\n        synthesis_success BOOL DEFAULT false,\n        findings_per_minute REAL DEFAULT 0,\n        top_source_type TEXT,\n        synthesis_confidence REAL DEFAULT 0\n    );\n    -- Index for ORDER BY ts DESC queries (scoreboard, recent sprints)\n    CREATE INDEX IF NOT EXISTS idx_sprint_delta_ts ON sprint_delta(ts DESC);\n    CREATE TABLE IF NOT EXISTS source_hit_log (\n        sprint_id TEXT,\n        ts DOUBLE,\n        source_type TEXT,\n        findings_count INT,\n        ioc_count INT,\n        hit_rate REAL\n    );\n    -- Sprint F-B: indexes for per-sprint + time-range source_hit_log lookups\n    CREATE INDEX IF NOT EXISTS idx_source_hit_log_sprint_ts\n        ON source_hit_log(sprint_id, ts DESC);\n    CREATE INDEX IF NOT EXISTS idx_source_hit_log_ts\n        ON source_hit_log(ts DESC);\n    CREATE TABLE IF NOT EXISTS sprint_scorecard (\n        sprint_id TEXT PRIMARY KEY,\n        ts DOUBLE NOT NULL,\n        findings_per_minute REAL,\n        ioc_density REAL,\n        semantic_novelty REAL,\n        source_yield_json TEXT,\n        phase_timings_json TEXT,\n        outlines_used BOOL,\n        accepted_findings INT,\n        ioc_nodes INT\n    );\n    CREATE INDEX IF NOT EXISTS idx_sprint_scorecard_ts\n        ON sprint_scorecard(ts DESC);\n    CREATE TABLE IF NOT EXISTS research_episodes (\n        episode_id   TEXT PRIMARY KEY,\n        sprint_id    TEXT NOT NULL,\n        query        TEXT NOT NULL,\n        summary      TEXT,\n        top_findings JSON,\n        ioc_clusters JSON,\n        source_yield JSON,\n        synthesis_engine TEXT,\n        duration_s   REAL,\n        ts           DOUBLE NOT NULL\n    );\n    CREATE INDEX IF NOT EXISTS idx_episodes_ts ON research_episodes(ts DESC);\n    CREATE INDEX IF NOT EXISTS idx_episodes_sprint\n        ON research_episodes(sprint_id);\n    CREATE TABLE IF NOT EXISTS target_profiles (\n        target_id TEXT PRIMARY KEY,\n        first_seen DOUBLE,\n        last_seen DOUBLE,\n        cumulative_finding_count INTEGER,\n        entity_summary_json TEXT\n    );\n    -- Sprint F-B: target_profiles queried by last_seen DESC for recent targets\n    CREATE INDEX IF NOT EXISTS idx_target_profiles_last_seen\n        ON target_profiles(last_seen DESC);\n    CREATE TABLE IF NOT EXISTS hypothesis_feedback (\n        id TEXT PRIMARY KEY,\n        target_id TEXT,\n        pivot_type TEXT,\n        ioc_type TEXT,\n        produced_count INTEGER,\n        accepted_count INTEGER,\n        signal_value DOUBLE,\n        ts DOUBLE\n    );\n    -- Sprint F-B: hypothesis_feedback target_id is the primary filter\n    -- for per-target pivot analytics. Index avoids scan.\n    CREATE INDEX IF NOT EXISTS idx_hypothesis_feedback_target_ts\n        ON hypothesis_feedback(target_id, ts DESC);\n    CREATE TABLE IF NOT EXISTS hypothesis_tracking (\n        hypothesis_id TEXT PRIMARY KEY,\n        sprint_id TEXT,\n        hypothesis_text TEXT,\n        status TEXT,\n        confidence REAL,\n        falsification_result TEXT,\n        disproved_by_sprint_id TEXT,\n        ts DOUBLE\n    );\n    -- Sprint F-B: hypothesis_tracking is queried by sprint_id and status\n    -- in the windup_engine hypothesis summarizer.\n    CREATE INDEX IF NOT EXISTS idx_hypothesis_tracking_sprint\n        ON hypothesis_tracking(sprint_id);\n    CREATE INDEX IF NOT EXISTS idx_hypothesis_tracking_status_ts\n        ON hypothesis_tracking(status, ts DESC);\n    CREATE TABLE IF NOT EXISTS target_memory (\n        target_id TEXT PRIMARY KEY,\n        first_seen_ts DOUBLE NOT NULL,\n        last_seen_ts DOUBLE NOT NULL,\n        sprint_count INTEGER NOT NULL,\n        cumulative_finding_count INTEGER NOT NULL,\n        entity_facets_json TEXT NOT NULL,\n        exposure_facets_json TEXT NOT NULL,\n        pivot_facets_json TEXT NOT NULL,\n        confidence_drift_json TEXT NOT NULL,\n        updated_by_sprint_id TEXT NOT NULL\n    );\n    -- Sprint F-B: target_memory last_seen_ts is the primary sort key\n    -- for "recent targets" queries in F204D.\n    CREATE INDEX IF NOT EXISTS idx_target_memory_last_seen\n        ON target_memory(last_seen_ts DESC);\n    -- Sprint F224A: DHT metadata table for torrent content discovery\n    CREATE TABLE IF NOT EXISTS dht_metadata (\n        infohash TEXT PRIMARY KEY,\n        name TEXT,\n        files_json TEXT,\n        size_bytes BIGINT,\n        first_seen DOUBLE,\n        last_seen DOUBLE,\n        peer_count INT,\n        sources_json TEXT\n    );\n    -- Sprint F-B: dht_metadata is queried by last_seen DESC and peer_count\n    -- for "recent active torrents" and "popular torrents" lookups.\n    CREATE INDEX IF NOT EXISTS idx_dht_metadata_last_seen\n        ON dht_metadata(last_seen DESC);\n    CREATE INDEX IF NOT EXISTS idx_dht_metadata_peer_count\n        ON dht_metadata(peer_count DESC);\n    -- Sprint F350M: Cross-sprint research session memory\n    CREATE TABLE IF NOT EXISTS research_sessions (\n        session_id TEXT PRIMARY KEY,\n        sprint_id TEXT NOT NULL,\n        query TEXT NOT NULL,\n        ts DOUBLE NOT NULL,\n        findings_count INTEGER,\n        accepted_count INTEGER,\n        gaps_json TEXT,\n        entities_json TEXT,\n        source_patterns_json TEXT,\n        unexplored_angles_json TEXT,\n        temporal_anomalies_json TEXT\n    );\n    CREATE INDEX IF NOT EXISTS idx_research_sessions_sprint\n        ON research_sessions(sprint_id);\n    CREATE INDEX IF NOT EXISTS idx_research_sessions_ts\n        ON research_sessions(ts DESC);\n    -- Sprint F350M: Entity observations for temporal tracking\n    CREATE TABLE IF NOT EXISTS entity_observations (\n        observation_id TEXT PRIMARY KEY,\n        entity_value TEXT NOT NULL,\n        entity_type TEXT NOT NULL,\n        sprint_id TEXT NOT NULL,\n        source_type TEXT NOT NULL,\n        confidence REAL,\n        ts DOUBLE NOT NULL,\n        finding_id TEXT NOT NULL\n    );\n    CREATE INDEX IF NOT EXISTS idx_entity_observations_entity\n        ON entity_observations(entity_value);\n    CREATE INDEX IF NOT EXISTS idx_entity_observations_sprint\n        ON entity_observations(sprint_id);\n    -- Sprint F330: IOC co-occurrence matrix for speculative edge mining\n    CREATE TABLE IF NOT EXISTS ioc_cooccurrence (\n        ioc_a TEXT NOT NULL,\n        ioc_b TEXT NOT NULL,\n        ioc_type_a TEXT NOT NULL,\n        ioc_type_b TEXT NOT NULL,\n        support INTEGER NOT NULL,\n        confidence REAL NOT NULL,\n        score REAL NOT NULL,\n        last_seen REAL NOT NULL\n    );\n    CREATE INDEX IF NOT EXISTS idx_ioc_cooccurrence_score\n        ON ioc_cooccurrence(score DESC);\n    CREATE INDEX IF NOT EXISTS idx_ioc_cooccurrence_ioc_a\n        ON ioc_cooccurrence(ioc_a);\n    CREATE INDEX IF NOT EXISTS idx_ioc_cooccurrence_ioc_b\n        ON ioc_cooccurrence(ioc_b);\n'
+
 
 def _apply_schema(conn, schema_sql: str) -> None:
     """Apply multi-statement schema via DuckDB's official tokenizer.
@@ -866,9 +1001,9 @@ def _apply_schema(conn, schema_sql: str) -> None:
 
     def _strip_comments(sql: str) -> str:
         """Remove -- and # line comments, then trailing triple-quote residue."""
-        sql = _re.sub('^\\s*--.*$', '', sql, flags=_re.MULTILINE)
-        sql = _re.sub('^\\s*#.*$', '', sql, flags=_re.MULTILINE)
-        sql = sql.replace('"""', '').strip()
+        sql = _re.sub("^\\s*--.*$", "", sql, flags=_re.MULTILINE)
+        sql = _re.sub("^\\s*#.*$", "", sql, flags=_re.MULTILINE)
+        sql = sql.replace('"""', "").strip()
         return sql
 
     def _regex_split_statements(sql: str) -> list[str]:
@@ -884,7 +1019,7 @@ def _apply_schema(conn, schema_sql: str) -> None:
                     i += 2
                     continue
                 in_string = False
-            elif c == ';' and (not in_string):
+            elif c == ";" and (not in_string):
                 stmt = sql[start:i].strip()
                 if stmt:
                     stmts.append(stmt)
@@ -894,17 +1029,18 @@ def _apply_schema(conn, schema_sql: str) -> None:
         if tail:
             stmts.append(tail)
         return stmts
+
     sql = _strip_comments(schema_sql)
-    if hasattr(conn, 'extract_statements'):
+    if hasattr(conn, "extract_statements"):
         try:
             for stmt in conn.extract_statements(sql):
-                stmt_sql = stmt.sql if hasattr(stmt, 'sql') else str(stmt)
+                stmt_sql = stmt.sql if hasattr(stmt, "sql") else str(stmt)
                 if not stmt_sql.strip():
                     continue
                 try:
                     conn.execute(stmt_sql)
                 except Exception as exc:
-                    if 'already exists' in str(exc).lower():
+                    if "already exists" in str(exc).lower():
                         continue
                     raise
             return
@@ -916,12 +1052,16 @@ def _apply_schema(conn, schema_sql: str) -> None:
         try:
             conn.execute(s)
         except Exception as exc:
-            if 'already exists' in str(exc).lower():
+            if "already exists" in str(exc).lower():
                 continue
             raise
+
+
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
 from hledac.universal.utils.msgspec_json import encode_for_arrow
+
 _MAX_INFLIGHT_GRAPH_UPDATES: int = 16
+
 
 def _duckdb_at_exit_shutdown(instance: DuckDBShadowStore) -> None:
     """Called by weakref.finalize at interpreter exit if explicit aclose() was not called.
@@ -945,11 +1085,75 @@ def _duckdb_at_exit_shutdown(instance: DuckDBShadowStore) -> None:
     except Exception:
         pass
 
-class DuckDBShadowStore:
-    __slots__ = ('_initialized', '_closed', '_lazy', '_db_path', '_temp_dir', '_uma_state', '_memory_limit', '_max_temp', '_startup_ready', '_quality_state', '_duckdb_module', '_duckdb_settings', '_persistent_conn', '_file_conn', '_read_pool', '_read_pool_idx', '_wal_manager', '_wal_lmdb', '_dedup_lmdb', '_dedup_lmdb_path', '_dedup_lmdb_boot_error', '_dedup_lmdb_last_error', '_dedup_manager', '_semantic_store', '_semantic_buffer', '_replay_lock', '_startup_replay_done', '_bg_tasks', '_checkpoint_task', '_shared_executor', '_executor_semaphore', '_write_semaphore', '_write_executor', '_read_executor', '_wal_executor', '_duckdb_arrow_executor', '_executor', '_query_executor', '_temporal_anonymizer', '_arrow_metrics', '_ingest_breaker_state', '_ingest_breaker_failures', '_ingest_breaker_last_failure', '_ingest_breaker_cooldown', '_ingest_breaker_threshold', '_DuckDBShadowStore__graph_store', '_stmt_insert_finding', '_stmt_insert_finding_conn_id', 'DEAD_LETTER_PREFIX', '__weakref__', '_query_cache', '_finalizer', '_pending_accepted_findings', '_pending_accepted_indices', '_batch_start_ts')
-    'DuckDB sidecar with RAMDISK-first / OPSEC-safe degraded mode.'
 
-    def __init__(self, db_path: Path | str | None=None, temp_dir: Path | str | None=None, uma_state: str | None=None, lazy: bool=True) -> None:
+class DuckDBShadowStore:
+    __slots__ = (
+        "_initialized",
+        "_closed",
+        "_lazy",
+        "_db_path",
+        "_temp_dir",
+        "_uma_state",
+        "_memory_limit",
+        "_max_temp",
+        "_startup_ready",
+        "_quality_state",
+        "_duckdb_module",
+        "_duckdb_settings",
+        "_persistent_conn",
+        "_file_conn",
+        "_read_pool",
+        "_read_pool_idx",
+        "_wal_manager",
+        "_wal_lmdb",
+        "_dedup_lmdb",
+        "_dedup_lmdb_path",
+        "_dedup_lmdb_boot_error",
+        "_dedup_lmdb_last_error",
+        "_dedup_manager",
+        "_semantic_store",
+        "_semantic_buffer",
+        "_replay_lock",
+        "_startup_replay_done",
+        "_bg_tasks",
+        "_checkpoint_task",
+        "_shared_executor",
+        "_executor_semaphore",
+        "_write_semaphore",
+        "_write_executor",
+        "_read_executor",
+        "_wal_executor",
+        "_duckdb_arrow_executor",
+        "_executor",
+        "_query_executor",
+        "_temporal_anonymizer",
+        "_arrow_metrics",
+        "_ingest_breaker_state",
+        "_ingest_breaker_failures",
+        "_ingest_breaker_last_failure",
+        "_ingest_breaker_cooldown",
+        "_ingest_breaker_threshold",
+        "_last_ingest_ts",
+        "_DuckDBShadowStore__graph_store",
+        "_stmt_insert_finding",
+        "_stmt_insert_finding_conn_id",
+        "DEAD_LETTER_PREFIX",
+        "__weakref__",
+        "_query_cache",
+        "_finalizer",
+        "_pending_accepted_findings",
+        "_pending_accepted_indices",
+        "_batch_start_ts",
+    )
+    "DuckDB sidecar with RAMDISK-first / OPSEC-safe degraded mode."
+
+    def __init__(
+        self,
+        db_path: Path | str | None = None,
+        temp_dir: Path | str | None = None,
+        uma_state: str | None = None,
+        lazy: bool = True,
+    ) -> None:
         """
         Initialize DuckDBShadowStore.
 
@@ -977,12 +1181,15 @@ class DuckDBShadowStore:
         self._uma_state: str | None = uma_state
         self._duckdb_settings: dict[str, str | int] = {}
         _max_workers = min(2, max(1, (os.cpu_count() or 2) - 1))
-        self._shared_executor: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=_max_workers, thread_name_prefix='duckdb_unified')
+        self._shared_executor: ThreadPoolExecutor = ThreadPoolExecutor(
+            max_workers=_max_workers, thread_name_prefix="duckdb_unified"
+        )
         self._write_executor: ThreadPoolExecutor = self._shared_executor
         self._read_executor: ThreadPoolExecutor = self._shared_executor
         self._wal_executor: ThreadPoolExecutor = self._shared_executor
         self._duckdb_arrow_executor: ThreadPoolExecutor = self._shared_executor
         from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+
         self._executor_semaphore: asyncio.Semaphore = get_semaphore_for_testing(ConcurrencyCategory.GRAPH_RAG)
         self._write_semaphore: asyncio.Semaphore = asyncio.Semaphore(2)
         self._persistent_conn: Any | None = None
@@ -991,7 +1198,23 @@ class DuckDBShadowStore:
         self._startup_ready: asyncio.Event = asyncio.Event()
         self._startup_replay_done: bool = False
         self._quality_state: QualityAssessmentState = QualityAssessmentState()
-        self._arrow_metrics: dict[str, int] = {'arrow_selected': 0, 'arrow_fallback_env': 0, 'arrow_fallback_batch': 0, 'arrow_fallback_pyarrow': 0, 'arrow_fallback_init': 0, 'arrow_fallback_executor': 0, 'arrow_fallback_empty': 0, 'arrow_fallback_all_fail': 0, 'arrow_success_count': 0, 'arrow_success_lmdb_count': 0, 'arrow_success_duckdb_count': 0, 'arrow_error_table_build': 0, 'arrow_error_duckdb_insert': 0, 'arrow_error_partial': 0, 'arrow_partial_duplicates': 0}
+        self._arrow_metrics: dict[str, int] = {
+            "arrow_selected": 0,
+            "arrow_fallback_env": 0,
+            "arrow_fallback_batch": 0,
+            "arrow_fallback_pyarrow": 0,
+            "arrow_fallback_init": 0,
+            "arrow_fallback_executor": 0,
+            "arrow_fallback_empty": 0,
+            "arrow_fallback_all_fail": 0,
+            "arrow_success_count": 0,
+            "arrow_success_lmdb_count": 0,
+            "arrow_success_duckdb_count": 0,
+            "arrow_error_table_build": 0,
+            "arrow_error_duckdb_insert": 0,
+            "arrow_error_partial": 0,
+            "arrow_partial_duplicates": 0,
+        }
         self._wal_manager: WALManager | None = None
         self._dedup_manager: DedupManager | None = None
         self._wal_lmdb: Any | None = None
@@ -1000,18 +1223,21 @@ class DuckDBShadowStore:
         self._last_ingest_ts: float = 0.0
         self._pending_accepted_findings: list[CanonicalFinding] = []
         self._pending_accepted_indices: list[int] = []
-        _flush_cfg = os.getenv('HLEDAC_DUCKDB_MIN_FLUSH', '50')
+        _flush_cfg = os.getenv("HLEDAC_DUCKDB_MIN_FLUSH", "50")
         self._min_flush: int = max(1, int(_flush_cfg))
-        _max_cfg = os.getenv('HLEDAC_DUCKDB_MAX_FLUSH_INTERVAL', '1.0')
+        _max_cfg = os.getenv("HLEDAC_DUCKDB_MAX_FLUSH_INTERVAL", "1.0")
         self._max_flush_interval: float = max(0.1, float(_max_cfg))
-        self.DEAD_LETTER_PREFIX: str = 'deadletter_ingest:'
+        self.DEAD_LETTER_PREFIX: str = "deadletter_ingest:"
         self._dedup_lmdb_path: Path | None = None
         self._dedup_lmdb_last_error: str | None = None
         self._dedup_lmdb_boot_error: str | None = None
-        self._bg_tasks: BoundedTaskSet = BoundedTaskSet(maxsize=_MAX_INFLIGHT_GRAPH_UPDATES) if BoundedTaskSet is not None else cast(Any, None)
+        self._bg_tasks: BoundedTaskSet = (
+            BoundedTaskSet(maxsize=_MAX_INFLIGHT_GRAPH_UPDATES) if BoundedTaskSet is not None else cast(Any, None)
+        )
         self._semantic_store: Any | None = None
         self._executor = self._write_executor
         from hledac.universal.knowledge.semantic_store_buffer import SemanticStoreBuffer
+
         self._semantic_buffer: SemanticStoreBuffer = SemanticStoreBuffer()
         self._ingest_breaker_state: CBState = CBState.CLOSED
         self._ingest_breaker_failures: int = 0
@@ -1048,21 +1274,22 @@ class DuckDBShadowStore:
         """
         try:
             from hledac.universal.core.resource_governor import sample_uma_status
+
             snap = sample_uma_status()
-            state = snap.state if snap else 'ok'
+            state = snap.state if snap else "ok"
         except Exception:
-            state = 'ok'
-        if state in ('critical', 'emergency', 'soft_warn'):
+            state = "ok"
+        if state in ("critical", "emergency", "soft_warn"):
             target_workers = 1
         else:
             target_workers = 3
-        if hasattr(self, '_shared_executor') and self._shared_executor is not None:
+        if hasattr(self, "_shared_executor") and self._shared_executor is not None:
             try:
                 current = self._shared_executor._max_workers
                 if current != target_workers:
                     self._shared_executor._max_workers = target_workers
                     _dbg = logging.getLogger(__name__)
-                    _dbg.debug('[DuckDB] executor workers: %d -> %d (uma_state=%s)', current, target_workers, state)
+                    _dbg.debug("[DuckDB] executor workers: %d -> %d (uma_state=%s)", current, target_workers, state)
             except Exception:
                 pass
 
@@ -1083,7 +1310,7 @@ class DuckDBShadowStore:
         return self._quality_state._persistent_duplicate_count
 
     @classmethod
-    def for_testing(cls, *, name: str='test', temp_dir: Path | str | None=None) -> DuckDBShadowStore:
+    def for_testing(cls, *, name: str = "test", temp_dir: Path | str | None = None) -> DuckDBShadowStore:
         """
         Create a DuckDB store for test isolation.
 
@@ -1098,14 +1325,15 @@ class DuckDBShadowStore:
                       cleaning it up.
         """
         import tempfile
-        td = temp_dir or Path(tempfile.mkdtemp(prefix='hledac_test_duckdb_'))
+
+        td = temp_dir or Path(tempfile.mkdtemp(prefix="hledac_test_duckdb_"))
         if isinstance(td, str):
             td = Path(td)
         td.mkdir(parents=True, exist_ok=True)
-        store_path = td / f'{name}.duckdb'
+        store_path = td / f"{name}.duckdb"
         return cls(db_path=str(store_path))
 
-    def set_uma_state(self, uma_state: str | None, swap_detected: bool=False) -> None:
+    def set_uma_state(self, uma_state: str | None, swap_detected: bool = False) -> None:
         """
         Set or update UMA memory pressure state at runtime.
 
@@ -1130,25 +1358,39 @@ class DuckDBShadowStore:
         Returns duckdb_stats section: findings count, graph stats,UMA state.
         """
         try:
-            graph_stats = self.get_graph_stats() if hasattr(self, '_DuckDBShadowStore__graph_store') else {}
+            graph_stats = self.get_graph_stats() if hasattr(self, "_DuckDBShadowStore__graph_store") else {}
         except Exception:
             graph_stats = {}
-        total_iocs = graph_stats.get('nodes', 0) if isinstance(graph_stats, dict) else 0
+        total_iocs = graph_stats.get("nodes", 0) if isinstance(graph_stats, dict) else 0
         try:
-            conn = self._qe()._conn if hasattr(self, '_qe') else None
-            total_findings = conn.execute('SELECT COUNT(*) FROM canonical_findings').fetchone()[0] if conn else 0
+            conn = self._qe()._conn if hasattr(self, "_qe") else None
+            total_findings = conn.execute("SELECT COUNT(*) FROM canonical_findings").fetchone()[0] if conn else 0
         except Exception:
             total_findings = 0
-        return {'total_findings': total_findings, 'total_iocs': total_iocs, 'graph_stats': graph_stats, 'uma_state': self._uma_state or 'unknown', 'duckdb_mode': getattr(self, '_duckdb_mode', 'unknown'), 'ingest_breaker': {'state': self._ingest_breaker_state.value if hasattr(self, '_ingest_breaker_state') else 'unknown', 'failures': self._ingest_breaker_failures if hasattr(self, '_ingest_breaker_failures') else 0, 'last_failure_age_s': round(_time.monotonic() - self._ingest_breaker_last_failure, 1) if hasattr(self, '_ingest_breaker_last_failure') and self._ingest_breaker_last_failure > 0 else None}}
+        return {
+            "total_findings": total_findings,
+            "total_iocs": total_iocs,
+            "graph_stats": graph_stats,
+            "uma_state": self._uma_state or "unknown",
+            "duckdb_mode": getattr(self, "_duckdb_mode", "unknown"),
+            "ingest_breaker": {
+                "state": self._ingest_breaker_state.value if hasattr(self, "_ingest_breaker_state") else "unknown",
+                "failures": self._ingest_breaker_failures if hasattr(self, "_ingest_breaker_failures") else 0,
+                "last_failure_age_s": round(_time.monotonic() - self._ingest_breaker_last_failure, 1)
+                if hasattr(self, "_ingest_breaker_last_failure") and self._ingest_breaker_last_failure > 0
+                else None,
+            },
+        }
 
     def _graph_store(self) -> Any:
         """Lazy-init GraphAttachmentStore."""
-        _attr = '_DuckDBShadowStore__graph_store'
+        _attr = "_DuckDBShadowStore__graph_store"
         if not hasattr(self, _attr):
             object.__setattr__(self, _attr, None)
         _store = object.__getattribute__(self, _attr)
         if _store is None:
             from hledac.universal.knowledge.graph_attachment import GraphAttachmentStore
+
             _store = GraphAttachmentStore()
             object.__setattr__(self, _attr, _store)
         return _store
@@ -1185,7 +1427,7 @@ class DuckDBShadowStore:
         """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.truth_write_graph_supports_buffered_writes()."""
         return self._graph_store().truth_write_graph_supports_buffered_writes()
 
-    def get_top_seed_nodes(self, n: int=5) -> list[dict]:
+    def get_top_seed_nodes(self, n: int = 5) -> list[dict]:
         """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.get_top_seed_nodes()."""
         return self._graph_store().get_top_seed_nodes(n=n)
 
@@ -1193,27 +1435,31 @@ class DuckDBShadowStore:
         """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.get_graph_stats()."""
         return self._graph_store().get_graph_stats()
 
-    def get_connected_iocs(self, ioc_value: str, max_hops: int=2) -> list:
+    def get_connected_iocs(self, ioc_value: str, max_hops: int = 2) -> list:
         """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.get_connected_iocs()."""
         return self._graph_store().get_connected_iocs(ioc_value, max_hops=max_hops)
 
-    def get_connected_iocs_batch(self, values: list[str], max_hops: int=2) -> dict[str, list]:
+    def get_connected_iocs_batch(self, values: list[str], max_hops: int = 2) -> dict[str, list]:
         """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.get_connected_iocs_batch()."""
         return self._graph_store().get_connected_iocs_batch(values, max_hops=max_hops)
 
-    def annotate_findings_with_graph_context(self, findings: list[dict], max_hops: int=2, max_annotations: int=50) -> list[dict]:
+    def annotate_findings_with_graph_context(
+        self, findings: list[dict], max_hops: int = 2, max_annotations: int = 50
+    ) -> list[dict]:
         """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.annotate_findings_with_graph_context()."""
-        return self._graph_store().annotate_findings_with_graph_context(findings, max_hops=max_hops, max_annotations=max_annotations)
+        return self._graph_store().annotate_findings_with_graph_context(
+            findings, max_hops=max_hops, max_annotations=max_annotations
+        )
 
     def get_analytics_graph_for_synthesis(self) -> Any:
         """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.get_analytics_graph_for_synthesis()."""
         return self._graph_store().get_analytics_graph_for_synthesis()
 
-    def get_top_entities_for_ghost_global(self, n: int=100) -> list[tuple[str, str, float]]:
+    def get_top_entities_for_ghost_global(self, n: int = 100) -> list[tuple[str, str, float]]:
         """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.get_top_entities_for_ghost_global()."""
         return self._graph_store().get_top_entities_for_ghost_global(n=n)
 
-    async def get_top_findings(self, limit: int=10) -> list[dict]:
+    async def get_top_findings(self, limit: int = 10) -> list[dict]:
         """
         Sprint 8VE B.4: Return top findings by confidence for IOC graph display.
 
@@ -1221,14 +1467,28 @@ class DuckDBShadowStore:
         with ioc, source_type, query, and confidence fields.
         """
         try:
-            conn = self._qe()._conn if hasattr(self, '_qe') else None
+            conn = self._qe()._conn if hasattr(self, "_qe") else None
             if conn is None:
                 return []
             from time import perf_counter_ns
+
             t0 = perf_counter_ns()
-            rows = conn.execute('\n                SELECT id, query, source_type, confidence, ts, payload_text\n                FROM canonical_findings\n                ORDER BY confidence DESC, ts DESC\n                LIMIT ?\n                ', [limit]).fetchall()
+            rows = conn.execute(
+                "\n                SELECT id, query, source_type, confidence, ts, payload_text\n                FROM canonical_findings\n                ORDER BY confidence DESC, ts DESC\n                LIMIT ?\n                ",
+                [limit],
+            ).fetchall()
             DuckDBShadowStore._record_query_latency(self._qe()._query_latencies_ns, perf_counter_ns() - t0)
-            return [{'ioc': row[0], 'query': row[1], 'source_type': row[2], 'confidence': row[3], 'ts': row[4], 'summary': (row[5] or '')[:200]} for row in rows]
+            return [
+                {
+                    "ioc": row[0],
+                    "query": row[1],
+                    "source_type": row[2],
+                    "confidence": row[3],
+                    "ts": row[4],
+                    "summary": (row[5] or "")[:200],
+                }
+                for row in rows
+            ]
         except Exception:
             return []
 
@@ -1272,19 +1532,21 @@ class DuckDBShadowStore:
         async def _run() -> None:
             try:
                 import xxhash
+
                 from hledac.universal.utils.ioc_extract import extract_iocs_batch
+
                 extraction_items: list[tuple[str, list[tuple[str, str]]]] = []
                 for finding in findings:
-                    text = finding.payload_text or ''
-                    pm = getattr(finding, 'pattern_matches', None)
+                    text = finding.payload_text or ""
+                    pm = getattr(finding, "pattern_matches", None)
                     matches: list[tuple[str, str]] = []
                     if pm and isinstance(pm, list):
                         for item in pm:
                             if isinstance(item, tuple) and len(item) == 2:
                                 matches.append((str(item[0]), str(item[1])))
                             elif isinstance(item, dict):
-                                v = item.get('value') or item.get('pattern') or ''
-                                label = item.get('label') or ''
+                                v = item.get("value") or item.get("pattern") or ""
+                                label = item.get("label") or ""
                                 matches.append((str(v), str(label)))
                     extraction_items.append((text, matches))
                 all_ioc_results = extract_iocs_batch(extraction_items)
@@ -1301,12 +1563,12 @@ class DuckDBShadowStore:
                     id_map: dict[str, str] = {}
                     for value, ioc_type in iocs:
                         all_iocs.append((ioc_type, value))
-                        ioc_id = f'{ioc_type}:{xxhash.xxh64(value.encode()).hexdigest()}'
+                        ioc_id = f"{ioc_type}:{xxhash.xxh64(value.encode()).hexdigest()}"
                         id_map[value] = ioc_id
                     values = list(id_map.keys())
                     for i, v_a in enumerate(values):
                         id_a = id_map[v_a]
-                        for v_b in values[i + 1:]:
+                        for v_b in values[i + 1 :]:
                             id_b = id_map[v_b]
                             finding_observations.append((finding_idx, id_a, id_b, ts, src))
                 seen_iocs: set[tuple[str, str]] = set()
@@ -1319,15 +1581,18 @@ class DuckDBShadowStore:
                     await truth_graph.buffer_observation(id_a, id_b, fid, ts, src)
             except Exception as e:
                 import logging
+
                 _logger2 = logging.getLogger(__name__)
-                _logger2.warning(f'[F206AC] truth_write_graph buffer failed: {e}')
-        await self._bg_tasks.spawn(_run(), name='duckdb:truth_write_graph')
+                _logger2.warning(f"[F206AC] truth_write_graph buffer failed: {e}")
+
+        await self._bg_tasks.spawn(_run(), name="duckdb:truth_write_graph")
+
     REPLAY_CHUNK_SIZE: int = 100
     MAX_RETRY_COUNT: int = 3
-    DEADLETTER_PREFIX: str = 'deadletter_duckdb_sync:'
+    DEADLETTER_PREFIX: str = "deadletter_duckdb_sync:"
     MAX_PENDING_SYNC_MARKERS: int = 10000
 
-    def _configure_connection(self, conn: Any, runtime: dict[str, Any], *, is_read_only: bool=False) -> None:
+    def _configure_connection(self, conn: Any, runtime: dict[str, Any], *, is_read_only: bool = False) -> None:
         """
         Apply all PRAGMAs/SETs to a DuckDB connection. DRY — called once per connection
         in _init_connection.
@@ -1338,37 +1603,44 @@ class DuckDBShadowStore:
         Idempotent — safe to call on any freshly-connected DuckDB connection.
         """
         _db_path = self._db_path
-        _is_memory_mode = _db_path is None or str(_db_path) == ':memory:'
+        _is_memory_mode = _db_path is None or str(_db_path) == ":memory:"
         if not _is_memory_mode and _db_path is not None:
             madv_free_reusable_on_path(_db_path)
             apply_nocache_to_path(_db_path)
-        memory_limit_val = _validate_duckdb_setting(str(runtime['memory_limit']), 'memory_limit')
-        max_temp_val = _validate_duckdb_setting(self._max_temp, 'max_temp')
-        conn.execute('SET memory_limit = ?', [memory_limit_val])
-        conn.execute('SET max_temp_directory_size = ?', [max_temp_val])
+        memory_limit_val = _validate_duckdb_setting(str(runtime["memory_limit"]), "memory_limit")
+        max_temp_val = _validate_duckdb_setting(self._max_temp, "max_temp")
+        conn.execute("SET memory_limit = ?", [memory_limit_val])
+        conn.execute("SET max_temp_directory_size = ?", [max_temp_val])
         if self._temp_dir is not None and (not is_read_only) and (not _is_memory_mode):
-            temp_dir_val = _validate_path_setting(self._temp_dir, 'temp_directory')
-            conn.execute('SET temp_directory = ?', [temp_dir_val])
-        conn.execute('PRAGMA threads = ?', [_validate_duckdb_threads(runtime['threads'])])
-        conn.execute('PRAGMA enable_progress_bar=false')
-        conn.execute('PRAGMA enable_object_cache=false')
+            temp_dir_val = _validate_path_setting(self._temp_dir, "temp_directory")
+            conn.execute("SET temp_directory = ?", [temp_dir_val])
+        conn.execute("PRAGMA threads = ?", [_validate_duckdb_threads(runtime["threads"])])
+        conn.execute("PRAGMA enable_progress_bar=false")
+        conn.execute("PRAGMA enable_object_cache=false")
         if not _is_memory_mode:
             try:
-                conn.execute('PRAGMA journal_mode=WAL')
-                conn.execute('PRAGMA busy_timeout=30000')
-                conn.execute('PRAGMA synchronous=NORMAL')
-                conn.execute('PRAGMA wal_autocheckpoint=51200')
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA busy_timeout=30000")
+                conn.execute("PRAGMA synchronous=NORMAL")
+                conn.execute("PRAGMA wal_autocheckpoint=51200")
             except Exception as e:
-                logger.debug(f'[DUCKDB] WAL/busy_timeout config failed: {e!r}')
+                logger.debug(f"[DUCKDB] WAL/busy_timeout config failed: {e!r}")
         try:
-            conn.execute('SET write_buffer_row_group_memory_limit = ?', [str(runtime.get('write_buffer_limit', '64MiB'))])
-            conn.execute('SET allocator_flush_threshold = ?', [str(runtime.get('allocator_flush_threshold', '64MiB'))])
-            conn.execute('SET allocator_bulk_deallocation_flush_threshold = ?', [str(runtime.get('allocator_bulk_dealloc_threshold', '256MiB'))])
-            conn.execute('SET enable_fsst_vectors = ?', [str(runtime.get('enable_fsst_vectors', 'true')).lower()])
+            conn.execute(
+                "SET write_buffer_row_group_memory_limit = ?", [str(runtime.get("write_buffer_limit", "64MiB"))]
+            )
+            conn.execute("SET allocator_flush_threshold = ?", [str(runtime.get("allocator_flush_threshold", "64MiB"))])
+            conn.execute(
+                "SET allocator_bulk_deallocation_flush_threshold = ?",
+                [str(runtime.get("allocator_bulk_dealloc_threshold", "256MiB"))],
+            )
+            conn.execute("SET enable_fsst_vectors = ?", [str(runtime.get("enable_fsst_vectors", "true")).lower()])
             if not _is_memory_mode:
-                conn.execute('SET temp_file_encryption = ?', [str(runtime.get('temp_file_encryption', 'false')).lower()])
+                conn.execute(
+                    "SET temp_file_encryption = ?", [str(runtime.get("temp_file_encryption", "false")).lower()]
+                )
         except Exception as e:
-            logger.debug(f'[DUCKDB] columnar/allocator tuning failed: {e}')
+            logger.debug(f"[DUCKDB] columnar/allocator tuning failed: {e}")
 
     def _init_connection(self) -> None:
         """
@@ -1382,29 +1654,29 @@ class DuckDBShadowStore:
         duckdb = _get_duckdb()
         runtime = _resolve_duckdb_runtime_settings(self._uma_state, swap_detected=False)
         self._duckdb_settings = runtime
-        resolved_memory = runtime['memory_limit']
-        resolved_threads = runtime['threads']
-        runtime['preserve_insertion_order']
-        runtime['safe_mode']
-        if self._db_path and str(self._db_path) != ':memory:':
+        resolved_memory = runtime["memory_limit"]
+        resolved_threads = runtime["threads"]
+        runtime["preserve_insertion_order"]
+        runtime["safe_mode"]
+        if self._db_path and str(self._db_path) != ":memory:":
             _lock_mode, _lock_msg = self._acquire_process_lock()
-            if _lock_mode == 'excl':
-                logger.debug(f'[duckdb_init] Exclusive lock acquired: {_lock_msg}')
+            if _lock_mode == "excl":
+                logger.debug(f"[duckdb_init] Exclusive lock acquired: {_lock_msg}")
                 _read_only_flag = False
-            elif _lock_mode == 'ro':
-                logger.warning(f'[duckdb_init] {_lock_msg} — operating in READ-ONLY mode')
+            elif _lock_mode == "ro":
+                logger.warning(f"[duckdb_init] {_lock_msg} — operating in READ-ONLY mode")
                 _read_only_flag = True
             else:
-                logger.warning(f'[duckdb_init] {_lock_msg} — falling back to :memory: mode')
+                logger.warning(f"[duckdb_init] {_lock_msg} — falling back to :memory: mode")
                 self._db_path = None
                 _read_only_flag = False
         else:
             _read_only_flag = False
         if self._db_path:
-            _is_memory_mode = str(self._db_path) == ':memory:'
+            _is_memory_mode = str(self._db_path) == ":memory:"
             if not _is_memory_mode:
                 if self._temp_dir is None:
-                    self._temp_dir = self._db_path.expanduser().parent / 'duckdb_tmp'
+                    self._temp_dir = self._db_path.expanduser().parent / "duckdb_tmp"
                 self._temp_dir.mkdir(parents=True, exist_ok=True)
             setup_conn = duckdb.connect(str(self._db_path), read_only=_read_only_flag)
             try:
@@ -1423,10 +1695,10 @@ class DuckDBShadowStore:
             try:
                 self._configure_connection(self._file_conn, runtime, is_read_only=_read_only_flag)
                 try:
-                    self._file_conn.execute('SET preserve_insertion_order = false')
+                    self._file_conn.execute("SET preserve_insertion_order = false")
                 except Exception as e:
-                    logger.debug(f'[DUCKDB] preserve_insertion_order config failed: {e}')
-                self._file_conn.execute('PRAGMA force_checkpoint')
+                    logger.debug(f"[DUCKDB] preserve_insertion_order config failed: {e}")
+                self._file_conn.execute("PRAGMA force_checkpoint")
             except Exception:
                 self._file_conn.close()
                 raise
@@ -1438,35 +1710,42 @@ class DuckDBShadowStore:
                     if _instrument_duckdb_connection:
                         read_conn = _instrument_duckdb_connection()(read_conn)
                     self._configure_connection(read_conn, runtime, is_read_only=True)
-                    read_conn.execute('SET preserve_insertion_order = false')
+                    read_conn.execute("SET preserve_insertion_order = false")
                     self._read_pool.append(read_conn)
                 except Exception as e:
-                    logger.debug(f'[DUCKDB] read pool connection {i} failed: {e}')
+                    logger.debug(f"[DUCKDB] read pool connection {i} failed: {e}")
                     break
         else:
-            _conn = duckdb.connect(':memory:')
+            _conn = duckdb.connect(":memory:")
             try:
-                memory_limit_val = _validate_duckdb_setting(str(resolved_memory), 'memory_limit')
-                _conn.execute('SET memory_limit = ?', [memory_limit_val])
+                memory_limit_val = _validate_duckdb_setting(str(resolved_memory), "memory_limit")
+                _conn.execute("SET memory_limit = ?", [memory_limit_val])
                 if _DUCKDB_RAMDISK_TEMP:
-                    temp_dir_val = _validate_path_setting(Path(_DUCKDB_RAMDISK_TEMP), 'temp_directory')
-                    _conn.execute('SET temp_directory = ?', [temp_dir_val])
+                    temp_dir_val = _validate_path_setting(Path(_DUCKDB_RAMDISK_TEMP), "temp_directory")
+                    _conn.execute("SET temp_directory = ?", [temp_dir_val])
                     _conn.execute("SET max_temp_directory_size = '4GB'")
                 else:
                     _conn.execute("SET max_temp_directory_size = '0GB'")
-                _conn.execute('PRAGMA threads = ?', [_validate_duckdb_threads(resolved_threads)])
-                _conn.execute('PRAGMA enable_progress_bar=false')
-                _conn.execute('PRAGMA enable_object_cache=false')
+                _conn.execute("PRAGMA threads = ?", [_validate_duckdb_threads(resolved_threads)])
+                _conn.execute("PRAGMA enable_progress_bar=false")
+                _conn.execute("PRAGMA enable_object_cache=false")
                 try:
-                    _conn.execute('SET allocator_flush_threshold = ?', [str(runtime.get('allocator_flush_threshold', '64MiB'))])
-                    _conn.execute('SET allocator_bulk_deallocation_flush_threshold = ?', [str(runtime.get('allocator_bulk_dealloc_threshold', '256MiB'))])
-                    _conn.execute('SET enable_fsst_vectors = ?', [str(runtime.get('enable_fsst_vectors', 'true')).lower()])
+                    _conn.execute(
+                        "SET allocator_flush_threshold = ?", [str(runtime.get("allocator_flush_threshold", "64MiB"))]
+                    )
+                    _conn.execute(
+                        "SET allocator_bulk_deallocation_flush_threshold = ?",
+                        [str(runtime.get("allocator_bulk_dealloc_threshold", "256MiB"))],
+                    )
+                    _conn.execute(
+                        "SET enable_fsst_vectors = ?", [str(runtime.get("enable_fsst_vectors", "true")).lower()]
+                    )
                 except Exception as e:
-                    logger.debug(f'[DUCKDB] columnar/allocator tuning failed: {e}')
+                    logger.debug(f"[DUCKDB] columnar/allocator tuning failed: {e}")
                 try:
-                    _conn.execute('SET preserve_insertion_order = false')
+                    _conn.execute("SET preserve_insertion_order = false")
                 except (OSError, RuntimeError) as e:
-                    logger.debug(f'[DUCKDB] preserve_insertion_order tuning failed: {e}')
+                    logger.debug(f"[DUCKDB] preserve_insertion_order tuning failed: {e}")
                 _apply_schema(_conn, _SCHEMA_SQL)
                 self._persistent_conn = _conn
             except Exception:
@@ -1474,8 +1753,14 @@ class DuckDBShadowStore:
                 raise
             if self._query_cache is None and self._db_path is not None:
                 from hledac.universal.paths import LMDB_ROOT
-                _cache_lmdb_path = LMDB_ROOT / 'duckdb_query_cache.lmdb'
-                self._query_cache = _DuckDBQueryCache(_cache_lmdb_path, max_l1=_DUCKDB_QUERY_CACHE_L1_MAX, max_l2=_DUCKDB_QUERY_CACHE_L2_MAX, ttl_s=_DUCKDB_QUERY_CACHE_TTL_S)
+
+                _cache_lmdb_path = LMDB_ROOT / "duckdb_query_cache.lmdb"
+                self._query_cache = _DuckDBQueryCache(
+                    _cache_lmdb_path,
+                    max_l1=_DUCKDB_QUERY_CACHE_L1_MAX,
+                    max_l2=_DUCKDB_QUERY_CACHE_L2_MAX,
+                    ttl_s=_DUCKDB_QUERY_CACHE_TTL_S,
+                )
 
     def _apply_schema_migrations(self) -> None:
         """
@@ -1501,17 +1786,17 @@ class DuckDBShadowStore:
             madv_free_reusable_on_path(self._db_path)
             apply_nocache_to_path(self._db_path)
             try:
-                conn.execute('ALTER TABLE sprint_delta ADD COLUMN findings_per_minute REAL DEFAULT 0')
+                conn.execute("ALTER TABLE sprint_delta ADD COLUMN findings_per_minute REAL DEFAULT 0")
             except (OSError, RuntimeError) as e:
-                logger.debug(f'[DUCKDB] ADD COLUMN findings_per_minute failed: {e}')
+                logger.debug(f"[DUCKDB] ADD COLUMN findings_per_minute failed: {e}")
             try:
-                conn.execute('ALTER TABLE sprint_delta ADD COLUMN top_source_type TEXT')
+                conn.execute("ALTER TABLE sprint_delta ADD COLUMN top_source_type TEXT")
             except (OSError, RuntimeError) as e:
-                logger.debug(f'[DUCKDB] ADD COLUMN top_source_type failed: {e}')
+                logger.debug(f"[DUCKDB] ADD COLUMN top_source_type failed: {e}")
             try:
-                conn.execute('ALTER TABLE sprint_delta ADD COLUMN synthesis_confidence REAL DEFAULT 0')
+                conn.execute("ALTER TABLE sprint_delta ADD COLUMN synthesis_confidence REAL DEFAULT 0")
             except (OSError, RuntimeError) as e:
-                logger.debug(f'[DUCKDB] ADD COLUMN synthesis_confidence failed: {e}')
+                logger.debug(f"[DUCKDB] ADD COLUMN synthesis_confidence failed: {e}")
         finally:
             if conn is not None:
                 try:
@@ -1529,7 +1814,9 @@ class DuckDBShadowStore:
             conn = self._file_conn if self._db_path else self._persistent_conn
             if conn is None:
                 return
-            conn.execute('\n                CREATE TABLE IF NOT EXISTS target_profiles (\n                    target_id TEXT PRIMARY KEY,\n                    first_seen DOUBLE,\n                    last_seen DOUBLE,\n                    cumulative_finding_count INTEGER,\n                    entity_summary_json TEXT\n                )\n                ')
+            conn.execute(
+                "\n                CREATE TABLE IF NOT EXISTS target_profiles (\n                    target_id TEXT PRIMARY KEY,\n                    first_seen DOUBLE,\n                    last_seen DOUBLE,\n                    cumulative_finding_count INTEGER,\n                    entity_summary_json TEXT\n                )\n                "
+            )
         except Exception:
             pass
 
@@ -1543,7 +1830,9 @@ class DuckDBShadowStore:
             conn = self._file_conn if self._db_path else self._persistent_conn
             if conn is None:
                 return
-            conn.execute('\n                CREATE TABLE IF NOT EXISTS target_memory (\n                    target_id TEXT PRIMARY KEY,\n                    first_seen_ts DOUBLE,\n                    last_seen_ts DOUBLE,\n                    sprint_count INTEGER,\n                    cumulative_finding_count INTEGER,\n                    entity_facets_json TEXT,\n                    exposure_facets_json TEXT,\n                    pivot_facets_json TEXT,\n                    confidence_drift_json TEXT,\n                    updated_by_sprint_id TEXT,\n                    updated_ts DOUBLE\n                )\n                ')
+            conn.execute(
+                "\n                CREATE TABLE IF NOT EXISTS target_memory (\n                    target_id TEXT PRIMARY KEY,\n                    first_seen_ts DOUBLE,\n                    last_seen_ts DOUBLE,\n                    sprint_count INTEGER,\n                    cumulative_finding_count INTEGER,\n                    entity_facets_json TEXT,\n                    exposure_facets_json TEXT,\n                    pivot_facets_json TEXT,\n                    confidence_drift_json TEXT,\n                    updated_by_sprint_id TEXT,\n                    updated_ts DOUBLE\n                )\n                "
+            )
         except Exception:
             pass
 
@@ -1577,22 +1866,40 @@ class DuckDBShadowStore:
             conn = self._file_conn if self._db_path else self._persistent_conn
             if conn is None:
                 return 0
-            conn.execute('\n                CREATE TABLE IF NOT EXISTS dht_metadata (\n                    infohash TEXT PRIMARY KEY,\n                    name TEXT,\n                    files_json TEXT,\n                    size_bytes BIGINT,\n                    first_seen DOUBLE,\n                    last_seen DOUBLE,\n                    peer_count INT,\n                    sources_json TEXT\n                )\n            ')
+            conn.execute(
+                "\n                CREATE TABLE IF NOT EXISTS dht_metadata (\n                    infohash TEXT PRIMARY KEY,\n                    name TEXT,\n                    files_json TEXT,\n                    size_bytes BIGINT,\n                    first_seen DOUBLE,\n                    last_seen DOUBLE,\n                    peer_count INT,\n                    sources_json TEXT\n                )\n            "
+            )
             count = 0
             rows: list[tuple] = []
             for m in metadata:
-                infohash = m.get('infohash', '')
+                infohash = m.get("infohash", "")
                 if not infohash:
                     continue
-                files_json = _json_dumps_str(m.get('files')) if m.get('files') else None
-                sources_json = _json_dumps_str(m.get('sources')) if m.get('sources') else None
-                rows.append((infohash, m.get('name'), files_json, m.get('size_bytes'), m.get('first_seen', now), m.get('last_seen', now), m.get('peer_count'), sources_json))
+                files_json = _json_dumps_str(m.get("files")) if m.get("files") else None
+                sources_json = _json_dumps_str(m.get("sources")) if m.get("sources") else None
+                rows.append(
+                    (
+                        infohash,
+                        m.get("name"),
+                        files_json,
+                        m.get("size_bytes"),
+                        m.get("first_seen", now),
+                        m.get("last_seen", now),
+                        m.get("peer_count"),
+                        sources_json,
+                    )
+                )
             if rows:
-                conn.executemany('\n                    INSERT INTO dht_metadata (\n                        infohash, name, files_json, size_bytes,\n                        first_seen, last_seen, peer_count, sources_json\n                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)\n                    ON CONFLICT(infohash) DO UPDATE SET\n                        name = COALESCE(excluded.name, dht_metadata.name),\n                        files_json = COALESCE(excluded.files_json, dht_metadata.files_json),\n                        size_bytes = COALESCE(excluded.size_bytes, dht_metadata.size_bytes),\n                        last_seen = excluded.last_seen,\n                        peer_count = COALESCE(excluded.peer_count, dht_metadata.peer_count),\n                        sources_json = COALESCE(excluded.sources_json, dht_metadata.sources_json)\n                    ', rows)
+                conn.executemany(
+                    "\n                    INSERT INTO dht_metadata (\n                        infohash, name, files_json, size_bytes,\n                        first_seen, last_seen, peer_count, sources_json\n                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)\n                    ON CONFLICT(infohash) DO UPDATE SET\n                        name = COALESCE(excluded.name, dht_metadata.name),\n                        files_json = COALESCE(excluded.files_json, dht_metadata.files_json),\n                        size_bytes = COALESCE(excluded.size_bytes, dht_metadata.size_bytes),\n                        last_seen = excluded.last_seen,\n                        peer_count = COALESCE(excluded.peer_count, dht_metadata.peer_count),\n                        sources_json = COALESCE(excluded.sources_json, dht_metadata.sources_json)\n                    ",
+                    rows,
+                )
                 count = len(rows)
             conn.commit()
             return count
+
         from utils.rayon_pool import run_in_io_pool_async
+
         return await run_in_io_pool_async(_sync_ingest)
 
     class _DuckDBQueryExecutor:
@@ -1609,26 +1916,31 @@ class DuckDBShadowStore:
         - Connection routing (MODE A file conn vs MODE B persistent conn) is shared
         - Arrow->dict conversion helpers are shared
         """
-        _SQL_INSERT_SHADOW_FINDING = 'INSERT INTO canonical_findings (id, query, source_type, confidence, ts, provenance_json) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING'
-        _SQL_INSERT_SHADOW_RUN = 'INSERT INTO shadow_runs (run_id, started_at, ended_at, total_fds, rss_mb) VALUES (?, ?, ?, ?, ?)'
-        _SQL_INSERT_SPRINT_DELTA = 'INSERT INTO sprint_delta VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)'
-        _SQL_INSERT_SOURCE_HIT = 'INSERT INTO source_hit_log VALUES (?,?,?,?,?,?)'
-        _SQL_INSERT_HYPOTHESIS_FEEDBACK = 'INSERT INTO hypothesis_feedback'
-        _SQL_INSERT_HYPOTHESIS_TRACKING = 'INSERT OR REPLACE INTO hypothesis_tracking'
-        _SQL_UPSERT_TARGET_PROFILE = 'INSERT OR REPLACE INTO target_profiles'
-        _SQL_SELECT_TARGET_PROFILE = 'SELECT target_id, first_seen, last_seen, cumulative_finding_count, entity_summary_json'
-        _SQL_SELECT_HYPOTHESIS_FEEDBACK = 'SELECT id, target_id, pivot_type, ioc_type'
-        _SQL_SELECT_SHADOW_FINDINGS = 'SELECT id, query, source_type, confidence, ts, provenance_json'
-        _SQL_INSERT_RESEARCH_SESSION = 'INSERT INTO research_sessions (session_id, sprint_id, query, ts, findings_count, accepted_count, gaps_json, entities_json, source_patterns_json, unexplored_angles_json, temporal_anomalies_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-        _SQL_INSERT_ENTITY_OBSERVATION = 'INSERT OR REPLACE INTO entity_observations (observation_id, entity_value, entity_type, sprint_id, source_type, confidence, ts, finding_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-        _SQL_SELECT_RESEARCH_SESSIONS_BY_SPRINT = 'SELECT session_id, sprint_id, query, ts, findings_count, accepted_count, gaps_json, entities_json, source_patterns_json, unexplored_angles_json, temporal_anomalies_json FROM research_sessions WHERE sprint_id = ? ORDER BY ts DESC'
-        _SQL_SELECT_ENTITY_OBSERVATIONS_BY_ENTITY = 'SELECT observation_id, entity_value, entity_type, sprint_id, source_type, confidence, ts, finding_id FROM entity_observations WHERE entity_value = ? ORDER BY ts DESC LIMIT ?'
-        _SQL_SELECT_RESEARCH_SESSIONS_RECENT = 'SELECT session_id, sprint_id, query, ts, findings_count, accepted_count, gaps_json, entities_json, source_patterns_json, unexplored_angles_json, temporal_anomalies_json FROM research_sessions ORDER BY ts DESC LIMIT ?'
+
+        _SQL_INSERT_SHADOW_FINDING = "INSERT INTO canonical_findings (id, query, source_type, confidence, ts, provenance_json) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING"
+        _SQL_INSERT_SHADOW_RUN = (
+            "INSERT INTO shadow_runs (run_id, started_at, ended_at, total_fds, rss_mb) VALUES (?, ?, ?, ?, ?)"
+        )
+        _SQL_INSERT_SPRINT_DELTA = "INSERT INTO sprint_delta VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
+        _SQL_INSERT_SOURCE_HIT = "INSERT INTO source_hit_log VALUES (?,?,?,?,?,?)"
+        _SQL_INSERT_HYPOTHESIS_FEEDBACK = "INSERT INTO hypothesis_feedback"
+        _SQL_INSERT_HYPOTHESIS_TRACKING = "INSERT OR REPLACE INTO hypothesis_tracking"
+        _SQL_UPSERT_TARGET_PROFILE = "INSERT OR REPLACE INTO target_profiles"
+        _SQL_SELECT_TARGET_PROFILE = (
+            "SELECT target_id, first_seen, last_seen, cumulative_finding_count, entity_summary_json"
+        )
+        _SQL_SELECT_HYPOTHESIS_FEEDBACK = "SELECT id, target_id, pivot_type, ioc_type"
+        _SQL_SELECT_SHADOW_FINDINGS = "SELECT id, query, source_type, confidence, ts, provenance_json"
+        _SQL_INSERT_RESEARCH_SESSION = "INSERT INTO research_sessions (session_id, sprint_id, query, ts, findings_count, accepted_count, gaps_json, entities_json, source_patterns_json, unexplored_angles_json, temporal_anomalies_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        _SQL_INSERT_ENTITY_OBSERVATION = "INSERT OR REPLACE INTO entity_observations (observation_id, entity_value, entity_type, sprint_id, source_type, confidence, ts, finding_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        _SQL_SELECT_RESEARCH_SESSIONS_BY_SPRINT = "SELECT session_id, sprint_id, query, ts, findings_count, accepted_count, gaps_json, entities_json, source_patterns_json, unexplored_angles_json, temporal_anomalies_json FROM research_sessions WHERE sprint_id = ? ORDER BY ts DESC"
+        _SQL_SELECT_ENTITY_OBSERVATIONS_BY_ENTITY = "SELECT observation_id, entity_value, entity_type, sprint_id, source_type, confidence, ts, finding_id FROM entity_observations WHERE entity_value = ? ORDER BY ts DESC LIMIT ?"
+        _SQL_SELECT_RESEARCH_SESSIONS_RECENT = "SELECT session_id, sprint_id, query, ts, findings_count, accepted_count, gaps_json, entities_json, source_patterns_json, unexplored_angles_json, temporal_anomalies_json FROM research_sessions ORDER BY ts DESC LIMIT ?"
 
         def __init__(self, store: DuckDBShadowStore) -> None:
-            object.__setattr__(self, '_store', store)
-            object.__setattr__(self, '_stmt_insert_finding', None)
-            object.__setattr__(self, '_stmt_insert_finding_conn_id', None)
+            object.__setattr__(self, "_store", store)
+            object.__setattr__(self, "_stmt_insert_finding", None)
+            object.__setattr__(self, "_stmt_insert_finding_conn_id", None)
 
         def _conn(self):
             """Return the active write connection (MODE A file or MODE B persistent).
@@ -1674,16 +1986,16 @@ class DuckDBShadowStore:
                 return cached
             try:
                 stmt = conn.prepare(self._SQL_INSERT_SHADOW_FINDING)
-                object.__setattr__(self, '_stmt_insert_finding', stmt)
-                object.__setattr__(self, '_stmt_insert_finding_conn_id', conn_id)
+                object.__setattr__(self, "_stmt_insert_finding", stmt)
+                object.__setattr__(self, "_stmt_insert_finding_conn_id", conn_id)
                 return stmt
             except Exception as e:
                 try:
-                    logger.debug(f'[DUCKDB] prepare() failed, falling back to execute(): {e}')
+                    logger.debug(f"[DUCKDB] prepare() failed, falling back to execute(): {e}")
                 except Exception:
                     pass
-                object.__setattr__(self, '_stmt_insert_finding', None)
-                object.__setattr__(self, '_stmt_insert_finding_conn_id', None)
+                object.__setattr__(self, "_stmt_insert_finding", None)
+                object.__setattr__(self, "_stmt_insert_finding_conn_id", None)
                 return None
 
         def _invalidate_insert_stmt(self) -> None:
@@ -1694,25 +2006,25 @@ class DuckDBShadowStore:
             `_get_insert_stmt(conn)` re-prepares on the (possibly new) conn.
             """
             try:
-                object.__setattr__(self, '_stmt_insert_finding', None)
-                object.__setattr__(self, '_stmt_insert_finding_conn_id', None)
+                object.__setattr__(self, "_stmt_insert_finding", None)
+                object.__setattr__(self, "_stmt_insert_finding_conn_id", None)
             except Exception:
                 pass
 
         @staticmethod
         def _begin(conn) -> None:
-            conn.execute('BEGIN TRANSACTION')
+            conn.execute("BEGIN TRANSACTION")
 
         @staticmethod
         def _commit(conn) -> None:
-            conn.execute('COMMIT')
+            conn.execute("COMMIT")
 
         @staticmethod
         def _rollback(conn) -> None:
             try:
-                conn.execute('ROLLBACK')
+                conn.execute("ROLLBACK")
             except (OSError, RuntimeError) as e:
-                logger.debug(f'[DUCKDB] rollback failed: {e}')
+                logger.debug(f"[DUCKDB] rollback failed: {e}")
 
         def _with_transaction(self, conn, fn):
             """
@@ -1729,7 +2041,15 @@ class DuckDBShadowStore:
                 self._rollback(conn)
                 raise
 
-        def insert_finding(self, finding_id: str, query: str, source_type: str, confidence: float, ts: float | None, provenance_json: str | None) -> bool:
+        def insert_finding(
+            self,
+            finding_id: str,
+            query: str,
+            source_type: str,
+            confidence: float,
+            ts: float | None,
+            provenance_json: str | None,
+        ) -> bool:
             """Insert a single shadow finding. Returns True on success."""
             conn = self._conn()
             if conn is None:
@@ -1743,6 +2063,7 @@ class DuckDBShadowStore:
                         stmt.execute(params)
                     else:
                         c.execute(self._SQL_INSERT_SHADOW_FINDING, params)
+
                 self._with_transaction(conn, _do)
                 return True
             except Exception:
@@ -1754,10 +2075,14 @@ class DuckDBShadowStore:
             MUST be called on the worker thread.
             """
             import logging as _logging
+
             _logger = _logging.getLogger(__name__)
             if not findings:
                 return 0
-            rows = [[r['id'], r['query'], r['source_type'], r['confidence'], r.get('ts'), r.get('provenance_json')] for r in findings]
+            rows = [
+                [r["id"], r["query"], r["source_type"], r["confidence"], r.get("ts"), r.get("provenance_json")]
+                for r in findings
+            ]
             conn = self._conn()
             if conn is None:
                 return 0
@@ -1769,10 +2094,11 @@ class DuckDBShadowStore:
                         stmt.executemany(rows)
                     else:
                         c.executemany(self._SQL_INSERT_SHADOW_FINDING, rows)
+
                 self._with_transaction(conn, _do)
                 return len(rows)
             except Exception as e:
-                _logger.error(f'[D7] DuckDB bulk insert failed: {type(e).__name__}: {e}')
+                _logger.error(f"[D7] DuckDB bulk insert failed: {type(e).__name__}: {e}")
                 return 0
 
         def insert_findings_bulk_as_tuples(self, rows: list[list]) -> int:
@@ -1782,6 +2108,7 @@ class DuckDBShadowStore:
             Returns number of successfully inserted records.
             """
             import logging as _logging
+
             _logger = _logging.getLogger(__name__)
             if not rows:
                 return 0
@@ -1796,10 +2123,11 @@ class DuckDBShadowStore:
                         stmt.executemany(rows)
                     else:
                         c.executemany(self._SQL_INSERT_SHADOW_FINDING, rows)
+
                 self._with_transaction(conn, _do)
                 return len(rows)
             except Exception as e:
-                _logger.error(f'[D7] DuckDB bulk-as-tuples insert failed: {type(e).__name__}: {e}')
+                _logger.error(f"[D7] DuckDB bulk-as-tuples insert failed: {type(e).__name__}: {e}")
                 return 0
 
         @contextmanager
@@ -1822,6 +2150,7 @@ class DuckDBShadowStore:
             a process-wide singleton per DuckDBShadowStore instance.
             """
             import logging as _logging
+
             _logger = _logging.getLogger(__name__)
             conn = self._conn()
             if conn is None:
@@ -1837,25 +2166,25 @@ class DuckDBShadowStore:
             else:
                 original_mode = None
                 try:
-                    result = conn.execute('PRAGMA journal_mode').fetchone()
+                    result = conn.execute("PRAGMA journal_mode").fetchone()
                     if result:
                         original_mode = str(result[0]).upper()
-                    object.__setattr__(self, '_stmt_insert_finding_conn_id', (conn_id, original_mode))
+                    object.__setattr__(self, "_stmt_insert_finding_conn_id", (conn_id, original_mode))
                 except Exception:
                     original_mode = None
             try:
-                if original_mode == 'WAL':
-                    conn.execute('PRAGMA journal_mode=DELETE')
+                if original_mode == "WAL":
+                    conn.execute("PRAGMA journal_mode=DELETE")
                 yield
             except Exception as _e:
-                _logger.debug(f'[F275-2] WAL→DELETE switch failed: {_e}')
+                _logger.debug(f"[F275-2] WAL→DELETE switch failed: {_e}")
                 yield
             finally:
-                if original_mode == 'WAL':
+                if original_mode == "WAL":
                     try:
-                        conn.execute('PRAGMA journal_mode=WAL')
+                        conn.execute("PRAGMA journal_mode=WAL")
                     except Exception as _e2:
-                        _logger.debug(f'[F275-2] WAL restore failed: {_e2}')
+                        _logger.debug(f"[F275-2] WAL restore failed: {_e2}")
 
         def insert_findings_bulk_arrow(self, table: Any) -> tuple[int, str | None]:
             """
@@ -1881,26 +2210,32 @@ class DuckDBShadowStore:
             caller is expected to pre-dedupe or accept the failure (logged + return 0).
             """
             import logging as _logging
+
             _logger = _logging.getLogger(__name__)
             if table is None:
-                return (0, 'table_none')
+                return (0, "table_none")
             try:
                 n_rows = int(table.num_rows)
             except Exception:
-                return (0, 'num_rows_err')
+                return (0, "num_rows_err")
             if n_rows == 0:
-                return (0, 'zero_rows')
+                return (0, "zero_rows")
             conn = self._conn()
             if conn is None:
-                return (0, 'no_conn')
+                return (0, "no_conn")
             try:
                 with self._wal_delete_mode():
                     import uuid as _uuid
-                    reg_name = f'finding_arrow_batch_{_uuid.uuid4().hex[:12]}'
+
+                    reg_name = f"finding_arrow_batch_{_uuid.uuid4().hex[:12]}"
                     conn.register(reg_name, table)
                     try:
-                        conn.execute(f'INSERT INTO canonical_findings (id, query, source_type, confidence, ts, provenance_json) SELECT id, query, source_type, confidence, ts, provenance_json FROM {reg_name} ON CONFLICT (id) DO NOTHING')
-                        conn.execute(f'INSERT INTO canonical_findings (id, query, source_type, confidence, ts, provenance_json) SELECT id, query, source_type, confidence, ts, provenance_json FROM {reg_name} ON CONFLICT (query, source_type) DO NOTHING')
+                        conn.execute(
+                            f"INSERT INTO canonical_findings (id, query, source_type, confidence, ts, provenance_json) SELECT id, query, source_type, confidence, ts, provenance_json FROM {reg_name} ON CONFLICT (id) DO NOTHING"
+                        )
+                        conn.execute(
+                            f"INSERT INTO canonical_findings (id, query, source_type, confidence, ts, provenance_json) SELECT id, query, source_type, confidence, ts, provenance_json FROM {reg_name} ON CONFLICT (query, source_type) DO NOTHING"
+                        )
                     finally:
                         try:
                             conn.unregister(reg_name)
@@ -1908,17 +2243,19 @@ class DuckDBShadowStore:
                             pass
                     return (n_rows, None)
             except Exception as e:
-                _logger.error(f'[P0-4 Arrow] DuckDB Arrow bulk insert failed: {type(e).__name__}: {e}')
-                return (0, 'duckdb_error')
+                _logger.error(f"[P0-4 Arrow] DuckDB Arrow bulk insert failed: {type(e).__name__}: {e}")
+                return (0, "duckdb_error")
 
-        def insert_run(self, run_id: str, started_at: float | None, ended_at: float | None, total_fds: int, rss_mb: int) -> bool:
+        def insert_run(
+            self, run_id: str, started_at: float | None, ended_at: float | None, total_fds: int, rss_mb: int
+        ) -> bool:
             conn = self._conn()
             if conn is None:
                 return False
             started_iso = _dt.datetime.fromtimestamp(started_at).isoformat() if started_at is not None else None
             ended_iso = _dt.datetime.fromtimestamp(ended_at).isoformat() if ended_at is not None else None
             params = [run_id, started_iso, ended_iso, total_fds, rss_mb]
-            cast_sql = 'INSERT INTO shadow_runs (run_id, started_at, ended_at, total_fds, rss_mb) VALUES (?, CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP), ?, ?)'
+            cast_sql = "INSERT INTO shadow_runs (run_id, started_at, ended_at, total_fds, rss_mb) VALUES (?, CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP), ?, ?)"
             try:
                 self._with_transaction(conn, lambda c: c.execute(cast_sql, params))
                 return True
@@ -1930,21 +2267,28 @@ class DuckDBShadowStore:
             conn = self._conn()
             if conn is None:
                 return
-            sql = 'INSERT OR REPLACE INTO target_profiles (target_id, first_seen, last_seen, cumulative_finding_count, entity_summary_json) VALUES (?, ?, ?, ?, ?)'
-            params = [profile.target_id, profile.first_seen, profile.last_seen, profile.cumulative_finding_count, profile.entity_summary_json]
+            sql = "INSERT OR REPLACE INTO target_profiles (target_id, first_seen, last_seen, cumulative_finding_count, entity_summary_json) VALUES (?, ?, ?, ?, ?)"
+            params = [
+                profile.target_id,
+                profile.first_seen,
+                profile.last_seen,
+                profile.cumulative_finding_count,
+                profile.entity_summary_json,
+            ]
             try:
                 conn.execute(sql, params)
             except (OSError, RuntimeError) as e:
-                logger.warning(f'[DUCKDB] upsert_target_profile failed: {e}')
+                logger.warning(f"[DUCKDB] upsert_target_profile failed: {e}")
 
         def get_target_profile(self, target_id: str):
             """Get target profile. Returns row tuple or None."""
             conn = self._conn()
             if conn is None:
                 return None
-            sql = 'SELECT target_id, first_seen, last_seen, cumulative_finding_count, entity_summary_json FROM target_profiles WHERE target_id = ?'
+            sql = "SELECT target_id, first_seen, last_seen, cumulative_finding_count, entity_summary_json FROM target_profiles WHERE target_id = ?"
             try:
                 from time import perf_counter_ns
+
                 t0 = perf_counter_ns()
                 result = conn.execute(sql, [target_id]).fetchone()
                 DuckDBShadowStore._record_query_latency(self._store._qe()._query_latencies_ns, perf_counter_ns() - t0)
@@ -1957,13 +2301,24 @@ class DuckDBShadowStore:
             conn = self._conn()
             if conn is None:
                 return []
-            sql = 'SELECT id, query, source_type, confidence, ts, provenance_json FROM canonical_findings ORDER BY ts DESC LIMIT ?'
+            sql = "SELECT id, query, source_type, confidence, ts, provenance_json FROM canonical_findings ORDER BY ts DESC LIMIT ?"
             try:
                 from time import perf_counter_ns
+
                 t0 = perf_counter_ns()
                 result = list(self._store.arrow_fetch_batch(conn, sql, [limit]))
                 DuckDBShadowStore._record_query_latency(self._store._qe()._query_latencies_ns, perf_counter_ns() - t0)
-                return [{'id': row[0], 'query': row[1], 'source_type': row[2], 'confidence': row[3], 'ts': row[4], 'provenance_json': row[5]} for row in result]
+                return [
+                    {
+                        "id": row[0],
+                        "query": row[1],
+                        "source_type": row[2],
+                        "confidence": row[3],
+                        "ts": row[4],
+                        "provenance_json": row[5],
+                    }
+                    for row in result
+                ]
             except Exception:
                 return []
 
@@ -1977,17 +2332,26 @@ class DuckDBShadowStore:
                 latencies[:] = latencies[-1000:]
             avg = sum(latencies) / len(latencies)
             from hledac.universal.metrics_registry import get_metrics_registry
-            get_metrics_registry().set_gauge('duckdb_query_latency_ms', avg)
+
+            get_metrics_registry().set_gauge("duckdb_query_latency_ms", avg)
         except Exception:
             pass
 
     def _qe(self):
         """Lazy executor - created on first _sync_* access, shared for instance lifetime."""
-        if not hasattr(self, '_query_executor'):
-            object.__setattr__(self, '_query_executor', self._DuckDBQueryExecutor(self))
+        if not hasattr(self, "_query_executor"):
+            object.__setattr__(self, "_query_executor", self._DuckDBQueryExecutor(self))
         return self._query_executor
 
-    def _sync_insert_finding(self, finding_id: str, query: str, source_type: str, confidence: float, ts: float | None=None, provenance_json: str | None=None) -> bool:
+    def _sync_insert_finding(
+        self,
+        finding_id: str,
+        query: str,
+        source_type: str,
+        confidence: float,
+        ts: float | None = None,
+        provenance_json: str | None = None,
+    ) -> bool:
         """Sync insert - MUST be called on the worker thread."""
         return self._qe().insert_finding(finding_id, query, source_type, confidence, ts, provenance_json)
 
@@ -1999,7 +2363,9 @@ class DuckDBShadowStore:
         """
         return self._qe().insert_findings_bulk(findings)
 
-    def _sync_insert_run(self, run_id: str, started_at: float | None, ended_at: float | None, total_fds: int, rss_mb: int) -> bool:
+    def _sync_insert_run(
+        self, run_id: str, started_at: float | None, ended_at: float | None, total_fds: int, rss_mb: int
+    ) -> bool:
         """Sync insert run - MUST be called on the worker thread."""
         return self._qe().insert_run(run_id, started_at, ended_at, total_fds, rss_mb)
 
@@ -2017,7 +2383,13 @@ class DuckDBShadowStore:
         if result is None:
             return None
         try:
-            return TargetProfileSummary(target_id=result[0], first_seen=result[1], last_seen=result[2], cumulative_finding_count=result[3], entity_summary_json=result[4])
+            return TargetProfileSummary(
+                target_id=result[0],
+                first_seen=result[1],
+                last_seen=result[2],
+                cumulative_finding_count=result[3],
+                entity_summary_json=result[4],
+            )
         except Exception:
             return None
 
@@ -2034,10 +2406,22 @@ class DuckDBShadowStore:
             conn = self._file_conn if self._db_path else self._persistent_conn
             if conn is None:
                 return False
-            conn.execute('\n                INSERT INTO hypothesis_feedback\n                (id, target_id, pivot_type, ioc_type, produced_count, accepted_count, signal_value, ts)\n                VALUES (?, ?, ?, ?, ?, ?, ?, ?)\n                ', [record.id, record.target_id, record.pivot_type, record.ioc_type, record.produced_count, record.accepted_count, record.signal_value, record.ts])
+            conn.execute(
+                "\n                INSERT INTO hypothesis_feedback\n                (id, target_id, pivot_type, ioc_type, produced_count, accepted_count, signal_value, ts)\n                VALUES (?, ?, ?, ?, ?, ?, ?, ?)\n                ",
+                [
+                    record.id,
+                    record.target_id,
+                    record.pivot_type,
+                    record.ioc_type,
+                    record.produced_count,
+                    record.accepted_count,
+                    record.signal_value,
+                    record.ts,
+                ],
+            )
             return True
         except Exception as e:
-            logger.warning(f'[F206L] _sync_record_hypothesis_feedback failed for {record.id}: {e}')
+            logger.warning(f"[F206L] _sync_record_hypothesis_feedback failed for {record.id}: {e}")
             return False
 
     def _sync_get_hypothesis_feedback(self, target_id: str | None, limit: int) -> list[dict]:
@@ -2059,26 +2443,66 @@ class DuckDBShadowStore:
             if conn is None:
                 return []
             if target_id:
-                sql = '\n                    SELECT id, target_id, pivot_type, ioc_type,\n                           produced_count, accepted_count, signal_value, ts\n                    FROM hypothesis_feedback\n                    WHERE target_id = ?\n                    ORDER BY ts DESC\n                    LIMIT ?\n                    '
+                sql = "\n                    SELECT id, target_id, pivot_type, ioc_type,\n                           produced_count, accepted_count, signal_value, ts\n                    FROM hypothesis_feedback\n                    WHERE target_id = ?\n                    ORDER BY ts DESC\n                    LIMIT ?\n                    "
                 result = conn.execute(sql, [target_id, limit])
                 result = list(self.arrow_fetch_batch(conn, sql, [target_id, limit]))
             else:
-                sql = '\n                    SELECT id, target_id, pivot_type, ioc_type,\n                           produced_count, accepted_count, signal_value, ts\n                    FROM hypothesis_feedback\n                    ORDER BY ts DESC\n                    LIMIT ?\n                    '
+                sql = "\n                    SELECT id, target_id, pivot_type, ioc_type,\n                           produced_count, accepted_count, signal_value, ts\n                    FROM hypothesis_feedback\n                    ORDER BY ts DESC\n                    LIMIT ?\n                    "
                 result = conn.execute(sql, [limit])
                 result = list(self.arrow_fetch_batch(conn, sql, [limit]))
-            return [{'id': r[0], 'target_id': r[1], 'pivot_type': r[2], 'ioc_type': r[3], 'produced_count': r[4], 'accepted_count': r[5], 'signal_value': r[6], 'ts': r[7]} for r in result]
+            return [
+                {
+                    "id": r[0],
+                    "target_id": r[1],
+                    "pivot_type": r[2],
+                    "ioc_type": r[3],
+                    "produced_count": r[4],
+                    "accepted_count": r[5],
+                    "signal_value": r[6],
+                    "ts": r[7],
+                }
+                for r in result
+            ]
         except Exception:
             return []
 
-    def _sync_record_research_session(self, session_id: str, sprint_id: str, query: str, ts: float, findings_count: int, accepted_count: int, gaps_json: str, entities_json: str, source_patterns_json: str, unexplored_angles_json: str, temporal_anomalies_json: str) -> bool:
+    def _sync_record_research_session(
+        self,
+        session_id: str,
+        sprint_id: str,
+        query: str,
+        ts: float,
+        findings_count: int,
+        accepted_count: int,
+        gaps_json: str,
+        entities_json: str,
+        source_patterns_json: str,
+        unexplored_angles_json: str,
+        temporal_anomalies_json: str,
+    ) -> bool:
         """Sprint F350M: Insert a research_sessions record."""
         try:
             conn = self._qe()._conn()
-            conn.execute('\n                INSERT INTO research_sessions\n                (session_id, sprint_id, query, ts, findings_count, accepted_count,\n                 gaps_json, entities_json, source_patterns_json, unexplored_angles_json, temporal_anomalies_json)\n                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n                ', [session_id, sprint_id, query, ts, findings_count, accepted_count, gaps_json, entities_json, source_patterns_json, unexplored_angles_json, temporal_anomalies_json])
+            conn.execute(
+                "\n                INSERT INTO research_sessions\n                (session_id, sprint_id, query, ts, findings_count, accepted_count,\n                 gaps_json, entities_json, source_patterns_json, unexplored_angles_json, temporal_anomalies_json)\n                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n                ",
+                [
+                    session_id,
+                    sprint_id,
+                    query,
+                    ts,
+                    findings_count,
+                    accepted_count,
+                    gaps_json,
+                    entities_json,
+                    source_patterns_json,
+                    unexplored_angles_json,
+                    temporal_anomalies_json,
+                ],
+            )
             conn.commit()
             return True
         except Exception as e:
-            logger.warning(f'[F350M] _sync_record_research_session failed: {e}')
+            logger.warning(f"[F350M] _sync_record_research_session failed: {e}")
             return False
 
     def _sync_record_entity_observations_bulk(self, observations: list[dict[str, Any]]) -> int:
@@ -2087,45 +2511,104 @@ class DuckDBShadowStore:
             return 0
         try:
             conn = self._qe()._conn()
-            rows = [(o['observation_id'], o['entity_value'], o['entity_type'], o['sprint_id'], o['source_type'], o['confidence'], o['ts'], o['finding_id']) for o in observations]
-            conn.executemany('\n                INSERT OR REPLACE INTO entity_observations\n                (observation_id, entity_value, entity_type, sprint_id, source_type, confidence, ts, finding_id)\n                VALUES (?, ?, ?, ?, ?, ?, ?, ?)\n                ', rows)
+            rows = [
+                (
+                    o["observation_id"],
+                    o["entity_value"],
+                    o["entity_type"],
+                    o["sprint_id"],
+                    o["source_type"],
+                    o["confidence"],
+                    o["ts"],
+                    o["finding_id"],
+                )
+                for o in observations
+            ]
+            conn.executemany(
+                "\n                INSERT OR REPLACE INTO entity_observations\n                (observation_id, entity_value, entity_type, sprint_id, source_type, confidence, ts, finding_id)\n                VALUES (?, ?, ?, ?, ?, ?, ?, ?)\n                ",
+                rows,
+            )
             conn.commit()
             return len(rows)
         except Exception as e:
-            logger.warning(f'[F350M] _sync_record_entity_observations_bulk failed: {e}')
+            logger.warning(f"[F350M] _sync_record_entity_observations_bulk failed: {e}")
             return 0
 
     def _sync_get_research_sessions_by_sprint(self, sprint_id: str) -> list[dict[str, Any]]:
         """Sprint F350M: Fetch research_sessions by sprint_id."""
         try:
             conn = self._qe()._conn()
-            sql = 'SELECT session_id, sprint_id, query, ts, findings_count, accepted_count, gaps_json, entities_json, source_patterns_json, unexplored_angles_json, temporal_anomalies_json FROM research_sessions WHERE sprint_id = ? ORDER BY ts DESC'
+            sql = "SELECT session_id, sprint_id, query, ts, findings_count, accepted_count, gaps_json, entities_json, source_patterns_json, unexplored_angles_json, temporal_anomalies_json FROM research_sessions WHERE sprint_id = ? ORDER BY ts DESC"
             result = list(self._store.arrow_fetch_batch(conn, sql, [sprint_id]))
-            return [{'session_id': r[0], 'sprint_id': r[1], 'query': r[2], 'ts': r[3], 'findings_count': r[4], 'accepted_count': r[5], 'gaps_json': r[6], 'entities_json': r[7], 'source_patterns_json': r[8], 'unexplored_angles_json': r[9], 'temporal_anomalies_json': r[10]} for r in result]
+            return [
+                {
+                    "session_id": r[0],
+                    "sprint_id": r[1],
+                    "query": r[2],
+                    "ts": r[3],
+                    "findings_count": r[4],
+                    "accepted_count": r[5],
+                    "gaps_json": r[6],
+                    "entities_json": r[7],
+                    "source_patterns_json": r[8],
+                    "unexplored_angles_json": r[9],
+                    "temporal_anomalies_json": r[10],
+                }
+                for r in result
+            ]
         except Exception:
             return []
 
-    def _sync_get_entity_observations_by_entity(self, entity_value: str, limit: int=50) -> list[dict[str, Any]]:
+    def _sync_get_entity_observations_by_entity(self, entity_value: str, limit: int = 50) -> list[dict[str, Any]]:
         """Sprint F350M: Fetch entity_observations by entity_value."""
         try:
             conn = self._qe()._conn()
-            sql = 'SELECT observation_id, entity_value, entity_type, sprint_id, source_type, confidence, ts, finding_id FROM entity_observations WHERE entity_value = ? ORDER BY ts DESC LIMIT ?'
+            sql = "SELECT observation_id, entity_value, entity_type, sprint_id, source_type, confidence, ts, finding_id FROM entity_observations WHERE entity_value = ? ORDER BY ts DESC LIMIT ?"
             result = list(self._store.arrow_fetch_batch(conn, sql, [entity_value, limit]))
-            return [{'observation_id': r[0], 'entity_value': r[1], 'entity_type': r[2], 'sprint_id': r[3], 'source_type': r[4], 'confidence': r[5], 'ts': r[6], 'finding_id': r[7]} for r in result]
+            return [
+                {
+                    "observation_id": r[0],
+                    "entity_value": r[1],
+                    "entity_type": r[2],
+                    "sprint_id": r[3],
+                    "source_type": r[4],
+                    "confidence": r[5],
+                    "ts": r[6],
+                    "finding_id": r[7],
+                }
+                for r in result
+            ]
         except Exception:
             return []
 
-    def _sync_get_recent_research_sessions(self, limit: int=10) -> list[dict[str, Any]]:
+    def _sync_get_recent_research_sessions(self, limit: int = 10) -> list[dict[str, Any]]:
         """Sprint F350M: Fetch recent research_sessions."""
         try:
             conn = self._qe()._conn()
-            sql = 'SELECT session_id, sprint_id, query, ts, findings_count, accepted_count, gaps_json, entities_json, source_patterns_json, unexplored_angles_json, temporal_anomalies_json FROM research_sessions ORDER BY ts DESC LIMIT ?'
+            sql = "SELECT session_id, sprint_id, query, ts, findings_count, accepted_count, gaps_json, entities_json, source_patterns_json, unexplored_angles_json, temporal_anomalies_json FROM research_sessions ORDER BY ts DESC LIMIT ?"
             result = list(self._store.arrow_fetch_batch(conn, sql, [limit]))
-            return [{'session_id': r[0], 'sprint_id': r[1], 'query': r[2], 'ts': r[3], 'findings_count': r[4], 'accepted_count': r[5], 'gaps_json': r[6], 'entities_json': r[7], 'source_patterns_json': r[8], 'unexplored_angles_json': r[9], 'temporal_anomalies_json': r[10]} for r in result]
+            return [
+                {
+                    "session_id": r[0],
+                    "sprint_id": r[1],
+                    "query": r[2],
+                    "ts": r[3],
+                    "findings_count": r[4],
+                    "accepted_count": r[5],
+                    "gaps_json": r[6],
+                    "entities_json": r[7],
+                    "source_patterns_json": r[8],
+                    "unexplored_angles_json": r[9],
+                    "temporal_anomalies_json": r[10],
+                }
+                for r in result
+            ]
         except Exception:
             return []
 
-    def _sync_get_previous_findings_for_target(self, target_id: str, before_sprint_id: str | None, limit: int) -> list[dict]:
+    def _sync_get_previous_findings_for_target(
+        self, target_id: str, before_sprint_id: str | None, limit: int
+    ) -> list[dict]:
         """
         Sync query - MUST be called on the worker thread.
         Returns raw dict rows from canonical_findings filtered by target_id metadata.
@@ -2135,14 +2618,25 @@ class DuckDBShadowStore:
             if conn is None:
                 return []
             if before_sprint_id:
-                sql = '\n                    SELECT finding_id, query, source_type, confidence, ts, provenance_json, payload_text\n                    FROM canonical_findings\n                    WHERE payload_text LIKE ?\n                    AND sprint_id < ?\n                    ORDER BY ts DESC\n                    LIMIT ?\n                    '
+                sql = "\n                    SELECT finding_id, query, source_type, confidence, ts, provenance_json, payload_text\n                    FROM canonical_findings\n                    WHERE payload_text LIKE ?\n                    AND sprint_id < ?\n                    ORDER BY ts DESC\n                    LIMIT ?\n                    "
                 result = conn.execute(sql, [f'%"{target_id}"%', before_sprint_id, limit])
                 result = list(self.arrow_fetch_batch(conn, sql, [f'%"{target_id}"%', before_sprint_id, limit]))
             else:
-                sql = '\n                    SELECT finding_id, query, source_type, confidence, ts, provenance_json, payload_text\n                    FROM canonical_findings\n                    WHERE payload_text LIKE ?\n                    ORDER BY ts DESC\n                    LIMIT ?\n                    '
+                sql = "\n                    SELECT finding_id, query, source_type, confidence, ts, provenance_json, payload_text\n                    FROM canonical_findings\n                    WHERE payload_text LIKE ?\n                    ORDER BY ts DESC\n                    LIMIT ?\n                    "
                 result = conn.execute(sql, [f'%"{target_id}"%', limit])
                 result = list(self.arrow_fetch_batch(conn, sql, [f'%"{target_id}"%', limit]))
-            return [{'finding_id': row[0], 'query': row[1], 'source_type': row[2], 'confidence': row[3], 'ts': row[4], 'provenance_json': row[5], 'payload_text': row[6]} for row in result]
+            return [
+                {
+                    "finding_id": row[0],
+                    "query": row[1],
+                    "source_type": row[2],
+                    "confidence": row[3],
+                    "ts": row[4],
+                    "provenance_json": row[5],
+                    "payload_text": row[6],
+                }
+                for row in result
+            ]
         except Exception:
             try:
                 conn = self._file_conn if self._db_path else self._persistent_conn
@@ -2161,21 +2655,65 @@ class DuckDBShadowStore:
         try:
             if self._db_path:
                 self._prewarm_file_conn()
-                self._file_conn.execute('\n                    INSERT INTO sprint_delta VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)\n                    ', [row['sprint_id'], row['ts'], row.get('query'), row.get('duration_s', 0), row.get('new_findings', 0), row.get('dedup_hits', 0), row.get('ioc_nodes', 0), row.get('ioc_new_this_sprint', 0), row.get('uma_peak_gib', 0), row.get('synthesis_success', False), row.get('findings_per_minute', 0), row.get('top_source_type'), row.get('synthesis_confidence', 0), row.get('findings_per_minute', 0)])
+                self._file_conn.execute(
+                    "\n                    INSERT INTO sprint_delta VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)\n                    ",
+                    [
+                        row["sprint_id"],
+                        row["ts"],
+                        row.get("query"),
+                        row.get("duration_s", 0),
+                        row.get("new_findings", 0),
+                        row.get("dedup_hits", 0),
+                        row.get("ioc_nodes", 0),
+                        row.get("ioc_new_this_sprint", 0),
+                        row.get("uma_peak_gib", 0),
+                        row.get("synthesis_success", False),
+                        row.get("findings_per_minute", 0),
+                        row.get("top_source_type"),
+                        row.get("synthesis_confidence", 0),
+                        row.get("findings_per_minute", 0),
+                    ],
+                )
             else:
-                self._persistent_conn.execute('\n                    INSERT INTO sprint_delta VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)\n                    ', [row['sprint_id'], row['ts'], row.get('query'), row.get('duration_s', 0), row.get('new_findings', 0), row.get('dedup_hits', 0), row.get('ioc_nodes', 0), row.get('ioc_new_this_sprint', 0), row.get('uma_peak_gib', 0), row.get('synthesis_success', False), row.get('findings_per_minute', 0), row.get('top_source_type'), row.get('synthesis_confidence', 0), row.get('findings_per_minute', 0)])
+                self._persistent_conn.execute(
+                    "\n                    INSERT INTO sprint_delta VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)\n                    ",
+                    [
+                        row["sprint_id"],
+                        row["ts"],
+                        row.get("query"),
+                        row.get("duration_s", 0),
+                        row.get("new_findings", 0),
+                        row.get("dedup_hits", 0),
+                        row.get("ioc_nodes", 0),
+                        row.get("ioc_new_this_sprint", 0),
+                        row.get("uma_peak_gib", 0),
+                        row.get("synthesis_success", False),
+                        row.get("findings_per_minute", 0),
+                        row.get("top_source_type"),
+                        row.get("synthesis_confidence", 0),
+                        row.get("findings_per_minute", 0),
+                    ],
+                )
             return True
         except Exception:
             return False
 
-    def _sync_insert_source_hit(self, sprint_id: str, ts: float, source_type: str, findings_count: int, ioc_count: int, hit_rate: float) -> bool:
+    def _sync_insert_source_hit(
+        self, sprint_id: str, ts: float, source_type: str, findings_count: int, ioc_count: int, hit_rate: float
+    ) -> bool:
         """Sync insert source hit - MUST be called on the worker thread."""
         try:
             if self._db_path:
                 self._prewarm_file_conn()
-                self._file_conn.execute('INSERT INTO source_hit_log VALUES (?,?,?,?,?,?)', [sprint_id, ts, source_type, findings_count, ioc_count, hit_rate])
+                self._file_conn.execute(
+                    "INSERT INTO source_hit_log VALUES (?,?,?,?,?,?)",
+                    [sprint_id, ts, source_type, findings_count, ioc_count, hit_rate],
+                )
             else:
-                self._persistent_conn.execute('INSERT INTO source_hit_log VALUES (?,?,?,?,?,?)', [sprint_id, ts, source_type, findings_count, ioc_count, hit_rate])
+                self._persistent_conn.execute(
+                    "INSERT INTO source_hit_log VALUES (?,?,?,?,?,?)",
+                    [sprint_id, ts, source_type, findings_count, ioc_count, hit_rate],
+                )
             return True
         except Exception:
             return False
@@ -2185,14 +2723,25 @@ class DuckDBShadowStore:
         try:
             if self._db_path:
                 self._prewarm_file_conn()
-                sql = '\n                    SELECT sprint_id, ts, new_findings, ioc_nodes,\n                           findings_per_minute, synthesis_success, uma_peak_gib\n                    FROM sprint_delta\n                    ORDER BY ts DESC\n                    LIMIT ?\n                    '
+                sql = "\n                    SELECT sprint_id, ts, new_findings, ioc_nodes,\n                           findings_per_minute, synthesis_success, uma_peak_gib\n                    FROM sprint_delta\n                    ORDER BY ts DESC\n                    LIMIT ?\n                    "
                 result = self._file_conn.execute(sql, [last_n])
                 result = list(self.arrow_fetch_batch(self._file_conn, sql, [last_n]))
             else:
-                sql = '\n                    SELECT sprint_id, ts, new_findings, ioc_nodes,\n                           findings_per_minute, synthesis_success, uma_peak_gib\n                    FROM sprint_delta\n                    ORDER BY ts DESC\n                    LIMIT ?\n                    '
+                sql = "\n                    SELECT sprint_id, ts, new_findings, ioc_nodes,\n                           findings_per_minute, synthesis_success, uma_peak_gib\n                    FROM sprint_delta\n                    ORDER BY ts DESC\n                    LIMIT ?\n                    "
                 result = self._persistent_conn.execute(sql, [last_n])
                 result = list(self.arrow_fetch_batch(self._persistent_conn, sql, [last_n]))
-            return [{'sprint_id': r[0], 'ts': r[1], 'new_findings': r[2], 'ioc_nodes': r[3], 'findings_per_minute': r[4], 'synthesis_success': bool(r[5]) if r[5] is not None else False, 'uma_peak_gib': r[6] or 0.0} for r in result]
+            return [
+                {
+                    "sprint_id": r[0],
+                    "ts": r[1],
+                    "new_findings": r[2],
+                    "ioc_nodes": r[3],
+                    "findings_per_minute": r[4],
+                    "synthesis_success": bool(r[5]) if r[5] is not None else False,
+                    "uma_peak_gib": r[6] or 0.0,
+                }
+                for r in result
+            ]
         except Exception:
             return []
 
@@ -2201,14 +2750,22 @@ class DuckDBShadowStore:
         try:
             if self._db_path:
                 self._prewarm_file_conn()
-                sql = '\n                    SELECT source_type,\n                           SUM(findings_count) as total_findings,\n                           AVG(hit_rate) as avg_hit_rate,\n                           COUNT(*) as sprint_appearances\n                    FROM source_hit_log\n                    WHERE ts > ?\n                    GROUP BY source_type\n                    LIMIT 10000\n                    ORDER BY total_findings DESC\n                    '
+                sql = "\n                    SELECT source_type,\n                           SUM(findings_count) as total_findings,\n                           AVG(hit_rate) as avg_hit_rate,\n                           COUNT(*) as sprint_appearances\n                    FROM source_hit_log\n                    WHERE ts > ?\n                    GROUP BY source_type\n                    LIMIT 10000\n                    ORDER BY total_findings DESC\n                    "
                 result = self._file_conn.execute(sql, [since_ts])
                 result = list(self.arrow_fetch_batch(self._file_conn, sql, [since_ts]))
             else:
-                sql = '\n                    SELECT source_type,\n                           SUM(findings_count) as total_findings,\n                           AVG(hit_rate) as avg_hit_rate,\n                           COUNT(*) as sprint_appearances\n                    FROM source_hit_log\n                    WHERE ts > ?\n                    GROUP BY source_type\n                    LIMIT 10000\n                    ORDER BY total_findings DESC\n                    '
+                sql = "\n                    SELECT source_type,\n                           SUM(findings_count) as total_findings,\n                           AVG(hit_rate) as avg_hit_rate,\n                           COUNT(*) as sprint_appearances\n                    FROM source_hit_log\n                    WHERE ts > ?\n                    GROUP BY source_type\n                    LIMIT 10000\n                    ORDER BY total_findings DESC\n                    "
                 result = self._persistent_conn.execute(sql, [since_ts])
                 result = list(self.arrow_fetch_batch(self._persistent_conn, sql, [since_ts]))
-            return [{'source_type': r[0], 'total_findings': r[1] or 0, 'avg_hit_rate': r[2] or 0.0, 'sprint_appearances': r[3] or 0} for r in result]
+            return [
+                {
+                    "source_type": r[0],
+                    "total_findings": r[1] or 0,
+                    "avg_hit_rate": r[2] or 0.0,
+                    "sprint_appearances": r[3] or 0,
+                }
+                for r in result
+            ]
         except Exception:
             return []
 
@@ -2222,14 +2779,14 @@ class DuckDBShadowStore:
         try:
             if self._db_path:
                 self._prewarm_file_conn()
-                sql = '\n                    SELECT source_type, AVG(hit_rate) as avg_hit_rate\n                    FROM source_hit_log\n                    WHERE ts > ?\n                    GROUP BY source_type\n                    LIMIT 10000\n                    '
+                sql = "\n                    SELECT source_type, AVG(hit_rate) as avg_hit_rate\n                    FROM source_hit_log\n                    WHERE ts > ?\n                    GROUP BY source_type\n                    LIMIT 10000\n                    "
                 result = self._file_conn.execute(sql, [cutoff])
                 result = list(self.arrow_fetch_batch(self._file_conn, sql, [cutoff]))
             else:
-                sql = '\n                    SELECT source_type, AVG(hit_rate) as avg_hit_rate\n                    FROM source_hit_log\n                    WHERE ts > ?\n                    GROUP BY source_type\n                    LIMIT 10000\n                    '
+                sql = "\n                    SELECT source_type, AVG(hit_rate) as avg_hit_rate\n                    FROM source_hit_log\n                    WHERE ts > ?\n                    GROUP BY source_type\n                    LIMIT 10000\n                    "
                 result = self._persistent_conn.execute(sql, [cutoff])
                 result = list(self.arrow_fetch_batch(self._persistent_conn, sql, [cutoff]))
-            return [{'source_type': r[0], 'avg_hit_rate': r[1] or 0.0} for r in result]
+            return [{"source_type": r[0], "avg_hit_rate": r[1] or 0.0} for r in result]
         except Exception:
             return []
 
@@ -2242,7 +2799,7 @@ class DuckDBShadowStore:
         if self._file_conn is None:
             return False
         try:
-            self._file_conn.execute('SELECT 1').fetchall()
+            self._file_conn.execute("SELECT 1").fetchall()
             return True
         except Exception:
             return False
@@ -2250,7 +2807,7 @@ class DuckDBShadowStore:
     def _sync_close_on_worker(self) -> None:
         """Close all connections - MUST be called on the worker thread."""
         try:
-            if hasattr(self, '_query_executor'):
+            if hasattr(self, "_query_executor"):
                 qe = self._qe()
                 if qe is not None:
                     qe._invalidate_insert_stmt()
@@ -2288,11 +2845,12 @@ class DuckDBShadowStore:
         """
         try:
             from hledac.universal.paths import DUCKDB_STORE_ROOT, RAMDISK_ACTIVE, RAMDISK_ROOT
+
             if RAMDISK_ACTIVE:
-                self._db_path = DUCKDB_STORE_ROOT / 'shadow_analytics.duckdb'
-                self._temp_dir = RAMDISK_ROOT / 'duckdb_tmp'
+                self._db_path = DUCKDB_STORE_ROOT / "shadow_analytics.duckdb"
+                self._temp_dir = RAMDISK_ROOT / "duckdb_tmp"
             else:
-                self._db_path = DUCKDB_STORE_ROOT / 'analytics.duckdb'
+                self._db_path = DUCKDB_STORE_ROOT / "analytics.duckdb"
                 self._temp_dir = None
         except Exception:
             self._db_path = None
@@ -2309,8 +2867,11 @@ class DuckDBShadowStore:
         if self._initialized:
             return True
         from compat.core_mlx_embeddings import MLXEmbeddingManager
-        _EMBEDDING_DIM = getattr(MLXEmbeddingManager, 'EMBEDDING_DIM', 256)
-        assert _EMBEDDING_DIM == 256, f'Embedding dimension mismatch: MLXEmbeddingManager.EMBEDDING_DIM={_EMBEDDING_DIM}, expected 256 (MRL canonical)'
+
+        _EMBEDDING_DIM = getattr(MLXEmbeddingManager, "EMBEDDING_DIM", 256)
+        assert _EMBEDDING_DIM == 256, (
+            f"Embedding dimension mismatch: MLXEmbeddingManager.EMBEDDING_DIM={_EMBEDDING_DIM}, expected 256 (MRL canonical)"
+        )
         if self._db_path is None:
             self._resolve_path()
         try:
@@ -2334,7 +2895,9 @@ class DuckDBShadowStore:
         except Exception:
             return False
 
-    def insert_shadow_run(self, run_id: str, started_at: float, ended_at: float | None, total_fds: int, rss_mb: int) -> bool:
+    def insert_shadow_run(
+        self, run_id: str, started_at: float, ended_at: float | None, total_fds: int, rss_mb: int
+    ) -> bool:
         """Sync insert - backward compat. For async use async_record_shadow_run()."""
         if not self._initialized or self._closed:
             return False
@@ -2344,7 +2907,7 @@ class DuckDBShadowStore:
         except Exception:
             return False
 
-    def query_recent_findings(self, limit: int=10) -> list[dict[str, Any]]:
+    def query_recent_findings(self, limit: int = 10) -> list[dict[str, Any]]:
         """Sync query - backward compat. For async use async_query_recent_findings()."""
         if not self._initialized or self._closed:
             return []
@@ -2365,7 +2928,7 @@ class DuckDBShadowStore:
 
         Idempotent: safe to call multiple times.
         """
-        _ct = getattr(self, '_checkpoint_task', None)
+        _ct = getattr(self, "_checkpoint_task", None)
         if _ct is not None:
             _ct.cancel()
             self._checkpoint_task = None
@@ -2379,30 +2942,30 @@ class DuckDBShadowStore:
         Extracts and awaits all async close() calls that _do_sync_close skips
         when emergency=True.
         """
-        gs = self._graph_store() if hasattr(self, '_DuckDBShadowStore__graph_store') else None
+        gs = self._graph_store() if hasattr(self, "_DuckDBShadowStore__graph_store") else None
         if gs is not None:
-            truth_graph = getattr(gs, '_truth_write_graph', None)
+            truth_graph = getattr(gs, "_truth_write_graph", None)
             if truth_graph is not None:
                 try:
-                    if callable(getattr(truth_graph, 'close', None)):
+                    if callable(getattr(truth_graph, "close", None)):
                         result = truth_graph.close()
                         if asyncio.iscoroutine(result):
                             await result
                 except Exception:
                     pass
-            ioc_graph = getattr(gs, '_ioc_graph', None)
+            ioc_graph = getattr(gs, "_ioc_graph", None)
             if ioc_graph is not None:
                 try:
-                    if callable(getattr(ioc_graph, 'close', None)):
+                    if callable(getattr(ioc_graph, "close", None)):
                         result = ioc_graph.close()
                         if asyncio.iscoroutine(result):
                             await result
                 except Exception:
                     pass
-            stix_graph = getattr(gs, '_stix_graph', None)
+            stix_graph = getattr(gs, "_stix_graph", None)
             if stix_graph is not None:
                 try:
-                    if callable(getattr(stix_graph, 'close', None)):
+                    if callable(getattr(stix_graph, "close", None)):
                         result = stix_graph.close()
                         if asyncio.iscoroutine(result):
                             await result
@@ -2422,7 +2985,7 @@ class DuckDBShadowStore:
                 pass
             self._wal_manager = None
 
-    def _do_sync_close(self, emergency: bool=False) -> None:
+    def _do_sync_close(self, emergency: bool = False) -> None:
         """
         Synchronous full cleanup — called by both close() and aclose().
 
@@ -2450,12 +3013,12 @@ class DuckDBShadowStore:
             f.result(timeout=5)
         except Exception:
             pass
-        gs = self._graph_store() if hasattr(self, '_DuckDBShadowStore__graph_store') else None
+        gs = self._graph_store() if hasattr(self, "_DuckDBShadowStore__graph_store") else None
         if gs is not None:
-            truth_graph = getattr(gs, '_truth_write_graph', None)
+            truth_graph = getattr(gs, "_truth_write_graph", None)
             if truth_graph is not None:
                 try:
-                    if callable(getattr(truth_graph, 'flush_buffers', None)):
+                    if callable(getattr(truth_graph, "flush_buffers", None)):
                         truth_graph.flush_buffers()
                 except Exception:
                     pass
@@ -2467,7 +3030,7 @@ class DuckDBShadowStore:
             except Exception:
                 pass
             self._semantic_store = None
-        _wal = getattr(self, '_wal_lmdb', None)
+        _wal = getattr(self, "_wal_lmdb", None)
         if _wal is not None:
             try:
                 _wal.close()
@@ -2488,7 +3051,7 @@ class DuckDBShadowStore:
             except Exception:
                 pass
             self._dedup_manager = None
-        _dedup = getattr(self, '_dedup_lmdb', None)
+        _dedup = getattr(self, "_dedup_lmdb", None)
         if _dedup is not None:
             try:
                 _dedup.close()
@@ -2497,20 +3060,21 @@ class DuckDBShadowStore:
             self._dedup_lmdb = None
         try:
             from hledac.universal.graph.lock_manager import _is_lock_stale
-            _lock_db_path = str(self._db_path) if self._db_path else 'memory'
-            duckdb_lock_path = pathlib.Path(_lock_db_path + '.lock')
+
+            _lock_db_path = str(self._db_path) if self._db_path else "memory"
+            duckdb_lock_path = pathlib.Path(_lock_db_path + ".lock")
             if duckdb_lock_path.exists():
                 is_stale, reason = _is_lock_stale(duckdb_lock_path, _lock_db_path)
                 if is_stale:
                     duckdb_lock_path.unlink(missing_ok=True)
-                    _logger.debug(f'[DUCKDB] Removed stale lock {duckdb_lock_path}: {reason}')
+                    _logger.debug(f"[DUCKDB] Removed stale lock {duckdb_lock_path}: {reason}")
         except Exception:
             pass
-        if hasattr(self, '_arrow_metrics') and self._arrow_metrics is not None:
+        if hasattr(self, "_arrow_metrics") and self._arrow_metrics is not None:
             self._arrow_metrics.clear()
         self._adjust_executor_pool()
 
-    async def async_initialize(self, replay_pending_limit: int | None=None, replay_timeout_s: float=5.0) -> bool:
+    async def async_initialize(self, replay_pending_limit: int | None = None, replay_timeout_s: float = 5.0) -> bool:
         """
         Async initialize - creates connection on the worker thread.
 
@@ -2566,22 +3130,26 @@ class DuckDBShadowStore:
         if self._wal_manager is None:
             _wal_root = self._db_path.parent if self._db_path else None
             if _wal_root is not None:
-                self._wal_manager = WALManager(wal_path=str(_wal_root / 'shadow_wal.lmdb'))
+                self._wal_manager = WALManager(wal_path=str(_wal_root / "shadow_wal.lmdb"))
                 self._wal_manager.initialize()
         if self._dedup_manager is None:
             self._dedup_manager = DedupManager()
         if replay_pending_limit:
-            await self._bounded_startup_replay(replay_pending_limit=replay_pending_limit, replay_timeout_s=replay_timeout_s)
+            await self._bounded_startup_replay(
+                replay_pending_limit=replay_pending_limit, replay_timeout_s=replay_timeout_s
+            )
             self._startup_replay_done = True
         self.ensure_target_profiles_schema()
         if self._db_path is not None:
             self._checkpoint_task = safe_create_task(self._checkpoint_loop())
         self._startup_ready.set()
         try:
-            if hasattr(self, '_arrow_metrics') and self._arrow_metrics is not None:
-                _finalizer = weakref.finalize(self, lambda _metrics: _metrics.clear() if _metrics is not None else None, self._arrow_metrics)
+            if hasattr(self, "_arrow_metrics") and self._arrow_metrics is not None:
+                _finalizer = weakref.finalize(
+                    self, lambda _metrics: _metrics.clear() if _metrics is not None else None, self._arrow_metrics
+                )
                 _finalizer.atexit = False
-        except (TypeError, AttributeError, Exception):
+        except TypeError, AttributeError, Exception:
             pass
         return True
 
@@ -2609,7 +3177,9 @@ class DuckDBShadowStore:
         except Exception:
             return False
 
-    async def async_record_shadow_run(self, run_id: str, started_at: float, ended_at: float | None, total_fds: int, rss_mb: int) -> bool:
+    async def async_record_shadow_run(
+        self, run_id: str, started_at: float, ended_at: float | None, total_fds: int, rss_mb: int
+    ) -> bool:
         """
         Insert a run record into the shadow analytics store.
 
@@ -2620,7 +3190,9 @@ class DuckDBShadowStore:
         self.ensure_connected()
         loop = asyncio.get_running_loop()
         try:
-            await loop.run_in_executor(self._executor, self._sync_insert_run, run_id, started_at, ended_at, total_fds, rss_mb)
+            await loop.run_in_executor(
+                self._executor, self._sync_insert_run, run_id, started_at, ended_at, total_fds, rss_mb
+            )
             return True
         except Exception:
             return False
@@ -2695,7 +3267,9 @@ class DuckDBShadowStore:
         """
         await self.aclose()
 
-    async def async_record_shadow_finding(self, finding_id: str, query: str, source_type: str, confidence: float) -> bool:
+    async def async_record_shadow_finding(
+        self, finding_id: str, query: str, source_type: str, confidence: float
+    ) -> bool:
         """
         Insert a single finding into the shadow analytics store.
 
@@ -2706,12 +3280,16 @@ class DuckDBShadowStore:
         self.ensure_connected()
         loop = asyncio.get_running_loop()
         try:
-            await loop.run_in_executor(self._executor, self._sync_insert_finding, finding_id, query, source_type, confidence)
+            await loop.run_in_executor(
+                self._executor, self._sync_insert_finding, finding_id, query, source_type, confidence
+            )
             return True
         except Exception:
             return False
 
-    async def async_record_shadow_findings_batch(self, findings: list[dict[str, Any]], max_batch_size: int=500) -> int:
+    async def async_record_shadow_findings_batch(
+        self, findings: list[dict[str, Any]], max_batch_size: int = 500
+    ) -> int:
         """
         Sprint 7H: True bulk insert for shadow findings using executemany in explicit transaction.
         Each chunk is at most max_batch_size records.
@@ -2727,7 +3305,7 @@ class DuckDBShadowStore:
         loop = asyncio.get_running_loop()
         total_inserted = 0
         for i in range(0, len(findings), max_batch_size):
-            chunk = findings[i:i + max_batch_size]
+            chunk = findings[i : i + max_batch_size]
             try:
                 count = await loop.run_in_executor(self._executor, self._sync_insert_findings_bulk, chunk)
                 total_inserted += count
@@ -2735,7 +3313,7 @@ class DuckDBShadowStore:
                 break
         return total_inserted
 
-    async def async_query_recent_findings(self, limit: int=10) -> list[dict[str, Any]]:
+    async def async_query_recent_findings(self, limit: int = 10) -> list[dict[str, Any]]:
         """
         Query recent findings ordered by timestamp descending.
 
@@ -2746,7 +3324,11 @@ class DuckDBShadowStore:
         self.ensure_connected()
         loop = asyncio.get_running_loop()
         try:
-            return await safe_wait_for(loop.run_in_executor(self._executor, self._sync_query_findings, limit), timeout=10.0, label='query_findings')
+            return await safe_wait_for(
+                loop.run_in_executor(self._executor, self._sync_query_findings, limit),
+                timeout=10.0,
+                label="query_findings",
+            )
         except asyncio.TimeoutError:
             raise
         except Exception:
@@ -2786,7 +3368,9 @@ class DuckDBShadowStore:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self._executor, self._sync_execute_raw_sql, sql)
 
-    async def aiter_recent_findings(self, batch_size: int=500, sprint_id_filter: str | None=None) -> AsyncIterator[list[dict[str, Any]]]:
+    async def aiter_recent_findings(
+        self, batch_size: int = 500, sprint_id_filter: str | None = None
+    ) -> AsyncIterator[list[dict[str, Any]]]:
         """
         STORAGE-FIX-3 / Issue #15: Back-pressure streaming iterator for recent findings.
 
@@ -2810,27 +3394,42 @@ class DuckDBShadowStore:
         if not self._initialized or self._closed:
             return
         if sprint_id_filter is None:
-            sql = 'SELECT id, query, source_type, confidence, ts, provenance_json FROM canonical_findings ORDER BY ts DESC'
+            sql = "SELECT id, query, source_type, confidence, ts, provenance_json FROM canonical_findings ORDER BY ts DESC"
             params: list[Any] | None = None
         else:
-            sql = 'SELECT id, query, source_type, confidence, ts, provenance_json FROM canonical_findings WHERE query LIKE ? ORDER BY ts DESC'
-            params = [f'%{sprint_id_filter}%']
+            sql = "SELECT id, query, source_type, confidence, ts, provenance_json FROM canonical_findings WHERE query LIKE ? ORDER BY ts DESC"
+            params = [f"%{sprint_id_filter}%"]
         try:
             async for batch in self.async_query_arrow_batches(sql, params, batch_size=batch_size):
                 try:
                     import polars as _pl
+
                     pdf = _pl.from_arrow(batch)
                     rows_list: list[dict[str, Any]] = list(pdf.iter_rows(named=True))
                 except ImportError:
                     cols = batch.columns
                     names = batch.schema.names
-                    rows_list = [dict(zip(names, (cols[j][i].as_py() if hasattr(cols[j][i], 'as_py') else cols[j][i] for j in range(len(cols))), strict=False)) for i in range(batch.num_rows)]
+                    rows_list = [
+                        dict(
+                            zip(
+                                names,
+                                (
+                                    cols[j][i].as_py() if hasattr(cols[j][i], "as_py") else cols[j][i]
+                                    for j in range(len(cols))
+                                ),
+                                strict=False,
+                            )
+                        )
+                        for i in range(batch.num_rows)
+                    ]
                 if rows_list:
                     yield rows_list
         except Exception:
             return
 
-    async def async_query_arrow_batches(self, sql: str, params: list[Any] | None=None, batch_size: int=2048) -> AsyncIterator[Any]:
+    async def async_query_arrow_batches(
+        self, sql: str, params: list[Any] | None = None, batch_size: int = 2048
+    ) -> AsyncIterator[Any]:
         """
         F231 C / Thread2b: Streaming Arrow batch query - yields batches without loading full result.
 
@@ -2868,7 +3467,7 @@ class DuckDBShadowStore:
                 return
             try:
                 result = conn.execute(sql, params or [])
-                if hasattr(result, 'fetch_record_batch'):
+                if hasattr(result, "fetch_record_batch"):
                     reader = result.fetch_record_batch(batch_size)
                     while True:
                         try:
@@ -2879,7 +3478,7 @@ class DuckDBShadowStore:
                         except StopIteration:
                             break
                     return
-                if hasattr(result, 'to_arrow_reader'):
+                if hasattr(result, "to_arrow_reader"):
                     reader = result.to_arrow_reader(rows_per_batch=batch_size)
                     while True:
                         try:
@@ -2892,13 +3491,14 @@ class DuckDBShadowStore:
                     return
             except Exception:
                 pass
-            os.environ.setdefault('HLEDAC_WARN_ARROW_FALLBACK', '1')
+            os.environ.setdefault("HLEDAC_WARN_ARROW_FALLBACK", "1")
             result = conn.execute(sql, params or [])
             while True:
                 rows = result.fetchmany(batch_size)
                 if not rows:
                     break
                 yield rows
+
         BATCH_SIZE = 8
 
         def _sync_iter_next_batch(iterator: Iterator[Any]) -> list[Any]:
@@ -2916,6 +3516,7 @@ class DuckDBShadowStore:
 
         def _sync_iter_wrapper() -> Iterator[Any]:
             yield from _sync_fetch_batches()
+
         loop = asyncio.get_running_loop()
         iterator = await loop.run_in_executor(self._executor, _sync_iter_wrapper)
         while True:
@@ -2930,7 +3531,9 @@ class DuckDBShadowStore:
             except Exception:
                 break
 
-    def arrow_fetch_batch(self, conn: Any, sql: str, params: list[Any] | None=None, batch_size: int=2048) -> Iterator[list[tuple]]:
+    def arrow_fetch_batch(
+        self, conn: Any, sql: str, params: list[Any] | None = None, batch_size: int = 2048
+    ) -> Iterator[list[tuple]]:
         """
         Sync streaming fetch - bounded memory alternative to `fetchall()`.
 
@@ -2958,7 +3561,7 @@ class DuckDBShadowStore:
             result = conn.execute(sql, params or [])
         except Exception:
             return
-        if hasattr(result, 'fetch_record_batch'):
+        if hasattr(result, "fetch_record_batch"):
             try:
                 reader = result.fetch_record_batch(batch_size)
                 while True:
@@ -2971,18 +3574,35 @@ class DuckDBShadowStore:
                     try:
                         try:
                             import polars as _pl
+
                             pdf = _pl.from_arrow(batch)
                             yield from pdf.iter_rows(named=False)
                         except ImportError:
                             cols = batch.columns
                             nrows = batch.num_rows
                             ncols = len(cols)
-                            yield [tuple((cols[j][i].as_py() if hasattr(cols[j][i], 'as_py') else cols[j][i] for j in range(ncols))) for i in range(nrows)]
+                            yield [
+                                tuple(
+                                    (
+                                        cols[j][i].as_py() if hasattr(cols[j][i], "as_py") else cols[j][i]
+                                        for j in range(ncols)
+                                    )
+                                )
+                                for i in range(nrows)
+                            ]
                     except Exception:
                         cols = batch.columns
                         nrows = batch.num_rows
                         ncols = len(cols)
-                        yield [tuple((cols[j][i].as_py() if hasattr(cols[j][i], 'as_py') else cols[j][i] for j in range(ncols))) for i in range(nrows)]
+                        yield [
+                            tuple(
+                                (
+                                    cols[j][i].as_py() if hasattr(cols[j][i], "as_py") else cols[j][i]
+                                    for j in range(ncols)
+                                )
+                            )
+                            for i in range(nrows)
+                        ]
                 return
             except Exception:
                 pass
@@ -2995,7 +3615,7 @@ class DuckDBShadowStore:
         except Exception:
             return
 
-    def duckdb_fetch_polars(self, conn: Any, sql: str, params: list[Any] | None=None) -> pl.DataFrame | None:
+    def duckdb_fetch_polars(self, conn: Any, sql: str, params: list[Any] | None = None) -> pl.DataFrame | None:
         """
         F320-431: Zero-copy DuckDB → Polars via Arrow C Data Interface.
 
@@ -3026,9 +3646,9 @@ class DuckDBShadowStore:
             return None
         try:
             result = conn.execute(sql, params or [])
-            if hasattr(result, 'pl'):
+            if hasattr(result, "pl"):
                 return result.pl()
-            if hasattr(result, 'to_arrow_reader'):
+            if hasattr(result, "to_arrow_reader"):
                 reader = result.to_arrow_reader()
                 return pl.from_arrow(reader)
             return None
@@ -3066,7 +3686,9 @@ class DuckDBShadowStore:
         except Exception:
             return False
 
-    async def async_record_source_hit(self, sprint_id: str, ts: float, source_type: str, findings_count: int, ioc_count: int, hit_rate: float) -> bool:
+    async def async_record_source_hit(
+        self, sprint_id: str, ts: float, source_type: str, findings_count: int, ioc_count: int, hit_rate: float
+    ) -> bool:
         """
         Insert a source_hit_log record.
 
@@ -3077,11 +3699,20 @@ class DuckDBShadowStore:
         self.ensure_connected()
         loop = asyncio.get_running_loop()
         try:
-            return await loop.run_in_executor(self._executor, self._sync_insert_source_hit, sprint_id, ts, source_type, findings_count, ioc_count, hit_rate)
+            return await loop.run_in_executor(
+                self._executor,
+                self._sync_insert_source_hit,
+                sprint_id,
+                ts,
+                source_type,
+                findings_count,
+                ioc_count,
+                hit_rate,
+            )
         except Exception:
             return False
 
-    async def async_query_sprint_trend(self, last_n: int=10) -> list[dict]:
+    async def async_query_sprint_trend(self, last_n: int = 10) -> list[dict]:
         """
         Return trend data for the last N sprints, ordered by ts DESC.
         Thread-safe, non-blocking.
@@ -3127,15 +3758,27 @@ class DuckDBShadowStore:
         if conn is None:
             return False
         try:
-            conn.execute('DELETE FROM ioc_cooccurrence')
+            conn.execute("DELETE FROM ioc_cooccurrence")
             for p in pairs:
-                if p.get('support', 0) >= 2:
-                    conn.execute('INSERT INTO ioc_cooccurrence VALUES (?, ?, ?, ?, ?, ?, ?, ?)', (p['ioc_a'], p['ioc_b'], p['ioc_type_a'], p['ioc_type_b'], p['support'], p['confidence'], p['score'], p['last_seen']))
+                if p.get("support", 0) >= 2:
+                    conn.execute(
+                        "INSERT INTO ioc_cooccurrence VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            p["ioc_a"],
+                            p["ioc_b"],
+                            p["ioc_type_a"],
+                            p["ioc_type_b"],
+                            p["support"],
+                            p["confidence"],
+                            p["score"],
+                            p["last_seen"],
+                        ),
+                    )
             return True
         except Exception:
             return False
 
-    async def async_load_cooccurrence(self, limit: int=100000) -> list[dict]:
+    async def async_load_cooccurrence(self, limit: int = 100000) -> list[dict]:
         """
         Load IOC co-occurrence pairs from DuckDB.
 
@@ -3164,12 +3807,27 @@ class DuckDBShadowStore:
         if conn is None:
             return []
         try:
-            rows = conn.execute('SELECT ioc_a, ioc_b, ioc_type_a, ioc_type_b, support, confidence, score, last_seen FROM ioc_cooccurrence ORDER BY score DESC LIMIT ?', (limit,)).fetchall()
-            return [{'ioc_a': r[0], 'ioc_b': r[1], 'ioc_type_a': r[2], 'ioc_type_b': r[3], 'support': r[4], 'confidence': r[5], 'score': r[6], 'last_seen': r[7]} for r in rows]
+            rows = conn.execute(
+                "SELECT ioc_a, ioc_b, ioc_type_a, ioc_type_b, support, confidence, score, last_seen FROM ioc_cooccurrence ORDER BY score DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [
+                {
+                    "ioc_a": r[0],
+                    "ioc_b": r[1],
+                    "ioc_type_a": r[2],
+                    "ioc_type_b": r[3],
+                    "support": r[4],
+                    "confidence": r[5],
+                    "score": r[6],
+                    "last_seen": r[7],
+                }
+                for r in rows
+            ]
         except Exception:
             return []
 
-    async def async_query_recent_findings_by_sprint(self, sprint_id: str, limit: int=20) -> list[dict]:
+    async def async_query_recent_findings_by_sprint(self, sprint_id: str, limit: int = 20) -> list[dict]:
         """
         Return the most recent accepted findings for a given sprint,
         ordered by ts DESC. Bounded, read-only, fail-soft.
@@ -3182,11 +3840,13 @@ class DuckDBShadowStore:
         self.ensure_connected()
         loop = asyncio.get_running_loop()
         try:
-            return await loop.run_in_executor(self._executor, self._sync_query_recent_findings_by_sprint, sprint_id, limit)
+            return await loop.run_in_executor(
+                self._executor, self._sync_query_recent_findings_by_sprint, sprint_id, limit
+            )
         except Exception:
             return []
 
-    async def async_query_findings_by_text(self, like_pattern: str, limit: int=1000) -> list[dict[str, Any]]:
+    async def async_query_findings_by_text(self, like_pattern: str, limit: int = 1000) -> list[dict[str, Any]]:
         """
         F251A: Read canonical_findings rows matching a text/keyword pattern.
         Used by run_runtime_pivot_prelude() for offline memory seed extraction
@@ -3209,7 +3869,7 @@ class DuckDBShadowStore:
         except Exception:
             return []
 
-    async def async_query_findings_by_keywords(self, keywords: list[str], limit: int=1000) -> list[dict[str, Any]]:
+    async def async_query_findings_by_keywords(self, keywords: list[str], limit: int = 1000) -> list[dict[str, Any]]:
         """
         P1-2: Read canonical_findings rows matching ANY of the given keywords.
         Uses OR across keywords so "ransomware breach" matches findings
@@ -3238,10 +3898,10 @@ class DuckDBShadowStore:
     def _sync_query_findings_by_keywords(self, keywords: list[str], limit: int) -> list[dict]:
         """Sync - MUST be called on worker thread."""
         if self._query_cache is not None:
-            conditions = ' OR '.join(['(query LIKE ? OR title LIKE ? OR payload_text LIKE ?)'] * len(keywords))
-            pattern = [f'%{kw}%' for kw in keywords for _ in range(3)]
+            conditions = " OR ".join(["(query LIKE ? OR title LIKE ? OR payload_text LIKE ?)"] * len(keywords))
+            pattern = [f"%{kw}%" for kw in keywords for _ in range(3)]
             _params = tuple(pattern) + (limit,)
-            _norm_sql = f'SELECT id, query, source_type, title, payload_text, ts FROM canonical_findings WHERE {conditions} ORDER BY ts DESC LIMIT ?'
+            _norm_sql = f"SELECT id, query, source_type, title, payload_text, ts FROM canonical_findings WHERE {conditions} ORDER BY ts DESC LIMIT ?"
             cached = self._query_cache.get(_norm_sql, _params)
             if cached is not None:
                 return cached
@@ -3257,21 +3917,31 @@ class DuckDBShadowStore:
             conn = self._file_conn if self._db_path else self._persistent_conn
             if conn is None:
                 return []
-            conditions = ' OR '.join(['(query LIKE ? OR title LIKE ? OR payload_text LIKE ?)'] * len(keywords))
-            pattern = [f'%{kw}%' for kw in keywords for _ in range(3)]
-            sql = f'\n                SELECT id, query, source_type, title, payload_text, ts\n                FROM canonical_findings\n                WHERE {conditions}\n                ORDER BY ts DESC\n                LIMIT ?\n                '
+            conditions = " OR ".join(["(query LIKE ? OR title LIKE ? OR payload_text LIKE ?)"] * len(keywords))
+            pattern = [f"%{kw}%" for kw in keywords for _ in range(3)]
+            sql = f"\n                SELECT id, query, source_type, title, payload_text, ts\n                FROM canonical_findings\n                WHERE {conditions}\n                ORDER BY ts DESC\n                LIMIT ?\n                "
             rows = list(self.arrow_fetch_batch(conn, sql, pattern + [limit]))
             if not rows:
                 return []
-            return [{'id': r[0], 'query': r[1], 'source_type': r[2], 'title': r[3] or '', 'payload_text': r[4] or '', 'ts': r[5]} for r in rows]
+            return [
+                {
+                    "id": r[0],
+                    "query": r[1],
+                    "source_type": r[2],
+                    "title": r[3] or "",
+                    "payload_text": r[4] or "",
+                    "ts": r[5],
+                }
+                for r in rows
+            ]
         except Exception:
             return []
 
     def _sync_query_findings_by_text(self, like_pattern: str, limit: int) -> list[dict]:
         """Sync - MUST be called on worker thread."""
         if self._query_cache is not None:
-            pattern = f'%{like_pattern}%'
-            _norm_sql = 'SELECT id, query, source_type, title, payload_text, ts FROM canonical_findings WHERE query LIKE ? OR title LIKE ? OR payload_text LIKE ? ORDER BY ts DESC LIMIT ?'
+            pattern = f"%{like_pattern}%"
+            _norm_sql = "SELECT id, query, source_type, title, payload_text, ts FROM canonical_findings WHERE query LIKE ? OR title LIKE ? OR payload_text LIKE ? ORDER BY ts DESC LIMIT ?"
             cached = self._query_cache.get(_norm_sql, (like_pattern, like_pattern, like_pattern, limit))
             if cached is not None:
                 return cached
@@ -3287,12 +3957,22 @@ class DuckDBShadowStore:
             conn = self._file_conn if self._db_path else self._persistent_conn
             if conn is None:
                 return []
-            pattern = f'%{like_pattern}%'
-            sql = '\n                SELECT id, query, source_type, title, payload_text, ts\n                FROM canonical_findings\n                WHERE query LIKE ?\n                   OR title LIKE ?\n                   OR payload_text LIKE ?\n                ORDER BY ts DESC\n                LIMIT ?\n                '
+            pattern = f"%{like_pattern}%"
+            sql = "\n                SELECT id, query, source_type, title, payload_text, ts\n                FROM canonical_findings\n                WHERE query LIKE ?\n                   OR title LIKE ?\n                   OR payload_text LIKE ?\n                ORDER BY ts DESC\n                LIMIT ?\n                "
             rows = list(self.arrow_fetch_batch(conn, sql, [pattern, pattern, pattern, limit]))
             if not rows:
                 return []
-            return [{'id': r[0], 'query': r[1], 'source_type': r[2], 'title': r[3] or '', 'payload_text': r[4] or '', 'ts': r[5]} for r in rows]
+            return [
+                {
+                    "id": r[0],
+                    "query": r[1],
+                    "source_type": r[2],
+                    "title": r[3] or "",
+                    "payload_text": r[4] or "",
+                    "ts": r[5],
+                }
+                for r in rows
+            ]
         except Exception:
             return []
 
@@ -3307,11 +3987,11 @@ class DuckDBShadowStore:
             rows = list(self.arrow_fetch_batch(conn, sql, [sprint_id, sprint_id, limit]))
             if not rows:
                 return []
-            return [{'id': r[0], 'query': r[1], 'source_type': r[2], 'confidence': r[3], 'ts': r[4]} for r in rows]
+            return [{"id": r[0], "query": r[1], "source_type": r[2], "confidence": r[3], "ts": r[4]} for r in rows]
         except Exception:
             return []
 
-    async def async_query_top_entities_by_sprint(self, sprint_id: str, limit: int=20) -> list[dict]:
+    async def async_query_top_entities_by_sprint(self, sprint_id: str, limit: int = 20) -> list[dict]:
         """
         Return entity-like pivot candidates extracted from finding queries
         and provenance for the given sprint. Looks for domain/IP/url-like
@@ -3332,8 +4012,11 @@ class DuckDBShadowStore:
     def _sync_query_top_entities_by_sprint(self, sprint_id: str, limit: int) -> list[dict]:
         """Sync - MUST be called on worker thread."""
         import re
-        DOMAIN_RE = re.compile('(?:https?://)?(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}')
-        IP_RE = re.compile('\\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\b')
+
+        DOMAIN_RE = re.compile("(?:https?://)?(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}")
+        IP_RE = re.compile(
+            "\\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\b"
+        )
         try:
             conn = self._file_conn if self._db_path else self._persistent_conn
             if conn is None:
@@ -3345,20 +4028,32 @@ class DuckDBShadowStore:
                 return []
             candidates: dict[str, dict] = {}
             for row in rows:
-                text = f'{row[1]} {row[0]}'
+                text = f"{row[1]} {row[0]}"
                 for m in DOMAIN_RE.finditer(text):
                     domain = m.group().lower()
                     if domain not in candidates:
-                        candidates[domain] = {'entity_value': domain, 'entity_type': 'domain', 'occurrences': 0, 'last_seen_ts': 0.0}
-                    candidates[domain]['occurrences'] += 1
-                    candidates[domain]['last_seen_ts'] = max(candidates[domain]['last_seen_ts'], row[3])
+                        candidates[domain] = {
+                            "entity_value": domain,
+                            "entity_type": "domain",
+                            "occurrences": 0,
+                            "last_seen_ts": 0.0,
+                        }
+                    candidates[domain]["occurrences"] += 1
+                    candidates[domain]["last_seen_ts"] = max(candidates[domain]["last_seen_ts"], row[3])
                 for m in IP_RE.finditer(text):
                     ip = m.group()
                     if ip not in candidates:
-                        candidates[ip] = {'entity_value': ip, 'entity_type': 'ip', 'occurrences': 0, 'last_seen_ts': 0.0}
-                    candidates[ip]['occurrences'] += 1
-                    candidates[ip]['last_seen_ts'] = max(candidates[ip]['last_seen_ts'], row[3])
-            sorted_candidates = sorted(candidates.values(), key=lambda x: (x['occurrences'], x['last_seen_ts']), reverse=True)
+                        candidates[ip] = {
+                            "entity_value": ip,
+                            "entity_type": "ip",
+                            "occurrences": 0,
+                            "last_seen_ts": 0.0,
+                        }
+                    candidates[ip]["occurrences"] += 1
+                    candidates[ip]["last_seen_ts"] = max(candidates[ip]["last_seen_ts"], row[3])
+            sorted_candidates = sorted(
+                candidates.values(), key=lambda x: (x["occurrences"], x["last_seen_ts"]), reverse=True
+            )
             return sorted_candidates[:limit]
         except Exception:
             return []
@@ -3400,14 +4095,25 @@ class DuckDBShadowStore:
             conn = self._file_conn if self._db_path else self._persistent_conn
             if conn is None:
                 return {}
-            row = conn.execute("\n                SELECT\n                    COUNT(*) as total_findings,\n                    COUNT(DISTINCT source_type) as unique_sources,\n                    AVG(confidence) as avg_confidence,\n                    MIN(ts) as first_ts,\n                    MAX(ts) as last_ts\n                FROM canonical_findings\n                WHERE query LIKE ('%' || ? || '%')\n                   OR id LIKE ('%' || ? || '%')\n                ", [sprint_id, sprint_id]).fetchone()
+            row = conn.execute(
+                "\n                SELECT\n                    COUNT(*) as total_findings,\n                    COUNT(DISTINCT source_type) as unique_sources,\n                    AVG(confidence) as avg_confidence,\n                    MIN(ts) as first_ts,\n                    MAX(ts) as last_ts\n                FROM canonical_findings\n                WHERE query LIKE ('%' || ? || '%')\n                   OR id LIKE ('%' || ? || '%')\n                ",
+                [sprint_id, sprint_id],
+            ).fetchone()
             if row is None or row[0] == 0:
                 return {}
-            return {'sprint_id': sprint_id, 'total_findings': row[0] or 0, 'unique_sources': row[1] or 0, 'avg_confidence': round(row[2] or 0.0, 3), 'first_ts': row[3] or 0.0, 'last_ts': row[4] or 0.0, 'span_seconds': (row[4] or 0.0) - (row[3] or 0.0)}
+            return {
+                "sprint_id": sprint_id,
+                "total_findings": row[0] or 0,
+                "unique_sources": row[1] or 0,
+                "avg_confidence": round(row[2] or 0.0, 3),
+                "first_ts": row[3] or 0.0,
+                "last_ts": row[4] or 0.0,
+                "span_seconds": (row[4] or 0.0) - (row[3] or 0.0),
+            }
         except Exception:
             return {}
 
-    async def async_query_top_sources_by_sprint(self, sprint_id: str, limit: int=10) -> list[dict]:
+    async def async_query_top_sources_by_sprint(self, sprint_id: str, limit: int = 10) -> list[dict]:
         """
         Return source_type breakdown (findings count, avg confidence)
         for a given sprint. Bounded, read-only, fail-soft.
@@ -3433,7 +4139,10 @@ class DuckDBShadowStore:
             sql = "\n                SELECT\n                    source_type,\n                    COUNT(*) as findings_count,\n                    AVG(confidence) as avg_confidence\n                FROM canonical_findings\n                WHERE query LIKE ('%' || ? || '%')\n                   OR id LIKE ('%' || ? || '%')\n                GROUP BY source_type\n                ORDER BY findings_count DESC\n                LIMIT ?\n                "
             rows = conn.execute(sql, [sprint_id, sprint_id, limit])
             rows = list(self.arrow_fetch_batch(conn, sql, [sprint_id, sprint_id, limit]))
-            return [{'source_type': r[0], 'findings_count': r[1] or 0, 'avg_confidence': round(r[2] or 0.0, 3)} for r in rows]
+            return [
+                {"source_type": r[0], "findings_count": r[1] or 0, "avg_confidence": round(r[2] or 0.0, 3)}
+                for r in rows
+            ]
         except Exception:
             return []
 
@@ -3460,7 +4169,21 @@ class DuckDBShadowStore:
             conn = self._file_conn if self._db_path else self._persistent_conn
             if conn is None:
                 return False
-            conn.execute('\n                INSERT OR REPLACE INTO sprint_scorecard VALUES (?,?,?,?,?,?,?,?,?,?)\n                ', [data['sprint_id'], data['ts'], data.get('findings_per_minute', 0), data.get('ioc_density', 0), data.get('semantic_novelty', 1.0), data.get('source_yield_json', '{}'), data.get('phase_timings_json', '{}'), data.get('outlines_used', False), data.get('accepted_findings', 0), data.get('ioc_nodes', 0)])
+            conn.execute(
+                "\n                INSERT OR REPLACE INTO sprint_scorecard VALUES (?,?,?,?,?,?,?,?,?,?)\n                ",
+                [
+                    data["sprint_id"],
+                    data["ts"],
+                    data.get("findings_per_minute", 0),
+                    data.get("ioc_density", 0),
+                    data.get("semantic_novelty", 1.0),
+                    data.get("source_yield_json", "{}"),
+                    data.get("phase_timings_json", "{}"),
+                    data.get("outlines_used", False),
+                    data.get("accepted_findings", 0),
+                    data.get("ioc_nodes", 0),
+                ],
+            )
             return True
         except Exception:
             return False
@@ -3548,11 +4271,26 @@ class DuckDBShadowStore:
             conn = self._persistent_conn
             if conn is None:
                 return
-            conn.execute('INSERT OR REPLACE INTO research_episodes\n                   (episode_id, sprint_id, query, summary, top_findings,\n                    ioc_clusters, source_yield, synthesis_engine, duration_s, ts)\n                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [data.get('sprint_id', ''), data.get('sprint_id', ''), data.get('query', ''), data.get('summary', '')[:300] if data.get('summary') else '', _json_dumps_str(data.get('top_findings', [])), _json_dumps_str(data.get('ioc_clusters', [])), _json_dumps_str(data.get('source_yield', {})), data.get('synthesis_engine', 'unknown'), float(data.get('duration_s', 0.0)), float(data.get('ts', _t.time()))])
+            conn.execute(
+                "INSERT OR REPLACE INTO research_episodes\n                   (episode_id, sprint_id, query, summary, top_findings,\n                    ioc_clusters, source_yield, synthesis_engine, duration_s, ts)\n                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    data.get("sprint_id", ""),
+                    data.get("sprint_id", ""),
+                    data.get("query", ""),
+                    data.get("summary", "")[:300] if data.get("summary") else "",
+                    _json_dumps_str(data.get("top_findings", [])),
+                    _json_dumps_str(data.get("ioc_clusters", [])),
+                    _json_dumps_str(data.get("source_yield", {})),
+                    data.get("synthesis_engine", "unknown"),
+                    float(data.get("duration_s", 0.0)),
+                    float(data.get("ts", _t.time())),
+                ],
+            )
+
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(self._executor, _sync)
 
-    async def recall_episodes(self, query_embedding: list[float] | None, limit: int=5) -> list[dict]:
+    async def recall_episodes(self, query_embedding: list[float] | None, limit: int = 5) -> list[dict]:
         """Sprint 8UC B.2: Načíst posledních `limit` epizod (recency-based)."""
 
         def _sync():
@@ -3560,15 +4298,16 @@ class DuckDBShadowStore:
             if conn is None:
                 return []
             try:
-                sql = 'SELECT sprint_id, query, summary, top_findings, source_yield, ts\n                       FROM research_episodes\n                       ORDER BY ts DESC\n                       LIMIT ?'
+                sql = "SELECT sprint_id, query, summary, top_findings, source_yield, ts\n                       FROM research_episodes\n                       ORDER BY ts DESC\n                       LIMIT ?"
                 rows = conn.execute(sql, [limit])
                 rows = list(self.arrow_fetch_batch(conn, sql, [limit]))
                 if not rows:
                     return []
-                cols = ['sprint_id', 'query', 'summary', 'top_findings', 'source_yield', 'ts']
+                cols = ["sprint_id", "query", "summary", "top_findings", "source_yield", "ts"]
                 return [dict(zip(cols, r, strict=False)) for r in rows]
             except Exception:
                 return []
+
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self._executor, _sync)
 
@@ -3593,15 +4332,31 @@ class DuckDBShadowStore:
     def _sync_upsert_target_memory(self, memory: TargetMemory) -> bool:
         """Sync upsert target memory - MUST be called on worker thread."""
         import logging as _logging
+
         _logger = _logging.getLogger(__name__)
         try:
             conn = self._file_conn if self._db_path else self._persistent_conn
             if conn is None:
                 return False
-            conn.execute('\n                INSERT OR REPLACE INTO target_memory\n                (target_id, first_seen_ts, last_seen_ts, sprint_count,\n                 cumulative_finding_count, entity_facets_json, exposure_facets_json,\n                 pivot_facets_json, confidence_drift_json, updated_by_sprint_id,\n                 updated_ts)\n                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n                ', [memory.target_id, memory.first_seen_ts, memory.last_seen_ts, memory.sprint_count, memory.cumulative_finding_count, _json_dumps_str(memory.entity_facets), _json_dumps_str(memory.exposure_facets), _json_dumps_str(memory.pivot_facets), _json_dumps_str(memory.confidence_drift), memory.updated_by_sprint_id, _time.time()])
+            conn.execute(
+                "\n                INSERT OR REPLACE INTO target_memory\n                (target_id, first_seen_ts, last_seen_ts, sprint_count,\n                 cumulative_finding_count, entity_facets_json, exposure_facets_json,\n                 pivot_facets_json, confidence_drift_json, updated_by_sprint_id,\n                 updated_ts)\n                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n                ",
+                [
+                    memory.target_id,
+                    memory.first_seen_ts,
+                    memory.last_seen_ts,
+                    memory.sprint_count,
+                    memory.cumulative_finding_count,
+                    _json_dumps_str(memory.entity_facets),
+                    _json_dumps_str(memory.exposure_facets),
+                    _json_dumps_str(memory.pivot_facets),
+                    _json_dumps_str(memory.confidence_drift),
+                    memory.updated_by_sprint_id,
+                    _time.time(),
+                ],
+            )
             return True
         except Exception as _exc:
-            _logger.warning(f'_sync_upsert_target_memory failed: {_exc}')
+            _logger.warning(f"_sync_upsert_target_memory failed: {_exc}")
             return False
 
     async def read_target_memory(self, target_id: str) -> TargetMemory | None:
@@ -3617,15 +4372,27 @@ class DuckDBShadowStore:
                 conn = self._file_conn if self._db_path else self._persistent_conn
                 if conn is None:
                     return None
-                sql = '\n                    SELECT target_id, first_seen_ts, last_seen_ts, sprint_count,\n                           cumulative_finding_count, entity_facets_json,\n                           exposure_facets_json, pivot_facets_json,\n                           confidence_drift_json, updated_by_sprint_id, updated_ts\n                    FROM target_memory\n                    WHERE target_id = ?\n                    '
+                sql = "\n                    SELECT target_id, first_seen_ts, last_seen_ts, sprint_count,\n                           cumulative_finding_count, entity_facets_json,\n                           exposure_facets_json, pivot_facets_json,\n                           confidence_drift_json, updated_by_sprint_id, updated_ts\n                    FROM target_memory\n                    WHERE target_id = ?\n                    "
                 rows = conn.execute(sql, [target_id])
                 rows = list(self.arrow_fetch_batch(conn, sql, [target_id]))
                 if not rows:
                     return None
                 r = rows[0]
-                return TargetMemory(target_id=r[0], first_seen_ts=r[1], last_seen_ts=r[2], sprint_count=r[3], cumulative_finding_count=r[4], entity_facets=_json_loads_flexible(r[5]), exposure_facets=_json_loads_flexible(r[6]), pivot_facets=_json_loads_flexible(r[7]), confidence_drift=_json_loads_flexible(r[8]), updated_by_sprint_id=r[9])
+                return TargetMemory(
+                    target_id=r[0],
+                    first_seen_ts=r[1],
+                    last_seen_ts=r[2],
+                    sprint_count=r[3],
+                    cumulative_finding_count=r[4],
+                    entity_facets=_json_loads_flexible(r[5]),
+                    exposure_facets=_json_loads_flexible(r[6]),
+                    pivot_facets=_json_loads_flexible(r[7]),
+                    confidence_drift=_json_loads_flexible(r[8]),
+                    updated_by_sprint_id=r[9],
+                )
             except Exception:
                 return None
+
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(self._executor, _sync)
@@ -3660,21 +4427,28 @@ class DuckDBShadowStore:
         DuckDB handles crash-safety internally - no external lock file needed.
         """
         from pathlib import Path
+
         import duckdb
-        ghost_home = Path.home() / '.hledac'
+
+        ghost_home = Path.home() / ".hledac"
         ghost_home.mkdir(parents=True, exist_ok=True)
-        db_path = ghost_home / 'ghost_global.duckdb'
-        conn = duckdb.connect(str(db_path), access_mode='automatic')
+        db_path = ghost_home / "ghost_global.duckdb"
+        conn = duckdb.connect(str(db_path), access_mode="automatic")
         try:
-            conn.execute('\n                CREATE TABLE IF NOT EXISTS global_entities (\n                    entity_value TEXT PRIMARY KEY,\n                    entity_type TEXT,\n                    sprint_count INT DEFAULT 0,\n                    last_seen DOUBLE,\n                    confidence_cumulative REAL DEFAULT 0\n                )\n                ')
+            conn.execute(
+                "\n                CREATE TABLE IF NOT EXISTS global_entities (\n                    entity_value TEXT PRIMARY KEY,\n                    entity_type TEXT,\n                    sprint_count INT DEFAULT 0,\n                    last_seen DOUBLE,\n                    confidence_cumulative REAL DEFAULT 0\n                )\n                "
+            )
             now = _time.time()
-            conn.execute('\n                INSERT INTO global_entities\n                    (entity_value, entity_type, sprint_count, last_seen, confidence_cumulative)\n                VALUES (?, ?, 1, ?, ?)\n                ON CONFLICT(entity_value) DO UPDATE SET\n                    sprint_count = sprint_count + 1,\n                    confidence_cumulative = MAX(confidence_cumulative, excluded.confidence_cumulative),\n                    last_seen = excluded.last_seen\n                ', [(e, t, now, c) for e, t, c in entities])
+            conn.execute(
+                "\n                INSERT INTO global_entities\n                    (entity_value, entity_type, sprint_count, last_seen, confidence_cumulative)\n                VALUES (?, ?, 1, ?, ?)\n                ON CONFLICT(entity_value) DO UPDATE SET\n                    sprint_count = sprint_count + 1,\n                    confidence_cumulative = MAX(confidence_cumulative, excluded.confidence_cumulative),\n                    last_seen = excluded.last_seen\n                ",
+                [(e, t, now, c) for e, t, c in entities],
+            )
             conn.commit()
             return len(entities)
         finally:
             conn.close()
 
-    async def async_query_source_leaderboard(self, days: int=7) -> list[dict]:
+    async def async_query_source_leaderboard(self, days: int = 7) -> list[dict]:
         """
         Return top sources by hit rate for the last N days.
         Thread-safe, non-blocking.
@@ -3684,7 +4458,9 @@ class DuckDBShadowStore:
         self.ensure_connected()
         loop = asyncio.get_running_loop()
         try:
-            return await loop.run_in_executor(self._executor, self._sync_query_source_leaderboard, _time.time() - days * 86400)
+            return await loop.run_in_executor(
+                self._executor, self._sync_query_source_leaderboard, _time.time() - days * 86400
+            )
         except Exception:
             return []
 
@@ -3703,7 +4479,7 @@ class DuckDBShadowStore:
         except Exception:
             return []
 
-    def get_sprint_trend(self, last_n: int=10) -> list[dict]:
+    def get_sprint_trend(self, last_n: int = 10) -> list[dict]:
         """
         DEPRECATED (Sprint F183D) - use async_query_sprint_trend() instead.
 
@@ -3720,7 +4496,7 @@ class DuckDBShadowStore:
         except Exception:
             return []
 
-    def get_source_leaderboard(self, days: int=7) -> list[dict]:
+    def get_source_leaderboard(self, days: int = 7) -> list[dict]:
         """
         DEPRECATED (Sprint F183D) - use async_query_source_leaderboard() instead.
 
@@ -3737,7 +4513,7 @@ class DuckDBShadowStore:
         except Exception:
             return []
 
-    def get_sprint_scorecard_trend(self, last_n: int=6) -> list[dict]:
+    def get_sprint_scorecard_trend(self, last_n: int = 6) -> list[dict]:
         """
         Sprint F150H: Convenience sync wrapper - returns last N scorecards
         ordered by ts DESC. Covers ioc_density, semantic_novelty, accepted_findings,
@@ -3766,7 +4542,7 @@ class DuckDBShadowStore:
             conn = self._file_conn if self._db_path else self._persistent_conn
             if conn is None:
                 return []
-            sql = '\n                SELECT sprint_id, ts, findings_per_minute, ioc_density,\n                       semantic_novelty, outlines_used, accepted_findings, ioc_nodes\n                FROM sprint_scorecard\n                ORDER BY ts DESC\n                LIMIT ?\n                '
+            sql = "\n                SELECT sprint_id, ts, findings_per_minute, ioc_density,\n                       semantic_novelty, outlines_used, accepted_findings, ioc_nodes\n                FROM sprint_scorecard\n                ORDER BY ts DESC\n                LIMIT ?\n                "
             df = self.duckdb_fetch_polars(conn, sql, [last_n])
             if df is None:
                 return []
@@ -3774,7 +4550,7 @@ class DuckDBShadowStore:
         except Exception:
             return []
 
-    def get_sprint_delta_comparison(self, current_sprint_id: str, lookback: int=4) -> dict:
+    def get_sprint_delta_comparison(self, current_sprint_id: str, lookback: int = 4) -> dict:
         """
         Sprint F150H: Compare current sprint against the average of the last
         `lookback` sprints. Returns a delta dict with absolute values of
@@ -3804,16 +4580,23 @@ class DuckDBShadowStore:
             conn = self._file_conn if self._db_path else self._persistent_conn
             if conn is None:
                 return {}
-            sql = '\n                SELECT new_findings, ioc_new_this_sprint, dedup_hits,\n                       findings_per_minute, uma_peak_gib, synthesis_confidence\n                FROM sprint_delta\n                WHERE sprint_id = ?\n                '
+            sql = "\n                SELECT new_findings, ioc_new_this_sprint, dedup_hits,\n                       findings_per_minute, uma_peak_gib, synthesis_confidence\n                FROM sprint_delta\n                WHERE sprint_id = ?\n                "
             current_rows = conn.execute(sql, [current_sprint_id])
             current_rows = list(self.arrow_fetch_batch(conn, sql, [current_sprint_id]))
             if not current_rows:
                 return {}
-            sql = '\n                SELECT new_findings, ioc_new_this_sprint, dedup_hits,\n                       findings_per_minute, uma_peak_gib, synthesis_confidence\n                FROM sprint_delta\n                WHERE sprint_id != ?\n                ORDER BY ts DESC\n                LIMIT ?\n                '
+            sql = "\n                SELECT new_findings, ioc_new_this_sprint, dedup_hits,\n                       findings_per_minute, uma_peak_gib, synthesis_confidence\n                FROM sprint_delta\n                WHERE sprint_id != ?\n                ORDER BY ts DESC\n                LIMIT ?\n                "
             prior_rows = conn.execute(sql, [current_sprint_id, lookback])
             prior_rows = list(self.arrow_fetch_batch(conn, sql, [current_sprint_id, lookback]))
             cur = current_rows[0]
-            fields = ['new_findings', 'ioc_new_this_sprint', 'dedup_hits', 'findings_per_minute', 'uma_peak_gib', 'synthesis_confidence']
+            fields = [
+                "new_findings",
+                "ioc_new_this_sprint",
+                "dedup_hits",
+                "findings_per_minute",
+                "uma_peak_gib",
+                "synthesis_confidence",
+            ]
             cur_vals = [cur[0] or 0, cur[1] or 0, cur[2] or 0, cur[3] or 0.0, cur[4] or 0.0, cur[5] or 0.0]
             if prior_rows:
                 prior_avg = [0.0] * len(fields)
@@ -3824,11 +4607,15 @@ class DuckDBShadowStore:
                 deltas = {f: round(cur_vals[i] - prior_avg[i], 4) for i, f in enumerate(fields)}
             else:
                 deltas = dict.fromkeys(fields, 0.0)
-            return {'sprint_id': current_sprint_id, 'current': {f: cur_vals[i] for i, f in enumerate(fields)}, 'vs_prior_mean': deltas}
+            return {
+                "sprint_id": current_sprint_id,
+                "current": {f: cur_vals[i] for i, f in enumerate(fields)},
+                "vs_prior_mean": deltas,
+            }
         except Exception:
             return {}
 
-    def get_source_mix_trend(self, days: int=14) -> list[dict]:
+    def get_source_mix_trend(self, days: int = 14) -> list[dict]:
         """
         Sprint F150H: Convenience sync wrapper - returns source_type distribution
         broken down by sprint for the last `days`. Each row contains
@@ -3851,14 +4638,23 @@ class DuckDBShadowStore:
             conn = self._get_read_conn()
             if conn is None:
                 return []
-            sql = '\n                SELECT source_type, sprint_id,\n                       SUM(findings_count) as total_findings,\n                       AVG(hit_rate) as avg_hit_rate,\n                       SUM(ioc_count) as total_iocs\n                FROM source_hit_log\n                WHERE ts > ?\n                GROUP BY source_type, sprint_id\n                LIMIT 10000\n                ORDER BY sprint_id DESC, total_findings DESC\n                '
+            sql = "\n                SELECT source_type, sprint_id,\n                       SUM(findings_count) as total_findings,\n                       AVG(hit_rate) as avg_hit_rate,\n                       SUM(ioc_count) as total_iocs\n                FROM source_hit_log\n                WHERE ts > ?\n                GROUP BY source_type, sprint_id\n                LIMIT 10000\n                ORDER BY sprint_id DESC, total_findings DESC\n                "
             rows = conn.execute(sql, [since_ts])
             rows = list(self.arrow_fetch_batch(conn, sql, [since_ts]))
-            return [{'source_type': r[0], 'sprint_id': r[1], 'total_findings': r[2] or 0, 'avg_hit_rate': r[3] or 0.0, 'total_iocs': r[4] or 0} for r in rows]
+            return [
+                {
+                    "source_type": r[0],
+                    "sprint_id": r[1],
+                    "total_findings": r[2] or 0,
+                    "avg_hit_rate": r[3] or 0.0,
+                    "total_iocs": r[4] or 0,
+                }
+                for r in rows
+            ]
         except Exception:
             return []
 
-    def get_yield_trend(self, last_n: int=8) -> list[dict]:
+    def get_yield_trend(self, last_n: int = 8) -> list[dict]:
         """
         Sprint F150H: Derived yield metrics per sprint - new_findings / duration_s,
         dedup_hits ratio (dedup_hits / new_findings), and ioc_rate
@@ -3881,7 +4677,7 @@ class DuckDBShadowStore:
             conn = self._get_read_conn()
             if conn is None:
                 return []
-            sql = '\n                SELECT sprint_id, ts, new_findings, duration_s,\n                       dedup_hits, ioc_new_this_sprint\n                FROM sprint_delta\n                ORDER BY ts DESC\n                LIMIT ?\n                '
+            sql = "\n                SELECT sprint_id, ts, new_findings, duration_s,\n                       dedup_hits, ioc_new_this_sprint\n                FROM sprint_delta\n                ORDER BY ts DESC\n                LIMIT ?\n                "
             rows = conn.execute(sql, [last_n])
             rows = list(self.arrow_fetch_batch(conn, sql, [last_n]))
             result = []
@@ -3890,12 +4686,22 @@ class DuckDBShadowStore:
                 duration_s = r[3] or 0.0
                 dedup_hits = r[4] or 0
                 ioc_new = r[5] or 0
-                result.append({'sprint_id': r[0], 'ts': r[1], 'new_findings': new_findings, 'duration_s': duration_s, 'yield_per_min': round(new_findings / max(duration_s / 60, 0.001), 4), 'dedup_ratio': round(dedup_hits / max(new_findings, 1), 4), 'ioc_rate': round(ioc_new / max(new_findings, 1), 4)})
+                result.append(
+                    {
+                        "sprint_id": r[0],
+                        "ts": r[1],
+                        "new_findings": new_findings,
+                        "duration_s": duration_s,
+                        "yield_per_min": round(new_findings / max(duration_s / 60, 0.001), 4),
+                        "dedup_ratio": round(dedup_hits / max(new_findings, 1), 4),
+                        "ioc_rate": round(ioc_new / max(new_findings, 1), 4),
+                    }
+                )
             return result
         except Exception:
             return []
 
-    def get_high_value_sprint_ranking(self, last_n: int=8) -> list[dict]:
+    def get_high_value_sprint_ranking(self, last_n: int = 8) -> list[dict]:
         """
         Sprint F150I: Rank last N sprints by a composite value score.
         Composite = accepted_findings * semantic_novelty / max(duration_s, 1).
@@ -3918,10 +4724,22 @@ class DuckDBShadowStore:
             conn = self._get_read_conn()
             if conn is None:
                 return []
-            sql = '\n                SELECT\n                    d.sprint_id,\n                    d.ts,\n                    d.new_findings,\n                    d.duration_s,\n                    c.accepted_findings,\n                    c.semantic_novelty,\n                    d.synthesis_confidence,\n                    ROUND(\n                        CAST(c.accepted_findings AS REAL)\n                        * COALESCE(c.semantic_novelty, 1.0)\n                        / MAX(d.duration_s, 1.0),\n                        4\n                    ) AS composite_score\n                FROM sprint_delta d\n                LEFT JOIN sprint_scorecard c ON d.sprint_id = c.sprint_id\n                ORDER BY d.ts DESC\n                LIMIT ?\n                '
+            sql = "\n                SELECT\n                    d.sprint_id,\n                    d.ts,\n                    d.new_findings,\n                    d.duration_s,\n                    c.accepted_findings,\n                    c.semantic_novelty,\n                    d.synthesis_confidence,\n                    ROUND(\n                        CAST(c.accepted_findings AS REAL)\n                        * COALESCE(c.semantic_novelty, 1.0)\n                        / MAX(d.duration_s, 1.0),\n                        4\n                    ) AS composite_score\n                FROM sprint_delta d\n                LEFT JOIN sprint_scorecard c ON d.sprint_id = c.sprint_id\n                ORDER BY d.ts DESC\n                LIMIT ?\n                "
             rows = conn.execute(sql, [last_n])
             rows = list(self.arrow_fetch_batch(conn, sql, [last_n]))
-            return [{'sprint_id': r[0], 'ts': r[1], 'new_findings': r[2] or 0, 'duration_s': r[3] or 0.0, 'accepted_findings': r[4] or 0, 'semantic_novelty': r[5] or 1.0, 'synthesis_confidence': r[6] or 0.0, 'composite_score': r[7] or 0.0} for r in rows]
+            return [
+                {
+                    "sprint_id": r[0],
+                    "ts": r[1],
+                    "new_findings": r[2] or 0,
+                    "duration_s": r[3] or 0.0,
+                    "accepted_findings": r[4] or 0,
+                    "semantic_novelty": r[5] or 1.0,
+                    "synthesis_confidence": r[6] or 0.0,
+                    "composite_score": r[7] or 0.0,
+                }
+                for r in rows
+            ]
         except Exception:
             return []
 
@@ -3955,7 +4773,7 @@ class DuckDBShadowStore:
             conn = self._get_read_conn()
             if conn is None:
                 return {}
-            sql = '\n                SELECT\n                    c.sprint_id,\n                    c.findings_per_minute,\n                    COALESCE(d.findings_per_minute, 0) AS delta_fpm,\n                    d.new_findings,\n                    d.duration_s\n                FROM sprint_scorecard c\n                LEFT JOIN sprint_delta d ON c.sprint_id = d.sprint_id\n                WHERE c.sprint_id = ?\n                ORDER BY rowid DESC\n                LIMIT 1000\n                '
+            sql = "\n                SELECT\n                    c.sprint_id,\n                    c.findings_per_minute,\n                    COALESCE(d.findings_per_minute, 0) AS delta_fpm,\n                    d.new_findings,\n                    d.duration_s\n                FROM sprint_scorecard c\n                LEFT JOIN sprint_delta d ON c.sprint_id = d.sprint_id\n                WHERE c.sprint_id = ?\n                ORDER BY rowid DESC\n                LIMIT 1000\n                "
             rows = conn.execute(sql, [sprint_id])
             rows = list(self.arrow_fetch_batch(conn, sql, [sprint_id]))
             if not rows:
@@ -3964,11 +4782,19 @@ class DuckDBShadowStore:
             scorecard_fpm = r[1] or 0.0
             delta_fpm = r[2] or 0.0
             ratio = round(delta_fpm / max(scorecard_fpm, 0.001), 4)
-            return {'sprint_id': r[0], 'scorecard_fpm': scorecard_fpm, 'delta_fpm': delta_fpm, 'ratio': ratio, 'diverges': ratio > 2.0 or ratio < 0.5, 'new_findings': r[3] or 0, 'duration_s': r[4] or 0.0}
+            return {
+                "sprint_id": r[0],
+                "scorecard_fpm": scorecard_fpm,
+                "delta_fpm": delta_fpm,
+                "ratio": ratio,
+                "diverges": ratio > 2.0 or ratio < 0.5,
+                "new_findings": r[3] or 0,
+                "duration_s": r[4] or 0.0,
+            }
         except Exception:
             return {}
 
-    def get_recent_best_sprints(self, last_n: int=5) -> list[dict]:
+    def get_recent_best_sprints(self, last_n: int = 5) -> list[dict]:
         """
         Sprint F150I: Return the top N sprints by yield (new_findings / duration_s).
         Reads from sprint_delta. Fail-soft, bounded.
@@ -3991,14 +4817,25 @@ class DuckDBShadowStore:
             conn = self._get_read_conn()
             if conn is None:
                 return []
-            sql = '\n                SELECT sprint_id, ts, new_findings, duration_s,\n                       findings_per_minute, synthesis_confidence,\n                       ROUND(new_findings / MAX(duration_s / 60, 0.001), 4)\n                       AS yield_per_min\n                FROM sprint_delta\n                WHERE new_findings > 0 AND duration_s > 0\n                ORDER BY yield_per_min DESC\n                LIMIT ?\n                '
+            sql = "\n                SELECT sprint_id, ts, new_findings, duration_s,\n                       findings_per_minute, synthesis_confidence,\n                       ROUND(new_findings / MAX(duration_s / 60, 0.001), 4)\n                       AS yield_per_min\n                FROM sprint_delta\n                WHERE new_findings > 0 AND duration_s > 0\n                ORDER BY yield_per_min DESC\n                LIMIT ?\n                "
             rows = conn.execute(sql, [last_n])
             rows = list(self.arrow_fetch_batch(conn, sql, [last_n]))
-            return [{'sprint_id': r[0], 'ts': r[1], 'new_findings': r[2] or 0, 'duration_s': r[3] or 0.0, 'findings_per_minute': r[4] or 0.0, 'synthesis_confidence': r[5] or 0.0, 'yield_per_min': r[6] or 0.0} for r in rows]
+            return [
+                {
+                    "sprint_id": r[0],
+                    "ts": r[1],
+                    "new_findings": r[2] or 0,
+                    "duration_s": r[3] or 0.0,
+                    "findings_per_minute": r[4] or 0.0,
+                    "synthesis_confidence": r[5] or 0.0,
+                    "yield_per_min": r[6] or 0.0,
+                }
+                for r in rows
+            ]
         except Exception:
             return []
 
-    def get_recent_worst_sprints(self, last_n: int=5) -> list[dict]:
+    def get_recent_worst_sprints(self, last_n: int = 5) -> list[dict]:
         """
         Sprint F150I: Return the bottom N sprints by yield (new_findings / duration_s).
         Only sprints with new_findings > 0 are included (exclude zero-yield noise).
@@ -4022,14 +4859,27 @@ class DuckDBShadowStore:
             conn = self._get_read_conn()
             if conn is None:
                 return []
-            sql = '\n                SELECT sprint_id, ts, new_findings, duration_s,\n                       findings_per_minute, synthesis_confidence,\n                       ROUND(new_findings / MAX(duration_s / 60, 0.001), 4)\n                       AS yield_per_min\n                FROM sprint_delta\n                WHERE new_findings > 0 AND duration_s > 0\n                ORDER BY yield_per_min ASC\n                LIMIT ?\n                '
+            sql = "\n                SELECT sprint_id, ts, new_findings, duration_s,\n                       findings_per_minute, synthesis_confidence,\n                       ROUND(new_findings / MAX(duration_s / 60, 0.001), 4)\n                       AS yield_per_min\n                FROM sprint_delta\n                WHERE new_findings > 0 AND duration_s > 0\n                ORDER BY yield_per_min ASC\n                LIMIT ?\n                "
             rows = conn.execute(sql, [last_n])
             rows = list(self.arrow_fetch_batch(conn, sql, [last_n]))
-            return [{'sprint_id': r[0], 'ts': r[1], 'new_findings': r[2] or 0, 'duration_s': r[3] or 0.0, 'findings_per_min': r[4] or 0.0, 'synthesis_confidence': r[5] or 0.0, 'yield_per_min': r[6] or 0.0} for r in rows]
+            return [
+                {
+                    "sprint_id": r[0],
+                    "ts": r[1],
+                    "new_findings": r[2] or 0,
+                    "duration_s": r[3] or 0.0,
+                    "findings_per_min": r[4] or 0.0,
+                    "synthesis_confidence": r[5] or 0.0,
+                    "yield_per_min": r[6] or 0.0,
+                }
+                for r in rows
+            ]
         except Exception:
             return []
 
-    async def async_record_activation(self, finding_id: str, query: str, source_type: str, confidence: float) -> ActivationResult:
+    async def async_record_activation(
+        self, finding_id: str, query: str, source_type: str, confidence: float
+    ) -> ActivationResult:
         """
         Record a single finding with WAL-first semantics.
 
@@ -4047,20 +4897,54 @@ class DuckDBShadowStore:
             ActivationResult with typed fields (never a raw dict)
         """
         if not self._initialized or self._closed:
-            return ActivationResult(finding_id=finding_id, lmdb_success=False, duckdb_success=None, lmdb_key=f'finding:{finding_id}', desync=False, error='store closed or not initialized', accepted=False)
+            return ActivationResult(
+                finding_id=finding_id,
+                lmdb_success=False,
+                duckdb_success=None,
+                lmdb_key=f"finding:{finding_id}",
+                desync=False,
+                error="store closed or not initialized",
+                accepted=False,
+            )
         if not self._startup_ready.is_set():
             try:
                 async with asyncio.timeout(30.0):
                     await self._startup_ready.wait()
             except TimeoutError:
-                return ActivationResult(finding_id=finding_id, lmdb_success=False, duckdb_success=None, lmdb_key=f'finding:{finding_id}', desync=False, error='startup replay timeout', accepted=False)
+                return ActivationResult(
+                    finding_id=finding_id,
+                    lmdb_success=False,
+                    duckdb_success=None,
+                    lmdb_key=f"finding:{finding_id}",
+                    desync=False,
+                    error="startup replay timeout",
+                    accepted=False,
+                )
         loop = asyncio.get_running_loop()
         try:
-            result = await loop.run_in_executor(self._executor, self._activation_record_finding, finding_id, query, source_type, confidence)
-            desync = bool(result.get('lmdb_success') and result.get('duckdb_success') is False)
-            return ActivationResult(finding_id=str(finding_id), lmdb_success=bool(result.get('lmdb_success')), duckdb_success=result.get('duckdb_success'), lmdb_key=f'finding:{finding_id}', desync=desync, error=None, accepted=True)
+            result = await loop.run_in_executor(
+                self._executor, self._activation_record_finding, finding_id, query, source_type, confidence
+            )
+            desync = bool(result.get("lmdb_success") and result.get("duckdb_success") is False)
+            return ActivationResult(
+                finding_id=str(finding_id),
+                lmdb_success=bool(result.get("lmdb_success")),
+                duckdb_success=result.get("duckdb_success"),
+                lmdb_key=f"finding:{finding_id}",
+                desync=desync,
+                error=None,
+                accepted=True,
+            )
         except Exception as e:
-            return ActivationResult(finding_id=str(finding_id), lmdb_success=False, duckdb_success=None, lmdb_key=f'finding:{finding_id}', desync=False, error=str(e), accepted=False)
+            return ActivationResult(
+                finding_id=str(finding_id),
+                lmdb_success=False,
+                duckdb_success=None,
+                lmdb_key=f"finding:{finding_id}",
+                desync=False,
+                error=str(e),
+                accepted=False,
+            )
 
     async def async_record_activation_batch(self, findings: list[dict[str, Any]]) -> list[ActivationResult]:
         """
@@ -4079,32 +4963,71 @@ class DuckDBShadowStore:
             list[ActivationResult] - one per finding
         """
         if not self._initialized or self._closed:
-            return [ActivationResult(finding_id=str(f.get('id', '')), lmdb_success=False, duckdb_success=None, lmdb_key=f"finding:{f.get('id', '')}", desync=False, error='store closed or not initialized') for f in findings]
+            return [
+                ActivationResult(
+                    finding_id=str(f.get("id", "")),
+                    lmdb_success=False,
+                    duckdb_success=None,
+                    lmdb_key=f"finding:{f.get('id', '')}",
+                    desync=False,
+                    error="store closed or not initialized",
+                )
+                for f in findings
+            ]
         if not self._startup_ready.is_set():
             try:
                 async with asyncio.timeout(30.0):
                     await self._startup_ready.wait()
             except TimeoutError:
-                return [ActivationResult(finding_id=str(f.get('id', '')), lmdb_success=False, duckdb_success=None, lmdb_key=f"finding:{f.get('id', '')}", desync=False, error='startup replay timeout') for f in findings]
+                return [
+                    ActivationResult(
+                        finding_id=str(f.get("id", "")),
+                        lmdb_success=False,
+                        duckdb_success=None,
+                        lmdb_key=f"finding:{f.get('id', '')}",
+                        desync=False,
+                        error="startup replay timeout",
+                    )
+                    for f in findings
+                ]
         loop = asyncio.get_running_loop()
         try:
             result = await loop.run_in_executor(self._executor, self._activation_record_findings_batch, findings)
-            lmdb_ok = result.get('lmdb_success', False)
-            duckdb_ok = result.get('duckdb_success', False)
-            failed_ids = set(result.get('failed_ids', []))
-            [f.get('id') for f in findings if f.get('id')]
+            lmdb_ok = result.get("lmdb_success", False)
+            duckdb_ok = result.get("duckdb_success", False)
+            failed_ids = set(result.get("failed_ids", []))
+            [f.get("id") for f in findings if f.get("id")]
             results: list[ActivationResult] = []
             for f in findings:
-                fid = f.get('id', '')
+                fid = f.get("id", "")
                 lmdb_success = lmdb_ok and fid not in failed_ids
                 duckdb_success = None
                 if lmdb_ok:
                     duckdb_success = duckdb_ok and fid not in failed_ids
                 desync = bool(lmdb_ok and duckdb_success is False)
-                results.append(ActivationResult(finding_id=str(fid), lmdb_success=lmdb_success, duckdb_success=duckdb_success, lmdb_key=f'finding:{fid}', desync=desync, error=None))
+                results.append(
+                    ActivationResult(
+                        finding_id=str(fid),
+                        lmdb_success=lmdb_success,
+                        duckdb_success=duckdb_success,
+                        lmdb_key=f"finding:{fid}",
+                        desync=desync,
+                        error=None,
+                    )
+                )
             return results
         except Exception as e:
-            return [ActivationResult(finding_id=str(f.get('id', '')), lmdb_success=False, duckdb_success=None, lmdb_key=f"finding:{f.get('id', '')}", desync=False, error=str(e)) for f in findings]
+            return [
+                ActivationResult(
+                    finding_id=str(f.get("id", "")),
+                    lmdb_success=False,
+                    duckdb_success=None,
+                    lmdb_key=f"finding:{f.get('id', '')}",
+                    desync=False,
+                    error=str(e),
+                )
+                for f in findings
+            ]
 
     async def async_record_canonical_finding(self, finding: CanonicalFinding) -> ActivationResult:
         """
@@ -4130,27 +5053,63 @@ class DuckDBShadowStore:
         """
         if canonical_source_type is not None and finding.source_type:
             try:
-                _raw = finding.source_type.value if isinstance(finding.source_type, SourceType) else str(finding.source_type)
+                _raw = (
+                    finding.source_type.value
+                    if isinstance(finding.source_type, SourceType)
+                    else str(finding.source_type)
+                )
                 if SourceType is not None and _raw not in SourceType._value2member_map_:
                     finding.source_type = canonical_source_type(_raw)
             except Exception:
                 pass
         if not self._initialized or self._closed:
-            return ActivationResult(finding_id=finding.finding_id, lmdb_success=False, duckdb_success=None, lmdb_key=f'finding:{finding.finding_id}', desync=False, error='store closed or not initialized', accepted=False)
+            return ActivationResult(
+                finding_id=finding.finding_id,
+                lmdb_success=False,
+                duckdb_success=None,
+                lmdb_key=f"finding:{finding.finding_id}",
+                desync=False,
+                error="store closed or not initialized",
+                accepted=False,
+            )
         if not self._startup_ready.is_set():
             try:
                 async with asyncio.timeout(30.0):
                     await self._startup_ready.wait()
             except TimeoutError:
-                return ActivationResult(finding_id=finding.finding_id, lmdb_success=False, duckdb_success=None, lmdb_key=f'finding:{finding.finding_id}', desync=False, error='startup replay timeout', accepted=False)
+                return ActivationResult(
+                    finding_id=finding.finding_id,
+                    lmdb_success=False,
+                    duckdb_success=None,
+                    lmdb_key=f"finding:{finding.finding_id}",
+                    desync=False,
+                    error="startup replay timeout",
+                    accepted=False,
+                )
         loop = asyncio.get_running_loop()
         try:
             result = await loop.run_in_executor(self._executor, self._canonical_finding_to_activation_result, finding)
-            desync = bool(result.get('lmdb_success') and result.get('duckdb_success') is False)
-            lmdb_ok = bool(result.get('lmdb_success'))
-            return ActivationResult(finding_id=str(finding.finding_id), lmdb_success=lmdb_ok, duckdb_success=result.get('duckdb_success'), lmdb_key=f'finding:{finding.finding_id}', desync=desync, error=result.get('error'), accepted=lmdb_ok)
+            desync = bool(result.get("lmdb_success") and result.get("duckdb_success") is False)
+            lmdb_ok = bool(result.get("lmdb_success"))
+            return ActivationResult(
+                finding_id=str(finding.finding_id),
+                lmdb_success=lmdb_ok,
+                duckdb_success=result.get("duckdb_success"),
+                lmdb_key=f"finding:{finding.finding_id}",
+                desync=desync,
+                error=result.get("error"),
+                accepted=lmdb_ok,
+            )
         except Exception as e:
-            return ActivationResult(finding_id=str(finding.finding_id), lmdb_success=False, duckdb_success=None, lmdb_key=f'finding:{finding.finding_id}', desync=False, error=str(e), accepted=False)
+            return ActivationResult(
+                finding_id=str(finding.finding_id),
+                lmdb_success=False,
+                duckdb_success=None,
+                lmdb_key=f"finding:{finding.finding_id}",
+                desync=False,
+                error=str(e),
+                accepted=False,
+            )
 
     def _canonical_finding_to_activation_result(self, finding: CanonicalFinding) -> dict:
         """
@@ -4169,42 +5128,64 @@ class DuckDBShadowStore:
         DuckDB insert uses tuple row (efficient, not dict list).
         """
         import logging as _logging
+
         _logger = _logging.getLogger(__name__)
-        result = {'lmdb_success': False, 'duckdb_success': None, 'error': None}
+        result = {"lmdb_success": False, "duckdb_success": None, "error": None}
         try:
-            if not hasattr(self, '_wal_manager') or self._wal_manager is None:
+            if not hasattr(self, "_wal_manager") or self._wal_manager is None:
                 _wal_root = self._db_path.parent if self._db_path else None
                 if _wal_root is None:
-                    result['error'] = 'no wal root'
+                    result["error"] = "no wal root"
                     return result
-                self._wal_manager = WALManager(wal_path=str(_wal_root / 'shadow_wal.lmdb'))
+                self._wal_manager = WALManager(wal_path=str(_wal_root / "shadow_wal.lmdb"))
                 self._wal_manager.initialize()
-            key = f'finding:{finding.finding_id}'
-            wal_payload = {'id': finding.finding_id, 'query': finding.query, 'source_type': finding.source_type, 'confidence': finding.confidence, 'ts': finding.ts, 'provenance': finding.provenance, 'payload_text': finding.payload_text}
+            key = f"finding:{finding.finding_id}"
+            wal_payload = {
+                "id": finding.finding_id,
+                "query": finding.query,
+                "source_type": finding.source_type,
+                "confidence": finding.confidence,
+                "ts": finding.ts,
+                "provenance": finding.provenance,
+                "payload_text": finding.payload_text,
+            }
             lmdb_ok = self._wal_manager.wal_put(key, wal_payload)
-            result['lmdb_success'] = lmdb_ok
+            result["lmdb_success"] = lmdb_ok
             if not lmdb_ok:
-                _logger.warning(f'[Sprint 8P] WAL failed for {finding.finding_id}')
+                _logger.warning(f"[Sprint 8P] WAL failed for {finding.finding_id}")
                 return result
         except Exception as e:
-            result['error'] = str(e)
-            _logger.error(f'[Sprint 8P] WAL exception for {finding.finding_id}: {e}')
+            result["error"] = str(e)
+            _logger.error(f"[Sprint 8P] WAL exception for {finding.finding_id}: {e}")
             return result
         try:
             provenance_json = _msgspec_encode(finding.provenance).decode()
-            duckdb_ok = self._sync_insert_finding(finding.finding_id, finding.query, finding.source_type, finding.confidence, ts=finding.ts, provenance_json=provenance_json)
-            result['duckdb_success'] = duckdb_ok
+            duckdb_ok = self._sync_insert_finding(
+                finding.finding_id,
+                finding.query,
+                finding.source_type,
+                finding.confidence,
+                ts=finding.ts,
+                provenance_json=provenance_json,
+            )
+            result["duckdb_success"] = duckdb_ok
             if not duckdb_ok:
-                _logger.error(f'[Sprint 8P] DuckDB failed for {finding.finding_id}, LMDB preserved')
-                self._wal_manager.wal_write_pending_sync_marker(finding.finding_id, finding.query, finding.source_type, finding.confidence)
+                _logger.error(f"[Sprint 8P] DuckDB failed for {finding.finding_id}, LMDB preserved")
+                self._wal_manager.wal_write_pending_sync_marker(
+                    finding.finding_id, finding.query, finding.source_type, finding.confidence
+                )
         except Exception as e:
-            result['duckdb_success'] = False
-            result['error'] = str(e)
-            _logger.error(f'[Sprint 8P] DuckDB exception for {finding.finding_id}: {e}, LMDB preserved')
-            self._wal_manager.wal_write_pending_sync_marker(finding.finding_id, finding.query, finding.source_type, finding.confidence)
+            result["duckdb_success"] = False
+            result["error"] = str(e)
+            _logger.error(f"[Sprint 8P] DuckDB exception for {finding.finding_id}: {e}, LMDB preserved")
+            self._wal_manager.wal_write_pending_sync_marker(
+                finding.finding_id, finding.query, finding.source_type, finding.confidence
+            )
         return result
 
-    async def _record_fail_open_batch(self, findings: list[CanonicalFinding], results: list, indices: list[int]) -> list[dict]:
+    async def _record_fail_open_batch(
+        self, findings: list[CanonicalFinding], results: list, indices: list[int]
+    ) -> list[dict]:
         """
         Sprint D7: Batch fail-open path - process N findings whose quality gate threw.
 
@@ -4217,6 +5198,7 @@ class DuckDBShadowStore:
         out-of-order WAL entries when concurrent batches race (Semaphore > workers race).
         """
         import logging as _logging
+
         _logger = _logging.getLogger(__name__)
         if not findings:
             return []
@@ -4224,50 +5206,60 @@ class DuckDBShadowStore:
         async with self._write_semaphore:
             lmdb_ok = False
             try:
-                if not hasattr(self, '_wal_manager') or self._wal_manager is None:
+                if not hasattr(self, "_wal_manager") or self._wal_manager is None:
                     _wal_root = self._db_path.parent if self._db_path else None
                     if _wal_root is None:
                         for f in findings:
-                            ret.append({'lmdb_success': False, 'duckdb_success': None, 'error': 'no wal root'})
+                            ret.append({"lmdb_success": False, "duckdb_success": None, "error": "no wal root"})
                         return ret
-                    self._wal_manager = WALManager(wal_path=str(_wal_root / 'shadow_wal.lmdb'))
+                    self._wal_manager = WALManager(wal_path=str(_wal_root / "shadow_wal.lmdb"))
                     self._wal_manager.initialize()
                 items = []
                 for f in findings:
-                    key = f'finding:{f.finding_id}'
-                    wal_payload = {'id': f.finding_id, 'query': f.query, 'source_type': f.source_type, 'confidence': f.confidence, 'ts': f.ts, 'provenance': f.provenance, 'payload_text': f.payload_text}
+                    key = f"finding:{f.finding_id}"
+                    wal_payload = {
+                        "id": f.finding_id,
+                        "query": f.query,
+                        "source_type": f.source_type,
+                        "confidence": f.confidence,
+                        "ts": f.ts,
+                        "provenance": f.provenance,
+                        "payload_text": f.payload_text,
+                    }
                     items.append((key, wal_payload))
                 if items:
-                    lmdb_ok = self._wal_manager.wal_put_many(items) if hasattr(self._wal_manager, 'wal_put_many') else False
+                    lmdb_ok = (
+                        self._wal_manager.wal_put_many(items) if hasattr(self._wal_manager, "wal_put_many") else False
+                    )
                     if not lmdb_ok:
-                        _logger.warning(f'[D7] Batch WAL failed for {len(items)} items')
+                        _logger.warning(f"[D7] Batch WAL failed for {len(items)} items")
                         for f in findings:
-                            ret.append({'lmdb_success': False, 'duckdb_success': None, 'error': 'lmdb batch failed'})
+                            ret.append({"lmdb_success": False, "duckdb_success": None, "error": "lmdb batch failed"})
                         return ret
             except Exception as e:
-                _logger.error(f'[D7] Batch WAL exception: {e}')
+                _logger.error(f"[D7] Batch WAL exception: {e}")
                 for f in findings:
-                    ret.append({'lmdb_success': False, 'duckdb_success': None, 'error': str(e)})
+                    ret.append({"lmdb_success": False, "duckdb_success": None, "error": str(e)})
                 return ret
             duckdb_all_ok = False
             try:
                 duckdb_count, duckdb_err = self._sync_record_canonical_findings_batch_arrow(findings)
                 if duckdb_err is not None:
-                    _logger.error(f'[D7-arrow] DuckDB Arrow failed: {duckdb_err}')
+                    _logger.error(f"[D7-arrow] DuckDB Arrow failed: {duckdb_err}")
                     duckdb_all_ok = False
                 elif duckdb_count < len(findings):
                     duckdb_all_ok = True
                 else:
                     duckdb_all_ok = True
             except Exception as e:
-                _logger.error(f'[D7] Batch DuckDB exception: {e}, LMDB preserved')
+                _logger.error(f"[D7] Batch DuckDB exception: {e}, LMDB preserved")
                 duckdb_all_ok = False
             accepted_total = 0
             for f in findings:
                 lmdb_success = lmdb_ok
                 if lmdb_success:
                     accepted_total += 1
-                ret.append({'lmdb_success': lmdb_success, 'duckdb_success': duckdb_all_ok, 'error': None})
+                ret.append({"lmdb_success": lmdb_success, "duckdb_success": duckdb_all_ok, "error": None})
             if accepted_total:
                 self._quality_state._accepted_count += accepted_total
         return ret
@@ -4286,28 +5278,80 @@ class DuckDBShadowStore:
         if not findings:
             return []
         if not self._initialized or self._closed:
-            return [ActivationResult(finding_id=str(f.finding_id), lmdb_success=False, duckdb_success=None, lmdb_key=f'finding:{f.finding_id}', desync=False, error='store closed or not initialized', accepted=False) for f in findings]
+            return [
+                ActivationResult(
+                    finding_id=str(f.finding_id),
+                    lmdb_success=False,
+                    duckdb_success=None,
+                    lmdb_key=f"finding:{f.finding_id}",
+                    desync=False,
+                    error="store closed or not initialized",
+                    accepted=False,
+                )
+                for f in findings
+            ]
         if not self._startup_ready.is_set():
             try:
                 async with asyncio.timeout(30.0):
                     await self._startup_ready.wait()
             except TimeoutError:
-                return [ActivationResult(finding_id=str(f.finding_id), lmdb_success=False, duckdb_success=None, lmdb_key=f'finding:{f.finding_id}', desync=False, error='startup replay timeout', accepted=False) for f in findings]
+                return [
+                    ActivationResult(
+                        finding_id=str(f.finding_id),
+                        lmdb_success=False,
+                        duckdb_success=None,
+                        lmdb_key=f"finding:{f.finding_id}",
+                        desync=False,
+                        error="startup replay timeout",
+                        accepted=False,
+                    )
+                    for f in findings
+                ]
         async with self._write_semaphore:
             try:
                 loop = asyncio.get_running_loop()
-                results = await loop.run_in_executor(self._executor, self._sync_record_canonical_findings_batch_arrow_standalone, findings)
-                if results and any((r.get('lmdb_success') for r in results)) and self.truth_write_graph_supports_buffered_writes():
+                results = await loop.run_in_executor(
+                    self._executor, self._sync_record_canonical_findings_batch_arrow_standalone, findings
+                )
+                if (
+                    results
+                    and any((r.get("lmdb_success") for r in results))
+                    and self.truth_write_graph_supports_buffered_writes()
+                ):
                     await self._graph_ingest_findings(findings)
-                if results and any((r.get('lmdb_success') for r in results)):
+                if results and any((r.get("lmdb_success") for r in results)):
                     self._semantic_buffer_findings(findings)
-                accepted_total = sum((1 for r in results if r.get('lmdb_success')))
+                accepted_total = sum((1 for r in results if r.get("lmdb_success")))
                 self._quality_state._accepted_count += accepted_total
-                return [ActivationResult(finding_id=str(r.get('finding_id', '')), lmdb_success=bool(r.get('lmdb_success')), duckdb_success=r.get('duckdb_success'), lmdb_key=f"finding:{r.get('finding_id', '')}", desync=bool(r.get('lmdb_success') and r.get('duckdb_success') is False), error=r.get('error'), accepted=bool(r.get('lmdb_success'))) for r in results]
+                return [
+                    ActivationResult(
+                        finding_id=str(r.get("finding_id", "")),
+                        lmdb_success=bool(r.get("lmdb_success")),
+                        duckdb_success=r.get("duckdb_success"),
+                        lmdb_key=f"finding:{r.get('finding_id', '')}",
+                        desync=bool(r.get("lmdb_success") and r.get("duckdb_success") is False),
+                        error=r.get("error"),
+                        accepted=bool(r.get("lmdb_success")),
+                    )
+                    for r in results
+                ]
             except Exception as e:
-                return [ActivationResult(finding_id=str(f.founding_id), lmdb_success=False, duckdb_success=None, lmdb_key=f'finding:{f.finding_id}', desync=False, error=str(e), accepted=False) for f in findings]
+                return [
+                    ActivationResult(
+                        finding_id=str(f.founding_id),
+                        lmdb_success=False,
+                        duckdb_success=None,
+                        lmdb_key=f"finding:{f.finding_id}",
+                        desync=False,
+                        error=str(e),
+                        accepted=False,
+                    )
+                    for f in findings
+                ]
 
-    async def async_record_canonical_findings_batch_arrow(self, findings: list[CanonicalFinding]) -> list[ActivationResult]:
+    async def async_record_canonical_findings_batch_arrow(
+        self, findings: list[CanonicalFinding]
+    ) -> list[ActivationResult]:
         """
         Sprint P0-4: Arrow zero-copy batch ingest for CanonicalFinding DTO list.
 
@@ -4338,16 +5382,18 @@ class DuckDBShadowStore:
         if not findings:
             return []
         if not _ARROW_INGEST_ENABLED:
-            self._arrow_metrics['arrow_fallback_env'] += len(findings)
-            logger.debug(f'[D7-arrow-fallback] HLEDAC_ARROW_INGEST=0, using legacy path for {len(findings)} findings')
+            self._arrow_metrics["arrow_fallback_env"] += len(findings)
+            logger.debug(f"[D7-arrow-fallback] HLEDAC_ARROW_INGEST=0, using legacy path for {len(findings)} findings")
             return await self.async_record_canonical_findings_batch(findings)
         if len(findings) < _ARROW_MIN_BATCH:
-            self._arrow_metrics['arrow_fallback_batch'] += len(findings)
-            logger.debug(f'[D7-arrow-fallback] batch size {len(findings)} < _ARROW_MIN_BATCH({_ARROW_MIN_BATCH}), using legacy path')
+            self._arrow_metrics["arrow_fallback_batch"] += len(findings)
+            logger.debug(
+                f"[D7-arrow-fallback] batch size {len(findings)} < _ARROW_MIN_BATCH({_ARROW_MIN_BATCH}), using legacy path"
+            )
             return await self.async_record_canonical_findings_batch(findings)
         if not _check_pyarrow_available():
-            self._arrow_metrics['arrow_fallback_pyarrow'] += len(findings)
-            logger.debug(f'[D7-arrow-fallback] pyarrow not available, using legacy path for {len(findings)} findings')
+            self._arrow_metrics["arrow_fallback_pyarrow"] += len(findings)
+            logger.debug(f"[D7-arrow-fallback] pyarrow not available, using legacy path for {len(findings)} findings")
             return await self.async_record_canonical_findings_batch(findings)
         if not self._initialized or self._closed:
             return await self.async_record_canonical_findings_batch(findings)
@@ -4356,7 +5402,7 @@ class DuckDBShadowStore:
                 async with asyncio.timeout(30.0):
                     await self._startup_ready.wait()
             except TimeoutError:
-                self._arrow_metrics['arrow_fallback_init'] += len(findings)
+                self._arrow_metrics["arrow_fallback_init"] += len(findings)
                 return await self.async_record_canonical_findings_batch(findings)
         loop = asyncio.get_running_loop()
         async with self._write_semaphore:
@@ -4364,68 +5410,100 @@ class DuckDBShadowStore:
             duckdb_future = loop.run_in_executor(self._duckdb_arrow_executor, self._duckdb_arrow_sync, findings)
             wal_ok: bool
             duckdb_result: tuple[int, str | None] | Exception
-            gather_results: tuple[object, ...] = await safe_gather_return_exceptions(wal_future, duckdb_future, label='duckdb_store:wal_duckdb')
+            gather_results: tuple[object, ...] = await safe_gather_return_exceptions(
+                wal_future, duckdb_future, label="duckdb_store:wal_duckdb"
+            )
             wal_ok_or_exc, duckdb_result = (gather_results[0], gather_results[1])
         if isinstance(wal_ok_or_exc, Exception):
-            self._arrow_metrics['arrow_fallback_executor'] += len(findings)
-            logger.warning(f'[D7-arrow-fallback] WAL executor error ({wal_ok_or_exc}), using legacy path for {len(findings)} findings')
+            self._arrow_metrics["arrow_fallback_executor"] += len(findings)
+            logger.warning(
+                f"[D7-arrow-fallback] WAL executor error ({wal_ok_or_exc}), using legacy path for {len(findings)} findings"
+            )
             return await self.async_record_canonical_findings_batch(findings)
         if isinstance(duckdb_result, Exception):
-            self._arrow_metrics['arrow_fallback_executor'] += len(findings)
-            logger.warning(f'[D7-arrow-fallback] DuckDB executor error ({duckdb_result}), using legacy path for {len(findings)} findings')
+            self._arrow_metrics["arrow_fallback_executor"] += len(findings)
+            logger.warning(
+                f"[D7-arrow-fallback] DuckDB executor error ({duckdb_result}), using legacy path for {len(findings)} findings"
+            )
             return await self.async_record_canonical_findings_batch(findings)
         wal_ok = wal_ok_or_exc
         if not wal_ok:
-            self._arrow_metrics['arrow_fallback_empty'] += len(findings)
-            _logger.error('[D7] Arrow WAL phase failed for %d findings - falling back to legacy executemany.', len(findings))
+            self._arrow_metrics["arrow_fallback_empty"] += len(findings)
+            _logger.error(
+                "[D7] Arrow WAL phase failed for %d findings - falling back to legacy executemany.", len(findings)
+            )
             return await self.async_record_canonical_findings_batch(findings)
-        logger.debug(f'[D7-arrow] WAL ok (concurrent), DuckDB result={duckdb_result!r} batch={len(findings)}')
+        logger.debug(f"[D7-arrow] WAL ok (concurrent), DuckDB result={duckdb_result!r} batch={len(findings)}")
         if isinstance(duckdb_result, Exception):
-            self._arrow_metrics['arrow_fallback_executor'] += len(findings)
-            logger.warning(f'[D7-arrow-fallback] DuckDB executor exception ({duckdb_result}), using legacy path for {len(findings)} findings')
+            self._arrow_metrics["arrow_fallback_executor"] += len(findings)
+            logger.warning(
+                f"[D7-arrow-fallback] DuckDB executor exception ({duckdb_result}), using legacy path for {len(findings)} findings"
+            )
             return await self.async_record_canonical_findings_batch(findings)
         duckdb_count, duckdb_err = duckdb_result
         if duckdb_err is not None:
-            _logger.error(f'[D7] DuckDB Arrow bulk failed: {duckdb_err}')
+            _logger.error(f"[D7] DuckDB Arrow bulk failed: {duckdb_err}")
             duckdb_all_ok = False
         elif duckdb_count < len(findings):
-            self._arrow_metrics['arrow_partial_duplicates'] += 1
-            _logger.debug(f'[D7-arrow] Duplicate suppression: {duckdb_count}/{len(findings)} inserted (rest were deduplicated by ON CONFLICT)')
+            self._arrow_metrics["arrow_partial_duplicates"] += 1
+            _logger.debug(
+                f"[D7-arrow] Duplicate suppression: {duckdb_count}/{len(findings)} inserted (rest were deduplicated by ON CONFLICT)"
+            )
             duckdb_all_ok = True
         else:
             duckdb_all_ok = True
-        results = [{'finding_id': f.finding_id, 'lmdb_success': wal_ok, 'duckdb_success': duckdb_all_ok, 'error': duckdb_err} for f in findings]
+        results = [
+            {"finding_id": f.finding_id, "lmdb_success": wal_ok, "duckdb_success": duckdb_all_ok, "error": duckdb_err}
+            for f in findings
+        ]
         if not results:
-            self._arrow_metrics['arrow_fallback_empty'] += len(findings)
-            _logger.error('[D7] Arrow path returned 0 results for %d findings - falling back to legacy executemany. Enable HLEDAC_ARROW_INGEST=0 to use legacy path only.', len(findings))
+            self._arrow_metrics["arrow_fallback_empty"] += len(findings)
+            _logger.error(
+                "[D7] Arrow path returned 0 results for %d findings - falling back to legacy executemany. Enable HLEDAC_ARROW_INGEST=0 to use legacy path only.",
+                len(findings),
+            )
             return await self.async_record_canonical_findings_batch(findings)
-        if results and all((r.get('duckdb_success') is False for r in results)):
-            self._arrow_metrics['arrow_fallback_all_fail'] += len(results)
-            errors_in_results = [r.get('error') for r in results if r.get('error')]
-            if errors_in_results and errors_in_results[0] == 'duckdb_error':
-                self._arrow_metrics['arrow_error_duckdb_insert'] += len(results)
-            elif errors_in_results and errors_in_results[0] == 'table_build':
-                self._arrow_metrics['arrow_error_table_build'] += len(results)
+        if results and all((r.get("duckdb_success") is False for r in results)):
+            self._arrow_metrics["arrow_fallback_all_fail"] += len(results)
+            errors_in_results = [r.get("error") for r in results if r.get("error")]
+            if errors_in_results and errors_in_results[0] == "duckdb_error":
+                self._arrow_metrics["arrow_error_duckdb_insert"] += len(results)
+            elif errors_in_results and errors_in_results[0] == "table_build":
+                self._arrow_metrics["arrow_error_table_build"] += len(results)
             else:
-                self._arrow_metrics['arrow_error_partial'] += len(results)
-            logger.error('[D7] Arrow path: all %d findings failed DuckDB write - falling back to legacy executemany.', len(results))
+                self._arrow_metrics["arrow_error_partial"] += len(results)
+            logger.error(
+                "[D7] Arrow path: all %d findings failed DuckDB write - falling back to legacy executemany.",
+                len(results),
+            )
             return await self.async_record_canonical_findings_batch(findings)
-        if results and any((r.get('lmdb_success') for r in results)):
+        if results and any((r.get("lmdb_success") for r in results)):
             if self.truth_write_graph_supports_buffered_writes():
                 await self._graph_ingest_findings(findings)
             self._semantic_buffer_findings(findings)
-        accepted_total = sum((1 for r in results if r.get('lmdb_success')))
+        accepted_total = sum((1 for r in results if r.get("lmdb_success")))
         self._quality_state._accepted_count += accepted_total
-        self._arrow_metrics['arrow_selected'] += len(findings)
-        self._arrow_metrics['arrow_success_count'] += len(findings)
-        lmdb_ok = sum((1 for r in results if r.get('lmdb_success')))
-        duckdb_ok = sum((1 for r in results if r.get('duckdb_success')))
-        self._arrow_metrics['arrow_success_lmdb_count'] += lmdb_ok
-        self._arrow_metrics['arrow_success_duckdb_count'] += duckdb_ok
-        logger.info(f'[D7-arrow] path=arrow batch={len(findings)} lmdb_ok={lmdb_ok} duckdb_ok={duckdb_ok}')
-        return [ActivationResult(finding_id=str(r.get('finding_id', '')), lmdb_success=bool(r.get('lmdb_success')), duckdb_success=r.get('duckdb_success'), lmdb_key=f"finding:{r.get('finding_id', '')}", desync=bool(r.get('lmdb_success') and r.get('duckdb_success') is False), error=r.get('error'), accepted=bool(r.get('lmdb_success'))) for r in results]
+        self._arrow_metrics["arrow_selected"] += len(findings)
+        self._arrow_metrics["arrow_success_count"] += len(findings)
+        lmdb_ok = sum((1 for r in results if r.get("lmdb_success")))
+        duckdb_ok = sum((1 for r in results if r.get("duckdb_success")))
+        self._arrow_metrics["arrow_success_lmdb_count"] += lmdb_ok
+        self._arrow_metrics["arrow_success_duckdb_count"] += duckdb_ok
+        logger.info(f"[D7-arrow] path=arrow batch={len(findings)} lmdb_ok={lmdb_ok} duckdb_ok={duckdb_ok}")
+        return [
+            ActivationResult(
+                finding_id=str(r.get("finding_id", "")),
+                lmdb_success=bool(r.get("lmdb_success")),
+                duckdb_success=r.get("duckdb_success"),
+                lmdb_key=f"finding:{r.get('finding_id', '')}",
+                desync=bool(r.get("lmdb_success") and r.get("duckdb_success") is False),
+                error=r.get("error"),
+                accepted=bool(r.get("lmdb_success")),
+            )
+            for r in results
+        ]
 
-    async def async_get_recent_findings(self, limit: int=10) -> list[CanonicalFinding]:
+    async def async_get_recent_findings(self, limit: int = 10) -> list[CanonicalFinding]:
         """
         Sprint F800A: Controller-facing async adapter for recent findings.
 
@@ -4453,7 +5531,7 @@ class DuckDBShadowStore:
         for row in rows:
             try:
                 provenance: tuple[str, ...] = ()
-                raw_prov = row.get('provenance_json') or row.get('provenance')
+                raw_prov = row.get("provenance_json") or row.get("provenance")
                 if raw_prov:
                     if isinstance(raw_prov, str):
                         try:
@@ -4464,7 +5542,15 @@ class DuckDBShadowStore:
                             provenance = ()
                     elif isinstance(raw_prov, list):
                         provenance = tuple((str(v) for v in raw_prov))
-                finding = CanonicalFinding(finding_id=str(row.get('id', row.get('finding_id', ''))), query=str(row.get('query', '')), source_type=str(row.get('source_type', '')), confidence=float(row.get('confidence', 0.0)), ts=float(row.get('ts', 0.0)), provenance=provenance, payload_text=row.get('payload_text'))
+                finding = CanonicalFinding(
+                    finding_id=str(row.get("id", row.get("finding_id", ""))),
+                    query=str(row.get("query", "")),
+                    source_type=str(row.get("source_type", "")),
+                    confidence=float(row.get("confidence", 0.0)),
+                    ts=float(row.get("ts", 0.0)),
+                    provenance=provenance,
+                    payload_text=row.get("payload_text"),
+                )
                 findings.append(finding)
             except Exception:
                 continue
@@ -4543,24 +5629,63 @@ class DuckDBShadowStore:
                 conn = self._file_conn if self._db_path else self._persistent_conn
                 if conn is None:
                     return None
-                result = conn.execute('SELECT * FROM target_memory WHERE target_id = ?', [target_id]).fetchone()
+                result = conn.execute("SELECT * FROM target_memory WHERE target_id = ?", [target_id]).fetchone()
                 if result is None:
                     return None
-                return TargetMemory(target_id=result[0], first_seen_ts=result[1], last_seen_ts=result[2], sprint_count=result[3], cumulative_finding_count=result[4], entity_facets=_json_loads_flexible(result[5]), exposure_facets=_json_loads_flexible(result[6]), pivot_facets=_json_loads_flexible(result[7]), confidence_drift=_json_loads_flexible(result[8]), updated_by_sprint_id=result[9])
+                return TargetMemory(
+                    target_id=result[0],
+                    first_seen_ts=result[1],
+                    last_seen_ts=result[2],
+                    sprint_count=result[3],
+                    cumulative_finding_count=result[4],
+                    entity_facets=_json_loads_flexible(result[5]),
+                    exposure_facets=_json_loads_flexible(result[6]),
+                    pivot_facets=_json_loads_flexible(result[7]),
+                    confidence_drift=_json_loads_flexible(result[8]),
+                    updated_by_sprint_id=result[9],
+                )
+
             return await loop.run_in_executor(self._executor, _sync_get)
         except asyncio.CancelledError:
             raise
         except Exception:
             return None
 
-    async def async_record_research_session(self, session_id: str, sprint_id: str, query: str, ts: float, findings_count: int, accepted_count: int, gaps_json: str, entities_json: str, source_patterns_json: str, unexplored_angles_json: str, temporal_anomalies_json: str) -> bool:
+    async def async_record_research_session(
+        self,
+        session_id: str,
+        sprint_id: str,
+        query: str,
+        ts: float,
+        findings_count: int,
+        accepted_count: int,
+        gaps_json: str,
+        entities_json: str,
+        source_patterns_json: str,
+        unexplored_angles_json: str,
+        temporal_anomalies_json: str,
+    ) -> bool:
         """Sprint F350M: Record research session outcome."""
         if not self._initialized or self._closed:
             return False
         self.ensure_connected()
         loop = asyncio.get_running_loop()
         try:
-            return await loop.run_in_executor(self._executor, self._sync_record_research_session, session_id, sprint_id, query, ts, findings_count, accepted_count, gaps_json, entities_json, source_patterns_json, unexplored_angles_json, temporal_anomalies_json)
+            return await loop.run_in_executor(
+                self._executor,
+                self._sync_record_research_session,
+                session_id,
+                sprint_id,
+                query,
+                ts,
+                findings_count,
+                accepted_count,
+                gaps_json,
+                entities_json,
+                source_patterns_json,
+                unexplored_angles_json,
+                temporal_anomalies_json,
+            )
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -4592,20 +5717,22 @@ class DuckDBShadowStore:
         except Exception:
             return []
 
-    async def async_get_entity_observations_by_entity(self, entity_value: str, limit: int=50) -> list[dict[str, Any]]:
+    async def async_get_entity_observations_by_entity(self, entity_value: str, limit: int = 50) -> list[dict[str, Any]]:
         """Sprint F350M: Get entity observations by entity value."""
         if not self._initialized or self._closed:
             return []
         self.ensure_connected()
         loop = asyncio.get_running_loop()
         try:
-            return await loop.run_in_executor(self._executor, self._sync_get_entity_observations_by_entity, entity_value, limit)
+            return await loop.run_in_executor(
+                self._executor, self._sync_get_entity_observations_by_entity, entity_value, limit
+            )
         except asyncio.CancelledError:
             raise
         except Exception:
             return []
 
-    async def async_get_recent_research_sessions(self, limit: int=10) -> list[dict[str, Any]]:
+    async def async_get_recent_research_sessions(self, limit: int = 10) -> list[dict[str, Any]]:
         """Sprint F350M: Get recent research sessions."""
         if not self._initialized or self._closed:
             return []
@@ -4618,7 +5745,9 @@ class DuckDBShadowStore:
         except Exception:
             return []
 
-    async def async_get_previous_findings_for_target(self, target_id: str, before_sprint_id: str | None=None, limit: int=1000) -> list[CanonicalFinding]:
+    async def async_get_previous_findings_for_target(
+        self, target_id: str, before_sprint_id: str | None = None, limit: int = 1000
+    ) -> list[CanonicalFinding]:
         """
         Sprint F202K: Get previous findings for a target, optionally before a specific sprint.
 
@@ -4639,14 +5768,16 @@ class DuckDBShadowStore:
         self.ensure_connected()
         loop = asyncio.get_running_loop()
         try:
-            rows: list[dict] = await loop.run_in_executor(self._executor, self._sync_get_previous_findings_for_target, target_id, before_sprint_id, limit)
+            rows: list[dict] = await loop.run_in_executor(
+                self._executor, self._sync_get_previous_findings_for_target, target_id, before_sprint_id, limit
+            )
         except Exception:
             return []
         findings: list[CanonicalFinding] = []
         for row in rows:
             try:
                 provenance: tuple[str, ...] = ()
-                raw_prov = row.get('provenance_json') or row.get('provenance')
+                raw_prov = row.get("provenance_json") or row.get("provenance")
                 if raw_prov:
                     if isinstance(raw_prov, str):
                         try:
@@ -4657,7 +5788,15 @@ class DuckDBShadowStore:
                             provenance = ()
                     elif isinstance(raw_prov, list):
                         provenance = tuple((str(v) for v in raw_prov))
-                finding = CanonicalFinding(finding_id=str(row.get('finding_id', row.get('id', ''))), query=str(row.get('query', '')), source_type=str(row.get('source_type', '')), confidence=float(row.get('confidence', 0.0)), ts=float(row.get('ts', 0.0)), provenance=provenance, payload_text=row.get('payload_text'))
+                finding = CanonicalFinding(
+                    finding_id=str(row.get("finding_id", row.get("id", ""))),
+                    query=str(row.get("query", "")),
+                    source_type=str(row.get("source_type", "")),
+                    confidence=float(row.get("confidence", 0.0)),
+                    ts=float(row.get("ts", 0.0)),
+                    provenance=provenance,
+                    payload_text=row.get("payload_text"),
+                )
                 findings.append(finding)
             except Exception:
                 continue
@@ -4687,7 +5826,7 @@ class DuckDBShadowStore:
         except Exception:
             return False
 
-    async def async_get_hypothesis_feedback(self, target_id: str | None=None, limit: int=1000) -> list[Any]:
+    async def async_get_hypothesis_feedback(self, target_id: str | None = None, limit: int = 1000) -> list[Any]:
         """
         Sprint F203G: Fetch aggregated hypothesis_feedback records.
 
@@ -4706,19 +5845,42 @@ class DuckDBShadowStore:
         self.ensure_connected()
         loop = asyncio.get_running_loop()
         try:
-            rows: list[dict] = await loop.run_in_executor(self._executor, self._sync_get_hypothesis_feedback, target_id, limit)
+            rows: list[dict] = await loop.run_in_executor(
+                self._executor, self._sync_get_hypothesis_feedback, target_id, limit
+            )
         except Exception:
             return []
         from hledac.universal.runtime.hypothesis_feedback import HypothesisFeedbackRecord
+
         records: list[Any] = []
         for row in rows:
             try:
-                records.append(HypothesisFeedbackRecord(id=str(row['id']), target_id=str(row['target_id']), pivot_type=str(row['pivot_type']), ioc_type=str(row['ioc_type']), produced_count=int(row['produced_count'] or 0), accepted_count=int(row['accepted_count'] or 0), signal_value=float(row['signal_value'] or 0.0), ts=float(row['ts'] or 0.0)))
+                records.append(
+                    HypothesisFeedbackRecord(
+                        id=str(row["id"]),
+                        target_id=str(row["target_id"]),
+                        pivot_type=str(row["pivot_type"]),
+                        ioc_type=str(row["ioc_type"]),
+                        produced_count=int(row["produced_count"] or 0),
+                        accepted_count=int(row["accepted_count"] or 0),
+                        signal_value=float(row["signal_value"] or 0.0),
+                        ts=float(row["ts"] or 0.0),
+                    )
+                )
             except Exception:
                 continue
         return records
 
-    async def async_record_hypothesis_tracking(self, hypothesis_id: str, sprint_id: str, hypothesis_text: str, status: str, confidence: float, falsification_result: str | None=None, disproved_by_sprint_id: str | None=None) -> bool:
+    async def async_record_hypothesis_tracking(
+        self,
+        hypothesis_id: str,
+        sprint_id: str,
+        hypothesis_text: str,
+        status: str,
+        confidence: float,
+        falsification_result: str | None = None,
+        disproved_by_sprint_id: str | None = None,
+    ) -> bool:
         """
         F214: Persist a hypothesis tracking record for cross-sprint lineage.
         Supports: "we hypothesized X in sprint N, disproved by sprint M."
@@ -4731,26 +5893,57 @@ class DuckDBShadowStore:
         self.ensure_connected()
         loop = asyncio.get_running_loop()
         try:
-            await loop.run_in_executor(self._executor, self._sync_record_hypothesis_tracking, hypothesis_id, sprint_id, hypothesis_text, status, confidence, falsification_result, disproved_by_sprint_id)
+            await loop.run_in_executor(
+                self._executor,
+                self._sync_record_hypothesis_tracking,
+                hypothesis_id,
+                sprint_id,
+                hypothesis_text,
+                status,
+                confidence,
+                falsification_result,
+                disproved_by_sprint_id,
+            )
             return True
         except Exception:
             return False
 
-    def _sync_record_hypothesis_tracking(self, hypothesis_id: str, sprint_id: str, hypothesis_text: str, status: str, confidence: float, falsification_result: str | None, disproved_by_sprint_id: str | None) -> None:
+    def _sync_record_hypothesis_tracking(
+        self,
+        hypothesis_id: str,
+        sprint_id: str,
+        hypothesis_text: str,
+        status: str,
+        confidence: float,
+        falsification_result: str | None,
+        disproved_by_sprint_id: str | None,
+    ) -> None:
         """Sync writer for hypothesis_tracking."""
         conn = self._get_conn()
         if conn is None:
             return
         try:
-            conn.execute(self._statements._SQL_INSERT_HYPOTHESIS_TRACKING, (hypothesis_id, sprint_id, hypothesis_text, status, confidence, falsification_result, disproved_by_sprint_id, time.time()))
+            conn.execute(
+                self._statements._SQL_INSERT_HYPOTHESIS_TRACKING,
+                (
+                    hypothesis_id,
+                    sprint_id,
+                    hypothesis_text,
+                    status,
+                    confidence,
+                    falsification_result,
+                    disproved_by_sprint_id,
+                    time.time(),
+                ),
+            )
         except (OSError, RuntimeError) as e:
-            logger.warning(f'[DUCKDB] insert_hypothesis_tracking failed: {e}')
+            logger.warning(f"[DUCKDB] insert_hypothesis_tracking failed: {e}")
 
     def _finding_id_of(self, f: CanonicalFinding | dict) -> str:
         """Extract finding_id from CanonicalFinding or dict, safely."""
         if isinstance(f, CanonicalFinding):
             return f.finding_id
-        return str(f.get('finding_id', f.get('id', '')))
+        return str(f.get("finding_id", f.get("id", "")))
 
     async def async_bulk_insert_findings(self, findings: list[CanonicalFinding | dict]) -> list[ActivationResult]:
         """
@@ -4774,7 +5967,18 @@ class DuckDBShadowStore:
         if not findings:
             return []
         if not self._initialized or self._closed:
-            return [ActivationResult(finding_id=self._finding_id_of(f), lmdb_success=False, duckdb_success=None, lmdb_key=f'finding:{self._finding_id_of(f)}', desync=False, error='store closed or not initialized', accepted=False) for f in findings]
+            return [
+                ActivationResult(
+                    finding_id=self._finding_id_of(f),
+                    lmdb_success=False,
+                    duckdb_success=None,
+                    lmdb_key=f"finding:{self._finding_id_of(f)}",
+                    desync=False,
+                    error="store closed or not initialized",
+                    accepted=False,
+                )
+                for f in findings
+            ]
         canonical_findings: list[CanonicalFinding] = []
         for f in findings:
             if isinstance(f, CanonicalFinding):
@@ -4782,7 +5986,7 @@ class DuckDBShadowStore:
             elif isinstance(f, dict):
                 try:
                     provenance: tuple[str, ...] = ()
-                    raw_prov = f.get('provenance')
+                    raw_prov = f.get("provenance")
                     if raw_prov:
                         if isinstance(raw_prov, (list, tuple)):
                             provenance = tuple((str(v) for v in raw_prov))
@@ -4793,20 +5997,61 @@ class DuckDBShadowStore:
                                     provenance = tuple((str(v) for v in decoded))
                             except Exception:
                                 provenance = ()
-                    canonical_findings.append(CanonicalFinding(finding_id=str(f.get('finding_id', f.get('id', ''))), query=str(f.get('query', '')), source_type=str(f.get('source_type', '')), confidence=float(f.get('confidence', 0.0)), ts=float(f.get('ts', 0.0)), provenance=provenance, payload_text=f.get('payload_text')))
+                    canonical_findings.append(
+                        CanonicalFinding(
+                            finding_id=str(f.get("finding_id", f.get("id", ""))),
+                            query=str(f.get("query", "")),
+                            source_type=str(f.get("source_type", "")),
+                            confidence=float(f.get("confidence", 0.0)),
+                            ts=float(f.get("ts", 0.0)),
+                            provenance=provenance,
+                            payload_text=f.get("payload_text"),
+                        )
+                    )
                 except Exception:
                     continue
             else:
                 continue
         if not canonical_findings:
-            return [ActivationResult(finding_id=self._finding_id_of(f), lmdb_success=False, duckdb_success=None, lmdb_key=f'finding:{self._finding_id_of(f)}', desync=False, error='unconvertible input', accepted=False) for f in findings]
+            return [
+                ActivationResult(
+                    finding_id=self._finding_id_of(f),
+                    lmdb_success=False,
+                    duckdb_success=None,
+                    lmdb_key=f"finding:{self._finding_id_of(f)}",
+                    desync=False,
+                    error="unconvertible input",
+                    accepted=False,
+                )
+                for f in findings
+            ]
         raw_results = await self.async_record_canonical_findings_batch(canonical_findings)
         normalized: list[ActivationResult] = []
         for r in raw_results:
-            if isinstance(r, dict) and 'finding_id' in r:
-                normalized.append(ActivationResult(finding_id=str(r.get('finding_id', '')), lmdb_success=bool(r.get('lmdb_success')), duckdb_success=r.get('duckdb_success'), lmdb_key=str(r.get('lmdb_key', '')), desync=bool(r.get('desync')), error=r.get('error'), accepted=bool(r.get('accepted', r.get('lmdb_success', False)))))
+            if isinstance(r, dict) and "finding_id" in r:
+                normalized.append(
+                    ActivationResult(
+                        finding_id=str(r.get("finding_id", "")),
+                        lmdb_success=bool(r.get("lmdb_success")),
+                        duckdb_success=r.get("duckdb_success"),
+                        lmdb_key=str(r.get("lmdb_key", "")),
+                        desync=bool(r.get("desync")),
+                        error=r.get("error"),
+                        accepted=bool(r.get("accepted", r.get("lmdb_success", False))),
+                    )
+                )
             else:
-                normalized.append(ActivationResult(finding_id='', lmdb_success=False, duckdb_success=None, lmdb_key='', desync=False, error='unexpected result type', accepted=False))
+                normalized.append(
+                    ActivationResult(
+                        finding_id="",
+                        lmdb_success=False,
+                        duckdb_success=None,
+                        lmdb_key="",
+                        desync=False,
+                        error="unexpected result type",
+                        accepted=False,
+                    )
+                )
         return normalized
 
     def _canonical_findings_batch_to_activation_results(self, findings: list[CanonicalFinding]) -> list[dict]:
@@ -4818,38 +6063,74 @@ class DuckDBShadowStore:
         DuckDB insert uses tuple rows (list of lists).
         """
         import logging as _logging
+
         _logger = _logging.getLogger(__name__)
         results: list[dict] = []
         if not findings:
             return results
-        logger.debug('[F276-INGEST] entry n=%d  _initialized=%s  _closed=%s  _startup_ready=%s', len(findings), getattr(self, '_initialized', None), getattr(self, '_closed', None), getattr(self, '_startup_ready', None) and (getattr(self._startup_ready, 'is_set', None)() if callable(getattr(self._startup_ready, 'is_set', None)) else False))
+        logger.debug(
+            "[F276-INGEST] entry n=%d  _initialized=%s  _closed=%s  _startup_ready=%s",
+            len(findings),
+            getattr(self, "_initialized", None),
+            getattr(self, "_closed", None),
+            getattr(self, "_startup_ready", None)
+            and (
+                getattr(self._startup_ready, "is_set", None)()
+                if callable(getattr(self._startup_ready, "is_set", None))
+                else False
+            ),
+        )
         lmdb_ok = False
         try:
-            if not hasattr(self, '_wal_manager') or self._wal_manager is None:
+            if not hasattr(self, "_wal_manager") or self._wal_manager is None:
                 _wal_root = self._db_path.parent if self._db_path else None
                 if _wal_root is None:
-                    _logger.error('[F276-INGEST] _db_path is None - WAL root unavailable, cannot persist findings')
+                    _logger.error("[F276-INGEST] _db_path is None - WAL root unavailable, cannot persist findings")
                     for f in findings:
-                        results.append({'finding_id': f.finding_id, 'lmdb_success': False, 'duckdb_success': None, 'error': 'no wal root'})
+                        results.append(
+                            {
+                                "finding_id": f.finding_id,
+                                "lmdb_success": False,
+                                "duckdb_success": None,
+                                "error": "no wal root",
+                            }
+                        )
                     return results
-                self._wal_manager = WALManager(wal_path=str(_wal_root / 'shadow_wal.lmdb'))
+                self._wal_manager = WALManager(wal_path=str(_wal_root / "shadow_wal.lmdb"))
                 self._wal_manager.initialize()
             items = []
             for f in findings:
-                key = f'finding:{f.finding_id}'
-                wal_payload = {'id': f.finding_id, 'query': f.query, 'source_type': f.source_type, 'confidence': f.confidence, 'ts': f.ts, 'provenance': f.provenance, 'payload_text': f.payload_text}
+                key = f"finding:{f.finding_id}"
+                wal_payload = {
+                    "id": f.finding_id,
+                    "query": f.query,
+                    "source_type": f.source_type,
+                    "confidence": f.confidence,
+                    "ts": f.ts,
+                    "provenance": f.provenance,
+                    "payload_text": f.payload_text,
+                }
                 items.append((key, wal_payload))
             if items:
-                lmdb_ok = self._wal_manager.wal_put_many(items) if hasattr(self._wal_manager, 'wal_put_many') else False
+                lmdb_ok = self._wal_manager.wal_put_many(items) if hasattr(self._wal_manager, "wal_put_many") else False
                 if not lmdb_ok:
-                    _logger.warning(f'[Sprint 8P] Batch WAL failed for {len(items)} items')
+                    _logger.warning(f"[Sprint 8P] Batch WAL failed for {len(items)} items")
                     for f in findings:
-                        results.append({'finding_id': f.finding_id, 'lmdb_success': False, 'duckdb_success': None, 'error': 'lmdb batch failed'})
+                        results.append(
+                            {
+                                "finding_id": f.finding_id,
+                                "lmdb_success": False,
+                                "duckdb_success": None,
+                                "error": "lmdb batch failed",
+                            }
+                        )
                     return results
         except Exception as e:
-            _logger.error(f'[Sprint 8P] Batch WAL exception: {e}')
+            _logger.error(f"[Sprint 8P] Batch WAL exception: {e}")
             for f in findings:
-                results.append({'finding_id': f.finding_id, 'lmdb_success': False, 'duckdb_success': None, 'error': str(e)})
+                results.append(
+                    {"finding_id": f.finding_id, "lmdb_success": False, "duckdb_success": None, "error": str(e)}
+                )
             return results
         try:
             rows: list[list] = []
@@ -4859,14 +6140,16 @@ class DuckDBShadowStore:
             inserted = self._sync_insert_findings_bulk_as_tuples(rows)
             duckdb_all_ok = inserted >= len(findings)
             if inserted < len(findings):
-                _logger.error(f'[Sprint 8P] Partial DuckDB batch: {inserted}/{len(findings)}')
+                _logger.error(f"[Sprint 8P] Partial DuckDB batch: {inserted}/{len(findings)}")
         except Exception as e:
-            _logger.error(f'[Sprint 8P] Batch DuckDB exception: {e}, LMDB preserved')
+            _logger.error(f"[Sprint 8P] Batch DuckDB exception: {e}, LMDB preserved")
             duckdb_all_ok = False
         for _i, f in enumerate(findings):
             duckdb_success = duckdb_all_ok
-            results.append({'finding_id': f.finding_id, 'lmdb_success': lmdb_ok, 'duckdb_success': duckdb_success, 'error': None})
-        logger.debug('[F276-INGEST] exit n=%d  lmdb_ok=%s  duckdb_ok=%s', len(results), lmdb_ok, duckdb_all_ok)
+            results.append(
+                {"finding_id": f.finding_id, "lmdb_success": lmdb_ok, "duckdb_success": duckdb_success, "error": None}
+            )
+        logger.debug("[F276-INGEST] exit n=%d  lmdb_ok=%s  duckdb_ok=%s", len(results), lmdb_ok, duckdb_all_ok)
         return results
 
     def _extract_url_from_provenance(self, provenance: tuple[str, ...]) -> str:
@@ -4877,11 +6160,11 @@ class DuckDBShadowStore:
         Returns empty string if no URL is found.
         """
         if not provenance:
-            return ''
+            return ""
         for item in provenance:
-            if isinstance(item, str) and item.startswith('http'):
+            if isinstance(item, str) and item.startswith("http"):
                 return item
-        return ''
+        return ""
 
     def _record_quality_rejection(self, finding: CanonicalFinding, decision: FindingQualityDecision) -> None:
         """
@@ -4919,9 +6202,10 @@ class DuckDBShadowStore:
         If both are empty, falls back to query (may accept trivially).
         """
         import logging as _logging
+
         _logger = _logging.getLogger(__name__)
         url_from_provenance = self._extract_url_from_provenance(finding.provenance)
-        url_fingerprint = _compute_url_fingerprint(url_from_provenance) if url_from_provenance else ''
+        url_fingerprint = _compute_url_fingerprint(url_from_provenance) if url_from_provenance else ""
         if url_fingerprint:
             fingerprint = url_fingerprint
             entropy = 0.0
@@ -4932,27 +6216,50 @@ class DuckDBShadowStore:
             normalized = _normalize_for_quality(text)
             entropy = _compute_entropy(normalized)
             fingerprint = _compute_dedup_fingerprint(normalized)
-        _is_feed_source: bool = finding.source_type == 'rss_atom_pipeline'
-        logger.debug('[QUALITY-GATE] assessing source_type=%s is_feed=%s url_fp=%s entropy=%.3f fp_len=%d finding_id=%s', finding.source_type, _is_feed_source, bool(url_fingerprint), entropy, len(fingerprint), finding.finding_id[:16] if finding.finding_id else '')
+        _is_feed_source: bool = finding.source_type == "rss_atom_pipeline"
+        logger.debug(
+            "[QUALITY-GATE] assessing source_type=%s is_feed=%s url_fp=%s entropy=%.3f fp_len=%d finding_id=%s",
+            finding.source_type,
+            _is_feed_source,
+            bool(url_fingerprint),
+            entropy,
+            len(fingerprint),
+            finding.finding_id[:16] if finding.finding_id else "",
+        )
         duplicate = self._hot_cache_lookup(fingerprint) is not None
         if duplicate:
             self._quality_state._quality_duplicate_count += 1
-            reason = 'persistent_duplicate' if url_fingerprint else 'duplicate_detected'
-            logger.debug('[QUALITY-GATE] rejected=hot_cache_duplicate fp=%s finding_id=%s', fingerprint[:16] if fingerprint else '', finding.finding_id[:16] if finding.finding_id else '')
-            return FindingQualityDecision(accepted=False, reason=reason, entropy=entropy, normalized_hash=fingerprint, duplicate=True)
+            reason = "persistent_duplicate" if url_fingerprint else "duplicate_detected"
+            logger.debug(
+                "[QUALITY-GATE] rejected=hot_cache_duplicate fp=%s finding_id=%s",
+                fingerprint[:16] if fingerprint else "",
+                finding.finding_id[:16] if finding.finding_id else "",
+            )
+            return FindingQualityDecision(
+                accepted=False, reason=reason, entropy=entropy, normalized_hash=fingerprint, duplicate=True
+            )
         stored_finding_id = self._lookup_persistent_dedup(fingerprint)
         if stored_finding_id is not None:
             if not _is_feed_source:
                 self._add_to_hot_cache(fingerprint, stored_finding_id)
             self._quality_state._persistent_duplicate_count += 1
-            reason = 'persistent_duplicate' if url_fingerprint else 'duplicate_detected'
-            logger.debug('[QUALITY-GATE] rejected=lmdb_duplicate fp=%s finding_id=%s stored_id=%s', fingerprint[:16] if fingerprint else '', finding.finding_id[:16] if finding.finding_id else '', stored_finding_id[:16] if stored_finding_id else '')
-            return FindingQualityDecision(accepted=False, reason=reason, entropy=entropy, normalized_hash=fingerprint, duplicate=True)
+            reason = "persistent_duplicate" if url_fingerprint else "duplicate_detected"
+            logger.debug(
+                "[QUALITY-GATE] rejected=lmdb_duplicate fp=%s finding_id=%s stored_id=%s",
+                fingerprint[:16] if fingerprint else "",
+                finding.finding_id[:16] if finding.finding_id else "",
+                stored_finding_id[:16] if stored_finding_id else "",
+            )
+            return FindingQualityDecision(
+                accepted=False, reason=reason, entropy=entropy, normalized_hash=fingerprint, duplicate=True
+            )
         if url_fingerprint:
             self._store_persistent_dedup(fingerprint, finding.finding_id)
             if not _is_feed_source:
                 self._add_to_hot_cache(fingerprint, finding.finding_id)
-            return FindingQualityDecision(accepted=True, reason=None, entropy=entropy, normalized_hash=fingerprint, duplicate=False)
+            return FindingQualityDecision(
+                accepted=True, reason=None, entropy=entropy, normalized_hash=fingerprint, duplicate=False
+            )
         if len(fingerprint) < _QUALITY_MIN_ENTROPY_LEN:
             dedup_cache = self._dedup_manager.semantic_dedup_cache if self._dedup_manager else None
             if dedup_cache is not None:
@@ -4963,18 +6270,38 @@ class DuckDBShadowStore:
                         is_dup = dedup_cache.check_and_cache(text_for_embed, threshold=_semantic_thresh)
                         if is_dup:
                             self._quality_state._quality_duplicate_count += 1
-                            return FindingQualityDecision(accepted=False, reason='semantic_duplicate', entropy=entropy, normalized_hash=fingerprint, duplicate=True)
+                            return FindingQualityDecision(
+                                accepted=False,
+                                reason="semantic_duplicate",
+                                entropy=entropy,
+                                normalized_hash=fingerprint,
+                                duplicate=True,
+                            )
                 except Exception as e:
-                    _logger.warning(f'Quality gate error (short_string path): {e}')
+                    _logger.warning(f"Quality gate error (short_string path): {e}")
             self._store_persistent_dedup(fingerprint, finding.finding_id)
             if not _is_feed_source:
                 self._add_to_hot_cache(fingerprint, finding.finding_id)
-            return FindingQualityDecision(accepted=True, reason='short_string_skip', entropy=entropy, normalized_hash=fingerprint, duplicate=False)
+            return FindingQualityDecision(
+                accepted=True, reason="short_string_skip", entropy=entropy, normalized_hash=fingerprint, duplicate=False
+            )
         _effective_threshold = 0.3 if _is_feed_source else _QUALITY_ENTROPY_THRESHOLD
         if entropy < _effective_threshold:
             self._quality_state._quality_rejected_count += 1
-            logger.debug('[QUALITY-GATE] rejected=low_entropy threshold=%.2f entropy=%.2f finding_id=%s is_feed=%s', _effective_threshold, entropy, finding.finding_id[:16] if finding.finding_id else '', _is_feed_source)
-            return FindingQualityDecision(accepted=False, reason='low_entropy_rejected', entropy=entropy, normalized_hash=fingerprint, duplicate=False)
+            logger.debug(
+                "[QUALITY-GATE] rejected=low_entropy threshold=%.2f entropy=%.2f finding_id=%s is_feed=%s",
+                _effective_threshold,
+                entropy,
+                finding.finding_id[:16] if finding.finding_id else "",
+                _is_feed_source,
+            )
+            return FindingQualityDecision(
+                accepted=False,
+                reason="low_entropy_rejected",
+                entropy=entropy,
+                normalized_hash=fingerprint,
+                duplicate=False,
+            )
         dedup_cache = self._dedup_manager.semantic_dedup_cache if self._dedup_manager else None
         if dedup_cache is not None:
             try:
@@ -4985,14 +6312,25 @@ class DuckDBShadowStore:
                     is_dup = dedup_cache_ref.check_and_cache(text_for_embed, threshold=_semantic_thresh)
                     if is_dup:
                         self._quality_state._quality_duplicate_count += 1
-                        logger.debug('[QUALITY-GATE] rejected=semantic_duplicate finding_id=%s', finding.finding_id[:16] if finding.finding_id else '')
-                        return FindingQualityDecision(accepted=False, reason='semantic_duplicate', entropy=entropy, normalized_hash=fingerprint, duplicate=True)
+                        logger.debug(
+                            "[QUALITY-GATE] rejected=semantic_duplicate finding_id=%s",
+                            finding.finding_id[:16] if finding.finding_id else "",
+                        )
+                        return FindingQualityDecision(
+                            accepted=False,
+                            reason="semantic_duplicate",
+                            entropy=entropy,
+                            normalized_hash=fingerprint,
+                            duplicate=True,
+                        )
             except Exception as e:
-                _logger.warning(f'Quality gate error (entropy path): {e}')
+                _logger.warning(f"Quality gate error (entropy path): {e}")
         self._store_persistent_dedup(fingerprint, finding.finding_id)
         if not _is_feed_source:
             self._add_to_hot_cache(fingerprint, finding.finding_id)
-        return FindingQualityDecision(accepted=True, reason=None, entropy=entropy, normalized_hash=fingerprint, duplicate=False)
+        return FindingQualityDecision(
+            accepted=True, reason=None, entropy=entropy, normalized_hash=fingerprint, duplicate=False
+        )
 
     def _assess_finding_quality_batch(self, findings: list[CanonicalFinding]) -> list[FindingQualityDecision]:
         """
@@ -5018,8 +6356,8 @@ class DuckDBShadowStore:
         if _IOC_EXTRACT_BATCH_AVAILABLE and _get_rust_batch_ioc_extract() is not None:
             texts_for_ioc = []
             for f in findings:
-                pt = f.payload_text if f.payload_text else f.query or ''
-                texts_for_ioc.append(pt[:5000] if pt else '')
+                pt = f.payload_text if f.payload_text else f.query or ""
+                texts_for_ioc.append(pt[:5000] if pt else "")
             try:
                 raw_iocs = _get_rust_batch_ioc_extract()(texts_for_ioc)
                 for ioc_list in raw_iocs:
@@ -5049,18 +6387,18 @@ class DuckDBShadowStore:
                 ioc_dup_flags = self._dedup_manager.is_duplicate_ioc_batch(all_iocs_flat)
             except Exception:
                 pass
-        url_fingerprints: list[str] = [''] * n
+        url_fingerprints: list[str] = [""] * n
         entropies: list[float] = [0.0] * n
-        fingerprints: list[str] = [''] * n
+        fingerprints: list[str] = [""] * n
         url_indices: list[int] = []
         payload_indices: list[int] = []
         texts: list[str] = []
         for idx, f in enumerate(findings):
-            url = self._extract_url_from_provenance(f.provenance) if f.provenance else ''
+            url = self._extract_url_from_provenance(f.provenance) if f.provenance else ""
             if url:
                 url_fingerprints[idx] = url
                 url_indices.append(idx)
-                texts.append('')
+                texts.append("")
             else:
                 payload_text = f.payload_text if f.payload_text else f.query
                 if not (payload_text and payload_text.strip()):
@@ -5113,26 +6451,32 @@ class DuckDBShadowStore:
             url_fp = url_fingerprints[idx]
             fp = fingerprints[idx]
             entropy = entropies[idx]
-            is_feed_source = f.source_type == 'rss_atom_pipeline'
+            is_feed_source = f.source_type == "rss_atom_pipeline"
             text_for_embed = url_fp or (f.payload_text or f.query)
             is_high_conf_ioc = bool(text_for_embed and _HIGH_CONF_IOC_RE.match(text_for_embed.strip()))
             if self._hot_cache_lookup(fp) is not None:
                 self._quality_state._quality_duplicate_count += 1
-                reason = 'persistent_duplicate' if url_fp else 'duplicate_detected'
-                results[idx] = FindingQualityDecision(accepted=False, reason=reason, entropy=entropy, normalized_hash=fp, duplicate=True)
+                reason = "persistent_duplicate" if url_fp else "duplicate_detected"
+                results[idx] = FindingQualityDecision(
+                    accepted=False, reason=reason, entropy=entropy, normalized_hash=fp, duplicate=True
+                )
                 continue
             stored_id = self._lookup_persistent_dedup(fp)
             if stored_id is not None:
                 self._add_to_hot_cache(fp, stored_id)
                 self._quality_state._persistent_duplicate_count += 1
-                reason = 'persistent_duplicate' if url_fp else 'duplicate_detected'
-                results[idx] = FindingQualityDecision(accepted=False, reason=reason, entropy=entropy, normalized_hash=fp, duplicate=True)
+                reason = "persistent_duplicate" if url_fp else "duplicate_detected"
+                results[idx] = FindingQualityDecision(
+                    accepted=False, reason=reason, entropy=entropy, normalized_hash=fp, duplicate=True
+                )
                 continue
             if url_fp:
                 self._store_persistent_dedup(fp, f.finding_id)
                 if not is_feed_source:
                     self._add_to_hot_cache(fp, f.finding_id)
-                results[idx] = FindingQualityDecision(accepted=True, reason=None, entropy=entropy, normalized_hash=fp, duplicate=False)
+                results[idx] = FindingQualityDecision(
+                    accepted=True, reason=None, entropy=entropy, normalized_hash=fp, duplicate=False
+                )
                 continue
             if len(fp) < _QUALITY_MIN_ENTROPY_LEN:
                 dedup_cache = self._dedup_manager.semantic_dedup_cache if self._dedup_manager else None
@@ -5143,19 +6487,29 @@ class DuckDBShadowStore:
                             is_dup = dedup_cache.check_and_cache(text_for_embed, threshold=_semantic_thresh)
                             if is_dup:
                                 self._quality_state._quality_duplicate_count += 1
-                                results[idx] = FindingQualityDecision(accepted=False, reason='semantic_duplicate', entropy=entropy, normalized_hash=fp, duplicate=True)
+                                results[idx] = FindingQualityDecision(
+                                    accepted=False,
+                                    reason="semantic_duplicate",
+                                    entropy=entropy,
+                                    normalized_hash=fp,
+                                    duplicate=True,
+                                )
                                 continue
                     except Exception:
                         pass
                 self._store_persistent_dedup(fp, f.finding_id)
                 if not is_feed_source:
                     self._add_to_hot_cache(fp, f.finding_id)
-                results[idx] = FindingQualityDecision(accepted=True, reason='short_string_skip', entropy=entropy, normalized_hash=fp, duplicate=False)
+                results[idx] = FindingQualityDecision(
+                    accepted=True, reason="short_string_skip", entropy=entropy, normalized_hash=fp, duplicate=False
+                )
                 continue
             _threshold = 0.3 if is_feed_source else _QUALITY_ENTROPY_THRESHOLD
             if entropy < _threshold:
                 self._quality_state._quality_rejected_count += 1
-                results[idx] = FindingQualityDecision(accepted=False, reason='low_entropy_rejected', entropy=entropy, normalized_hash=fp, duplicate=False)
+                results[idx] = FindingQualityDecision(
+                    accepted=False, reason="low_entropy_rejected", entropy=entropy, normalized_hash=fp, duplicate=False
+                )
                 continue
             dedup_cache = self._dedup_manager.semantic_dedup_cache if self._dedup_manager else None
             if dedup_cache is not None and (not is_high_conf_ioc):
@@ -5165,7 +6519,13 @@ class DuckDBShadowStore:
                         is_dup = dedup_cache.check_and_cache(text_for_embed, threshold=_semantic_thresh)
                         if is_dup:
                             self._quality_state._quality_duplicate_count += 1
-                            results[idx] = FindingQualityDecision(accepted=False, reason='semantic_duplicate', entropy=entropy, normalized_hash=fp, duplicate=True)
+                            results[idx] = FindingQualityDecision(
+                                accepted=False,
+                                reason="semantic_duplicate",
+                                entropy=entropy,
+                                normalized_hash=fp,
+                                duplicate=True,
+                            )
                             continue
                 except Exception:
                     pass
@@ -5178,9 +6538,15 @@ class DuckDBShadowStore:
                 any_ioc_dup = any(finding_ioc_dup_flags)
                 if any_ioc_dup:
                     self._quality_state._quality_duplicate_count += 1
-                    results[idx] = FindingQualityDecision(accepted=False, reason='ioc_duplicate', entropy=entropy, normalized_hash=fp, duplicate=True)
+                    results[idx] = FindingQualityDecision(
+                        accepted=False, reason="ioc_duplicate", entropy=entropy, normalized_hash=fp, duplicate=True
+                    )
                     continue
-                new_iocs_for_batch = [(val, ioc_type, float(f.confidence)) for (val, ioc_type), is_dup in zip(finding_iocs, finding_ioc_dup_flags) if not is_dup]
+                new_iocs_for_batch = [
+                    (val, ioc_type, float(f.confidence))
+                    for (val, ioc_type), is_dup in zip(finding_iocs, finding_ioc_dup_flags)
+                    if not is_dup
+                ]
             self._store_persistent_dedup(fp, f.finding_id)
             if not is_feed_source:
                 self._add_to_hot_cache(fp, f.finding_id)
@@ -5188,9 +6554,11 @@ class DuckDBShadowStore:
                 try:
                     self._dedup_manager.add_ioc_batch(new_iocs_for_batch)
                 except (OSError, RuntimeError) as e:
-                    logger.debug(f'[DUCKDB] add_ioc_batch failed: {e}')
-            results[idx] = FindingQualityDecision(accepted=True, reason=None, entropy=entropy, normalized_hash=fp, duplicate=False)
-        assert None not in results, '_assess_finding_quality_batch: 1:1 invariant violated'
+                    logger.debug(f"[DUCKDB] add_ioc_batch failed: {e}")
+            results[idx] = FindingQualityDecision(
+                accepted=True, reason=None, entropy=entropy, normalized_hash=fp, duplicate=False
+            )
+        assert None not in results, "_assess_finding_quality_batch: 1:1 invariant violated"
         return results
 
     async def async_ingest_finding(self, finding: CanonicalFinding) -> FindingQualityDecision | ActivationResult:
@@ -5217,15 +6585,17 @@ class DuckDBShadowStore:
             return decision
         result = await self.async_record_canonical_finding(finding)
         if isinstance(result, dict):
-            lmdb_ok = result.get('lmdb_success', False)
+            lmdb_ok = result.get("lmdb_success", False)
         else:
             lmdb_ok = bool(result.lmdb_success)
         if lmdb_ok:
             self._quality_state._accepted_count += 1
         return result
 
-    @_otel_instrumented('duckdb.ingest_batch', component='storage')
-    async def async_ingest_findings_batch(self, findings: list[CanonicalFinding]) -> list[FindingQualityDecision | ActivationResult]:
+    @_otel_instrumented("duckdb.ingest_batch", component="storage")
+    async def async_ingest_findings_batch(
+        self, findings: list[CanonicalFinding]
+    ) -> list[FindingQualityDecision | ActivationResult]:
         """
         Sprint 8W: Quality-gated batch ingest.
 
@@ -5244,11 +6614,18 @@ class DuckDBShadowStore:
             return []
         self.ensure_connected()
         n = len(findings)
-        logger.debug('[INGEST-BATCH] entry len(findings)=%d  quality_state=_accepted:%d _rejected:%d _dup:%d _persist_dup:%d', n, self._quality_state._accepted_count, self._quality_state._quality_rejected_count, self._quality_state._quality_duplicate_count, self._quality_state._persistent_duplicate_count)
+        logger.debug(
+            "[INGEST-BATCH] entry len(findings)=%d  quality_state=_accepted:%d _rejected:%d _dup:%d _persist_dup:%d",
+            n,
+            self._quality_state._accepted_count,
+            self._quality_state._quality_rejected_count,
+            self._quality_state._quality_duplicate_count,
+            self._quality_state._persistent_duplicate_count,
+        )
         results: list[FindingQualityDecision | ActivationResult | None] = [None] * n
         _accepted_findings: list[CanonicalFinding] = []
         _accepted_indices: list[int] = []
-        _chunk_size = self._duckdb_settings.get('chunk_size', 1024)
+        _chunk_size = self._duckdb_settings.get("chunk_size", 1024)
         CHUNK_SIZE: int = _chunk_size
         self._last_ingest_ts = _time.monotonic()
         self._batch_start_ts = self._last_ingest_ts
@@ -5265,7 +6642,9 @@ class DuckDBShadowStore:
             _batch_rust_ok = False
             try:
                 loop = asyncio.get_running_loop()
-                chunk_decisions: list[FindingQualityDecision] = await loop.run_in_executor(self._shared_executor, lambda cf=chunk_findings: self._assess_finding_quality_batch(cf))
+                chunk_decisions: list[FindingQualityDecision] = await loop.run_in_executor(
+                    self._shared_executor, lambda cf=chunk_findings: self._assess_finding_quality_batch(cf)
+                )
                 _batch_rust_ok = True
             except Exception:
                 self._quality_state._quality_fail_open_count += 1
@@ -5274,7 +6653,13 @@ class DuckDBShadowStore:
                 try:
                     if _batch_rust_ok:
                         if i_offset >= len(chunk_decisions):
-                            decision = FindingQualityDecision(accepted=False, reason='batch_incomplete', rejection_reason='quality_gate_batch_incomplete', confidence=0.0, source_quality=0.0)
+                            decision = FindingQualityDecision(
+                                accepted=False,
+                                reason="batch_incomplete",
+                                rejection_reason="quality_gate_batch_incomplete",
+                                confidence=0.0,
+                                source_quality=0.0,
+                            )
                         else:
                             decision = chunk_decisions[i_offset]
                     else:
@@ -5287,10 +6672,11 @@ class DuckDBShadowStore:
                     self._record_quality_rejection(f, decision)
                     results[i] = decision
                 else:
-                    if os.getenv('HLEDAC_ENABLE_ZERO_ATTRIBUTION') == '1':
+                    if os.getenv("HLEDAC_ENABLE_ZERO_ATTRIBUTION") == "1":
                         try:
                             from hledac.universal.security.temporal_anonymizer import TemporalAnonymizer
-                            if not hasattr(self, '_temporal_anonymizer'):
+
+                            if not hasattr(self, "_temporal_anonymizer"):
                                 self._temporal_anonymizer = TemporalAnonymizer()
                             f.timestamp = self._temporal_anonymizer.anonymize_timestamp(f.timestamp)
                         except Exception:
@@ -5298,18 +6684,24 @@ class DuckDBShadowStore:
                     chunk_accepted_findings.append(f)
                     chunk_accepted_indices.append(i)
             if fail_open_chunk_findings:
-                batch_results = await self._record_fail_open_batch(fail_open_chunk_findings, results, fail_open_chunk_indices)
+                batch_results = await self._record_fail_open_batch(
+                    fail_open_chunk_findings, results, fail_open_chunk_indices
+                )
                 for idx, br in zip(fail_open_chunk_indices, batch_results, strict=False):
                     if br is not None:
                         results[idx] = br
             self._pending_accepted_findings.extend(chunk_accepted_findings)
             self._pending_accepted_indices.extend(chunk_accepted_indices)
             _elapsed = _time.monotonic() - self._last_ingest_ts
-            _should_flush = len(self._pending_accepted_findings) >= self._min_flush or _elapsed >= self._max_flush_interval
+            _should_flush = (
+                len(self._pending_accepted_findings) >= self._min_flush or _elapsed >= self._max_flush_interval
+            )
             if _should_flush and self._pending_accepted_findings:
                 _flush_indices = list(self._pending_accepted_indices)
                 _flush_findings = list(self._pending_accepted_findings)
-                _flush_task = safe_create_task(self.async_record_canonical_findings_batch_arrow(_flush_findings), name='duckdb:record_arrow_tb')
+                _flush_task = safe_create_task(
+                    self.async_record_canonical_findings_batch_arrow(_flush_findings), name="duckdb:record_arrow_tb"
+                )
                 pending_tasks.append((_flush_indices, _flush_task))
                 self._pending_accepted_findings.clear()
                 self._pending_accepted_indices.clear()
@@ -5319,62 +6711,93 @@ class DuckDBShadowStore:
         if self._pending_accepted_findings:
             _flush_indices = list(self._pending_accepted_indices)
             _flush_findings = list(self._pending_accepted_findings)
-            _flush_task = safe_create_task(self.async_record_canonical_findings_batch_arrow(_flush_findings), name='duckdb:record_arrow_tb_final')
+            _flush_task = safe_create_task(
+                self.async_record_canonical_findings_batch_arrow(_flush_findings), name="duckdb:record_arrow_tb_final"
+            )
             pending_tasks.append((_flush_indices, _flush_task))
             self._pending_accepted_findings.clear()
             self._pending_accepted_indices.clear()
         all_accepted_findings: list[CanonicalFinding] = []
         if pending_tasks:
             tasks_only = [t for _, t in pending_tasks]
-            storage_results_all: tuple[list[ActivationResult] | Exception, ...] = await safe_gather_return_exceptions(*tasks_only, label='duckdb_store:storage_pipeline')
+            storage_results_all: tuple[list[ActivationResult] | Exception, ...] = await safe_gather_return_exceptions(
+                *tasks_only, label="duckdb_store:storage_pipeline"
+            )
             for (chunk_indices, task), task_result in zip(pending_tasks, storage_results_all, strict=True):
                 if isinstance(task_result, Exception):
-                    logger.warning('[A8HIGH] storage task failed: %s', task_result)
+                    logger.warning("[A8HIGH] storage task failed: %s", task_result)
                     for idx in chunk_indices:
                         if results[idx] is None:
-                            results[idx] = ActivationResult(finding_id=str(findings[idx].finding_id), lmdb_success=False, duckdb_success=None, lmdb_key=f'finding:{findings[idx].finding_id}', desync=False, error='pipeline_storage_failed', accepted=False)
+                            results[idx] = ActivationResult(
+                                finding_id=str(findings[idx].finding_id),
+                                lmdb_success=False,
+                                duckdb_success=None,
+                                lmdb_key=f"finding:{findings[idx].finding_id}",
+                                desync=False,
+                                error="pipeline_storage_failed",
+                                accepted=False,
+                            )
                     continue
                 for idx, sr in zip(chunk_indices, task_result, strict=False):
                     results[idx] = sr
-                    if getattr(sr, 'accepted', False):
+                    if getattr(sr, "accepted", False):
                         all_accepted_findings.append(findings[idx])
         truth_graph = self._graph_store().get_truth_write_graph() if all_accepted_findings else None
         if truth_graph is not None:
             if _IOC_EXTRACT_BATCH_AVAILABLE and _get_rust_batch_ioc_extract() is not None:
                 try:
-                    ioc_texts = [f.payload_text or f.query or '' for f in all_accepted_findings]
-                    ioc_results: list[list[tuple[str, str]]] = await asyncio.to_thread(_get_rust_batch_ioc_extract(), ioc_texts)
+                    ioc_texts = [f.payload_text or f.query or "" for f in all_accepted_findings]
+                    ioc_results: list[list[tuple[str, str]]] = await asyncio.to_thread(
+                        _get_rust_batch_ioc_extract(), ioc_texts
+                    )
                     if ioc_results and truth_graph is not None:
-                        buffer_ioc = getattr(truth_graph, 'buffer_ioc', None)
-                        flush_buffers = getattr(truth_graph, 'flush_buffers', None)
+                        buffer_ioc = getattr(truth_graph, "buffer_ioc", None)
+                        flush_buffers = getattr(truth_graph, "flush_buffers", None)
                         if callable(buffer_ioc) and callable(flush_buffers):
                             import xxhash
+
                             for finding_idx, _ in enumerate(all_accepted_findings):
                                 for ioc_value, ioc_type in ioc_results[finding_idx]:
-                                    _ioc_id = f'{ioc_type}:{xxhash.xxh64(ioc_value.encode()).hexdigest()}'
+                                    _ioc_id = f"{ioc_type}:{xxhash.xxh64(ioc_value.encode()).hexdigest()}"
                                     buffer_ioc(ioc_type, ioc_value, 1.0)
                             flush_buffers()
                 except Exception:
                     pass
             self._schedule_graph_update(all_accepted_findings)
-        assert None not in results, 'Internal error: 1:1 invariant violated'
-        accepted_total = sum((1 for r in results if getattr(r, 'accepted', None) is True or (isinstance(r, dict) and r.get('accepted') is True)))
-        logger.debug('[INGEST-BATCH] exit len(results)=%d  accepted=%d  _accepted_count=%d', len(results), accepted_total, self._quality_state._accepted_count)
+        assert None not in results, "Internal error: 1:1 invariant violated"
+        accepted_total = sum(
+            (
+                1
+                for r in results
+                if getattr(r, "accepted", None) is True or (isinstance(r, dict) and r.get("accepted") is True)
+            )
+        )
+        logger.debug(
+            "[INGEST-BATCH] exit len(results)=%d  accepted=%d  _accepted_count=%d",
+            len(results),
+            accepted_total,
+            self._quality_state._accepted_count,
+        )
         if accepted_total > 0:
-            logger.info('[DuckDB] written %d records (sprint F265-P1-2 canonical write verification)', accepted_total)
+            logger.info("[DuckDB] written %d records (sprint F265-P1-2 canonical write verification)", accepted_total)
         try:
             if self._wal_manager is not None:
                 compact_result = self._wal_manager.compact()
                 if compact_result is not None:
-                    logger.debug('[WAL] compact pages_reclaimed=%d pages_free=%d', compact_result.get('pages_reclaimed', -1), compact_result.get('pages_free', -1))
+                    logger.debug(
+                        "[WAL] compact pages_reclaimed=%d pages_free=%d",
+                        compact_result.get("pages_reclaimed", -1),
+                        compact_result.get("pages_free", -1),
+                    )
         except Exception:
             pass
         try:
             _ingest_end = _time.monotonic()
-            _batch_start = getattr(self, '_batch_start_ts', self._last_ingest_ts)
+            _batch_start = getattr(self, "_batch_start_ts", self._last_ingest_ts)
             _ingest_latency_ms = (_ingest_end - _batch_start) * 1000.0
             from hledac.universal.metrics_registry import get_metrics_registry
-            get_metrics_registry().set_gauge('duckdb_ingest_latency_ms', _ingest_latency_ms)
+
+            get_metrics_registry().set_gauge("duckdb_ingest_latency_ms", _ingest_latency_ms)
         except Exception:
             pass
         return results
@@ -5387,6 +6810,7 @@ class DuckDBShadowStore:
         Caller degrades to plain finding when None is returned.
         """
         from hledac.universal.knowledge.finding_envelope import FindingEnvelope, envelope_size_guard, serialize_envelope
+
         if not isinstance(envelope, FindingEnvelope):
             return None
         if not envelope_size_guard(envelope):
@@ -5401,6 +6825,7 @@ class DuckDBShadowStore:
         or required audit_reason field is missing.
         """
         from hledac.universal.knowledge.finding_envelope import deserialize_envelope
+
         return deserialize_envelope(payload_text)
 
     def _store_envelope_payload(self, finding_id: str, payload_text: str) -> bool:
@@ -5412,24 +6837,27 @@ class DuckDBShadowStore:
         """
         try:
             from hledac.universal.tools.lmdb_kv import LMDBKVStore
-            if not hasattr(self, '_wal_lmdb'):
+
+            if not hasattr(self, "_wal_lmdb"):
                 _wal_root = self._db_path.parent if self._db_path else None
                 if _wal_root is None:
                     return False
-                self._wal_lmdb = LMDBKVStore(path=str(_wal_root / 'shadow_wal.lmdb'))
-            key = f'finding:{finding_id}'
+                self._wal_lmdb = LMDBKVStore(path=str(_wal_root / "shadow_wal.lmdb"))
+            key = f"finding:{finding_id}"
             existing = self._wal_lmdb.get(key)
             if existing is None:
                 return False
             if isinstance(existing, dict):
-                existing['payload_text'] = payload_text
+                existing["payload_text"] = payload_text
             else:
                 return False
             return self._wal_lmdb.put(key, existing)
         except Exception:
             return False
 
-    async def async_ingest_findings_with_envelope(self, findings: list[CanonicalFinding], envelopes: list[FindingEnvelope]) -> list[ActivationResult | FindingQualityDecision]:
+    async def async_ingest_findings_with_envelope(
+        self, findings: list[CanonicalFinding], envelopes: list[FindingEnvelope]
+    ) -> list[ActivationResult | FindingQualityDecision]:
         """
         Sprint F202A §2: Ingest findings WITH pre-built evidence envelopes.
 
@@ -5442,6 +6870,7 @@ class DuckDBShadowStore:
             envelopes: List of FindingEnvelope instances (same length as findings)
         """
         from hledac.universal.knowledge.finding_envelope import FindingEnvelope
+
         if not findings:
             return []
         if len(envelopes) != len(findings):
@@ -5452,17 +6881,19 @@ class DuckDBShadowStore:
                 payload_overrides[i] = None
                 continue
             from hledac.universal.knowledge.finding_envelope import envelope_size_guard
+
             if not envelope_size_guard(env):
                 payload_overrides[i] = None
             else:
                 from hledac.universal.knowledge.finding_envelope import serialize_envelope
+
                 payload_overrides[i] = serialize_envelope(env)
         results = await self.async_ingest_findings_batch(findings)
         for i, override in payload_overrides.items():
             if override is None:
                 continue
-            if results[i].get('lmdb_success') if isinstance(results[i], dict) else False:
-                fid = results[i].get('finding_id', '')
+            if results[i].get("lmdb_success") if isinstance(results[i], dict) else False:
+                fid = results[i].get("finding_id", "")
                 if fid:
                     self._store_envelope_payload(fid, override)
         return results
@@ -5476,21 +6907,22 @@ class DuckDBShadowStore:
         """
         try:
             from hledac.universal.tools.lmdb_kv import LMDBKVStore
-            if not hasattr(self, '_wal_lmdb'):
+
+            if not hasattr(self, "_wal_lmdb"):
                 _wal_root = self._db_path.parent if self._db_path else None
                 if _wal_root is None:
                     return None
-                self._wal_lmdb = LMDBKVStore(path=str(_wal_root / 'shadow_wal.lmdb'))
-            key = f'finding:{finding_id}'
+                self._wal_lmdb = LMDBKVStore(path=str(_wal_root / "shadow_wal.lmdb"))
+            key = f"finding:{finding_id}"
             entry = self._wal_lmdb.get(key)
             if entry is None or not isinstance(entry, dict):
                 return None
-            payload_text = entry.get('payload_text')
+            payload_text = entry.get("payload_text")
             return self._payload_to_envelope(payload_text)
         except Exception:
             return None
 
-    async def async_get_findings_with_envelope(self, limit: int=20) -> list[dict]:
+    async def async_get_findings_with_envelope(self, limit: int = 20) -> list[dict]:
         """
         Sprint F202A §3: Read recent findings with deserialized envelopes.
 
@@ -5502,10 +6934,10 @@ class DuckDBShadowStore:
         raw_findings = await self.async_query_recent_findings(limit=limit)
         result = []
         for f in raw_findings:
-            fid = f.get('id', f.get('finding_id', ''))
+            fid = f.get("id", f.get("finding_id", ""))
             env = self._sync_read_envelope(fid) if fid else None
             item = dict(f)
-            item['envelope'] = env
+            item["envelope"] = env
             result.append(item)
         return result
 
@@ -5543,18 +6975,29 @@ class DuckDBShadowStore:
         if not findings:
             return (0, None)
         if not _check_pyarrow_available():
-            return (0, 'pyarrow_not_installed')
+            return (0, "pyarrow_not_installed")
         import pyarrow as _pa
+
         if _RUST_ARROW_AVAILABLE and _rust_build_arrow_batch is not None:
             try:
-                findings_dicts = [{'id': f.finding_id, 'query': f.query, 'source_type': f.source_type, 'confidence': f.confidence, 'ts': f.ts, 'provenance_json': _provenance_to_arrow_native(f.provenance)} for f in findings]
+                findings_dicts = [
+                    {
+                        "id": f.finding_id,
+                        "query": f.query,
+                        "source_type": f.source_type,
+                        "confidence": f.confidence,
+                        "ts": f.ts,
+                        "provenance_json": _provenance_to_arrow_native(f.provenance),
+                    }
+                    for f in findings
+                ]
                 ipc_bytes = _rust_build_arrow_batch(findings_dicts)
                 if ipc_bytes and len(ipc_bytes) > 8:
                     reader = _pa.ipc.open_record_batch_reader(ipc_bytes)
                     table = reader.read_next_batch()
                     duckdb_count, duckdb_err = self._qe().insert_findings_bulk_arrow(table)
                     if duckdb_err is not None:
-                        return (0, 'duckdb_insert_failed')
+                        return (0, "duckdb_insert_failed")
                     return (duckdb_count, None)
             except Exception:
                 pass
@@ -5566,14 +7009,18 @@ class DuckDBShadowStore:
             src_arr = _pa.array([f.source_type for f in findings], type=_pa.string())
             conf_arr = _pa.array([f.confidence for f in findings], type=_pa.float64())
             ts_arr = _pa.array([f.ts for f in findings], type=_pa.float64())
-            table = _pa.Table.from_arrays([id_arr, query_arr, src_arr, conf_arr, ts_arr, provenance_arr], names=['id', 'query', 'source_type', 'confidence', 'ts', 'provenance_json'])
+            table = _pa.Table.from_arrays(
+                [id_arr, query_arr, src_arr, conf_arr, ts_arr, provenance_arr],
+                names=["id", "query", "source_type", "confidence", "ts", "provenance_json"],
+            )
         except Exception as e:
             import logging as _logging
-            _logging.getLogger(__name__).error(f'[P0-4 Arrow] Table build failed: {type(e).__name__}: {e}')
-            return (0, 'table_build_failed')
+
+            _logging.getLogger(__name__).error(f"[P0-4 Arrow] Table build failed: {type(e).__name__}: {e}")
+            return (0, "table_build_failed")
         duckdb_count, duckdb_err = self._qe().insert_findings_bulk_arrow(table)
         if duckdb_err is not None:
-            return (0, 'duckdb_insert_failed')
+            return (0, "duckdb_insert_failed")
         return (duckdb_count, None)
 
     def _wal_put_many_sync(self, findings: list[CanonicalFinding]) -> bool:
@@ -5586,32 +7033,45 @@ class DuckDBShadowStore:
         Returns True if WAL succeeded for all findings.
         """
         import logging as _logging
+
         _logger = _logging.getLogger(__name__)
         try:
-            if not hasattr(self, '_wal_manager') or self._wal_manager is None:
+            if not hasattr(self, "_wal_manager") or self._wal_manager is None:
                 _wal_root = self._db_path.parent if self._db_path else None
                 if _wal_root is None:
-                    _logger.warning('[P1-2 WAL] no wal_root')
+                    _logger.warning("[P1-2 WAL] no wal_root")
                     return False
-                self._wal_manager = WALManager(wal_path=str(_wal_root / 'shadow_wal.lmdb'))
+                self._wal_manager = WALManager(wal_path=str(_wal_root / "shadow_wal.lmdb"))
                 self._wal_manager.initialize()
             items = []
             for f in findings:
-                key = f'finding:{f.finding_id}'
-                wal_payload = {'id': f.finding_id, 'query': f.query, 'source_type': f.source_type, 'confidence': f.confidence, 'ts': f.ts, 'provenance': f.provenance, 'payload_text': f.payload_text}
+                key = f"finding:{f.finding_id}"
+                wal_payload = {
+                    "id": f.finding_id,
+                    "query": f.query,
+                    "source_type": f.source_type,
+                    "confidence": f.confidence,
+                    "ts": f.ts,
+                    "provenance": f.provenance,
+                    "payload_text": f.payload_text,
+                }
                 items.append((key, wal_payload))
             if items:
-                results = self._wal_manager.wal_put_many(items) if hasattr(self._wal_manager, 'wal_put_many') else [False] * len(items)
+                results = (
+                    self._wal_manager.wal_put_many(items)
+                    if hasattr(self._wal_manager, "wal_put_many")
+                    else [False] * len(items)
+                )
                 if isinstance(results, list) and (not all(results)):
                     failed = sum((1 for r in results if not r))
-                    _logger.warning(f'[P1-2 WAL] Batch WAL: {failed}/{len(items)} items failed')
+                    _logger.warning(f"[P1-2 WAL] Batch WAL: {failed}/{len(items)} items failed")
                     return False
                 elif not isinstance(results, list):
-                    _logger.warning(f'[P1-2 WAL] Batch WAL: unexpected return type {type(results)}')
+                    _logger.warning(f"[P1-2 WAL] Batch WAL: unexpected return type {type(results)}")
                     return False
             return True
         except Exception as e:
-            _logger.error(f'[P1-2 WAL] Batch WAL exception: {e}')
+            _logger.error(f"[P1-2 WAL] Batch WAL exception: {e}")
             return False
 
     def _duckdb_arrow_sync(self, findings: list[CanonicalFinding]) -> tuple[int, str | None]:
@@ -5638,47 +7098,63 @@ class DuckDBShadowStore:
         Returns list[dict] with 1:1 mapping.
         """
         import logging as _logging
+
         _logger = _logging.getLogger(__name__)
         if not findings:
             return []
         ret: list[dict] = []
         lmdb_ok = False
         try:
-            if not hasattr(self, '_wal_manager') or self._wal_manager is None:
+            if not hasattr(self, "_wal_manager") or self._wal_manager is None:
                 _wal_root = self._db_path.parent if self._db_path else None
                 if _wal_root is None:
                     for _ in findings:
-                        ret.append({'lmdb_success': False, 'duckdb_success': None, 'error': 'no wal root'})
+                        ret.append({"lmdb_success": False, "duckdb_success": None, "error": "no wal root"})
                     return ret
-                self._wal_manager = WALManager(wal_path=str(_wal_root / 'shadow_wal.lmdb'))
+                self._wal_manager = WALManager(wal_path=str(_wal_root / "shadow_wal.lmdb"))
                 self._wal_manager.initialize()
             items = []
             for f in findings:
-                key = f'finding:{f.finding_id}'
-                wal_payload = {'id': f.finding_id, 'query': f.query, 'source_type': f.source_type, 'confidence': f.confidence, 'ts': f.ts, 'provenance': f.provenance, 'payload_text': f.payload_text}
+                key = f"finding:{f.finding_id}"
+                wal_payload = {
+                    "id": f.finding_id,
+                    "query": f.query,
+                    "source_type": f.source_type,
+                    "confidence": f.confidence,
+                    "ts": f.ts,
+                    "provenance": f.provenance,
+                    "payload_text": f.payload_text,
+                }
                 items.append((key, wal_payload))
             if items:
-                lmdb_ok = self._wal_manager.wal_put_many(items) if hasattr(self._wal_manager, 'wal_put_many') else False
+                lmdb_ok = self._wal_manager.wal_put_many(items) if hasattr(self._wal_manager, "wal_put_many") else False
                 if not lmdb_ok:
-                    _logger.warning(f'[Arrow-standalone] WAL failed for {len(items)} items')
+                    _logger.warning(f"[Arrow-standalone] WAL failed for {len(items)} items")
                     for _ in findings:
-                        ret.append({'lmdb_success': False, 'duckdb_success': None, 'error': 'lmdb batch failed'})
+                        ret.append({"lmdb_success": False, "duckdb_success": None, "error": "lmdb batch failed"})
                     return ret
         except Exception as e:
-            _logger.error(f'[Arrow-standalone] WAL exception: {e}')
+            _logger.error(f"[Arrow-standalone] WAL exception: {e}")
             for _ in findings:
-                ret.append({'lmdb_success': False, 'duckdb_success': None, 'error': str(e)})
+                ret.append({"lmdb_success": False, "duckdb_success": None, "error": str(e)})
             return ret
         duckdb_count, duckdb_err = self._sync_record_canonical_findings_batch_arrow(findings)
         if duckdb_err is not None:
-            _logger.error(f'[Arrow-standalone] DuckDB Arrow failed: {duckdb_err}')
+            _logger.error(f"[Arrow-standalone] DuckDB Arrow failed: {duckdb_err}")
             duckdb_all_ok = False
         elif duckdb_count < len(findings):
             duckdb_all_ok = True
         else:
             duckdb_all_ok = True
         for f in findings:
-            ret.append({'finding_id': f.finding_id, 'lmdb_success': lmdb_ok, 'duckdb_success': duckdb_all_ok, 'error': duckdb_err})
+            ret.append(
+                {
+                    "finding_id": f.finding_id,
+                    "lmdb_success": lmdb_ok,
+                    "duckdb_success": duckdb_all_ok,
+                    "error": duckdb_err,
+                }
+            )
         return ret
 
     async def aclose(self) -> None:
@@ -5695,13 +7171,13 @@ class DuckDBShadowStore:
         if self._checkpoint_task is not None:
             self._checkpoint_task.cancel()
             self._checkpoint_task = None
-        _bg = getattr(self, '_bg_tasks', None)
+        _bg = getattr(self, "_bg_tasks", None)
         if _bg is not None:
             await _bg.cancel()
         self._do_sync_close(emergency=False)
         await self._do_async_close()
 
-    async def rrf_rank_findings(self, query: str, k: int=30) -> list[dict]:
+    async def rrf_rank_findings(self, query: str, k: int = 30) -> list[dict]:
         """
         Sprint 8TC B.1: Reciprocal Rank Fusion přes 4 signály.
 
@@ -5733,11 +7209,23 @@ class DuckDBShadowStore:
                 conn = self._get_read_conn()
                 if conn is None:
                     return []
-                rrf_sql = '\n                WITH\n                  ranked AS (\n                      SELECT id AS finding_id,\n                             ROW_NUMBER() OVER (ORDER BY COALESCE(confidence, 0) DESC) AS r1,\n                             ROW_NUMBER() OVER (ORDER BY COALESCE(ts, 0) DESC) AS r2,\n                             ROW_NUMBER() OVER (ORDER BY source_type ASC) AS r3\n                        FROM canonical_findings\n                       WHERE query = ?1\n                  ),\n                  rrf AS (\n                      SELECT finding_id, r1 AS r FROM ranked\n                      UNION ALL\n                      SELECT finding_id, r2 AS r FROM ranked\n                      UNION ALL\n                      SELECT finding_id, r3 AS r FROM ranked\n                  )\n                SELECT f.id AS finding_id,\n                       f.query AS content,\n                       f.ts,\n                       f.confidence AS semantic_score,\n                       f.source_type,\n                       f.confidence,\n                       SUM(1.0 / (?2 + rrf.r)) AS rrf_score\n                  FROM rrf\n                  JOIN canonical_findings f ON f.id = rrf.finding_id\n                 WHERE f.query = ?1\n                 GROUP BY f.id, f.query, f.ts, f.confidence, f.source_type\n                 ORDER BY rrf_score DESC\n                 LIMIT ?2\n                '
+                rrf_sql = "\n                WITH\n                  ranked AS (\n                      SELECT id AS finding_id,\n                             ROW_NUMBER() OVER (ORDER BY COALESCE(confidence, 0) DESC) AS r1,\n                             ROW_NUMBER() OVER (ORDER BY COALESCE(ts, 0) DESC) AS r2,\n                             ROW_NUMBER() OVER (ORDER BY source_type ASC) AS r3\n                        FROM canonical_findings\n                       WHERE query = ?1\n                  ),\n                  rrf AS (\n                      SELECT finding_id, r1 AS r FROM ranked\n                      UNION ALL\n                      SELECT finding_id, r2 AS r FROM ranked\n                      UNION ALL\n                      SELECT finding_id, r3 AS r FROM ranked\n                  )\n                SELECT f.id AS finding_id,\n                       f.query AS content,\n                       f.ts,\n                       f.confidence AS semantic_score,\n                       f.source_type,\n                       f.confidence,\n                       SUM(1.0 / (?2 + rrf.r)) AS rrf_score\n                  FROM rrf\n                  JOIN canonical_findings f ON f.id = rrf.finding_id\n                 WHERE f.query = ?1\n                 GROUP BY f.id, f.query, f.ts, f.confidence, f.source_type\n                 ORDER BY rrf_score DESC\n                 LIMIT ?2\n                "
                 rows = list(self.arrow_fetch_batch(conn, rrf_sql, [query, k]))
-                return [{'finding_id': str(r[0]), 'content': r[1] or '', 'ts': r[2] or 0.0, 'semantic_score': r[3] or 0.0, 'source_type': r[4] or '', 'confidence': r[5] or 0.0, 'rrf_score': r[6] or 0.0} for r in rows]
+                return [
+                    {
+                        "finding_id": str(r[0]),
+                        "content": r[1] or "",
+                        "ts": r[2] or 0.0,
+                        "semantic_score": r[3] or 0.0,
+                        "source_type": r[4] or "",
+                        "confidence": r[5] or 0.0,
+                        "rrf_score": r[6] or 0.0,
+                    }
+                    for r in rows
+                ]
             except Exception:
                 return []
+
         return await loop.run_in_executor(self._executor, _sync_rrf_rank)
 
     async def _bounded_startup_replay(self, replay_pending_limit: int, replay_timeout_s: float) -> None:
@@ -5758,6 +7246,7 @@ class DuckDBShadowStore:
             replay_timeout_s:    Wall-time budget in seconds
         """
         import time as _time
+
         lock = self._ensure_replay_lock()
         deadline = _time.monotonic() + replay_timeout_s
         all_markers = self._wal_scan_pending_sync_markers()
@@ -5766,7 +7255,7 @@ class DuckDBShadowStore:
         seen_ids: set = set()
         unique_markers: list[dict[str, Any]] = []
         for m in all_markers:
-            fid = m.get('id', '')
+            fid = m.get("id", "")
             if fid and fid not in seen_ids:
                 seen_ids.add(fid)
                 unique_markers.append(m)
@@ -5777,7 +7266,7 @@ class DuckDBShadowStore:
             for i, marker in enumerate(markers_to_replay):
                 if _time.monotonic() > deadline:
                     break
-                fid = marker.get('id', '')
+                fid = marker.get("id", "")
                 if not fid:
                     continue
                 if i > 0 and i % self.REPLAY_CHUNK_SIZE == 0:
@@ -5815,9 +7304,19 @@ class DuckDBShadowStore:
         Returns:
             ReplayResult with all fields populated.
         """
-        result: ReplayResult = ReplayResult(finding_id=finding_id, marker_found=False, wal_truth_found=False, duckdb_written=False, marker_cleared=False, read_back_verified=False, deadlettered=False, retry_count=0, error=None)
+        result: ReplayResult = ReplayResult(
+            finding_id=finding_id,
+            marker_found=False,
+            wal_truth_found=False,
+            duckdb_written=False,
+            marker_cleared=False,
+            read_back_verified=False,
+            deadlettered=False,
+            retry_count=0,
+            error=None,
+        )
         if self._closed:
-            result['error'] = 'store closed'
+            result["error"] = "store closed"
             return result
         marker = self._wal_get_pending_marker(finding_id)
         if marker is None:
@@ -5825,66 +7324,73 @@ class DuckDBShadowStore:
                 loop = asyncio.get_running_loop()
                 already_there = await loop.run_in_executor(self._executor, self._sync_verify_duckdb_record, finding_id)
                 if already_there:
-                    result['marker_found'] = False
-                    result['wal_truth_found'] = False
-                    result['duckdb_written'] = True
-                    result['read_back_verified'] = True
-                    result['error'] = None
+                    result["marker_found"] = False
+                    result["wal_truth_found"] = False
+                    result["duckdb_written"] = True
+                    result["read_back_verified"] = True
+                    result["error"] = None
                     return result
             except Exception:
                 pass
-            result['marker_found'] = False
-            result['error'] = f'no pending marker found for {finding_id}'
+            result["marker_found"] = False
+            result["error"] = f"no pending marker found for {finding_id}"
             return result
-        result['marker_found'] = True
+        result["marker_found"] = True
         try:
-            if not hasattr(self, '_wal_lmdb') or self._wal_lmdb is None:
-                result['wal_truth_found'] = False
-                result['error'] = 'WAL not initialized'
+            if not hasattr(self, "_wal_lmdb") or self._wal_lmdb is None:
+                result["wal_truth_found"] = False
+                result["error"] = "WAL not initialized"
                 return result
-            wal_key = f'finding:{finding_id}'
+            wal_key = f"finding:{finding_id}"
             wal_record = self._wal_lmdb.get(wal_key)
             if wal_record is None:
-                result['wal_truth_found'] = False
-                result['error'] = f'WAL truth missing for {finding_id}'
+                result["wal_truth_found"] = False
+                result["error"] = f"WAL truth missing for {finding_id}"
                 return result
-            result['wal_truth_found'] = True
+            result["wal_truth_found"] = True
         except Exception as e:
-            result['wal_truth_found'] = False
-            result['error'] = f'WAL lookup failed: {e}'
+            result["wal_truth_found"] = False
+            result["error"] = f"WAL lookup failed: {e}"
             return result
-        retry_count = marker.get('_retry_count', 0)
-        result['retry_count'] = retry_count
+        retry_count = marker.get("_retry_count", 0)
+        result["retry_count"] = retry_count
         loop = asyncio.get_running_loop()
         try:
             db_written = await loop.run_in_executor(self._executor, self._sync_replay_single_marker, finding_id, marker)
-            result['duckdb_written'] = db_written
+            result["duckdb_written"] = db_written
         except Exception as e:
-            result['duckdb_written'] = False
-            result['error'] = f'DuckDB write exception: {e}'
-        if not result['duckdb_written']:
+            result["duckdb_written"] = False
+            result["error"] = f"DuckDB write exception: {e}"
+        if not result["duckdb_written"]:
             new_retry = self._get_and_bump_retry_count(finding_id)
-            result['retry_count'] = new_retry
+            result["retry_count"] = new_retry
             if new_retry >= self.MAX_RETRY_COUNT:
-                dl_ok = self._wal_write_deadletter_marker(finding_id=finding_id, query=marker.get('query', ''), source_type=marker.get('source_type', 'unknown'), confidence=marker.get('confidence', 1.0), error=result['error'] or 'max retries exceeded', retry_count=new_retry)
+                dl_ok = self._wal_write_deadletter_marker(
+                    finding_id=finding_id,
+                    query=marker.get("query", ""),
+                    source_type=marker.get("source_type", "unknown"),
+                    confidence=marker.get("confidence", 1.0),
+                    error=result["error"] or "max retries exceeded",
+                    retry_count=new_retry,
+                )
                 if dl_ok:
                     self._wal_clear_pending_sync_marker(finding_id)
-                    result['deadlettered'] = True
-                    result['marker_cleared'] = True
+                    result["deadlettered"] = True
+                    result["marker_cleared"] = True
             return result
         try:
             read_back_ok = await loop.run_in_executor(self._executor, self._sync_verify_duckdb_record, finding_id)
-            result['read_back_verified'] = read_back_ok
+            result["read_back_verified"] = read_back_ok
         except Exception as e:
-            result['read_back_verified'] = False
-            result['error'] = f'read-back failed: {e}'
+            result["read_back_verified"] = False
+            result["error"] = f"read-back failed: {e}"
             return result
-        if result['read_back_verified']:
+        if result["read_back_verified"]:
             cleared = self._wal_clear_pending_sync_marker(finding_id)
-            result['marker_cleared'] = cleared
+            result["marker_cleared"] = cleared
         return result
 
-    async def async_replay_all_pending_duckdb_sync(self, limit: int | None=None) -> list[ReplayResult]:
+    async def async_replay_all_pending_duckdb_sync(self, limit: int | None = None) -> list[ReplayResult]:
         """
         Sprint 8H: Replay all pending markers with chunking and event-loop yields.
 
@@ -5909,7 +7415,7 @@ class DuckDBShadowStore:
         seen_ids: set = set()
         unique_markers: list[dict[str, Any]] = []
         for m in all_markers:
-            fid = m.get('id', '')
+            fid = m.get("id", "")
             if fid and fid not in seen_ids:
                 seen_ids.add(fid)
                 unique_markers.append(m)
@@ -5920,9 +7426,9 @@ class DuckDBShadowStore:
         chunk_size = self.REPLAY_CHUNK_SIZE
         async with lock:
             for i in range(0, len(unique_markers), chunk_size):
-                chunk = unique_markers[i:i + chunk_size]
+                chunk = unique_markers[i : i + chunk_size]
                 for marker in chunk:
-                    fid = marker.get('id', '')
+                    fid = marker.get("id", "")
                     if not fid:
                         continue
                     result = await self.async_replay_single_pending_marker(fid)
@@ -5986,10 +7492,15 @@ class DuckDBShadowStore:
             return False
         try:
             import psutil
+
             total_ram = psutil.virtual_memory().total
             size = self.size_bytes()
-            if size is not None and size > 3 * 1024 ** 3 and (total_ram < 10 * 1024 ** 3):
-                logger.warning('[duckdb_vacuum] CRITICAL: DuckDB %.1fGB on %.1fGB RAM system — vacuum recommended', size / 1024 ** 3, total_ram / 1024 ** 3)
+            if size is not None and size > 3 * 1024**3 and (total_ram < 10 * 1024**3):
+                logger.warning(
+                    "[duckdb_vacuum] CRITICAL: DuckDB %.1fGB on %.1fGB RAM system — vacuum recommended",
+                    size / 1024**3,
+                    total_ram / 1024**3,
+                )
         except Exception:
             pass
         loop = asyncio.get_running_loop()
@@ -5997,7 +7508,7 @@ class DuckDBShadowStore:
             await loop.run_in_executor(self._executor, self._vacuum_sync)
             return True
         except Exception as e:
-            logger.warning(f'[duckdb_vacuum] VACUUM failed: {e}')
+            logger.warning(f"[duckdb_vacuum] VACUUM failed: {e}")
             return False
 
     def _vacuum_sync(self) -> None:
@@ -6007,11 +7518,11 @@ class DuckDBShadowStore:
         duckdb = _get_duckdb()
         tmp_conn = duckdb.connect(str(self._db_path), read_only=False)
         try:
-            tmp_conn.execute('VACUUM')
+            tmp_conn.execute("VACUUM")
         finally:
             tmp_conn.close()
 
-    async def async_vacuum_if_needed(self, threshold_bytes: int=2 * 1024 ** 3) -> bool:
+    async def async_vacuum_if_needed(self, threshold_bytes: int = 2 * 1024**3) -> bool:
         """
         Conditionally vacuum if the DB file exceeds threshold_bytes.
 
@@ -6024,7 +7535,7 @@ class DuckDBShadowStore:
         if size is None:
             return False
         if size > threshold_bytes:
-            logger.info(f'[duckdb_vacuum] DB size {size / 1024 ** 3:.1f}GB > threshold, running VACUUM')
+            logger.info(f"[duckdb_vacuum] DB size {size / 1024**3:.1f}GB > threshold, running VACUUM")
             return await self.vacuum_async()
         return False
 
@@ -6051,18 +7562,22 @@ class DuckDBShadowStore:
         Used for observability and monitoring.
         """
         try:
-            if not hasattr(self, '_wal_lmdb') or self._wal_lmdb is None:
+            if not hasattr(self, "_wal_lmdb") or self._wal_lmdb is None:
                 return 0
             env = self._wal_lmdb._env
             if env is None:
                 return 0
             count = 0
-            prefix = self.DEADLETTER_PREFIX.encode('utf-8')
+            prefix = self.DEADLETTER_PREFIX.encode("utf-8")
             with env.begin(write=False, buffers=True) as txn:
                 cursor = txn.cursor()
                 if cursor.set_range(prefix):
                     for key_bytes, _ in cursor.iternext():
-                        key = key_bytes.decode('utf-8') if isinstance(key_bytes, bytes) else bytes(key_bytes).decode('utf-8')
+                        key = (
+                            key_bytes.decode("utf-8")
+                            if isinstance(key_bytes, bytes)
+                            else bytes(key_bytes).decode("utf-8")
+                        )
                         if not key.startswith(self.DEADLETTER_PREFIX):
                             break
                         count += 1
@@ -6105,41 +7620,47 @@ class DuckDBShadowStore:
             - temp_size_ok: bool (1GB or 0GB for :memory:)
             - temp_dir_on_ramdisk: bool (temp_dir under RAMDISK_ROOT if set)
         """
-        results = {'has_no_gpu_pragma': True, 'memory_limit_ok': False, 'temp_size_ok': False, 'temp_dir_on_ramdisk': False}
+        results = {
+            "has_no_gpu_pragma": True,
+            "memory_limit_ok": False,
+            "temp_size_ok": False,
+            "temp_dir_on_ramdisk": False,
+        }
         try:
             mem_val = self._memory_limit.strip().upper()
-            if mem_val.endswith('GB'):
+            if mem_val.endswith("GB"):
                 mem_gb = float(mem_val[:-2])
-                results['memory_limit_ok'] = mem_gb <= 1.0
-            elif mem_val.endswith('MB'):
+                results["memory_limit_ok"] = mem_gb <= 1.0
+            elif mem_val.endswith("MB"):
                 mem_mb = float(mem_val[:-2])
-                results['memory_limit_ok'] = mem_mb <= 1024
+                results["memory_limit_ok"] = mem_mb <= 1024
             else:
-                results['memory_limit_ok'] = True
+                results["memory_limit_ok"] = True
         except Exception:
-            results['memory_limit_ok'] = False
+            results["memory_limit_ok"] = False
         try:
             temp_val = self._max_temp.strip().upper()
-            if temp_val in ('0GB', '0', '0MB'):
-                results['temp_size_ok'] = self._temp_dir is None
-            elif temp_val.endswith('GB'):
+            if temp_val in ("0GB", "0", "0MB"):
+                results["temp_size_ok"] = self._temp_dir is None
+            elif temp_val.endswith("GB"):
                 temp_gb = float(temp_val[:-2])
-                results['temp_size_ok'] = temp_gb <= 1.0
-            elif temp_val.endswith('MB'):
+                results["temp_size_ok"] = temp_gb <= 1.0
+            elif temp_val.endswith("MB"):
                 temp_mb = float(temp_val[:-2])
-                results['temp_size_ok'] = temp_mb <= 1024
+                results["temp_size_ok"] = temp_mb <= 1024
             else:
-                results['temp_size_ok'] = True
+                results["temp_size_ok"] = True
         except Exception:
-            results['temp_size_ok'] = False
+            results["temp_size_ok"] = False
         if self._temp_dir is not None:
             try:
                 from hledac.universal.paths import RAMDISK_ROOT
-                results['temp_dir_on_ramdisk'] = str(self._temp_dir).startswith(str(RAMDISK_ROOT))
+
+                results["temp_dir_on_ramdisk"] = str(self._temp_dir).startswith(str(RAMDISK_ROOT))
             except Exception:
-                results['temp_dir_on_ramdisk'] = False
+                results["temp_dir_on_ramdisk"] = False
         else:
-            results['temp_dir_on_ramdisk'] = True
+            results["temp_dir_on_ramdisk"] = True
         return results
 
     def _wal_write_finding(self, finding_id: str, query: str, source_type: str, confidence: float) -> bool:
@@ -6158,9 +7679,11 @@ class DuckDBShadowStore:
             _wal_root = self._db_path.parent if self._db_path else None
             if _wal_root is None:
                 return False
-            self._wal_manager = WALManager(wal_path=str(_wal_root / 'shadow_wal.lmdb'))
+            self._wal_manager = WALManager(wal_path=str(_wal_root / "shadow_wal.lmdb"))
             self._wal_manager.initialize()
-        return self._wal_manager.wal_write_finding(finding_id=finding_id, query=query, source_type=source_type, confidence=confidence)
+        return self._wal_manager.wal_write_finding(
+            finding_id=finding_id, query=query, source_type=source_type, confidence=confidence
+        )
 
     def _activation_record_finding(self, finding_id: str, query: str, source_type: str, confidence: float) -> dict:
         """
@@ -6180,22 +7703,23 @@ class DuckDBShadowStore:
         Returns dict with keys: lmdb_success, duckdb_success, finding_id, query
         """
         import logging as _logging
+
         _logger = _logging.getLogger(__name__)
-        result = {'lmdb_success': False, 'duckdb_success': None, 'finding_id': finding_id, 'query': query}
+        result = {"lmdb_success": False, "duckdb_success": None, "finding_id": finding_id, "query": query}
         lmdb_ok = self._wal_write_finding(finding_id, query, source_type, confidence)
-        result['lmdb_success'] = lmdb_ok
+        result["lmdb_success"] = lmdb_ok
         if not lmdb_ok:
-            _logger.warning(f'[Sprint 8A] WAL-DuckDB desync: LMDB write failed for {finding_id}')
+            _logger.warning(f"[Sprint 8A] WAL-DuckDB desync: LMDB write failed for {finding_id}")
             return result
         try:
             db_ok = self._sync_insert_finding(finding_id, query, source_type, confidence)
-            result['duckdb_success'] = db_ok
+            result["duckdb_success"] = db_ok
             if not db_ok:
-                _logger.error(f'[Sprint 8A] WAL-DuckDB desync: DuckDB write failed for {finding_id}, LMDB preserved')
+                _logger.error(f"[Sprint 8A] WAL-DuckDB desync: DuckDB write failed for {finding_id}, LMDB preserved")
                 self._wal_write_pending_sync_marker(finding_id, query, source_type, confidence)
         except Exception as e:
-            result['duckdb_success'] = False
-            _logger.error(f'[Sprint 8A] WAL-DuckDB desync: DuckDB exception for {finding_id}: {e}, LMDB preserved')
+            result["duckdb_success"] = False
+            _logger.error(f"[Sprint 8A] WAL-DuckDB desync: DuckDB exception for {finding_id}: {e}, LMDB preserved")
             self._wal_write_pending_sync_marker(finding_id, query, source_type, confidence)
         return result
 
@@ -6207,27 +7731,32 @@ class DuckDBShadowStore:
         Returns number of markers evicted.
         """
         import logging as _logging
+
         _logger = _logging.getLogger(__name__)
         try:
-            if not hasattr(self, '_wal_lmdb') or self._wal_lmdb is None:
+            if not hasattr(self, "_wal_lmdb") or self._wal_lmdb is None:
                 return 0
             env = self._wal_lmdb._env
             if env is None:
                 return 0
-            prefix = 'pending_duckdb_sync:'
+            prefix = "pending_duckdb_sync:"
             markers: list[tuple[float, str]] = []
             with env.begin(write=False, buffers=True) as txn:
                 cursor = txn.cursor()
-                if cursor.set_range(prefix.encode('utf-8')):
+                if cursor.set_range(prefix.encode("utf-8")):
                     for key_bytes, value_bytes in cursor.iternext():
-                        key = key_bytes.decode('utf-8') if isinstance(key_bytes, bytes) else bytes(key_bytes).decode('utf-8')
+                        key = (
+                            key_bytes.decode("utf-8")
+                            if isinstance(key_bytes, bytes)
+                            else bytes(key_bytes).decode("utf-8")
+                        )
                         if not key.startswith(prefix):
                             break
                         try:
                             vb = value_bytes if isinstance(value_bytes, memoryview) else value_bytes
                             vb = bytes(value_bytes) if isinstance(value_bytes, memoryview) else value_bytes
                             value = _ORJSON_DECODER(vb)
-                            ts = value.get('ts', 0.0)
+                            ts = value.get("ts", 0.0)
                             markers.append((ts, key))
                         except Exception:
                             continue
@@ -6241,7 +7770,7 @@ class DuckDBShadowStore:
                 if self._wal_lmdb.delete(key):
                     evicted += 1
             if evicted > 0:
-                _logger.warning(f'[P0-9] Evicted {evicted} oldest pending sync markers (limit={keep_count})')
+                _logger.warning(f"[P0-9] Evicted {evicted} oldest pending sync markers (limit={keep_count})")
             return evicted
         except Exception:
             return 0
@@ -6259,20 +7788,28 @@ class DuckDBShadowStore:
         """
         try:
             import time as _time
+
             from hledac.universal.tools.lmdb_kv import LMDBKVStore
-            if not hasattr(self, '_wal_lmdb'):
+
+            if not hasattr(self, "_wal_lmdb"):
                 _wal_root = self._db_path.parent if self._db_path else None
                 if _wal_root is None:
                     return False
-                self._wal_lmdb = LMDBKVStore(path=str(_wal_root / 'shadow_wal.lmdb'))
+                self._wal_lmdb = LMDBKVStore(path=str(_wal_root / "shadow_wal.lmdb"))
                 try:
-                    self._wal_lmdb.put('_schema_init', {'_': 'ok'})
-                    self._wal_lmdb.delete('_schema_init')
+                    self._wal_lmdb.put("_schema_init", {"_": "ok"})
+                    self._wal_lmdb.delete("_schema_init")
                 except (OSError, RuntimeError) as e:
-                    logger.debug(f'[DUCKDB] WAL schema init failed: {e}')
+                    logger.debug(f"[DUCKDB] WAL schema init failed: {e}")
             self._wal_evict_oldest_pending_markers(self.MAX_PENDING_SYNC_MARKERS - 1)
-            key = f'pending_duckdb_sync:{finding_id}'
-            value = {'id': finding_id, 'query': query, 'source_type': source_type, 'confidence': confidence, 'ts': _time.time()}
+            key = f"pending_duckdb_sync:{finding_id}"
+            value = {
+                "id": finding_id,
+                "query": query,
+                "source_type": source_type,
+                "confidence": confidence,
+                "ts": _time.time(),
+            }
             return self._wal_lmdb.put(key, value)
         except Exception:
             return False
@@ -6286,18 +7823,22 @@ class DuckDBShadowStore:
         NOT O(N) full database scan.
         """
         try:
-            if not hasattr(self, '_wal_lmdb'):
+            if not hasattr(self, "_wal_lmdb"):
                 return []
             env = self._wal_lmdb._env
             if env is None:
                 return []
             results = []
-            prefix = 'pending_duckdb_sync:'
+            prefix = "pending_duckdb_sync:"
             with env.begin(write=False, buffers=True) as txn:
                 cursor = txn.cursor()
-                if cursor.set_range(prefix.encode('utf-8')):
+                if cursor.set_range(prefix.encode("utf-8")):
                     for key_bytes, value_bytes in cursor.iternext():
-                        key = key_bytes.decode('utf-8') if isinstance(key_bytes, bytes) else bytes(key_bytes).decode('utf-8')
+                        key = (
+                            key_bytes.decode("utf-8")
+                            if isinstance(key_bytes, bytes)
+                            else bytes(key_bytes).decode("utf-8")
+                        )
                         if not key.startswith(prefix):
                             break
                         try:
@@ -6318,14 +7859,16 @@ class DuckDBShadowStore:
         Called by a future recovery sprint after the DuckDB write succeeds.
         """
         try:
-            if not hasattr(self, '_wal_lmdb'):
+            if not hasattr(self, "_wal_lmdb"):
                 return False
-            key = f'pending_duckdb_sync:{finding_id}'
+            key = f"pending_duckdb_sync:{finding_id}"
             return self._wal_lmdb.delete(key)
         except Exception:
             return False
 
-    def _wal_write_deadletter_marker(self, finding_id: str, query: str, source_type: str, confidence: float, error: str, retry_count: int) -> bool:
+    def _wal_write_deadletter_marker(
+        self, finding_id: str, query: str, source_type: str, confidence: float, error: str, retry_count: int
+    ) -> bool:
         """
         Sprint 8H: Write a marker to the dead-letter namespace after max retries exceeded.
 
@@ -6334,10 +7877,19 @@ class DuckDBShadowStore:
         """
         try:
             import time as _time
-            if not hasattr(self, '_wal_lmdb'):
+
+            if not hasattr(self, "_wal_lmdb"):
                 return False
-            key = f'{self.DEADLETTER_PREFIX}{finding_id}'
-            value = {'id': finding_id, 'query': query, 'source_type': source_type, 'confidence': confidence, 'ts': _time.time(), 'error': error, 'retry_count': retry_count}
+            key = f"{self.DEADLETTER_PREFIX}{finding_id}"
+            value = {
+                "id": finding_id,
+                "query": query,
+                "source_type": source_type,
+                "confidence": confidence,
+                "ts": _time.time(),
+                "error": error,
+                "retry_count": retry_count,
+            }
             return self._wal_lmdb.put(key, value)
         except Exception:
             return False
@@ -6349,9 +7901,9 @@ class DuckDBShadowStore:
         Returns the marker dict or None if not found.
         """
         try:
-            if not hasattr(self, '_wal_lmdb'):
+            if not hasattr(self, "_wal_lmdb"):
                 return None
-            key = f'pending_duckdb_sync:{finding_id}'
+            key = f"pending_duckdb_sync:{finding_id}"
             return self._wal_lmdb.get(key)
         except Exception:
             return None
@@ -6361,9 +7913,9 @@ class DuckDBShadowStore:
         Sprint 8H: Delete a dead-letter marker (used when replay succeeds later).
         """
         try:
-            if not hasattr(self, '_wal_lmdb'):
+            if not hasattr(self, "_wal_lmdb"):
                 return False
-            key = f'{self.DEADLETTER_PREFIX}{finding_id}'
+            key = f"{self.DEADLETTER_PREFIX}{finding_id}"
             return self._wal_lmdb.delete(key)
         except Exception:
             return False
@@ -6376,7 +7928,12 @@ class DuckDBShadowStore:
         Returns True if DuckDB write succeeded.
         """
         try:
-            db_ok = self._sync_insert_finding(finding_id=marker.get('id', finding_id), query=marker.get('query', ''), source_type=marker.get('source_type', 'unknown'), confidence=marker.get('confidence', 1.0))
+            db_ok = self._sync_insert_finding(
+                finding_id=marker.get("id", finding_id),
+                query=marker.get("query", ""),
+                source_type=marker.get("source_type", "unknown"),
+                confidence=marker.get("confidence", 1.0),
+            )
             return db_ok
         except Exception:
             return False
@@ -6394,13 +7951,13 @@ class DuckDBShadowStore:
                 duckdb = _get_duckdb()
                 conn = duckdb.connect(str(self._db_path))
                 try:
-                    sql = 'SELECT 1 FROM canonical_findings WHERE id = ? LIMIT 1'
+                    sql = "SELECT 1 FROM canonical_findings WHERE id = ? LIMIT 1"
                     result = list(self.arrow_fetch_batch(conn, sql, [finding_id]))
                     return bool(result)
                 finally:
                     conn.close()
             else:
-                sql = 'SELECT 1 FROM canonical_findings WHERE id = ? LIMIT 1'
+                sql = "SELECT 1 FROM canonical_findings WHERE id = ? LIMIT 1"
                 result = list(self.arrow_fetch_batch(self._persistent_conn, sql, [finding_id]))
                 return bool(result)
         except Exception:
@@ -6417,10 +7974,10 @@ class DuckDBShadowStore:
             marker = self._wal_get_pending_marker(finding_id)
             if marker is None:
                 return 0
-            current = marker.get('_retry_count', 0)
+            current = marker.get("_retry_count", 0)
             new_count = current + 1
-            marker['_retry_count'] = new_count
-            key = f'pending_duckdb_sync:{finding_id}'
+            marker["_retry_count"] = new_count
+            key = f"pending_duckdb_sync:{finding_id}"
             self._wal_lmdb.put(key, marker)
             return new_count
         except Exception:
@@ -6437,45 +7994,63 @@ class DuckDBShadowStore:
                                 failed_ids (list of ids that failed)
         """
         import logging as _logging
+
         _logger = _logging.getLogger(__name__)
-        result = {'lmdb_success': False, 'duckdb_success': False, 'count': 0, 'failed_ids': []}
+        result = {"lmdb_success": False, "duckdb_success": False, "count": 0, "failed_ids": []}
         if not findings:
             return result
         try:
             import time as _time
+
             from hledac.universal.tools.lmdb_kv import LMDBKVStore
-            if not hasattr(self, '_wal_lmdb'):
+
+            if not hasattr(self, "_wal_lmdb"):
                 _wal_root = self._db_path.parent if self._db_path else None
                 if _wal_root is None:
                     return result
-                self._wal_lmdb = LMDBKVStore(path=str(_wal_root / 'shadow_wal.lmdb'))
+                self._wal_lmdb = LMDBKVStore(path=str(_wal_root / "shadow_wal.lmdb"))
             items = []
             for f in findings:
-                fid = f.get('id')
+                fid = f.get("id")
                 if not fid:
                     continue
-                key = f'finding:{fid}'
-                value = {'id': fid, 'query': f.get('query', ''), 'source_type': f.get('source_type', 'unknown'), 'confidence': f.get('confidence', 1.0), 'ts': _time.time()}
+                key = f"finding:{fid}"
+                value = {
+                    "id": fid,
+                    "query": f.get("query", ""),
+                    "source_type": f.get("source_type", "unknown"),
+                    "confidence": f.get("confidence", 1.0),
+                    "ts": _time.time(),
+                }
                 items.append((key, value))
             if items:
                 lmdb_ok = self._wal_lmdb.put_many(items)
-                result['lmdb_success'] = lmdb_ok
+                result["lmdb_success"] = lmdb_ok
                 if not lmdb_ok:
-                    _logger.warning(f'[Sprint 8A] Batch WAL failed for {len(items)} items')
+                    _logger.warning(f"[Sprint 8A] Batch WAL failed for {len(items)} items")
                     return result
         except Exception as e:
-            _logger.error(f'[Sprint 8A] Batch WAL exception: {e}')
+            _logger.error(f"[Sprint 8A] Batch WAL exception: {e}")
             return result
         try:
-            db_findings = [{'id': f.get('id'), 'query': f.get('query', ''), 'source_type': f.get('source_type', 'unknown'), 'confidence': f.get('confidence', 1.0)} for f in findings if f.get('id')]
+            db_findings = [
+                {
+                    "id": f.get("id"),
+                    "query": f.get("query", ""),
+                    "source_type": f.get("source_type", "unknown"),
+                    "confidence": f.get("confidence", 1.0),
+                }
+                for f in findings
+                if f.get("id")
+            ]
             if db_findings:
                 inserted = self._sync_insert_findings_bulk(db_findings)
-                result['duckdb_success'] = inserted >= len(db_findings)
-                result['count'] = inserted
+                result["duckdb_success"] = inserted >= len(db_findings)
+                result["count"] = inserted
                 if inserted < len(db_findings):
-                    _logger.error(f'[Sprint 8A] Partial DuckDB batch: {inserted}/{len(db_findings)}, LMDB preserved')
+                    _logger.error(f"[Sprint 8A] Partial DuckDB batch: {inserted}/{len(db_findings)}, LMDB preserved")
         except Exception as e:
-            _logger.error(f'[Sprint 8A] Batch DuckDB exception: {e}, LMDB preserved')
+            _logger.error(f"[Sprint 8A] Batch DuckDB exception: {e}, LMDB preserved")
         return result
 
     def _acquire_process_lock(self) -> tuple[str, str]:
@@ -6494,15 +8069,17 @@ class DuckDBShadowStore:
             tuple: (lock_mode: str, message: str)
         """
         from hledac.universal.graph.lock_manager import GraphLockManager
+
         my_pid = os.getpid()
         lock_mgr = GraphLockManager(str(self._db_path))
         if lock_mgr.acquire(timeout_s=2.0):
             try:
                 from hledac.universal.monitoring.alert_manager import get_lock_contention_tracker
+
                 get_lock_contention_tracker().record_attempt(acquired=True)
             except Exception:
                 pass
-            return ('excl', f'PID {my_pid} acquired exclusive lock via GraphLockManager')
+            return ("excl", f"PID {my_pid} acquired exclusive lock via GraphLockManager")
         denial = lock_mgr.denial_reason
         holder = lock_mgr.holder_pid
         test_conn = None
@@ -6512,20 +8089,24 @@ class DuckDBShadowStore:
             test_conn = None
             try:
                 from hledac.universal.monitoring.alert_manager import get_lock_contention_tracker
+
                 get_lock_contention_tracker().record_attempt(acquired=False)
             except Exception:
                 pass
-            msg = f'PID {my_pid} opening READ-ONLY (GraphLockManager denied: {denial})'
+            msg = f"PID {my_pid} opening READ-ONLY (GraphLockManager denied: {denial})"
             if holder:
-                msg = f'PID {my_pid} opening READ-ONLY (holder PID {holder}: {denial})'
-            return ('ro', msg)
+                msg = f"PID {my_pid} opening READ-ONLY (holder PID {holder}: {denial})"
+            return ("ro", msg)
         except Exception as e:
             if test_conn is not None:
                 try:
                     test_conn.close()
                 except Exception:
                     pass
-            return (None, f'PID {my_pid} GraphLockManager denied ({denial}), READ-ONLY failed ({e}) — using :memory: fallback')
+            return (
+                None,
+                f"PID {my_pid} GraphLockManager denied ({denial}), READ-ONLY failed ({e}) — using :memory: fallback",
+            )
 
     def _cleanup_orphaned_locks(self) -> None:
         """
@@ -6545,16 +8126,18 @@ class DuckDBShadowStore:
         if self._db_path is None:
             return
         import pathlib
+
         from hledac.universal.graph.lock_manager import _is_lock_stale
+
         try:
-            lock_path = pathlib.Path(str(self._db_path) + '.lock')
+            lock_path = pathlib.Path(str(self._db_path) + ".lock")
             if lock_path.exists():
                 is_stale, reason = _is_lock_stale(lock_path, self._db_path)
                 if is_stale:
                     lock_path.unlink(missing_ok=True)
-                    logger.debug(f'[DUCKDB] Removed stale lock {lock_path}: {reason}')
+                    logger.debug(f"[DUCKDB] Removed stale lock {lock_path}: {reason}")
         except Exception as e:
-            logger.warning(f'[DUCKDB] Lock cleanup failed: {e}')
+            logger.warning(f"[DUCKDB] Lock cleanup failed: {e}")
 
     def _do_close(self) -> None:
         """
@@ -6572,12 +8155,13 @@ class DuckDBShadowStore:
         except Exception:
             pass
         try:
-            if hasattr(self, '_db_path') and self._db_path is not None:
+            if hasattr(self, "_db_path") and self._db_path is not None:
                 _db_str = str(self._db_path)
-                if _db_str != ':memory:' and _db_str != 'None':
+                if _db_str != ":memory:" and _db_str != "None":
                     import pathlib
+
                     _lock_path = pathlib.Path(_db_str).expanduser()
-                    _lock_file = _lock_path.parent / (_lock_path.name + '.lock')
+                    _lock_file = _lock_path.parent / (_lock_path.name + ".lock")
                     try:
                         _lock_file.unlink(missing_ok=True)
                     except Exception:
@@ -6585,7 +8169,7 @@ class DuckDBShadowStore:
         except Exception:
             pass
         try:
-            if hasattr(self, '_shared_executor') and self._shared_executor is not None:
+            if hasattr(self, "_shared_executor") and self._shared_executor is not None:
                 self._shared_executor.shutdown(wait=False)
         except Exception:
             pass
@@ -6595,23 +8179,26 @@ class DuckDBShadowStore:
                 self._query_cache = None
         except Exception:
             pass
-    DEDUP_NAMESPACE: str = 'dedup:'
+
+    DEDUP_NAMESPACE: str = "dedup:"
 
     def _dedup_key_from_fingerprint(self, fp: str) -> bytes:
         """Build dedup namespace key from BLAKE2b fingerprint."""
-        return f'{self.DEDUP_NAMESPACE}{fp}'.encode()
+        return f"{self.DEDUP_NAMESPACE}{fp}".encode()
 
     def _dedup_lmdb_key_to_fingerprint(self, key: bytes) -> str:
         """Extract fingerprint from dedup namespace key."""
-        return key.decode('utf-8')[len(self.DEDUP_NAMESPACE):]
+        return key.decode("utf-8")[len(self.DEDUP_NAMESPACE) :]
 
     def _init_persistent_dedup_lmdb(self) -> None:
         """Deprecated: initialization moved to DedupManager.initialize()."""
         try:
             from hledac.universal.paths import LMDB_STORE_ROOT
-            dedup_path = LMDB_STORE_ROOT / 'dedup.lmdb'
+
+            dedup_path = LMDB_STORE_ROOT / "dedup.lmdb"
             dedup_path.mkdir(parents=True, exist_ok=True)
             from hledac.universal.tools.lmdb_kv import LMDBKVStore
+
             self._dedup_lmdb = LMDBKVStore(path=str(dedup_path), map_size=_DEDUP_LMDB_MAP_SIZE, max_keys=1000000)
             self._dedup_lmdb_path = dedup_path
             self._dedup_lmdb_last_error = None
@@ -6656,12 +8243,12 @@ class DuckDBShadowStore:
         if self._dedup_manager is not None:
             self._dedup_manager.store_persistent_dedup(fp, finding_id)
             return
-        _dedup_lmdb = getattr(self, '_dedup_lmdb', None)
+        _dedup_lmdb = getattr(self, "_dedup_lmdb", None)
         if _dedup_lmdb is None:
             return
         try:
-            key = f'dedup:{fp}'.encode()
-            value_bytes = finding_id.encode('utf-8')
+            key = f"dedup:{fp}".encode()
+            value_bytes = finding_id.encode("utf-8")
             with _dedup_lmdb._env.begin(write=True) as txn:
                 txn.put(key, value_bytes)
         except Exception:
@@ -6677,7 +8264,7 @@ class DuckDBShadowStore:
         if self._dedup_manager is not None:
             self._dedup_manager.add_to_hot_cache(fp, finding_id)
             return
-        if not hasattr(self, '_hot_cache_fallback'):
+        if not hasattr(self, "_hot_cache_fallback"):
             self._hot_cache_fallback: dict[str, str] = {}
         self._hot_cache_fallback[fp] = finding_id
 
@@ -6690,7 +8277,7 @@ class DuckDBShadowStore:
         """
         if self._dedup_manager is not None:
             return self._dedup_manager.hot_cache_lookup(fp)
-        return getattr(self, '_hot_cache_fallback', {}).get(fp)
+        return getattr(self, "_hot_cache_fallback", {}).get(fp)
 
     def get_dedup_runtime_status(self) -> dict:
         """
@@ -6701,11 +8288,39 @@ class DuckDBShadowStore:
         """
         if self._dedup_manager is not None:
             dedup_status = self._dedup_manager.get_runtime_status(self._quality_state)
-            return {**dedup_status, 'in_memory_duplicate_count': self._quality_state._quality_duplicate_count, 'persistent_duplicate_count': self._quality_state._persistent_duplicate_count, 'accepted_count': self._quality_state._accepted_count, 'low_information_rejected_count': self._quality_state._quality_rejected_count, 'in_memory_duplicate_rejected_count': self._quality_state._quality_duplicate_count, 'persistent_duplicate_rejected_count': self._quality_state._persistent_duplicate_count, 'other_rejected_count': self._quality_state._quality_fail_open_count}
-        fallback_error = getattr(self, '_dedup_lmdb_boot_error', None)
-        _dedup_lmdb = getattr(self, '_dedup_lmdb', None)
+            return {
+                **dedup_status,
+                "in_memory_duplicate_count": self._quality_state._quality_duplicate_count,
+                "persistent_duplicate_count": self._quality_state._persistent_duplicate_count,
+                "accepted_count": self._quality_state._accepted_count,
+                "low_information_rejected_count": self._quality_state._quality_rejected_count,
+                "in_memory_duplicate_rejected_count": self._quality_state._quality_duplicate_count,
+                "persistent_duplicate_rejected_count": self._quality_state._persistent_duplicate_count,
+                "other_rejected_count": self._quality_state._quality_fail_open_count,
+            }
+        fallback_error = getattr(self, "_dedup_lmdb_boot_error", None)
+        _dedup_lmdb = getattr(self, "_dedup_lmdb", None)
         _dedup_enabled = _dedup_lmdb is not None and fallback_error is None
-        return {'persistent_dedup_enabled': _dedup_enabled, 'bloom_filter_enabled': False, 'bloom_filter_error': None, 'last_boot_cleanup_error': fallback_error or getattr(self._dedup_manager, '_dedup_lmdb_boot_error', None) if self._dedup_manager else fallback_error, 'last_dedup_error': None, 'dedup_lmdb_path': str(getattr(self, '_dedup_lmdb_path', '') or ''), 'dedup_namespace': 'dedup:', 'hot_cache_size': len(getattr(self, '_hot_cache_fallback', {})), 'hot_cache_capacity': 1000, 'in_memory_duplicate_count': self._quality_state._quality_duplicate_count, 'persistent_duplicate_count': self._quality_state._persistent_duplicate_count, 'accepted_count': self._quality_state._accepted_count, 'low_information_rejected_count': self._quality_state._quality_rejected_count, 'in_memory_duplicate_rejected_count': self._quality_state._quality_duplicate_count, 'persistent_duplicate_rejected_count': self._quality_state._persistent_duplicate_count, 'other_rejected_count': self._quality_state._quality_fail_open_count}
+        return {
+            "persistent_dedup_enabled": _dedup_enabled,
+            "bloom_filter_enabled": False,
+            "bloom_filter_error": None,
+            "last_boot_cleanup_error": fallback_error or getattr(self._dedup_manager, "_dedup_lmdb_boot_error", None)
+            if self._dedup_manager
+            else fallback_error,
+            "last_dedup_error": None,
+            "dedup_lmdb_path": str(getattr(self, "_dedup_lmdb_path", "") or ""),
+            "dedup_namespace": "dedup:",
+            "hot_cache_size": len(getattr(self, "_hot_cache_fallback", {})),
+            "hot_cache_capacity": 1000,
+            "in_memory_duplicate_count": self._quality_state._quality_duplicate_count,
+            "persistent_duplicate_count": self._quality_state._persistent_duplicate_count,
+            "accepted_count": self._quality_state._accepted_count,
+            "low_information_rejected_count": self._quality_state._quality_rejected_count,
+            "in_memory_duplicate_rejected_count": self._quality_state._quality_duplicate_count,
+            "persistent_duplicate_rejected_count": self._quality_state._persistent_duplicate_count,
+            "other_rejected_count": self._quality_state._quality_fail_open_count,
+        }
 
     def reset_ingest_reason_counters(self) -> None:
         """
@@ -6737,21 +8352,21 @@ class DuckDBShadowStore:
         """
         if isinstance(decision, FindingQualityDecision):
             if decision.accepted:
-                return 'accepted'
+                return "accepted"
             reason = decision.reason
-            if reason == 'low_entropy_rejected':
-                return 'low_information_rejected'
-            if reason == 'persistent_duplicate':
-                return 'persistent_duplicate_rejected'
-            if reason == 'duplicate_detected':
-                return 'in_memory_duplicate_rejected'
-            return 'other_rejected'
-        if decision['accepted']:
-            return 'accepted'
-        error = decision.get('error')
+            if reason == "low_entropy_rejected":
+                return "low_information_rejected"
+            if reason == "persistent_duplicate":
+                return "persistent_duplicate_rejected"
+            if reason == "duplicate_detected":
+                return "in_memory_duplicate_rejected"
+            return "other_rejected"
+        if decision["accepted"]:
+            return "accepted"
+        error = decision.get("error")
         if error:
-            return 'error_rejected'
-        return 'other_rejected'
+            return "error_rejected"
+        return "other_rejected"
 
     def _schedule_graph_update(self, accepted_findings: list[CanonicalFinding]) -> None:
         """
@@ -6784,15 +8399,16 @@ class DuckDBShadowStore:
                         return
                     rows = []
                     for f in accepted_findings:
-                        ioc_value = getattr(f, 'ioc_value', '')
-                        ioc_type = getattr(f, 'ioc_type', '')
+                        ioc_value = getattr(f, "ioc_value", "")
+                        ioc_type = getattr(f, "ioc_type", "")
                         if ioc_value:
-                            rows.append((ioc_value, ioc_type, float(f.confidence), f.source_type or ''))
+                            rows.append((ioc_value, ioc_type, float(f.confidence), f.source_type or ""))
                     if rows:
                         truth_graph.upsert_ioc_batch(rows)
                 except Exception:
                     pass
-            tasks = getattr(self, '_bg_tasks', None)
+
+            tasks = getattr(self, "_bg_tasks", None)
             if tasks is None:
                 return
             try:
@@ -6802,9 +8418,10 @@ class DuckDBShadowStore:
 
             async def _graph_update_coro() -> None:
                 await asyncio.to_thread(_sync_graph_update)
+
             if tasks.count >= _MAX_INFLIGHT_GRAPH_UPDATES:
                 return
-            tasks.spawn(_graph_update_coro(), name='duckdb:_schedule_graph_update')
+            tasks.spawn(_graph_update_coro(), name="duckdb:_schedule_graph_update")
         except Exception:
             pass
 
@@ -6826,14 +8443,15 @@ class DuckDBShadowStore:
                 if self._file_conn is None:
                     continue
                 try:
-                    self._file_conn.execute('PRAGMA checkpoint')
-                    self._file_conn.execute('ANALYZE')
+                    self._file_conn.execute("PRAGMA checkpoint")
+                    self._file_conn.execute("ANALYZE")
                 except Exception as e:
-                    _logger.debug(f'[P3-2] checkpoint/ANALYZE error: {e}')
+                    _logger.debug(f"[P3-2] checkpoint/ANALYZE error: {e}")
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                _logger.debug(f'[P3-2] checkpoint loop error: {e}')
+                _logger.debug(f"[P3-2] checkpoint loop error: {e}")
+
 
 def create_owned_store() -> DuckDBShadowStore:
     """
@@ -6852,9 +8470,10 @@ def create_owned_store() -> DuckDBShadowStore:
     """
     try:
         from hledac.universal.paths import DUCKDB_STORE_ROOT, RAMDISK_ACTIVE, RAMDISK_ROOT
+
         if RAMDISK_ACTIVE:
-            db_path = DUCKDB_STORE_ROOT / 'shadow_analytics.duckdb'
-            temp_dir = RAMDISK_ROOT / 'duckdb_tmp'
+            db_path = DUCKDB_STORE_ROOT / "shadow_analytics.duckdb"
+            temp_dir = RAMDISK_ROOT / "duckdb_tmp"
             return DuckDBShadowStore(db_path=db_path, temp_dir=temp_dir)
         else:
             return DuckDBShadowStore()

@@ -46,7 +46,7 @@ try:
 except ImportError:
     psutil = None
 
-@dataclass(True)
+@dataclass(slots=True)
 class GCSnapshot:
     """Point-in-time GC state."""
     threshold: tuple[int, int, int]

@@ -5,21 +5,8 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
+TESTS_DIR = str(REPO_ROOT / "tests")
 
-# Prepend the paths needed for `hledac` to be importable. The canonical
-# bootstrap below will then extend sys.path with every spec sibling.
-# Idempotent — duplicates are silently dropped by `set` membership.
-#
-# Order matters: REPO_ROOT must end up at sys.path[0] (Python walks the
-# path list in order; if the parent of the project is at index 0, Python
-# discovers `hledac` as an *implicit namespace package* there and the
-# real `hledac/_namespace_bootstrap.py` under REPO_ROOT becomes invisible).
-# Tuple order is the iteration order, but `insert(0, …)` reverses it, so
-# we list the parent FIRST and REPO_ROOT SECOND to land the desired
-# final ordering of [REPO_ROOT, parent, …].
-for _p in ("/Users/vojtechhamada/PycharmProjects/Hledac", str(REPO_ROOT)):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
 
 # CRITICAL: load the real hledac.universal package via importlib so its
 # `__init__.py` actually runs (populating `_LAZY_EXPORTS` and the
@@ -53,6 +40,15 @@ from hledac._namespace_bootstrap import ensure_namespace_paths  # noqa: E402
 
 ensure_namespace_paths()
 
+# CRITICAL: TESTS_DIR must be at sys.path[0] AFTER sibling dirs are prepended
+# by ensure_namespace_paths() / _inject_sys_path().  The original insert at
+# module level (line 8) is pushed down by _inject_sys_path().  We re-insert
+# TESTS_DIR at index 0 to ensure `from tests.utils.memory_profiler` resolves
+# to tests/utils/memory_profiler.py and not the bare discovery/ package.
+if TESTS_DIR in sys.path:
+    sys.path.remove(TESTS_DIR)
+sys.path.insert(0, TESTS_DIR)
+
 # Force-import all key submodules of hledac.universal so the namespace
 # bootstrap does NOT create empty stubs for them.  The bootstrap's
 # `_bootstrap_universal()` synthesises a ModuleType for `hledac.universal`
@@ -74,6 +70,10 @@ def _force_load(modname: str) -> None:
     init = "/".join(parts) + "/__init__.py"
     for candidate in (os.path.join(_HUB_DIR, rel), os.path.join(_HUB_DIR, init)):
         if os.path.isfile(candidate):
+            # F271-FIX: `sys.path` may contain entries added by the module being
+            # reloaded (e.g. `hledac.universal.paths` inserts `tests/`).  Save
+            # it before dropping the old module so we can restore it.
+            _saved_sys_path: list[str] = sys.path.copy()
             # Drop the stub (and any cached submodule entries) so the
             # real import wins.
             for k in list(sys.modules.keys()):
@@ -87,20 +87,28 @@ def _force_load(modname: str) -> None:
                 sys.modules[modname] = _m
                 _spec.loader.exec_module(_m)
                 # F270 fix: detect partial package init. If candidate was an
-                # __init__.py (package), the resulting module MUST have __path__.
-                # When a sub-import inside __init__.py fails (e.g. heavy optional
+                # `__init__.py` (package), the resulting module MUST have `__path__`.
+                # When a sub-import inside `__init__.py` fails (e.g. heavy optional
                 # deps or cross-test contamination), exec_module leaves the
-                # module in sys.modules without __path__ — a "stub". Subsequent
+                # module in sys.modules without `__path__` — a "stub". Subsequent
                 # `from hledac.universal.utils.X import Y` then errors with
                 # `'hledac.universal.utils' is not a package`. Drop the stub
                 # so the normal import path can re-attempt from scratch.
                 if init.endswith("__init__.py") and not hasattr(_m, "__path__"):
                     sys.modules.pop(modname, None)
+                # F271-FIX: restore sys.path after reload.  The module's `__init__.py`
+                # may have inserted project paths (e.g. `tests/` from paths.py) that
+                # would otherwise be lost, causing downstream `ModuleNotFoundError`
+                # for test utilities.
+                sys.path[:] = _saved_sys_path
                 return
             except Exception:
                 # exec_module raised — drop the partial stub so it does not
                 # poison sys.modules for the rest of the collection run.
                 sys.modules.pop(modname, None)
+                # F271-FIX: restore sys.path even on failure so the session stays
+                # importable.
+                sys.path[:] = _saved_sys_path
                 return
 
 
@@ -234,7 +242,7 @@ def _ensure_r0_artifacts() -> None:
             capture_output=True,
             timeout=60,
         )
-    except subprocess.TimeoutExpired, OSError:
+    except subprocess.TimeoutExpired as err:
         # Fail-safe: neblokuj testy kvůli autoprobe
         pass
 
@@ -327,11 +335,16 @@ def session_duckdb_store():
 
         yield store
 
-        # Teardown
+        # Teardown — use the session event loop so we don't create an extra
+        # loop that pytest-asyncio may not know about.  If no session loop is
+        # available, fall back to a transient loop (will be closed below).
         try:
-            loop2 = asyncio.new_event_loop()
-            loop2.run_until_complete(store.aclose())
-            loop2.close()
+            _loop = asyncio.get_event_loop()
+        except RuntimeError:
+            _loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(_loop)
+        try:
+            _loop.run_until_complete(store.aclose())
         except Exception:
             pass
     finally:
@@ -369,6 +382,12 @@ def session_otel_tracer():
 
 import gc  # noqa: E402
 
+# Import mock cleanup utilities (lazy, fail-soft)
+try:
+    from tests.utils.spec_mocks import _deep_cleanup_mock  # noqa: E402
+except Exception:
+    _deep_cleanup_mock = None  # type: ignore[assignment, misc]
+
 try:
     from tests.utils.memory_profiler import (
         LEAK_THRESHOLD_MB,
@@ -377,15 +396,41 @@ try:
         TracemallocSnapshot,
         assert_no_leak,
         get_rss_mb,
+        init_session_tracer,
+        stop_session_tracer,
     )
-except Exception:
-    # Fail-soft: tests that need memory profiler will be skipped gracefully
-    Snapshot = None
+except Exception as _e:
+    import sys
+    import traceback
+
+    traceback.print_exc()
+    print(f"FAIL memory_profiler import: {_e}\npath[:3]={sys.path[:3]}", flush=True)
+    # Set fallbacks so subsequent references don't NameError
+    LEAK_THRESHOLD_MB = 50.0
     MemoryTracker = None
+    Snapshot = None
     TracemallocSnapshot = None
     assert_no_leak = None
     get_rss_mb = None
-    LEAK_THRESHOLD_MB = 50.0
+    init_session_tracer = None
+    stop_session_tracer = None
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _session_tracer() -> None:
+    """
+    Session-scoped tracemalloc tracer.
+    Starts tracemalloc once at pytest session start and stops it once at
+    session teardown. Eliminates repeated start/stop cycles that fragment
+    Python's pymalloc arenas (~200 KB per cycle × 100 tests = ~20 MB retained).
+    Individual TracemallocSnapshot / MemoryTracker instances in per-test
+    fixtures only take snapshots — they never start or stop the tracer.
+    """
+    if init_session_tracer is not None:
+        init_session_tracer()
+    yield
+    if stop_session_tracer is not None:
+        stop_session_tracer()
 
 
 @pytest.fixture
@@ -462,17 +507,33 @@ def assert_memory_leak():
 # Úspora: 30–50 MB při 10 testech v souboru.
 # ─────────────────────────────────────────────────────────────────────────────
 def _make_lifecycle_mock(remaining: float = 30.0) -> MagicMock:
-    """Lifecycle mock pro _run_one_cycle testy."""
-    lc = MagicMock()
+    """Lifecycle mock pro _run_one_cycle testy.
+
+    Uses spec=SprintLifecycleManager to restrict mock to real attributes only,
+    preventing unbounded _mock_children growth (Issue 5.6).
+    """
+    from hledac.universal.utils.sprint_lifecycle import SprintLifecycleManager
+
+    lc = MagicMock(spec=SprintLifecycleManager)
+    # SprintLifecycleManager methods — spec restricts allowed attributes,
+    # so we set only what exists on the class.
     lc.remaining_time = MagicMock(return_value=remaining)
     lc.recommended_tool_mode = MagicMock(return_value="normal")
-    lc.is_active = MagicMock(return_value=True)
     return lc
 
 
 def _make_runner_mock() -> MagicMock:
-    """Runner mock s konzistentními default return hodnotami."""
-    runner = MagicMock()
+    """Runner mock s konzistentními default return hodnotami.
+
+    Uses spec=SprintLifecycleRunner to restrict mock to real attributes only,
+    preventing unbounded _mock_children growth (Issue 5.6).
+    Extra runtime state (current_phase, abort_requested, last_guard_observation)
+    is attached as plain attributes — allowed because they don't conflict with
+    spec-class members.
+    """
+    from hledac.universal.runtime.sprint_lifecycle_runner import SprintLifecycleRunner
+
+    runner = MagicMock(spec=SprintLifecycleRunner)
     runner.is_terminal = MagicMock(return_value=False)
     runner.tick = MagicMock()
     runner.post_sleep_gate = MagicMock(return_value=False)
@@ -500,13 +561,19 @@ def _make_scheduler_base(
     scheduler = SprintScheduler.__new__(SprintScheduler)
     scheduler._config = cfg
     scheduler._result = result
-    scheduler._layer_manager = MagicMock()
+    from hledac.universal.knowledge.ioc_graph import IOCGraph
+    from hledac.universal.layers.layer_manager import LayerManager
+    from hledac.universal.planning.acquisition_plan import AcquisitionPlan
+    from hledac.universal.runtime.int_counter_layout import IntCounterLayout
+    from hledac.universal.runtime.sprint_scheduler import _LifecycleAdapter
+
+    scheduler._layer_manager = MagicMock(spec=LayerManager)
     scheduler._enrichment_services = None
     scheduler._governor = None
     scheduler._bg_tasks: set[asyncio.Task] = set()
-    scheduler._int_counter_layout = MagicMock()
-    scheduler._lc_adapter = MagicMock()
-    scheduler._pivot_ioc_graph = MagicMock()
+    scheduler._int_counter_layout = MagicMock(spec=IntCounterLayout)
+    scheduler._lc_adapter = MagicMock(spec=_LifecycleAdapter)
+    scheduler._pivot_ioc_graph = MagicMock(spec=IOCGraph)
     scheduler._pivot_stats = {}
     scheduler._query = ""
     scheduler._sprint_depth = 0
@@ -520,22 +587,34 @@ def _make_scheduler_base(
     scheduler._last_sources: list = []
     scheduler._stop_requested = False
     scheduler._runner = _make_runner_mock()
-    scheduler._acquisition_plan = MagicMock()
-    scheduler._inject_ioc_graph = MagicMock()
+    scheduler._acquisition_plan = MagicMock(spec=AcquisitionPlan)
+    scheduler._injected_ioc_graph = MagicMock(spec=IOCGraph)
     return scheduler, result, scheduler._runner
 
 
 @pytest.fixture
-def scheduler_mocks() -> Generator[tuple[Any, Any, MagicMock], None, None]:
-    """Per-test fixture vracející (scheduler, result, runner)."""
+def scheduler_mocks() -> Generator[tuple[Any, Any, MagicMock], object, object]:
+    """Per-test fixture vracející (scheduler, result, runner) s auto-cleanup."""
     scheduler, result, runner = _make_scheduler_base()
-    yield scheduler, result, runner
+    try:
+        yield scheduler, result, runner
+    finally:
+        if _deep_cleanup_mock is not None:
+            _deep_cleanup_mock(scheduler)
+            _deep_cleanup_mock(runner)
+        gc.collect()
 
 
 @pytest.fixture
-def lifecycle_mock() -> Generator[MagicMock, None, None]:
-    """Standard lifecycle mock pro OODA loop testy."""
-    yield _make_lifecycle_mock(remaining=30.0)
+def lifecycle_mock() -> Generator[MagicMock, object, object]:
+    """Standard lifecycle mock pro OODA loop testy s auto-cleanup."""
+    lc = _make_lifecycle_mock(remaining=30.0)
+    try:
+        yield lc
+    finally:
+        if _deep_cleanup_mock is not None:
+            _deep_cleanup_mock(lc)
+        gc.collect()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -561,7 +640,7 @@ def _read_settings_bak() -> str:
 
 
 @pytest.fixture
-def mock_settings_json() -> Generator[dict, None, None]:
+def mock_settings_json() -> Generator[dict, object, object]:
     """Hermetický settings.json mock — fresh read per invocation, no global cache."""
     content = _read_settings_json()
     data = json.loads(content)
@@ -571,21 +650,20 @@ def mock_settings_json() -> Generator[dict, None, None]:
 
 
 @pytest.fixture
-def mock_settings_bak() -> Generator[str, None, None]:
+def mock_settings_bak() -> Generator[str, object, object]:
     """Hermetický backup settings.json mock."""
     yield _read_settings_bak()
 
 
 @pytest.fixture(scope="session")
-def event_loop_policy() -> asyncio.AbstractEventLoopPolicy:
+def event_loop_policy() -> asyncio.DefaultEventLoopPolicy:
     return asyncio.DefaultEventLoopPolicy()
 
 
-@pytest.fixture(scope="session")
-def event_loop(event_loop_policy: asyncio.AbstractEventLoopPolicy) -> Generator[asyncio.AbstractEventLoop, None, None]:
-    loop = event_loop_policy.new_event_loop()
-    yield loop
-    loop.close()
+# Legacy event_loop fixture removed — F350M-R: pytest-asyncio provides
+# its own session-scoped event_loop when asyncio_default_fixture_loop_scope = "session"
+# (pyproject.toml:851). Keeping event_loop_policy for explicit policy control.
+# Tests needing explicit loop control use session_event_loop fixture instead.
 
 
 # ---------------------------------------------------------------------------
@@ -621,31 +699,28 @@ _MLX_AVAILABLE: bool = False
 _mlx_core: Any = None
 
 try:
-    import mlx.core as _mlx_core
-
     _MLX_AVAILABLE = True
 except Exception:
     _MLX_AVAILABLE = False
 
 
 @pytest.fixture(autouse=True)
-def _mlx_cache_cleanup() -> None:
+def _memory_profiler_gc_sync() -> None:
     """
-    Auto-cleanup MLX Metal cache after each test.
+    Ensure GC is unfrozen before each test.
 
-    CRITICAL FIX F350M-R: MLX Metal cache can accumulate up to 1.5GB.
-    Without explicit cleanup, session-scoped tests leak Metal memory
-    and crash M1 8GB after ~100 tests.
+    CRITICAL FIX (F350M-R): MemoryTracker uses gc.freeze() to pin objects
+    during measurement. If a previous test's MemoryTracker crashes or
+    skips __exit__, GC stays frozen and subsequent gc.collect() calls
+    become no-ops, silently breaking leak detection.
 
-    Pattern: mx.eval([]) barrier before clear_cache() — F350M-R invariant.
+    This fixture runs BEFORE every test to ensure GC is in a clean state.
     """
+    try:
+        gc.unfreeze()
+    except Exception:
+        pass  # Already unfrozen or freeze unavailable
     yield
-    if _MLX_AVAILABLE:
-        try:
-            _mlx_core.eval([])
-            _mlx_core.metal.clear_cache()
-        except Exception:
-            pass  # fail-soft: don't fail tests for cleanup errors
 
 
 @pytest.fixture(autouse=True)
@@ -732,18 +807,41 @@ def _asyncio_task_leak_guard(request: pytest.FixtureRequest) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _graph_service_session_cleanup() -> None:
+    """
+    Reset GraphService singleton state between tests.
+
+    F350M-R: _DEFAULT_GRAPH_SERVICE holds _seen_iocs / _seen_rels idempotency
+    sets that persist across tests. reset_session() clears both sets AND the
+    DuckPGQGraph singleton -- preventing cross-test IOC leakage.
+    """
+    from hledac.universal.knowledge.graph_service import _DEFAULT_GRAPH_SERVICE
+
+    _DEFAULT_GRAPH_SERVICE.reset_session()
+    yield
+    _DEFAULT_GRAPH_SERVICE.reset_session()
+
+
 def _gc_after_heavy_tests(request: pytest.FixtureRequest) -> None:
     """
     Run GC after tests that use MLX/DuckDB/LMDB.
 
-    CRITICAL FIX 5.9: MLX/DuckDB/LMDB allocate via Rust FFI / Metal /
+    CRITICAL FIX (F350M-R): MLX/DuckDB/LMDB allocate via Rust FFI / Metal /
     mmap; Python's cyclic GC cannot see into those allocations. Calling
     gc.collect() after the test forces the interpreter to check reachable
     objects and break reference cycles that hold FFI handles.
-    2-pass collection handles cyclic-ref chains (A→B→C→A).
+
+    Uses 2-pass collection for cyclic-ref chains (A→B→C→A).
+    Unfreezes GC if frozen from previous MemoryTracker use to ensure
+    clean GC state between tests.
     """
     yield
+    # CRITICAL FIX (F350M-R): Unfreeze GC if frozen from MemoryTracker
+    try:
+        gc.unfreeze()
+    except Exception:
+        pass
     markers = {m.name for m in request.node.iter_markers()}
     if markers & {"mlx", "duckdb", "lmdb", "heavy"}:
         gc.collect()
-        gc.collect()  # 2-pass for cyclic refs
+        gc.collect()

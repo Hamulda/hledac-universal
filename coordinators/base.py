@@ -35,7 +35,7 @@ class OperationType(Enum):
     SYNTHESIS = auto()
     OPTIMIZATION = auto()
 
-@dataclass(True)
+@dataclass(slots=True)
 class DecisionResponse:
     """Decision from orchestrator to be executed by coordinator."""
     decision_id: str

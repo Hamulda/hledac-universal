@@ -110,7 +110,7 @@ class SourceTransportMap:
         """Return True if suffix MUST use Tor (e.g. .onion)."""
         return cls._map.get(suffix) is Transport.TOR
 
-@dataclass(True)
+@dataclass(slots=True)
 class TransportContext:
     """Runtime context for transport selection."""
     requires_anonymity: bool = False

@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 HYPOTHESIS_ENABLED = os.environ.get('HLEDAC_ENABLE_HYPOTHESIS', '1') == '1'
 RAM_THRESHOLD = 0.7
 
-@dataclass(True)
+@dataclass(slots=True)
 class HypothesisResult:
     """Result of hypothesis generation run."""
     enabled: bool

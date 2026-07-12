@@ -38,7 +38,7 @@ UUID_PATTERN = '\\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[
 CREDIT_CARD_PATTERN = '\\b(?:\\d{4}[-\\s]?){3}\\d{4}\\b'
 PHONE_PATTERN = '\\b(?:\\+?\\d{1,3}[-.\\s]?)?\\(?\\d{3}\\)?[-.\\s]?\\d{3}[-.\\s]?\\d{4}\\b'
 
-@dataclass(True)
+@dataclass(slots=True)
 class Pattern:
     """Represents a detected pattern in input data.
 

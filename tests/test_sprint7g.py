@@ -12,6 +12,7 @@ Canonical replacements:
 - StealthCrawler (canonical path)
 - SprintSchedulerConfig duration handling
 """
+
 import asyncio
 import inspect
 from unittest.mock import MagicMock
@@ -33,22 +34,20 @@ class TestScanCtFix:
         assert config.sprint_duration_s == 5
         assert config.aggressive_mode is True
 
-    def test_sprint_scheduler_can_be_created(self):
-        """SprintScheduler should be creatable without errors (sync wrapper)."""
-        async def _run():
-            config = SprintSchedulerConfig(
-                sprint_duration_s=3,
-                aggressive_mode=False,
-            )
-            scheduler = SprintScheduler(config)
+    @pytest.mark.asyncio
+    async def test_sprint_scheduler_can_be_created(self):
+        """SprintScheduler should be creatable without errors."""
+        config = SprintSchedulerConfig(
+            sprint_duration_s=3,
+            aggressive_mode=False,
+        )
+        scheduler = SprintScheduler(config)
 
-            # Verify basic attributes
-            assert scheduler._config is not None
-            assert scheduler._config.sprint_duration_s == 3
-            assert hasattr(scheduler, '_seen_hashes')
-            assert hasattr(scheduler, '_entries_per_source')
-
-        asyncio.run(_run())
+        # Verify basic attributes
+        assert scheduler._config is not None
+        assert scheduler._config.sprint_duration_s == 3
+        assert hasattr(scheduler, "_seen_hashes")
+        assert hasattr(scheduler, "_entries_per_source")
 
 
 class TestStealthCrawlerFix:
@@ -151,7 +150,7 @@ class TestShutdownWarning:
         from hledac.universal.security.quantum_resistant_crypto import QuantumResistantCrypto
 
         # Handle stub case — stub has no __del__, just check class exists
-        if not hasattr(QuantumResistantCrypto, '__del__'):
+        if not hasattr(QuantumResistantCrypto, "__del__"):
             # Stub class — no __del__ means no bare except risk
             return
 
@@ -166,22 +165,21 @@ class TestShutdownWarning:
 # INTEGRATION SMOKE TEST
 # =============================================================================
 
+
 class TestSmokeIntegration:
     """SMOKE: sprint scheduler basic initialization"""
 
-    def test_sprint_scheduler_init_no_blocker_errors(self):
-        """SprintScheduler creation should have no blocker errors (sync wrapper)."""
-        async def _run():
-            config = SprintSchedulerConfig(
-                sprint_duration_s=5,
-            )
-            scheduler = SprintScheduler(config)
+    @pytest.mark.asyncio
+    async def test_sprint_scheduler_init_no_blocker_errors(self):
+        """FIX F350M-R: Use @pytest.mark.asyncio instead of asyncio.run()."""
+        config = SprintSchedulerConfig(
+            sprint_duration_s=5,
+        )
+        scheduler = SprintScheduler(config)
 
-            # Basic sanity check
-            assert scheduler._config is not None
-            assert scheduler._config.sprint_duration_s == 5
-
-        asyncio.run(_run())
+        # Basic sanity check
+        assert scheduler._config is not None
+        assert scheduler._config.sprint_duration_s == 5
 
 
 if __name__ == "__main__":

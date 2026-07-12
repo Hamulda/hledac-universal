@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 logger = logging.getLogger(__name__)
 
-@dataclass(True)
+@dataclass(slots=True)
 class DestructionConfig:
     """Konfigurace bezpečného mazání"""
     passes: int = 3

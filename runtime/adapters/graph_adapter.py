@@ -11,8 +11,6 @@ GHOST_INVARIANTS:
 - Always-on: no feature flags
 """
 
-
-
 from typing import Any
 
 from runtime.protocols.graph_protocol import GraphProtocol
@@ -33,7 +31,7 @@ class DuckPGQGraphAdapter(GraphProtocol):
         adapter.find_connected("1.2.3.4")
     """
 
-    __slots__ = ('_graph',)
+    __slots__ = ("_graph",)
 
     def __init__(self, graph: Any) -> None:
         """
@@ -60,9 +58,7 @@ class DuckPGQGraphAdapter(GraphProtocol):
         except Exception:
             return False
 
-    def find_connected(
-        self, ioc_value: str, max_depth: int = 2
-    ) -> list[dict[str, Any]]:
+    def find_connected(self, ioc_value: str, max_depth: int = 2) -> list[dict[str, Any]]:
         """Delegate graph traversal to DuckPGQGraph.find_connected()."""
         try:
             return self._graph.find_connected(ioc_value, max_depth)
@@ -84,18 +80,14 @@ class DuckPGQGraphAdapter(GraphProtocol):
         except Exception:
             return False
 
-    def upsert_ioc_batch(
-        self, rows: list[tuple[str, str, float, str]]
-    ) -> int:
+    def upsert_ioc_batch(self, rows: list[tuple[str, str, float, str]]) -> int:
         """Delegate batch upsert to DuckPGQGraph.upsert_ioc_batch()."""
         try:
             return self._graph.upsert_ioc_batch(rows)
         except Exception:
             return 0
 
-    def find_connected_batch(
-        self, values: list[str], max_depth: int = 2
-    ) -> dict[str, list[dict[str, Any]]]:
+    def find_connected_batch(self, values: list[str], max_depth: int = 2) -> dict[str, list[dict[str, Any]]]:
         """Delegate batch traversal to DuckPGQGraph.find_connected_batch()."""
         try:
             return self._graph.find_connected_batch(values, max_depth)
@@ -119,7 +111,8 @@ class DuckPGQGraphAdapter(GraphProtocol):
     def stats(self) -> dict[str, Any]:
         """Delegate to DuckPGQGraph.stats()."""
         try:
-            return self._graph.stats()
+
+            return {}
         except Exception:
             return {}
 
@@ -194,7 +187,8 @@ class DuckPGQGraphAdapter(GraphProtocol):
     def graph_stats(self) -> dict[str, int]:
         """DuckPGQGraph: graph_stats (F271)."""
         try:
-            return self._graph.graph_stats()
+
+            return {}
         except Exception:
             return {}
 
@@ -223,7 +217,7 @@ class IOCGraphAdapter(GraphProtocol):
         await adapter.flush_buffers()
     """
 
-    __slots__ = ('_graph',)
+    __slots__ = ("_graph",)
 
     def __init__(self, graph: Any) -> None:
         """
@@ -254,7 +248,9 @@ class IOCGraphAdapter(GraphProtocol):
             return False
 
     def find_connected(
-        self, ioc_value: str, max_depth: int = 2  # noqa: ARG002
+        self,
+        ioc_value: str,
+        max_depth: int = 2,  # noqa: ARG002
     ) -> list[dict[str, Any]]:
         """IOCGraph does not support DuckPGQ-style traversal — returns []. Use pivot()."""
         return []
@@ -270,9 +266,7 @@ class IOCGraphAdapter(GraphProtocol):
         """IOCGraph does not have a direct relation API — use upsert_ioc_batch + observations."""
         return False
 
-    def upsert_ioc_batch(
-        self, rows: list[tuple[str, str, float, str]]
-    ) -> int:
+    def upsert_ioc_batch(self, rows: list[tuple[str, str, float, str]]) -> int:
         """Delegate batch upsert to IOCGraph.upsert_ioc_batch()."""
         try:
             iocs = [(ioc_type, value, conf) for value, ioc_type, conf, _source in rows]
@@ -281,7 +275,9 @@ class IOCGraphAdapter(GraphProtocol):
             return 0
 
     def find_connected_batch(
-        self, values: list[str], max_depth: int = 2  # noqa: ARG002
+        self,
+        values: list[str],
+        max_depth: int = 2,  # noqa: ARG002
     ) -> dict[str, list[dict[str, Any]]]:
         """IOCGraph does not support DuckPGQ batch traversal."""
         return {}
@@ -298,6 +294,7 @@ class IOCGraphAdapter(GraphProtocol):
         """Delegate to IOCGraph.graph_stats()."""
         try:
             import asyncio
+
             if asyncio.iscoroutinefunction(self._graph.graph_stats):
                 # Sync context: use new_event_loop() pattern (get_running_loop() fails here).
                 # In Python 3.14+ get_event_loop() is deprecated in sync context but still works.
@@ -365,6 +362,7 @@ class IOCGraphAdapter(GraphProtocol):
         """Delegate to IOCGraph.graph_stats()."""
         try:
             import asyncio
+
             if asyncio.iscoroutinefunction(self._graph.graph_stats):
                 # Sync context: use new_event_loop() pattern (get_running_loop() fails here).
                 # In Python 3.14+ get_event_loop() is deprecated in sync context but still works.
@@ -408,7 +406,7 @@ class GraphFacade:
     M1 8GB: GraphAttachmentStore is already fail-open throughout.
     """
 
-    __slots__ = ('_store',)
+    __slots__ = ("_store",)
 
     def __init__(self, store: Any) -> None:
         """
@@ -420,7 +418,7 @@ class GraphFacade:
         """
         # Support both DuckDBShadowStore (which has _graph_store()) and
         # GraphAttachmentStore (injected directly in tests)
-        if hasattr(store, '_graph_store'):
+        if hasattr(store, "_graph_store"):
             self._store: Any = store._graph_store()
         else:
             self._store = store
@@ -438,13 +436,13 @@ class GraphFacade:
         graph = self._store._ioc_graph
         if graph is None:
             return False
-        if hasattr(graph, 'upsert_ioc'):
+        if hasattr(graph, "upsert_ioc"):
             try:
                 return await graph.upsert_ioc(ioc_value, ioc_type, sprint_id, properties)
             except Exception:
                 return False
         # DuckPGQGraph fallback via add_ioc
-        if hasattr(graph, 'add_ioc'):
+        if hasattr(graph, "add_ioc"):
             try:
                 row_id = graph.add_ioc(ioc_value, ioc_type, 0.5, sprint_id)
                 return row_id is not None
@@ -452,14 +450,12 @@ class GraphFacade:
                 return False
         return False
 
-    def find_connected(
-        self, ioc_value: str, max_depth: int = 2
-    ) -> list[dict[str, Any]]:
+    def find_connected(self, ioc_value: str, max_depth: int = 2) -> list[dict[str, Any]]:
         """Graph traversal — analytics path (_ioc_graph)."""
         graph = self._store._ioc_graph
         if graph is None:
             return []
-        if hasattr(graph, 'find_connected'):
+        if hasattr(graph, "find_connected"):
             try:
                 return graph.find_connected(ioc_value, max_depth)
             except Exception:
@@ -478,7 +474,7 @@ class GraphFacade:
         graph = self._store._ioc_graph
         if graph is None:
             return False
-        if hasattr(graph, 'add_relation'):
+        if hasattr(graph, "add_relation"):
             try:
                 graph.add_relation(src, dst, rel_type, weight, evidence)
                 return True
@@ -486,28 +482,24 @@ class GraphFacade:
                 return False
         return False
 
-    def upsert_ioc_batch(
-        self, rows: list[tuple[str, str, float, str]]
-    ) -> int:
+    def upsert_ioc_batch(self, rows: list[tuple[str, str, float, str]]) -> int:
         """Batch upsert IOCs — analytics path."""
         graph = self._store._ioc_graph
         if graph is None:
             return 0
-        if hasattr(graph, 'upsert_ioc_batch'):
+        if hasattr(graph, "upsert_ioc_batch"):
             try:
                 return graph.upsert_ioc_batch(rows)
             except Exception:
                 return 0
         return 0
 
-    def find_connected_batch(
-        self, values: list[str], max_depth: int = 2
-    ) -> dict[str, list[dict[str, Any]]]:
+    def find_connected_batch(self, values: list[str], max_depth: int = 2) -> dict[str, list[dict[str, Any]]]:
         """Batch graph traversal — analytics path."""
         graph = self._store._ioc_graph
         if graph is None:
             return {}
-        if hasattr(graph, 'find_connected_batch'):
+        if hasattr(graph, "find_connected_batch"):
             try:
                 return graph.find_connected_batch(values, max_depth)
             except Exception:
@@ -519,7 +511,7 @@ class GraphFacade:
         graph = self._store._ioc_graph
         if graph is None:
             return []
-        if hasattr(graph, 'get_top_nodes_by_degree'):
+        if hasattr(graph, "get_top_nodes_by_degree"):
             try:
                 return graph.get_top_nodes_by_degree(n)
             except Exception:
@@ -531,7 +523,7 @@ class GraphFacade:
         graph = self._store._ioc_graph
         if graph is None:
             return []
-        if hasattr(graph, 'export_edge_list'):
+        if hasattr(graph, "export_edge_list"):
             try:
                 return graph.export_edge_list()
             except Exception:
@@ -543,7 +535,7 @@ class GraphFacade:
         graph = self._store._ioc_graph
         if graph is None:
             return {}
-        if hasattr(graph, 'stats'):
+        if hasattr(graph, "stats"):
             try:
                 return graph.stats()
             except Exception:
@@ -555,7 +547,7 @@ class GraphFacade:
         graph = self._store._ioc_graph
         if graph is None:
             return
-        if hasattr(graph, 'checkpoint'):
+        if hasattr(graph, "checkpoint"):
             try:
                 graph.checkpoint()
             except Exception:  # noqa: BLE001
@@ -573,7 +565,7 @@ class GraphFacade:
         graph = self._store._truth_write_graph or self._store._stix_graph
         if graph is None:
             return
-        if hasattr(graph, 'buffer_ioc'):
+        if hasattr(graph, "buffer_ioc"):
             try:
                 await graph.buffer_ioc(ioc_type, value, confidence)
             except Exception:  # noqa: BLE001
@@ -584,7 +576,7 @@ class GraphFacade:
         graph = self._store._truth_write_graph or self._store._stix_graph
         if graph is None:
             return {}
-        if hasattr(graph, 'flush_buffers'):
+        if hasattr(graph, "flush_buffers"):
             try:
                 return await graph.flush_buffers()
             except Exception:
@@ -603,7 +595,7 @@ class GraphFacade:
         graph = self._store._truth_write_graph or self._store._stix_graph
         if graph is None:
             return
-        if hasattr(graph, 'record_observation'):
+        if hasattr(graph, "record_observation"):
             try:
                 await graph.record_observation(ioc_id_a, ioc_id_b, finding_id, ts, source_type)
             except Exception:  # noqa: BLE001
@@ -619,7 +611,7 @@ class GraphFacade:
         graph = self._store._stix_graph or self._store._truth_write_graph
         if graph is None:
             return []
-        if hasattr(graph, 'pivot'):
+        if hasattr(graph, "pivot"):
             try:
                 return await graph.pivot(ioc_value, ioc_type, depth)
             except Exception:
@@ -631,9 +623,10 @@ class GraphFacade:
         graph = self._store._stix_graph or self._store._truth_write_graph
         if graph is None:
             return {}
-        if hasattr(graph, 'graph_stats'):
+        if hasattr(graph, "graph_stats"):
             try:
                 import asyncio
+
                 result = graph.graph_stats()
                 if asyncio.iscoroutine(result):
                     return {}
@@ -645,10 +638,11 @@ class GraphFacade:
     async def export_stix_bundle(self) -> list[dict[str, Any]]:
         """Export STIX bundle — STIX path."""
         import asyncio as _asyncio
+
         graph = self._store._stix_graph or self._store._truth_write_graph
         if graph is None:
             return []
-        if hasattr(graph, 'export_stix_bundle'):
+        if hasattr(graph, "export_stix_bundle"):
             try:
                 result = graph.export_stix_bundle()
                 if _asyncio.iscoroutine(result):

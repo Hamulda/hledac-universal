@@ -48,7 +48,7 @@ _F224_BLOCKING_PROBES = [('probe_f224a_worker_pool_import_seal', 'worker_pool_im
 _F224_WARNING_PROBES = [('probe_f224b_claims_extraction_v1', 'claims_extraction_v1.json'), ('probe_f224e_type_checking_hygiene', 'type_checking_hygiene.json')]
 _F224_BLOCKING_PROFILES = ('active300', 'nonfeed_diagnostic')
 
-@dataclass(True)
+@dataclass(slots=True)
 class ProbeReport:
     path: str
     found: bool

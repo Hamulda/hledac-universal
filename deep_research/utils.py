@@ -10,7 +10,7 @@ from typing import Any
 from hledac.universal.utils.async_helpers import safe_gather_ok
 logger = logging.getLogger(__name__)
 
-@dataclass(True)
+@dataclass(slots=True)
 class LinkCheckResult:
     """Result of link rot check"""
     url: str

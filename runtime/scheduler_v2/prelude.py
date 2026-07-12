@@ -18,7 +18,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
-@dataclass(True)
+@dataclass(slots=True)
 class LaneResult:
     lane: str
     attempted: bool

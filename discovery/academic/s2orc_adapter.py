@@ -27,7 +27,7 @@ S2AG_AUTHOR_FIELDS = 'authorId,name,hIndex,paperCount,citationCount'
 RATE_LIMIT = 10
 REQUEST_TIMEOUT_S = 25.0
 
-@dataclass(True)
+@dataclass(slots=True)
 class S2Paper:
     """Semantic Scholar paper."""
     paper_id: str

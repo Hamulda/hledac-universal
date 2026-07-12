@@ -40,7 +40,7 @@ class OutputFormat(Enum):
     MARKDOWN = 'markdown'
     JSON = 'json'
 
-@dataclass(True)
+@dataclass(slots=True)
 class DepStatus:
     """Status for a single dependency."""
     name: str

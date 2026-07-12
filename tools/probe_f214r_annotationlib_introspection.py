@@ -23,7 +23,7 @@ class RotatingBloomFilter:
     """Dummy for type testing (matches url_dedup.py pattern)."""
     pass
 
-@dataclass(True)
+@dataclass(slots=True)
 class ToolMetadata:
     """Dataclass pattern found in tool_registry.py cost model."""
     name: str

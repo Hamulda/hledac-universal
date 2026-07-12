@@ -74,7 +74,7 @@ class CDXDiffEvent:
     change_type: str
     evidence_url: str
 
-@dataclass(True)
+@dataclass(slots=True)
 class WaybackDiffResult:
     """Result of a WaybackDiffMiner.mine() call."""
     input_count: int

@@ -38,7 +38,7 @@ except ImportError:
     MLX_AVAILABLE = False
     logger.warning('MLX not available - using numpy fallback')
 
-@dataclass(True)
+@dataclass(slots=True)
 class ImageHash:
     """Perceptual hash for image similarity."""
     ahash: str

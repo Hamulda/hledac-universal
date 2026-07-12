@@ -65,7 +65,7 @@ class CompressionLevel(Enum):
     IMPORTANT = IMPORTANT
     ABSTRACT = ABSTRACT
 
-@dataclass(True)
+@dataclass(slots=True)
 class CompressedContext:
     """Compressed context container."""
     context_id: str

@@ -13,7 +13,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 EvidenceLog = None
 
-@dataclass(True)
+@dataclass(slots=True)
 class OnlineRidge:
     """Online ridge regrese přes Sherman-Morrison."""
     n_features: int

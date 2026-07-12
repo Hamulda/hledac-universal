@@ -77,7 +77,7 @@ class ActionType(Enum):
     STEALTH_HARVEST = 'stealth_harvest'
     OSINT_DISCOVERY = 'osint_discovery'
 
-@dataclass(True)
+@dataclass(slots=True)
 class ActionResult:
     """Výsledek akce"""
     success: bool

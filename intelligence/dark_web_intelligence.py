@@ -75,7 +75,7 @@ class OnionType(Enum):
     V3 = 'v3'
     UNKNOWN = 'unknown'
 
-@dataclass(True)
+@dataclass(slots=True)
 class HiddenService:
     """Represents a discovered hidden service."""
     address: str

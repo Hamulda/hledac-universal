@@ -32,7 +32,7 @@ from typing import Any
 import numpy as np
 logger = logging.getLogger(__name__)
 
-@dataclass(True)
+@dataclass(slots=True)
 class FilterResult:
     """Result of semantic filtering."""
     passed: bool

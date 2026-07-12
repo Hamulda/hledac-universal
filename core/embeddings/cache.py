@@ -41,7 +41,7 @@ _MAX_BYTES = 512 * 1024 * 1024
 _HEADER_SIZE = 4096
 _ENTRY_OVERHEAD = 128
 
-@dataclass(True)
+@dataclass(slots=True)
 class CacheStats:
     hits: int = 0
     misses: int = 0

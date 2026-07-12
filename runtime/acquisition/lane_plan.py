@@ -47,7 +47,7 @@ class LaneRule(msgspec.Struct, frozen=True):
     concurrency: int
     risk_level: str
 
-@dataclass(True)
+@dataclass(slots=True)
 class AcquisitionContext:
     """
     Shared context for lane eligibility evaluation.

@@ -64,7 +64,7 @@ def _deserialize_cnew(data: bytes) -> dict[str, ContextItem]:
         result[k] = _deserialize_context_item(v)
     return result
 
-@dataclass(True)
+@dataclass(slots=True)
 class ContextItem:
     """Individual context item with metadata."""
     item_id: str

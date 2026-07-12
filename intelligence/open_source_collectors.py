@@ -67,7 +67,7 @@ class PasteFinding:
     def to_finding_dict(self) -> dict:
         return {'source': 'pastebin', 'source_family': 'FEED', 'uri': self.uri, 'source_name': self.source, 'secrets': [_mask_secret(s) for s in self.extracted_secrets], 'emails': self.emails, 'ips': self.ip_addresses, 'snippet': self.context_snippet[:200]}
 
-@dataclass(True)
+@dataclass(slots=True)
 class UsenetArticle:
     message_id: str
     subject: str

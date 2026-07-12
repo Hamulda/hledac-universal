@@ -76,9 +76,7 @@ class TestImportSmoke:
             "MACOS_WEBKIT_REASONS",
         }
         for name in expected:
-            assert name in rendering.__all__, (
-                f"{name} missing from rendering.__all__"
-            )
+            assert name in rendering.__all__, f"{name} missing from rendering.__all__"
 
     def test_duckdb_store_module_parses(self):
         """duckdb_store.py must be AST-parseable on Python 3.14."""
@@ -148,12 +146,9 @@ class TestAsyncioCoroutineDrift:
                         and isinstance(func.value, ast.Name)
                         and func.value.id == "asyncio"
                     ):
-                        offenders.append(
-                            (py_file, node.lineno, "asyncio.coroutine() call")
-                        )
-        assert not offenders, (
-            "Production code uses asyncio.coroutine() (removed in 3.11):\n"
-            + "\n".join(f"  {p.relative_to(REPO_ROOT)}:{ln} {why}" for p, ln, why in offenders)
+                        offenders.append((py_file, node.lineno, "asyncio.coroutine() call"))
+        assert not offenders, "Production code uses asyncio.coroutine() (removed in 3.11):\n" + "\n".join(
+            f"  {p.relative_to(REPO_ROOT)}:{ln} {why}" for p, ln, why in offenders
         )
 
 
@@ -221,7 +216,7 @@ class TestSubprocessInParensDrift:
                     continue
                 try:
                     src = py_file.read_text(encoding="utf-8")
-                except (OSError, UnicodeDecodeError):
+                except OSError, UnicodeDecodeError:
                     continue
                 try:
                     ast.parse(src, filename=str(py_file))
@@ -232,15 +227,10 @@ class TestSubprocessInParensDrift:
                     # This trims noise from other forms of syntax errors
                     # (e.g. pre-existing AST bugs unrelated to this drift).
                     if "import" in msg.lower() or "parenth" in msg.lower():
-                        offenders.append(
-                            (py_file, e.lineno or 0, msg)
-                        )
+                        offenders.append((py_file, e.lineno or 0, msg))
         assert not offenders, (
             "Drift pattern detected — import stmt inside 'from ... import (...)' parens:\n"
-            + "\n".join(
-                f"  {p.relative_to(REPO_ROOT)}:{ln} {snippet}"
-                for p, ln, snippet in offenders
-            )
+            + "\n".join(f"  {p.relative_to(REPO_ROOT)}:{ln} {snippet}" for p, ln, snippet in offenders)
         )
 
 
@@ -259,6 +249,7 @@ class TestScheduleGraphUpdate:
         graph update is a no-op import (graph_service is feature-gated).
         """
         from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
+
         s = DuckDBShadowStore()
         # _bg_tasks is initialised in __init__, but be defensive
         s._bg_tasks = set()
@@ -267,12 +258,14 @@ class TestScheduleGraphUpdate:
     @pytest.fixture
     def sample_findings(self):
         """Minimal CanonicalFinding-like objects (duck-typed)."""
+
         class _F:
             def __init__(self, value, type_, conf, src):
                 self.ioc_value = value
                 self.ioc_type = type_
                 self.confidence = conf
                 self.source_type = src
+
         return [
             _F("1.2.3.4", "ip", 0.9, "ct_log"),
             _F("evil.example", "domain", 0.8, "ct_log"),
@@ -280,16 +273,15 @@ class TestScheduleGraphUpdate:
             _F(None, "ip", 0.5, "ct_log"),  # missing ioc_value (filter out)
         ]
 
-    def test_async_context_creates_task(self, store, sample_findings):
+    @pytest.mark.asyncio
+    async def test_async_context_creates_task(self, store, sample_findings):
         """In async context, _schedule_graph_update creates a real task."""
-        async def _runner():
-            store._schedule_graph_update(sample_findings)
-            # Yield to the loop so the task starts
-            await asyncio.sleep(0)
-            # Bound: tasks set should contain >=1 task (or fewer if it finished)
-            # Critically: it must NOT have raised (was failing pre-fix).
-            assert isinstance(store._bg_tasks, set)
-        asyncio.run(_runner())
+        store._schedule_graph_update(sample_findings)
+        # Yield to the loop so the task starts
+        await asyncio.sleep(0)
+        # Bound: tasks set should contain >=1 task (or fewer if it finished)
+        # Critically: it must NOT have raised (was failing pre-fix).
+        assert isinstance(store._bg_tasks, set)
 
     def test_sync_context_is_noop(self, store, sample_findings):
         """In sync context (no running loop), method is silent no-op."""
@@ -301,6 +293,7 @@ class TestScheduleGraphUpdate:
     def test_inflight_cap_enforced(self, store, sample_findings):
         """In-flight task set is bounded by _MAX_INFLIGHT_GRAPH_UPDATES."""
         from hledac.universal.knowledge import duckdb_store as ds_mod
+
         cap = ds_mod._MAX_INFLIGHT_GRAPH_UPDATES
         assert cap == 16, f"Cap unexpectedly changed: {cap}"
 
@@ -314,39 +307,33 @@ class TestScheduleGraphUpdate:
         # Bounded: no new task created (count unchanged)
         assert len(store._bg_tasks) == cap + 5
 
-    def test_drain_callback_releases_task(self, store, sample_findings):
+    @pytest.mark.asyncio
+    async def test_drain_callback_releases_task(self, store, sample_findings):
         """Task added to _bg_tasks is removed on completion."""
-        async def _runner():
-            store._schedule_graph_update(sample_findings)
-            await asyncio.sleep(0.05)  # let any spawned task finish
-            # Steady state: set should be drained back near zero
-            assert len(store._bg_tasks) <= 1
-        asyncio.run(_runner())
+        store._schedule_graph_update(sample_findings)
+        await asyncio.sleep(0.05)  # let any spawned task finish
+        # Steady state: set should be drained back near zero
+        assert len(store._bg_tasks) <= 1
 
-    def test_finds_with_missing_attrs_filtered(self, store):
+    @pytest.mark.asyncio
+    async def test_finds_with_missing_attrs_filtered(self, store):
         """Objects without ioc_value/ioc_type are filtered out, no error."""
+
         class _BadFinding:
             pass
-        # Should not raise; should silently skip (rows=[])
-        async def _runner():
-            store._schedule_graph_update([_BadFinding()])
-            await asyncio.sleep(0)
-        asyncio.run(_runner())
 
-    def test_finds_with_no_findings_is_noop(self, store):
+        # Should not raise; should silently skip (rows=[])
+        store._schedule_graph_update([_BadFinding()])
+        await asyncio.sleep(0)
+
+    @pytest.mark.asyncio
+    async def test_finds_with_no_findings_is_noop(self, store):
         """Empty findings list creates a task that completes near-immediately.
 
         Invariant: steady-state _bg_tasks count returns near 0 after the
-        scheduled task finishes. ``add_done_callback(tasks.discard)`` is
-        scheduled by the event loop and may not have run yet when the
-        outer ``asyncio.run()`` exits — so we accept ``<= 1`` (the
-        finished-but-not-yet-discarded task) instead of ``== 0``.
+        scheduled task finishes.
         """
-        async def _runner():
-            store._schedule_graph_update([])
-            # Yield to let the scheduled task run + discard callback fire
-            await asyncio.sleep(0.01)
-            assert len(store._bg_tasks) <= 1, (
-                f"Expected <=1 in-flight task, got {len(store._bg_tasks)}"
-            )
-        asyncio.run(_runner())
+        store._schedule_graph_update([])
+        # Yield to let the scheduled task run + discard callback fire
+        await asyncio.sleep(0.01)
+        assert len(store._bg_tasks) <= 1, f"Expected <=1 in-flight task, got {len(store._bg_tasks)}"

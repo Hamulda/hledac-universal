@@ -53,7 +53,7 @@ class TimelineEvent:
     def to_dict(self) -> dict[str, Any]:
         return {'ts': self.ts, 'event_type': self.event_type, 'source': self.source, 'description': self.description, 'entity_id': self.entity_id, 'confidence': self.confidence, 'evidence': self.evidence}
 
-@dataclass(True)
+@dataclass(slots=True)
 class TimelineMetadata:
     """
     Metadata about the synthesized timeline.

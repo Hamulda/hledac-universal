@@ -22,7 +22,7 @@ MAX_FINDINGS: int = 5000
 MAX_HYPOTHESES: int = 500
 _TYPE_MAP: dict[str, str] = {'ipv4': 'ip', 'ipv6': 'ip'}
 
-@dataclass(True)
+@dataclass(slots=True)
 class Entity:
     """Single entity in the causal graph."""
     entity_id: str

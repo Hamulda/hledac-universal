@@ -28,7 +28,7 @@ MAX_ENTRIES = 200
 MAX_BYTES = 256 * 1024
 ALLOWED_EXTENSIONS = {'.txt', '.csv', '.json', '.log', '.md', '.xml', '.yaml', '.yml'}
 
-@dataclass(True)
+@dataclass(slots=True)
 class FTPListingItem:
     """Represents a single item in FTP directory listing."""
     path: str

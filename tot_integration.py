@@ -45,7 +45,7 @@ def _load_tot_components():
         TOT_AVAILABLE = False
         return False
 
-@dataclass(True)
+@dataclass(slots=True)
 class TotResult:
     """Result from Tree of Thoughts reasoning."""
     solution: str | None

@@ -33,7 +33,7 @@ from hledac.universal.utils.mlx_cache import MLX_AVAILABLE, get_mx
 logger = logging.getLogger(__name__)
 _MLX_NN_AVAILABLE: bool = MLX_AVAILABLE
 
-@dataclass(True)
+@dataclass(slots=True)
 class DistillationExample:
     """
     Dataclass pro training example pro distillation.

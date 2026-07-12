@@ -68,7 +68,7 @@ def get_provider_state(name: str) -> ProviderCapabilityState:
         return ProviderCapabilityState.DISABLED
     return ProviderCapabilityState.PRODUCTION
 
-@dataclass(True)
+@dataclass(slots=True)
 class ProviderPlan:
     """Plan for a single discovery call."""
     provider: str

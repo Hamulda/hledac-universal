@@ -54,7 +54,7 @@ try:
 except ImportError:
     CanonicalFinding = None
 
-@dataclass(True)
+@dataclass(slots=True)
 class PatternCandidate:
     """A derived pattern candidate produced by the pattern mining engine."""
     pattern_id: str

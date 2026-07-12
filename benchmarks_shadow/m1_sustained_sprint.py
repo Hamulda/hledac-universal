@@ -71,7 +71,7 @@ def count_cves_in_text(text: str) -> int:
     import re
     return len(re.findall('CVE-\\d{4}-\\d{4,}', text))
 
-@dataclass(True)
+@dataclass(slots=True)
 class BenchmarkResult:
     """Hermetic benchmark result."""
     status: str

@@ -118,7 +118,7 @@ class LayerStatus(Enum):
     ERROR = 'error'
     SHUTDOWN = 'shutdown'
 
-@dataclass(True)
+@dataclass(slots=True)
 class LayerHealth:
     """Layer health status"""
     name: str

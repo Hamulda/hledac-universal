@@ -31,7 +31,7 @@ _DELETION_REGEX_SET: _re.Pattern[str] = _re.compile('|'.join(_DELETION_PATTERNS)
 _GHOST_COMBINED = _re.compile('|'.join((f'(?P<{name}>{pattern})' for name, pattern in _GHOST_PATTERN_GROUPS)))
 _SIGNAL_TYPE_MAP: dict[str, tuple[str, float, list[str]]] = {'timestamp_gap': ('timestamp_gap', 0.7, ['suspicious_timestamp', 'possible_deletion']), 'content_fragment': ('content_fragment', 0.6, ['structural_remains', 'partial_content']), 'shadow_reference': ('shadow_reference', 0.8, ['reference_to_deleted', 'broken_link']), 'filesystem_artifact': ('filesystem_artifact', 0.65, ['backup_file', 'temporary_file', 'recovered_item'])}
 
-@dataclass(True)
+@dataclass(slots=True)
 class GhostSignal:
     """Detected digital ghost signal."""
     signal_type: str
@@ -51,7 +51,7 @@ class RecoveredContent:
     source_signals: list[str] = field(default_factory=list)
     temporal_context: datetime | None = None
 
-@dataclass(True)
+@dataclass(slots=True)
 class DigitalGhostAnalysis:
     """Complete digital ghost analysis result."""
     target: str

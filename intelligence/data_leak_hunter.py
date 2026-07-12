@@ -53,7 +53,7 @@ class LeakSource(Enum):
     PUBLIC_RECORDS = 'public_records'
     HACKER_FORUM = 'hacker_forum'
 
-@dataclass(True)
+@dataclass(slots=True)
 class LeakAlert:
     """Data leak alert"""
     alert_id: str

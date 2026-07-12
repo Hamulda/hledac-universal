@@ -290,7 +290,7 @@ M3_METAL_PRESSURE_BYTES = 2 * 1024 * 1024 * 1024
 STREAM_BUFFER_SIZE = 32
 STREAM_MIN_BUFFER = 8
 
-@dataclass(True)
+@dataclass(slots=True)
 class DeepHermesConfig:
     """Konfigurace pro DeepHermes-3"""
     model_path: str = 'mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit'

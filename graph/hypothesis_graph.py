@@ -16,7 +16,7 @@ from typing import Any
 MAX_NODES: int = 5000
 MAX_EDGES: int = 20000
 
-@dataclass(True)
+@dataclass(slots=True)
 class HypothesisNode:
     """Single node in the hypothesis graph."""
     node_id: str

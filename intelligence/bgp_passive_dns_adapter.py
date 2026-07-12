@@ -61,7 +61,7 @@ def _is_private_ip(ip: str) -> bool:
     """Check if IP is RFC1918/loopback/private."""
     return bool(_PRIVATE_IP_RE.match(ip))
 
-@dataclass(True)
+@dataclass(slots=True)
 class BGPFinding:
     """BGP intelligence finding from RIPE/BGP.tools."""
     ip: str = ''

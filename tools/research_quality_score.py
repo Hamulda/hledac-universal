@@ -62,7 +62,7 @@ class QualityGate(StrEnum):
     QUALITY_FAIL_NONFEED_ZERO = 'QUALITY_FAIL_NONFEED_ZERO'
     QUALITY_WARN_MULTISOURCE_SHALLOW = 'QUALITY_WARN_MULTISOURCE_SHALLOW'
 
-@dataclass(True)
+@dataclass(slots=True)
 class EvidenceDepth:
     """F231M: Production evidence depth diagnostics from KPI field aliases."""
     claims_depth: float = 0.0

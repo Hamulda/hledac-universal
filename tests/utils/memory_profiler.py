@@ -25,10 +25,10 @@ Usage:
         tracker.assert_leak_threshold(50)  # raises AssertionError if >50MB
 """
 
-
 import gc
 import logging
 import os
+import time
 import tracemalloc
 from dataclasses import dataclass, field
 from typing import Any
@@ -41,18 +41,165 @@ __all__ = [
     "TracemallocSnapshot",
     "MemoryTracker",
     "assert_no_leak",
-    "LEAK_THRESHOLD_MB",
+    "init_session_tracer",
+    "stop_session_tracer",
+    "is_tracing",
 ]
+
+_TM_NFRAMES: int = int(os.environ.get("HLEDAC_TEST_TM_FRAMES", "25"))
+"""Number of stack frames tracked by tracemalloc (default 25, ~200 KB ring buffer)."""
+
+log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Session-scoped tracer state
+# ---------------------------------------------------------------------------
+
+_SESSION_TRACER_STARTED: bool = False  # <- FIX: initialize to avoid NameError
+_sess_snapshot_domains: tuple[str, ...] | None = None  # e.g. ("hledac", "brain")
+_sess_filter_ttl_s: float = float(os.environ.get("HLEDAC_TEST_TM_FILTER_TTL", "60.0"))
+"""Re-build domain tuple every N seconds (default 60s — domain list is stable)."""
+_sess_snapshot_rebuild_after: float = 0.0  # next rebuild timestamp
+
+# psutil Process cache — avoid 50 KB allocation per get_rss_mb() call
+_psutil_process: psutil.Process | None = None
+_psutil_process_pid: int = -1
+_psutil_cache_refresh_after: float = 0.0  # force refresh every N seconds
+_psutil_refresh_interval_s: float = 10.0  # refresh cached process every 10s
+
+
+# ---------------------------------------------------------------------------  # Session-scoped tracer (F350M-R Fix)
+# tracemalloc.start() allocates a ring buffer ONCE per process.
+# Repeated start/stop cycles fragment Python's pymalloc arenas — the allocator  # keeps freed chunks in free lists instead of returning them to the OS.
+# Solution: start once at pytest session start, stop once at session teardown.
+# Per-test TracemallocSnapshot instances only take snapshots, never stop.
+# ---------------------------------------------------------------------------  _SESSION_TRACER_STARTED: bool = False
+_SESSION_TRACER_N_FRAMES: int = _TM_NFRAMES
 
 LEAK_THRESHOLD_MB: float = 50.0
 """Default leak threshold in MB per sprint cycle."""
 
-log = logging.getLogger(__name__)
+
+def _rebuild_snapshot_domains() -> tuple[str, ...]:
+    """Parse HLEDAC_TEST_TM_DOMAINS env var into a tuple of domain prefixes.
+
+    Example: HLEDAC_TEST_TM_DOMAINS="hledac,brain,knowledge"
+    Results in domain prefixes used to filter comparison results.
+
+    Falls back to all domains (empty tuple) if env var is not set.
+    """
+    domains_raw = os.environ.get("HLEDAC_TEST_TM_DOMAINS", "").strip()
+    if not domains_raw:
+        return ()  # All domains
+    return tuple(d.strip() for d in domains_raw.split(",") if d.strip())
+
+
+def _get_snapshot_domains() -> tuple[str, ...]:
+    """Return cached domain prefixes, rebuilding only when TTL expires."""
+    global _sess_snapshot_domains, _sess_snapshot_rebuild_after
+    now = time.monotonic()
+    if _sess_snapshot_domains is None or now >= _sess_snapshot_rebuild_after:
+        _sess_snapshot_domains = _rebuild_snapshot_domains()
+        _sess_snapshot_rebuild_after = now + _sess_filter_ttl_s
+    return _sess_snapshot_domains
+
+
+def _domain_in_traceback(traceback_str: str, domains: tuple[str, ...]) -> bool:
+    """Return True if traceback contains any of the given domain prefixes.
+
+    Matches three formats tracemalloc can produce:
+    1. Absolute paths:  /Users/.../hledac/brain/engine.py:123
+    2. Relative paths:  core/resource_governor.py:200, tests/utils/memory_profiler.py:160
+    3. Dot-notation:    hledac.universal.core.resource_governor:42
+
+    Filters noisy third-party allocations (psutil, tracemalloc internals, etc.)
+    while keeping only allocations from the project's modules.
+    """
+    if not domains:
+        return True  # No filter — include all
+    for domain in domains:
+        # Absolute & relative slash-separated path: /hledac/ or hledac/ as directory component
+        if f"/{domain}/" in traceback_str or traceback_str.startswith(f"{domain}/"):
+            return True
+        # Dot-notation namespace: hledac.brain. as module prefix
+        if f"{domain}." in traceback_str:
+            return True
+    return False
+
+
+def init_session_tracer(nframes: int = _TM_NFRAMES) -> bool:
+    """
+    Start the session-scoped tracemalloc tracer (idempotent).
+
+    Call once at pytest session start (e.g. in conftest.py session fixture).
+    Does NOT stop the tracer — use stop_session_tracer() at teardown.
+
+    Args:
+        nframes: Number of stack frames to trace (default: _TM_NFRAMES).
+                 Higher = more detail, more memory (~8 KB per frame).
+
+    Returns:
+        True if tracer is now active.
+    """
+    global _SESSION_TRACER_STARTED, _SESSION_TRACER_N_FRAMES
+    try:
+        if not tracemalloc.is_tracing():
+            tracemalloc.start(nframes)
+        _SESSION_TRACER_STARTED = tracemalloc.is_tracing()
+        _SESSION_TRACER_N_FRAMES = nframes
+        return _SESSION_TRACER_STARTED
+    except Exception as ex:
+        log.warning("session tracer init failed: %s", ex)
+        _SESSION_TRACER_STARTED = False
+        return False
+
+
+def stop_session_tracer() -> None:
+    """
+    Stop the session-scoped tracemalloc tracer (idempotent).
+
+    Call once at pytest session teardown. Safe to call even if not started.
+    """
+    global _SESSION_TRACER_STARTED
+    try:
+        if tracemalloc.is_tracing():
+            tracemalloc.stop()
+        _SESSION_TRACER_STARTED = False
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def is_tracing() -> bool:
+    """Return True if tracemalloc is currently active (session or otherwise)."""
+    try:
+        return tracemalloc.is_tracing()
+    except Exception:
+        return False
 
 
 # ---------------------------------------------------------------------------
 # Low-level RSS measurement
 # ---------------------------------------------------------------------------
+
+
+def _get_psutil_process() -> psutil.Process:
+    """Get or create a cached psutil.Process for the current PID.
+
+    Avoids 50 KB allocation per get_rss_mb() call by caching the Process object.
+    Refreshes the cached object every 10s or when PID changes.
+    """
+    global _psutil_process, _psutil_process_pid, _psutil_cache_refresh_after
+    now = time.monotonic()
+
+    pid = os.getpid()
+    if _psutil_process is not None and _psutil_process_pid == pid and now < _psutil_cache_refresh_after:
+        return _psutil_process
+
+    # Refresh: create new Process object, refresh interval
+    _psutil_process = psutil.Process(pid)
+    _psutil_process_pid = pid
+    _psutil_cache_refresh_after = now + _psutil_refresh_interval_s
+    return _psutil_process
 
 
 def get_rss_mb() -> float:
@@ -61,9 +208,11 @@ def get_rss_mb() -> float:
 
     Fail-safe: returns 0.0 on any error (permission, process terminated, etc.)
     This ensures CI never fails due to measurement error.
+
+    Uses a cached psutil.Process object (~50 KB saved per call).
     """
     try:
-        return psutil.Process(os.getpid()).memory_info().rss / 1024**2
+        return _get_psutil_process().memory_info().rss / 1024**2
     except Exception:
         return 0.0
 
@@ -89,7 +238,6 @@ class Snapshot:
     """
 
     rss_mb: float = field(default_factory=get_rss_mb)
-    _gc_collected: bool = field(default=False, repr=False)
 
     def delta_mb(self, *, force_gc: bool = True) -> float:
         """
@@ -149,16 +297,25 @@ class TracemallocSnapshot:
 
     _started: bool = field(default=False, repr=False)
     _baseline: Any = field(default=None, repr=False)  # tracemalloc.Snapshot or None
+    _session_mode: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        # Session tracer is active — snapshots only, no start/stop.
+        # Idempotent: multiple TracemallocSnapshot instances share one tracer.
+        self._session_mode = _SESSION_TRACER_STARTED and tracemalloc.is_tracing()
+        if self._session_mode:
+            self._started = True
+            return
+
+        # Legacy mode: start/stop per instance.
         try:
-            # Only start if not already tracing. Idempotent if already started.
             if not tracemalloc.is_tracing():
-                tracemalloc.start()
+                tracemalloc.start(_TM_NFRAMES)
             self._started = tracemalloc.is_tracing()
         except Exception as ex:
             log.warning("tracemalloc init failed (CI/container?): %s", ex)
             self._started = False
+            self._session_mode = False
 
     def take(self) -> None:
         """Take a baseline snapshot (call before code under test)."""
@@ -166,8 +323,9 @@ class TracemallocSnapshot:
             return
         try:
             if not tracemalloc.is_tracing():
-                tracemalloc.start()
-                self._started = True
+                # Session mode didn't start the tracer — start it now (legacy fallback)
+                tracemalloc.start(_TM_NFRAMES)
+
             self._baseline = tracemalloc.take_snapshot()
         except RuntimeError:
             # Tracing was stopped — fail silently, baseline stays None
@@ -192,8 +350,6 @@ class TracemallocSnapshot:
         if not self._started:
             return []
 
-        import tracemalloc
-
         try:
             if not tracemalloc.is_tracing():
                 tracemalloc.start()
@@ -211,8 +367,9 @@ class TracemallocSnapshot:
 
         try:
             stats = current.compare_to(base, "lineno")
-            # Filter to positive growth only
-            growth = [s for s in stats if s.size_diff > 0]
+            # Filter to positive growth AND domain match
+            domains = _get_snapshot_domains()
+            growth = [s for s in stats if s.size_diff > 0 and _domain_in_traceback(str(s.traceback), domains)]
             return sorted(growth, key=lambda s: s.size_diff, reverse=True)[:n]
         except Exception:
             return []
@@ -250,7 +407,19 @@ class TracemallocSnapshot:
         return deltas[0].size_diff > threshold_kb * 1024
 
     def stop(self) -> None:
-        """Stop tracemalloc (call after test completes)."""
+        """
+        Stop tracemalloc — ONLY in legacy (non-session) mode.
+
+        In session-scoped tracer mode, this is a no-op: the session tracer
+        is owned by init_session_tracer() / stop_session_tracer() and must
+        not be stopped by individual snapshot instances.
+
+        Safe to call multiple times (idempotent in both modes).
+        """
+        if self._session_mode:
+            # Session tracer is shared — do NOT stop it here.
+            self._started = False
+            return
         if self._started:
             try:
                 tracemalloc.stop()
@@ -307,7 +476,13 @@ class MemoryTracker:
         return self
 
     def __exit__(self, *args: Any) -> None:
-        gc.unfreeze()  # CRITICAL FIX: unfreeze after measurement window
+        # CRITICAL FIX (F350M-R): Unfreeze GC in fail-safe manner.
+        # gc.unfreeze() can fail if: (1) GC was never frozen, (2) Python build
+        # doesn't support gc.freeze() (Python 3.12+ only). Wrap in try/except.
+        try:
+            gc.unfreeze()
+        except Exception:  # noqa: BLE001
+            pass  # Already unfrozen or unavailable
         gc.collect()
         if self._tracemalloc is not None:
             self._tracemalloc.stop()

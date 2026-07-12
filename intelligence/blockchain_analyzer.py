@@ -144,7 +144,7 @@ class RiskScore(Enum):
     LOW = 0.25
     MINIMAL = 0.0
 
-@dataclass(True)
+@dataclass(slots=True)
 class Transaction:
     """Represents a blockchain transaction."""
     tx_hash: str

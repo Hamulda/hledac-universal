@@ -71,7 +71,7 @@ class CentralityScores:
     pagerank: float = 0.0
     overall_influence: float = 0.0
 
-@dataclass(True)
+@dataclass(slots=True)
 class Community:
     """Detected community in the graph."""
     community_id: int

@@ -123,7 +123,7 @@ class Priority(Enum):
     CRITICAL = 4
     EMERGENCY = 5
 
-@dataclass(True)
+@dataclass(slots=True)
 class ResourceRequest:
     """Resource request specification"""
     task_id: str

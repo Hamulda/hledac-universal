@@ -43,7 +43,7 @@ _MAX_DOH_RETRIES: int = 2
 _DOH_RETRY_DELAY_S: float = 0.5
 from dataclasses import dataclass
 
-@dataclass(True)
+@dataclass(slots=True)
 class _ResolverHealth:
     """Per-resolver health state for circuit breaker."""
     consecutive_failures: int = 0

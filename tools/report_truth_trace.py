@@ -22,7 +22,7 @@ F208_FIELDS = ['measurement_id', 'status', 'run_quality_verdict', 'report_json_p
 TERMINALITY_FIELDS = ['acquisition_terminality_checked', 'acquisition_terminality_satisfied', 'acquisition_terminality_missing_lanes', 'acquisition_terminality_report']
 SHAPE_GAP_FIELDS = ['return_guard', 'windup_guard_observation', 'source_family_outcomes']
 
-@dataclass(True)
+@dataclass(slots=True)
 class BoundarySnapshot:
     """Field presence at one processing boundary."""
     source: str

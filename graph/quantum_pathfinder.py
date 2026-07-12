@@ -181,7 +181,7 @@ def _get_SCIPY_AVAILABLE():
         SCIPY_AVAILABLE = _is_scipy_available()
     return SCIPY_AVAILABLE
 
-@dataclass(True)
+@dataclass(slots=True)
 class QuantumPathConfig:
     """Configuration for quantum-inspired pathfinding.
 

@@ -106,7 +106,7 @@ def _sample_uma() -> dict:
     except Exception as exc:
         return {'system_used_gib': 0.0, 'swap_used_gib': 0.0, 'swap_detected': False, 'uma_state': 'unknown', 'io_only': False, 'error': str(exc)}
 
-@dataclass(True)
+@dataclass(slots=True)
 class F221ArtifactResult:
     probe_dir: str
     filename: str

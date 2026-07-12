@@ -99,7 +99,7 @@ def _sidecar_profile_allows(sidecar_name: str, profile: str | None) -> tuple[boo
         return (True, '')
     return (False, f"profile '{profile}' disallows active-network sidecar '{sidecar_name}'")
 
-@dataclass(True)
+@dataclass(slots=True)
 class SidecarBatch:
     """Batch of accepted findings submitted to the sidecar bus."""
     findings: list
@@ -120,7 +120,7 @@ class SidecarBatch:
                 outcomes[f'sidecar_{r.sidecar_name}'] = {'attempted': False, 'skipped_reason': r.skipped_reason or 'unknown', 'elapsed_ms': round(r.elapsed_ms, 1)}
         return outcomes
 
-@dataclass(True)
+@dataclass(slots=True)
 class SidecarRunResult:
     sidecar_name: str
     attempted: bool

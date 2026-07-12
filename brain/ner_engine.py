@@ -1035,7 +1035,7 @@ def build_entity_summary(findings: list[dict], *, max_entities: int=20, max_cooc
         takeaway = f'{unique_count} unique entities across {len(findings)} findings.'
     return {'top_entities': top_entities, 'corroborated': corroborated, 'co_occurrence_pivots': pivots, 'dominant_type': dominant, 'entity_takeaway': takeaway, 'type_breakdown': type_breakdown, 'total_entities': unique_count}
 
-@dataclass(True)
+@dataclass(slots=True)
 class FeedbackPack:
     """
     Unified compact feedback artifact for findings→entity→hypothesis→semantic loop.

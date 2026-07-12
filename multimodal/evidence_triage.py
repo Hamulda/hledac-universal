@@ -65,7 +65,7 @@ def _extract_urls_and_domains(text: str) -> tuple[list[str], list[str]]:
     domains = unique_domains[:MAX_URL_HITS]
     return (urls, domains)
 
-@dataclass(True)
+@dataclass(slots=True)
 class TriageFacets:
     """
     Bounded triage facets extracted from a document/image artifact.

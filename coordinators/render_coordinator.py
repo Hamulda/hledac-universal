@@ -14,7 +14,7 @@ from hledac.universal.utils.capability_prober import get_prober
 logger = logging.getLogger(__name__)
 CAPTCHA_PATTERNS = ['captcha', 'recaptcha', 'hcaptcha', 'g-recaptcha', 'data-sitekey', 'turnstile', 'cloudflare', 'challenge', 'security check', 'verify you are human', 'i am not a robot', 'select all images', 'grid captcha']
 
-@dataclass(True)
+@dataclass(slots=True)
 class RenderResult:
     html: str | None
     status: Literal['ok', 'no_backend', 'timeout', 'blocked', 'error']

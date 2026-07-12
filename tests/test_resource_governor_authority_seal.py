@@ -37,7 +37,7 @@ class TestEvaluateBranchConcurrencyConsistency:
         with patch.object(gov, "_get_model_status", return_value={"loaded": False}):
             with patch("hledac.universal.runtime.resource_governor.sample_uma_status", return_value=self._mock_uma(uma_state)):  # noqa: E501
                 import asyncio
-                decision = asyncio.run(gov.evaluate())
+                decision = session_event_loop.run_until_complete(gov.evaluate())
                 branch = gov.branch_admission()
                 assert decision.branch_concurrency == expected, (
                     f"[{uma_state}] evaluate().branch_concurrency={decision.branch_concurrency} != "
@@ -51,7 +51,7 @@ class TestEvaluateBranchConcurrencyConsistency:
             with patch("hledac.universal.runtime.resource_governor.sample_uma_status", return_value=self._mock_uma("ok")):  # noqa: E501
                 import asyncio
 
-                decision = asyncio.run(gov.evaluate())
+                decision = session_event_loop.run_until_complete(gov.evaluate())
                 branch = gov.branch_admission()
                 assert decision.branch_concurrency == expected, (
                     f"[model_loaded] evaluate().branch_concurrency={decision.branch_concurrency} != "
@@ -105,7 +105,7 @@ class TestRendererAdmissionConsistency:
             with patch("hledac.universal.runtime.resource_governor.sample_uma_status", return_value=self._mock_uma(uma_state)):  # noqa: E501
                 import asyncio
 
-                decision = asyncio.run(gov.evaluate())
+                decision = session_event_loop.run_until_complete(gov.evaluate())
                 renderer = gov.renderer_admission()
                 assert decision.allow_renderer == expected, (
                     f"[{uma_state}] evaluate().allow_renderer={decision.allow_renderer} != "
@@ -118,7 +118,7 @@ class TestRendererAdmissionConsistency:
             with patch("hledac.universal.runtime.resource_governor.sample_uma_status", return_value=self._mock_uma("ok")):  # noqa: E501
                 import asyncio
 
-                decision = asyncio.run(gov.evaluate())
+                decision = session_event_loop.run_until_complete(gov.evaluate())
                 renderer = gov.renderer_admission()
                 assert decision.allow_renderer == expected
                 assert renderer.allowed == expected
@@ -165,7 +165,7 @@ class TestModelAdmissionConsistency:
             with patch("hledac.universal.runtime.resource_governor.sample_uma_status", return_value=self._mock_uma(uma_state)):  # noqa: E501
                 import asyncio
 
-                decision = asyncio.run(gov.evaluate())
+                decision = session_event_loop.run_until_complete(gov.evaluate())
                 model_adm = gov.model_admission()
                 assert decision.allow_model_load == expected, (
                     f"[{uma_state}] evaluate().allow_model_load={decision.allow_model_load} != "
@@ -260,34 +260,34 @@ class TestPendingIntegrationMarkers:
         return mock
 
     @pytest.mark.xfail(reason="pending integration: renderer_admission() not wired to production call sites")
-    def test_renderer_admission_has_pending_marker(self, governor):
+    def test_renderer_admission_has_pending_marker(self, governor, session_event_loop: asyncio.AbstractEventLoop):
         """renderer_admission() carries @pending_integration marker."""
         import asyncio
 
         with patch.object(governor, "_get_model_status", return_value={"loaded": False}):
             with patch("hledac.universal.runtime.resource_governor.sample_uma_status", return_value=self._mock_uma("ok")):  # noqa: E501
-                result = asyncio.run(gov.evaluate())
+                result = session_event_loop.run_until_complete(gov.evaluate())
                 # If this passes, renderer_admission() is being called in production
                 assert result.allow_renderer is not None
 
     @pytest.mark.xfail(reason="pending integration: model_admission() not wired to production call sites")
-    def test_model_admission_has_pending_marker(self, governor):
+    def test_model_admission_has_pending_marker(self, governor, session_event_loop: asyncio.AbstractEventLoop):
         """model_admission() carries @pending_integration marker."""
         import asyncio
 
         with patch.object(governor, "_get_model_status", return_value={"loaded": False}):
             with patch("hledac.universal.runtime.resource_governor.sample_uma_status", return_value=self._mock_uma("ok")):  # noqa: E501
-                result = asyncio.run(gov.evaluate())
+                result = session_event_loop.run_until_complete(gov.evaluate())
                 # If this passes, model_admission() is being called in production
                 assert result.allow_model_load is not None
 
     @pytest.mark.xfail(reason="pending integration: branch_admission() not wired to production call sites")
-    def test_branch_admission_has_pending_marker(self, governor):
+    def test_branch_admission_has_pending_marker(self, governor, session_event_loop: asyncio.AbstractEventLoop):
         """branch_admission() carries @pending_integration marker."""
         import asyncio
 
         with patch.object(governor, "_get_model_status", return_value={"loaded": False}):
             with patch("hledac.universal.runtime.resource_governor.sample_uma_status", return_value=self._mock_uma("ok")):  # noqa: E501
-                result = asyncio.run(gov.evaluate())
+                result = session_event_loop.run_until_complete(gov.evaluate())
                 # If this passes, branch_admission() is being called in production
                 assert result.branch_concurrency > 0

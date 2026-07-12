@@ -25,7 +25,7 @@ MIN_VERSION = (3, 14)
 if sys.version_info < MIN_VERSION:
     raise SystemExit(f'Requires Python {MIN_VERSION[0]}.{MIN_VERSION[1]}+')
 
-@dataclass(True)
+@dataclass(slots=True)
 class BenchmarkResult:
     name: str
     serial_ms: float
@@ -37,7 +37,7 @@ class BenchmarkResult:
     result_equivalence: bool
     verdict: str
 
-@dataclass(True)
+@dataclass(slots=True)
 class CompressionResult:
     name: str
     format: str

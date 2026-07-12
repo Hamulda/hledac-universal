@@ -41,7 +41,7 @@ class SmartSpawnedRole(Enum):
     CODER = 'coder'
     TESTER = 'tester'
 
-@dataclass(True)
+@dataclass(slots=True)
 class SmartSpawnedAgent:
     """Represents a smart-spawned agent"""
     agent_id: str

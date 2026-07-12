@@ -19,7 +19,7 @@ from hledac.universal.utils.async_helpers import safe_create_task
 from dataclasses import dataclass, field
 from typing import Any
 
-@dataclass(True)
+@dataclass(slots=True)
 class WinddownPhaseResult:
     """Result from the winddown phase."""
     export_paths: list[str] = field(default_factory=list)

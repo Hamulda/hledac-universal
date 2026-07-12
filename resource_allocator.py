@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 MLX_AVAILABLE = False
 _FALLBACK_RAM_ESTIMATE_MB: float = 500.0
 
-@dataclass(True)
+@dataclass(slots=True)
 class ResourceBudget:
     """Resource budget for a request."""
     ram_mb: int

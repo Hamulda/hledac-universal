@@ -24,7 +24,7 @@ except ImportError:
     FLASHRANK_AVAILABLE = False
     logger.warning('FlashRank not installed. Install with: pip install flashrank')
 
-@dataclass(True)
+@dataclass(slots=True)
 class RerankResult:
     """Result from reranking operation."""
     document_id: str

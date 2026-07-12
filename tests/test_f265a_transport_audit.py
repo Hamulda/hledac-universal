@@ -23,7 +23,6 @@ network, or real LMDB on disk. Persistence is tested via a tmp_path
 monkey-patch so the test never touches the production LMDB_ROOT.
 """
 
-
 import asyncio
 import os
 import unittest
@@ -33,12 +32,14 @@ from unittest.mock import patch
 # 1. JA3 profile cycling
 # ---------------------------------------------------------------------------
 
+
 class TestJA3ProfileCycling(unittest.TestCase):
     """Sprint F265A — JA3 fingerprint rotation."""
 
     def setUp(self) -> None:
         # Force a fresh import-state every test (counter resets)
         from transport import curl_cffi_fetch
+
         curl_cffi_fetch.reset_ja3_cycle()
 
     def test_pool_contains_at_least_three_browser_families(self) -> None:
@@ -110,49 +111,55 @@ class TestJA3ProfileCycling(unittest.TestCase):
 # 2. I2P health_check()
 # ---------------------------------------------------------------------------
 
+
 class TestI2PIsRunning(unittest.TestCase):
     """Sprint F265A — I2PTransport.is_running() sync check, never raises."""
 
-    def test_is_running_returns_false_when_unavailable(self) -> None:
+    def test_is_running_returns_false_when_unavailable(self, session_event_loop: asyncio.AbstractEventLoop) -> None:
+        """FIX F350M-R: Use session_event_loop fixture instead of asyncio.run()."""
         """available=False → False without touching any network."""
         from transport.i2p_transport import I2PTransport
 
         transport = I2PTransport.__new__(I2PTransport)
         transport.available = False
         transport.transport_mode = "none"
-        # is_running() is sync — no asyncio.run needed
-        result = asyncio.run(transport.is_running())
+        result = session_event_loop.run_until_complete(transport.is_running())
         self.assertFalse(result)
 
-    def test_is_running_returns_false_when_mode_none(self) -> None:
+    def test_is_running_returns_false_when_mode_none(self, session_event_loop: asyncio.AbstractEventLoop) -> None:
+        """FIX F350M-R: Use session_event_loop fixture instead of asyncio.run()."""
         """transport_mode='none' → False even if available=True."""
         from transport.i2p_transport import I2PTransport
 
         transport = I2PTransport.__new__(I2PTransport)
         transport.available = True
         transport.transport_mode = "none"
-        result = asyncio.run(transport.is_running())
+        result = session_event_loop.run_until_complete(transport.is_running())
         self.assertFalse(result)
 
-    def test_is_running_returns_bool_type(self) -> None:
+    def test_is_running_returns_bool_type(self, session_event_loop: asyncio.AbstractEventLoop) -> None:
+        """FIX F350M-R: Use session_event_loop fixture instead of asyncio.run()."""
         """is_running returns a bool regardless of state."""
         from transport.i2p_transport import I2PTransport
 
         transport = I2PTransport.__new__(I2PTransport)
         transport.available = True
         transport.transport_mode = "invalid"  # not "none"
-        result = asyncio.run(transport.is_running())
+        result = session_event_loop.run_until_complete(transport.is_running())
         self.assertIsInstance(result, bool)
         self.assertTrue(result)  # mode != "none" → True
 
-    def test_is_running_returns_true_when_available_with_mode(self) -> None:
+    def test_is_running_returns_true_when_available_with_mode(
+        self, session_event_loop: asyncio.AbstractEventLoop
+    ) -> None:
+        """FIX F350M-R: Use session_event_loop fixture instead of asyncio.run()."""
         """available=True + transport_mode != 'none' → True."""
         from transport.i2p_transport import I2PTransport
 
         transport = I2PTransport.__new__(I2PTransport)
         transport.available = True
         transport.transport_mode = "socks5h"
-        result = asyncio.run(transport.is_running())
+        result = session_event_loop.run_until_complete(transport.is_running())
         self.assertTrue(result)
 
 
@@ -160,11 +167,13 @@ class TestI2PIsRunning(unittest.TestCase):
 # 3. Circuit breaker opt-in LMDB persistence
 # ---------------------------------------------------------------------------
 
+
 class TestCircuitBreakerPersistenceOptIn(unittest.TestCase):
     """Sprint F265A — circuit breaker in-memory only (LMDB persistence not implemented)."""
 
     def setUp(self) -> None:
         from transport import circuit_breaker
+
         circuit_breaker.clear_all_breakers()
 
     def test_record_failure_succeeds_normally(self) -> None:
@@ -232,19 +241,23 @@ class TestCircuitBreakerPersistenceInMemorySemantics(unittest.TestCase):
 # Module-load smoke test
 # ---------------------------------------------------------------------------
 
+
 class TestTransportAuditModuleLoad(unittest.TestCase):
     """All F265A-modified modules must import cleanly with default env."""
 
     def test_curl_cffi_fetch_imports(self) -> None:
         from transport import curl_cffi_fetch  # noqa: F401
+
         self.assertTrue(hasattr(curl_cffi_fetch, "next_ja3_profile"))
 
     def test_i2p_transport_imports(self) -> None:
         from transport import i2p_transport  # noqa: F401
+
         self.assertTrue(hasattr(i2p_transport.I2PTransport, "is_running"))
 
     def test_circuit_breaker_imports(self) -> None:
         from transport import circuit_breaker as cb
+
         self.assertTrue(hasattr(cb, "get_breaker"))
         self.assertTrue(hasattr(cb, "clear_all_breakers"))
         self.assertTrue(hasattr(cb, "CircuitBreaker"))

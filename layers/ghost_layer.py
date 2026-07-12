@@ -391,7 +391,7 @@ class ProcessType(Enum):
     SUSPICIOUS = 2
     MALWARE = 3
 
-@dataclass(True)
+@dataclass(slots=True)
 class ProcessInfo:
     """Process information"""
     pid: int

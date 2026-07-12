@@ -25,6 +25,7 @@ Derived from canonical surfaces (Sprint F192H §1):
   - correlation["campaign_hints"]
   - hypothesis_pack["hypothesis_count"]
 """
+
 from unittest.mock import MagicMock
 
 import pytest
@@ -67,8 +68,13 @@ class TestResearchDepthOutputShape:
             correlation={"campaign_hints": [{"a": 1}, {"b": 2}]},
         )
         bd = result["breakdown"]
-        assert set(bd.keys()) == {"source_diversity", "non_indexed_ratio",
-                                  "corroboration", "branch_diversity", "pivot_depth"}
+        assert set(bd.keys()) == {
+            "source_diversity",
+            "non_indexed_ratio",
+            "corroboration",
+            "branch_diversity",
+            "pivot_depth",
+        }
 
     def test_full_run_returns_all_required_depth_signals_keys(self):
         """depth_signals always has all 8 signal keys."""
@@ -81,9 +87,14 @@ class TestResearchDepthOutputShape:
         )
         ds = result["depth_signals"]
         assert set(ds.keys()) == {
-            "unique_source_types", "deep_sources_found", "total_source_hits",
-            "corroborated", "noisy_signal", "campaign_hints",
-            "active_branches", "pivot_recommended",
+            "unique_source_types",
+            "deep_sources_found",
+            "total_source_hits",
+            "corroborated",
+            "noisy_signal",
+            "campaign_hints",
+            "active_branches",
+            "pivot_recommended",
         }
 
 
@@ -112,8 +123,7 @@ class TestResearchDepthScoreBounds:
         result = _compute_research_depth(
             eh=_mock_handoff(_full_source_counts()),
             pvs={"accepted": 50},
-            signal_path={"is_corroborated": True, "is_noisy": False,
-                         "next_pivot_recommendation": "pivot_immediately"},
+            signal_path={"is_corroborated": True, "is_noisy": False, "next_pivot_recommendation": "pivot_immediately"},
             hypothesis_pack={"hypothesis_count": 5},
             correlation={"campaign_hints": [{"a": 1}, {"b": 2}, {"c": 3}]},
         )
@@ -167,10 +177,12 @@ class TestResearchDepthLevelThresholds:
     def test_moderate_level_with_deep_sources(self):
         """Deep sources + no corroboration → moderate."""
         result = _compute_research_depth(
-            eh=_mock_handoff({
-                "rss_atom_pipeline": 5,
-                "ct_log_pipeline": 5,   # tier 1 → non_indexed_ratio
-            }),
+            eh=_mock_handoff(
+                {
+                    "rss_atom_pipeline": 5,
+                    "ct_log_pipeline": 5,  # tier 1 → non_indexed_ratio
+                }
+            ),
             pvs=None,
             signal_path=None,
             hypothesis_pack=None,
@@ -210,8 +222,7 @@ class TestResearchDepthLevelThresholds:
                 {"feed_findings": 5, "public_findings": 3, "ct_findings": 2},
             ),
             pvs={"accepted": 50},
-            signal_path={"is_corroborated": True, "is_noisy": False,
-                         "next_pivot_recommendation": "pivot_immediately"},
+            signal_path={"is_corroborated": True, "is_noisy": False, "next_pivot_recommendation": "pivot_immediately"},
             hypothesis_pack={"hypothesis_count": 5},
             correlation={"campaign_hints": [{"a": 1}, {"b": 2}, {"c": 3}]},
         )
@@ -247,11 +258,13 @@ class TestSourceDiversityComponent:
     def test_multiple_diverse_sources_high_diversity(self):
         """3+ diverse sources with even distribution → high diversity score."""
         result = _compute_research_depth(
-            eh=_mock_handoff({
-                "rss_atom_pipeline": 33,
-                "ct_log_pipeline": 33,
-                "circl_pdns": 34,
-            }),
+            eh=_mock_handoff(
+                {
+                    "rss_atom_pipeline": 33,
+                    "ct_log_pipeline": 33,
+                    "circl_pdns": 34,
+                }
+            ),
             pvs=None,
             signal_path=None,
             hypothesis_pack=None,
@@ -300,11 +313,13 @@ class TestNonIndexedRatioComponent:
     def test_all_deep_gives_max_non_indexed_score(self):
         """Only tier-1+tier-2 sources → non_indexed_ratio score = 20."""
         result = _compute_research_depth(
-            eh=_mock_handoff({
-                "ct_log_pipeline": 50,
-                "circl_pdns": 30,
-                "rl_research": 20,
-            }),
+            eh=_mock_handoff(
+                {
+                    "ct_log_pipeline": 50,
+                    "circl_pdns": 30,
+                    "rl_research": 20,
+                }
+            ),
             pvs=None,
             signal_path=None,
             hypothesis_pack=None,
@@ -315,10 +330,12 @@ class TestNonIndexedRatioComponent:
     def test_mixed_gives_partial_non_indexed_score(self):
         """50% deep sources → partial non_indexed_ratio."""
         result = _compute_research_depth(
-            eh=_mock_handoff({
-                "rss_atom_pipeline": 50,   # tier 0 (indexed)
-                "ct_log_pipeline": 50,     # tier 1 (structured)
-            }),
+            eh=_mock_handoff(
+                {
+                    "rss_atom_pipeline": 50,  # tier 0 (indexed)
+                    "ct_log_pipeline": 50,  # tier 1 (structured)
+                }
+            ),
             pvs=None,
             signal_path=None,
             hypothesis_pack=None,
@@ -529,11 +546,13 @@ class TestDepthSignalsReflectInputs:
     def test_unique_source_types_reflected(self):
         """unique_source_types in depth_signals matches number of source types."""
         result = _compute_research_depth(
-            eh=_mock_handoff({
-                "rss_atom_pipeline": 10,
-                "ct_log_pipeline": 5,
-                "circl_pdns": 3,
-            }),
+            eh=_mock_handoff(
+                {
+                    "rss_atom_pipeline": 10,
+                    "ct_log_pipeline": 5,
+                    "circl_pdns": 3,
+                }
+            ),
             pvs=None,
             signal_path=None,
             hypothesis_pack=None,
@@ -544,11 +563,13 @@ class TestDepthSignalsReflectInputs:
     def test_deep_sources_found_accumulates_tier1_tier2(self):
         """deep_sources_found sums hits from tier1 + tier2 sources."""
         result = _compute_research_depth(
-            eh=_mock_handoff({
-                "rss_atom_pipeline": 10,   # tier 0 → not counted
-                "ct_log_pipeline": 5,       # tier 1 → counted
-                "circl_pdns": 3,            # tier 1 → counted
-            }),
+            eh=_mock_handoff(
+                {
+                    "rss_atom_pipeline": 10,  # tier 0 → not counted
+                    "ct_log_pipeline": 5,  # tier 1 → counted
+                    "circl_pdns": 3,  # tier 1 → counted
+                }
+            ),
             pvs=None,
             signal_path=None,
             hypothesis_pack=None,
@@ -577,7 +598,8 @@ class TestDepthSignalsReflectInputs:
 class TestResearchDepthInExportReturn:
     """export_sprint() must include research_depth_metric in its return dict."""
 
-    def test_export_sprint_includes_research_depth_metric(self):
+    def test_export_sprint_includes_research_depth_metric(self, session_event_loop: asyncio.AbstractEventLoop):
+        """FIX F350M-R: Use session_event_loop fixture instead of asyncio.run()."""
         """The export_sprint return dict must contain research_depth_metric key."""
         import asyncio
         from unittest.mock import AsyncMock, MagicMock, patch
@@ -587,11 +609,13 @@ class TestResearchDepthInExportReturn:
 
         mock_store = MagicMock()
         mock_store.async_healthcheck = AsyncMock(return_value=True)
-        mock_store.get_dedup_runtime_status = MagicMock(return_value={
-            "accepted_count": 5,
-            "low_information_rejected_count": 2,
-            "persistent_dedup_enabled": True,
-        })
+        mock_store.get_dedup_runtime_status = MagicMock(
+            return_value={
+                "accepted_count": 5,
+                "low_information_rejected_count": 2,
+                "persistent_dedup_enabled": True,
+            }
+        )
         mock_store.get_top_seed_nodes = MagicMock(return_value=[])
 
         # Use a proper ExportHandoff instance to bypass ensure_export_handoff dict bug
@@ -617,7 +641,9 @@ class TestResearchDepthInExportReturn:
             mock_path.return_value = MagicMock()
             with patch("hledac.universal.export.sprint_exporter._make_serializable", side_effect=lambda x: x):
                 with patch.object(asyncio, "get_running_loop", side_effect=RuntimeError("no loop")):
-                    result = asyncio.run(export_sprint(mock_store, mock_eh, sprint_id="test_001"))
+                    result = session_event_loop.run_until_complete(
+                        export_sprint(mock_store, mock_eh, sprint_id="test_001")
+                    )
 
         assert "research_depth_metric" in result
         rdm = result["research_depth_metric"]
@@ -848,13 +874,15 @@ class TestSourceTaxonomyContribution:
     def test_all_new_sources_diverse_contributes_high_diversity(self):
         """5 diverse sources including new types → high source_diversity score."""
         result = _compute_research_depth(
-            eh=_mock_handoff({
-                "rss_atom_pipeline": 20,
-                "live_public_pipeline": 20,
-                "ct_log": 20,
-                "onion_discovery": 20,
-                "ipfs": 20,
-            }),
+            eh=_mock_handoff(
+                {
+                    "rss_atom_pipeline": 20,
+                    "live_public_pipeline": 20,
+                    "ct_log": 20,
+                    "onion_discovery": 20,
+                    "ipfs": 20,
+                }
+            ),
             pvs=None,
             signal_path=None,
             hypothesis_pack=None,
@@ -867,6 +895,7 @@ class TestSourceTaxonomyContribution:
 # =============================================================================
 # Helpers
 # =============================================================================
+
 
 def _mock_handoff(source_counts: dict) -> MagicMock:
     """Build a mock ExportHandoff with scorecard source counts."""

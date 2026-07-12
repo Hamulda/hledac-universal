@@ -29,7 +29,7 @@ SUBMIT_TIMEOUT_S = 120.0
 PREPROCESS_WORKERS = 2
 _DEEP_THINKING_PREFIX: Final[str] = ' <|im_start|>reasoning\nFor this query, I need to think step by step about the evidence and derive conclusions.<|im_end|>\n'
 
-@dataclass(True)
+@dataclass(slots=True)
 class PendingRequest:
     """A pending inference request with its resolving future."""
     future: asyncio.Future[str]

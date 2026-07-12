@@ -44,7 +44,7 @@ _MAX_TRAIN_STEPS_PER_SPRINT = 1
 _Q_CACHE_TTL_S = 5.0
 _QMIX_FIELD = 'qmix_weights'
 
-@dataclass(True)
+@dataclass(slots=True)
 class SprintPolicyState:
     """Serialized policy state persisted to disk."""
     sprint_sequence_number: int = 0

@@ -27,7 +27,7 @@ class Verdict(StrEnum):
     DELTA_NEW_NONFEED_EVIDENCE = 'DELTA_NEW_NONFEED_EVIDENCE'
     DELTA_MEANINGFUL_RESEARCH_PROGRESS = 'DELTA_MEANINGFUL_RESEARCH_PROGRESS'
 
-@dataclass(True)
+@dataclass(slots=True)
 class EvidenceDelta:
     new_source_families: list[str] = field(default_factory=list)
     disappeared_source_families: list[str] = field(default_factory=list)

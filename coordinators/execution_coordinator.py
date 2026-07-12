@@ -26,7 +26,7 @@ from hledac.universal.utils.async_helpers import bounded_gather, safe_create_tas
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
 logger = logging.getLogger(__name__)
 
-@dataclass(True)
+@dataclass(slots=True)
 class ExecutionTask:
     """Definition of an execution task."""
     task_id: str

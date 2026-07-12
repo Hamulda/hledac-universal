@@ -111,7 +111,7 @@ class EntitySnapshot:
     content_preview: str
     metadata: dict[str, Any] = field(default_factory=dict)
 
-@dataclass(True)
+@dataclass(slots=True)
 class IdentityChange:
     """Represents an identity change event."""
     from_identifier: str

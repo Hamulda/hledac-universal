@@ -50,7 +50,7 @@ GTYPE_TN3270 = 'T'
 GTYPE_GIF = 'g'
 GTYPE_IMAGE = 'I'
 
-@dataclass(True)
+@dataclass(slots=True)
 class GopherResponse:
     """Response from a Gopher request."""
     selector: str
@@ -68,7 +68,7 @@ class GopherResponse:
     def size(self) -> int:
         return len(self.content)
 
-@dataclass(True)
+@dataclass(slots=True)
 class GopherItem:
     """Single item in a Gopher directory listing."""
     item_type: str

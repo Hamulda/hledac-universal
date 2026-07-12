@@ -37,7 +37,7 @@ _MAX_BATCH_SIZE = 32
 _MAX_DOCS = 50000
 _EMBEDDING_DIM = 256
 
-@dataclass(True)
+@dataclass(slots=True)
 class RAGDocument:
     """Document for LanceDB-backed RAG."""
     id: str

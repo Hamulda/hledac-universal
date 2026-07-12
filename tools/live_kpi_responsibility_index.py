@@ -18,7 +18,7 @@ import msgspec
 from pathlib import Path
 from typing import Any
 
-@dataclass(True)
+@dataclass(slots=True)
 class FunctionSpec:
     """One KPI-related function."""
     name: str

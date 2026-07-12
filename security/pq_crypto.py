@@ -41,7 +41,7 @@ class PQSecurityLevel(Enum):
     """ML-DSA security levels (NIST FIPS 204)."""
     ML_DSA_65 = 65
 
-@dataclass(True)
+@dataclass(slots=True)
 class PQStatus:
     """Current status of the post-quantum backend."""
     availability: PQAvailability = PQAvailability.DISABLED

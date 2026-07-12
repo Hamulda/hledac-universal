@@ -38,7 +38,7 @@ except ImportError:
     AgentProtocol = Any
 logger = logging.getLogger(__name__)
 
-@dataclass(True)
+@dataclass(slots=True)
 class BenchmarkConfig:
     """Configuration for agent benchmarking."""
     warmup_iterations: int = 3

@@ -109,7 +109,7 @@ class CapabilityTruthLayer(Enum):
     RUNTIME_LOADED = 'loaded'
     EFFECTIVE_FOR_TOOL_CONTRACT = 'effective'
 
-@dataclass(True)
+@dataclass(slots=True)
 class CapabilityTruthStatus:
     """
     F6: Truthful capability status across all four layers.

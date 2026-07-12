@@ -47,7 +47,7 @@ for _member in Verdict:
     globals()[_member.name] = _member
 del _member
 
-@dataclass(True)
+@dataclass(slots=True)
 class ValidationFailure:
     verdict: Verdict
     reason: str

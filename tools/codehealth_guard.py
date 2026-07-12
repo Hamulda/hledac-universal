@@ -36,7 +36,7 @@ class GuardVerdict(Enum):
     FAIL_SYNTAX_ERROR = 'CODEHEALTH_FAIL_SYNTAX_ERROR'
     FAIL_SYMBOL_MISSING = 'CODEHEALTH_FAIL_SYMBOL_MISSING'
 
-@dataclass(True)
+@dataclass(slots=True)
 class GuardResult:
     verdict: GuardVerdict
     function_name: str

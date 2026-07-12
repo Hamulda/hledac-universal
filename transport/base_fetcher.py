@@ -33,7 +33,7 @@ _CIRCUIT_BREAKER_MAX_DOMAINS: int = 512
 _CIRCUIT_BREAKER_FAILURE_THRESHOLD: int = 5
 _CIRCUIT_BREAKER_RECOVERY_SECONDS: float = 30.0
 
-@dataclass(True)
+@dataclass(slots=True)
 class RetryPolicy:
     """Bounded retry policy for fetch operations.
 

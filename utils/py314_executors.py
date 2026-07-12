@@ -275,7 +275,7 @@ def interpreter_pool_available() -> bool:
     except ImportError:
         return False
 
-@dataclass(True)
+@dataclass(slots=True)
 class BenchmarkResult:
     """Result of a parallel execution benchmark."""
     name: str

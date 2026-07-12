@@ -58,7 +58,7 @@ class RecordType(Enum):
     SRV = 'SRV'
     CAA = 'CAA'
 
-@dataclass(True)
+@dataclass(slots=True)
 class DNSRecord:
     """DNS record information."""
     record_type: RecordType

@@ -131,7 +131,7 @@ class TestSprint8AXFlagOn:
             '    except Exception:\n'
             '        break\n'
             'if batch:\n'
-            '    asyncio.run(rec._flush_batch(batch))\n'
+            '    session_event_loop.run_until_complete(rec._flush_batch(batch))\n'
             'failures = shadow_ingest_failures()\n'
             'print(f"failures={failures}")\n'
             'rows = conn.execute("SELECT id, query, source_type FROM canonical_findings ORDER BY ts").fetchall()\n'
@@ -250,7 +250,7 @@ class TestSprint8AXMemoryMode:
             '    inserted2 = await store.async_record_shadow_findings_batch(batch2)\n'
             '    rows = await store.async_query_recent_findings(limit=25)\n'
             '    return inserted1, inserted2, len(rows)\n'
-            'inserted1, inserted2, total = asyncio.run(run_test())\n'
+            'inserted1, inserted2, total = session_event_loop.run_until_complete(run_test())\n'
             'print(f"inserted1={inserted1}")\n'
             'print(f"inserted2={inserted2}")\n'
             'print(f"total={total}")\n'
@@ -297,7 +297,7 @@ class TestSprint8AXMemoryMode:
             '    return len(batch)\n'
             'async def run_test():\n'
             '    await asyncio.gather(write_and_capture(1), write_and_capture(2), write_and_capture(3))\n'
-            'asyncio.run(run_test())\n'
+            'session_event_loop.run_until_complete(run_test())\n'
             'print(f"thread_names={thread_names}")\n'
             'assert len(set(thread_names)) == 1, f"Expected 1 unique thread, got: {set(thread_names)}"\n'
             'assert "duckdb_worker" in thread_names[0], f"Expected duckdb_worker, got: {thread_names[0]}"\n'
@@ -341,7 +341,7 @@ class TestSprint8AXBatchChunking:
             '             for i in range(1001)]\n'
             '    inserted = await store.async_record_shadow_findings_batch(batch, max_batch_size=500)\n'
             '    return inserted\n'
-            'inserted = asyncio.run(run_test())\n'
+            'inserted = session_event_loop.run_until_complete(run_test())\n'
             'print(f"inserted={inserted}")\n'
             'conn.close()\n'
         )
@@ -446,7 +446,7 @@ class TestSprint8AXAclclose:
             '    elapsed = time.monotonic() - start\n'
             '    print(f"elapsed={elapsed:.2f}")\n'
             '    assert elapsed < 5.0, f"aclose should not block: {elapsed:.2f}s"\n'
-            'asyncio.run(run_test())\n'
+            'session_event_loop.run_until_complete(run_test())\n'
         )
         stdout, _, _ = _run_in_subprocess(code, env={"GHOST_DUCKDB_SHADOW": "1"})
         lines = [l for l in stdout.strip().splitlines() if l]  # noqa: E741

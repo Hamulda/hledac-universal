@@ -34,7 +34,7 @@ class ReasoningStrategy(Enum):
     GRAPH_REASONING = 'graph'
     HYBRID = 'hybrid'
 
-@dataclass(True)
+@dataclass(slots=True)
 class ReasoningStep:
     """Single reasoning step."""
     step_id: str

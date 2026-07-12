@@ -16,15 +16,10 @@ Tests:
 All tests are hermetic — no network, no real MLX.
 """
 
-
-import asyncio
 import concurrent.futures
-import html
-import re
 from unittest import mock
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Sample data
@@ -60,6 +55,7 @@ SAMPLE_HTML_LARGE = """
 # IOC batch extraction tests
 # ---------------------------------------------------------------------------
 
+
 class TestExtractIocsFromTextsBatch:
     """Tests for extract_iocs_from_texts (Rust batch path)."""
 
@@ -85,11 +81,13 @@ class TestExtractIocsFromTextsBatch:
         """Result structure: list of lists, one per input text."""
         from hledac.universal.pipeline.public_patterns import extract_iocs_from_texts
 
-        result = extract_iocs_from_texts([
-            "admin@example.com",
-            "support@corp.org",
-            "192.168.1.1",
-        ])
+        result = extract_iocs_from_texts(
+            [
+                "admin@example.com",
+                "support@corp.org",
+                "192.168.1.1",
+            ]
+        )
         assert isinstance(result, list)
         assert len(result) == 3
         for sublist in result:
@@ -115,6 +113,7 @@ class TestExtractIocsFromTextOriginal:
 # ---------------------------------------------------------------------------
 # Batch HTML processing tests
 # ---------------------------------------------------------------------------
+
 
 class TestBatchSyncProcessHtml:
     """Tests for _batch_sync_process_html (selectolax path)."""
@@ -150,10 +149,7 @@ class TestBatchSyncProcessHtml:
     def test_cap_at_1000_items(self):
         from hledac.universal.fetching.public_fetcher import _batch_sync_process_html
 
-        items = [
-            (SAMPLE_HTML, f"https://example.com/{i}")
-            for i in range(2000)
-        ]
+        items = [(SAMPLE_HTML, f"https://example.com/{i}") for i in range(2000)]
         result = _batch_sync_process_html(items)
         # Should be capped at 1000
         assert len(result) == 1000
@@ -161,12 +157,8 @@ class TestBatchSyncProcessHtml:
     def test_links_resolved_correctly(self):
         from hledac.universal.fetching.public_fetcher import _batch_sync_process_html
 
-        html_with_link = (
-            '<html><body><a href="/path">Link</a></body></html>'
-        )
-        result = _batch_sync_process_html(
-            [(html_with_link, "https://example.com")]
-        )
+        html_with_link = '<html><body><a href="/path">Link</a></body></html>'
+        result = _batch_sync_process_html([(html_with_link, "https://example.com")])
         _text, links, _metadata = result[0]
         assert any("example.com/path" in link for link in links)
 
@@ -183,9 +175,7 @@ class TestBatchSyncProcessHtml:
         from hledac.universal.fetching.public_fetcher import _batch_sync_process_html
 
         html_no_href = "<html><body><a>No href here</a></body></html>"
-        result = _batch_sync_process_html(
-            [(html_no_href, "https://example.com")]
-        )
+        result = _batch_sync_process_html([(html_no_href, "https://example.com")])
         _text, links, _metadata = result[0]
         assert isinstance(links, list)
 
@@ -193,17 +183,17 @@ class TestBatchSyncProcessHtml:
 class TestProcessHtmlPayloadBatch:
     """Tests for process_html_payload_batch (async ThreadPoolExecutor wrapper)."""
 
-    def test_empty_input_returns_empty_list(self):
+    @pytest.mark.asyncio
+    async def test_empty_input_returns_empty_list(self):
+        """FIX F350M-R: Use @pytest.mark.asyncio instead of asyncio.run()."""
         from hledac.universal.fetching.public_fetcher import process_html_payload_batch
 
-        async def _run():
-            return await process_html_payload_batch([])
-
-        result = asyncio.run(_run())
+        result = await process_html_payload_batch([])
         assert result == []
 
-    def test_submits_to_thread_pool_executor(self):
-        """process_html_payload_batch submits to _get_html_executor."""
+    @pytest.mark.asyncio
+    async def test_submits_to_thread_pool_executor(self):
+        """FIX F350M-R: Use @pytest.mark.asyncio instead of asyncio.run()."""
         from hledac.universal.fetching.public_fetcher import (
             _batch_sync_process_html,
             process_html_payload_batch,
@@ -223,11 +213,6 @@ class TestProcessHtmlPayloadBatch:
             "hledac.universal.fetching.public_fetcher._get_html_executor",
             return_value=MockExecutor(max_workers=2),
         ):
-            async def _run():
-                return await process_html_payload_batch(
-                    [(SAMPLE_HTML, "https://test.com")]
-                )
-
-            result = asyncio.run(_run())
+            result = await process_html_payload_batch([(SAMPLE_HTML, "https://test.com")])
             assert submitted_fn is _batch_sync_process_html
             assert len(result) == 1

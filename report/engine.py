@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 __all__ = ['ReportEngine', 'get_report_engine', 'ReportOutput']
 
-@dataclass(True)
+@dataclass(slots=True)
 class ReportOutput:
     """Result of a render operation."""
     path: Path | None = None

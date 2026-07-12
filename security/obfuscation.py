@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from typing import Any
 logger = logging.getLogger(__name__)
 
-@dataclass(True)
+@dataclass(slots=True)
 class ObfuscationConfig:
     """Konfigurace obfuskace"""
     mask_queries: bool = True

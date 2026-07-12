@@ -106,7 +106,7 @@ class HashType(Enum):
     APACHE_MD5 = 'apache_md5'
     UNKNOWN = 'unknown'
 
-@dataclass(True)
+@dataclass(slots=True)
 class CryptanalysisResult:
     """Result of cryptanalysis attempt."""
     success: bool

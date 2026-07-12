@@ -84,7 +84,7 @@ class NodeLane:
     ALL: tuple[str, ...] = (SURFACE, DARK, ARCHIVE)
     'The default 3-lane partitioning (matches MAX_VIRTUAL_NODES).'
 
-@dataclass(True)
+@dataclass(slots=True)
 class NodeResult:
     """Result of a single virtual node's research cycle."""
     lane: str

@@ -41,7 +41,7 @@ TIMEOUT_PER_REQUEST: float = 15.0
 MAX_PREFIXES_PER_ASN: int = 200
 BGPVIEW_API = 'https://api.bgpview.io'
 
-@dataclass(True)
+@dataclass(slots=True)
 class BGPFinding:
     """
     BGP intelligence finding.

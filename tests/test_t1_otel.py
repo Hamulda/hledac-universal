@@ -636,14 +636,15 @@ class TestSprintT1Context:
 class TestSprintT1Integration:
     """End-to-end: instrumented decorator on real fetch/run functions."""
 
-    def test_async_decorator_preserves_signature(self) -> None:
+    def test_async_decorator_preserves_signature(self, session_event_loop: asyncio.AbstractEventLoop) -> None:
+        """FIX F350M-R: Use session_event_loop fixture instead of asyncio.run()."""
         @instrumented("integration.test")
         async def my_async_fn(url: str, count: int = 10) -> dict[str, Any]:
             return {"url": url, "count": count, "ts": time.monotonic()}
 
         ring: BoundedRing = BoundedRing(capacity=16)
         init_telemetry(TelemetryConfig(exporter_kind="ring", ring_sink=ring, sample_ratio=1.0))
-        result = asyncio.run(my_async_fn("https://x", count=5))
+        result = session_event_loop.run_until_complete(my_async_fn("https://x", count=5))
         assert result["url"] == "https://x"
         assert result["count"] == 5
         shutdown_telemetry(timeout_ms=1000)

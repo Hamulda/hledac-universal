@@ -31,7 +31,7 @@ class DomainStatus(StrEnum):
     RED = 'red'
     UNKNOWN = 'unknown'
 
-@dataclass(True)
+@dataclass(slots=True)
 class DomainResult:
     status: DomainStatus
     score: int

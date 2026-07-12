@@ -37,7 +37,7 @@ from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_
 _DOH_SEMAPHORE = get_semaphore_for_testing(ConcurrencyCategory.DNS_BRUTE)
 COMMON_SUBDOMAINS: list[str] = ['www', 'mail', 'ftp', 'vpn', 'api', 'admin', 'dev', 'staging', 'beta', 'internal', 'corp', 'git', 'jira', 'confluence', 'jenkins', 'gitlab']
 
-@dataclass(True)
+@dataclass(slots=True)
 class DOHFinding:
     domain: str
     record_type: str

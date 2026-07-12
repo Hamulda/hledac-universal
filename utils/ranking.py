@@ -21,7 +21,7 @@ import msgspec
 from typing import Any
 logger = logging.getLogger(__name__)
 
-@dataclass(True)
+@dataclass(slots=True)
 class RRFConfig:
     """Configuration for Reciprocal Rank Fusion"""
     k: int = 60

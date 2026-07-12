@@ -49,7 +49,7 @@ class Decryptability(Enum):
     EPHEMERAL_TEST_ONLY = 'ephemeral_test_only'
     UNSUPPORTED = 'unsupported'
 
-@dataclass(True)
+@dataclass(slots=True)
 class ExportEncryptionEnvelope:
     """
     Encrypted export bundle envelope — PRODUCTION safe, no private key material.

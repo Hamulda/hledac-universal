@@ -32,7 +32,7 @@ def _canonical_base(sprint_id: str) -> tuple[str, str]:
     suffix = sprint_id[len(f'F{digits}'):]
     return (f'F{digits}', suffix if suffix else '')
 
-@dataclass(True)
+@dataclass(slots=True)
 class SprintIdCollision:
     sprint_id: str
     aliases: list[str] = field(default_factory=list)

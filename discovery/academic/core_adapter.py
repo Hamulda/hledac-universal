@@ -29,7 +29,7 @@ def _get_api_key() -> str | None:
     """Get CORE API key from environment."""
     return os.environ.get('CORE_API_KEY') or os.environ.get('HLEDAC_CORE_API_KEY')
 
-@dataclass(True)
+@dataclass(slots=True)
 class COREWork:
     """CORE.ac.uk academic work."""
     id: int

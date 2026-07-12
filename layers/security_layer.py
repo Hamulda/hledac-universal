@@ -598,7 +598,7 @@ import json
 import time
 from dataclasses import dataclass, field
 
-@dataclass(True)
+@dataclass(slots=True)
 class AuditEntry:
     """
     Immutable audit entry with SHA-256 hashing.

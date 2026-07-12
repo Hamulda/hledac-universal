@@ -5,6 +5,7 @@ Tests that FOCA metadata types are properly wired into:
 - EvidenceTriageCoordinator
 - Canonical pipeline
 """
+
 import asyncio
 import zipfile
 from unittest.mock import AsyncMock, MagicMock
@@ -82,9 +83,7 @@ class TestFOCATriageIntegration:
         await coordinator.initialize()
 
         # Inject mock result
-        coordinator._metadata_extractor.extract = AsyncMock(
-            return_value=mock_extractor["pptx"]
-        )
+        coordinator._metadata_extractor.extract = AsyncMock(return_value=mock_extractor["pptx"])
 
         facets = await coordinator.extract_triage_facets(str(pptx_path), "document")
 
@@ -112,9 +111,7 @@ class TestFOCATriageIntegration:
         await coordinator.initialize()
 
         # Inject mock result
-        coordinator._metadata_extractor.extract = AsyncMock(
-            return_value=mock_extractor["email"]
-        )
+        coordinator._metadata_extractor.extract = AsyncMock(return_value=mock_extractor["email"])
 
         facets = await coordinator.extract_triage_facets(str(eml_path), "document")
 
@@ -143,9 +140,12 @@ class TestFOCATriageIntegration:
 class TestFOCAMacroExtraction:
     """Test macro URL extraction with olevba fallback."""
 
-    def test_macro_urls_in_pptx_via_zip(self, tmp_path):
-        """Test URL extraction from VBA without olevba (fallback)."""
+    def test_macro_urls_in_pptx_via_zip(self, tmp_path: Path, session_event_loop: asyncio.AbstractEventLoop) -> None:
+        """Test URL extraction from VBA without olevba (fallback).
 
+        FIX F350M-R: Use session_event_loop fixture instead of asyncio.run()
+        to avoid orphaning the session-scoped loop.
+        """
         # Create PPTX with VBA containing URL
         pptx_path = tmp_path / "macro.pptx"
         with zipfile.ZipFile(pptx_path, "w") as zf:
@@ -154,8 +154,6 @@ class TestFOCAMacroExtraction:
             zf.writestr("ppt/vbaProject.bin", vba_content)
 
         # Test extraction directly
-        import asyncio
-
         from forensics.metadata_extractor import UniversalMetadataExtractor
 
         async def run():
@@ -163,7 +161,7 @@ class TestFOCAMacroExtraction:
             result = await extractor.extract(str(pptx_path))
             return result
 
-        result = asyncio.run(run())
+        result = session_event_loop.run_until_complete(run())
 
         assert result.pptx is not None
         assert result.pptx.has_macros is True
@@ -199,6 +197,7 @@ class TestFOCADocumentIntelligenceSeam:
     def test_office_analyzer_has_analyze_async(self):
         """Test OfficeDocumentAnalyzer has async analyze method."""
         from intelligence.document_intelligence import OfficeDocumentAnalyzer
+
         analyzer = OfficeDocumentAnalyzer()
         assert hasattr(analyzer, "analyze_async")
         assert callable(analyzer.analyze_async)
@@ -211,11 +210,14 @@ class TestFOCADocumentIntelligenceSeam:
         # Create minimal PPTX
         pptx_path = tmp_path / "test.pptx"
         with zipfile.ZipFile(pptx_path, "w") as zf:
-            zf.writestr("docProps/core.xml", """<?xml version="1.0" encoding="UTF-8"?>
+            zf.writestr(
+                "docProps/core.xml",
+                """<?xml version="1.0" encoding="UTF-8"?>
 <cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties">
 <dc:creator>Test Author</dc:creator>
 <dc:title>Test Doc</dc:title>
-</cp:coreProperties>""")
+</cp:coreProperties>""",
+            )
             zf.writestr("ppt/presentation.xml", "<xml/>")
 
         analyzer = OfficeDocumentAnalyzer()
@@ -231,10 +233,13 @@ class TestFOCADocumentIntelligenceSeam:
         # Create minimal PPTX
         pptx_path = tmp_path / "test.pptx"
         with zipfile.ZipFile(pptx_path, "w") as zf:
-            zf.writestr("docProps/core.xml", """<?xml version="1.0" encoding="UTF-8"?>
+            zf.writestr(
+                "docProps/core.xml",
+                """<?xml version="1.0" encoding="UTF-8"?>
 <cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties">
 <dc:creator>Sync Author</dc:creator>
-</cp:coreProperties>""")
+</cp:coreProperties>""",
+            )
             zf.writestr("ppt/presentation.xml", "<xml/>")
 
         analyzer = OfficeDocumentAnalyzer()
@@ -297,7 +302,7 @@ class TestFOCAConfidenceScoring:
                     "macro_urls": ["http://evil.com/c2.php"],
                     "has_macros": True,
                     "hidden_slides": [{"id": "1"}],
-                    "template_path": "C:\\Templates\\blank.potx"
+                    "template_path": "C:\\Templates\\blank.potx",
                 }
             }
         }
@@ -311,11 +316,7 @@ class TestFOCAConfidenceScoring:
         enricher = ForensicsEnricher()
         enrichment = {
             "metadata": {
-                "email": {
-                    "originating_ip": "192.168.1.100",
-                    "dkim_domain": "example.com",
-                    "attachment_count": 2
-                }
+                "email": {"originating_ip": "192.168.1.100", "dkim_domain": "example.com", "attachment_count": 2}
             }
         }
         score = enricher._score_foca_findings(enrichment)
@@ -326,14 +327,7 @@ class TestFOCAConfidenceScoring:
         from forensics.enrichment_service import ForensicsEnricher
 
         enricher = ForensicsEnricher()
-        enrichment = {
-            "metadata": {
-                "cad": {
-                    "autocad_version": "2022",
-                    "coordinate_extents": {"x": 100, "y": 200}
-                }
-            }
-        }
+        enrichment = {"metadata": {"cad": {"autocad_version": "2022", "coordinate_extents": {"x": 100, "y": 200}}}}
         score = enricher._score_foca_findings(enrichment)
         assert score >= 0.15  # autocad=0.1, coords=0.05
 
@@ -348,17 +342,10 @@ class TestFOCAConfidenceScoring:
                     "macro_urls": ["http://evil.com/c2.php"],
                     "has_macros": True,
                     "hidden_slides": [{"id": "1"}],
-                    "template_path": "C:\\Templates\\blank.potx"
+                    "template_path": "C:\\Templates\\blank.potx",
                 },
-                "email": {
-                    "originating_ip": "192.168.1.100",
-                    "dkim_domain": "example.com",
-                    "attachment_count": 2
-                },
-                "cad": {
-                    "autocad_version": "2022",
-                    "coordinate_extents": {"x": 100, "y": 200}
-                }
+                "email": {"originating_ip": "192.168.1.100", "dkim_domain": "example.com", "attachment_count": 2},
+                "cad": {"autocad_version": "2022", "coordinate_extents": {"x": 100, "y": 200}},
             }
         }
         score = enricher._score_foca_findings(enrichment)

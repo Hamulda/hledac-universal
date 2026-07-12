@@ -27,7 +27,7 @@ _CANONICAL_HTML_TEXT_AVAILABLE = bool(_html_text_fast_mod)
 html_to_text_fast = _html_text_fast_mod() if _html_text_fast_mod else None
 _CLEAN_PATTERNS: list[tuple[re.Pattern, str]] = [(re.compile('<script[^>]*>.*?</script>', flags=re.DOTALL | re.IGNORECASE), ' '), (re.compile('<style[^>]*>.*?</style>', flags=re.DOTALL | re.IGNORECASE), ' '), (re.compile('<head[^>]*>.*?</head>', flags=re.DOTALL | re.IGNORECASE), ' '), (re.compile('<nav[^>]*>.*?</nav>', flags=re.DOTALL | re.IGNORECASE), ' '), (re.compile('<footer[^>]*>.*?</footer>', flags=re.DOTALL | re.IGNORECASE), ' '), (re.compile('<header[^>]*>.*?</header>', flags=re.DOTALL | re.IGNORECASE), ' '), (re.compile('<aside[^>]*>.*?</aside>', flags=re.DOTALL | re.IGNORECASE), ' '), (re.compile('<[^>]+>'), ' '), (re.compile('&nbsp;'), ' '), (re.compile('&amp;'), '&'), (re.compile('&lt;'), '<'), (re.compile('&gt;'), '>'), (re.compile('&quot;'), '"'), (re.compile('&apos;'), "'"), (re.compile('\\s+'), ' ')]
 
-@dataclass(True)
+@dataclass(slots=True)
 class MiningResult:
     """Result of content mining operation"""
     content: str

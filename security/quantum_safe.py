@@ -25,7 +25,7 @@ class SecurityLevel(Enum):
     HIGH = 'high'
     MAXIMUM = 'maximum'
 
-@dataclass(True)
+@dataclass(slots=True)
 class EncryptedContainer:
     """Šifrovaný kontejner"""
     ciphertext: bytes

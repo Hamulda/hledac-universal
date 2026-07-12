@@ -42,7 +42,7 @@ class EvictionStrategy(Enum):
     LFU = 'lfu'
     ADAPTIVE = 'adaptive'
 
-@dataclass(True)
+@dataclass(slots=True)
 class CacheConfig:
     """Configuration for intelligent cache."""
     max_size_bytes: int = 100 * 1024 * 1024

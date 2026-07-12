@@ -26,7 +26,7 @@ REQUEST_TIMEOUT_S = 5.0
 MAX_RESULTS = 20
 FIELD_CONCEPTS = {'cs': 'C164176025', 'ai': 'C39432361', 'ml': 'C185592260', 'security': 'C162324750', 'crypto': 'C2777199784'}
 
-@dataclass(True)
+@dataclass(slots=True)
 class OpenAlexWork:
     """OpenAlex academic work."""
     id: str

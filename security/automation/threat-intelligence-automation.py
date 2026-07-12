@@ -17,7 +17,7 @@ import yaml
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-@dataclass(True)
+@dataclass(slots=True)
 class ThreatIntelligence:
     """Threat intelligence data"""
     threat_id: str

@@ -28,13 +28,13 @@ class Verdict(str, Enum):
     BLOCKED_BY_ARTIFACTS = 'BLOCKED_BY_ARTIFACTS'
     BLOCKED_BY_PROVIDER_SURFACE = 'BLOCKED_BY_PROVIDER_SURFACE'
 
-@dataclass(True)
+@dataclass(slots=True)
 class Blocker:
     category: str
     detail: str
     probe: str | None = None
 
-@dataclass(True)
+@dataclass(slots=True)
 class ReadinessResult:
     verdict: Verdict
     live_allowed: bool

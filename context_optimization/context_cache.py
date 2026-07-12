@@ -173,7 +173,7 @@ class CacheLocation(Enum):
     L1_MEMORY = L1_MEMORY
     L2_DISK = L2_DISK
 
-@dataclass(True)
+@dataclass(slots=True)
 class CacheEntry:
     """Single cache entry."""
     cache_id: str
@@ -186,7 +186,7 @@ class CacheEntry:
     cache_type: CacheType
     metadata: dict[str, Any]
 
-@dataclass(True)
+@dataclass(slots=True)
 class CacheStats:
     """Cache performance statistics."""
     total_entries: int

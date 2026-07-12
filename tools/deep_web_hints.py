@@ -27,7 +27,7 @@ MAX_FIELDS_PER_FORM = 10
 MAX_API_CANDIDATES = 20
 MAX_HTML_PREVIEW_SIZE = 50 * 1024
 
-@dataclass(True)
+@dataclass(slots=True)
 class DeepWebHints:
     """Structured hints extracted from HTML preview."""
     url: str

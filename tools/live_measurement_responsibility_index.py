@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 import msgspec
 from typing import Any
 
-@dataclass(True)
+@dataclass(slots=True)
 class SectionIndex:
     name: str
     line_count_estimate: int

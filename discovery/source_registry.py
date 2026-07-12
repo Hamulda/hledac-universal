@@ -16,7 +16,7 @@ import msgspec
 from typing import Any
 from hledac.universal.utils.cache import PyCacheDict
 
-@dataclass(True)
+@dataclass(slots=True)
 class SourceEntry:
     """F229: Named source with tier and acquisition lane."""
     adapter: Callable[..., Any] | None = None

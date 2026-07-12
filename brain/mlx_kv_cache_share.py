@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 _MAX_CACHED_PROMPTS: int = 8
 
-@dataclass(True)
+@dataclass(slots=True)
 class TokenizedPromptEntry:
     """Cached tokenized prompt array."""
     key: str
@@ -38,7 +38,7 @@ class TokenizedPromptEntry:
     last_used: float = 0.0
     tokenize_time_ms: float = 0.0
 
-@dataclass(True)
+@dataclass(slots=True)
 class PromptCacheStats:
     """Statistics for tokenized prompt cache."""
     cache_hits: int = 0

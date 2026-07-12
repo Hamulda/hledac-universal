@@ -37,7 +37,7 @@ class PatternType(Enum):
     RANDOM = 'random'
     STEP_CHANGE = 'step_change'
 
-@dataclass(True)
+@dataclass(slots=True)
 class TrendAnalysis:
     """Result of trend analysis."""
     direction: TrendDirection

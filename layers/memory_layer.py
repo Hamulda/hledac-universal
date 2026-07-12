@@ -744,7 +744,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-@dataclass(True)
+@dataclass(slots=True)
 class RAMDiskConfig:
     """Configuration for RAM disk creation"""
     size_mb: int = 512

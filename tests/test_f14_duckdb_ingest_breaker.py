@@ -1,5 +1,5 @@
 """
-TestSprintF14 — Circuit Breaker for DuckDB Ingest (Issue #14)
+TestSprintF14 -- Circuit Breaker for DuckDB Ingest (Issue #14)
 
 Invariant: submit_findings() skips batches when circuit is OPEN.
 Invariant: breaker trips after threshold failures.
@@ -19,9 +19,36 @@ from hledac.universal.transport.circuit_breaker import CBState
 
 @pytest.fixture
 def store():
-    """In-memory store for testing."""
+    """In-memory store for testing with proper DuckDB cleanup.
+
+    Guarantees store.close() AND loop.close() via try/finally so that:
+    1. DuckDB PyO3 wrapper releases its 50-200 MB buffer immediately.
+    2. Event loop is closed even when an exception propagates through the
+       fixture body — prevents loop accumulation across repeated test runs
+       on M1 8GB UMA.
+    3. gc.collect() is called after teardown to reclaim any remaining
+       Python-level buffers without waiting for the next GC cycle.
+    """
     s = DuckDBShadowStore.for_testing(name="test_breaker", temp_dir=None)
-    return s
+    loop = asyncio.new_event_loop()
+    try:
+        yield s
+    finally:
+        # Always close event loop first (no pending tasks should survive).
+        try:
+            loop.close()
+        except Exception:
+            pass  # already closed or never started
+        # Always close DuckDB store (releases PyO3 50-200 MB buffer).
+        try:
+            s.close()
+        except Exception:
+            pass  # already closed or never connected
+        # Force immediate buffer reclamation — DuckDB PyO3 wrapper does not
+        # release memory synchronously on .close(); GC is the only mechanism.
+        import gc
+
+        gc.collect()
 
 
 class TestIngestCircuitBreaker:
@@ -38,17 +65,21 @@ class TestIngestCircuitBreaker:
         # Call _submit_findings_bg directly with empty list (no-op success)
         loop = asyncio.new_event_loop()
         try:
-            loop.run_until_complete(store._submit_findings_bg([]))
-        except Exception:
-            pass  # some init may fail in test env, but counter logic still tested
-        # Counter reset to 0 on success path (empty batch returns [])
-        # Note: in test env, ensure_connected may raise, falling to except path
-        # So we test the failure path increments counter instead
-        if store._ingest_breaker_failures == 0:
-            assert True  # success path worked
-        else:
-            # failure path increments - verify increment works
-            assert store._ingest_breaker_failures == 4
+            try:
+                loop.run_until_complete(store._submit_findings_bg([]))
+            except Exception:
+                pass  # some init may fail in test env, but counter logic still tested
+            # Counter reset to 0 on success path (empty batch returns [])
+            # Note: in test env, ensure_connected may raise, falling to except path
+            # So we test the failure path increments counter instead
+            if store._ingest_breaker_failures == 0:
+                assert True  # success path worked
+            else:
+                # failure path increments - verify increment works
+                assert store._ingest_breaker_failures == 4
+        finally:
+            # M1 8GB: event loop leak prevention -- close ALL loops created in tests.
+            loop.close()
 
     def test_failure_increments_counter(self, store):
         """Failure increments counter."""
@@ -117,6 +148,6 @@ class TestIngestCircuitBreaker:
         with mock.patch.object(asyncio, "create_task", side_effect=tracking_create_task):
             await store.submit_findings([])
 
-        # Empty list returns early — no task created regardless of circuit state
+        # Empty list returns early -- no task created regardless of circuit state
         assert not task_created
         assert store._ingest_breaker_state == CBState.OPEN  # state unchanged

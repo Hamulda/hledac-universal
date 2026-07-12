@@ -41,7 +41,7 @@ class AuditEventType(Enum):
     SECURITY_ALERT = 'security_alert'
     SYSTEM_EVENT = 'system_event'
 
-@dataclass(True)
+@dataclass(slots=True)
 class AuditEvent:
     """Audit událost"""
     timestamp: datetime
@@ -71,7 +71,7 @@ class AuditEvent:
         """Export jako slovník"""
         return {'timestamp': self.timestamp.isoformat(), 'event_type': self.event_type.value, 'action': self.action, 'resource': self.resource, 'user_id': self.user_id, 'session_id': self.session_id, 'details': self.details, 'level': self.level.value, 'hash': self.hash}
 
-@dataclass(True)
+@dataclass(slots=True)
 class AuditConfig:
     """Konfigurace auditu"""
     db_path: str = 'storage/audit.db'

@@ -32,7 +32,7 @@ class EnclaveAvailability(Enum):
     SIGNED = 'signed'
     FAIL_SOFT = 'fail_soft'
 
-@dataclass(True)
+@dataclass(slots=True)
 class EnclaveStatus:
     """Current status of the secure enclave backend."""
     availability: EnclaveAvailability = EnclaveAvailability.DISABLED

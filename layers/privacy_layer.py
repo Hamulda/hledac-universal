@@ -51,7 +51,7 @@ GeneratedProtocol = getattr(_pcg_mod_val, 'GeneratedProtocol', None)
 ProtocolCodeGenerator = getattr(_pcg_mod_val, 'ProtocolCodeGenerator', None)
 ProtocolSpec = getattr(_pcg_mod_val, 'ProtocolSpec', None)
 
-@dataclass(True)
+@dataclass(slots=True)
 class PrivacyContext:
     """Privacy context for operations."""
     level: PrivacyLevel

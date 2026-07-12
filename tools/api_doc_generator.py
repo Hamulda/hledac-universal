@@ -12,7 +12,7 @@ import msgspec
 from pathlib import Path
 from typing import Any
 
-@dataclass(True)
+@dataclass(slots=True)
 class APIClass:
     """Represents a Python class with its documentation."""
     name: str

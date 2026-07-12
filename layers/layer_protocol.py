@@ -107,7 +107,7 @@ class LayerContext:
         """Cancellation event for this sprint."""
         return self._meta.get('cancel_event', asyncio.Event())
 
-@dataclass(True)
+@dataclass(slots=True)
 class LayerEvent:
     """Event that propagates through the LayerStack."""
     type: str

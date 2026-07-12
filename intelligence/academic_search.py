@@ -52,7 +52,7 @@ class AcademicSource(Enum):
     CROSSREF = 'crossref'
     SEMANTIC_SCHOLAR = 'semantic_scholar'
 
-@dataclass(True)
+@dataclass(slots=True)
 class SourceConfig:
     """Configuration for a search source."""
     name: str
@@ -69,7 +69,7 @@ class SourceConfig:
             env_key = f'{self.name.upper()}_API_KEY'
             self.api_key = __import__('os').getenv(env_key)
 
-@dataclass(True)
+@dataclass(slots=True)
 class SearchResult:
     """A single search result."""
     title: str

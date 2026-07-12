@@ -20,7 +20,7 @@ URL_ENCODING_REGEX = '(?:%[0-9A-Fa-f]{2})+'
 MIN_ENTROPY = 2.5
 MAX_ENTROPY = 7.5
 
-@dataclass(True)
+@dataclass(slots=True)
 class EncodingChain:
     """Represents a chain of nested encodings.
 
