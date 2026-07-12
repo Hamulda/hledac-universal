@@ -1406,6 +1406,7 @@ class _RustUrlDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
         MethodSpec("batch_classify", no_except=True),  # hot-path batch: no per-call try/except
         MethodSpec("extract_host"),
         MethodSpec("extract_domain"),
+        MethodSpec("priority_classify_urls", no_except=True),  # Issue E1: sort + classify in one FFI call
     ]
 
 
@@ -1887,6 +1888,27 @@ class _PythonUrlDomain:
 
     def extract_host(self, url: str) -> str:
         return _python_extract_host(url)
+
+    def priority_classify_urls(
+        self, urls: list[tuple[str, float]]
+    ) -> list[tuple[str, float, str]]:
+        # Python fallback: sort by priority desc, then classify each URL in parallel.
+        if not urls:
+            return []
+        # Sort descending by priority
+        sorted_urls = sorted(urls, key=lambda x: x[1], reverse=True)
+        # Classify in parallel via ThreadPoolExecutor — rayon parallel not available in Python.
+        import concurrent.futures
+
+        n_workers = min(2, max(1, len(sorted_urls) // 16))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as ex:
+            results = list(
+                ex.map(
+                    lambda item: (item[0], item[1], _python_classify_url(item[0])[0]),
+                    sorted_urls,
+                )
+            )
+        return results
 
 
 class _PythonHashDomain:

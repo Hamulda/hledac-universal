@@ -37,9 +37,8 @@ GHOST_INVARIANTS:
 - RAM guard: registry evicts domains above MAX_TRACKED_DOMAINS via LRU
 - Fail-soft: if breaker check fails, fetch continues via safe path
 """
+
 from __future__ import annotations
-
-
 
 import asyncio
 import collections.abc
@@ -48,7 +47,7 @@ import random
 import threading
 import time
 from dataclasses import dataclass, field
-from enum import Enum, auto
+from enum import Enum
 from typing import Final
 
 import httpx
@@ -78,7 +77,7 @@ __all__ = [
 # All limits are runtime-configurable via HLEDAC_CB_* env vars.
 # Defaults are M1 8GB calibrated values.
 try:
-    from hledac.universal.config import _cb_int, _cb_float
+    from hledac.universal.config import _cb_float, _cb_int
 
     MAX_TRACKED_DOMAINS: Final[int] = _cb_int("MAX_TRACKED_DOMAINS")
     MAX_RECOVERY_TIMEOUT_S: Final[float] = _cb_float("MAX_RECOVERY_TIMEOUT_S")
@@ -174,6 +173,7 @@ def _metrics_safe_increment(metric_name: str) -> None:
     """Fire-and-forget metric increment — never blocks CB logic."""
     try:
         from metrics_registry import get_metrics_registry
+
         get_metrics_registry().inc(metric_name)
     except Exception:  # noqa: BLE001
         pass  # noqa: BLE001
@@ -181,6 +181,7 @@ def _metrics_safe_increment(metric_name: str) -> None:
 
 class CircuitBreakerSnapshot(msgspec.Struct, frozen=True):
     """Immutable snapshot of circuit breaker state for diagnostics."""
+
     domain: str
     state: str
     failure_count: int
@@ -192,6 +193,7 @@ class CircuitBreakerSnapshot(msgspec.Struct, frozen=True):
 
 class CircuitDecision(msgspec.Struct, frozen=True):
     """Decision returned when checking a domain circuit breaker."""
+
     allowed: bool
     domain: str
     state: str
@@ -213,6 +215,7 @@ class CircuitBreaker:
     Invariant: hold _state_lock for ALL reads AND writes of _state, _failure_count,
     _consecutive_timeouts, _half_open_probes, recovery_timeout fields.
     """
+
     domain: str
     failure_threshold: int = CIRCUIT_FAILURE_THRESHOLD
     recovery_timeout: float = BASE_RECOVERY_TIMEOUT_S
@@ -236,6 +239,7 @@ class CircuitBreaker:
         """Sprint F4: Record duration gauge when transitioning between states."""
         try:
             from metrics_registry import get_metrics_registry
+
             duration = time.monotonic() - self._state_entered_at_monotonic
             if from_state == CBState.OPEN and to_state == CBState.HALF_OPEN:
                 get_metrics_registry().set_gauge("circuit_breaker_open_duration_s", duration)
@@ -360,6 +364,7 @@ class CircuitBreaker:
                 from hledac.universal.monitoring.alert_manager import (
                     check_circuit_breaker_alert,
                 )
+
                 asyncio.get_running_loop().create_task(
                     check_circuit_breaker_alert(
                         domain=_domain,
@@ -393,7 +398,14 @@ class CircuitBreaker:
         if event_to_emit is not None:
             _emit_transport_event(event_to_emit, _domain_for_emit)
 
-    def record_failure(self, is_timeout: bool = False, failure_kind: str = "", *, is_warmup: bool = False, sprint_remaining_s: float | None = None):
+    def record_failure(
+        self,
+        is_timeout: bool = False,
+        failure_kind: str = "",
+        *,
+        is_warmup: bool = False,
+        sprint_remaining_s: float | None = None,
+    ):
         """Record a failure against the circuit breaker.
 
         Warmup failures (is_warmup=True) are tracked separately and do NOT
@@ -478,11 +490,11 @@ class CircuitBreaker:
             )
 
 
-# ISSUE-041: OrderedDict → cachetools.LRUCache (Python 3.14 deprecation)
-# LRU-ordered registry: thread-safe via cachetools, eviction automatic
-from cachetools import LRUCache
+# E5 FIX: OrderedDict → PyCacheDict — replaces cachetools.LRUCache.
+# LRU-ordered registry: thread-safe via PyCacheDict RLock, eviction automatic.
+from hledac.universal.utils.cache import PyCacheDict
 
-_BREAKERS: LRUCache[str, CircuitBreaker] = LRUCache(maxsize=MAX_TRACKED_DOMAINS)
+_BREAKERS: PyCacheDict[str, CircuitBreaker] = PyCacheDict(maxsize=MAX_TRACKED_DOMAINS)
 # ISSUE-010 FIX preserved: atomic get_breaker() still needs lock for compound ops
 _breakers_lock = threading.Lock()
 
@@ -509,14 +521,14 @@ def _get_effective_ttl(domain: str) -> float:
 def get_breaker(domain: str) -> CircuitBreaker:
     """Canonical domain circuit breaker accessor with LRU eviction.
 
-    ISSUE-010 FIX + ISSUE-041: Thread-safe via _breakers_lock.
-    cachetools.LRUCache handles eviction automatically on insert (maxsize cap).
+    ISSUE-010 FIX + E5: Thread-safe via _breakers_lock.
+    PyCacheDict handles eviction automatically on insert (maxsize cap).
     """
     with _breakers_lock:
         if domain in _BREAKERS:
-            # LRUCache: access automatically promotes (no move_to_end call needed)
+            # PyCacheDict: access automatically promotes (no move_to_end call needed)
             return _BREAKERS[domain]
-        # LRUCache auto-evicts oldest on insert when maxsize is reached
+        # PyCacheDict auto-evicts oldest on insert when maxsize is reached
         ttl = _get_effective_ttl(domain)
         _BREAKERS[domain] = CircuitBreaker(domain=domain, recovery_timeout=ttl)
         return _BREAKERS[domain]
@@ -591,6 +603,7 @@ class ModelCircuitBreaker:
     HLEDAC_CB_MODEL_FAILURE_THRESHOLD / HLEDAC_CB_BASE_RECOVERY_TIMEOUT_S env vars
     at instantiation time.
     """
+
     model_id: str
     failure_threshold: int = field(default_factory=lambda: _cb_int("CIRCUIT_FAILURE_THRESHOLD"))
     recovery_timeout_s: float = field(default_factory=lambda: _cb_float("BASE_RECOVERY_TIMEOUT_S"))
@@ -665,7 +678,8 @@ class ModelCircuitBreaker:
                 "failure_count": self._failure_count,
                 "last_failure_kind": self._last_failure_kind,
                 "last_failure_age_s": round(time.monotonic() - self._last_failure_time, 1)
-                if self._last_failure_time > 0 else None,
+                if self._last_failure_time > 0
+                else None,
             }
 
 
@@ -715,6 +729,7 @@ async def get_transport_for_domain(domain: str) -> str:
 def _domain_from_url(url: str) -> str:
     """Extract netloc domain from a URL string."""
     from urllib.parse import urlparse
+
     try:
         parsed = urlparse(url)
         domain = parsed.netloc
@@ -791,9 +806,7 @@ async def checked_httpx_get(
             except Exception:
                 data = resp.text
                 return data, resp.status_code, None
-        get_breaker(domain).record_failure(
-            failure_kind=f"{failure_kind}:{resp.status_code}"
-        )
+        get_breaker(domain).record_failure(failure_kind=f"{failure_kind}:{resp.status_code}")
         return None, resp.status_code, None
     except httpx.TimeoutException:
         get_breaker(domain).record_failure(is_timeout=True, failure_kind=f"{failure_kind}:timeout")
@@ -829,9 +842,7 @@ async def checked_httpx_post(
             except Exception:
                 data = resp.text
                 return data, resp.status_code, None
-        get_breaker(domain).record_failure(
-            failure_kind=f"{failure_kind}:{resp.status_code}"
-        )
+        get_breaker(domain).record_failure(failure_kind=f"{failure_kind}:{resp.status_code}")
         return None, resp.status_code, f"http_error:{resp.status_code}"
     except httpx.TimeoutException:
         get_breaker(domain).record_failure(is_timeout=True, failure_kind=f"{failure_kind}:timeout")

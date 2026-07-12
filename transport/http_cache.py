@@ -132,7 +132,7 @@ async def build_cache_transport(base_transport: Any = None) -> Any:
     except ImportError:
         logger.info(
             "hishel not installed — HTTP cache disabled (install: "
-            "'uv pip install \".[osint-cache]\"'); passing through base transport"
+            "uv pip install hishel aiosqlite"
         )
         return base_transport
 

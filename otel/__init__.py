@@ -6,8 +6,13 @@ BACKWARD COMPATIBILITY FACADE: Re-exports from original otel modules.
 For new code, use: from core.telemetry import init_telemetry, get_tracer, span
 """
 
-
 # Original otel modules (kept for backward compatibility)
+# Issue #23: DuckDB span exporter + analytical query builder
+from hledac.universal.otel._duckdb_exporter import (
+    DuckDBSpanExporter,
+    QueryBuilder,
+    create_otel_spans_table,
+)
 from otel._instrumentation import (
     add_event,
     current_span_id,
@@ -19,19 +24,16 @@ from otel._instrumentation import (
     set_status,
     span,
 )
+from otel._instrumentation_asyncio import (
+    create_task_with_context,
+    current_otel_context,
+)
 from otel._setup import (
     TelemetryConfig,
     get_config,
     init_telemetry,
     is_initialized,
     shutdown_telemetry,
-)
-
-# Issue #23: DuckDB span exporter + analytical query builder
-from hledac.universal.otel._duckdb_exporter import (
-    DuckDBSpanExporter,
-    QueryBuilder,
-    create_otel_spans_table,
 )
 
 __all__ = [
@@ -53,4 +55,7 @@ __all__ = [
     "DuckDBSpanExporter",
     "QueryBuilder",
     "create_otel_spans_table",
+    # E4: async context propagation
+    "current_otel_context",
+    "create_task_with_context",
 ]

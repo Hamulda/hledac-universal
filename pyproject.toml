@@ -37,8 +37,9 @@ dependencies = [
     # uvloop gives ~2× I/O-bound speedup vs native asyncio kqueue on M1.
     "uvloop>=0.22; sys_platform == 'darwin' and platform_machine == 'arm64'",
     # ── HTTP / stealth ────────────────────────────────────────────────────────
-    "httpx>=0.28.0",
-    "curl-cffi>=0.15.0; sys_platform == 'darwin'",
+    # httpx<0.30.0: HTTP/2 stable in 0.28.x; upper bound prevents 1.x breaking changes
+    "httpx>=0.28.0,<0.30.0",
+    "curl-cffi>=0.15.0,<1.0.0; sys_platform == 'darwin'",
     "brotlicffi>=1.2.0.1",
     "cloudscraper>=1.2.71",
     # camoufox REMOVED F330: nodriver (CDP-direct) + playwright 2-tab pool
@@ -47,8 +48,11 @@ dependencies = [
     # If explicitly needed: HLEDAC_ENABLE_CAMOUFOX=1 + install manually.
     # h2 REMOVED F3XX: httpx bundles h2 internally — no need for explicit dep.
     # HTTP/2 is enabled by default in httpx >= 0.28.0.
-    "httpx-socks>=0.10.0",
-    "hishel>=0.0.31",
+    # httpx-socks<0.12.0: API stable in 0.11.x; AsyncProxyTransport used by Tor/I2P
+    "httpx-socks>=0.10.0,<0.12.0",
+    # hishel<2.0.0: API stable in 1.x; upper bound prevents 2.x breaking changes
+    "hishel>=0.0.31,<2.0.0",
+    "aiosqlite>=0.20.0",  # hishel dependency for AsyncSqliteStorage
     # ── Serialization ─────────────────────────────────────────────────────────
     "orjson>=3.10.0",
     # UPGRADE 2026-07-05: msgspec 0.22.x is backward-compatible, adds fixes.
@@ -63,14 +67,13 @@ dependencies = [
     # rust_extensions bundles DuckDB 1.10.5 C++ source; no ABI conflict exists.
     # UPGRADE 2026-07-05: Extended upper bound to <2.0.0 for DuckDB 1.10+ support.
     "duckdb>=1.5.0,<2.0.0",
-    "lancedb>=0.33.0",
+    "lancedb>=0.33.0,<0.35.0",
     # Issue 4.3: sqlite-vec fallback for semantic_store — zero-process ANN on M1 8GB
     "sqlite-vec>=0.1.0",
-    "pyarrow>=24.0.0",
-    "polars>=1.0.0",
+    "pyarrow>=24.0.0,<25.0.0",
+    "polars>=1.0.0,<2.0.0",
     "lmdb>=2.2.0",
     "diskcache>=5.6.0",
-    "redis>=8.0.0",
     # ── MLX / Apple Silicon ───────────────────────────────────────────────────
     # NOTE: mlx + mlx-lm exact pins come from uv.lock; >= here allows range resolution.
     # MLX_ENABLE_MLX=1 gate in runtime.
@@ -180,13 +183,13 @@ dependencies = [
     # Manual spans via otel.span() — M1 8GB safe. httpx auto-instr via
     # HLEDAC_OTEL_PROFILE=1. Default exporter: JSON-Lines to stdout.
     # OTLP/HTTP exporter via [otel-otlp] extra.
-    "opentelemetry-api>=1.27.0",
-    "opentelemetry-sdk>=1.27.0",
+    "opentelemetry-api>=1.27.0,<2.0.0",
+    "opentelemetry-sdk>=1.27.0,<2.0.0",
     # httpx auto-instrumentation via HLEDAC_OTEL_PROFILE=1 (~1MB, M1-safe).
     # aiohttp instrumentation removed — aiohttp is now [aiohttp-fallback] extra only
     "opentelemetry-instrumentation-httpx>=0.47b0",
     # Issue 10.2: structlog (optional — stdlib fallback when unavailable)
-    "structlog>=24.0.0",
+    "structlog>=24.0.0,<25.0.0",
     # Issue 10.2: OTLP HTTP exporter (for otel collector)
     "opentelemetry-exporter-otlp-proto-http>=1.27.0",
     # Issue 10.2: Logfire for local dev observability (M1 8GB safe)
@@ -203,7 +206,7 @@ dependencies = [
 [project.optional-dependencies]
 # Issue 10: observability extras — OTLP + profiling
 observability = [
-    "structlog>=24.0.0",
+    "structlog>=24.0.0,<25.0.0",
     # asyncio instrumentation NOT included — 5-15% event-loop overhead on M1
     # httpx instrumentation ENABLED via HLEDAC_OTEL_PROFILE=1
     # aiohttp removed — aiohttp is now in [aiohttp-fallback] extra only

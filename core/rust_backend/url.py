@@ -72,6 +72,25 @@ class _PythonUrlDomain:
     def extract_host(url: str) -> str:
         return _python_extract_host(url)
 
+    def priority_classify_urls(
+        self,
+        urls: list[tuple[str, float]],
+    ) -> list[tuple[str, float, str]]:
+        # Python fallback: sort by priority desc, then classify each URL in parallel.
+        if not urls:
+            return []
+        sorted_urls = sorted(urls, key=lambda x: x[1], reverse=True)
+        import concurrent.futures
+
+        n_workers = min(2, max(1, len(sorted_urls) // 16))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as ex:
+            results = list(
+                ex.map(
+                    lambda item: (item[0], item[1], _python_classify_url(item[0])[0]),
+                    sorted_urls,
+                )
+            )
+        return results
 
 # ------------------------------------------------------------------
 # Pure-Python URL helpers (moved from top of rust_backend.py)

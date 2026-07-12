@@ -43,6 +43,7 @@ from typing import Any
 _psutil: Any | None = None
 try:
     import psutil
+
     _psutil = psutil
 except ImportError:
     pass  # _psutil stays None, fail-safe
@@ -59,6 +60,7 @@ _CACHE_TTL_S: float = 1.0
 # ----------------------------------------------------------------------------------------------------------------------
 # Readers — MUST run in a thread (blocking syscalls)
 # ----------------------------------------------------------------------------------------------------------------------
+
 
 def _read_virtual_memory_sync() -> Any:
     """Blocking psutil.virtual_memory(). Must run in a thread, not the event loop."""
@@ -77,6 +79,7 @@ def _read_swap_memory_sync() -> Any:
 # ----------------------------------------------------------------------------------------------------------------------
 # Public API — cached reads
 # ----------------------------------------------------------------------------------------------------------------------
+
 
 def get_virtual_memory() -> Any:
     """
@@ -100,10 +103,14 @@ def _get_cached(key: str, reader_fn: Callable[[], Any]) -> Any:
     """
     Thread-safe cached read with 1-second TTL.
 
-    Pattern:
-        1. Fast path: entry exists and is fresh → return cached.
-        2. Slow path: entry stale or missing → acquire lock, re-read, store.
-        3. Purge: remove entry if reader_fn returns None (error).
+    Fast path: TTL cache hit → return cached, no syscall, no thread.
+    Slow path: TTL expired → call reader_fn() directly (caller already
+    runs this via asyncio.to_thread or a dedicated monitor thread).
+    Fail-safe: purge entry on error so next call retries cleanly.
+
+    Invariant: always-on, bounded, fail-safe. No thread spawn overhead
+    on cache miss — the monitor thread or to_thread pool owns the
+    blocking call; this is a cache layer, not an executor.
     """
     now = _time_module.monotonic()
 
@@ -123,29 +130,18 @@ def _get_cached(key: str, reader_fn: Callable[[], Any]) -> Any:
             if (now - timestamp) < _CACHE_TTL_S:
                 return result
 
-        # Read fresh value in a thread to avoid blocking the caller
-        # (psutil.virtual_memory() is a syscall, ~microseconds but still blocking)
-        result_holder: list[Any] = [None]
-        error_holder: list[Exception | None] = [None]
-
-        def _read() -> None:
-            try:
-                result_holder[0] = reader_fn()
-            except Exception as e:  # noqa: BLE001
-                error_holder[0] = e
-
-        t = threading.Thread(target=_read, daemon=True)
-        t.start()
-        t.join(timeout=2.0)  # hard cap — don't hang the cache path
-
-        result = result_holder[0]
-
-        if error_holder[0] is not None or result is None:
-            # Purge stale entry so next call retries
+        # Call reader directly — caller runs this in a thread or monitor loop.
+        # TTL cache amortises the cost: one call per 1-second window regardless
+        # of how many callers hit the same key.
+        try:
+            result = reader_fn()
+        except Exception:
+            # Purge stale entry so next caller retries
             _psutil_cache.pop(key, None)
             return None
 
-        _psutil_cache[key] = (result, now)
+        if result is not None:
+            _psutil_cache[key] = (result, now)
         return result
 
 

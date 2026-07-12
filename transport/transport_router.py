@@ -39,7 +39,6 @@ INVARIANTS:
   [TR-6] CancelledError is NOT handled — caller must re-raise
 """
 
-
 import contextvars
 import re
 import urllib.parse
@@ -83,6 +82,7 @@ class TransportDecision:
       max_bytes          — response size cap (0 = no cap at router level)
       timeout_s          — suggested timeout in seconds (0 = use transport default)
       concurrency_class  — "low" | "medium" | "high" — for concurrency control
+      url_kind          — pre-classified kind: "onion"|"i2p"|"freenet"|"clearnet"|"malformed"|""
     """
 
     lane: Lane
@@ -92,6 +92,8 @@ class TransportDecision:
     max_bytes: int = 0  # 0 = delegate to transport layer
     timeout_s: float = 0.0  # 0.0 = delegate to transport layer
     concurrency_class: str = "medium"
+    # F271: pre-classified URL kind from _classify_url_cached — avoids re-extract
+    url_kind: str = ""
 
     def __post_init__(self) -> None:
         # Resolve selected_transport from lane if not explicitly set
@@ -182,104 +184,50 @@ class TransportRouter:
           6. API-like + HLEDAC_ENABLE_HTTPX_H2=1 + h2 available → httpx_h2
           7. default → aiohttp_default
         """
-        # B1: Use pre-classified result when available — avoids internal FFI.
-        # _extract_host() path is only taken when caller has NOT pre-classified.
-        hostname: str
+        # F271: Use Rust cache when caller has not pre-classified
         if preclassified_kind is not None and preclassified_host is not None:
             hostname = preclassified_host
+            kind = preclassified_kind
         else:
-            hostname = self._extract_host(url)
+            kind, hostname = self._classify_url(url)
 
-        kind = preclassified_kind
+        def _d(lane: Lane, reason: str, concurrency: str, cache: bool = False) -> TransportDecision:
+            return TransportDecision(lane=lane, reason=reason, cache_allowed=cache,
+                max_bytes=suggested_max_bytes or 0, timeout_s=suggested_timeout_s or 0.0,
+                concurrency_class=suggested_concurrency or concurrency, url_kind=kind)
 
         # 1. Darknet: .onion → tor_socks (pre-classified or hostname check)
         if kind == "onion" or hostname.endswith(".onion"):
-            return TransportDecision(
-                lane="tor_socks",
-                reason="darknet_onion",
-                cache_allowed=False,
-                max_bytes=suggested_max_bytes or 0,
-                timeout_s=suggested_timeout_s or 0.0,
-                concurrency_class=suggested_concurrency or "low",
-            )
+            return _d("tor_socks", "darknet_onion", "low")
 
         # 2. Darknet: .i2p/.b32.i2p → i2p_socks (pre-classified or hostname check)
         if kind == "i2p" or hostname.endswith(".i2p") or hostname.endswith(".b32.i2p"):
-            return TransportDecision(
-                lane="i2p_socks",
-                reason="darknet_i2p",
-                cache_allowed=False,
-                max_bytes=suggested_max_bytes or 0,
-                timeout_s=suggested_timeout_s or 0.0,
-                concurrency_class=suggested_concurrency or "low",
-            )
+            return _d("i2p_socks", "darknet_i2p", "low")
 
         # Gopher protocol — before Freenet since gopher:// has no hostname suffix
         if url.startswith("gopher://"):
-            return TransportDecision(
-                lane="gopher",
-                reason="gopher_protocol",
-                cache_allowed=False,
-                max_bytes=suggested_max_bytes or 0,
-                timeout_s=suggested_timeout_s or 0.0,
-                concurrency_class=suggested_concurrency or "low",
-            )
+            return _d("gopher", "gopher_protocol", "low")
 
         # Freenet — not supported, fall through to default (pre-classified or hostname check)
         if kind == "freenet" or hostname.endswith(".freenet"):
-            return TransportDecision(
-                lane="aiohttp_default",
-                reason="freenet_not_supported",
-                cache_allowed=False,
-                max_bytes=suggested_max_bytes or 0,
-                timeout_s=suggested_timeout_s or 0.0,
-                concurrency_class=suggested_concurrency or "medium",
-            )
+            return _d("aiohttp_default", "freenet_not_supported", "medium")
 
         # 3. JS rendering → js_renderer
         if use_js:
-            return TransportDecision(
-                lane="js_renderer",
-                reason="js_required",
-                cache_allowed=False,
-                max_bytes=suggested_max_bytes or 0,
-                timeout_s=suggested_timeout_s or 0.0,
-                concurrency_class=suggested_concurrency or "low",
-            )
+            return _d("js_renderer", "js_required", "low")
 
         # 4. Stealth → curl_cffi_stealth
         if use_stealth:
-            return TransportDecision(
-                lane="curl_cffi_stealth",
-                reason="explicit_stealth",
-                cache_allowed=False,
-                max_bytes=suggested_max_bytes or 0,
-                timeout_s=suggested_timeout_s or 0.0,
-                concurrency_class=suggested_concurrency or "medium",
-            )
+            return _d("curl_cffi_stealth", "explicit_stealth", "medium")
 
         # 5. Retry after 403/429 → curl_cffi_stealth (escalation)
         if retry_after_status in (403, 429):
-            return TransportDecision(
-                lane="curl_cffi_stealth",
-                reason=f"retry_after_http_{retry_after_status}",
-                cache_allowed=False,
-                max_bytes=suggested_max_bytes or 0,
-                timeout_s=suggested_timeout_s or 0.0,
-                concurrency_class=suggested_concurrency or "medium",
-            )
+            return _d("curl_cffi_stealth", f"retry_after_http_{retry_after_status}", "medium")
 
         # 6. HTTPX H2 — env-gated, API-like, h2 available
         # B1: hostname already available from pre-classified or _extract_host above.
         if self._is_httpx_h2_candidate(url, hostname):
-            return TransportDecision(
-                lane="httpx_h2",
-                reason="api_like_httpx_h2",
-                cache_allowed=cache_safe,
-                max_bytes=suggested_max_bytes or 0,
-                timeout_s=suggested_timeout_s or 0.0,
-                concurrency_class=suggested_concurrency or "high",
-            )
+            return _d("httpx_h2", "api_like_httpx_h2", "high", cache=cache_safe)
 
         # 6.5 HTTPX H3 — env-gated, API-like, host already advertised h3 via Alt-Svc.
         # The host must have been observed advertising ``h3`` in a previous
@@ -288,50 +236,47 @@ class TransportRouter:
         # here we merely promote the routing decision so telemetry reflects
         # the intended lane and the call site can pick the right profile.
         if self._is_httpx_h3_candidate(url, hostname):
-            return TransportDecision(
-                lane="httpx_h3",
-                reason="api_like_httpx_h3",
-                cache_allowed=cache_safe,
-                max_bytes=suggested_max_bytes or 0,
-                timeout_s=suggested_timeout_s or 0.0,
-                concurrency_class=suggested_concurrency or "high",
-            )
+            return _d("httpx_h3", "api_like_httpx_h3", "high", cache=cache_safe)
 
         # 7. Default → aiohttp_default
-        return TransportDecision(
-            lane="aiohttp_default",
-            reason="clearnet_default",
-            cache_allowed=False,
-            max_bytes=suggested_max_bytes or 0,
-            timeout_s=suggested_timeout_s or 0.0,
-            concurrency_class=suggested_concurrency or "medium",
-        )
+        return _d("aiohttp_default", "clearnet_default", "medium")
 
     # -------------------------------------------------------------------------
     # Helpers
     # -------------------------------------------------------------------------
 
-    @staticmethod
-    def _extract_host(url: str) -> str:
-        """Extract lowercase hostname from URL. Returns '' on parse failure.
+    def _classify_url(self, url: str) -> tuple[str, str]:
+        """F271: Classify URL via Rust cache — single GIL transition.
 
-        F271: Uses Rust url_ops.extract_host() when available (fast path),
-        falls back to urllib.parse on ImportError.
+        Delegates to public_fetcher._classify_url_cached so the cache is shared
+        across callers (transport_router + public_fetcher). Never raises.
         """
-        try:
-            from hledac.universal.fetching.public_fetcher import url_ops
+        # gopher:// has no hostname
+        if url.startswith("gopher://"):
+            return ("gopher", "")
 
-            return url_ops.extract_host(url)
+        try:
+            # Import lazily — avoid circular import at module level
+            from hledac.universal.fetching.public_fetcher import _classify_url_cached
+
+            return _classify_url_cached(url)
         except Exception:  # noqa: BLE001
             pass
-        # Fallback: urllib.parse
+        # Fallback: pure-Python classify (never raises)
         try:
-            netloc = urllib.parse.urlparse(url).netloc
-            if ":" in netloc:
-                netloc = netloc.split(":")[0]
-            return netloc.lower()
+            parsed = urllib.parse.urlparse(url)
+            host = (parsed.hostname or "").lower()
+            if not host:
+                return ("malformed", "")
+            if host.endswith(".onion"):
+                return ("onion", host)
+            if host.endswith(".i2p") or host.endswith(".b32.i2p"):
+                return ("i2p", host)
+            if host.endswith(".freenet") or "freenet" in host:
+                return ("freenet", host)
+            return ("clearnet", host)
         except Exception:
-            return ""
+            return ("malformed", "")
 
     def _is_httpx_h2_candidate(self, url: str, hostname: str = "") -> bool:
         """
@@ -353,7 +298,7 @@ class TransportRouter:
 
         # B1: use pre-extracted hostname when available
         if not hostname:
-            hostname = self._extract_host(url)
+            hostname = self._classify_url(url)[1]
         if not hostname:
             return False
 
@@ -411,7 +356,7 @@ class TransportRouter:
 
         # B1: use pre-extracted hostname when available
         if not hostname:
-            hostname = self._extract_host(url)
+            hostname = self._classify_url(url)[1]
         if not hostname:
             return False
 

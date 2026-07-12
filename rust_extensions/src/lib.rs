@@ -53,6 +53,7 @@ pub mod simhash_ext;
 pub mod lsh_index; // F320+: LSH index for O(1) near-duplicate detection at scale
 pub mod text_norm;
 pub mod feed_decision;
+pub mod feed_pipeline;
 pub mod xml_sanitize;
 pub mod url_engine;
 pub mod url_ops;
@@ -562,6 +563,6 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // C3: Feed decision classifiers — pure functions for feed signal classification.
     feed_decision::register_functions(m)?;
-
-    Ok(())
+feed_pipeline::register(m)?;
+Ok(())
 }

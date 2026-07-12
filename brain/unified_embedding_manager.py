@@ -12,18 +12,16 @@ Default 512d for backward compatibility with existing 384d code.
 M1 8GB: Single model instance, lazy loading, fail-soft degradation.
 """
 
-
-
 import asyncio
 import hashlib
-import threading
 import logging
+import threading
 from pathlib import Path
 
 import numpy as np
 
-# cachetools LRUCache for embed caching — SHA-256 keyed, 4096 entries
-from cachetools import LRUCache
+# PyCacheDict: bounded LRU cache for embed caching — SHA-256 keyed, 4096 entries, 1h TTL.
+from hledac.universal.utils.cache import PyCacheDict
 
 logger = logging.getLogger(__name__)
 
@@ -64,9 +62,7 @@ class UnifiedEmbeddingManager:
             lazy_load: Defer model loading until first use.
         """
         if dim not in SUPPORTED_DIMS:
-            raise ValueError(
-                f"dim={dim} not supported. Must be one of {SUPPORTED_DIMS}"
-            )
+            raise ValueError(f"dim={dim} not supported. Must be one of {SUPPORTED_DIMS}")
 
         self._dim = dim
         self._model_path = model_path
@@ -77,10 +73,10 @@ class UnifiedEmbeddingManager:
         # FastEmbed-compatible API cache
         self._embedder = None  # Will hold MLX manager for embed() calls
 
-        # Sprint F320: SHA-256 keyed LRU cache for embed results — avoids recomputing
-        # embeddings for duplicate text within the same sprint. 4096 entries ≈ 128MB
-        # for 512d float32 vectors.
-        self._embed_cache: LRUCache[str, list[list[float]]] = LRUCache(maxsize=4096)
+        # E5 FIX: SHA-256 keyed LRU cache — replaces cachetools.LRUCache.
+        # PyCacheDict: __slots__, OrderedDict-based LRU, RLock, TTL-aware.
+        # 4096 entries ≈ 128MB for 512d float32 vectors.
+        self._embed_cache: PyCacheDict[str, list[list[float]]] = PyCacheDict(maxsize=4096, ttl_s=3600.0)
 
         if not lazy_load:
             self._ensure_loaded()
@@ -117,8 +113,7 @@ class UnifiedEmbeddingManager:
                     self._mlx_manager._load_model()
                 self._is_loaded = True
                 logger.info(
-                    f"[UnifiedEmbedder] MLX backend loaded: dim={self._dim}, "
-                    f"model={self._mlx_manager.model_path}"
+                    f"[UnifiedEmbedder] MLX backend loaded: dim={self._dim}, model={self._mlx_manager.model_path}"
                 )
             except Exception as e:
                 logger.warning(f"[UnifiedEmbedder] MLX load failed: {e}")
@@ -174,6 +169,7 @@ class UnifiedEmbeddingManager:
             # MLX encode() releases GIL — parallel batch encode ~3-4× faster than serial.
             # Use concurrent.futures.as_completed() for streaming results (lower latency).
             import concurrent.futures
+
             uncached_texts = [t for _, t in uncached]
             n = len(uncached_texts)
             # Issue #003: chunk into 2 parallel tasks for streaming lower latency.
@@ -284,10 +280,8 @@ class UnifiedEmbeddingManager:
                 # Large batch: split into 4 chunks for ~4× speedup
                 # M1 8GB: 4E+4P cores, 4 workers optimal for CPU-bound ML encode
                 chunk_size = (n + 3) // 4
-                chunks = [texts[i:i + chunk_size] for i in range(0, n, chunk_size)]
-                chunk_results = await asyncio.gather(
-                    *[asyncio.to_thread(encode_chunk, chunk) for chunk in chunks]
-                )
+                chunks = [texts[i : i + chunk_size] for i in range(0, n, chunk_size)]
+                chunk_results = await asyncio.gather(*[asyncio.to_thread(encode_chunk, chunk) for chunk in chunks])
                 # Flatten results preserving order
                 embeddings: list[list[float]] = []
                 for result in chunk_results:
@@ -326,6 +320,7 @@ class UnifiedEmbeddingManager:
 # =============================================================================
 # For code that checks isinstance(x, TextEmbedding) or similar
 
+
 class FastEmbedShim:
     """
     Compatibility shim that makes UnifiedEmbeddingManager look like FastEmbed.
@@ -351,6 +346,7 @@ class FastEmbedShim:
 # =============================================================================
 # Module-level singleton accessor
 # =============================================================================
+
 
 def get_unified_embedder(dim: int = DEFAULT_DIM) -> UnifiedEmbeddingManager:
     """

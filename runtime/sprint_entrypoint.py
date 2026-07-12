@@ -34,9 +34,8 @@ Usage:
     python -m hledac.universal.runtime.sprint_entrypoint --sprint --query "LockBit ransomware" --duration 1800
     python -m hledac.universal.core --ct-pivot example.com
 """
+
 from __future__ import annotations
-
-
 
 import argparse
 import asyncio
@@ -49,7 +48,11 @@ import traceback
 import uuid
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+
+# TYPE_CHECKING imports — available for type checker but NOT loaded at runtime
+# This eliminates the 21.5s pre-loop import bottleneck
+# Sprint F500I: Heavy modules loaded ONLY when --sprint actually runs
+from typing import TYPE_CHECKING, Any
 
 import httpx  # F4XX: replaces aiohttp
 
@@ -60,26 +63,15 @@ import msgspec
 import orjson
 from dotenv import load_dotenv
 
-# TYPE_CHECKING imports — available for type checker but NOT loaded at runtime
-# This eliminates the 21.5s pre-loop import bottleneck
-# Sprint F500I: Heavy modules loaded ONLY when --sprint actually runs
-from typing import TYPE_CHECKING
-
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
-    from hledac.universal.knowledge.duckdb_subprocess_adapter import DuckDBSubprocessAdapter
     from hledac.universal.knowledge.semantic_store import SemanticStore
-    from hledac.universal.runtime.scheduler_config import SprintSchedulerConfig
     from hledac.universal.runtime.scheduler_result import SprintSchedulerResult
     from hledac.universal.runtime.scheduler_v2 import SprintScheduler as SprintScheduler
-    from hledac.universal.export.sprint_exporter import export_sprint
-    from hledac.universal.transport.tor_transport import TorTransport
-    from hledac.universal.rl.sprint_policy_manager import SprintPolicyManager
-    from hledac.universal.intelligence.ct_log_client import CTLogClient
 
 # Runtime imports — lightweight, fast-loading only
+from evidence_log import EvidenceLog
 from hledac.universal.core import memory_cycle as _memory_cycle  # F266-U2/U3
-from hledac.universal.utils.async_helpers import safe_wait_for
 from hledac.universal.core.resource_governor import (
     CLEAN_SWAP_MAX_GIB,
     HARD_BLOCK_SWAP_GIB,
@@ -98,11 +90,7 @@ from hledac.universal.runtime.acquisition_telemetry_reconcile import (
     complete_source_family_outcomes_from_prelude,
 )
 from hledac.universal.runtime.sprint_lifecycle import _PHASE_ORDER, SprintLifecycleManager
-from hledac.universal.runtime.protocols.cleanup_protocol import (
-    AsyncCleanable,
-    manage_cleanup,
-)
-from evidence_log import EvidenceLog
+from hledac.universal.utils.async_helpers import safe_wait_for
 
 logger = logging.getLogger(__name__)
 
@@ -239,8 +227,7 @@ def _is_meaningful_run(
     # authoritative early-returns above (findings > 0, hits >= 15) are exempt.
     if actual_duration_s < 180 and accepted_findings == 0 and total_pattern_hits == 0:
         return False, (
-            f"runtime {actual_duration_s:.0f}s < 180s floor, "
-            f"no findings, no pattern hits — below meaningful threshold"
+            f"runtime {actual_duration_s:.0f}s < 180s floor, no findings, no pattern hits — below meaningful threshold"
         )
 
     # Normal meaningful run
@@ -262,6 +249,7 @@ def _is_meaningful_run(
 #   after initial msgspec.convert. All field access via direct .attribute.
 #   All defensive defaults encoded in AcqReportPayload field defaults.
 # =============================================================================
+
 
 class AcqReportPayload(msgspec.Struct):
     """
@@ -744,9 +732,7 @@ def _build_sfo_list(r: AcqReportPayload) -> list[dict[str, Any]]:
 
     # PUBLIC
     pub_pts = r.public_terminal_stage
-    pub_fetch_attempted = bool(
-        r.public_stage_counters and r.public_stage_counters.get("fetch_attempted", 0) > 0
-    )
+    pub_fetch_attempted = bool(r.public_stage_counters and r.public_stage_counters.get("fetch_attempted", 0) > 0)
     pub_has_outcome = bool(
         r.public_discovered > 0
         or r.public_accepted_findings > 0
@@ -943,9 +929,7 @@ def acq_payload_to_dict(result: Any, scheduler: Any, query: str, duration_s: flo
             "acquisition_profile": getattr(nd_raw, "acquisition_profile", "default"),
             "feed_cap_reason": getattr(nd_raw, "feed_cap_reason", None),
             "nonfeed_priority_enabled": getattr(nd_raw, "nonfeed_priority_enabled", False),
-            "nonfeed_profile_expected_lanes": list(
-                getattr(nd_raw, "nonfeed_profile_expected_lanes", ()) or ()
-            ),
+            "nonfeed_profile_expected_lanes": list(getattr(nd_raw, "nonfeed_profile_expected_lanes", ()) or ()),
         }
 
     # ── 9. Canonical build_acquisition_report — single try/except ──────────────
@@ -962,19 +946,19 @@ def acq_payload_to_dict(result: Any, scheduler: Any, query: str, duration_s: flo
             windup_guard_observation=wg_dict,
             query=query,
             acquisition_profile=(
-                _safe_config_get(nd, "acquisition_profile", "default") if nd
-                else (acq_effective or "default")
+                _safe_config_get(nd, "acquisition_profile", "default") if nd else (acq_effective or "default")
             ),
             feed_cap_reason=(nd.get("feed_cap_reason") if nd else None),
             nonfeed_priority_enabled=(
-                nd.get("nonfeed_priority_enabled", False) if nd
-                else (acq_effective == "nonfeed_diagnostic")
+                nd.get("nonfeed_priority_enabled", False) if nd else (acq_effective == "nonfeed_diagnostic")
             ),
             nonfeed_profile_expected_lanes=(
-                nd.get("nonfeed_profile_expected_lanes", []) if nd
+                nd.get("nonfeed_profile_expected_lanes", [])
+                if nd
                 else (
                     ["CT", "WAYBACK", "PASSIVE_DNS", "PIVOT_EXECUTOR", "DOH"]
-                    if acq_effective in ("nonfeed_diagnostic", "deep_osint_m1") else []
+                    if acq_effective in ("nonfeed_diagnostic", "deep_osint_m1")
+                    else []
                 )
             ),
             # PUBLIC
@@ -1031,8 +1015,11 @@ def acq_payload_to_dict(result: Any, scheduler: Any, query: str, duration_s: flo
             pivot_seed_hashes=tuple(r.pivot_seed_hashes or ()),
             pivot_seed_cves=tuple(r.pivot_seed_cves or ()),
             seed_context_available=bool(
-                r.pivot_seed_domains or r.pivot_seed_ips or r.pivot_seed_urls
-                or r.pivot_seed_hashes or r.pivot_seed_cves
+                r.pivot_seed_domains
+                or r.pivot_seed_ips
+                or r.pivot_seed_urls
+                or r.pivot_seed_hashes
+                or r.pivot_seed_cves
             ),
             seed_context_propagated=bool(r.seed_context_propagated),
             lanes_unlocked_by_seed_context=list(r.lanes_unlocked_by_seed_context or ()),
@@ -1042,9 +1029,7 @@ def acq_payload_to_dict(result: Any, scheduler: Any, query: str, duration_s: flo
             acquisition_plan_build_error=r.acquisition_plan_build_error,
             acquisition_plan_present_for_prelude=r.acquisition_plan_present_for_prelude,
             acquisition_plan_lanes_for_prelude=tuple(r.acquisition_plan_lanes_for_prelude or ()),
-            acquisition_plan_enabled_lanes_for_prelude=tuple(
-                r.acquisition_plan_enabled_lanes_for_prelude or ()
-            ),
+            acquisition_plan_enabled_lanes_for_prelude=tuple(r.acquisition_plan_enabled_lanes_for_prelude or ()),
             acquisition_plan_profile_for_prelude=r.acquisition_plan_profile_for_prelude,
             acquisition_plan_build_error_for_prelude=r.acquisition_plan_build_error_for_prelude,
             # Nonfeed prelude
@@ -1071,8 +1056,11 @@ def acq_payload_to_dict(result: Any, scheduler: Any, query: str, duration_s: flo
         acq_report = complete_source_family_outcomes_from_prelude(acq_report)
         if not acq_report.get("seed_context_available"):
             has_seeds = (
-                r.pivot_seed_domains or r.pivot_seed_ips or r.pivot_seed_urls
-                or r.pivot_seed_hashes or r.pivot_seed_cves
+                r.pivot_seed_domains
+                or r.pivot_seed_ips
+                or r.pivot_seed_urls
+                or r.pivot_seed_hashes
+                or r.pivot_seed_cves
             )
             if has_seeds:
                 acq_report["seed_context_available"] = True
@@ -1085,12 +1073,11 @@ def acq_payload_to_dict(result: Any, scheduler: Any, query: str, duration_s: flo
 
     except Exception as _exc:
         logger.exception(
-            "[Issue9-FALLBACK] build_acquisition_report raised: %s", _exc,
+            "[Issue9-FALLBACK] build_acquisition_report raised: %s",
+            _exc,
         )
         # Single fallback path — same semantics as original triple-nested fallback
-        fallback_profile = (
-            _safe_config_get(nd, "acquisition_profile", "default") if nd else "default"
-        )
+        fallback_profile = _safe_config_get(nd, "acquisition_profile", "default") if nd else "default"
         acq_report = {
             "schema_version": f"{ACQUISITION_REPORT_SCHEMA_VERSION}-fallback",
             "terminality": term_rep,
@@ -1107,27 +1094,27 @@ def acq_payload_to_dict(result: Any, scheduler: Any, query: str, duration_s: flo
             "runtime_attempted_lanes": [
                 o.get("family", "") for o in sfo_list if o.get("attempted") and o.get("family")
             ],
-            "effective_acquisition_plan": list(set(
-                term_rep.get("required_lanes", []) if term_rep else []
-            ) | {
-                o.get("family", "") for o in sfo_list if o.get("attempted") and o.get("family")
-            }),
-            "plan_semantics": (
-                "effective_runtime" if any(o.get("attempted") for o in sfo_list) else "prelude_only"
+            "effective_acquisition_plan": list(
+                set(term_rep.get("required_lanes", []) if term_rep else [])
+                | {o.get("family", "") for o in sfo_list if o.get("attempted") and o.get("family")}
             ),
+            "plan_semantics": ("effective_runtime" if any(o.get("attempted") for o in sfo_list) else "prelude_only"),
             "nonfeed_plan_debug": nd,
             "acquisition_profile": fallback_profile,
             "feed_cap_reason": nd.get("feed_cap_reason") if nd else None,
             "nonfeed_priority_enabled": (
-                nd.get("nonfeed_priority_enabled", False) if nd
+                nd.get("nonfeed_priority_enabled", False)
+                if nd
                 else bool(r.nonfeed_priority_enabled or (acq_effective == "nonfeed_diagnostic"))
             ),
             "nonfeed_profile_expected_lanes": (
-                nd.get("nonfeed_profile_expected_lanes", []) if nd
+                nd.get("nonfeed_profile_expected_lanes", [])
+                if nd
                 else list(r.nonfeed_profile_expected_lanes or ())
                 or (
                     ["CT", "WAYBACK", "PASSIVE_DNS", "PIVOT_EXECUTOR", "DOH"]
-                    if acq_effective == "nonfeed_diagnostic" else []
+                    if acq_effective == "nonfeed_diagnostic"
+                    else []
                 )
             ),
             # PUBLIC
@@ -1194,8 +1181,11 @@ def acq_payload_to_dict(result: Any, scheduler: Any, query: str, duration_s: flo
             "pivot_seed_hashes": list(r.pivot_seed_hashes or ()),
             "pivot_seed_cves": list(r.pivot_seed_cves or ()),
             "seed_context_available": bool(
-                r.pivot_seed_domains or r.pivot_seed_ips or r.pivot_seed_urls
-                or r.pivot_seed_hashes or r.pivot_seed_cves
+                r.pivot_seed_domains
+                or r.pivot_seed_ips
+                or r.pivot_seed_urls
+                or r.pivot_seed_hashes
+                or r.pivot_seed_cves
             ),
             "seed_context_propagated": r.seed_context_propagated,
             "lanes_unlocked_by_seed_context": list(r.lanes_unlocked_by_seed_context or ()),
@@ -1206,9 +1196,7 @@ def acq_payload_to_dict(result: Any, scheduler: Any, query: str, duration_s: flo
             "acquisition_plan_build_error": r.acquisition_plan_build_error,
             "acquisition_plan_present_for_prelude": r.acquisition_plan_present_for_prelude,
             "acquisition_plan_lanes_for_prelude": list(r.acquisition_plan_lanes_for_prelude or ()),
-            "acquisition_plan_enabled_lanes_for_prelude": list(
-                r.acquisition_plan_enabled_lanes_for_prelude or ()
-            ),
+            "acquisition_plan_enabled_lanes_for_prelude": list(r.acquisition_plan_enabled_lanes_for_prelude or ()),
             "acquisition_plan_profile_for_prelude": r.acquisition_plan_profile_for_prelude,
             "acquisition_plan_build_error_for_prelude": r.acquisition_plan_build_error_for_prelude,
             # Nonfeed prelude
@@ -1239,8 +1227,11 @@ def acq_payload_to_dict(result: Any, scheduler: Any, query: str, duration_s: flo
         acq_report = complete_source_family_outcomes_from_prelude(acq_report)
         if not acq_report.get("seed_context_available"):
             has_seeds = (
-                r.pivot_seed_domains or r.pivot_seed_ips or r.pivot_seed_urls
-                or r.pivot_seed_hashes or r.pivot_seed_cves
+                r.pivot_seed_domains
+                or r.pivot_seed_ips
+                or r.pivot_seed_urls
+                or r.pivot_seed_hashes
+                or r.pivot_seed_cves
             )
             if has_seeds:
                 acq_report["seed_context_available"] = True
@@ -1256,9 +1247,7 @@ def acq_payload_to_dict(result: Any, scheduler: Any, query: str, duration_s: flo
         "acquisition_report": acq_report,
         "acquisition_terminality_checked": r.acquisition_terminality_checked,
         "acquisition_terminality_satisfied": r.acquisition_terminality_satisfied,
-        "acquisition_terminality_missing_lanes": list(
-            r.acquisition_terminality_missing_lanes or ()
-        ),
+        "acquisition_terminality_missing_lanes": list(r.acquisition_terminality_missing_lanes or ()),
         "acquisition_terminality_report": term_rep,
         "source_family_outcomes": sfo_list,
         "scheduler_exit": se_dict,
@@ -1267,18 +1256,10 @@ def acq_payload_to_dict(result: Any, scheduler: Any, query: str, duration_s: flo
         "prewindup_barrier": pwb,
         "acquisition_prelude_checked": r.acquisition_prelude_checked,
         "acquisition_prelude_ran": r.acquisition_prelude_ran,
-        "acquisition_prelude_required_lanes": list(
-            r.acquisition_prelude_required_lanes or ()
-        ),
-        "acquisition_prelude_terminal_lanes": list(
-            r.acquisition_prelude_terminal_lanes or ()
-        ),
-        "acquisition_prelude_missing_lanes": list(
-            r.acquisition_prelude_missing_lanes or ()
-        ),
-        "acquisition_prelude_skipped_lanes": dict(
-            r.acquisition_prelude_skipped_lanes or {}
-        ),
+        "acquisition_prelude_required_lanes": list(r.acquisition_prelude_required_lanes or ()),
+        "acquisition_prelude_terminal_lanes": list(r.acquisition_prelude_terminal_lanes or ()),
+        "acquisition_prelude_missing_lanes": list(r.acquisition_prelude_missing_lanes or ()),
+        "acquisition_prelude_skipped_lanes": dict(r.acquisition_prelude_skipped_lanes or {}),
         "acquisition_prelude_errors": dict(r.acquisition_prelude_errors or {}),
         "acquisition_prelude_duration_s": r.acquisition_prelude_duration_s,
         "acquisition_prelude_reason": r.acquisition_prelude_reason,
@@ -1297,6 +1278,7 @@ def acq_payload_to_dict(result: Any, scheduler: Any, query: str, duration_s: flo
 # to the schema-driven implementation. The old function body is preserved below
 # for reference until Issue #9 is fully validated.
 # =============================================================================
+
 
 def _scheduler_result_acquisition_payload(
     result: Any,
@@ -1416,10 +1398,6 @@ def _acq_payload_without_sfo(
     }
 
 
-
-
-
-
 def _runtime_truth(
     actual_duration_s: float,
     query: str,
@@ -1442,8 +1420,11 @@ def _runtime_truth(
 ) -> dict:
     """Build canonical runtime-truth record from scheduler result data."""
     is_meaningful, evidence_note = _is_meaningful_run(
-        actual_duration_s, cycles_completed, cycles_started,
-        accepted_findings, total_pattern_hits,
+        actual_duration_s,
+        cycles_completed,
+        cycles_started,
+        accepted_findings,
+        total_pattern_hits,
         swap_detected=swap_detected,
         uma_state=uma_state,
     )
@@ -1467,7 +1448,9 @@ def _runtime_truth(
         # F214-ACQ: When feed dominates (>95%) and non-feed is minimal, label as feed
         # not mixed — the signal is overwhelmingly from the feed lane.
         total_nonfeed = public_accepted_findings + ct_findings
-        feed_dominance_ratio = feed_findings / (feed_findings + total_nonfeed) if (feed_findings + total_nonfeed) > 0 else 1.0  # noqa: E501
+        feed_dominance_ratio = (
+            feed_findings / (feed_findings + total_nonfeed) if (feed_findings + total_nonfeed) > 0 else 1.0
+        )  # noqa: E501
         if feed_dominance_ratio > 0.95:
             primary = "feed"
         else:
@@ -1500,6 +1483,7 @@ def _runtime_truth(
         "ct_branch_timed_out": ct_branch_timed_out,
     }
 
+
 def _get_live_feed_urls() -> list[str]:
     """
     Return canonical runtime feed URLs for live sprint path.
@@ -1510,6 +1494,7 @@ def _get_live_feed_urls() -> list[str]:
     sprint owner path should use; topology_candidates are excluded by design.
     """
     from hledac.universal.discovery.rss_atom_adapter import get_runtime_feed_seeds
+
     return [seed.feed_url for seed in get_runtime_feed_seeds()]
 
 
@@ -1587,6 +1572,7 @@ def run_pre_sprint_checks() -> bool:
     # Must run FIRST, before MLX buffers or any memory-heavy init.
     try:
         from hledac.universal.core.memory_cycle import malloc_zone_pressure_relief
+
         released = malloc_zone_pressure_relief()
         if released > 0:
             logger.debug("[BOOT] malloc_zone_pressure_relief released %d bytes", released)
@@ -1597,14 +1583,17 @@ def run_pre_sprint_checks() -> bool:
     # MLX is optional. Skip Metal limit config when unavailable.
     # Sprint F500I: Lazy import — mlx_cache triggers 23s import of mlx_embeddings
     from hledac.universal.utils import mlx_cache
+
     if not mlx_cache.MLX_AVAILABLE:
         logger.info("[BOOT] MLX unavailable — skipping Metal wired limit")
     else:
         try:
             mlx_cache.init_mlx_buffers()
             status = mlx_cache.get_metal_limits_status()
+
             def _fmt(v):
                 return f"{v // (1024 * 1024):.0f}MiB" if v else "N/A"
+
             logger.info(
                 f"[BOOT] MLX buffers: cache={_fmt(status['cache_limit_bytes'])} wired={_fmt(status['wired_limit_bytes'])} configured={status['configured']}"  # noqa: E501
             )
@@ -1627,10 +1616,7 @@ def run_pre_sprint_checks() -> bool:
             f"doporučuji restart před long run"
         )
 
-    logger.info(
-        f"[BOOT] Pre-sprint checks OK | "
-        f"UMA: {s.system_used_gib:.2f}GiB used | swap: {s.swap_used_gib:.2f}GiB"
-    )
+    logger.info(f"[BOOT] Pre-sprint checks OK | UMA: {s.system_used_gib:.2f}GiB used | swap: {s.swap_used_gib:.2f}GiB")
     return checks_passed
 
 
@@ -1747,7 +1733,7 @@ async def dry_run_sprint(query: str, duration_s: float = 300.0) -> None:
     try:
         _ = float(duration_s)
         assert duration_s > 0
-    except (TypeError, ValueError, AssertionError):
+    except TypeError, ValueError, AssertionError:
         issues.append(f"duration ({duration_s}) is not a valid positive float")
         verdict = "ABORT_RECOMMENDED"
 
@@ -1755,6 +1741,7 @@ async def dry_run_sprint(query: str, duration_s: float = 300.0) -> None:
     hermes_ok = False
     try:
         from hledac.universal.brain.model_lifecycle import get_model_lifecycle_status
+
         status_dict = get_model_lifecycle_status()
         hermes_ok = status_dict.get("loaded", False)  # "loaded" key from get_model_lifecycle_status()
     except Exception as e:
@@ -1791,7 +1778,8 @@ async def dry_run_sprint(query: str, duration_s: float = 300.0) -> None:
         target_host = query.replace("https://", "").replace("http://", "").split("/")[0].split()[0]
         await safe_wait_for(
             asyncio.to_thread(socket.gethostbyname, target_host),
-            timeout=5.0, label="dns_resolve",
+            timeout=5.0,
+            label="dns_resolve",
         )
         report["dns_resolve"] = {"target": target_host, "status": "ok"}
     except (TimeoutError, socket.gaierror) as e:
@@ -1914,12 +1902,14 @@ def _print_dry_run_summary(report: dict) -> None:
             t1 = p["t_end"]
             print(f"  [T={t0:5.0f}s–{t1:5.0f}s]  {p['phase']:<10}  {p['description']}")
         print()
-        print(f"  Active budget: {plan.get('active_budget', 0):.0f}s  │  UMA available: {report.get('uma_available_gib', 0):.1f} GiB")  # noqa: E501
+        print(
+            f"  Active budget: {plan.get('active_budget', 0):.0f}s  │  UMA available: {report.get('uma_available_gib', 0):.1f} GiB"
+        )  # noqa: E501
     print()
     print(f"  Hermes3:      {'✓ available' if report.get('hermes_available') else '✗ not loaded'}")
     sources = report.get("sources_online", {})
     dns = report.get("dns_resolve", {})
-    print(f"  DNS probe:     {'✓ ' + dns.get('target','') if dns.get('status') == 'ok' else '✗ failed'}")
+    print(f"  DNS probe:     {'✓ ' + dns.get('target', '') if dns.get('status') == 'ok' else '✗ failed'}")
     print(f"  crt.sh:       {'✓' if sources.get('crt.sh') else '✗ unreachable'}")
     print(f"  CIRCL PDNS:   {'✓' if sources.get('circl_pdns') else '✗ unreachable'}")
     print()
@@ -2004,9 +1994,7 @@ async def run_sprint(
     else:
         _F272A_WINDUP_LEAD_FRAC: float = 0.30  # noqa: N806
     _raw_windup = float(duration_s) * _F272A_WINDUP_LEAD_FRAC
-    _effective_windup_s = float(
-        max(_F272A_WINDUP_CLAMP_MIN_S, min(_F272A_WINDUP_CLAMP_MAX_S, _raw_windup))
-    )
+    _effective_windup_s = float(max(_F272A_WINDUP_CLAMP_MIN_S, min(_F272A_WINDUP_CLAMP_MAX_S, _raw_windup)))
     _active_window_s = float(duration_s) - _effective_windup_s
     # Sprint F271C: fail-loud invariant — if we somehow compute a negative
     # active window, the guard is broken; surface it as a config error
@@ -2028,8 +2016,7 @@ async def run_sprint(
         _pct = (_effective_windup_s / _active_window_s * 100) if _active_window_s > 0 else 100.0
         if _force_override:
             logger.warning(
-                "[F289-FORCED] Windup %.0fs would consume %.0f%% of active window %.0fs. "
-                "Proceeding due to --force.",
+                "[F289-FORCED] Windup %.0fs would consume %.0f%% of active window %.0fs. Proceeding due to --force.",
                 _effective_windup_s,
                 _pct,
                 _active_window_s,
@@ -2118,8 +2105,9 @@ async def run_sprint(
         # Remove any lock whose owning PID is dead (crash, SIGKILL, orphaned).
         # Uses psutil.pid_exists() for cross-platform liveness check.
         try:
+
             import psutil
-            import os as _os
+
             lock_dir = _sprint_lock_path.parent
             if lock_dir.exists():
                 for lock_file in lock_dir.iterdir():
@@ -2132,7 +2120,9 @@ async def run_sprint(
                             lock_pid = int.from_bytes(pid_bytes[:4], byteorder="little")
                             if not psutil.pid_exists(lock_pid):
                                 lock_file.unlink()
-                                logger.info(f"[F320-JANITOR] Removed stale lock: {lock_file.name} (PID={lock_pid} dead)")
+                                logger.info(
+                                    f"[F320-JANITOR] Removed stale lock: {lock_file.name} (PID={lock_pid} dead)"
+                                )
                     except Exception:  # noqa: BLE001
                         pass  # best-effort
         except Exception:  # noqa: BLE001
@@ -2158,6 +2148,7 @@ async def run_sprint(
     # DuckDB runs in-process via DuckDBShadowStore (M1 8GB UMA safe).
     # HLEDAC_DUCKDB_SUBPROCESS is now a no-op (subprocess path deleted).
     from hledac.universal.knowledge.duckdb_subprocess_adapter import DuckDBSubprocessAdapter
+
     store = DuckDBSubprocessAdapter()
 
     # P0-3: Pre-initialize DuckDB before sprint starts.
@@ -2173,6 +2164,7 @@ async def run_sprint(
     # ONCE at application startup. Subsequent sprints skip re-loading via
     # is_prewarm_done() check in SprintScheduler._prewarm_mlx_sync().
     from hledac.universal.runtime.prewarm_daemon import start_prewarm_if_needed
+
     start_prewarm_if_needed()
 
     _cb_reset_done = False
@@ -2182,6 +2174,7 @@ async def run_sprint(
         nonlocal _cb_reset_done
         try:
             from transport.circuit_breaker import _BREAKERS
+
             for breaker in _BREAKERS.values():
                 breaker.mark_warmup_done()
             _cb_reset_done = True
@@ -2258,8 +2251,8 @@ async def run_sprint(
     # so _prewarm_hermes_for_sprint can override HLEDAC_ENABLE_HERMES_SYNTHESIS.
     # Sprint F500I: Lazy import — SprintSchedulerConfig heavy, only needed when --sprint runs
     # STEP 4 F350M-R: Using SprintSchedulerV2 (greenfield rewrite)
-    from hledac.universal.runtime.scheduler_v2 import SprintSchedulerV2
     from hledac.universal.runtime.scheduler_config import SprintSchedulerConfig
+    from hledac.universal.runtime.scheduler_v2 import SprintSchedulerV2
 
     config = SprintSchedulerConfig(
         sprint_duration_s=float(duration_s),
@@ -2327,6 +2320,7 @@ async def run_sprint(
     if not (flags.no_communication if flags else False):
         try:
             from hledac.universal.layers import get_communication_layer
+
             _comm_layer = get_communication_layer()
             if _comm_layer is not None:
                 scheduler.inject_communication_layer(_comm_layer)
@@ -2339,6 +2333,7 @@ async def run_sprint(
     if not (flags.no_stealth if flags else False):
         try:
             from hledac.universal.layers import get_stealth_layer
+
             _stealth_layer = get_stealth_layer()
             if _stealth_layer is not None:
                 scheduler.inject_stealth_layer(_stealth_layer)
@@ -2352,12 +2347,12 @@ async def run_sprint(
     if not (flags.no_ghost if flags else False):
         try:
             from hledac.universal.layers import get_ghost_layer
+
             _ghost_layer = get_ghost_layer()
             if _ghost_layer is not None:
                 scheduler.inject_ghost_layer(_ghost_layer)
         except Exception as _e:
             logger.debug("F260: GhostLayer injection failed (fail-soft): %s", _e)
-
 
     # F26X+: SecurityCoordinator injection (advisory, research/aggressive modes)
     # Coordinates: StealthEngine, ThreatIntelligence, QuantumCrypto, ZKP.
@@ -2365,6 +2360,7 @@ async def run_sprint(
     if not (flags.no_stealth if flags else False):
         try:
             from hledac.universal.coordinators.security_coordinator import UniversalSecurityCoordinator
+
             _sec_coordinator = UniversalSecurityCoordinator(max_concurrent=3)
             if _sec_coordinator is not None:
                 scheduler.inject_security_coordinator(_sec_coordinator)
@@ -2376,6 +2372,7 @@ async def run_sprint(
     # All oracle calls are fail-soft -- exception or None oracle -> no-op.
     try:
         from hledac.universal.prefetch.prefetch_oracle_integration import PrefetchOracleIntegration
+
         _prefetch_oracle = PrefetchOracleIntegration()
         scheduler.inject_prefetch_oracle(_prefetch_oracle)
     except Exception as _e:
@@ -2395,6 +2392,7 @@ async def run_sprint(
             # IOC graph: get from the graph_service singleton (same pattern as OODA wiring)
             try:
                 from hledac.universal.knowledge.graph_service import _get_graph
+
                 _ioc_graph = _get_graph()
                 _oracle.inject_ioc_graph(_ioc_graph)
             except Exception as _e:
@@ -2410,6 +2408,7 @@ async def run_sprint(
         from hledac.universal.layers import get_temporal_signal_layer
         from hledac.universal.prefetch.prefetch_pipeline import ContinuousPrefetchPipeline
         from hledac.universal.prefetch.temporal_predictor import TemporalIOCPredictor
+
         _temporal_predictor = TemporalIOCPredictor(
             temporal_layer=get_temporal_signal_layer(),
             duckdb_store=getattr(scheduler, "_duckdb_store", None),
@@ -2463,6 +2462,7 @@ async def run_sprint(
     _ct_log_client = None
     try:
         from pathlib import Path
+
         from hledac.universal.intelligence.ct_log_client import CTLogClient
 
         _ct_cache = Path.home() / ".hledac" / "ct_cache"
@@ -2477,6 +2477,7 @@ async def run_sprint(
         if ui_mode:
             try:
                 from hledac.universal.monitoring.sprint_dashboard import SprintDashboard
+
                 _dashboard = SprintDashboard(sprint_id, query, duration_s)
                 _dashboard.start()
             except Exception as e:
@@ -2508,11 +2509,10 @@ async def run_sprint(
                 from hledac.universal.runtime.scheduler_result import (
                     SprintSchedulerResult,
                 )
+
                 _sf = SprintSchedulerResult()
                 _sf.scheduler_exit_path = "soft_fail"
-                _sf.scheduler_exit_reason = (
-                    f"{type(_fatal_exc).__name__}: {_fatal_exc}"
-                )
+                _sf.scheduler_exit_reason = f"{type(_fatal_exc).__name__}: {_fatal_exc}"
                 result = _sf
             except Exception:
                 # Last-ditch fallback: raise the original exception.
@@ -2686,6 +2686,30 @@ async def run_sprint(
                     if ph_name in _phase_times and _teardown_ts is not None:
                         _phase_durations[ph_name] = round(_teardown_ts - _phase_times[ph_name], 2)
 
+        # Sprint F360: Wire record_sprint_budget to MetricsRegistry — phase durations
+        if _phase_durations:
+            import statistics
+
+            values = list(_phase_durations.values())
+            phase_avg_ms = (sum(values) / len(values)) * 1000
+            phase_p50_ms = statistics.median(values) * 1000
+            values_sorted = sorted(values)
+            p95_idx = max(0, int(len(values_sorted) * 0.95) - 1)
+            phase_p95_ms = values_sorted[p95_idx] * 1000
+            try:
+                from hledac.universal.metrics_registry import get_metrics_registry
+
+                get_metrics_registry().record_sprint_budget(
+                    elapsed_ms=actual_duration * 1000,
+                    remaining_ms=max(0.0, (duration_s - actual_duration) * 1000),
+                    phase="TEARDOWN",
+                    phase_avg_ms=phase_avg_ms,
+                    phase_p50_ms=phase_p50_ms,
+                    phase_p95_ms=phase_p95_ms,
+                )
+            except Exception:
+                pass  # fail-safe: metrics never block sprint
+
         # --- Timing truth (Sprint F160E) -------------------------------------------
         # Canonical surfaces that distinguish:
         #   requested_duration  — what operator asked for
@@ -2710,11 +2734,7 @@ async def run_sprint(
             # F169F: scheduler_returned_phase — derive from result state, not dict inspection
             # F167B fix: use result.entered_active_at_monotonic, NOT _phase_times["ACTIVE"]
             # (which is never set — only BOOT/WARMUP/WINDUP/TEARDOWN are written)
-            "scheduler_returned_phase": (
-                "ACTIVE"
-                if result.entered_active_at_monotonic is not None
-                else "entry_only"
-            ),
+            "scheduler_returned_phase": ("ACTIVE" if result.entered_active_at_monotonic is not None else "entry_only"),
             # F167B fix: use result fields (first cycle STARTED not cycles_completed)
             "entered_active_truth": result.entered_active_at_monotonic is not None,
             "first_cycle_truth": result.first_cycle_started_at_monotonic is not None,
@@ -2736,7 +2756,9 @@ async def run_sprint(
         total_seen = result.unique_entry_hashes_seen + result.duplicate_entry_hashes_skipped
         dup_rate = (result.duplicate_entry_hashes_skipped / total_seen * 100) if total_seen > 0 else 0.0
         feed_fnd = result.accepted_findings - result.public_accepted_findings
-        public_pct = (result.public_accepted_findings / result.accepted_findings * 100) if result.accepted_findings > 0 else 0.0  # noqa: E501
+        public_pct = (
+            (result.public_accepted_findings / result.accepted_findings * 100) if result.accepted_findings > 0 else 0.0
+        )  # noqa: E501
 
         # F169F: Use scheduler result fields directly — no local duplication.
         # Scheduler SprintSchedulerResult.public_backend_degraded is pre-computed.
@@ -2897,13 +2919,13 @@ async def run_sprint(
         hyp = intel.get("hypothesis_pack") or {}
         if sv:
             logger.info(
-                f"[INTEL] posture={sv.get('posture','?')} | "
-                f"dominant={sv.get('dominant_signal','?')} | "
-                f"corroborated={sp.get('is_corroborated',False)} | "
-                f"noisy={sp.get('is_noisy',False)} | "
-                f"risk={corr.get('risk_score',0):.3f} | "
-                f"hypotheses={hyp.get('hypothesis_count',0)} | "
-                f"next={sv.get('first_action','?')[:60]}"
+                f"[INTEL] posture={sv.get('posture', '?')} | "
+                f"dominant={sv.get('dominant_signal', '?')} | "
+                f"corroborated={sp.get('is_corroborated', False)} | "
+                f"noisy={sp.get('is_noisy', False)} | "
+                f"risk={corr.get('risk_score', 0):.3f} | "
+                f"hypotheses={hyp.get('hypothesis_count', 0)} | "
+                f"next={sv.get('first_action', '?')[:60]}"
             )
 
         # Sprint F500I: Use canonical path helper (no more ad-hoc /tmp)
@@ -3081,8 +3103,10 @@ async def run_sprint(
         _export_finish_status = (
             "finished"
             if result.final_phase in ("EXPORT", "TEARDOWN") and result.accepted_findings > 0 and not result.aborted
-            else "aborted" if result.aborted
-            else "empty_run" if result.accepted_findings == 0
+            else "aborted"
+            if result.aborted
+            else "empty_run"
+            if result.accepted_findings == 0
             else "unknown"
         )
 
@@ -3152,7 +3176,6 @@ async def run_sprint(
             # any canonical_run_summary fields also in _acq_payload are overwritten
             # with acquisition truth (correct: acquisition fields should take precedence).
             "canonical_run_summary": {
-
                 "meaningful": runtime_truth["is_meaningful"],
                 "primary_signal": runtime_truth["primary_signal_source"],
                 "posture": (intel.get("sprint_verdict") or {}).get("posture", "unknown"),
@@ -3274,13 +3297,18 @@ async def run_sprint(
                     # [F223D] runtime_accepted_findings — full truth from all lanes at windup time.
                     # F265B fix: use result.accepted_findings + result.public_accepted_findings
                     # since PUBLIC findings are tracked separately from FEED findings.
-                    "runtime_accepted_findings": (result.accepted_findings or 0) + (result.public_accepted_findings or 0),
+                    "runtime_accepted_findings": (result.accepted_findings or 0)
+                    + (result.public_accepted_findings or 0),
                     # F220F: findings_per_minute — computed from all-lanes total / active window.
                     # PVS uses scorecard.findings_per_minute directly; adding here ensures PVS
                     # never shows 0.0 for a productive sprint where phase_timings.WINDUP is 0.0.
                     "findings_per_minute": round(
-                        ((result.accepted_findings or 0) + (result.public_accepted_findings or 0)) / (actual_duration / 60.0), 2
-                    ) if actual_duration > 0 else 0.0,
+                        ((result.accepted_findings or 0) + (result.public_accepted_findings or 0))
+                        / (actual_duration / 60.0),
+                        2,
+                    )
+                    if actual_duration > 0
+                    else 0.0,
                     # Sprint F202B: Identity stitching sidecar counters
                     "identity_candidates_found": result.identity_candidates_found,
                     "identity_findings_produced": result.identity_findings_produced,
@@ -3357,19 +3385,19 @@ async def run_sprint(
             )
 
             # Sprint F155: Log enrichment level
-            logger.info(
-                f"[EXPORT] {'fully_enriched' if _handoff_enriched else 'degraded'} → sprint_id={sprint_id}"
-            )
+            logger.info(f"[EXPORT] {'fully_enriched' if _handoff_enriched else 'degraded'} → sprint_id={sprint_id}")
 
             # Sprint F500I: Lazy import — export_sprint heavy, only needed at end of sprint
             from hledac.universal.export.sprint_exporter import export_sprint
+
             export_result = await export_sprint(store=store, handoff=handoff, sprint_id=sprint_id)
-            logger.info(f"[EXPORT] finish layer → seeds={export_result.get('seeds_json','')}")
+            logger.info(f"[EXPORT] finish layer → seeds={export_result.get('seeds_json', '')}")
 
             # Deep probe runs AFTER export completes — post-sprint, non-blocking
             if deep_probe_enabled:
                 try:
                     from hledac.universal.deep_research.probe_runner import run_deep_probe_if_enabled
+
                     probe_result = await run_deep_probe_if_enabled(
                         query=query,
                         store=store,
@@ -3427,6 +3455,7 @@ async def run_sprint(
         # Sprint F206K: Close HTTPX client if it was lazily instantiated
         try:
             from hledac.universal.transport.httpx_client import close_httpx_client_async
+
             await close_httpx_client_async()
         except asyncio.CancelledError:
             raise
@@ -3435,6 +3464,7 @@ async def run_sprint(
         # Sprint F206L: Close curl_cffi sessions if they were lazily instantiated
         try:
             from hledac.universal.transport.curl_cffi_runtime import close_curl_cffi_sessions_async
+
             await close_curl_cffi_sessions_async()
         except asyncio.CancelledError:
             raise
@@ -3443,6 +3473,7 @@ async def run_sprint(
         # Sprint F219K: Close public_fetcher local Tor/I2P sessions
         try:
             from hledac.universal.fetching.public_fetcher import close_public_fetcher_sessions_async
+
             await close_public_fetcher_sessions_async()
         except asyncio.CancelledError:
             raise
@@ -3451,6 +3482,7 @@ async def run_sprint(
         # Sprint F216A: Close aiohttp session used by public_fetcher
         try:
             from hledac.universal.network.session_runtime import close_aiohttp_session_async
+
             await close_aiohttp_session_async()
         except asyncio.CancelledError:
             raise
@@ -3546,6 +3578,7 @@ async def run_semantic_pivot(query: str, top_k: int = 10) -> None:
             print(f"  [{score:.3f}] {src:15} | {text}")
             if ts:
                 import datetime
+
                 print(f"               ts: {datetime.datetime.fromtimestamp(ts):.0f}")  # noqa: DTZ006
         print(f"\nTotal results: {len(results)}")
     finally:
@@ -3566,7 +3599,11 @@ def _install_signal_handler_for_loop(
     _prev_term: Callable[[int, Any], Any] | None = None
 
     def _handler(signum: int, frame: Any) -> None:
-        sig_name = getattr(signal.Signals, 'SIGINT', None) and signal.Signals(signum).name if hasattr(signal, 'Signals') else str(signum)  # noqa: E501
+        sig_name = (
+            getattr(signal.Signals, "SIGINT", None) and signal.Signals(signum).name
+            if hasattr(signal, "Signals")
+            else str(signum)
+        )  # noqa: E501
         logging.info(f"[SIGNAL] Received {sig_name} — cooperative shutdown")
         try:
             if loop.is_running() and not loop.is_closed():
@@ -3608,10 +3645,7 @@ def _fatal(exc: BaseException, code: int = 1) -> None:
         3   = programmer error / regression (NameError, ImportError, AttributeError)
         130 = SIGINT (KeyboardInterrupt)
     """
-    logger.critical(
-        "_MAIN_FATAL [exit=%d]: %s\n%s",
-        code, exc, traceback.format_exc()
-    )
+    logger.critical("_MAIN_FATAL [exit=%d]: %s\n%s", code, exc, traceback.format_exc())
     sys.exit(code)
 
 
@@ -3641,8 +3675,12 @@ def _run_sprint_loop(args: argparse.Namespace) -> None:
     try:
         sprint_task = loop.create_task(
             run_sprint(
-                args.query, float(args.duration), args.export_dir, args.aggressive,
-                args.deep_probe, deep_research=args.deep_research,
+                args.query,
+                float(args.duration),
+                args.export_dir,
+                args.aggressive,
+                args.deep_probe,
+                deep_research=args.deep_research,
                 extreme_mode=args.extreme,
                 acquisition_profile=args.acquisition_profile,
                 rl_train_mode=args.rl_train,
@@ -3685,14 +3723,14 @@ def main() -> None:
     try:
         _main_dispatch()
     except (NameError, AttributeError, ImportError) as e:
-        _fatal(e, code=3)   # programmer error / regression
+        _fatal(e, code=3)  # programmer error / regression
     except KeyboardInterrupt:
         logger.info("[MAIN] Interrupted by user")
-        sys.exit(130)       # standard SIGINT convention
+        sys.exit(130)  # standard SIGINT convention
     except SystemExit:
-        raise               # never swallow sys.exit() calls
+        raise  # never swallow sys.exit() calls
     except Exception as e:
-        _fatal(e, code=1)   # runtime error
+        _fatal(e, code=1)  # runtime error
 
 
 def _main_dispatch() -> None:
@@ -3754,9 +3792,9 @@ def _main_dispatch() -> None:
         "--force",
         action="store_true",
         help="F221-ABORT: Override the pre-flight guard that aborts sprints whose "
-             "active-window budget would be below MIN_ACTIVE_WINDOW_S=30s. "
-             "Emits a [F221-FORCED] warning instead of exiting with code 2. "
-             "Use only for explicit dry-runs / smoke tests where zero evidence is acceptable.",
+        "active-window budget would be below MIN_ACTIVE_WINDOW_S=30s. "
+        "Emits a [F221-FORCED] warning instead of exiting with code 2. "
+        "Use only for explicit dry-runs / smoke tests where zero evidence is acceptable.",
     )
     parser.add_argument(
         "--acquisition-profile",
@@ -3837,6 +3875,7 @@ def _main_dispatch() -> None:
     # F261QMIX: env-var override for train interval
     if args.rl_train_interval is not None:
         import os as _os
+
         _os.environ["HLEDAC_RL_TRAIN_INTERVAL"] = str(args.rl_train_interval)
     args = args_with_rl_resolution
 
@@ -3854,11 +3893,7 @@ def _main_dispatch() -> None:
         def filter(self, record: logging.LogRecord) -> bool:
             if record.name == "coremltools" and record.levelno == logging.WARNING:
                 msg = record.getMessage()
-                if (
-                    "Failed to load _ML" in msg
-                    or "Failed to load '" in msg
-                    or "Fail to import Blob" in msg
-                ):
+                if "Failed to load _ML" in msg or "Failed to load '" in msg or "Fail to import Blob" in msg:
                     return False
             return True
 
@@ -3876,6 +3911,7 @@ def _main_dispatch() -> None:
         from hledac.universal.discovery.deep_source_registry import (
             DeepSourceRegistry,
         )
+
         registry = DeepSourceRegistry()
         sources = registry.get_sources(tier=args.tier)
         print(f"DeepSourceRegistry (F270): {len(sources)} curated sources")

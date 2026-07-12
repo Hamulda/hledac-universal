@@ -15,7 +15,7 @@ Key Features:
     - M1 8GB RAM optimized (no heavy ML models)
 
 Dependencies:
-    - aiohttp (async HTTP requests)
+    - httpx (async HTTP requests)  # F4XX: replaced aiohttp
     - rapidfuzz (fuzzy string matching)
     - Optional: SPARQLWrapper
 
@@ -50,14 +50,8 @@ def _ensure_utc_aware(value: datetime) -> datetime:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
 
-# Optional imports with fallback
-aiohttp = None
-try:
-    import aiohttp
-    AIOHTTP_AVAILABLE = True
-except ImportError:
-    AIOHTTP_AVAILABLE = False
-    logger.warning("aiohttp not available. Install with: pip install aiohttp")
+# F4XX: httpx replaces aiohttp
+from hledac.universal.network.session_runtime import async_get_httpx_session
 
 rapidfuzz = None
 try:
@@ -374,16 +368,9 @@ class EntityLinker:
         }
 
     async def _get_session(self) -> Any | None:
-        """Get or create aiohttp session."""
-        if not AIOHTTP_AVAILABLE:
-            return None
-
-        if self._session is None or self._session.closed:
-            timeout = aiohttp.ClientTimeout(total=self.request_timeout)
-            self._session = aiohttp.ClientSession(
-                timeout=timeout,
-                headers={'User-Agent': self.DEFAULT_USER_AGENT}
-            )
+        """Get or create httpx.AsyncClient session (F4XX)."""
+        if self._session is None or self._session.is_closed:
+            self._session = await async_get_httpx_session()
         return self._session
 
     def _load_gliner(self):
@@ -498,10 +485,6 @@ class EntityLinker:
             logger.debug(f"Cache hit for: {entity_text}")
             return [EntityCandidate.from_dict(c) for c in cached]
 
-        if not AIOHTTP_AVAILABLE:
-            logger.warning("aiohttp not available, cannot query Wikidata")
-            return []
-
         session = await self._get_session()
         if session is None:
             return []
@@ -509,14 +492,13 @@ class EntityLinker:
         query = self._build_sparql_query(entity_text, self.max_candidates)
 
         try:
-            params = {'query': query, 'format': 'json'}
-
-            async with session.get(self.wikidata_endpoint, params=params) as response:
-                if response.status != 200:
-                    logger.warning(f"Wikidata query failed: {response.status}")
+            async with asyncio.timeout(self.request_timeout):
+                params = {'query': query, 'format': 'json'}
+                resp = await session.get(self.wikidata_endpoint, params=params)
+                if resp.status_code != 200:
+                    logger.warning(f"Wikidata query failed: {resp.status_code}")
                     return []
-
-                data = await response.json()
+                data = resp.json()
                 candidates = self._parse_sparql_results(entity_text, data)
 
                 # Cache results

@@ -51,11 +51,9 @@ us a single seam to test in isolation, gate with a single env var, and
 expose telemetry from a single counter dictionary.
 """
 
-
 import asyncio
 import functools
 import logging
-import os
 import time
 from collections import OrderedDict
 from typing import Any
@@ -63,11 +61,10 @@ from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
-from hledac.universal.utils.async_helpers import safe_wait_for
-
 # F270: Canonical constants — single source of truth for M1 8GB bounds
 from hledac.universal.core.constants import M1_BOUNDS  # noqa: E402
 from hledac.universal.core.env_config import ENV  # noqa: E402
+from hledac.universal.utils.async_helpers import safe_wait_for
 
 # Backward-compatible local aliases (these names are used throughout the module)
 _H3_CACHE_MAX: int = M1_BOUNDS().http3_lru_max
@@ -106,9 +103,14 @@ _semaphore: asyncio.Semaphore | None = None
 # PATCH 4: throttle speculative Alt-Svc probes (max 5 concurrent)
 # Note: Consider using ConcurrencyCategory.HTTP_LANE from concurrency_registry
 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing  # noqa: E402
+
 _probe_semaphore: asyncio.Semaphore = get_semaphore_for_testing(ConcurrencyCategory.HTTP_LANE)
 _aioquic_checked: bool = False
-_aioquic_available: bool = False
+aioquic_available: bool = False
+# F1 fix: lazy curl_cffi availability probe — avoids top-level ImportError
+# when H3 is enabled but curl_cffi is not installed. Silent fallback = no H3.
+_curl_cffi_checked: bool = False
+_curl_cffi_available: bool = False
 # PATCH 5: bounded task tracking for speculative probes — replaces fire-and-forget
 # asyncio.create_task() with a tracked set + done-callback. Max size enforced
 # by _MAX_PROBE_TASKS; excess probes are dropped (advisory, never blocks).
@@ -207,7 +209,7 @@ def _rss_over_budget() -> bool:
         # We never want this probe to noticeably cost fetch latency.
         logger.debug("http3_lane: rss probe slow (%.3fs), not blocking", elapsed)
         return False
-    gib = rss / (1024 ** 3)
+    gib = rss / (1024**3)
     return gib > _H3_RSS_BLOCK_GIB
 
 
@@ -322,14 +324,15 @@ _DARK_WEB_TLDS: frozenset[str] = frozenset({".onion", ".i2p", ".b32.i2p"})
 def is_dark_web_url(url: str) -> bool:
     """Return True if ``url`` targets a dark web host (.onion, .i2p, .b32.i2p).
 
-    Used by transport_router to skip H3 lane entirely for dark web URLs.
+    F271: Uses TransportRouter._DARKNET_SUFFIXES — single source of truth.
     QUIC/UDP cannot be tunneled through Tor TransPort or I2P HTTP proxy,
     so HTTP/3 is never attempted for dark web destinations.
     Never raises.
     """
     try:
-        host = extract_host(url)
-        return any(host.endswith(tld) for tld in _DARK_WEB_TLDS)
+        from transport.transport_router import TransportRouter
+        kind, host = TransportRouter()._classify_url(url)
+        return kind in ("onion", "i2p")
     except Exception:
         return False
 
@@ -358,7 +361,11 @@ def http_version_for_curl_cffi(url: str) -> Any:
         _stats["http3_memory_blocks"] += 1
         logger.debug("http3_lane: memory budget exceeded, suppressing H3 for %s", host)
         return None
-    # Lazy import: never load curl_cffi at module import.
+    # F1 fix: probe curl_cffi availability before lazy import.
+    # curl_cffi is in default deps but may be uninstalled in bare-bones envs.
+    # Silent fallback = no H3 upgrade (not a hard failure).
+    if not _probe_curl_cffi():
+        return None
     try:
         from curl_cffi.requests import HttpVersion as _HttpVersion  # type: ignore
     except Exception:
@@ -452,6 +459,7 @@ async def _speculative_altsvc_probe_inner(url: str) -> None:
         # Use a per-probe session to keep the probe isolated from
         # the live fetch session. The session is closed at the end
         # of the probe to avoid leaking connections.
+        # F1 fix: lazy import — guarded by _probe_curl_cffi() at call site.
         from curl_cffi.requests import AsyncSession  # type: ignore
 
         sess = AsyncSession(
@@ -472,9 +480,7 @@ async def _speculative_altsvc_probe_inner(url: str) -> None:
             if resp is not None and resp.headers:
                 if _altsvc_advertises_h3(resp.headers):
                     _cache_put(host, True)
-                    logger.debug(
-                        "http3_lane: speculative probe primed H3 for %s", host
-                    )
+                    logger.debug("http3_lane: speculative probe primed H3 for %s", host)
         except Exception as e:  # noqa: BLE001
             logger.debug("http3_lane: speculative header parse failed: %s", e)
         finally:
@@ -511,6 +517,11 @@ def probe_altsvc_speculative(url: str) -> None:
     # Idempotency: skip if we already know.
     if _cache_get(host) is not None:
         return
+    # F1 fix: guard speculative probes against missing curl_cffi.
+    # Without this, a bare env with H3_ENABLED=1 but no curl_cffi
+    # would raise ImportError on the first probe and spam the log.
+    if not _probe_curl_cffi():
+        return
     # PATCH 4: throttle — max 5 concurrent probe tasks
     # Use _value==0 instead of locked() to avoid race condition on pre-check
     if _probe_semaphore._value == 0:
@@ -525,12 +536,11 @@ def probe_altsvc_speculative(url: str) -> None:
     except RuntimeError:
         # No event loop in this context. The probe simply does not
         # happen; the next reactive fetch will populate the LRU.
-        logger.debug(
-            "http3_lane: speculative probe skipped (no event loop) for %s", host
-        )
+        logger.debug("http3_lane: speculative probe skipped (no event loop) for %s", host)
         return
     try:
         from hledac.universal.utils.async_helpers import safe_create_task
+
         task = safe_create_task(
             _guarded_probe(url),
             name=f"http3_lane:speculative_probe:{host}",
@@ -565,16 +575,37 @@ def _probe_aioquic() -> bool:
         import aioquic.asyncio  # type: ignore[import-not-found]
         import aioquic.h3.connection  # type: ignore[import-not-found]
         import aioquic.quic.configuration  # type: ignore[import-not-found]
+
         _aioquic_available = True
     except ImportError:
         _aioquic_available = False
-        logger.debug(
-            "http3_lane: aioquic not available (not installed with --extra http3)"
-        )
+        logger.debug("http3_lane: aioquic not available (not installed with --extra http3)")
     except Exception as e:
         _aioquic_available = False
         logger.debug("http3_lane: aioquic import failed: %s", e)
     return _aioquic_available
+
+
+# F1 fix: lazy curl_cffi availability probe — mirrors _probe_aioquic() pattern.
+# curl_cffi is in default deps but may be uninstalled; silent no-op if missing.
+def _probe_curl_cffi() -> bool:
+    """Detect curl_cffi availability once; cache the result. Returns True iff
+    curl_cffi is importable. Fallback: no H3 upgrade (fail-soft).
+    """
+    global _curl_cffi_checked, _curl_cffi_available
+    if _curl_cffi_checked:
+        return _curl_cffi_available
+    _curl_cffi_checked = True
+    try:
+        import curl_cffi  # type: ignore[import-not-found]  # noqa: F401
+        _curl_cffi_available = True
+    except ImportError:
+        _curl_cffi_available = False
+        logger.debug("http3_lane: curl_cffi not available")
+    except Exception as e:
+        _curl_cffi_available = False
+        logger.debug("http3_lane: curl_cffi import failed: %s", e)
+    return _curl_cffi_available
 
 
 async def fetch_http3_aioquic(
@@ -662,9 +693,7 @@ async def fetch_http3_aioquic(
             so a stuck UDP handshake can never block the fetch path
             beyond ``timeout_s`` (default 8s).
             """
-            async with _quic_connect(
-                host, port, configuration=cfg, create_protocol=H3Connection
-            ) as protocol:
+            async with _quic_connect(host, port, configuration=cfg, create_protocol=H3Connection) as protocol:
                 req_headers: list[tuple[bytes, bytes]] = [
                     (b":method", b"GET"),
                     (b":path", (parsed.path or "/").encode("ascii", "ignore")),
@@ -673,9 +702,7 @@ async def fetch_http3_aioquic(
                 if headers:
                     for k, v in headers.items():
                         try:
-                            req_headers.append(
-                                (k.encode("ascii", "ignore"), v.encode("ascii", "ignore"))
-                            )
+                            req_headers.append((k.encode("ascii", "ignore"), v.encode("ascii", "ignore")))
                         except Exception:  # noqa: BLE001
                             pass
                 stream_id = protocol.make_request(req_headers)

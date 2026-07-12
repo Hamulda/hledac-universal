@@ -35,15 +35,21 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin, urlparse
 
+import httpx  # F4XX: replaces aiohttp for Tor proxy sessions
+
+# F4XX: httpx-socks for SOCKS5 proxy (Tor)
+_HTTpx_SOCKS_AVAILABLE = False
+try:
+    import httpx_socks
+    _HTTpx_SOCKS_AVAILABLE = True
+except ImportError:
+    httpx_socks = None
+
 from hledac.universal.project_types import RiskLevel
 
-# Try to import aiohttp for Tor support
-try:
-    import aiohttp
-    import aiohttp_socks
-    TOR_AVAILABLE = True
-except ImportError:
-    TOR_AVAILABLE = False
+# F4XX: no longer need aiohttp import guard
+# TOR_AVAILABLE is now based on httpx-socks availability
+TOR_AVAILABLE = _HTTpx_SOCKS_AVAILABLE
 
 try:
     from selectolax.parser import HTMLParser as _SelectolaxHTMLParser
@@ -145,6 +151,8 @@ class TorProxyManager:
     Manages Tor proxy connections for stealth crawling.
 
     Requires Tor to be running locally (brew install tor)
+
+    F4XX: migrated from aiohttp + aiohttp_socks to httpx + httpx-socks.
     """
 
     def __init__(
@@ -158,13 +166,12 @@ class TorProxyManager:
         self.proxy_port = proxy_port
         self.control_port = control_port
         self.control_password = control_password
-        self._session: aiohttp.ClientSession | None = None
-        self._connector = None
+        self._session: httpx.AsyncClient | None = None
 
     async def initialize(self) -> bool:
         """Initialize Tor proxy connection."""
         if not TOR_AVAILABLE:
-            logger.error("aiohttp-socks not installed. Run: pip install aiohttp-socks")
+            logger.error("httpx-socks not installed. Run: uv add httpx-socks")
             return False
 
         try:
@@ -174,24 +181,39 @@ class TorProxyManager:
             writer.close()
             await writer.wait_closed()
 
-            # Create SOCKS5 connector
-            self._connector = aiohttp_socks.ProxyConnector.from_url(
-                f"socks5://{self.proxy_host}:{self.proxy_port}"
+            # F4XX: Create httpx-socks transport for SOCKS5 proxy
+            transport = httpx_socks.AsyncProxyTransport.from_url(
+                f"socks5://{self.proxy_host}:{self.proxy_port}",
+                rdns=True,  # Resolve DNS on the proxy (Tor exit node)
             )
 
-            # Create session with extended timeout for Tor
-            timeout = aiohttp.ClientTimeout(total=120, connect=60)
-            self._session = aiohttp.ClientSession(
-                connector=self._connector,
+            limits = httpx.Limits(
+                max_connections=20,
+                max_keepalive_connections=10,
+            )
+            timeout = httpx.Timeout(
+                connect=60.0,
+                read=120.0,
+                write=20.0,
+                pool=30.0,
+            )
+            self._session = httpx.AsyncClient(
+                limits=limits,
+                http2=True,
                 timeout=timeout,
+                transport=transport,
+                trust_env=False,
                 headers={
                     "User-Agent": self._get_tor_browser_ua()
-                }
+                },
             )
 
             logger.info(f"Tor proxy initialized: {self.proxy_host}:{self.proxy_port}")
             return True
 
+        except asyncio.TimeoutError:
+            logger.error("Tor proxy connection timeout")
+            return False
         except Exception as e:
             logger.error(f"Failed to initialize Tor proxy: {e}")
             return False
@@ -240,16 +262,14 @@ class TorProxyManager:
             logger.error(f"Failed to get new Tor identity: {e}")
             return False
 
-    def get_session(self) -> aiohttp.ClientSession | None:
-        """Get aiohttp session configured for Tor."""
+    def get_session(self) -> httpx.AsyncClient | None:
+        """Get httpx.AsyncClient configured for Tor."""
         return self._session
 
     async def close(self):
         """Close Tor connections."""
         if self._session:
-            await self._session.close()
-        if self._connector:
-            await self._connector.close()
+            await self._session.aclose()
 
     async def __aenter__(self) -> TorProxyManager:
         """Async context manager entry - initializes Tor connection."""
@@ -380,14 +400,15 @@ class DarkWebCrawler:
         try:
             start_time = time.time()
 
-            async with session.get(url, allow_redirects=True) as response:
+            async with asyncio.timeout(120.0):
+                resp = await session.get(url, follow_redirects=True)
                 response_time = (time.time() - start_time) * 1000
 
-                if response.status != 200:
-                    logger.warning(f"HTTP {response.status} for {url}")
+                if resp.status_code != 200:
+                    logger.warning(f"HTTP {resp.status_code} for {url}")
                     return None
 
-                html = await response.text()
+                html = resp.text
 
                 # Extract content
                 content = self._parse_content(url, html)
@@ -417,9 +438,11 @@ class DarkWebCrawler:
 
                 return content
 
-        except TimeoutError:
+        except asyncio.TimeoutError:
             logger.warning(f"Timeout fetching {url}")
             return None
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(f"Error fetching {url}: {e}")
             return None

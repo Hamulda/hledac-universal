@@ -261,6 +261,8 @@ class FeedPipelineRunResult(msgspec.Struct, frozen=True):
     pages: tuple[FeedPipelineEntryResult, ...] = ()
     error: str | None = None
     telemetry: FeedSignalTelemetry | None = None
+    # E2: Raw XML for fast path — enables single-call parse+scan+dedup
+    raw_xml: str | None = None
 
 
 @dataclasses.dataclass(slots=True)
@@ -1339,6 +1341,10 @@ def _make_feed_finding_id(
 # Import here so that absence of pattern_matcher is a hard fail at import time
 from hledac.universal.utils.async_helpers import bounded_gather  # noqa: E402
 from hledac.universal.utils.patterns.pattern_matcher import match_text  # noqa: E402
+from hledac.universal.utils.patterns.feed_pipeline_wrapper import (  # noqa: E402
+    feed_entry_pipeline_fast,
+    is_feed_pipeline_available,
+)
 
 # ---------------------------------------------------------------------------
 # Pattern scan — offloaded, bounded concurrency
@@ -1746,7 +1752,7 @@ async def _fetch_with_wayback_fallback(
 
 async def _fetch_article_text(entry_url: str) -> tuple[str, bool, int]:
     """
-    Fetch article body via direct aiohttp GET and strip HTML.
+    Fetch article body via direct httpx GET and strip HTML.  # F4XX: was aiohttp
 
     F183E EXPANSION: Wayback CDX seam — before live fetch, check if archive
     capture exists and is recent (within 90 days). If so, fetch from archive
@@ -2253,6 +2259,110 @@ async def async_run_live_feed_pipeline(
         )
 
     entries = batch.entries
+    # E2: Fast path — single-call parse+scan+dedup via Rust feed_entry_pipeline
+    # Replaces the 4-stage pipeline: parse→fetch→scan→dedup with one Rust call.
+    # Only active when Rust extension is available and we have patterns configured.
+    _rust_fast_path_used = False
+    _run_deduper_fast = make_run_deduper()
+    if is_feed_pipeline_available() and batch.raw_xml:
+        from hledac.universal.utils.patterns.pattern_matcher import get_pattern_matcher
+        _matcher = get_pattern_matcher()
+        _patterns = list(_matcher._registry_snapshot)
+        if _patterns:
+            _pattern_strs = [p for p, _ in _patterns]
+            _pattern_labels = [l for _, l in _patterns]
+            _rust_results = feed_entry_pipeline_fast(
+                batch.raw_xml,
+                max_entries=max_entries,
+                patterns=_pattern_strs,
+                labels=_pattern_labels,
+            )
+            if _rust_results:
+                _rust_fast_path_used = True
+                # Convert Rust results back to FeedPipelineEntryResult format
+                for _idx, _entry_url, _combined_hits, _t_hits, _d_hits, _phase in _rust_results:
+                    # run_deduper check — must match slow-path gate at line 2495
+                    if not _run_deduper_fast.is_new(_entry_url):
+                        continue
+                    if not _combined_hits:
+                        continue
+                    # Convert hits to PatternHit-like objects
+                    _converted_hits = []
+                    for _h_start, _h_end, _h_pat, _h_lbl, _h_val in _combined_hits:
+                        class _Hit:
+                            __slots__ = ("pattern", "start", "end", "value", "label", "confidence")
+                            def __init__(self):
+                                self.pattern = _h_pat
+                                self.start = _h_start
+                                self.end = _h_end
+                                self.value = _h_val
+                                self.label = _h_lbl
+                                self.confidence = 0.8  # E2: hit_confidence not yet surfaced from Rust
+                        _converted_hits.append(_Hit())
+                    # Run entry_deduper check and build finding
+                    for _hit in _converted_hits:
+                        _lbl = _hit.label or ""
+                        _pat = _hit.pattern
+                        _val = _hit.value
+                        if not entry_deduper.is_new(_lbl, _pat, _val, 0.8):
+                            continue
+                        _hit_confidence = getattr(_hit, "confidence", None)
+                        _conf = clamp_confidence(_hit_confidence, default=0.8) if _hit_confidence is not None else 0.8
+                        _finding = _pattern_hit_to_finding(feed_url, _entry_url, _hit, query_context, f"{{{{_hit.value}}}}")
+                        if _finding:
+                            _findings_list = [_finding]
+                            total_accepted += 1
+                            pages.append(
+                                FeedPipelineEntryResult(
+                                    entry_url=_entry_url,
+                                    accepted_findings=len(_findings_list),
+                                    stored_findings=len(_findings_list),
+                                    error=None,
+                                )
+                            )
+                            total_matched += 1
+                # Skip slow path entirely when fast path produced results
+                if pages:
+                    _telemetry = FeedSignalTelemetry(
+                        signal_stage="rust_fast_path",
+                        entries_seen=fetched_count,
+                        entries_with_empty_assembled_text=0,
+                        entries_with_text=0,
+                        entries_scanned=len(pages),
+                        entries_with_hits=len(pages),
+                        total_pattern_hits=total_matched,
+                        findings_built_pre_store=total_accepted,
+                        assembled_text_chars_total=0,
+                        avg_assembled_text_len=0.0,
+                        entries_with_rich_feed_content=0,
+                        entries_with_article_fallback=0,
+                        article_fallback_fetch_attempts=0,
+                        article_fallback_fetch_successes=0,
+                        enriched_text_chars_total=0,
+                        avg_enriched_text_len=0.0,
+                        sample_enriched_texts=(),
+                        enrichment_phase_used="rust_fast_path",
+                        temporal_feed_vocabulary_mismatch=False,
+                        upstream_fetch_blocker=None,
+                        upstream_parse_blocker=None,
+                        source_accessibility_blocker=None,
+                        root_zero_yield_reason=None,
+                        had_substantive_content_but_no_hits=False,
+                    )
+                    return FeedPipelineRunResult(
+                        feed_url=feed_url,
+                        fetched_entries=fetched_count,
+                        accepted_findings=total_accepted,
+                        stored_findings=total_accepted,
+                        patterns_configured=len(_patterns),
+                        matched_patterns=total_matched,
+                        pages=tuple(pages),
+                        error=None,
+                        telemetry=_telemetry,
+                        raw_xml=batch.raw_xml,
+                    )
+
+
     fetched_count = len(entries)
 
     # P0-4: keyword fallback — filter entries by query keyword substring match
@@ -2981,6 +3091,7 @@ async def async_run_live_feed_pipeline(
         pages=tuple(pages),
         error=None,
         telemetry=_telemetry,
+        raw_xml=batch.raw_xml,
     )
 
 

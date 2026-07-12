@@ -1,39 +1,38 @@
-"""otel/_instrumentation_asyncio.py — Async auto-instrumentation (Issue 10.1).
+"""otel/_instrumentation_asyncio.py — Async auto-instrumentation.
 
-Wraps asyncio.Task / asyncio.TaskGroup to automatically propagate:
-  - OTel trace context (trace_id, span_id) into task-local storage
-  - structlog bound fields (sprint_id, mode)
+Wraps asyncio.Task to automatically propagate OTel trace context
+(trace_id, span_id) into task-local storage via contextvars.
 
 M1 8GB bounds:
-  - task_context_cache: 256 entries (bounded LRU via OrderedDict)
-  - No background threads — fully synchronous, zero extra RAM
+  - task_context_cache: 256 entries (LRU via OrderedDict)
+  - No background threads — zero extra RAM
 
-Usage:
-    from otel._instrumentation_asyncio import TaskContext, task_context
+Usage (canonical path):
+    from utils.async_helpers import safe_create_task
+    task = safe_create_task(coro(), name="fetch")
 
-    # Replace asyncio.create_task with auto-context propagation:
-    task = TaskContext.create_task(coro(), sprint_id=sprint_id)
-    results = await TaskContext.gather(*tasks)
-
-    # Or as a context manager for the current task:
-    async with TaskContext.current() as ctx:
-        ctx.set_tag("sprint_id", sprint_id)
+    # Inside the coroutine, read parent trace context:
+    from utils.async_helpers import current_otel_context
+    ctx = current_otel_context()  # {trace_id, span_id} or None
 """
 
-
+from __future__ import annotations
 
 import asyncio
 import contextvars
-import functools
-import os
 import sys
 from collections import OrderedDict
-from typing import TYPE_CHECKING, Any, Callable, Coroutine, TypeVar
+from typing import TYPE_CHECKING, Any, Coroutine, TypeVar
 
 if TYPE_CHECKING:
-    from opentelemetry.trace import SpanKind
+    pass
 
-__all__ = ["TaskContext", "task_context", "patch_asyncio", "unpatch_asyncio"]
+__all__ = [
+    "TaskContext",
+    "task_context",
+    "current_otel_context",
+    "create_task_with_context",
+]
 
 # ── Task-local context ────────────────────────────────────────────────────────
 
@@ -41,15 +40,10 @@ __all__ = ["TaskContext", "task_context", "patch_asyncio", "unpatch_asyncio"]
 _task_context_cache: OrderedDict[int, dict[str, Any]] = OrderedDict()
 _MAX_TASK_CACHE = 256  # M1 8GB: bound concurrent task context
 
-# Current task contextvar — set when inside a TaskContext-wrapped task.
+# Current task contextvar — set when inside a context-wrapped task.
 _current_task_context: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
     "_current_task_context", default=None
 )
-
-
-def _get_task_id(task: asyncio.Task[Any]) -> int:
-    """Return a stable task ID for cache key."""
-    return id(task)
 
 
 # ── OTel context helpers ──────────────────────────────────────────────────────
@@ -59,7 +53,7 @@ def _get_current_otel_context() -> dict[str, Any]:
     """Extract trace_id/span_id from OTel context, or empty dict."""
     out: dict[str, Any] = {}
     try:
-        from otel._instrumentation import current_span_id, current_trace_id
+        from otel._instrumentation import current_span_id, current_trace_id  # type: ignore[attr-defined]
 
         tid = current_trace_id()
         sid = current_span_id()
@@ -72,23 +66,109 @@ def _get_current_otel_context() -> dict[str, Any]:
     return out
 
 
+def current_otel_context() -> dict[str, Any] | None:
+    """
+    Return the OTel trace context dict captured by safe_create_task for this task.
+
+    Call this inside a coroutine spawned via safe_create_task (or
+    create_task_with_context) to read the trace_id / span_id of the parent
+    that created this task.
+
+    Returns None if the coroutine was not created via safe_create_task or if
+    OTel tracing is not active.
+    """
+    return _current_task_context.get()
+
+
+# ── Canonical task creation ───────────────────────────────────────────────────
+# Wired into utils/async_helpers.safe_create_task (the single canonical entry
+# point used by ~15 call sites across the codebase).
+
+
+def create_task_with_context(
+    coro: Any,
+    *,
+    name: str | None = None,
+    eager_start: bool = False,
+    otel_trace: bool = True,
+) -> asyncio.Task[Any]:
+    """
+    Create an asyncio.Task with OTel trace context propagation.
+
+    This is the canonical task-creation path used by utils/async_helpers.
+    safe_create_task, which is called from ~15+ sites across the codebase.
+
+    The function:
+      1. Captures current OTel trace context (trace_id / span_id)
+      2. Wraps the coroutine so context is restored before execution
+      3. Registers a done-callback to clean up the task context cache
+
+    Args:
+        coro:        The coroutine to wrap.
+        name:        Optional task name.
+        eager_start: Pass eager_start=True to asyncio.create_task (3.12+).
+        otel_trace:  Capture and propagate OTel trace context (default True).
+
+    Returns:
+        asyncio.Task wrapping the coroutine.
+    """
+    captured: dict[str, Any] = {}
+    if otel_trace:
+        captured = _get_current_otel_context()
+
+    async def _otel_wrapped() -> Any:
+        """Inner coroutine: restore OTel context then run original."""
+        _current_task_context.set(captured if captured else None)
+        try:
+            return await coro
+        finally:
+            _current_task_context.set(None)
+
+    # Probe eager_start support (same logic as async_helpers._EAGER_START_SUPPORTED).
+    _PY_312_PLUS: bool = sys.version_info >= (3, 12)
+    _UVLOOP_INSTALLED: bool = sys.modules.get("uvloop") is not None
+    _EAGER_START_SUPPORTED: bool = _PY_312_PLUS and not _UVLOOP_INSTALLED
+
+    if eager_start and _EAGER_START_SUPPORTED:
+        try:
+            task: asyncio.Task[Any] = asyncio.create_task(
+                _otel_wrapped(),
+                name=name,
+                eager_start=True,  # type: ignore[call-arg]
+            )
+        except TypeError:
+            task = asyncio.create_task(_otel_wrapped(), name=name)
+    else:
+        task = asyncio.create_task(_otel_wrapped(), name=name)
+
+    task_id = id(task)
+    _task_context_cache[task_id] = captured if captured else {}
+
+    def _clear(t: asyncio.Task[Any]) -> None:
+        _task_context_cache.pop(id(t), None)
+        _current_task_context.set(None)
+
+    task.add_done_callback(_clear)
+    return task
+
+
 # ── TaskContext ───────────────────────────────────────────────────────────────
 
 
 class TaskContext:
-    """ asyncio.Task wrapper that propagates OTel trace context + structlog fields.
+    """High-level asyncio.Task wrapper that propagates OTel + sprint context.
 
     Usage::
 
-        ctx = TaskContext()
-        task = ctx.create_task(coro(), sprint_id=sprint_id, mode=mode)
-        await ctx.gather(task1, task2, ...)
+        task = TaskContext.create_task(coro(), sprint_id=sprint_id, mode=mode)
+        await TaskContext.gather(task1, task2)
+
+    For the canonical path used by the codebase, prefer safe_create_task().
+    TaskContext is useful when you need sprint_id / mode tags.
     """
 
     def __init__(self) -> None:
         self._tasks: list[asyncio.Task[Any]] = []
-
-    # ── Task creation ─────────────────────────────────────────────────────────
 
     @staticmethod
     def create_task(
@@ -96,14 +176,11 @@ class TaskContext:
         *,
         sprint_id: str | None = None,
         mode: str | None = None,
-        trace_flags: str = "inherit",
         extra: dict[str, Any] | None = None,
     ) -> asyncio.Task[Any]:
-        """Create an asyncio.Task with OTel + sprint context propagated.
+        """Create an asyncio.Task with OTel + sprint context propagated."""
+        import os
 
-        trace_flags: "inherit" (default) | "remote" | "none"
-        """
-        # Build context dict
         ctx_data: dict[str, Any] = {
             **_get_current_otel_context(),
             "sprint_id": sprint_id or os.environ.get("HLEDAC_SPRINT_ID", ""),
@@ -112,30 +189,27 @@ class TaskContext:
         if extra:
             ctx_data.update(extra)
 
-        # Evict oldest if cache full
         if len(_task_context_cache) >= _MAX_TASK_CACHE:
-            # Remove oldest ~10%
             drop = max(1, _MAX_TASK_CACHE // 10)
             for _ in range(drop):
                 _task_context_cache.popitem(last=False)
 
+        async def _wrapped() -> Any:
+            _current_task_context.set(ctx_data)
+            try:
+                return await coro
+            finally:
+                _current_task_context.set(None)
+
+        task: asyncio.Task[Any] = asyncio.create_task(_wrapped())
+        task_id = id(task)
+        _task_context_cache[task_id] = ctx_data
+
         def _clear(t: asyncio.Task[Any]) -> None:
-            """Clear context when task completes."""
-            tid = _get_task_id(t)
-            _task_context_cache.pop(tid, None)
+            _task_context_cache.pop(id(t), None)
             _current_task_context.set(None)
 
-        # Create the wrapped coroutine directly — no intermediate task.
-        # We need a stable task_id BEFORE creating the task, so we use a counter.
-        wrapped_coro = _wrap_coro_with_context(coro, ctx_data, 0)  # task_id resolved below
-        task: asyncio.Task[Any] = asyncio.create_task(wrapped_coro)
-        task_id = _get_task_id(task)
-
-        # Update the wrapped coroutine's task_id reference via closure hack.
-        # Replace the ctx_data entry with the real task_id.
-        _task_context_cache[task_id] = ctx_data
         task.add_done_callback(_clear)
-
         return task
 
     @staticmethod
@@ -151,7 +225,7 @@ class TaskContext:
         return await asyncio.gather(*tasks, return_exceptions=return_exceptions)
 
     @staticmethod
-    def current() -> TaskContextManager:
+    def current() -> "TaskContextManager":
         """Return a context manager for the current task's context."""
         return TaskContextManager()
 
@@ -171,13 +245,18 @@ class TaskContext:
 class TaskContextManager:
     """Async context manager that exposes the current task's context."""
 
+    __slots__ = ("_token",)
+
+    def __init__(self) -> None:
+        self._token: contextvars.Token[dict[str, Any] | None] | None = None
+
     async def __aenter__(self) -> dict[str, Any]:
-        token = _current_task_context.set(_current_task_context.get() or {})
-        self._token = token
+        self._token = _current_task_context.set(_current_task_context.get() or {})
         return _current_task_context.get() or {}
 
     async def __aexit__(self, *args: Any) -> None:
-        _current_task_context.reset(self._token)
+        if self._token is not None:
+            _current_task_context.reset(self._token)
 
     def set_tag(self, key: str, value: Any) -> None:
         ctx = _current_task_context.get()
@@ -185,80 +264,7 @@ class TaskContextManager:
             ctx[key] = value
 
 
-# ── Coroutine wrapper ────────────────────────────────────────────────────────
-
-
-def _wrap_coro_with_context(
-    coro: Coroutine[Any, Any, Any],
-    ctx_data: dict[str, Any],
-    task_id: int,
-) -> Coroutine[Any, Any, Any]:
-    """Wrap a coroutine to inject task context before it runs."""
-
-    async def wrapped() -> Any:
-        _current_task_context.set(ctx_data)
-        try:
-            return await coro
-        finally:
-            _task_context_cache.pop(task_id, None)
-
-    return wrapped()
-
-
-# ── asyncio.create_task patch ────────────────────────────────────────────────
-# Provide patch_asyncio() / unpatch_asyncio() for automatic coverage.
-
-_PATCHED = False
-_original_create_task: Callable[..., asyncio.Task[Any]] | None = None
-
-
-def patch_asyncio() -> bool:
-    """Patch asyncio.create_task to auto-propagate OTel + sprint context.
-
-    After calling this, ALL asyncio.create_task() calls automatically
-    include trace context from the parent task.
-
-    Returns True if patching succeeded.
-    """
-    global _PATCHED, _original_create_task
-    if _PATCHED:
-        return True
-    try:
-        _original_create_task = asyncio.create_task
-
-        @functools.wraps(_original_create_task)
-        def patched_create_task(
-            coro: Coroutine[Any, Any, Any],
-            *,
-            name: str | None = None,
-            sprint_id: str | None = None,
-            mode: str | None = None,
-        ) -> asyncio.Task[Any]:
-            return TaskContext.create_task(
-                coro,
-                sprint_id=sprint_id or os.environ.get("HLEDAC_SPRINT_ID"),
-                mode=mode or os.environ.get("HLEDAC_SPRINT_MODE"),
-            )
-
-        asyncio.create_task = patched_create_task  # type: ignore[assignment,misc]
-        _PATCHED = True
-        return True
-    except Exception as e:
-        sys.stderr.write(f"[asyncio_patch] failed: {e}\n")
-        return False
-
-
-def unpatch_asyncio() -> None:
-    """Restore original asyncio.create_task."""
-    global _PATCHED, _original_create_task
-    if not _PATCHED or _original_create_task is None:
-        return
-    asyncio.create_task = _original_create_task  # type: ignore[assignment]
-    _PATCHED = False
-    _original_create_task = None
-
-
-# ── task_context helper (convenience) ────────────────────────────────────────
+# ── task_context helper ──────────────────────────────────────────────────────
 
 
 class task_context:
@@ -272,6 +278,8 @@ class task_context:
         async with task_context(sprint_id=sprint_id, mode="aggressive"):
             await fetch()
     """
+
+    __slots__ = ("_kwargs", "_token")
 
     def __init__(self, **kwargs: Any) -> None:
         self._kwargs = kwargs

@@ -1,0 +1,11 @@
+[plugins]
+paths = ["/Users/vojtechhamada/.config/gptme/contrib/plugins"]
+enabled = [
+  "tooloutput-trimmer",
+  "attention-tracker",
+  "ace",
+  "user-memories",
+  "headroom-compressor",
+  "lsp",
+  "retrieval",
+]

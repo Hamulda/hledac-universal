@@ -21,7 +21,7 @@ Never use this for coroutine objects — use async_lru from cachetools instead.
 import threading
 import time
 from collections import OrderedDict
-from typing import Any, Generic, TypeVar
+from typing import Any, TypeVar
 
 K = TypeVar("K", default=object)
 V = TypeVar("V", default=object)
@@ -201,17 +201,44 @@ class PyCacheDict[K, V]:
         try:
             with self._lock:
                 now = time.monotonic()
-                expired: list[K] = [
-                    k
-                    for k, (_, ts) in self._data.items()
-                    if now - ts > self._ttl_s
-                ]
+                expired: list[K] = [k for k, (_, ts) in self._data.items() if now - ts > self._ttl_s]
                 for k in expired:
                     del self._data[k]
                     self._expirations += 1
                 return len(expired)
         except Exception:
             return 0
+
+    def items(self) -> list[tuple[K, V]]:
+        """
+        Return list of (key, value) pairs, excluding expired.
+
+        Thread-safe. O(n) scan.
+        """
+        try:
+            with self._lock:
+                now = time.monotonic()
+                result: list[tuple[K, V]] = []
+                expired: list[K] = []
+                for k, (v, ts) in self._data.items():
+                    if now - ts > self._ttl_s:
+                        expired.append(k)
+                    else:
+                        result.append((k, v))
+                for k in expired:
+                    del self._data[k]
+                    self._expirations += 1
+                return result
+        except Exception:
+            return []
+
+    def keys(self) -> list[K]:
+        """Return list of keys, excluding expired. Thread-safe."""
+        return [k for k, _ in self.items()]
+
+    def values(self) -> list[V]:
+        """Return list of values, excluding expired. Thread-safe."""
+        return [v for _, v in self.items()]
 
     # -- introspection ───────────────────────────────────────────────────────
 

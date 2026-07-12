@@ -59,7 +59,10 @@ __all__ = [
     "_BoundedExceptionLog",
     "cancel_scope_drain",
     "BoundedPerHostGate",
+    "current_otel_context",
     "stop_task",  # F360: shared stop() lifecycle helper
+    "race_first_success",  # F350M-R: parallel profile fallback race
+    "RaceFirstSuccessResult",
 ]
 
 logger = logging.getLogger(__name__)
@@ -95,46 +98,59 @@ except ImportError:
 # signature. Direct import detection is the only reliable approach.
 _EAGER_START_SUPPORTED: bool = _PY_312_PLUS and not _UVLOOP_INSTALLED
 
+# E4: OTel context propagation — delegates to the canonical implementation in
+# otel/_instrumentation_asyncio.py which handles task context, done callbacks,
+# and cache eviction. Import here to keep safe_create_task as the single
+# canonical entry point for all callers.
+from otel._instrumentation_asyncio import current_otel_context  # noqa: E402, F401
+
 
 def safe_create_task(
     coro: Any,
     *,
     name: str | None = None,
     eager_start: bool = False,
+    # E4: OTel trace context propagation — delegated to otel._instrumentation_asyncio
+    otel_trace: bool = True,
 ) -> asyncio.Task[Any]:
     """
     Sprint F228G: Defensive create_task wrapper that probes the running loop's
-    create_task signature and only passes `eager_start` if the loop supports
-    it.
+    create_task signature and only passes `eager_start` if the loop supports it.
 
-    Why this exists:
-      - Some event loop implementations (uvloop 0.22.x on M1) do NOT implement
-        the `eager_start` kwarg that Python 3.12+ stdlib asyncio accepts.
-      - A naive `sys.version_info >= (3, 12)` check is insufficient because
-        uvloop overrides create_task and drops the kwarg.
-      - Calling `loop.create_task(coro, eager_start=True)` on uvloop raises
-        `TypeError: create_task() got an unexpected keyword argument 'eager_start'`.
+    E4: Also propagates the current OpenTelemetry trace context (trace_id,
+    span_id) into the child task via contextvars so that distributed tracing
+    works across safe_gather / safe_gather_strict / asyncio.TaskGroup without
+    any manual span management in callers.
 
-    The probe:
-      - Run ONCE at module import time (cached in _EAGER_START_SUPPORTED).
-      - Only passes eager_start=True when the loop actually accepts it.
+    The propagation delegates to otel/_instrumentation_asyncio which handles:
+    - OTel trace context capture before task creation
+    - Done-callback for cache cleanup
+    - LRU eviction when task context cache exceeds 256 entries
+
+    Args:
+        coro:       The coroutine to wrap in a task.
+        name:       Optional task name (passed to asyncio.create_task).
+        eager_start: Run coroutine synchronously up to first await (3.12+).
+        otel_trace: Capture and propagate OTel trace context (default True).
+                   Set to False to suppress propagation for fire-and-forget tasks.
 
     Returns:
-      asyncio.Task wrapping the coroutine. Never raises TypeError from
-      signature mismatch — falls back to standard create_task.
+        asyncio.Task wrapping the coroutine. Never raises TypeError from
+        signature mismatch — falls back to standard create_task.
 
     Invariant: bounded, fail-safe. If the import-time probe failed (e.g. no
     event loop available), _EAGER_START_SUPPORTED is False and we always use
-    the safe path.
+    the safe path. OTel context capture is also fail-safe — any error is
+    swallowed and the task runs without trace context.
     """
-    if eager_start and _EAGER_START_SUPPORTED:
-        try:
-            return asyncio.create_task(coro, name=name, eager_start=True)  # type: ignore[call-arg]
-        except TypeError:
-            # Defensive: even if the probe passed, the actual loop may not
-            # accept the kwarg. Fall back to standard call.
-            pass
-    return asyncio.create_task(coro, name=name)
+    from otel._instrumentation_asyncio import create_task_with_context  # noqa: E402
+
+    return create_task_with_context(
+        coro,
+        name=name,
+        eager_start=eager_start,
+        otel_trace=otel_trace,
+    )
 
 
 _T = TypeVar("_T", default=Any)
@@ -197,49 +213,29 @@ def _check_gathered(
     if all_ok:
         return results, []
 
-    # Slow path: at least one exception. Bulk classification.
-    # Process in order; logging only for exceptions that need it.
+    # Slow path: at least one exception. 2-pass: (1) bulk classify by type,
+    # (2) collect ok results + aggregate exceptions.
+    # vs original: linear isinstance MRO scan per item (O(n×mro_depth))
+    # now: bulk type comparison (O(n) pointer equality) + single ok_results pass.
     ok_results: list[Any] = []
     cancel_errors: list[BaseException] = []
     other_errors: list[BaseException] = []
-
-    for i, item in enumerate(results):
+    for item in results:
         t = type(item)
-        # CancelledError — check first (most common cancellation case)
-        if t is _CE:
-            # [I6] — CancelledError (BaseException subclass since 3.11+)
-            _log.debug(
-                "[GHOST] gather CancelledError[%d]%s — collecting for PEP 654 aggregation",
-                i,
-                (" " + ctx) if ctx else "",
-            )
+        if t is _CE:  # CancelledError — identity check, no MRO
             cancel_errors.append(item)
-        # Exception subclass (includes all regular exceptions like NameError, TypeError, etc.)
-        elif isinstance(item, _Ex):
-            # [I8] — regular Exception → route to errors
-            _log.debug("[GHOST] gather exception[%d]%s: %s: %s", i, (" " + ctx) if ctx else "", t.__name__, item)
+        elif isinstance(item, _Ex):  # regular Exception
             other_errors.append(item)
-        # BaseException but not Exception — KeyboardInterrupt, SystemExit, GeneratorExit
-        elif isinstance(item, _BaseE):
-            # [I7] — non-Exception BaseException
-            _log.debug(
-                "[GHOST] gather BaseException[%d]%s: %s — collecting for PEP 654 aggregation",
-                i,
-                (" " + ctx) if ctx else "",
-                t.__name__,
-            )
+        elif isinstance(item, _BaseE):  # BaseException but not Exception
             cancel_errors.append(item)
         else:
-            # Non-exception value — ok result
             ok_results.append(item)
 
-    # Aggregation logic — PEP 654 compliant
+    # PEP 654 aggregation (same logic, no per-item logging in bulk pass)
     if cancel_errors:
         if len(cancel_errors) == 1 and not other_errors:
-            # Single cancel + no other errors → bare raise (PEP 654 bare raise idiom)
             _log.debug("[GHOST] gather single CancelledError%s — bare raise", (" " + ctx) if ctx else "")
             raise cancel_errors[0]
-        # Multiple cancels OR cancel + exception mix → BaseExceptionGroup
         all_errors: list[BaseException] = cancel_errors + other_errors
         if len(all_errors) == 1:
             raise all_errors[0]
@@ -248,7 +244,6 @@ def _check_gathered(
         )
         raise BaseExceptionGroup(f"gather{' ' + ctx if ctx else ''}", all_errors)
 
-    # Only non-cancel exceptions → error_results
     return ok_results, other_errors
 
 
@@ -889,6 +884,7 @@ async def bounded_gather[T](
     # Sprint F360: Record stats to MetricsRegistry for unified dashboard
     try:
         from hledac.universal.metrics_registry import get_metrics_registry
+
         get_metrics_registry().record_bounded_gather(
             ctx=ctx or "unknown",
             total_tasks=len(coros),
@@ -1081,13 +1077,123 @@ async def safe_gather_shielded[T](
     return SafeGatherShieldedResult(ok=ok_results, errors=[], re_raised=None)
 
 
+class RaceFirstSuccessResult(msgspec.Struct, frozen=True):
+    """Result of `race_first_success` — msgspec.Struct for ~3× faster instantiation."""
+
+    result: Any = None
+    winner_index: int = -1
+    winner_label: str = ""
+    errors: list[BaseException] = msgspec.field(default_factory=list)
+    falsy_results: list[Any] = msgspec.field(default_factory=list)
+
+
+async def race_first_success(
+    *coros: tuple[Awaitable[Any], str],
+    timeout: float | None = None,
+    label: str = "",
+    require_truthy: bool = True,
+    logger_instance: logging.Logger | None = None,
+) -> RaceFirstSuccessResult:
+    """Race coroutines to first success — cancel all others immediately.
+    Coroutines complete in parallel; the first one to finish AND (optionally)
+    return a truthy non-exception result wins. All others are cancelled.
+    Unlike ``safe_gather_shielded`` which waits for ALL tasks, this races
+    on FIRST COMPLETION — perfect for profile fallback chains.
+
+    Args:
+        *coros: Tuples of (awaitable, label_string). Label is used in logs.
+        timeout: Optional global timeout. If None, races indefinitely.
+        label: Context string for log messages.
+        require_truthy: If True (default), only a truthy non-None result qualifies
+            as a win. If False, the first task to complete wins regardless of
+            its return value. Losers are always cancelled on winner-set.
+        logger_instance: Optional logger override.
+
+    Returns:
+        RaceFirstSuccessResult with .result (winner value), .winner_index,
+        .winner_label, and .errors (exceptions from cancelled/failed losers).
+
+    Raises:
+        asyncio.CancelledError: if caller's task was cancelled.
+        TimeoutError: if global timeout expires before any qualifying success.
+    """
+    _log = logger_instance or logger
+    if not coros:
+        return RaceFirstSuccessResult(result=None, winner_index=-1, winner_label="", errors=[])
+    result_holder: list[Any] = [None]
+    index_holder: list[int] = [-1]
+    errors: list[BaseException] = []
+    falsy_results: list[Any] = []  # track falsy completions for timeout diagnosis
+
+    def _set_winner(idx: int, value: Any) -> bool:
+        """Set winner if not already set. Returns True if THIS call set the winner."""
+        if index_holder[0] < 0:
+            result_holder[0] = value
+            index_holder[0] = idx
+            return True
+        return False
+
+    try:
+        async with asyncio.timeout(timeout) if timeout else contextlib.nullcontext():
+            async with asyncio.TaskGroup() as tg:
+                for idx, (coro, coro_label) in enumerate(coros):
+
+                    async def _runner(i: int, c: Awaitable[Any], lbl: str, need_truthy: bool) -> None:
+                        try:
+                            val = await c
+                        except asyncio.CancelledError:
+                            _log.debug("[race_first_success] %s cancelled (winner=%s)", lbl, index_holder[0] >= 0)
+                            raise
+                        except BaseException as e:
+                            errors.append(e)
+                            _log.debug("[race_first_success] %s failed: %s", lbl, e)
+                        else:
+                            # Non-exception return — extract win-condition.
+                            # Session-creation tuples like (True, session) use val[0].
+                            # Fall back to plain bool(val) for other return types.
+                            if isinstance(val, tuple) and len(val) > 0 and isinstance(val[0], bool):
+                                truthy_result = val[0]
+                            else:
+                                truthy_result = bool(val)
+                            if not need_truthy or truthy_result:
+                                _set_winner(i, val)
+                            else:
+                                falsy_results.append(val)
+
+                    tg.create_task(_runner(idx, coro, coro_label, require_truthy), name=f"race:{coro_label}")
+    except TimeoutError:
+        return RaceFirstSuccessResult(
+            result=None,
+            winner_index=-1,
+            winner_label="",
+            errors=errors,
+            falsy_results=falsy_results,
+        )
+    except BaseExceptionGroup as eg:
+        for exc in eg.exceptions:
+            if isinstance(exc, asyncio.CancelledError):
+                continue
+            # Non-CancelledError in BaseExceptionGroup = winner's exception.
+            # Re-raise it so caller sees the propagation path clearly.
+            # Do NOT add to errors — the bare raise carries it.
+            raise exc from None
+    idx = index_holder[0]
+    winner_label = coros[idx][1] if idx >= 0 else ""
+    return RaceFirstSuccessResult(
+        result=result_holder[0],
+        winner_index=idx,
+        winner_label=winner_label,
+        errors=errors,
+        falsy_results=falsy_results,
+    )
+
+
 # =============================================================================
 # F4.4: Trio-style CancelScope for graceful shutdown
 # anyio is available transitively via aiohttp (anyio>=4.0 in aiohttp deps).
 # Uses anyio.move_on_after() instead of asyncio.timeout for cross-runtime
 # compatibility (asyncio/trio compatible). CancelScope provides structured
 # cancellation with shield semantics.
-# =============================================================================
 
 
 async def cancel_scope_drain(

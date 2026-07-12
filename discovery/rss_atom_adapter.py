@@ -26,9 +26,8 @@ Sprint 8AJ — Feed Source Discovery + Curated Seeds:
 - Typed curated seed surface (OSINT-relevant feeds).
 - Deterministic merge of discovered + seeded sources.
 """
+
 from __future__ import annotations
-
-
 
 import asyncio
 import datetime
@@ -48,6 +47,7 @@ import xxhash
 def _entry_hash(title: str, published_raw: str) -> str:
     """Compute deterministic xxhash of title|published_raw for entry identity."""
     return xxhash.xxh3_64(f"{(title or '')}|{(published_raw or '')}").hexdigest()
+
 
 # Sprint 8AH: defusedxml is primary parser when available.
 # stdlib xml.etree.ElementTree is fallback.
@@ -117,6 +117,8 @@ class FeedBatchResult(msgspec.Struct, frozen=True):
     # beyond parse-level error. Carries the fetch-layer signal when the
     # feed was inaccessible at the source level.
     source_accessibility_error: str | None = None
+    # E2: Raw XML for fast path — single-call parse+scan+dedup via feed_entry_pipeline_fast
+    raw_xml: str | None = None
 
 
 # Sprint 8AJ — Feed Discovery DTOs
@@ -175,9 +177,7 @@ class MergedFeedSource(msgspec.Struct, frozen=True):
 
 _SOURCE: str = "rss_atom"
 _MAX_ENTRIES_HARD: int = 200  # F184B: 100→200: high-signal OSINT feeds need more headroom
-_XML_ENTITY_RE: re.Pattern[str] = re.compile(
-    r"<!ENTITY|<!DOCTYPE", re.IGNORECASE
-)
+_XML_ENTITY_RE: re.Pattern[str] = re.compile(r"<!ENTITY|<!DOCTYPE", re.IGNORECASE)
 # ISO 8601 / RFC 3339 normalization
 _ISO_Z_RE: re.Pattern[str] = re.compile(r"Z$")
 
@@ -209,9 +209,7 @@ def _local_name(tag: str) -> str:
     return tag
 
 
-def _find_first_child(
-    parent, localname: str
-) -> Any | None:
+def _find_first_child(parent, localname: str) -> Any | None:
     """Find first direct child element by local name (namespace-safe)."""
     children = list(parent)
     for child in children:
@@ -271,7 +269,6 @@ def _text_of(element) -> str:
     return text.strip()
 
 
-
 # ---------------------------------------------------------------------------
 # Date parsing (fail-soft, no locale dependency)
 # ---------------------------------------------------------------------------
@@ -307,14 +304,14 @@ def _parse_published_ts(raw: str | None) -> float | None:
 # Freshness tiers: age in seconds from retrieved_ts
 # F178E: relaxed from 180→365 days — OSINT content (CVE disclosures, malware campaigns)
 # remains valuable long after publication; 6-month-old IoCs are still actionable
-_TIER_RECENT_MAX: float = 3 * 86400       # ≤3 days  → "recent"
-_TIER_FRESH_MAX: float = 14 * 86400       # ≤14 days → "fresh"
-_TIER_AGED_MAX: float = 60 * 86400        # ≤60 days → "aged"
-_TIER_STALE_MAX: float = 365 * 86400     # ≤365 days → "stale"
+_TIER_RECENT_MAX: float = 3 * 86400  # ≤3 days  → "recent"
+_TIER_FRESH_MAX: float = 14 * 86400  # ≤14 days → "fresh"
+_TIER_AGED_MAX: float = 60 * 86400  # ≤60 days → "aged"
+_TIER_STALE_MAX: float = 365 * 86400  # ≤365 days → "stale"
 # >365 days or future → "unknown"
 
 # Future penalty: entries with published_ts > retrieved_ts + this gap are penalized
-_FUTURE_GAP_MAX: float = 3600 * 6        # 6 hours ahead = tolerated noise
+_FUTURE_GAP_MAX: float = 3600 * 6  # 6 hours ahead = tolerated noise
 
 
 def _compute_freshness(
@@ -394,12 +391,11 @@ def _is_spam_domain(url: str) -> bool:
 
 # F178E: SEO spam / title-manipulation patterns
 _SEO_SPAM_TITLE_RE = re.compile(
-    r"(?:\b\w+\b\s*){30,}", re.IGNORECASE  # title with 30+ words = likely keyword-stuffed
+    r"(?:\b\w+\b\s*){30,}",
+    re.IGNORECASE,  # title with 30+ words = likely keyword-stuffed
 )
 _REPEATED_DOTS_RE = re.compile(r"^\.{3,}$")  # "..." only title
-_TEMPLATE_NOISE_RE = re.compile(
-    r"^\s*(?:title|untitled|article|post|page)\s*$", re.IGNORECASE
-)
+_TEMPLATE_NOISE_RE = re.compile(r"^\s*(?:title|untitled|article|post|page)\s*$", re.IGNORECASE)
 
 
 def _is_seo_spam_title(title: str) -> bool:
@@ -420,9 +416,7 @@ def _is_seo_spam_title(title: str) -> bool:
 
 
 # F178E: snippet noise patterns — "title • description" template
-_SNIPPET_TEMPLATE_RE = re.compile(
-    r"^\s*[\w\s\-]+\s*[•·|\-\"']\s*[\w\s\-]+\s*$"
-)
+_SNIPPET_TEMPLATE_RE = re.compile(r"^\s*[\w\s\-]+\s*[•·|\-\"']\s*[\w\s\-]+\s*$")
 
 
 def _is_template_snippet(snippet: str, title: str) -> bool:
@@ -614,22 +608,13 @@ def _safe_sanitize_xml(raw: str) -> str:
     # Fast path: no dangerous declarations AND no entity references to process
     # Note: we still process the input even with benign entity refs
     # (predefined entities like &amp; are left untouched by the scanner)
-    if (
-        "<!doctype" not in raw.lower()
-        and "<!entity" not in raw.lower()
-        and "&" not in raw
-    ):
+    if "<!doctype" not in raw.lower() and "<!entity" not in raw.lower() and "&" not in raw:
         return raw
 
-
     # ---- Precompute sets ----
-    _predefined: frozenset[str] = frozenset(
-        {"amp", "lt", "gt", "quot", "apos"}
-    )
+    _predefined: frozenset[str] = frozenset({"amp", "lt", "gt", "quot", "apos"})
     # apos is included because defusedxml resolves it to "'" natively in XML 1.0.
-    _benign_names: frozenset[str] = frozenset(
-        name for name, _ in _BENIGN_HTML_ENTITIES
-    )
+    _benign_names: frozenset[str] = frozenset(name for name, _ in _BENIGN_HTML_ENTITIES)
     _benign_patterns: tuple[tuple[str, str], ...] = tuple(_BENIGN_HTML_ENTITIES)
 
     result: list[str] = []
@@ -640,7 +625,7 @@ def _safe_sanitize_xml(raw: str) -> str:
         c = raw[i]
 
         # ---- Handle <!DOCTYPE ...> ----
-        if c == "<" and raw[i:i+9].lower() == "<!doctype":
+        if c == "<" and raw[i : i + 9].lower() == "<!doctype":
             # Skip the entire DOCTYPE block using bracket-depth tracker
             i += 9
             depth = 0  # inside [...]:
@@ -670,7 +655,7 @@ def _safe_sanitize_xml(raw: str) -> str:
                 i += 1
 
         # ---- Handle <!ENTITY ...> ----
-        elif c == "<" and raw[i:i+9].lower() == "<!entity":
+        elif c == "<" and raw[i : i + 9].lower() == "<!entity":
             # Skip the entire ENTITY declaration without copying to output
             i += 9
             in_quote = False
@@ -695,20 +680,12 @@ def _safe_sanitize_xml(raw: str) -> str:
             # Potential named entity reference
             sem_idx = raw.find(";", i + 1)
             if sem_idx != -1 and sem_idx - i < 20:  # sanity limit on name length
-                name = raw[i + 1:sem_idx]
-                name_is_valid = (
-                    name
-                    and name.isidentifier()
-                    and name.lower() not in _predefined
-                )
+                name = raw[i + 1 : sem_idx]
+                name_is_valid = name and name.isidentifier() and name.lower() not in _predefined
                 if name_is_valid:
                     if name.lower() in _benign_names:
                         # Replace with Unicode equivalent
-                        replacement = next(
-                            repl
-                            for n_, repl in _benign_patterns
-                            if n_.lower() == name.lower()
-                        )
+                        replacement = next(repl for n_, repl in _benign_patterns if n_.lower() == name.lower())
                         result.append(replacement)
                         i = sem_idx + 1
                         continue
@@ -880,9 +857,7 @@ def _parse_atom(root, feed_url: str, retrieved_ts: float) -> list[FeedEntryHit]:
         # Sprint 8BE: extract content element for rich HTML content
         content_el = _find_first_child(entry, "content")
         rich_content = _text_of(content_el) or ""
-        published_raw = _text_of(
-            _find_first_child(entry, "published")
-        ) or _text_of(_find_first_child(entry, "updated"))
+        published_raw = _text_of(_find_first_child(entry, "published")) or _text_of(_find_first_child(entry, "updated"))
         published_ts = _parse_published_ts(published_raw)
         # Sprint F150H: author — key quality signal for downstream
         author_el = _find_first_child(entry, "author")
@@ -1131,9 +1106,7 @@ async def async_fetch_feed_entries(
 
     # Network call via 8AD
     try:
-        result = await async_fetch_public_text(
-            feed_url, timeout_s=timeout_s, max_bytes=max_bytes
-        )
+        result = await async_fetch_public_text(feed_url, timeout_s=timeout_s, max_bytes=max_bytes)
     except CancelledError:
         raise  # never swallow
 
@@ -1149,6 +1122,7 @@ async def async_fetch_feed_entries(
             entries=(),
             error=fetch_err,
             source_accessibility_error=src_accessibility,
+            raw_xml=result.text if result.text else None,
         )
 
     # Guard removed by Sprint 8AR: DOCTYPE/ENTITY handling is now done
@@ -1188,6 +1162,7 @@ async def async_fetch_feed_entries(
             entries=(),
             error=error_tag,
             source_accessibility_error=src_err,
+            raw_xml=result.text,
         )
 
     # Deduplicate (preserve-first within this feed)
@@ -1222,9 +1197,7 @@ async def async_fetch_feed_entries(
 
         # We got at least one entry that passed the pre-filter
         all_filtered_out = False
-        freshness_score, freshness_tier = _compute_freshness(
-            entry.published_ts, retrieved_ts
-        )
+        freshness_score, freshness_tier = _compute_freshness(entry.published_ts, retrieved_ts)
         quality_score = _compute_quality(entry)
 
         # Combined score: freshness权重0.55, quality权重0.45
@@ -1267,9 +1240,7 @@ async def async_fetch_feed_entries(
 
         # entry_usefulness_band (additive signal #3): derived from combined score quintiles
         usefulness_band: str = (
-            "high" if combined >= 0.8
-            else ("medium" if combined >= 0.55
-                  else ("low" if combined >= 0.3 else "noise"))
+            "high" if combined >= 0.8 else ("medium" if combined >= 0.55 else ("low" if combined >= 0.3 else "noise"))
         )
 
         # F150K: source_priority_bias — credibility lift from curated seed domain hints.
@@ -1303,10 +1274,21 @@ async def async_fetch_feed_entries(
         else:
             time_signal = "ts_aged_low_conf"
 
-        scored.append((
-            entry, freshness_score, quality_score, freshness_tier, "", combined,
-            ts_rel, richness_band, usefulness_band, spb, time_signal,
-        ))
+        scored.append(
+            (
+                entry,
+                freshness_score,
+                quality_score,
+                freshness_tier,
+                "",
+                combined,
+                ts_rel,
+                richness_band,
+                usefulness_band,
+                spb,
+                time_signal,
+            )
+        )
 
     # Sort: highest combined score desc; preserve-first tie-break via stable sort
     # F150K: source_priority_bias is additive bias — fold into sort key.
@@ -1315,10 +1297,19 @@ async def async_fetch_feed_entries(
 
     # Clamp to max_entries and rebuild with scoring metadata
     entries: list[FeedEntryHit] = []
-    for rank, (entry, freshness_score, quality_score, freshness_tier, _,
-               combined, ts_rel, richness_band, usefulness_band,  # noqa: B007
-               spb, time_signal) in enumerate(scored[:max_entries]):
-
+    for rank, (
+        entry,
+        freshness_score,
+        quality_score,
+        freshness_tier,
+        _,
+        combined,
+        ts_rel,
+        richness_band,
+        usefulness_band,  # noqa: B007
+        spb,
+        time_signal,
+    ) in enumerate(scored[:max_entries]):
         # Determine selection_reason
         if freshness_tier == "future":
             reason = "future_timestamp"
@@ -1385,7 +1376,7 @@ async def async_fetch_feed_entries(
         error_tag = "valid_empty_feed"
     # else: entries found → no error, normal success
 
-    return FeedBatchResult(feed_url=feed_url, entries=tuple(entries), error=error_tag)
+    return FeedBatchResult(feed_url=feed_url, entries=tuple(entries), error=error_tag, raw_xml=result.text)
 
 
 # ---------------------------------------------------------------------------
@@ -1425,9 +1416,7 @@ class _FeedLinkParser(HTMLParser):
         if self._error is None:
             self._error = message
 
-    def handle_starttag(
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == "base":
             # <base href="..."> — take the first valid one
             if self._base_href is None:
@@ -1477,9 +1466,7 @@ class _FeedLinkParser(HTMLParser):
             }
         )
 
-    def handle_startendtag(
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         # e.g. <link ... /> — same logic as starttag
         self.handle_starttag(tag, attrs)
 
@@ -1657,9 +1644,7 @@ async def async_discover_feed_urls(
     from hledac.universal.fetching.public_fetcher import async_fetch_public_text
 
     try:
-        result = await async_fetch_public_text(
-            page_url, timeout_s=timeout_s, max_bytes=max_bytes
-        )
+        result = await async_fetch_public_text(page_url, timeout_s=timeout_s, max_bytes=max_bytes)
     except CancelledError:
         raise  # never swallow
 
@@ -1673,10 +1658,7 @@ async def async_discover_feed_urls(
 
     # Reject non-HTML content types
     content_type = result.content_type.lower()
-    if content_type and not (
-        "text/html" in content_type
-        or "application/xhtml+xml" in content_type
-    ):
+    if content_type and not ("text/html" in content_type or "application/xhtml+xml" in content_type):
         return FeedDiscoveryBatchResult(
             page_url=page_url,
             hits=(),
@@ -1854,9 +1836,7 @@ def get_default_feed_seed_truth() -> dict[str, Any]:
         "runtime_rss_atom_urls": sorted(s.feed_url for s in runtime),
         "topology_candidate_urls": sorted(s.feed_url for s in topology),
         "all_urls": sorted(s.feed_url for s in seeds),
-        "has_authenticated_reuters": any(
-            "reuters.com" in s.feed_url.lower() for s in seeds
-        ),
+        "has_authenticated_reuters": any("reuters.com" in s.feed_url.lower() for s in seeds),
     }
 
 
@@ -1895,7 +1875,7 @@ def get_topology_candidates() -> tuple[FeedSeed, ...]:
 # Viability tier thresholds — derived from FeedSeed.priority field.
 # These drive get_feed_viability_posture() and are part of its public contract.
 # DO NOT use these values in any new scoring system — they are for tier derivation only.
-VIABILITY_HIGH_PRIORITY_THRESHOLD: int = 7   # min priority for "high" tier
+VIABILITY_HIGH_PRIORITY_THRESHOLD: int = 7  # min priority for "high" tier
 VIABILITY_MEDIUM_PRIORITY_THRESHOLD: int = 4  # min priority for "medium" tier
 
 

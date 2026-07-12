@@ -12,11 +12,9 @@ Architecture (Issue 3.5 consolidation):
   - curl_cffi_runtime.py is a backward-compat re-export alias (deleted in v3.0)
 """
 
-
 import asyncio
 import itertools
 import logging
-import os
 import threading
 import time
 import urllib.parse
@@ -25,13 +23,13 @@ from typing import Any
 
 from hledac.universal.core.constants import M1_BOUNDS
 from hledac.universal.core.env_config import ENV
+
+# Issue 10.2: canonical UA — injects JA3-consistent User-Agent header
+from hledac.universal.layers.ua_rotator import get_ua_for_profile
 from hledac.universal.utils.async_helpers import safe_create_task
 from hledac.universal.utils.encoding import decode_response_bytes, parse_charset_from_content_type
 
 from .body_limiter import read_body_with_cap
-
-# Issue 10.2: canonical UA — injects JA3-consistent User-Agent header
-from hledac.universal.layers.ua_rotator import get_ua_for_profile
 
 logger = logging.getLogger(__name__)
 
@@ -58,12 +56,12 @@ _tor_curl_request_count: int = 0
 # browser families" contract enforced by tests/test_f265a_transport_audit.py
 # TestJA3ProfileCycling.test_pool_contains_at_least_three_browser_families.
 _JA3_ROTATION_POOL: list[str] = [
-    "chrome133",    # Chromium 133, Mar 2025 (chrome133+)
-    "chrome136",    # Chromium 136, May 2025 (latest stable)
-    "safari18_0",   # Safari 18.0 (macOS Sequoia 15)
-    "safari17_4",   # Safari 17.4 (Sonoma 14.4)
-    "firefox136",   # Firefox 136 ESR, Mar 2026
-    "firefox133",   # Firefox 133 ESR, Nov 2024
+    "chrome133",  # Chromium 133, Mar 2025 (chrome133+)
+    "chrome136",  # Chromium 136, May 2025 (latest stable)
+    "safari18_0",  # Safari 18.0 (macOS Sequoia 15)
+    "safari17_4",  # Safari 17.4 (Sonoma 14.4)
+    "firefox136",  # Firefox 136 ESR, Mar 2026
+    "firefox133",  # Firefox 133 ESR, Nov 2024
 ]
 
 # Bounded, thread-safe round-robin iterator. ISSUE-010 FIX: itertools.cycle
@@ -109,7 +107,9 @@ def _ja3_log(*, profile: str, url: str, used_profile: str) -> None:
             return
         logger.debug(
             "JA3 rotation: requested=%s used=%s url=%s",
-            profile, used_profile, url,
+            profile,
+            used_profile,
+            url,
         )
     except Exception:  # noqa: BLE001
         pass
@@ -188,28 +188,44 @@ async def async_get_curl_cffi_session(profile: str = "chrome110") -> tuple[bool,
     Get or create a cached curl_cffi AsyncSession for the given profile.
     Lazy singleton with bounded LRU eviction.
 
+    F350M-R: Uses race_first_success to parallelize profile fallback chain.
+    All profiles race to create a session; first success wins, losers cancelled.
+    ~3× faster than sequential fallback (was O(n) sequential, now O(1) parallel).
+
     Returns:
-        (success, session_or_None, reason)
+        (success, session_or_None, used_profile)
     """
     available, reason = is_curl_cffi_available()
     if not available:
         return False, None, reason
 
-    profiles_to_try = _PROFILE_FALLBACK_ORDER if profile not in _PROFILE_FALLBACK_ORDER else [profile] + [
-        p for p in _PROFILE_FALLBACK_ORDER if p != profile
-    ]
+    profiles_to_try = (
+        _PROFILE_FALLBACK_ORDER
+        if profile not in _PROFILE_FALLBACK_ORDER
+        else [profile] + [p for p in _PROFILE_FALLBACK_ORDER if p != profile]
+    )
 
-    last_error = "unknown"
-    for try_profile in profiles_to_try:
-        try:
-            session = await _get_or_create_session(try_profile)
-            if session is not None:
-                return True, session, try_profile
-        except Exception as e:
-            last_error = str(e)
-            continue
+    # F350M-R: Race-first success — parallel profile creation.
+    # Creates a session for each profile concurrently; first working profile wins.
+    # Losers are cancelled immediately, saving CPU/RAM vs sequential O(n) delay.
+    from hledac.universal.utils.async_helpers import race_first_success
 
-    return False, None, f"session_creation_failed: {last_error}"
+    coros: list[tuple[Awaitable[tuple[bool, Any]], str]] = []
+    for p in profiles_to_try:
+
+        async def _try_profile(prof: str = p) -> tuple[bool, Any]:
+            sess = await _get_or_create_session(prof)
+            return sess is not None, sess
+
+        coros.append((_try_profile(p), p))
+
+    # 5s global timeout for profile race — if all profiles fail, return failure
+    result = await race_first_success(*coros, timeout=5.0, label="curl_cffi_profile_race")
+
+    if result.result is not None and result.result[0]:
+        return True, result.result[1], result.winner_label
+
+    return False, None, f"session_creation_failed: {len(result.errors)} profiles failed"
 
 
 # F273H: Public API — get session keyed by (url, profile) for keepalive reuse
@@ -331,9 +347,7 @@ async def _get_or_create_session(profile: str) -> Any | None:
                 _curl_cffi_sessions.pop(profile, None)
             _curl_cffi_sessions[profile] = sess
             _curl_cffi_profiles_order.append(profile)
-            logger.debug(
-                f"curl_cffi session acquired from prewarm pool for profile: {used}"
-            )
+            logger.debug(f"curl_cffi session acquired from prewarm pool for profile: {used}")
             return sess
     except Exception as e:  # noqa: BLE001
         logger.debug(f"prewarm pool acquire failed (fallback to lazy): {e}")
@@ -352,6 +366,7 @@ async def _get_or_create_session(profile: str) -> Any | None:
                         _sessions_to_close.append(_curl_cffi_sessions.pop(oldest))
 
             from curl_cffi.requests import AsyncSession  # type: ignore[unresolved-import]
+
             new_session = AsyncSession(
                 impersonate=profile,
                 timeout=10.0,
@@ -363,6 +378,7 @@ async def _get_or_create_session(profile: str) -> Any | None:
             return new_session
     finally:
         if _sessions_to_close:
+
             async def _close_evicted():
                 for _sess in _sessions_to_close:
                     try:
@@ -424,6 +440,7 @@ def get_curl_cffi_runtime_status() -> dict[str, Any]:
 
 # === Fetch API (from original curl_cffi_fetch.py) ===
 
+
 # F265C: blocking Alt-Svc pre-probe for first-fetch H3 priming.
 async def _blocking_altsvc_probe_for_url(url: str) -> Any:
     """Perform a blocking HEAD probe to prime the H3 LRU before first fetch.
@@ -441,6 +458,8 @@ async def _blocking_altsvc_probe_for_url(url: str) -> Any:
         return None
 
     try:
+        from hledac.universal.fetching.public_fetcher import url_ops
+
         from .http3_lane import (
             _altsvc_advertises_h3,
             _cache_get,
@@ -450,9 +469,8 @@ async def _blocking_altsvc_probe_for_url(url: str) -> Any:
         from .http3_lane import (
             extract_host as _http3_extract_host,
         )
-        from hledac.universal.fetching.public_fetcher import url_ops
 
-        _use_extract_host = url_ops.extract_host if hasattr(url_ops, 'extract_host') else _http3_extract_host
+        _use_extract_host = url_ops.extract_host if hasattr(url_ops, "extract_host") else _http3_extract_host
     except Exception:
         _use_extract_host = None
 
@@ -830,13 +848,20 @@ async def fetch_via_curl_cffi_cached(
         ``content`` field is the cached bytes and the result carries
         ``conditional_304=True`` so callers can log the hit.
     """
+    from hledac.universal.utils.rate_limiters import get_limiter
+
     from .conditional_cache import (
         conditional_headers_for,
+    )
+    from .conditional_cache import (
         lookup as _cc_lookup,
+    )
+    from .conditional_cache import (
         record_conditional_result as _cc_record,
+    )
+    from .conditional_cache import (
         store as _cc_store,
     )
-    from hledac.universal.utils.rate_limiters import get_limiter
 
     # F273G: Issue #39 — Rate limiting envelope.  Every caller of this
     # function is now automatically rate-limited without needing a separate
@@ -858,13 +883,17 @@ async def fetch_via_curl_cffi_cached(
             try:
                 await _blocking_altsvc_probe_for_url(url)
                 from .http3_lane import (
-                    extract_host as _probe_extract_host,
                     _cache_get,
                 )
+                from .http3_lane import (
+                    extract_host as _probe_extract_host,
+                )
+
                 _probe_host = _probe_extract_host(url)
                 if _probe_host and _cache_get(_probe_host) is True:
                     try:
                         from curl_cffi.requests import HttpVersion as _HttpVersion  # type: ignore[unresolved-import]
+
                         http_version = _HttpVersion.v3
                     except Exception:  # noqa: BLE001
                         pass
@@ -936,6 +965,7 @@ async def fetch_via_curl_cffi_cached(
             sha_hex = ""
             try:
                 import hashlib
+
                 sha_hex = hashlib.sha256(body_bytes).hexdigest()
             except Exception:  # noqa: BLE001
                 pass

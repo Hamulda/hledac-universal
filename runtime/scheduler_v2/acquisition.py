@@ -114,16 +114,30 @@ class AcquisitionOrchestrator:
 
                 # ── Hard deadline check ────────────────────────────────────────
                 if not self._check_hard_deadline(ctx):
-                    await self._ensure_nonfeed_predispatch_before_finalization(
-                        ctx, ordered_sources, duckdb_store, "hard_deadline_exceeded"
-                    )
+                    # Sprint F350M-R Issue #P2: parallelize finalization pipeline
+                    # Issue: _ensure_nonfeed_predispatch + _finalize_result_truth sequential await
+                    # Fix: asyncio.TaskGroup runs both in parallel — nonfeed_predispatch
+                    # completes faster so its result can gate _finalize_result_truth output
+                    try:
+                        async with asyncio.TaskGroup() as _tg:
+                            _predispatch_tg = _tg.create_task(
+                                self._ensure_nonfeed_predispatch_before_finalization(
+                                    ctx, ordered_sources, duckdb_store, "hard_deadline_exceeded"
+                                ),
+                                name="finalize:predispatch",
+                            )
+                            _finalize_tg = _tg.create_task(
+                                self._finalize_result_truth(
+                                    ctx,
+                                    "hard_deadline_exceeded",
+                                    f"hard deadline exceeded at cycle {cycles_started}",
+                                    "GATHER",
+                                ),
+                                name="finalize:truth",
+                            )
+                    except ExceptionGroup:
+                        pass  # graceful degradation: at least one finalization path ran
                     _result.scheduler_exit_elapsed_s = _time.monotonic() - _wall_clock_start
-                    await self._finalize_result_truth(
-                        ctx,
-                        "hard_deadline_exceeded",
-                        f"hard deadline exceeded at cycle {cycles_started}",
-                        "GATHER",
-                    )
                     exit_path = "hard_deadline"
                     break
 
@@ -132,13 +146,24 @@ class AcquisitionOrchestrator:
                     if await self._ensure_mandatory_nonfeed_before_return(
                         ctx, ordered_sources, duckdb_store, "stop_requested"
                     ):
-                        await self._ensure_nonfeed_predispatch_before_finalization(
-                            ctx, ordered_sources, duckdb_store, "stop_requested_break"
-                        )
+                        # Sprint F350M-R Issue #P2: parallelize finalization pipeline
+                        try:
+                            async with asyncio.TaskGroup() as _tg:
+                                _predispatch_tg = _tg.create_task(
+                                    self._ensure_nonfeed_predispatch_before_finalization(
+                                        ctx, ordered_sources, duckdb_store, "stop_requested_break"
+                                    ),
+                                    name="finalize:predispatch",
+                                )
+                                _finalize_tg = _tg.create_task(
+                                    self._finalize_result_truth(
+                                        ctx, "stop_requested_break", "stop_requested guard passed", "GATHER"
+                                    ),
+                                    name="finalize:truth",
+                                )
+                        except ExceptionGroup:
+                            pass
                         _result.scheduler_exit_elapsed_s = _time.monotonic() - _wall_clock_start
-                        await self._finalize_result_truth(
-                            ctx, "stop_requested_break", "stop_requested guard passed", "GATHER"
-                        )
                         _runner.request_windup()
                         break
                     continue
@@ -151,13 +176,24 @@ class AcquisitionOrchestrator:
                     await self._ensure_mandatory_nonfeed_before_return(
                         ctx, ordered_sources, duckdb_store, "lifecycle_abort"
                     )
-                    await self._ensure_nonfeed_predispatch_before_finalization(
-                        ctx, ordered_sources, duckdb_store, "lifecycle_abort_break"
-                    )
+                    # Sprint F350M-R Issue #P2: parallelize finalization pipeline
+                    try:
+                        async with asyncio.TaskGroup() as _tg:
+                            _predispatch_tg = _tg.create_task(
+                                self._ensure_nonfeed_predispatch_before_finalization(
+                                    ctx, ordered_sources, duckdb_store, "lifecycle_abort_break"
+                                ),
+                                name="finalize:predispatch",
+                            )
+                            _finalize_tg = _tg.create_task(
+                                self._finalize_result_truth(
+                                    ctx, "lifecycle_abort_break", "abort_requested from lifecycle", "GATHER"
+                                ),
+                                name="finalize:truth",
+                            )
+                    except ExceptionGroup:
+                        pass
                     _result.scheduler_exit_elapsed_s = _time.monotonic() - _wall_clock_start
-                    await self._finalize_result_truth(
-                        ctx, "lifecycle_abort_break", "abort_requested from lifecycle", "GATHER"
-                    )
                     _runner.request_windup()
                     break
 
@@ -234,25 +270,53 @@ class AcquisitionOrchestrator:
                     if await self._ensure_mandatory_nonfeed_before_return(
                         ctx, ordered_sources, duckdb_store, "windup_barrier"
                     ):
-                        await self._ensure_nonfeed_predispatch_before_finalization(
-                            ctx, ordered_sources, duckdb_store, "windup_barrier_passed"
-                        )
+                        # Sprint F350M-R Issue #P2: parallelize finalization pipeline
+                        try:
+                            async with asyncio.TaskGroup() as _tg:
+                                _predispatch_tg = _tg.create_task(
+                                    self._ensure_nonfeed_predispatch_before_finalization(
+                                        ctx, ordered_sources, duckdb_store, "windup_barrier_passed"
+                                    ),
+                                    name="finalize:predispatch",
+                                )
+                                _finalize_tg = _tg.create_task(
+                                    self._finalize_result_truth(
+                                        ctx,
+                                        "windup_barrier_passed",
+                                        "pre-windup barrier satisfied, entered windup",
+                                        "WINDUP",
+                                    ),
+                                    name="finalize:truth",
+                                )
+                        except ExceptionGroup:
+                            pass
                         _result.scheduler_exit_elapsed_s = _time.monotonic() - _wall_clock_start
-                        await self._finalize_result_truth(
-                            ctx, "windup_barrier_passed", "pre-windup barrier satisfied, entered windup", "WINDUP"
-                        )
                         break
 
                     await self._ensure_mandatory_nonfeed_before_return(
                         ctx, ordered_sources, duckdb_store, "windup_barrier_forced"
                     )
-                    await self._ensure_nonfeed_predispatch_before_finalization(
-                        ctx, ordered_sources, duckdb_store, "windup_barrier_break"
-                    )
+                    # Sprint F350M-R Issue #P2: parallelize finalization pipeline
+                    try:
+                        async with asyncio.TaskGroup() as _tg:
+                            _predispatch_tg = _tg.create_task(
+                                self._ensure_nonfeed_predispatch_before_finalization(
+                                    ctx, ordered_sources, duckdb_store, "windup_barrier_break"
+                                ),
+                                name="finalize:predispatch",
+                            )
+                            _finalize_tg = _tg.create_task(
+                                self._finalize_result_truth(
+                                    ctx,
+                                    "windup_barrier_break",
+                                    "pre-windup barrier unsatisfied, forced terminalization",
+                                    "WINDUP",
+                                ),
+                                name="finalize:truth",
+                            )
+                    except ExceptionGroup:
+                        pass
                     _result.scheduler_exit_elapsed_s = _time.monotonic() - _wall_clock_start
-                    await self._finalize_result_truth(
-                        ctx, "windup_barrier_break", "pre-windup barrier unsatisfied, forced terminalization", "WINDUP"
-                    )
                     break
 
                 # ── Re-prioritize sources in ACTIVE phase ──────────────────────
@@ -266,13 +330,27 @@ class AcquisitionOrchestrator:
                     if await self._ensure_mandatory_nonfeed_before_return(
                         ctx, ordered_sources, duckdb_store, "max_cycles_reached"
                     ):
-                        await self._ensure_nonfeed_predispatch_before_finalization(
-                            ctx, ordered_sources, duckdb_store, "max_cycles_reached"
-                        )
+                        # Sprint F350M-R Issue #P2: parallelize finalization pipeline
+                        try:
+                            async with asyncio.TaskGroup() as _tg:
+                                _predispatch_tg = _tg.create_task(
+                                    self._ensure_nonfeed_predispatch_before_finalization(
+                                        ctx, ordered_sources, duckdb_store, "max_cycles_reached"
+                                    ),
+                                    name="finalize:predispatch",
+                                )
+                                _finalize_tg = _tg.create_task(
+                                    self._finalize_result_truth(
+                                        ctx,
+                                        "max_cycles_reached",
+                                        f"max_cycles {effective_max_cycles} reached",
+                                        "ACTIVE",
+                                    ),
+                                    name="finalize:truth",
+                                )
+                        except ExceptionGroup:
+                            pass
                         _result.scheduler_exit_elapsed_s = _time.monotonic() - _wall_clock_start
-                        await self._finalize_result_truth(
-                            ctx, "max_cycles_reached", f"max_cycles {effective_max_cycles} reached", "ACTIVE"
-                        )
                         _runner.request_windup()
                         break
                     continue
@@ -597,10 +675,6 @@ class AcquisitionOrchestrator:
     def _get_effective_max_cycles(self, ctx: Any) -> int:
         """Adaptive max_cycles based on cycle_time EMA."""
         _cyc = ctx._cycle
-        if _cyc.cycle_time_ema == 1.0 and _cyc.last_cycle_start is None:
-            _cyc.cycle_time_ema = 1.0
-            _cyc.last_cycle_start = None
-            _cyc.effective_max_cycles = ctx.config.max_cycles
         if _cyc.last_cycle_start is not None:
             _elapsed = max(0.1, min(10.0, _time.monotonic() - _cyc.last_cycle_start))
             _cyc.cycle_time_ema = 0.7 * _cyc.cycle_time_ema + 0.3 * _elapsed

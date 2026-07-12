@@ -1565,7 +1565,6 @@ dependencies = [
     { name = "pyzipper" },
     { name = "rank-bm25" },
     { name = "rapidfuzz" },
-    { name = "redis" },
     { name = "roampal" },
     { name = "rustworkx" },
     { name = "scapy" },
@@ -1654,6 +1653,7 @@ requires-dist = [
     { name = "aiohttp", marker = "extra == 'aiohttp-fallback'", specifier = ">=3.11.0" },
     { name = "aioquic", marker = "extra == 'http3'", specifier = ">=1.3.0" },
     { name = "aiosqlite", specifier = ">=0.19.0" },
+    { name = "aiosqlite", specifier = ">=0.20.0" },
     { name = "beautifulsoup4", specifier = ">=4.14.3" },
     { name = "brotlicffi", specifier = ">=1.2.0.1" },
     { name = "cachetools", specifier = ">=7.1.4" },
@@ -1661,7 +1661,7 @@ requires-dist = [
     { name = "coremltools", specifier = ">=8.0,<10.0" },
     { name = "cryptography", specifier = ">=48.0.0" },
     { name = "cryptography", marker = "extra == 'http3'", specifier = ">=48.0.0" },
-    { name = "curl-cffi", marker = "sys_platform == 'darwin'", specifier = ">=0.15.0" },
+    { name = "curl-cffi", marker = "sys_platform == 'darwin'", specifier = ">=0.15.0,<1.0.0" },
     { name = "datasketch", specifier = ">=1.10.0" },
     { name = "debugpy", specifier = ">=1.8.21" },
     { name = "defusedxml" },
@@ -1673,12 +1673,12 @@ requires-dist = [
     { name = "fast-langdetect", specifier = ">=1.0.1" },
     { name = "flashrank", marker = "extra == 'ml'", specifier = ">=0.2.10" },
     { name = "gliner2", specifier = ">=1.0.1" },
-    { name = "hishel", specifier = ">=0.0.31" },
-    { name = "httpx", specifier = ">=0.28.0" },
-    { name = "httpx-socks", specifier = ">=0.10.0" },
+    { name = "hishel", specifier = ">=0.0.31,<2.0.0" },
+    { name = "httpx", specifier = ">=0.28.0,<0.30.0" },
+    { name = "httpx-socks", specifier = ">=0.10.0,<0.12.0" },
     { name = "ipwhois", specifier = ">=1.3.0" },
     { name = "jinja2", specifier = ">=3.1.0" },
-    { name = "lancedb", specifier = ">=0.33.0" },
+    { name = "lancedb", specifier = ">=0.33.0,<0.35.0" },
     { name = "liboqs-python", marker = "platform_machine == 'arm64'", specifier = ">=0.15.0" },
     { name = "lightgbm", specifier = ">=4.6.0" },
     { name = "lmdb", specifier = ">=2.2.0" },
@@ -1701,24 +1701,24 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.4.6" },
     { name = "ocrmac", marker = "sys_platform == 'darwin'", specifier = ">=1.0.1" },
     { name = "onnxscript", specifier = ">=0.7.0" },
-    { name = "opentelemetry-api", specifier = ">=1.27.0" },
+    { name = "opentelemetry-api", specifier = ">=1.27.0,<2.0.0" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.27.0" },
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'observability'", specifier = ">=1.27.0" },
     { name = "opentelemetry-instrumentation-aio-pika", marker = "extra == 'observability'", specifier = ">=0.47b0" },
     { name = "opentelemetry-instrumentation-aio-pika", extras = ["observability"], specifier = ">=0.47b0" },
     { name = "opentelemetry-instrumentation-asyncpg", extras = ["observability"], specifier = ">=0.47b0" },
     { name = "opentelemetry-instrumentation-httpx", specifier = ">=0.47b0" },
-    { name = "opentelemetry-sdk", specifier = ">=1.27.0" },
+    { name = "opentelemetry-sdk", specifier = ">=1.27.0,<2.0.0" },
     { name = "orjson", specifier = ">=3.10.0" },
     { name = "outlines", marker = "extra == 'ml'", specifier = ">=1.3.0" },
     { name = "piexif" },
     { name = "pillow", specifier = ">=12.2.0" },
-    { name = "polars", specifier = ">=1.0.0" },
+    { name = "polars", specifier = ">=1.0.0,<2.0.0" },
     { name = "posix-ipc", marker = "sys_platform == 'darwin'", specifier = ">=1.1.1" },
     { name = "psutil", specifier = ">=5.9.0" },
     { name = "py-spy", marker = "extra == 'observability'", specifier = ">=0.3.14" },
     { name = "pyahocorasick", specifier = ">=2.3.1" },
-    { name = "pyarrow", specifier = ">=24.0.0" },
+    { name = "pyarrow", specifier = ">=24.0.0,<25.0.0" },
     { name = "pydantic", specifier = ">=2.10.0,<3.0.0" },
     { name = "pydantic-settings", specifier = ">=2.14.2" },
     { name = "pymupdf", specifier = ">=1.27.2.3" },
@@ -1741,7 +1741,6 @@ requires-dist = [
     { name = "pyzipper", specifier = ">=0.3.6" },
     { name = "rank-bm25", specifier = ">=0.2.2" },
     { name = "rapidfuzz", specifier = ">=3.0.0" },
-    { name = "redis", specifier = ">=8.0.0" },
     { name = "roampal", specifier = ">=0.5.7" },
     { name = "rustworkx", specifier = ">=0.17.1,<0.20.0" },
     { name = "scapy", specifier = ">=2.5.0" },
@@ -1752,8 +1751,8 @@ requires-dist = [
     { name = "sqlite-vec", specifier = ">=0.1.0" },
     { name = "stem", specifier = ">=1.8.0" },
     { name = "stix2", specifier = ">=3.0.1" },
-    { name = "structlog", specifier = ">=24.0.0" },
-    { name = "structlog", marker = "extra == 'observability'", specifier = ">=24.0.0" },
+    { name = "structlog", specifier = ">=24.0.0,<25.0.0" },
+    { name = "structlog", marker = "extra == 'observability'", specifier = ">=24.0.0,<25.0.0" },
     { name = "tenacity", specifier = ">=9.0.0" },
     { name = "transformers", specifier = ">=4.30" },
     { name = "transformers", marker = "extra == 'ml'", specifier = ">=5.10.2" },
@@ -4781,15 +4780,6 @@ wheels = [
 ]
 
 [[package]]
-name = "redis"
-version = "8.0.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/cc/c3/928b290c2c0ca99ab96eea5b4ff8f30be8112b075301a7d3ba214a3c8c12/redis-8.0.1.tar.gz", hash = "sha256:afc5a7a2f5a084f5b1880dec548dd45be17db7e43c82a30d84f952aefb05cfb0", size = 5114170, upload-time = "2026-06-23T14:52:37.728Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/fd/0a/c2345ebf1ebe70840ce3f6c6ee612f8fa749cfbd1b03069c53bf0c62aaad/redis-8.0.1-py3-none-any.whl", hash = "sha256:47daa35a058c23468d6437f17a8c76882cb316b838ef763036af99b96cedd743", size = 502406, upload-time = "2026-06-23T14:52:36.137Z" },
-]
-
-[[package]]
 name = "referencing"
 version = "0.37.0"
 source = { registry = "https://pypi.org/simple" }
@@ -5556,11 +5546,11 @@ wheels = [
 
 [[package]]
 name = "structlog"
-version = "26.1.0"
+version = "24.4.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/5e/89/b4a0bcfdf4f71a3dea31379f095929613d7e4528a0996bca6aa964cd0dca/structlog-26.1.0.tar.gz", hash = "sha256:f63a716cbd1b1291cf7661de7794b455acfa4c43c5bcf1630e6ad5ddc1adb3b7", size = 1459881, upload-time = "2026-06-06T07:33:39.348Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/78/a3/e811a94ac3853826805253c906faa99219b79951c7d58605e89c79e65768/structlog-24.4.0.tar.gz", hash = "sha256:b27bfecede327a6d2da5fbc96bd859f114ecc398a6389d664f62085ee7ae6fc4", size = 1348634, upload-time = "2024-07-17T12:38:43.483Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a9/18/489c97b834dfff9cf2fc2507cede4bcd4b11e67f84bc462acd1992496f86/structlog-26.1.0-py3-none-any.whl", hash = "sha256:e081a26d6c373e6d201eca24eede26d8ffab07f88f477822e679183428d3d91e", size = 73764, upload-time = "2026-06-06T07:33:38.046Z" },
+    { url = "https://files.pythonhosted.org/packages/bf/65/813fc133609ebcb1299be6a42e5aea99d6344afb35ccb43f67e7daaa3b92/structlog-24.4.0-py3-none-any.whl", hash = "sha256:597f61e80a91cc0749a9fd2a098ed76715a1c8a01f73e336b746504d1aad7610", size = 67180, upload-time = "2024-07-17T12:38:41.043Z" },
 ]
 
 [[package]]

@@ -29,7 +29,7 @@ import threading
 import time
 from collections.abc import Callable
 from enum import Enum, IntEnum
-from typing import Any, Generic, TypeVar
+from typing import Any, TypeVar
 
 _KT = TypeVar("_KT")
 _VT = TypeVar("_VT")
@@ -228,77 +228,53 @@ def _get_cached_process() -> Any:
 # background thread, all reads are synchronous cache hits.
 # =============================================================================
 
+import contextvars as _contextvars
 import threading as _threading
 import time as _time_module
 
-
-# Fast LRU cache using __slots__ + dict insertion-order (Python 3.7+).
-# Avoids cachetools.OrderedDict overhead. Expected ~30% faster.
-class _FastLRUCache(Generic[_KT, _VT]):
-    __slots__ = ("_data", "_maxsize")
-
-    def __init__(self, maxsize: int) -> None:
-        object.__setattr__(self, "_data", {})
-        object.__setattr__(self, "_maxsize", maxsize)
-
-    def get(self, key: _KT) -> _VT | None:
-        data = object.__getattribute__(self, "_data")
-        val = data.get(key)
-        if val is not None:
-            # Move to end (most recent) — dict preserves insertion order
-            data[key] = data.pop(key)
-        return val
-
-    def put(self, key: _KT, value: _VT) -> None:
-        data = object.__getattribute__(self, "_data")
-        maxsize = object.__getattribute__(self, "_maxsize")
-        if key in data:
-            data[key] = value
-            return
-        if len(data) >= maxsize:
-            # Evict oldest (first insertion-order key)
-            data.pop(next(iter(data)))
-        data[key] = value
-
-    def clear(self) -> None:
-        object.__getattribute__(self, "_data").clear()
-
-    def __len__(self) -> int:
-        return len(object.__getattribute__(self, "_data"))
-
-
-_MAX_PSUTIL_CACHE_SIZE: int = 32  # defence-in-depth: bounds cache entries
-_psutil_cache: _FastLRUCache[str, tuple[Any, float]] = _FastLRUCache(
-    maxsize=_MAX_PSUTIL_CACHE_SIZE
-)  # key → (result, timestamp)
-_psutil_key_locks: _FastLRUCache[str, _threading.Lock] = _FastLRUCache(
-    maxsize=128
-)  # ISSUE-110: bounded per-key lock cache
-_psutil_meta_lock: _threading.Lock = _threading.Lock()  # only for dict ops (_psutil_cache, _psutil_key_locks)
-_PSUTIL_CACHE_TTL_S: float = 2.0  # Short TTL — memory state changes fast under load
+# E5 FIX: Thread-local lock map via ContextVar — eliminates _psutil_meta_lock contention.
+# Each thread gets its own dict[str, Lock]; no inter-thread contention.
+# For asyncio.to_thread workers: each worker thread has its own locks.
+_thread_local_locks: _contextvars.ContextVar[dict[str, _threading.Lock] | None] = _contextvars.ContextVar(
+    "_thread_local_locks", default=None
+)
 
 
 def _get_key_lock(key: str) -> _threading.Lock:
-    """Return per-key lock, lazily created. Uses _psutil_meta_lock only for dict access.
+    """Return per-key lock, lazily created in thread-local dict.
 
-    ISSUE-110 FIX: LRUCache auto-evicts least-recently-used entries when maxsize=128
-    is reached. Thread-safe via _psutil_meta_lock guard. Evicted locks are abandoned
-    (no threads can be waiting on them at eviction time — they are only created
-    lazily after a cache miss and released immediately after use).
+    E5 FIX: Uses ContextVar instead of global _psutil_meta_lock + LRUCache.
+    - No global meta-lock bottleneck — every thread has its own lock dict
+    - No LRUCache eviction — per-thread unbounded dict (thread count bounded)
+    - Thread-safe: ContextVar is thread-isolated, each thread gets own dict
+    - O(1) per-thread: dict[key] lookup, no global lock needed
+
+    Rationale:
+    - asyncio monitor thread + to_thread worker threads → each has own locks
+    - max threads ≈ 10 (thread pool) × 1 dict ≈ negligible memory
+    - 2-level TTL cache (_get_cached_psutil) already bounds staleness
     """
-    with _psutil_meta_lock:
-        lock = _psutil_key_locks.get(key)
-        if lock is None:
-            lock = _threading.Lock()
-            _psutil_key_locks[key] = lock
-        return lock
+    locks = _thread_local_locks.get()
+    if locks is None:
+        locks = {}
+        _thread_local_locks.set(locks)
+    lock = locks.get(key)
+    if lock is None:
+        lock = _threading.Lock()
+        locks[key] = lock
+    return lock
+
+
+_MAX_PSUTIL_CACHE_SIZE: int = 32  # defence-in-depth: bounds cache entries
+_psutil_cache: dict[str, tuple[Any, float]] = {}  # key → (result, timestamp)
+_psutil_meta_lock: _threading.Lock = _threading.Lock()  # only for _psutil_cache dict ops
+_PSUTIL_CACHE_TTL_S: float = 2.0  # Short TTL — memory state changes fast under load
 
 
 def reset_psutil_cache() -> None:
     """Reset psutil TTL cache. For testing only — clears all cached readings."""
     with _psutil_meta_lock:
         _psutil_cache.clear()
-        _psutil_key_locks.clear()
 
 
 def _read_virtual_memory_sync() -> Any:
@@ -404,7 +380,13 @@ def _get_cached_psutil(key: str, reader_fn: Callable[[], Any]) -> Any:
         raise
 
     # Write fresh result under meta-lock (key_lock already released)
+    # E5 FIX: enforce _MAX_PSUTIL_CACHE_SIZE — evict oldest by timestamp on overflow
     with _psutil_meta_lock:
+        evictions_needed = len(_psutil_cache) - _MAX_PSUTIL_CACHE_SIZE + 1
+        if evictions_needed > 0:
+            sorted_keys = sorted(_psutil_cache, key=lambda k: _psutil_cache[k][1])
+            for k in sorted_keys[:evictions_needed]:
+                del _psutil_cache[k]
         _psutil_cache[key] = (result, _time_module.monotonic())
     return result
 

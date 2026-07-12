@@ -177,6 +177,58 @@ pub fn batch_classify(urls: &Bound<'_, pyo3::types::PyList>) -> Vec<(String, Str
     }
 }
 
+/// Priority-based URL classification — sort by priority then classify in one pass.
+///
+/// **Problem:** Scheduler ranks sources by priority (tor_request_count,
+/// feed_native_yield_ratio) but fetch is sequential via bounded_gather.
+/// Priority-based prefetch needs: (1) sort URLs by priority, (2) classify each.
+/// Two separate FFI calls = 2 GIL transitions.
+///
+/// **Solution:** Single FFI call — sort + classify in one rayon-parallel pass.
+/// Eliminates the 2nd GIL transition entirely.
+///
+/// # Arguments
+/// * `urls` — Vec of (url: String, priority: f32) tuples. Priority 0.0–1.0.
+///
+/// # Returns
+/// * Vec of (url: String, priority: f32, kind: String) sorted by priority desc.
+///   Kind is "clearnet" | "onion" | "i2p" | "freenet" | "empty" | "malformed".
+///
+/// # M1 8GB bounds
+/// * Threading: mixed_pool(n) — adaptive 1-2 threads based on batch size.
+/// * Memory: O(n) for sort buffer, bounded by caller (scheduler URL set limit).
+/// * Fail-soft: malformed URLs get ("malformed", "") kind, never panics.
+#[pyfunction]
+pub fn priority_classify_urls(
+    urls: Vec<(String, f32)>,
+) -> Vec<(String, f32, String)> {
+    if urls.is_empty() {
+        return Vec::new();
+    }
+
+    // Stage 1: sort by priority descending (f32::total_cmp for NaN-safe comparison)
+    let n = urls.len();
+    let mut sorted: Vec<(String, f32)> = urls;
+    sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Stage 2: classify all URLs via mixed_pool (adaptive parallelism)
+    // No intermediate Vec<String> allocation — rayon iterates sorted directly.
+    let classifications: Vec<(String, String)> = crate::mixed_pool(n).install(|| {
+        sorted.par_iter()
+            .map(|(u, _)| classify_url(u))
+            .with_min_len(BATCH_PARALLEL_MIN_CHUNK)
+            .collect()
+    });
+
+    // Zip: (url, priority) + (url, kind) → (url, priority, kind)
+    // URLs are in priority order from stage 1, classifications are in same order.
+    sorted
+        .into_iter()
+        .zip(classifications.into_iter())
+        .map(|((url, priority), (_, kind))| (url, priority, kind))
+        .collect()
+}
+
 // =============================================================================
 // UrlClassifyCache — embedded xxh3 cached in Rust (Issue #4)
 // =============================================================================
@@ -932,6 +984,7 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<UrlClassifyCachePy>()?;
     m.add_function(wrap_pyfunction!(classify_url, m)?)?;
     m.add_function(wrap_pyfunction!(batch_classify, m)?)?;
+    m.add_function(wrap_pyfunction!(priority_classify_urls, m)?)?;
     m.add_function(wrap_pyfunction!(extract_host, m)?)?;
     m.add_function(wrap_pyfunction!(looks_like_feed_url, m)?)?;
     m.add_function(wrap_pyfunction!(canonical_url, m)?)?;
@@ -1351,5 +1404,94 @@ mod tests {
             strip_tracking("example.com/page?utm_source=google"),
             "example.com/page"
         );
+    }
+
+    // priority_classify_urls tests
+
+    #[test]
+    fn test_priority_classify_empty() {
+        let input: Vec<(String, f32)> = vec![];
+        let result = priority_classify_urls(input);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_priority_classify_sorted_desc() {
+        // Priority descending: 0.9, 0.5, 0.1
+        let input = vec![
+            ("https://low.example.com/path".to_string(), 0.1),
+            ("https://high.example.com/path".to_string(), 0.9),
+            ("https://mid.example.com/path".to_string(), 0.5),
+        ];
+        let result = priority_classify_urls(input);
+        assert_eq!(result.len(), 3);
+        // Sorted by priority desc
+        assert_eq!(result[0].0, "https://high.example.com/path");
+        assert_eq!(result[0].1, 0.9);
+        assert_eq!(result[1].0, "https://mid.example.com/path");
+        assert_eq!(result[1].1, 0.5);
+        assert_eq!(result[2].0, "https://low.example.com/path");
+        assert_eq!(result[2].1, 0.1);
+        // All should be classified as clearnet
+        assert_eq!(result[0].2, "clearnet");
+        assert_eq!(result[1].2, "clearnet");
+        assert_eq!(result[2].2, "clearnet");
+    }
+
+    #[test]
+    fn test_priority_classify_onion_kind() {
+        let input = vec![
+            ("http://tor.onion/hidden".to_string(), 0.8),
+            ("https://public.example.com".to_string(), 0.9),
+        ];
+        let result = priority_classify_urls(input);
+        assert_eq!(result.len(), 2);
+        // Sorted desc: public (0.9) first, then onion (0.8)
+        assert_eq!(result[0].2, "clearnet");
+        assert_eq!(result[1].2, "onion");
+    }
+
+    #[test]
+    fn test_priority_classify_preserves_order_on_equal_priority() {
+        // Equal priorities — relative order is implementation-defined but stable
+        let input = vec![
+            ("https://a.example.com".to_string(), 0.5),
+            ("https://b.example.com".to_string(), 0.5),
+            ("https://c.example.com".to_string(), 0.5),
+        ];
+        let result = priority_classify_urls(input);
+        assert_eq!(result.len(), 3);
+        for r in &result {
+            assert_eq!(r.1, 0.5);
+            assert_eq!(r.2, "clearnet");
+        }
+    }
+
+    #[test]
+    fn test_priority_classify_mixed_kinds() {
+        let input = vec![
+            ("https://clearnet.example.com".to_string(), 0.7),
+            ("http://dark.onion/secret".to_string(), 0.6),
+            ("http://i2p.site/eep".to_string(), 0.8),
+        ];
+        let result = priority_classify_urls(input);
+        assert_eq!(result.len(), 3);
+        // Desc: i2p (0.8), clearnet (0.7), onion (0.6)
+        assert_eq!(result[0].0, "http://i2p.site/eep");
+        assert_eq!(result[0].2, "i2p");
+        assert_eq!(result[1].0, "https://clearnet.example.com");
+        assert_eq!(result[1].2, "clearnet");
+        assert_eq!(result[2].0, "http://dark.onion/secret");
+        assert_eq!(result[2].2, "onion");
+    }
+
+    #[test]
+    fn test_priority_classify_single_item() {
+        let input = vec![("https://solo.example.com/path".to_string(), 0.42)];
+        let result = priority_classify_urls(input);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].0, "https://solo.example.com/path");
+        assert_eq!(result[0].1, 0.42);
+        assert_eq!(result[0].2, "clearnet");
     }
 }
