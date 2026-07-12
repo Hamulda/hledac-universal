@@ -103,6 +103,11 @@ class EmbeddingCache:
             _loop.run_until_complete(self._init_memmap())
         finally:
             _loop.close()
+            # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
+            try:
+                gc.collect()
+            except Exception:
+                pass
 
     async def _init_memmap(self) -> None:
         async with self._mmap_lock:

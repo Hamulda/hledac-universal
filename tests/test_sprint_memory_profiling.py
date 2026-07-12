@@ -26,10 +26,12 @@ import sys
 import unittest
 
 import pytest
+
 from tests.utils.memory_profiler import (
     LEAK_THRESHOLD_MB,
     Snapshot,
     TracemallocSnapshot,
+    TracemallocStats,
     assert_no_leak,
     get_rss_mb,
 )
@@ -74,7 +76,7 @@ sys.exit(0 if delta > {threshold_mb} else 1)
             timeout=30,
         )
         return proc.returncode == 0
-    except (subprocess.TimeoutExpired, OSError):
+    except subprocess.TimeoutExpired, OSError:
         return False
 
 
@@ -265,6 +267,118 @@ class TestSprintMemoryProfilingC_TracemallocSnapshot(unittest.IsolatedAsyncioTes
             assert isinstance(result, bool)
         finally:
             snap.stop()
+
+
+class TestSprintMemoryProfilingH_TracemallocStats(unittest.IsolatedAsyncioTestCase):
+    """H. TracemallocStats — lightweight 2-number tracemalloc without take_snapshot()."""
+
+    def test_take_returns_started_stats(self):
+        """TracemallocStats.take() returns a started instance with 2 numbers."""
+        stats = TracemallocStats.take()
+        try:
+            assert stats._started is True
+            assert isinstance(stats.current_bytes, int)
+            assert isinstance(stats.peak_bytes, int)
+            assert stats.current_bytes >= 0
+            assert stats.peak_bytes >= 0
+        finally:
+            stats.stop()
+
+    def test_delta_bytes_zero_on_noop(self):
+        """delta_bytes() returns ~0 for no-op."""
+        stats = TracemallocStats.take()
+        try:
+            delta = stats.delta_bytes()
+            assert abs(delta) < 1024 * 100
+        finally:
+            stats.stop()
+
+    def test_delta_bytes_captures_allocation(self):
+        """delta_bytes() captures Python object allocation growth."""
+        stats = TracemallocStats.take()
+        try:
+            _big = [None] * 500_000
+            delta = stats.delta_bytes()
+            assert delta >= 0
+        finally:
+            stats.stop()
+
+    def test_delta_mb_returns_float(self):
+        """delta_mb() returns delta in MB as float."""
+        stats = TracemallocStats.take()
+        try:
+            result = stats.delta_mb()
+            assert isinstance(result, float)
+        finally:
+            stats.stop()
+
+    def test_peak_delta_mb_returns_float(self):
+        """peak_delta_mb() returns peak memory growth in MB."""
+        stats = TracemallocStats.take()
+        try:
+            _ = [None] * 500_000
+            result = stats.peak_delta_mb()
+            assert isinstance(result, float)
+            assert result >= 0.0
+        finally:
+            stats.stop()
+
+    def test_stop_is_noop_when_not_started(self):
+        """stop() is safe to call on non-started instance."""
+        stats = TracemallocStats(current_bytes=0, peak_bytes=0, _started=False)
+        stats.stop()
+
+
+class TestSprintMemoryProfilingI_MemoryTrackerWeakref(unittest.IsolatedAsyncioTestCase):
+    """I. MemoryTracker weakref finalizer safety net (Issue #12)."""
+
+    def test_register_allocation_returns_finalizer(self):
+        """register_allocation() returns a weakref.finalize object."""
+        from tests.utils.memory_profiler import MemoryTracker
+
+        tracker = MemoryTracker(threshold_mb=50)
+        tracker.__enter__()
+        try:
+            obj = [None] * 100
+            fin = tracker.register_allocation(obj)
+            assert hasattr(fin, "detach")
+            assert callable(fin)
+        finally:
+            tracker.__exit__(None, None, None)
+
+    def test_finalizers_invoked_on_exit(self):
+        """weakref finalizers are invoked when MemoryTracker exits."""
+        import weakref
+
+        from tests.utils.memory_profiler import MemoryTracker
+
+        tracker = MemoryTracker(threshold_mb=50)
+        tracker.__enter__()
+        try:
+            sentinel = [None]
+            called = []
+
+            def tracker_finalizer():
+                called.append(1)
+
+            sentinel_fin = weakref.finalize(sentinel, tracker_finalizer)
+            tracker._weakref_finalizers.append(sentinel_fin)
+        finally:
+            tracker.__exit__(None, None, None)
+
+        assert len(called) == 1, "weakref finalizer should have been invoked"
+
+    def test_weakref_finalizers_cleared_on_exit(self):
+        """_weakref_finalizers list is cleared after __exit__."""
+        from tests.utils.memory_profiler import MemoryTracker
+
+        tracker = MemoryTracker(threshold_mb=50)
+        tracker.__enter__()
+        obj = [None] * 100
+        tracker.register_allocation(obj)
+        assert len(tracker._weakref_finalizers) == 1
+        tracker.__exit__(None, None, None)
+        assert len(tracker._weakref_finalizers) == 0
 
 
 class TestSprintMemoryProfilingG_SessionTracer(unittest.IsolatedAsyncioTestCase):

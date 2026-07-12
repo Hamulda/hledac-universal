@@ -16,19 +16,16 @@ Usage:
 No CLI arguments are required for normal operation.
 Benchmark mode activates internal probe tests.
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 import asyncio
 import contextlib
-
-from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for, stop_task
 import logging
 import os
 import pathlib
 import signal
 import sys
-import threading
 import time
 import traceback
 from collections import deque
@@ -36,6 +33,8 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from dotenv import load_dotenv
+
+from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for, stop_task
 
 # Sprint F285: Ensure local modules (utils/, runtime/, etc.) are resolvable when
 # hledac is invoked via `uv run hledac` or the generated .venv/bin/hledac entry point.
@@ -63,6 +62,7 @@ sys.path = [p for p in sys.path if not p.endswith("/legacy")]
 # Sprint Phase4: ulimit -n 4096 for DuckDB FD budget (M1 Air 8GB)
 try:
     import resource as _resource
+
     soft, hard = _resource.getrlimit(_resource.RLIMIT_NOFILE)
     if soft < 4096:
         try:
@@ -80,12 +80,14 @@ try:
     import sys as _sys
 
     import uvloop
+
     # Python 3.15+: uvloop.install() triggers AbstractEventLoopPolicy deprecation
     # inside the library itself — skip it and use stdlib asyncio loop (F3.4: 3.14 works)
     if _sys.version_info >= (3, 15):
         logging.warning("[RUNTIME] Python 3.15+ detected, skipping uvloop.install()")
     else:
         import warnings as _lw
+
         with _lw.catch_warnings():
             _lw.filterwarnings("ignore", message=".*AbstractEventLoopPolicy.*", category=DeprecationWarning)
             uvloop.install()
@@ -103,53 +105,69 @@ except ImportError:
 # Must be defined BEFORE any heavy module imports (mlx_cache, brain, etc.)
 # =============================================================================
 
+
 def build_parser() -> argparse.ArgumentParser:
     """Build CLI argument parser. Lightweight — imports only argparse/stdlib."""
     import argparse  # local import keeps help path off module-level MLX chain
+
     parser = argparse.ArgumentParser(
         description="Hledac Universal OSINT Runner",
         add_help=False,  # manually handle -h/--help below
     )
     parser.add_argument("--sprint", metavar="QUERY", help="Run sprint with given query")
     parser.add_argument(
-        "--duration", type=float, default=1800.0, metavar="SECS",
+        "--duration",
+        type=float,
+        default=1800.0,
+        metavar="SECS",
         help="Sprint duration in seconds (default: 1800 = 30min)",
     )
     parser.add_argument(
-        "--windup-lead", type=float, default=None,
+        "--windup-lead",
+        type=float,
+        default=None,
         help="F285: Override windup lead time in seconds. Default: 30%% of duration (capped at 180s). "
-             "Use 30 for M1 Air 8GB sprints to maximize active acquisition window.",
+        "Use 30 for M1 Air 8GB sprints to maximize active acquisition window.",
     )
     parser.add_argument(
-        "--export-dir", default=str(pathlib.Path.home() / ".hledac" / "reports"),
+        "--export-dir",
+        default=str(pathlib.Path.home() / ".hledac" / "reports"),
         help="Directory for sprint reports (default: ~/.hledac/reports)",
     )
     parser.add_argument(
-        "--vault", action="store_true",
+        "--vault",
+        action="store_true",
         help="F26X+: Enable encrypted vault export (AES-256-ZIP via VaultManager)",
     )
     parser.add_argument(
-        "--aggressive", action="store_true", default=True,
+        "--aggressive",
+        action="store_true",
+        default=True,
         help="Sprint F195B: Enable aggressive mode with 8s branch budgets (default: ON)",
     )
     parser.add_argument(
-        "--no-aggressive", dest="aggressive", action="store_false",
+        "--no-aggressive",
+        dest="aggressive",
+        action="store_false",
         help="Disable aggressive mode: stable sequential branches, 30 percent windup",
     )
     parser.add_argument(
-        "--deep-probe", action="store_true",
+        "--deep-probe",
+        action="store_true",
         help="Run deep probe research post-sprint",
     )
     parser.add_argument(
-        "--ui", action="store_true",
+        "--ui",
+        action="store_true",
         help="Enable terminal dashboard during sprint",
     )
     parser.add_argument(
-        "--force", action="store_true",
+        "--force",
+        action="store_true",
         help="F221-ABORT: Override the pre-flight guard that aborts sprints whose "
-             "active-window budget would be below MIN_ACTIVE_WINDOW_S=30s. "
-             "Emits a [F221-FORCED] warning instead of exiting with code 2. "
-             "Use only for explicit dry-runs / smoke tests where zero evidence is acceptable.",
+        "active-window budget would be below MIN_ACTIVE_WINDOW_S=30s. "
+        "Emits a [F221-FORCED] warning instead of exiting with code 2. "
+        "Use only for explicit dry-runs / smoke tests where zero evidence is acceptable.",
     )
     parser.add_argument(
         "--acquisition-profile",
@@ -167,10 +185,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--profile",
         action="store_true",
         help="Issue #19: Enable M1-safe OTEL profiling via HLEDAC_OTEL_PROFILE=1. "
-             "Activates httpx auto-instrumentation (~1MB overhead). "
-             "Exports spans to OTLP endpoint (HLEDAC_OTEL_ENDPOINT, default http://localhost:4318). "
-             "Use --export-dir to override output directory. "
-             "For memory profiling: HLEDAC_OTEL_EXPORTER=duckdb + memray.",
+        "Activates httpx auto-instrumentation (~1MB overhead). "
+        "Exports spans to OTLP endpoint (HLEDAC_OTEL_ENDPOINT, default http://localhost:4318). "
+        "Use --export-dir to override output directory. "
+        "For memory profiling: HLEDAC_OTEL_EXPORTER=duckdb + memray.",
     )
     # Phase 3: flag preset selectors. ``--list-presets`` is handled in
     # main() and exits 0 before any sprint/boot logic runs.
@@ -179,10 +197,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         choices=["minimal", "osint", "recon", "research", "full"],
-        help=(
-            "Phase 3: Apply a flag preset before validation. "
-            "Existing HLEDAC_ENABLE_* env vars are NOT overwritten."
-        ),
+        help=("Phase 3: Apply a flag preset before validation. Existing HLEDAC_ENABLE_* env vars are NOT overwritten."),
     )
     parser.add_argument(
         "--list-presets",
@@ -227,6 +242,7 @@ def _drain_boot_telemetry() -> None:
     """Drain oldest 50%% to ~/.hledac/logs/boot.jsonl. Fail-soft."""
     try:
         from core.rust_backend import rust as _rust
+
         _compact = _rust.json.compact
     except Exception:
         import orjson
@@ -260,6 +276,7 @@ def clear_boot_telemetry() -> None:
 # Sprint 8VD §E: Preflight check — graceful degradation, never raises
 # =============================================================================
 
+
 async def _preflight_check() -> dict:
     """
     Check critical system capabilities before sprint starts.
@@ -268,15 +285,17 @@ async def _preflight_check() -> dict:
     results: dict = {}
     try:
         import mlx.core as mx
+
         results["metal"] = mx.metal.is_available()
-    except (ImportError, AttributeError):
+    except ImportError, AttributeError:
         results["metal"] = False
     try:
         import psutil
+
         vm = psutil.virtual_memory()
         results["free_ram_mb"] = round(vm.available / 1024 / 1024, 1)
         results["memory_pct"] = vm.percent
-    except (ImportError, AttributeError, OSError):
+    except ImportError, AttributeError, OSError:
         results["free_ram_mb"] = -1
     # Sprint F500J §2: REMOVED duckdb.connect() eager check.
     # DuckDB availability is verified through store.async_initialize() in the
@@ -350,6 +369,7 @@ def _install_signal_teardown(loop: asyncio.AbstractEventLoop) -> None:
     It only sets the flag and schedules loop.stop().
     Actual cleanup happens in AsyncExitStack unwind.
     """
+
     def _handler(signum: int, _frame) -> None:
         global _signal_teardown_flag
         sig_name = signal.Signals(signum).name
@@ -371,6 +391,7 @@ def _install_signal_teardown(loop: asyncio.AbstractEventLoop) -> None:
 # Sprint 8AI: Boot guard — synchronous, called BEFORE asyncio.run()
 # =============================================================================
 
+
 def _run_boot_guard(lmdb_root: pathlib.Path | None = None) -> tuple[int, str]:
     """
     Run LMDB boot guard (8AG) synchronously.
@@ -388,6 +409,7 @@ def _run_boot_guard(lmdb_root: pathlib.Path | None = None) -> tuple[int, str]:
         # Try to derive from paths if available
         try:
             from hledac.universal.paths import LMDB_ROOT as _derived_root  # noqa: N811
+
             lmdb_root = _derived_root
         except Exception:
             return 0, "lmdb_root_not_configured"
@@ -416,12 +438,14 @@ def _run_boot_guard(lmdb_root: pathlib.Path | None = None) -> tuple[int, str]:
 
 class BootGuardError(Exception):
     """Raised when boot guard detects unsafe stale-lock state."""
+
     pass
 
 
 # =============================================================================
 # Sprint 8AI: AsyncExitStack-backed teardown
 # =============================================================================
+
 
 async def _cancel_orphan_tasks() -> None:
     """F4.4: Delegate to trio-style cancel_scope_drain from async_helpers."""
@@ -436,6 +460,7 @@ async def _cancel_orphan_tasks() -> None:
 # =============================================================================
 # Sprint 8AM C.1: Owned Runtime Path — Public Passive Once
 # =============================================================================
+
 
 async def _run_public_passive_once(
     stop_flag: Callable[[], bool],
@@ -517,6 +542,7 @@ async def _run_public_passive_once(
         if owned_store and exit_stack is not None:
             try:
                 from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
+
                 # Create owned store (uses paths.py RAMDisk SSOT)
                 store_instance = DuckDBShadowStore(lazy=False)
                 # Async init
@@ -562,6 +588,7 @@ async def _run_public_passive_once(
             try:
                 from hledac.universal.brain.model_lifecycle import ModelLifecycle
                 from hledac.universal.brain.synthesis_runner import SynthesisRunner
+
                 boot_runner = SynthesisRunner(ModelLifecycle())
                 hermes_boot_engine = boot_runner._get_hermes_engine()
                 # Engine is now referenced by boot_runner._hermes_engine and our local var
@@ -825,6 +852,7 @@ def _record_runtime_truth() -> None:
 
     try:
         import ahocorasick as _  # noqa: F401  # ahocorasick
+
         _ahocorasick_available = True
     except ImportError:
         _ahocorasick_available = False
@@ -832,9 +860,10 @@ def _record_runtime_truth() -> None:
     # Bootstrap pack truth
     try:
         from hledac.universal.utils.patterns.pattern_matcher import get_default_bootstrap_patterns
+
         _default_bootstrap_count = len(get_default_bootstrap_patterns())
         _bootstrap_pack_version = 2  # Sprint 8AZ bootstrap pack v2
-    except (ImportError, AttributeError):
+    except ImportError, AttributeError:
         _bootstrap_pack_version = 0
         _default_bootstrap_count = 0
 
@@ -847,17 +876,22 @@ _record_runtime_truth()
 def get_actual_live_run_executed() -> bool:
     return _actual_live_run_executed
 
+
 def get_interpreter_executable() -> str:
     return _interpreter_executable
+
 
 def get_interpreter_version() -> str:
     return _interpreter_version
 
+
 def get_ahocorasick_available() -> bool:
     return _ahocorasick_available
 
+
 def get_bootstrap_pack_version() -> int:
     return _bootstrap_pack_version
+
 
 def get_default_bootstrap_count() -> int:
     return _default_bootstrap_count
@@ -877,6 +911,7 @@ class ObservedRunReport(msgspec.Struct, frozen=True):
     C.1: All required fields present.
     C.7: content_quality_validated reflects PatternMatcher availability.
     """
+
     started_ts: float
     finished_ts: float
     elapsed_ms: float
@@ -1055,24 +1090,25 @@ def _build_observed_run_report(
 
     # Per-source results
     per_source_raw: list[dict] = []
-    for src in (batch_result.sources if batch_result else []):
-        per_source_raw.append({
-            "feed_url": src.feed_url,
-            "label": src.label,
-            "origin": src.origin,
-            "priority": src.priority,
-            "fetched_entries": src.fetched_entries,
-            "accepted_findings": src.accepted_findings,
-            "stored_findings": src.stored_findings,
-            "elapsed_ms": src.elapsed_ms,
-            "error": getattr(src, "error", None),
-        })
+    for src in batch_result.sources if batch_result else []:
+        per_source_raw.append(
+            {
+                "feed_url": src.feed_url,
+                "label": src.label,
+                "origin": src.origin,
+                "priority": src.priority,
+                "fetched_entries": src.fetched_entries,
+                "accepted_findings": src.accepted_findings,
+                "stored_findings": src.stored_findings,
+                "elapsed_ms": src.elapsed_ms,
+                "error": getattr(src, "error", None),
+            }
+        )
 
     # Dedup delta
     dedup_delta = {}
     if dedup_surface_available(dedup_before, dedup_after):
-        for key in ("persistent_duplicate_count", "quality_duplicate_count",
-                    "in_memory_duplicate_count"):
+        for key in ("persistent_duplicate_count", "quality_duplicate_count", "in_memory_duplicate_count"):
             before = dedup_before.get(key, 0) or 0
             after = dedup_after.get(key, 0) or 0
             dedup_delta[key] = after - before
@@ -1089,20 +1125,14 @@ def _build_observed_run_report(
     error_sources = [s for s in per_source_raw if s.get("error") is not None]
     error_summary = {
         "count": len(error_sources),
-        "sources": [
-            {"feed_url": s["feed_url"], "error": s["error"]}
-            for s in error_sources
-        ],
+        "sources": [{"feed_url": s["feed_url"], "error": s["error"]} for s in error_sources],
     }
 
     # Sprint 8AS C.2: success_rate + failed_source_count
     total_sources_val = batch_result.total_sources if batch_result else 0
     completed_sources_val = batch_result.completed_sources if batch_result else 0
     failed_source_count_val = total_sources_val - completed_sources_val
-    success_rate_val = (
-        completed_sources_val / total_sources_val
-        if total_sources_val > 0 else 0.0
-    )
+    success_rate_val = completed_sources_val / total_sources_val if total_sources_val > 0 else 0.0
 
     # Sprint 8AS C.0: baseline delta
     _report_for_delta = {
@@ -1328,7 +1358,9 @@ def diagnose_end_to_end_live_run(
         if total_rejected == 0:
             return "unknown"
         low_frac = low_information_rejected_count_delta / total_rejected
-        dup_frac = (in_memory_duplicate_rejected_count_delta + persistent_duplicate_rejected_count_delta) / total_rejected  # noqa: E501
+        dup_frac = (
+            in_memory_duplicate_rejected_count_delta + persistent_duplicate_rejected_count_delta
+        ) / total_rejected  # noqa: E501
         if low_frac >= dup_frac and low_information_rejected_count_delta > 0:
             return "low_information_rejection_dominant"
         return "duplicate_rejection_dominant"
@@ -1340,8 +1372,10 @@ def diagnose_end_to_end_live_run(
 # C.1, B.4
 # =============================================================================
 
+
 class FeedHealthKind(str):
     """Sprint 8AS C.1: Feed health classification labels."""
+
     SUCCESS = "success"
     NETWORK_ERROR = "network_error"
     PARSE_ERROR = "parse_error"
@@ -1379,7 +1413,15 @@ def classify_feed_health(per_source: tuple[dict, ...]) -> dict:
             breakdown[FeedHealthKind.ENTITY_RECOVERY_RELATED_ERROR] += 1
         elif "parse" in error.lower() or "xml" in error.lower() or "feed" in error.lower() or "html" in error.lower():
             breakdown[FeedHealthKind.PARSE_ERROR] += 1
-        elif "network" in error.lower() or "connection" in error.lower() or "dns" in error.lower() or "resolve" in error.lower() or "http" in error.lower() or "ssl" in error.lower() or "certificate" in error.lower():  # noqa: E501
+        elif (
+            "network" in error.lower()
+            or "connection" in error.lower()
+            or "dns" in error.lower()
+            or "resolve" in error.lower()
+            or "http" in error.lower()
+            or "ssl" in error.lower()
+            or "certificate" in error.lower()
+        ):  # noqa: E501
             breakdown[FeedHealthKind.NETWORK_ERROR] += 1
         else:
             breakdown[FeedHealthKind.UNKNOWN_ERROR] += 1
@@ -1396,10 +1438,11 @@ def _get_pattern_count() -> int:
     """Get current pattern count from PatternMatcher. Returns 0 if unavailable."""
     try:
         from hledac.universal.utils.patterns.pattern_matcher import get_pattern_matcher
+
         pm = get_pattern_matcher()
         if hasattr(pm, "pattern_count"):
             return pm.pattern_count()
-    except (ImportError, AttributeError):
+    except ImportError, AttributeError:
         pass
     return 0
 
@@ -1414,12 +1457,13 @@ def _get_pattern_status() -> tuple[int, bool]:
     """
     try:
         from hledac.universal.utils.patterns.pattern_matcher import get_pattern_matcher
+
         pm = get_pattern_matcher()
         if hasattr(pm, "pattern_count"):
             count = pm.pattern_count()
             status = pm.get_status()
             return count, status.get("bootstrap_default_configured", False)
-    except (ImportError, AttributeError):
+    except ImportError, AttributeError:
         pass
     return 0, False
 
@@ -1439,6 +1483,7 @@ def _ensure_runtime_patterns_configured_for_live_validation() -> tuple[int, bool
             configure_default_bootstrap_patterns_if_empty,
             get_pattern_matcher,
         )
+
         pm = get_pattern_matcher()
         current_count = pm.pattern_count()
         if current_count > 0:
@@ -1447,7 +1492,7 @@ def _ensure_runtime_patterns_configured_for_live_validation() -> tuple[int, bool
         # Registry empty — apply bootstrap
         applied = configure_default_bootstrap_patterns_if_empty()
         return pm.pattern_count(), applied
-    except (ImportError, AttributeError):
+    except ImportError, AttributeError:
         return 0, False
 
 
@@ -1455,6 +1500,7 @@ def _ensure_runtime_patterns_configured_for_live_validation() -> tuple[int, bool
 # Sprint 8AO: Observed Live Run — Main Entry Point
 # C.0, C.1, C.2, C.3, C.4
 # =============================================================================
+
 
 def get_last_observed_run_report() -> ObservedRunReport | None:
     """
@@ -1472,6 +1518,7 @@ def get_last_observed_run_report() -> ObservedRunReport | None:
 # Sprint 8AO: Human-Readable Summary Formatter
 # C.5, C.10, C.11
 # =============================================================================
+
 
 def format_observed_run_summary(report: dict) -> str:
     """
@@ -1501,13 +1548,13 @@ def format_observed_run_summary(report: dict) -> str:
     lines.append(f"  default_bootstrap_count:      {report.get('default_bootstrap_count', 0)}")
     lines.append(f"  store_counters_reset_before_run: {report.get('store_counters_reset_before_run', False)}")
     lines.append(f"  matcher_probe_sample_used:   {report.get('matcher_probe_sample_used', 'N/A')}")
-    rss_hits = report.get('matcher_probe_rss_hits', ())
+    rss_hits = report.get("matcher_probe_rss_hits", ())
     lines.append(f"  matcher_probe_rss_hits:       {len(rss_hits)} hits")
 
     # Sprint 8BC C.4: [matcher truth] section
-    sample_texts = report.get('sample_scanned_texts', ())
-    sample_counts = report.get('sample_hit_counts', ())
-    sample_labels = report.get('sample_hit_labels_union', ())
+    sample_texts = report.get("sample_scanned_texts", ())
+    sample_counts = report.get("sample_hit_counts", ())
+    sample_labels = report.get("sample_hit_labels_union", ())
     lines.append("\n[matcher truth]")
     lines.append(f"  patterns_configured_at_run:  {report.get('patterns_configured_at_run', 0)}")
     lines.append(f"  automaton_built_at_run:     {report.get('automaton_built_at_run', False)}")
@@ -1528,7 +1575,7 @@ def format_observed_run_summary(report: dict) -> str:
     lines.append(f"  live_run_attempt_count:    {report.get('live_run_attempt_count', 0)}")
     lines.append(f"  live_run_attempt_1_result: {report.get('live_run_attempt_1_result', '')}")
     lines.append(f"  live_run_attempt_2_result: {report.get('live_run_attempt_2_result', '')}")
-    rec = report.get('recommended_next_sprint', '')
+    rec = report.get("recommended_next_sprint", "")
     lines.append(f"  recommended_next_sprint:   {rec if rec else '(computed post-run)'}")
 
     # Batch totals (C.1)
@@ -1561,7 +1608,11 @@ def format_observed_run_summary(report: dict) -> str:
     # Peak UMA (C.3)
     uma = report.get("uma_snapshot", {})
     lines.append("\n[Peak UMA]")
-    lines.append(f"  Peak used GiB:    {uma.get('peak_used_gib', 'N/A'):.2f}" if isinstance(uma.get('peak_used_gib'), float) else f"  Peak used GiB:    {uma.get('peak_used_gib', 'N/A')}")  # noqa: E501
+    lines.append(
+        f"  Peak used GiB:    {uma.get('peak_used_gib', 'N/A'):.2f}"
+        if isinstance(uma.get("peak_used_gib"), float)
+        else f"  Peak used GiB:    {uma.get('peak_used_gib', 'N/A')}"
+    )  # noqa: E501
     lines.append(f"  Peak state:        {uma.get('peak_state', 'N/A')}")
     lines.append(f"  Start state:       {uma.get('start_state', 'N/A')}")
     lines.append(f"  End state:          {uma.get('end_state', 'N/A')}")
@@ -1615,11 +1666,15 @@ def format_observed_run_summary(report: dict) -> str:
     if baseline:
         lines.append("\n[Sprint 8AS C.0] Delta vs 8AO Baseline")
         lines.append(f"  Status: {baseline.get('status', 'N/A')}")
-        lines.append(f"  Completed sources: {baseline.get('completed_sources', 'N/A')} ({baseline.get('completed_sources_delta', 0):+d})")  # noqa: E501
+        lines.append(
+            f"  Completed sources: {baseline.get('completed_sources', 'N/A')} ({baseline.get('completed_sources_delta', 0):+d})"
+        )  # noqa: E501
         lines.append(f"  Fetched entries: {baseline.get('fetched_entries_delta', 0):+d}")
         lines.append(f"  Accepted findings: {baseline.get('accepted_findings_delta', 0):+d}")
         lines.append(f"  Stored findings: {baseline.get('stored_findings_delta', 0):+d}")
-        lines.append(f"  Failed sources: {baseline.get('failed_source_count', 'N/A')} ({baseline.get('failed_source_count_delta', 0):+d})")  # noqa: E501
+        lines.append(
+            f"  Failed sources: {baseline.get('failed_source_count', 'N/A')} ({baseline.get('failed_source_count_delta', 0):+d})"
+        )  # noqa: E501
         blocker = baseline.get("blocker")
         if blocker:
             lines.append(f"  Blocker: {blocker}")
@@ -1735,6 +1790,7 @@ def format_observed_run_summary(report: dict) -> str:
 # Sprint 0B: Benchmark probe (unchanged)
 # =============================================================================
 
+
 async def _run_benchmark_probe() -> dict[str, Any]:
     """
     Run Sprint 0B benchmark probe tests.
@@ -1774,8 +1830,6 @@ async def _run_benchmark_probe() -> dict[str, Any]:
     return results
 
 
-
-
 # =============================================================================
 # Sprint 8PC: sprint_mode entrypoint
 # =============================================================================
@@ -1806,6 +1860,7 @@ def _compute_sprint_report_path(sprint_id: str) -> Path:
     Removal condition: NIKDY — thin delegation seam, not dead code
     """
     from hledac.universal.paths import get_sprint_report_path as _get_path
+
     return _get_path(sprint_id)
 
 
@@ -1821,6 +1876,7 @@ def _render_sprint_report_markdown(
     Path computation and file write stay in shell.
     """
     from hledac.universal.export.sprint_markdown_reporter import render_sprint_markdown as _render
+
     return _render(report, scorecard, sprint_id)
 
 
@@ -1890,7 +1946,7 @@ async def _print_scorecard_report(
         try:
             dedup = store.get_dedup_runtime_status()
             accepted = dedup.get("accepted_count", 0)
-        except (AttributeError, RuntimeError):
+        except AttributeError, RuntimeError:
             pass
 
     # Calculate metrics
@@ -1922,6 +1978,7 @@ async def _print_scorecard_report(
 
     # Sprint 8VD §F: Compute peak RSS
     import resource as _resource
+
     rss_bytes = _resource.getrusage(_resource.RUSAGE_SELF).ru_maxrss
     # macOS: ru_maxrss is in bytes (not KB like on Linux)
     peak_rss_mb = round(rss_bytes / 1024 / 1024, 1)
@@ -1930,8 +1987,9 @@ async def _print_scorecard_report(
     # Sprint 8VB: Circuit breaker state for scorecard
     try:
         from transport.circuit_breaker import get_all_breaker_states
+
         scorecard_data["cb_open_domains"] = get_all_breaker_states()
-    except (ImportError, AttributeError):
+    except ImportError, AttributeError:
         pass
 
     # Sprint F204E: Attach analyst brief to scorecard for markdown export
@@ -1941,11 +1999,12 @@ async def _print_scorecard_report(
     # Sprint F232C: Build and attach investigation_packet for markdown analyst brief
     try:
         from hledac.universal.export.sprint_exporter import _build_investigation_packet
+
         if sprint_report and isinstance(sprint_report, dict):
             scorecard_data["investigation_packet"] = _build_investigation_packet(sprint_report)
         elif sprint_report is not None and hasattr(sprint_report, "__dict__"):
             scorecard_data["investigation_packet"] = _build_investigation_packet(sprint_report.__dict__)
-    except (ImportError, AttributeError):
+    except ImportError, AttributeError:
         pass
 
     # Print structured report
@@ -1964,7 +2023,11 @@ async def _print_scorecard_report(
     print(f"  Phase timings:    {phase_timings}")
     # Sprint F265C: Show Arrow ingest metrics in sprint output
     arrow_m = scorecard_data.get("arrow_metrics", {})
-    if arrow_m and isinstance(arrow_m, dict) and any((v or 0) > 0 for v in arrow_m.values() if isinstance(v, (int, float))):
+    if (
+        arrow_m
+        and isinstance(arrow_m, dict)
+        and any((v or 0) > 0 for v in arrow_m.values() if isinstance(v, (int, float)))
+    ):
         arrow_sel = arrow_m.get("arrow_selected", 0)
         arrow_ok = arrow_m.get("arrow_success_count", 0)
         arrow_fb = {k: v for k, v in arrow_m.items() if "fallback" in k or "error" in k}
@@ -1979,13 +2042,14 @@ async def _print_scorecard_report(
     if store is not None and hasattr(store, "_arrow_metrics"):
         try:
             scorecard_data["arrow_metrics"] = store._arrow_metrics
-        except (AttributeError, TypeError):
+        except AttributeError, TypeError:
             pass
     elif store is not None and hasattr(store, "get_arrow_metrics"):
         try:
             from hledac.universal.knowledge.duckdb_store import get_arrow_metrics
+
             scorecard_data["arrow_metrics"] = get_arrow_metrics()
-        except (ImportError, AttributeError):
+        except ImportError, AttributeError:
             pass
 
     # Persist to DuckDB
@@ -1999,21 +2063,27 @@ async def _print_scorecard_report(
     if store is not None and hasattr(store, "upsert_episode"):
         try:
             import time as _t
+
             top_findings_list = []
             if sprint_report is not None and hasattr(sprint_report, "findings"):
-                top_findings_list = [f.content if hasattr(f, "content") else str(f)
-                                     for f in (sprint_report.findings or [])[:5]]
-            await store.upsert_episode({
-                "sprint_id": sprint_id,
-                "query": target,
-                "summary": sprint_report.threat_summary if sprint_report and hasattr(sprint_report, "threat_summary") else "",  # noqa: E501
-                "top_findings": top_findings_list,
-                "ioc_clusters": [],
-                "source_yield": scorecard_data.get("source_yield_json", "{}"),
-                "synthesis_engine": scorecard_data.get("synthesis_engine", "unknown"),
-                "duration_s": elapsed,
-                "ts": _t.time(),
-            })
+                top_findings_list = [
+                    f.content if hasattr(f, "content") else str(f) for f in (sprint_report.findings or [])[:5]
+                ]
+            await store.upsert_episode(
+                {
+                    "sprint_id": sprint_id,
+                    "query": target,
+                    "summary": sprint_report.threat_summary
+                    if sprint_report and hasattr(sprint_report, "threat_summary")
+                    else "",  # noqa: E501
+                    "top_findings": top_findings_list,
+                    "ioc_clusters": [],
+                    "source_yield": scorecard_data.get("source_yield_json", "{}"),
+                    "synthesis_engine": scorecard_data.get("synthesis_engine", "unknown"),
+                    "duration_s": elapsed,
+                    "ts": _t.time(),
+                }
+            )
             logger.info(f"[SCORECARD] Research episode saved: {sprint_id}")
         except (RuntimeError, OSError) as e:
             logger.warning("[SCORECARD] Failed to persist episode: %s", e)
@@ -2034,7 +2104,7 @@ async def _print_scorecard_report(
             if entities and hasattr(store, "upsert_global_entities"):
                 n_upserted = await store.upsert_global_entities(entities)
                 logger.info("[SCORECARD] ghost_global: %d entities upserted", n_upserted)
-        except (AttributeError, RuntimeError, OSError):
+        except AttributeError, RuntimeError, OSError:
             pass
 
     # Sprint 8VZ §B: FIRST producer-side cutover — canonical path constructs
@@ -2068,7 +2138,7 @@ async def _print_scorecard_report(
             try:
                 if hasattr(store, "get_top_seed_nodes"):
                     _top_nodes = store.get_top_seed_nodes(n=10)
-            except (AttributeError, RuntimeError):
+            except AttributeError, RuntimeError:
                 pass
 
         handoff = ExportHandoff(
@@ -2078,9 +2148,11 @@ async def _print_scorecard_report(
             phase_durations=phase_timings,
         )
         export_result = await _export_sprint(store, handoff)
-        logger.info("[SCORECARD] Sprint export: JSON=%s, seeds=%s",
-                     export_result.get("report_json", ""),
-                     export_result.get("seeds_json", ""))
+        logger.info(
+            "[SCORECARD] Sprint export: JSON=%s, seeds=%s",
+            export_result.get("report_json", ""),
+            export_result.get("seeds_json", ""),
+        )
     except (RuntimeError, OSError) as e:
         logger.warning("[SCORECARD] export_sprint() failed (non-fatal): %s", e)
 
@@ -2116,10 +2188,14 @@ async def _windup_synthesis(
         else:
             # Sprint 8VY: Priority 2 — analytics/donor graph via explicit seam
             # Previously: elif hasattr(store, "_ioc_graph") and store._ioc_graph: runner.inject_graph(store._ioc_graph)
-            analytics_graph = store.get_analytics_graph_for_synthesis() if hasattr(store, "get_analytics_graph_for_synthesis") else None  # noqa: E501
+            analytics_graph = (
+                store.get_analytics_graph_for_synthesis()
+                if hasattr(store, "get_analytics_graph_for_synthesis")
+                else None
+            )  # noqa: E501
             if analytics_graph is not None:
                 runner.inject_graph(analytics_graph)
-    except (ImportError, AttributeError, RuntimeError):
+    except ImportError, AttributeError, RuntimeError:
         pass
 
     # Sprint 8UC B.2: Inject DuckDB store for episode recall
@@ -2156,6 +2232,7 @@ async def _windup_synthesis(
     if findings and findings:
         try:
             from hledac.universal.brain.research_hypothesis_engine import HypothesisEngine
+
             _hyp_engine = HypothesisEngine()
             finding_texts = [f.get("text", "")[:200] for f in findings[:10]]
             hypotheses = await _hyp_engine.generate_sprint_hypotheses(
@@ -2171,15 +2248,18 @@ async def _windup_synthesis(
             logger.debug(f"[8VA] HypothesisEngine skipped: {e}")
 
     # Sprint 8UC B.2.4: Capture synthesis engine for scorecard
-    getattr(runner, '_last_synthesis_engine', 'unknown')
+    getattr(runner, "_last_synthesis_engine", "unknown")
 
     await runner.close()
 
     if report is not None:
         # Export to JSON
         await export_report(report, query)
-        logger.info("[WINDUP] Synthesis complete: %d IOCs, %d threat actors",
-                     len(report.ioc_entities), len(report.threat_actors))
+        logger.info(
+            "[WINDUP] Synthesis complete: %d IOCs, %d threat actors",
+            len(report.ioc_entities),
+            len(report.threat_actors),
+        )
     else:
         logger.info("[WINDUP] Synthesis returned None (no model or UMERGENCY)")
 
@@ -2203,10 +2283,7 @@ def _fatal(exc: BaseException, code: int = 1) -> None:
         3   = programmer error / regression (NameError, ImportError, AttributeError)
         130 = SIGINT (KeyboardInterrupt)
     """
-    logger.critical(
-        "_MAIN_FATAL [exit=%d]: %s\n%s",
-        code, exc, traceback.format_exc()
-    )
+    logger.critical("_MAIN_FATAL [exit=%d]: %s\n%s", code, exc, traceback.format_exc())
     sys.exit(code)
 
 
@@ -2235,6 +2312,7 @@ def main() -> None:
     # Sprint 7C: process masking
     try:
         import setproctitle
+
         setproctitle.setproctitle("kernel_worker")
     except ImportError:
         pass
@@ -2250,12 +2328,11 @@ def main() -> None:
                 "OSINT runtime requires external debugger disabled"
             )
         logger.warning(
-            "[OPSEC] PYTHON_DISABLE_REMOTE_DEBUG not set — "
-            "Python 3.14 safe-external-debugger interface is ACTIVE."
+            "[OPSEC] PYTHON_DISABLE_REMOTE_DEBUG not set — Python 3.14 safe-external-debugger interface is ACTIVE."
         )
 
     # Import CLI parser from new cli/ package
-    from cli.parser import build_parser, dispatch
+    from hledac.universal.cli.parser import build_parser, dispatch
 
     parser = build_parser()
 
@@ -2284,6 +2361,7 @@ def main() -> None:
     if getattr(args, "list_presets", False):
         try:
             from hledac.universal.utils.flag_presets import list_presets_table
+
             print(list_presets_table())
         except (ImportError, AttributeError) as exc:
             print(f"flag_presets unavailable: {exc!r}", file=sys.stderr)
@@ -2294,10 +2372,9 @@ def main() -> None:
     if preset_name:
         try:
             from hledac.universal.utils.flag_presets import apply_preset
+
             applied = apply_preset(preset_name, overwrite=False)
-            logger.info(
-                "[FLAG_PRESET] applied %r: %d flags set", preset_name, len(applied)
-            )
+            logger.info("[FLAG_PRESET] applied %r: %d flags set", preset_name, len(applied))
         except (ValueError, RuntimeError) as exc:
             logger.error("[FLAG_PRESET] failed to apply %r: %r", preset_name, exc)
             sys.exit(2)
@@ -2305,6 +2382,7 @@ def main() -> None:
     # Flag combo validation
     try:
         from hledac.universal.utils.flag_registry import validate_flag_combo
+
         errors, warnings = validate_flag_combo()
         for w in warnings:
             logger.warning("FLAG_VALIDATION: %s", w)
@@ -2356,12 +2434,9 @@ if __name__ == "__main__":
 
 import logging  # noqa: E402
 
-
 TYPE_CHECKING  # noqa: B018
 
 if TYPE_CHECKING:
     from hledac.universal.runtime.sprint_scheduler import SprintScheduler  # noqa: F401
 
 _logger = logging.getLogger(__name__)
-
-

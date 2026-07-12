@@ -38,6 +38,7 @@ import psutil
 __all__ = [
     "get_rss_mb",
     "Snapshot",
+    "TracemallocStats",
     "TracemallocSnapshot",
     "MemoryTracker",
     "assert_no_leak",
@@ -46,8 +47,12 @@ __all__ = [
     "is_tracing",
 ]
 
-_TM_NFRAMES: int = int(os.environ.get("HLEDAC_TEST_TM_FRAMES", "25"))
-"""Number of stack frames tracked by tracemalloc (default 25, ~200 KB ring buffer)."""
+_TM_NFRAMES: int = int(os.environ.get("HLEDAC_TEST_TM_FRAMES", "10"))
+"""Number of stack frames tracked by tracemalloc (default 10, ~80 KB ring buffer).
+
+F350M-R fix: reduced from 25 → 10 frames (~80 KB vs ~200 KB per test session).
+25 frames × ~8 KB/frame × 100 tests = ~20 MB retained. 10 frames × 100 = ~8 MB.
+"""
 
 log = logging.getLogger(__name__)
 
@@ -280,6 +285,80 @@ class Snapshot:
 
 
 @dataclass
+class TracemallocStats:
+    """
+    Lightweight tracemalloc stats using get_traced_memory() — 2 numbers, no snapshot.
+
+    F350M-R fix: tracemalloc.take_snapshot() allocates a full Python object graph
+    (~15-20 MB per snapshot on a 181-test suite). get_traced_memory() returns
+    only two integers: current bytes and peak bytes — zero allocation overhead.
+
+    For detailed per-site breakdown (when needed), call take_snapshot() separately
+    and use compare_top_n() on TracemallocSnapshot.
+
+    Example:
+        stats = TracemallocStats.take()
+        # ... test code ...
+        delta = stats.delta_bytes()
+        assert delta < 10 * 1024 * 1024, f"Python allocations grew {delta / 1024 / 1024:.1f} MB"
+    """
+
+    current_bytes: int
+    peak_bytes: int
+    _baseline: tuple[int, int] = field(default_factory=lambda: (0, 0))
+    _started: bool = field(default=False, repr=False)
+
+    @staticmethod
+    def take() -> TracemallocStats:
+        """Take a lightweight snapshot of Python object allocations."""
+        try:
+            if not tracemalloc.is_tracing():
+                tracemalloc.start(_TM_NFRAMES)
+            current, peak = tracemalloc.get_traced_memory()
+            return TracemallocStats(
+                current_bytes=current,
+                peak_bytes=peak,
+                _baseline=(current, peak),
+                _started=True,
+            )
+        except Exception as ex:
+            log.warning("get_traced_memory failed: %s", ex)
+            return TracemallocStats(current_bytes=0, peak_bytes=0, _started=False)
+
+    def delta_bytes(self) -> int:
+        """Return delta in bytes from baseline to now."""
+        try:
+            if not self._started:
+                return 0
+            if not tracemalloc.is_tracing():
+                return 0
+            current, _ = tracemalloc.get_traced_memory()
+            return current - self._baseline[0]
+        except Exception:
+            return 0
+
+    def delta_mb(self) -> float:
+        """Return delta in MB."""
+        return self.delta_bytes() / 1024 / 1024
+
+    def peak_delta_mb(self) -> float:
+        """Return peak memory growth in MB from baseline."""
+        try:
+            if not self._started:
+                return 0.0
+            if not tracemalloc.is_tracing():
+                return 0.0
+            _, peak = tracemalloc.get_traced_memory()
+            return (peak - self._baseline[1]) / 1024 / 1024
+        except Exception:
+            return 0.0
+
+    def stop(self) -> None:
+        """Stop tracemalloc if not in session mode (no-op in session mode)."""
+        self._started = False
+
+
+@dataclass
 class TracemallocSnapshot:
     """
     tracemalloc-based snapshot for Python object allocation tracking.
@@ -463,6 +542,26 @@ class MemoryTracker:
     include_tracemalloc: bool = True
     _rss_snapshot: Snapshot | None = field(default=None, repr=False)
     _tracemalloc: TracemallocSnapshot | None = field(default=None, repr=False)
+    _weakref_finalizers: list[weakref.finalize] = field(default_factory=list, repr=False)
+
+    def register_allocation(self, obj: object, name: str | None = None) -> weakref.finalize:
+        """
+        Register a large object for weakref-based finalization safety net.
+
+        Issue #12 fix: pytest fixtures can crash before __exit__ cleanup, leaving
+        large objects pinned in memory. weakref.finalize() guarantees __del__ runs
+        even if the fixture crashes mid-test.
+
+        Args:
+            obj: Large object to track.
+            name: Optional name for debugging.
+
+        Returns:
+            weakref.finalize object — call .detach() to cancel tracking.
+        """
+        finalizer = weakref.finalize(obj, lambda _: None)
+        self._weakref_finalizers.append(finalizer)
+        return finalizer
 
     def __enter__(self) -> MemoryTracker:
         gc.collect()
@@ -486,6 +585,13 @@ class MemoryTracker:
         gc.collect()
         if self._tracemalloc is not None:
             self._tracemalloc.stop()
+        # Issue #12: invoke and detach all weakref finalizers
+        for finalizer in self._weakref_finalizers:
+            try:
+                finalizer()
+            except Exception:  # noqa: BLE001
+                pass
+        self._weakref_finalizers.clear()
 
     def assert_leak_threshold(self, threshold_mb: float | None = None) -> None:
         """

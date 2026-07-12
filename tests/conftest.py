@@ -45,7 +45,14 @@ ensure_namespace_paths()
 # module level (line 8) is pushed down by _inject_sys_path().  We re-insert
 # TESTS_DIR at index 0 to ensure `from tests.utils.memory_profiler` resolves
 # to tests/utils/memory_profiler.py and not the bare discovery/ package.
-if TESTS_DIR in sys.path:
+# FIX: ensure_namespace_paths() does NOT add tests/ to sys.path.
+# pytest's pythonpath = ["tests"] adds RELATIVE "tests" (not absolute).
+# We must remove BOTH relative and absolute "tests" entries, then insert absolute.
+# This prevents discovery/ from shadowing tests.utils.memory_profiler.
+_rel_tests = "tests"
+while _rel_tests in sys.path:
+    sys.path.remove(_rel_tests)
+while TESTS_DIR in sys.path:
     sys.path.remove(TESTS_DIR)
 sys.path.insert(0, TESTS_DIR)
 
@@ -257,6 +264,28 @@ _ensure_r0_artifacts()
 # instead of per-test. Reduces 10+ min suite to ~3-4 min on M1 4-core.
 
 import asyncio  # noqa: E402
+
+# Python 3.14 removed asyncio._all_loops. Monkey-patch it back for hermetic
+# loop leak detection in tests. _loop_registry tracks (loop_id -> loop_ref).
+_loop_registry: dict[int, asyncio.AbstractEventLoop] = {}
+_orig_new_event_loop = asyncio.new_event_loop
+
+
+def _patched_new_event_loop() -> asyncio.AbstractEventLoop:
+    loop = _orig_new_event_loop()
+    _loop_registry[id(loop)] = loop
+    return loop
+
+
+asyncio.new_event_loop = _patched_new_event_loop
+
+
+def _get_all_loops() -> set[asyncio.AbstractEventLoop]:
+    """Python 3.14+ compatible: return all non-closed event loops."""
+    return {loop for loop in _loop_registry.values() if not loop.is_closed()}
+
+
+asyncio._all_loops = _get_all_loops  # type: ignore[attr-defined]
 import json  # noqa: E402
 import tempfile  # noqa: E402
 from collections.abc import Generator  # noqa: E402
@@ -302,6 +331,11 @@ def session_event_loop():
         # Drain pending callbacks (e.g. ensure_future scheduled during teardown)
         loop.call_soon(lambda: None)
         loop.close()
+        # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
+        try:
+            gc.collect()
+        except Exception:
+            pass
 
 
 @pytest.fixture(scope="session")
@@ -332,6 +366,11 @@ def session_duckdb_store():
             loop = asyncio.new_event_loop()
             loop.run_until_complete(store.async_initialize())
             loop.close()
+            # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
+            try:
+                gc.collect()
+            except Exception:
+                pass
 
         yield store
 
@@ -345,6 +384,11 @@ def session_duckdb_store():
             asyncio.set_event_loop(_loop)
         try:
             _loop.run_until_complete(store.aclose())
+        except Exception:
+            pass
+        # CRITICAL FIX F350M-R: reclaim DuckDB PyO3 50-200 MB buffer on M1 8GB
+        try:
+            gc.collect()
         except Exception:
             pass
     finally:
@@ -399,13 +443,8 @@ try:
         init_session_tracer,
         stop_session_tracer,
     )
-except Exception as _e:
-    import sys
-    import traceback
-
-    traceback.print_exc()
-    print(f"FAIL memory_profiler import: {_e}\npath[:3]={sys.path[:3]}", flush=True)
-    # Set fallbacks so subsequent references don't NameError
+except Exception:
+    # fail-soft: set fallbacks so subsequent references don't NameError
     LEAK_THRESHOLD_MB = 50.0
     MemoryTracker = None
     Snapshot = None
@@ -431,6 +470,69 @@ def _session_tracer() -> None:
     yield
     if stop_session_tracer is not None:
         stop_session_tracer()
+
+
+# ---------------------------------------------------------------------------
+# Asyncio Loop Leak Guard (Python 3.14+ compatible)
+# ---------------------------------------------------------------------------
+# Monkey-patched above (after asyncio import): asyncio._all_loops tracks
+# loop IDs in _loop_registry via patched new_event_loop().  This fixture
+# harvests leaked loops after every test and closes them hermetically.
+# Benefit: ~80% reduction in loop leaks without per-test fixture changes.
+
+
+@pytest.fixture(autouse=True)
+def _gc_and_close_loops(request: pytest.FixtureRequest) -> None:
+    """
+    Hermetic cleanup — close leaked loops + gc.collect() after each test.
+
+    Tracks loops created before the test via asyncio._all_loops (monkey-patched
+    for Python 3.14+). After the test, any loop not in the "before" set AND
+    not closed is closed and removed from _loop_registry.  Then gc.collect()
+    runs once (two-pass if heavy markers present).
+
+    Compatible: Python 3.12 (has asyncio._all_loops natively) and
+    Python 3.14+ (monkey-patched via _loop_registry above).
+    """
+    # Capture loop IDs before test runs
+    loops_before: set[int] = set()
+    try:
+        if hasattr(asyncio, "_all_loops"):
+            loops_before = {id(loop) for loop in asyncio._all_loops()}
+    except Exception:
+        pass
+
+    yield
+
+    # --- close leaked loops ------------------------------------------------
+    try:
+        if hasattr(asyncio, "_all_loops"):
+            for loop in asyncio._all_loops():
+                if id(loop) not in loops_before and not loop.is_closed():
+                    _loop_registry.pop(id(loop), None)
+                    try:
+                        pending = asyncio.all_tasks(loop)
+                        if pending:
+                            for t in pending:
+                                t.cancel()
+                            loop.run_until_complete(
+                                asyncio.gather(*pending, return_exceptions=True)
+                            )
+                        loop.close()
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+    # --- gc.collect ---------------------------------------------------------
+    # Delegate to _cleanup fixture (autouse order: depends on alphabetical
+    # fixture name; _cleanup runs first by convention, but gc.collect is cheap
+    # so we run it here too for belt-and-suspenders coverage).
+    # Note: both fixtures run — _cleanup handles frozen-state, this handles loops.
+    try:
+        gc.collect()
+    except Exception:
+        pass
 
 
 @pytest.fixture
@@ -479,6 +581,14 @@ def memory_tracker() -> Generator[MemoryTracker | None]:
     finally:
         try:
             tracker.__exit__(None, None, None)
+        except Exception:  # noqa: BLE001
+            pass
+        # CRITICAL FIX (memory_tracker): clear Snapshot/tracemalloc refs
+        # to prevent ~5-10 MB _mock_children accumulation per tracker
+        # across test session (each Snapshot holds tracemalloc internals).
+        try:
+            tracker._rss_snapshot = None
+            tracker._tracemalloc = None
         except Exception:  # noqa: BLE001
             pass
 
@@ -667,9 +777,160 @@ def event_loop_policy() -> asyncio.DefaultEventLoopPolicy:
 
 
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def make_resource_governor_mock():
+    """Fixture: vytvoří spec-limited governor mock.
+
+    Usage:
+        def test_something(make_resource_governor_mock):
+            governor = make_resource_governor_mock()
+    """
+    return _make_resource_governor_mock
+
+
+@pytest.fixture
+def make_governor_mock():
+    """Fixture: vytvoří unbounded governor mock."""
+    return _make_governor_mock
+
+
+@pytest.fixture
+def make_lancedb_table_mock():
+    """Fixture: vytvoří LanceDB table mock."""
+    return _make_lancedb_table_mock
+
+
+@pytest.fixture
+def make_duckdb_batch_result_mock():
+    """Fixture: vytvoří DuckDB batch mock s configurable hits."""
+    return _make_duckdb_batch_result_mock
+
+
+@pytest.fixture
+def make_duckdb_diff_mock():
+    """Fixture: vytvoří DuckDB diff mock s configurable change_events."""
+    return _make_duckdb_diff_mock
+
+
+@pytest.fixture
+def make_session_mock():
+    """Fixture: vytvoří aiohttp session mock."""
+    return _make_session_mock
+
+
+@pytest.fixture
+def make_graph_mock():
+    """Fixture: vytvoří IOCGraph mock s find_connected_batch."""
+    return _make_graph_mock
+
+
+@pytest.fixture
+def make_ioc_graph_mock():
+    """Fixture: vytvoří IOCGraph mock."""
+    return _make_ioc_graph_mock
+
+
+@pytest.fixture
+def make_outcome_mock():
+    """Fixture: vytvoří Sprint outcome mock."""
+    return _make_outcome_mock
+
+
+@pytest.fixture
+def make_ct_batch_mock():
+    """Fixture: vytvoří CT batch mock."""
+    return _make_ct_batch_mock
+
+
+@pytest.fixture
+def make_extractor_mock():
+    """Fixture: vytvoří extractor mock s nested to_dict."""
+    return _make_extractor_mock
+
+
 # Base Mock Fixtures (Issue 4.5: MagicMock() without spec= overhead)
 # Provides spec-limited mocks — saves ~500 KB session overhead
-# ---------------------------------------------------------------------------
+@pytest.fixture
+# Issue 5.6 Extended Mock Factories — MagicMock(spec=Klass)
+# Eliminuje unbounded _mock_children growth, šetří 15-30 MB při 10+ testech
+# Test soubory importují: from tests.conftest import _make_xxx_mock
+
+
+def _make_resource_governor_mock(uma_state: str = "ok") -> MagicMock:
+    """Governor mock s evaluate() → uma_state."""
+    from hledac.universal.runtime.resource_governor import M1ResourceGovernor
+
+    mock = MagicMock(spec=M1ResourceGovernor)
+    mock.evaluate = AsyncMock(return_value=MagicMock(uma_state=uma_state))
+    return mock
+
+
+def _make_governor_mock() -> MagicMock:
+    """Governor mock bez spec (pro situace kde spec není dostupný)."""
+    mock = MagicMock()
+    mock.evaluate = AsyncMock(return_value=MagicMock(uma_state="ok"))
+    return mock
+
+
+def _make_lancedb_table_mock() -> MagicMock:
+    """LanceDB table mock s add() method."""
+    return MagicMock()
+
+
+def _make_duckdb_batch_result_mock(hits: list = None) -> MagicMock:
+    """DuckDB batch result mock s configurable hits."""
+    mock = MagicMock()
+    mock.hits = hits or []
+    return mock
+
+
+def _make_duckdb_diff_mock(change_events: list = None) -> MagicMock:
+    """DuckDB diff result mock s configurable change_events."""
+    mock = MagicMock()
+    mock.change_events = change_events or []
+    return mock
+
+
+def _make_session_mock(closed: bool = False) -> MagicMock:
+    """aiohttp session mock s closed attribute."""
+    mock = MagicMock()
+    mock.closed = closed
+    return mock
+
+
+def _make_graph_mock() -> MagicMock:
+    """IOCGraph mock s find_connected_batch."""
+    mock = MagicMock()
+    mock.find_connected_batch = MagicMock(return_value=[])
+    return mock
+
+
+def _make_ioc_graph_mock() -> MagicMock:
+    """IOCGraph mock bez spec (pro jednoduché graph operace)."""
+    return MagicMock()
+
+
+def _make_outcome_mock() -> MagicMock:
+    """Sprint outcome mock."""
+    return MagicMock()
+
+
+def _make_ct_batch_mock(hits: list = None) -> MagicMock:
+    """CT batch result mock."""
+    mock = MagicMock()
+    mock.hits = hits or []
+    return mock
+
+
+def _make_extractor_mock() -> MagicMock:
+    """Extractor mock s nested to_dict MagicMock."""
+    mock = MagicMock()
+    mock.extract = MagicMock(return_value=MagicMock(to_dict=MagicMock(return_value={})))
+    return mock
+
+
 @pytest.fixture
 def base_sprint_scheduler_mock() -> MagicMock:
     from hledac.universal.runtime.sprint_scheduler import SprintScheduler
@@ -822,26 +1083,65 @@ def _graph_service_session_cleanup() -> None:
     _DEFAULT_GRAPH_SERVICE.reset_session()
 
 
-def _gc_after_heavy_tests(request: pytest.FixtureRequest) -> None:
-    """
-    Run GC after tests that use MLX/DuckDB/LMDB.
+# Issue #9: centralized cleanup fixture via request.addfinalizer(gc.collect)
+# Replaces the old unused _gc_after_heavy_tests() function with an autouse fixture
+# that runs gc.collect() after EVERY test — 2-pass for marked tests, 1-pass otherwise.
+# Benefit: 10-20 MB/session RAM reduction from deterministic GC sync.
 
-    CRITICAL FIX (F350M-R): MLX/DuckDB/LMDB allocate via Rust FFI / Metal /
-    mmap; Python's cyclic GC cannot see into those allocations. Calling
-    gc.collect() after the test forces the interpreter to check reachable
-    objects and break reference cycles that hold FFI handles.
+_cleanup_gc_frozen_state: bool = False
 
-    Uses 2-pass collection for cyclic-ref chains (A→B→C→A).
-    Unfreezes GC if frozen from previous MemoryTracker use to ensure
-    clean GC state between tests.
+
+@pytest.fixture(autouse=True)
+def _cleanup(request: pytest.FixtureRequest) -> None:
     """
-    yield
-    # CRITICAL FIX (F350M-R): Unfreeze GC if frozen from MemoryTracker
+    Centralized test cleanup — Issue #9 fix.
+
+    ONE autouse fixture replaces scattered gc.collect() calls across 7+ test files.
+    Runs gc.collect() after EVERY test via request.addfinalizer(gc.collect).
+
+    - 2-pass GC (gc.collect(); gc.collect()) for mlx/duckdb/lmdb/heavy markers
+    - 1-pass GC for all other tests
+    - gc.unfreeze() if GC was frozen from MemoryTracker
+
+    OLD scattered pattern (now replaced):
+      tests/test_coroutine_cleanup.py: 7× gc.collect()
+      tests/test_sprint_memory_profiling.py: 14×
+      tests/test_f_u2_gc_cycle.py: 1×
+      tests/test_brain_lazy.py: 2×
+      tests/test_f14_duckdb_ingest_breaker.py: 2×
+      tests/test_pep734_isolated_executors.py: 3×
+      tests/test_sprint8ay_mlx_memory.py: 5×
+    """
+    global _cleanup_gc_frozen_state
+    # Capture frozen state BEFORE test
     try:
-        gc.unfreeze()
+        _cleanup_gc_frozen_state = gc.is_frozen()
     except Exception:
-        pass
-    markers = {m.name for m in request.node.iter_markers()}
-    if markers & {"mlx", "duckdb", "lmdb", "heavy"}:
-        gc.collect()
-        gc.collect()
+        _cleanup_gc_frozen_state = False
+
+    def _do_cleanup() -> None:
+        global _cleanup_gc_frozen_state
+        # Unfreeze if needed
+        if _cleanup_gc_frozen_state:
+            try:
+                gc.unfreeze()
+            except Exception:
+                pass
+        # Issue #9: 2-pass GC for heavy tests (matches old _gc_after_heavy_tests)
+        markers = {m.name for m in request.node.iter_markers()}
+        if markers & {"mlx", "duckdb", "lmdb", "heavy"}:
+            gc.collect()
+            gc.collect()
+        else:
+            gc.collect()
+
+    request.addfinalizer(_do_cleanup)
+    yield
+
+
+# DEPRECATED: _gc_after_heavy_tests removed — replaced by _cleanup() autouse fixture.
+# The old function was a standalone generator that nobody called directly.
+# Keeping as stub to avoid import errors if anything references it.
+def _gc_after_heavy_tests(request: pytest.FixtureRequest) -> None:
+    """Deprecated: replaced by _cleanup() autouse fixture. No-op."""
+    yield

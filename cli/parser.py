@@ -13,66 +13,83 @@ Commands:
 
 import argparse
 import pathlib
-import sys
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from typing import Callable
+    pass
 
 
 # --------------------------------------------------------------------------- #
 # Shared argument helpers
 # --------------------------------------------------------------------------- #
 
+
 def _add_sprint_common(parser: argparse.ArgumentParser) -> None:
     """Arguments common to sprint and dry-run."""
     parser.add_argument(
-        "--sprint", metavar="QUERY", required=True,
+        "--sprint",
+        metavar="QUERY",
+        required=True,
         help="Run sprint with given query",
     )
     parser.add_argument(
-        "--duration", type=float, default=1800.0, metavar="SECS",
+        "--duration",
+        type=float,
+        default=1800.0,
+        metavar="SECS",
         help="Sprint duration in seconds (default: 1800 = 30min)",
     )
     parser.add_argument(
-        "--windup-lead", type=float, default=None,
+        "--windup-lead",
+        type=float,
+        default=None,
         help="Override windup lead time in seconds. Default: 30%% of duration (capped at 180s).",
     )
     parser.add_argument(
-        "--export-dir", default=str(pathlib.Path.home() / ".hledac" / "reports"),
+        "--export-dir",
+        default=str(pathlib.Path.home() / ".hledac" / "reports"),
         help="Directory for sprint reports (default: ~/.hledac/reports)",
     )
     parser.add_argument(
-        "--aggressive", action="store_true", default=True,
+        "--aggressive",
+        action="store_true",
+        default=True,
         help="Enable aggressive mode with 8s branch budgets (default: ON)",
     )
     parser.add_argument(
-        "--no-aggressive", dest="aggressive", action="store_false",
+        "--no-aggressive",
+        dest="aggressive",
+        action="store_false",
         help="Disable aggressive mode: stable sequential branches, 30 percent windup",
     )
     parser.add_argument(
-        "--force", action="store_true",
+        "--force",
+        action="store_true",
         help="F221-ABORT: Override the pre-flight guard that aborts sprints whose "
-             "active-window budget would be below MIN_ACTIVE_WINDOW_S=30s.",
+        "active-window budget would be below MIN_ACTIVE_WINDOW_S=30s.",
     )
     parser.add_argument(
         "--acquisition-profile",
-        type=str, default="default",
+        type=str,
+        default="default",
         choices=["default", "nonfeed_diagnostic", "deep_osint_m1"],
         help="Acquisition runtime profile",
     )
     parser.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Dry-run mode: validate config, check Hermes/UMA/sources, show timing plan.",
     )
     parser.add_argument(
         "--preset",
-        type=str, default=None,
+        type=str,
+        default=None,
         choices=["minimal", "osint", "recon", "research", "full"],
         help="Apply a flag preset before validation.",
     )
     parser.add_argument(
-        "--list-presets", action="store_true",
+        "--list-presets",
+        action="store_true",
         help="Print preset table and exit 0.",
     )
 
@@ -81,18 +98,22 @@ def _add_sprint_common(parser: argparse.ArgumentParser) -> None:
 # Subcommand: sprint
 # --------------------------------------------------------------------------- #
 
+
 def _cmd_sprint(parser: argparse.ArgumentParser) -> None:
     _add_sprint_common(parser)
     parser.add_argument(
-        "--ui", action="store_true",
+        "--ui",
+        action="store_true",
         help="Enable terminal dashboard during sprint",
     )
     parser.add_argument(
-        "--deep-probe", action="store_true",
+        "--deep-probe",
+        action="store_true",
         help="Run deep probe research post-sprint",
     )
     parser.add_argument(
-        "--vault", action="store_true",
+        "--vault",
+        action="store_true",
         help="Enable encrypted vault export (AES-256-ZIP)",
     )
 
@@ -101,17 +122,23 @@ def _cmd_sprint(parser: argparse.ArgumentParser) -> None:
 # Subcommand: pivot
 # --------------------------------------------------------------------------- #
 
+
 def _cmd_pivot(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--pivot", metavar="QUERY", required=True,
+        "--pivot",
+        metavar="QUERY",
+        required=True,
         help="Pivot search query",
     )
     parser.add_argument(
-        "--pivot-k", type=int, default=10,
+        "--pivot-k",
+        type=int,
+        default=10,
         help="Number of pivot results (default: 10)",
     )
     parser.add_argument(
-        "--export-dir", default=str(pathlib.Path.home() / ".hledac" / "reports"),
+        "--export-dir",
+        default=str(pathlib.Path.home() / ".hledac" / "reports"),
         help="Directory for reports (default: ~/.hledac/reports)",
     )
 
@@ -120,13 +147,17 @@ def _cmd_pivot(parser: argparse.ArgumentParser) -> None:
 # Subcommand: ct (certificate transparency)
 # --------------------------------------------------------------------------- #
 
+
 def _cmd_ct(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--ct-pivot", metavar="DOMAIN", required=True,
+        "--ct-pivot",
+        metavar="DOMAIN",
+        required=True,
         help="Certificate transparency pivot domain",
     )
     parser.add_argument(
-        "--export-dir", default=str(pathlib.Path.home() / ".hledac" / "reports"),
+        "--export-dir",
+        default=str(pathlib.Path.home() / ".hledac" / "reports"),
         help="Directory for reports (default: ~/.hledac/reports)",
     )
 
@@ -134,6 +165,7 @@ def _cmd_ct(parser: argparse.ArgumentParser) -> None:
 # --------------------------------------------------------------------------- #
 # Parser factory
 # --------------------------------------------------------------------------- #
+
 
 def build_parser() -> argparse.ArgumentParser:
     """
@@ -171,9 +203,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sprint", metavar="QUERY", help="Run sprint with given query")
     parser.add_argument("--duration", type=float, default=1800.0, metavar="SECS")
     parser.add_argument("--windup-lead", type=float, default=None)
-    parser.add_argument(
-        "--export-dir", default=str(pathlib.Path.home() / ".hledac" / "reports")
-    )
+    parser.add_argument("--export-dir", default=str(pathlib.Path.home() / ".hledac" / "reports"))
     parser.add_argument("--vault", action="store_true")
     parser.add_argument("--aggressive", action="store_true", default=True)
     parser.add_argument("--no-aggressive", dest="aggressive", action="store_false")
@@ -181,15 +211,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ui", action="store_true")
     parser.add_argument("--force", action="store_true")
     parser.add_argument(
-        "--acquisition-profile", type=str, default="default",
+        "--acquisition-profile",
+        type=str,
+        default="default",
         choices=["default", "nonfeed_diagnostic", "deep_osint_m1"],
     )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
-        "--preset", type=str, default=None,
+        "--preset",
+        type=str,
+        default=None,
         choices=["minimal", "osint", "recon", "research", "full"],
     )
     parser.add_argument("--list-presets", action="store_true")
+    parser.add_argument("--profile", action="store_true", default=False, help="Enable OTEL profiling (Issue #19)")
 
     # ------------------------------------------------------------------
     # Subcommands (modern syntax)
@@ -211,6 +246,7 @@ def build_parser() -> argparse.ArgumentParser:
 # --------------------------------------------------------------------------- #
 # Dispatcher — called from __main__.py:main()
 # --------------------------------------------------------------------------- #
+
 
 def dispatch(args: argparse.Namespace) -> int:
     """
@@ -258,7 +294,7 @@ def _dispatch_sprint(args: argparse.Namespace) -> int:
     import os
     import pathlib
 
-    from hledac.universal.core.__main__ import SprintFlags, run_sprint, dry_run_sprint
+    from hledac.universal.core.__main__ import SprintFlags, dry_run_sprint, run_sprint
 
     logger = logging.getLogger(__name__)
     logger.info("[CLI] sprint: delegating to core.__main__.run_sprint()")
@@ -273,9 +309,7 @@ def _dispatch_sprint(args: argparse.Namespace) -> int:
     force: bool = getattr(args, "force", False)
     profile: str | None = getattr(args, "acquisition_profile", "default")
     dry_run: bool = getattr(args, "dry_run", False)
-    export_dir: str = getattr(args, "export_dir", None) or str(
-        pathlib.Path.home() / ".hledac" / "reports"
-    )
+    export_dir: str = getattr(args, "export_dir", None) or str(pathlib.Path.home() / ".hledac" / "reports")
 
     if vault:
         os.environ["HLEDAC_VAULT_EXPORT"] = "1"
@@ -299,7 +333,7 @@ def _dispatch_sprint(args: argparse.Namespace) -> int:
                 )
             )
         return 0
-    except (NameError, AttributeError, ImportError):
+    except NameError, AttributeError, ImportError:
         raise  # propagate to main() for code=3
     except SystemExit as e:
         return e.code if isinstance(e.code, int) else 1

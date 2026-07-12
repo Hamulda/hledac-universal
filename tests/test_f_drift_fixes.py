@@ -247,13 +247,24 @@ class TestScheduleGraphUpdate:
         We bypass async_initialize() because the contract under test is the
         pure-Python _schedule_graph_update — no DB writes needed. The store's
         graph update is a no-op import (graph_service is feature-gated).
+
+        M1 8GB: cleanup releases DuckDB PyO3 50-200 MB buffer.
         """
         from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
         s = DuckDBShadowStore()
         # _bg_tasks is initialised in __init__, but be defensive
         s._bg_tasks = set()
-        return s
+        try:
+            yield s
+        finally:
+            try:
+                s.close()
+            except Exception:
+                pass
+            import gc
+
+            gc.collect()
 
     @pytest.fixture
     def sample_findings(self):

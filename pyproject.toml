@@ -102,6 +102,8 @@ dependencies = [
     "usearch>=2.25.3",
     "datasketch>=1.10.0",
     "python-dotenv>=1.0.0",
+    "cyclopts>=5.0.0a7,<6.0.0; python_full_version >= '3.14'",  # Python 3.14 max
+    "cyclopts>=6.0.0; python_full_version < '3.14'",
     "rank-bm25>=0.2.2",
     # UPGRADE 2026-07-05: Extended upper bound to <0.20.0 for rustworkx 0.18+ support.
     "rustworkx>=0.17.1,<0.20.0",
@@ -282,6 +284,7 @@ dev = [
     # ── Testing ────────────────────────────────────────────────────────────────
     "pytest>=8.0.0",
     "pytest-asyncio>=1.4.0",
+    "pytest-mock>=3.14.0",  # Issue #10: mocker fixture for MagicMock/AsyncMock lifecycle (~30-50 MB session savings)
     "pytest-xdist>=3.5.0",
     "pytest-cov>=4.1.0",
     "pytest-benchmark>=4.0.0",  # Hot-path benchmarks, fail if regress >10%

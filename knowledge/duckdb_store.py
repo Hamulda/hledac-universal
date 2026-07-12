@@ -3070,9 +3070,38 @@ class DuckDBShadowStore:
                     _logger.debug(f"[DUCKDB] Removed stale lock {duckdb_lock_path}: {reason}")
         except Exception:
             pass
+        # F350M-R FIX: flush pending accepted findings before close.
+        # Without this, up to _min_flush=50 CanonicalFinding objects (~50-200KB)
+        # accumulate per sprint and leak if _do_sync_close is called before async_ingest_findings_batch
+        # next runs. Safe in sync context: runs flush in thread pool.
+        _pending = getattr(self, "_pending_accepted_findings", None)
+        if _pending:
+            try:
+                _pending_copy = list(_pending)
+                _pending.clear()
+                if _pending_copy:
+                    self._executor.submit(self._flush_pending_findings_sync, _pending_copy)
+            except Exception:
+                pass
         if hasattr(self, "_arrow_metrics") and self._arrow_metrics is not None:
             self._arrow_metrics.clear()
         self._adjust_executor_pool()
+
+    def _flush_pending_findings_sync(self, findings: list) -> None:
+        """Sync flush: persists pending findings from _pending_accepted_findings on close.
+
+        Called from _do_sync_close via executor.submit to avoid blocking.
+        Writes via Arrow batch pipeline (same as async_ingest_findings_batch).
+        """
+        try:
+            if not findings:
+                return
+            if hasattr(self, "_record_canonical_findings_batch_arrow"):
+                self._record_canonical_findings_batch_arrow(findings)
+            elif hasattr(self, "_sync_record_canonical_findings_batch_arrow_standalone"):
+                self._sync_record_canonical_findings_batch_arrow_standalone(findings)
+        except Exception:
+            pass  # fail-soft: don't fail close for flush errors
 
     async def async_initialize(self, replay_pending_limit: int | None = None, replay_timeout_s: float = 5.0) -> bool:
         """
@@ -3149,7 +3178,7 @@ class DuckDBShadowStore:
                     self, lambda _metrics: _metrics.clear() if _metrics is not None else None, self._arrow_metrics
                 )
                 _finalizer.atexit = False
-        except TypeError, AttributeError, Exception:
+        except (TypeError, AttributeError, Exception):
             pass
         return True
 

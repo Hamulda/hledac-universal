@@ -189,12 +189,15 @@ class TestF271ARelationshipImport:
             )
             # After: seen_rels should grow
             assert len(svc._seen_rels) > initial_size, "upsert_relation must register the relation in _seen_rels"
-        except Exception as _e:  # noqa: BLE001
+        except Exception:
             # F271A contract is fail-soft: any exception inside the engine
             # is fine; the key invariant is that the CALL SITE doesn't blow
             # up with ImportError for `Relationship` (the original bug).
             # We assert by reaching this line at all.
             pass
+        finally:
+            # F350M-R fix: clear _seen_rels in teardown to prevent cross-test accumulation
+            svc._seen_rels.clear()
 
 
 # ─────────────────────────────────────────────────────────────────────────

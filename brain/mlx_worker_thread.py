@@ -225,6 +225,11 @@ class MLXWorkerThread:
                         except Exception:
                             pass
                     loop.close()
+                    # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
+                    try:
+                        gc.collect()
+                    except Exception:
+                        pass
             except Exception as e:
                 logger.debug('[MLXWorker] cleanup error: %s', e)
             self._loop = None

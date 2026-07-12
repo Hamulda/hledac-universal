@@ -251,6 +251,11 @@ def run_runtime(
         restore_signals()
         loop.run_until_complete(_cancel_all_tasks())
         loop.close()
+        # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
+        try:
+            gc.collect()
+        except Exception:
+            pass
         logger.debug("[RUNTIME] Event loop closed")
 
 
@@ -273,6 +278,11 @@ def shutdown_runtime(
 
     loop.run_until_complete(_cancel_all_tasks())
     loop.close()
+    # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
+    try:
+        gc.collect()
+    except Exception:
+        pass
     logger.debug("[RUNTIME] Event loop closed")
 
 

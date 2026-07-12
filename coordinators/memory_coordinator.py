@@ -1449,6 +1449,11 @@ class MultiLevelContextCache:
                     finally:
                         if _loop_owned:
                             loop.close()
+                            # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
+                            try:
+                                gc.collect()
+                            except Exception:
+                                pass
                     return result[0] if result else None
                 embeddings = list(self.embedder.embed([text]))
                 if embeddings:

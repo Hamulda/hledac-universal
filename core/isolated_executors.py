@@ -233,6 +233,11 @@ class IsolatedInterpreter:
                 return loop.run_until_complete(self.run_async(func, *args, **kwargs))
             finally:
                 loop.close()
+                            # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
+                            try:
+                                gc.collect()
+                            except Exception:
+                                pass
         else:
             import functools
             return asyncio.run_coroutine_threadsafe(self.run_async(func, *args, **kwargs), loop).result()
@@ -327,6 +332,11 @@ class IsolatedInterpreterPool:
                 return loop.run_until_complete(self.run_async(func, *args, **kwargs))
             finally:
                 loop.close()
+                            # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
+                            try:
+                                gc.collect()
+                            except Exception:
+                                pass
         else:
             return asyncio.run_coroutine_threadsafe(self.run_async(func, *args, **kwargs), loop).result()
 
@@ -401,6 +411,11 @@ class IsolatedDuckDBExecutor:
                 return loop.run_until_complete(self.execute_query_async(query_func, *args, **kwargs))
             finally:
                 loop.close()
+                # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
+                try:
+                    gc.collect()
+                except Exception:
+                    pass
         else:
             return asyncio.run_coroutine_threadsafe(self.execute_query_async(query_func, *args, **kwargs), loop).result()
 
@@ -465,6 +480,11 @@ class IsolatedMLXExecutor:
                 return loop.run_until_complete(self.run_inference_async(inference_func, *args, **kwargs))
             finally:
                 loop.close()
+                # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
+                try:
+                    gc.collect()
+                except Exception:
+                    pass
         else:
             return asyncio.run_coroutine_threadsafe(self.run_inference_async(inference_func, *args, **kwargs), loop).result()
 
@@ -529,6 +549,11 @@ class IsolatedEvidenceBatchWriter:
                 return loop.run_until_complete(self.process_batch_async(process_func, items, *args, **kwargs))
             finally:
                 loop.close()
+                # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
+                try:
+                    gc.collect()
+                except Exception:
+                    pass
         else:
             return asyncio.run_coroutine_threadsafe(self.process_batch_async(process_func, items, *args, **kwargs), loop).result()
 

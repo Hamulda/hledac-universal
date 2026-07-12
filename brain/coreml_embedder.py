@@ -376,6 +376,11 @@ class CoreMLEmbedder:
                             return new_loop.run_until_complete(self.encode_batch(texts, **kwargs))
                         finally:
                             new_loop.close()
+                            # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
+                            try:
+                                gc.collect()
+                            except Exception:
+                                pass
                     future = _ex.submit(_run_encode)
                     return future.result(timeout=30)
             except Exception:

@@ -46,8 +46,6 @@ Sprint F150P: Finish-layer truth fields — canonical surfaces from scheduler/co
   - No new store reads, no write-back, additive only
 """
 
-
-
 import asyncio
 import logging
 import os
@@ -81,12 +79,14 @@ def _json_dumps(obj: Any, *, indent: int | None = None, default: Any = None) -> 
     """Sprint F285: orjson.dumps wrapper for compatibility."""
     try:
         import orjson
+
         opts = orjson.OPT_INDENT_2 if indent else 0
         if default:
             return orjson.dumps(obj, default=default, option=opts).decode()
         return orjson.dumps(obj, option=opts).decode()
     except Exception:
         import json
+
         return json.dumps(obj, indent=indent, default=default or str)
 
 
@@ -199,16 +199,18 @@ def _build_investigation_packet(report: dict) -> dict:
             # Terminal-only lanes (zero accepted, attempted) count as coverage
             attempted = outcome.get("attempted", False)
             terminal_state = outcome.get("terminal_state", "")
-            source_family_summary.append({
-                "family": family,
-                "accepted": accepted,
-                "rejected": rejected,
-                "pending": pending,
-                "attempted": attempted,
-                "terminal_state": terminal_state,
-                "has_findings": accepted > 0,
-                "terminal_only": (attempted or bool(terminal_state)) and accepted == 0,
-            })
+            source_family_summary.append(
+                {
+                    "family": family,
+                    "accepted": accepted,
+                    "rejected": rejected,
+                    "pending": pending,
+                    "attempted": attempted,
+                    "terminal_state": terminal_state,
+                    "has_findings": accepted > 0,
+                    "terminal_only": (attempted or bool(terminal_state)) and accepted == 0,
+                }
+            )
 
         # ── Terminal coverage ───────────────────────────────────────────────────
         terminal_coverage: dict[str, str] = {}
@@ -250,6 +252,7 @@ def _build_investigation_packet(report: dict) -> dict:
 
         # Feed dominance without nonfeed corroboration
         from hledac.universal.runtime.investigation_planner import _is_feed_dominant
+
         if _is_feed_dominant(sfo_dict) and not corroboration:
             gaps.append("feed_dominant_no_nonfeed_corroboration")
 
@@ -260,14 +263,20 @@ def _build_investigation_packet(report: dict) -> dict:
                 break
             act_type = action.get("action", "")
             target = action.get("target", "")
-            if act_type in ("run_doh_on_domain", "run_ct_on_domain", "run_wayback_on_url",
-                           "run_passivedns_on_domain_or_ip"):
-                next_pivots.append({
-                    "pivot_type": act_type.replace("run_", "").replace("_on_", "_"),
-                    "target": target,
-                    "priority": action.get("priority", 0.0),
-                    "lane": action.get("lane", ""),
-                })
+            if act_type in (
+                "run_doh_on_domain",
+                "run_ct_on_domain",
+                "run_wayback_on_url",
+                "run_passivedns_on_domain_or_ip",
+            ):
+                next_pivots.append(
+                    {
+                        "pivot_type": act_type.replace("run_", "").replace("_on_", "_"),
+                        "target": target,
+                        "priority": action.get("priority", 0.0),
+                        "lane": action.get("lane", ""),
+                    }
+                )
 
         return {
             "query": str(planner_state.get("current_query", "") or ""),
@@ -284,7 +293,15 @@ def _build_investigation_packet(report: dict) -> dict:
         logger.warning(f"[EXPORT] investigation_packet build failed (fail-soft): {e}")
         return {
             "query": report.get("query", "") or "",
-            "seed_context": {"available": False, "source": "", "domains": [], "ips": [], "urls": [], "hashes": [], "cves": []},  # noqa: E501
+            "seed_context": {
+                "available": False,
+                "source": "",
+                "domains": [],
+                "ips": [],
+                "urls": [],
+                "hashes": [],
+                "cves": [],
+            },  # noqa: E501
             "source_family_summary": [],
             "terminal_coverage": {},
             "corroboration": {},
@@ -311,6 +328,7 @@ def _build_investigation_packet(report: dict) -> dict:
 #   - Fail-soft: returns partial diagnosis when fields are missing.
 #   - accepted nonfeed evidence changes overall status to partial_yield.
 # ---------------------------------------------------------------------------
+
 
 def _build_provider_yield_diagnosis(report: dict) -> dict:
     """
@@ -359,8 +377,12 @@ def _build_provider_yield_diagnosis(report: dict) -> dict:
 
         # Determine public status and action
         if public_terminal in ("DISCOVERY_ERROR", "FETCH_ERROR", "FETCH_TIMEOUT"):
-            if public_error in ("provider_returned_zero", "no_provider_selected",
-                                "provider_unavailable", "provider_timeout"):
+            if public_error in (
+                "provider_returned_zero",
+                "no_provider_selected",
+                "provider_unavailable",
+                "provider_timeout",
+            ):
                 pub_status = "error_or_zero"
                 pub_reason = public_error or "provider_returned_zero"
                 pub_action = "check_provider_selection_or_bootstrap"
@@ -399,7 +421,7 @@ def _build_provider_yield_diagnosis(report: dict) -> dict:
             ct_error = report.get("ct_provider_status", "") or ""
             # Strip prefix: "CTProviderStatus.COOLDOWN_ACTIVE" → "cooldown_active"
             if ct_error.startswith("CTProviderStatus."):
-                ct_error = ct_error[len("CTProviderStatus."):].lower()
+                ct_error = ct_error[len("CTProviderStatus.") :].lower()
 
         if ct_error in ("cooldown_active", "cooldown"):
             ct_status = "cooldown"
@@ -447,7 +469,10 @@ def _build_provider_yield_diagnosis(report: dict) -> dict:
             doh_status = "attempted_empty"
             doh_reason = doh_error or "attempted_empty"
             doh_action = "try_passive_dns_or_wayback"
-        elif doh_terminal in ("ATTEMPTED_ACCEPTED", "attempted_accepted") or (doh_outcome.get("accepted_count", 0) or 0) > 0:  # noqa: E501
+        elif (
+            doh_terminal in ("ATTEMPTED_ACCEPTED", "attempted_accepted")
+            or (doh_outcome.get("accepted_count", 0) or 0) > 0
+        ):  # noqa: E501
             doh_status = "successful"
             doh_reason = doh_error or "accepted"
             doh_action = "none"
@@ -597,6 +622,7 @@ def _build_provider_yield_diagnosis(report: dict) -> dict:
 #   - Expose reconciliation via truth_reconciliation_applied + reason.
 # ---------------------------------------------------------------------------
 
+
 def reconcile_terminal_truth(
     pvs: dict[str, Any] | None,
     scorecard: dict[str, Any] | None,
@@ -669,6 +695,7 @@ def reconcile_terminal_truth(
 # Consolidates isinstance guard pattern used throughout _build_product_value_summary.
 # Guards against MagicMock / non-numeric values in test or degraded scenarios.
 # ---------------------------------------------------------------------------
+
 
 def _pvs_num(val: Any, default: float | int) -> float | int:
     """Type-safe numeric coercion — returns default for non-numeric values."""
@@ -751,8 +778,9 @@ async def export_partial_sprint(
         # Written as NEW sidecar (.json.zst) — existing .json path untouched for backward compat
         _text_data = _json_dumps(partial_artifact, indent=2, default=str)
         import compression.zstd
-        compressed = compression.zstd.compress(_text_data.encode('utf-8'))
-        partial_path_zst = partial_path.with_suffix('.json.zst')
+
+        compressed = compression.zstd.compress(_text_data.encode("utf-8"))
+        partial_path_zst = partial_path.with_suffix(".json.zst")
         partial_path_zst.write_bytes(compressed)
         logger.info(f"[PARTIAL-EXPORT] {partial_path_zst} — findings={finding_count} (zstd sidecar)")
         # Always write .json for backward compatibility with existing readers
@@ -821,6 +849,7 @@ async def export_sprint(
     helpers — they are NOT moved, just organized under the formatter class hierarchy.
     """
     from .formatters import JSONFormatter
+
     formatter = JSONFormatter()
     return await formatter.format(
         store=store,
@@ -1033,6 +1062,7 @@ async def _generate_next_sprint_seeds(
       full — enables hypothesis_engine for query suggestions
     """
     from hledac.universal.paths import SPRINT_STORE_ROOT, get_sprint_next_seeds_path
+
     # Sprint F229 §1: Use get_sprint_next_seeds_path() — same canonical pattern as
     # get_sprint_json_report_path() used for report_path. This ensures the test's
     # patch on get_sprint_next_seeds_path is respected in _generate_next_sprint_seeds.
@@ -1139,6 +1169,7 @@ async def _generate_next_sprint_seeds(
 
             # Sprint F214Q: Merge quantum pathfinder seeds with degree-centrality seeds
             from hledac.universal.knowledge.sprint_seeds_store import sync_load_sprint_seeds
+
             quantum_seeds = sync_load_sprint_seeds(sprint_id)
             if quantum_seeds:
                 q_seed_dicts = [
@@ -1165,11 +1196,14 @@ async def _generate_next_sprint_seeds(
         _seeds_bytes = _seeds_text.encode("utf-8")
         # F214ZSTD2: write optional zstd sidecar
         import compression.zstd
+
         seeds_zst = seeds_path.with_suffix(".json.zst")
         seeds_zst.write_bytes(compression.zstd.compress(_seeds_bytes, level=3))
         logger.info(f"[EXPORT] {len(seeds)} seeds ({next_seeds_source}) → {seeds_zst} (zstd sidecar)")
         await asyncio.to_thread(seeds_path.write_text, _seeds_text, encoding="utf-8")
-        logger.info(f"[EXPORT] {len(seeds)} seeds ({next_seeds_source}) ({', '.join(_seed_type_counts(seeds))}) → {seeds_path}")  # noqa: E501
+        logger.info(
+            f"[EXPORT] {len(seeds)} seeds ({next_seeds_source}) ({', '.join(_seed_type_counts(seeds))}) → {seeds_path}"
+        )  # noqa: E501
     except Exception as e:
         logger.warning(f"[EXPORT] Enhanced seed generation failed: {e}")
         _empty_wrapper = {
@@ -1179,6 +1213,7 @@ async def _generate_next_sprint_seeds(
         }
         _empty_text = _json_dumps(_empty_wrapper, indent=2)
         import compression.zstd
+
         seeds_zst = seeds_path.with_suffix(".json.zst")
         seeds_zst.write_bytes(compression.zstd.compress(_empty_text.encode("utf-8"), level=3))
         await asyncio.to_thread(seeds_path.write_text, _empty_text, encoding="utf-8")
@@ -1222,41 +1257,51 @@ def _derive_query_seeds(pvs: dict[str, Any]) -> list[dict[str, Any]]:
 
     match signal:
         case "high_density":
-            seeds.append({
-                "task_type": "query_suggestion",
-                "suggested_action": "refine",
-                "priority": 0.75,
-                "reason": f"signal=high_density/accepted={accepted}/ioc_density={ioc_density:.2f}",
-            })
+            seeds.append(
+                {
+                    "task_type": "query_suggestion",
+                    "suggested_action": "refine",
+                    "priority": 0.75,
+                    "reason": f"signal=high_density/accepted={accepted}/ioc_density={ioc_density:.2f}",
+                }
+            )
         case "medium_density":
             if low_info_ratio > 0.5:
-                seeds.append({
-                    "task_type": "query_suggestion",
-                    "suggested_action": "narrow_scope",
-                    "priority": 0.70,
-                    "reason": f"low_info_ratio={low_info_ratio:.2f}/broad_queries",
-                })
+                seeds.append(
+                    {
+                        "task_type": "query_suggestion",
+                        "suggested_action": "narrow_scope",
+                        "priority": 0.70,
+                        "reason": f"low_info_ratio={low_info_ratio:.2f}/broad_queries",
+                    }
+                )
             else:
-                seeds.append({
-                    "task_type": "query_suggestion",
-                    "suggested_action": "broaden",
-                    "priority": 0.65,
-                    "reason": f"signal=medium_density/ioc_density={ioc_density:.2f}",
-                })
+                seeds.append(
+                    {
+                        "task_type": "query_suggestion",
+                        "suggested_action": "broaden",
+                        "priority": 0.65,
+                        "reason": f"signal=medium_density/ioc_density={ioc_density:.2f}",
+                    }
+                )
         case "slow_novelty":
-            seeds.append({
-                "task_type": "query_suggestion",
-                "suggested_action": "accelerate",
-                "priority": 0.60,
-                "reason": f"signal=slow_novelty/fpm={findings_per_minute:.2f}",
-            })
+            seeds.append(
+                {
+                    "task_type": "query_suggestion",
+                    "suggested_action": "accelerate",
+                    "priority": 0.60,
+                    "reason": f"signal=slow_novelty/fpm={findings_per_minute:.2f}",
+                }
+            )
         case "depleted":
-            seeds.append({
-                "task_type": "query_suggestion",
-                "suggested_action": "new_approach",
-                "priority": 0.80,
-                "reason": "signal=depleted/exhausted_query_space",
-            })
+            seeds.append(
+                {
+                    "task_type": "query_suggestion",
+                    "suggested_action": "new_approach",
+                    "priority": 0.80,
+                    "reason": "signal=depleted/exhausted_query_space",
+                }
+            )
 
     return seeds[:3]  # Hard cap: max 3 query suggestions
 
@@ -1277,21 +1322,25 @@ def _derive_source_revisit_seeds(pvs: dict[str, Any]) -> list[dict[str, Any]]:
 
     if cb_open:
         for domain in cb_open[:3]:  # Max 3 domains from circuit breaker
-            seeds.append({
-                "task_type": "source_revisit",
-                "value": domain,
-                "priority": 0.55,
-                "reason": "circuit_breaker_open",
-                "backoff_seconds": 3600,  # 1h backoff recommendation
-            })
+            seeds.append(
+                {
+                    "task_type": "source_revisit",
+                    "value": domain,
+                    "priority": 0.55,
+                    "reason": "circuit_breaker_open",
+                    "backoff_seconds": 3600,  # 1h backoff recommendation
+                }
+            )
     elif signal == "depleted":
         # No cb state but depleted — suggest retrying known sources with backoff
-        seeds.append({
-            "task_type": "source_revisit",
-            "suggested_action": "retry_known_sources",
-            "priority": 0.50,
-            "reason": "signal=depleted/retry_after_backoff",
-        })
+        seeds.append(
+            {
+                "task_type": "source_revisit",
+                "suggested_action": "retry_known_sources",
+                "priority": 0.50,
+                "reason": "signal=depleted/retry_after_backoff",
+            }
+        )
 
     return seeds[:3]
 
@@ -1315,20 +1364,24 @@ def _derive_low_signal_seeds(pvs: dict[str, Any]) -> list[dict[str, Any]]:
 
     if accepted <= 2 and findings_per_minute < 0.5 and total_rejected > 0:
         # Sprint was nearly empty — offer practical restart suggestions
-        seeds.append({
-            "task_type": "low_signal_recommendation",
-            "suggested_action": "start_fresh",
-            "priority": 0.70,
-            "reason": f"accepted={accepted}/fpm={findings_per_minute:.2f}/near_empty_sprint",
-        })
+        seeds.append(
+            {
+                "task_type": "low_signal_recommendation",
+                "suggested_action": "start_fresh",
+                "priority": 0.70,
+                "reason": f"accepted={accepted}/fpm={findings_per_minute:.2f}/near_empty_sprint",
+            }
+        )
         # If dedup was effective but we still found nothing, sources may be exhausted
         if pvs.get("dedup_effective"):
-            seeds.append({
-                "task_type": "low_signal_recommendation",
-                "suggested_action": "new_seed_sources",
-                "priority": 0.65,
-                "reason": "dedup_effective_but_depleted/switch_sources",
-            })
+            seeds.append(
+                {
+                    "task_type": "low_signal_recommendation",
+                    "suggested_action": "new_seed_sources",
+                    "priority": 0.65,
+                    "reason": "dedup_effective_but_depleted/switch_sources",
+                }
+            )
 
     return seeds[:2]  # Hard cap: max 2 low-signal recommendations
 
@@ -1336,6 +1389,7 @@ def _derive_low_signal_seeds(pvs: dict[str, Any]) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Sprint F226D §1: capability_synthesis-driven seeds
 # ---------------------------------------------------------------------------
+
 
 def _derive_capability_seeds(capability_synthesis: dict[str, Any] | None) -> list[dict[str, Any]]:
     """
@@ -1366,69 +1420,81 @@ def _derive_capability_seeds(capability_synthesis: dict[str, Any] | None) -> lis
 
     # 1. Feed noise → nonfeed evidence seed
     if feed_noise in ("feed_noisy_no_nonfeed_signal", "feed_dominant"):
-        seeds.append({
-            "task_type": "source_revisit",
-            "suggested_action": "boost_nonfeed_lanes",
-            "priority": 0.82,
-            "reason": f"feed_noise={feed_noise}",
-            "seed_source": "capability_synthesis",
-            "expected_value": "nonfeed_signal_balance",
-        })
+        seeds.append(
+            {
+                "task_type": "source_revisit",
+                "suggested_action": "boost_nonfeed_lanes",
+                "priority": 0.82,
+                "reason": f"feed_noise={feed_noise}",
+                "seed_source": "capability_synthesis",
+                "expected_value": "nonfeed_signal_balance",
+            }
+        )
 
     # 2. Weak source diversity → PUBLIC/CT/Wayback seed
     if source_diversity in ("single_source_feed_only", "single_source_niche", "unknown_source"):
-        seeds.append({
-            "task_type": "query_suggestion",
-            "suggested_action": "expand_public_sources",
-            "priority": 0.75,
-            "reason": f"source_diversity={source_diversity}",
-            "seed_source": "capability_synthesis",
-            "expected_value": "multi_source_diversity",
-        })
+        seeds.append(
+            {
+                "task_type": "query_suggestion",
+                "suggested_action": "expand_public_sources",
+                "priority": 0.75,
+                "reason": f"source_diversity={source_diversity}",
+                "seed_source": "capability_synthesis",
+                "expected_value": "multi_source_diversity",
+            }
+        )
 
     # 3. Weak corroboration → corroboration seed
     if corroboration in ("none", "noisy"):
-        seeds.append({
-            "task_type": "corroboration_seed",
-            "suggested_action": "seek_corroboration",
-            "priority": 0.72,
-            "reason": f"corroboration={corroboration}",
-            "seed_source": "capability_synthesis",
-            "expected_value": "cross_source_confirmation",
-        })
+        seeds.append(
+            {
+                "task_type": "corroboration_seed",
+                "suggested_action": "seek_corroboration",
+                "priority": 0.72,
+                "reason": f"corroboration={corroboration}",
+                "seed_source": "capability_synthesis",
+                "expected_value": "cross_source_confirmation",
+            }
+        )
 
     # 4. Weak evidence quality → quality improvement seed
     if not evidence_present:
-        seeds.append({
-            "task_type": "quality_seed",
-            "suggested_action": "improve_evidence_quality",
-            "priority": 0.70,
-            "reason": "useful_evidence_present=false",
-            "seed_source": "capability_synthesis",
-            "expected_value": "actionable_findings",
-        })
+        seeds.append(
+            {
+                "task_type": "quality_seed",
+                "suggested_action": "improve_evidence_quality",
+                "priority": 0.70,
+                "reason": "useful_evidence_present=false",
+                "seed_source": "capability_synthesis",
+                "expected_value": "actionable_findings",
+            }
+        )
 
     # 5. Next investigation action → top-priority investigation seed
     if next_action and isinstance(next_action, str) and len(next_action) > 3:
-        seeds.append({
-            "task_type": "investigation_seed",
-            "suggested_action": next_action,
-            "priority": 0.88,
-            "reason": f"next_investigation_action={next_action[:60]}",
-            "seed_source": "capability_synthesis",
-            "expected_value": "targeted_discovery",
-        })
+        seeds.append(
+            {
+                "task_type": "investigation_seed",
+                "suggested_action": next_action,
+                "priority": 0.88,
+                "reason": f"next_investigation_action={next_action[:60]}",
+                "seed_source": "capability_synthesis",
+                "expected_value": "targeted_discovery",
+            }
+        )
 
     # 6. Engineering action as lower-priority engineering seed
     if next_engineering and isinstance(next_engineering, str) and len(next_engineering) > 3:
-        seeds.append({
-            "task_type": "engineering_seed",
-            "suggested_action": next_engineering,
-            "priority": 0.55,
-            "reason": f"next_engineering_action={next_engineering[:60]}",
-            "seed_source": "capability_synthesis",
-            "expected_value": "system_improvement",
-        })
+        seeds.append(
+            {
+                "task_type": "engineering_seed",
+                "suggested_action": next_engineering,
+                "priority": 0.55,
+                "reason": f"next_engineering_action={next_engineering[:60]}",
+                "seed_source": "capability_synthesis",
+                "expected_value": "system_improvement",
+            }
+        )
 
     return seeds[:4]  # Hard cap: max 4 capability-derived seeds
 
@@ -1436,6 +1502,7 @@ def _derive_capability_seeds(capability_synthesis: dict[str, Any] | None) -> lis
 # ---------------------------------------------------------------------------
 # Sprint F226D §2: analyst_brief-driven seeds
 # ---------------------------------------------------------------------------
+
 
 def _get_brief_field(obj: Any, field: str, default: Any = None) -> Any:
     """Get field from dict or dataclass/attr object (fallback: getattr)."""
@@ -1465,40 +1532,46 @@ def _derive_analyst_brief_seeds(analyst_brief: dict[str, Any] | None) -> list[di
     if isinstance(pivots, (list, tuple)):
         for p in pivots[:2]:
             if isinstance(p, str) and len(p) > 3:
-                seeds.append({
-                    "task_type": "pivot_seed",
-                    "suggested_action": p,
-                    "priority": 0.78,
-                    "reason": f"pivot_recommendation={p[:60]}",
-                    "seed_source": "analyst_brief",
-                    "expected_value": "pivot_discovery",
-                })
+                seeds.append(
+                    {
+                        "task_type": "pivot_seed",
+                        "suggested_action": p,
+                        "priority": 0.78,
+                        "reason": f"pivot_recommendation={p[:60]}",
+                        "seed_source": "analyst_brief",
+                        "expected_value": "pivot_discovery",
+                    }
+                )
 
     gaps = _get_brief_field(analyst_brief, "evidence_gaps") or []
     if isinstance(gaps, (list, tuple)) and gaps:
         gap = gaps[0]
         if isinstance(gap, str) and len(gap) > 3:
-            seeds.append({
-                "task_type": "gap_fill_seed",
-                "suggested_action": f"address_gap: {gap[:80]}",
-                "priority": 0.68,
-                "reason": f"evidence_gap={gap[:60]}",
-                "seed_source": "analyst_brief",
-                "expected_value": "evidence_completeness",
-            })
+            seeds.append(
+                {
+                    "task_type": "gap_fill_seed",
+                    "suggested_action": f"address_gap: {gap[:80]}",
+                    "priority": 0.68,
+                    "reason": f"evidence_gap={gap[:60]}",
+                    "seed_source": "analyst_brief",
+                    "expected_value": "evidence_completeness",
+                }
+            )
 
     risks = _get_brief_field(analyst_brief, "risk_hypotheses") or []
     if isinstance(risks, (list, tuple)) and risks:
         risk = risks[0]
         if isinstance(risk, str) and len(risk) > 3:
-            seeds.append({
-                "task_type": "risk_investigation_seed",
-                "suggested_action": f"investigate_risk: {risk[:80]}",
-                "priority": 0.65,
-                "reason": f"risk_hypothesis={risk[:60]}",
-                "seed_source": "analyst_brief",
-                "expected_value": "risk_mitigation",
-            })
+            seeds.append(
+                {
+                    "task_type": "risk_investigation_seed",
+                    "suggested_action": f"investigate_risk: {risk[:80]}",
+                    "priority": 0.65,
+                    "reason": f"risk_hypothesis={risk[:60]}",
+                    "seed_source": "analyst_brief",
+                    "expected_value": "risk_mitigation",
+                }
+            )
 
     return seeds[:4]  # Hard cap: max 4 analyst-brief seeds
 
@@ -1506,6 +1579,7 @@ def _derive_analyst_brief_seeds(analyst_brief: dict[str, Any] | None) -> list[di
 # ---------------------------------------------------------------------------
 # Sprint F226D §3: seed deduplication
 # ---------------------------------------------------------------------------
+
 
 def _dedup_seeds(seeds: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
@@ -1601,10 +1675,26 @@ def _type_aware_seeds(value: str, ioc_type: str, reason: str = "top_graph_node")
             # DHT lookup is marginally relevant (some Tor research uses DHT)
             # but skip entirely to be safe — no strong signal
             return []
-        case ("cve" | "md5" | "sha1" | "sha256" | "sha512" | "sha384"
-              | "md6" | "ripemd160" | "unknown" | "email" | "phone"
-              | "ipv4_addr" | "ipv6_addr" | "mac_addr" | "btc" | "eth"
-              | "xmpp" | "jabber"):
+        case (
+            "cve"
+            | "md5"
+            | "sha1"
+            | "sha256"
+            | "sha512"
+            | "sha384"
+            | "md6"
+            | "ripemd160"
+            | "unknown"
+            | "email"
+            | "phone"
+            | "ipv4_addr"
+            | "ipv6_addr"
+            | "mac_addr"
+            | "btc"
+            | "eth"
+            | "xmpp"
+            | "jabber"
+        ):
             # Truthful skip — these types have no meaningful follow-up seed
             # CVE: vuln ID not a network observable
             # Hashes: not domains, not infohashes, not IPs
@@ -1747,8 +1837,8 @@ def _build_product_value_summary(
     gnn_predictions = eh.gnn_predictions if eh.gnn_predictions else 0
 
     # 5. Synthesis engine
-    synthesis_engine = eh.synthesis_engine if eh.synthesis_engine else (
-        scorecard.get("synthesis_engine_used", "unknown") or "unknown"
+    synthesis_engine = (
+        eh.synthesis_engine if eh.synthesis_engine else (scorecard.get("synthesis_engine_used", "unknown") or "unknown")
     )
 
     # F214-ACQ: Feed dominance ratio and nonfeed diagnostic recommendation
@@ -1757,15 +1847,15 @@ def _build_product_value_summary(
     # in __main__.py run_sprint).
     _sfo_list = scorecard.get("source_family_outcomes", []) if isinstance(scorecard, dict) else []
     _feed_entry = next((e for e in _sfo_list if isinstance(e, dict) and e.get("family") == "feed"), None)
-    _nonfeed_entries = [e for e in _sfo_list if isinstance(e, dict) and e.get("family") != "feed" and e.get("attempted")]  # noqa: E501
+    _nonfeed_entries = [
+        e for e in _sfo_list if isinstance(e, dict) and e.get("family") != "feed" and e.get("attempted")
+    ]  # noqa: E501
     _feed_accepted = (_feed_entry.get("accepted_count") or 0) if _feed_entry else 0
     _nonfeed_accepted = sum((e.get("accepted_count") or 0) for e in _nonfeed_entries)
     _total_accepted = _feed_accepted + _nonfeed_accepted
     feed_dominance_ratio = (_feed_accepted / _total_accepted) if _total_accepted > 0 else None
     should_recommend_nonfeed_diagnostic = (
-        feed_dominance_ratio is not None
-        and feed_dominance_ratio > 0.95
-        and _nonfeed_accepted < 5
+        feed_dominance_ratio is not None and feed_dominance_ratio > 0.95 and _nonfeed_accepted < 5
     )
 
     # Sprint F178C: signal_quality renamed to _signal_quality_classification
@@ -1816,14 +1906,24 @@ def _build_product_value_summary(
         "dedup_lmdb_path": dedup_lmdb_path,
         "hot_cache": hot_cache,
         # F193B: Archive + academic discovery contribution surfaces
-        "commoncrawl_archive_augmented": (eh.canonical_run_summary.get("cc_archive_injected", 0) if eh.canonical_run_summary else None) or scorecard.get("cc_archive_injected", 0),  # noqa: E501
-        "academic_discovery_contribution": (eh.canonical_run_summary.get("academic_findings_count", 0) if eh.canonical_run_summary else None) or scorecard.get("academic_findings_count", 0),  # noqa: E501
+        "commoncrawl_archive_augmented": (
+            eh.canonical_run_summary.get("cc_archive_injected", 0) if eh.canonical_run_summary else None
+        )
+        or scorecard.get("cc_archive_injected", 0),  # noqa: E501
+        "academic_discovery_contribution": (
+            eh.canonical_run_summary.get("academic_findings_count", 0) if eh.canonical_run_summary else None
+        )
+        or scorecard.get("academic_findings_count", 0),  # noqa: E501
         # Sprint F204F: Production CTI scorecard enrichment fields
         "attribution": eh.canonical_run_summary.get("attribution") if eh.canonical_run_summary else None,
         "wayback_diff": eh.canonical_run_summary.get("wayback_diff") if eh.canonical_run_summary else None,
         "embedding": eh.canonical_run_summary.get("embedding") if eh.canonical_run_summary else None,
-        "hypothesis_feedback": eh.canonical_run_summary.get("hypothesis_feedback") if eh.canonical_run_summary else None,  # noqa: E501
-        "circuit_state": eh.canonical_run_summary.get("circuit_state") if eh.canonical_run_summary else scorecard.get("circuit_state"),  # noqa: E501
+        "hypothesis_feedback": eh.canonical_run_summary.get("hypothesis_feedback")
+        if eh.canonical_run_summary
+        else None,  # noqa: E501
+        "circuit_state": eh.canonical_run_summary.get("circuit_state")
+        if eh.canonical_run_summary
+        else scorecard.get("circuit_state"),  # noqa: E501
         # F214-ACQ: Feed dominance and nonfeed diagnostic signals
         "feed_dominance_ratio": round(feed_dominance_ratio, 4) if feed_dominance_ratio is not None else None,
         "should_recommend_nonfeed_diagnostic": should_recommend_nonfeed_diagnostic,
@@ -1854,6 +1954,7 @@ def _build_product_value_summary(
 # Measures how much new IOC value sidecars added vs. raw input findings.
 # Canonical read-only seam — no network, no model, no new store API.
 # ---------------------------------------------------------------------------
+
 
 def _build_enrichment_value_delta(scorecard: dict, input_accepted: int) -> dict:
     """
@@ -1971,6 +2072,7 @@ def _build_enrichment_value_delta(scorecard: dict, input_accepted: int) -> dict:
 # Canonical read-only seam — no network, no model, no new store API.
 # ---------------------------------------------------------------------------
 
+
 def _build_engineering_action_map(
     pyd: dict[str, Any] | None,
     evd: dict[str, Any] | None,
@@ -2008,7 +2110,12 @@ def _build_engineering_action_map(
       - confidence: 0.0-1.0, rounded to 2 decimal places
     """
     if pyd is None and evd is None:
-        return {"primary_action": "none", "reason": "no diagnosis data available", "target_area": "none", "confidence": 0.0}  # noqa: E501
+        return {
+            "primary_action": "none",
+            "reason": "no diagnosis data available",
+            "target_area": "none",
+            "confidence": 0.0,
+        }  # noqa: E501
 
     pyd = pyd if isinstance(pyd, dict) else {}
     evd = evd if isinstance(evd, dict) else {}
@@ -2044,7 +2151,9 @@ def _build_engineering_action_map(
         }
 
     # Rule 3: provider returned zero but was attempted (not skipped)
-    if public_status == "error_or_zero" and ("provider_returned_zero" in str(public_reason) or "provider_unavailable" in str(public_reason)):  # noqa: E501
+    if public_status == "error_or_zero" and (
+        "provider_returned_zero" in str(public_reason) or "provider_unavailable" in str(public_reason)
+    ):  # noqa: E501
         return {
             "primary_action": "add_or_use_provider_replay_fixture",
             "reason": "provider returned zero or unavailable — replay fixture needed for diagnostics",
@@ -2093,6 +2202,7 @@ def _build_engineering_action_map(
 # Compares provider_yield_diagnosis against what was expected for the
 # mission intent + seed classes. Read-only seam — no network, no model.
 # ---------------------------------------------------------------------------
+
 
 def _build_expected_evidence(
     intent: str,
@@ -2261,6 +2371,7 @@ def _build_expected_evidence(
 # F229B/F230E: Lane corroboration score helpers
 # ---------------------------------------------------------------------------
 
+
 def _get_corrob_outcomes(scorecard: dict) -> dict:
     """Normalize lane outcomes from either src_family_outcomes or source_family_outcomes.
 
@@ -2298,13 +2409,16 @@ def _get_corrob_outcomes(scorecard: dict) -> dict:
     except Exception:
         return {}
 
+
 def _corroboration_score_value(scorecard: dict) -> float:
     """Compute corroboration score (0.0-1.0) from src_family_outcomes or source_family_outcomes."""
     from hledac.universal.runtime.corroboration_score import score_from_result
+
     outcomes = _get_corrob_outcomes(scorecard)
 
     class _Result:
         __slots__ = ("src_family_outcomes", "seed_context_available")
+
         def __init__(self, outcomes):
             self.src_family_outcomes = outcomes
             self.seed_context_available = False
@@ -2320,10 +2434,12 @@ def _corroboration_score_value(scorecard: dict) -> float:
 def _corroborating_families(scorecard: dict) -> tuple:
     """Return tuple of families that contributed to corroboration."""
     from hledac.universal.runtime.corroboration_score import score_from_result
+
     outcomes = _get_corrob_outcomes(scorecard)
 
     class _Result:
         __slots__ = ("src_family_outcomes", "seed_context_available")
+
         def __init__(self, outcomes):
             self.src_family_outcomes = outcomes
             self.seed_context_available = False
@@ -2339,10 +2455,12 @@ def _corroborating_families(scorecard: dict) -> tuple:
 def _corroboration_reason_str(scorecard: dict) -> str:
     """Return human-readable corroboration reason."""
     from hledac.universal.runtime.corroboration_score import score_from_result
+
     outcomes = _get_corrob_outcomes(scorecard)
 
     class _Result:
         __slots__ = ("src_family_outcomes", "seed_context_available")
+
         def __init__(self, outcomes):
             self.src_family_outcomes = outcomes
             self.seed_context_available = False
@@ -2362,12 +2480,14 @@ def _corroboration_penalties_list(scorecard: dict) -> list:
         _TERMINAL_COMPLETED,
         _TERMINAL_NO_RESULTS,
     )
+
     outcomes = _get_corrob_outcomes(scorecard)
     penalties = []
 
     feed_present = bool(outcomes.get("feed", {}).get("accepted_count", 0) > 0)
     nonfeed_terminals = sum(
-        1 for f in _NONFEED_FAMILIES
+        1
+        for f in _NONFEED_FAMILIES
         if outcomes.get(f, {}).get("terminal_state") in (_TERMINAL_COMPLETED, _TERMINAL_NO_RESULTS)
     )
     nonfeed_missed = all(
@@ -2398,6 +2518,7 @@ def _terminal_coverage_score(scorecard: dict) -> float:
     This is separate from corroboration_score which only rewards positive outcomes.
     """
     from hledac.universal.runtime.corroboration_score import compute_terminal_coverage
+
     outcomes = _get_corrob_outcomes(scorecard)
     try:
         tc = compute_terminal_coverage(outcomes)
@@ -2409,6 +2530,7 @@ def _terminal_coverage_score(scorecard: dict) -> float:
 def _terminal_families(scorecard: dict) -> tuple:
     """Return families that reached terminal/attempted state."""
     from hledac.universal.runtime.corroboration_score import compute_terminal_coverage
+
     outcomes = _get_corrob_outcomes(scorecard)
     try:
         tc = compute_terminal_coverage(outcomes)
@@ -2420,6 +2542,7 @@ def _terminal_families(scorecard: dict) -> tuple:
 def _terminal_coverage_reason_str(scorecard: dict) -> str:
     """Return human-readable terminal coverage reason."""
     from hledac.universal.runtime.corroboration_score import compute_terminal_coverage
+
     outcomes = _get_corrob_outcomes(scorecard)
     try:
         tc = compute_terminal_coverage(outcomes)
@@ -2469,7 +2592,9 @@ def _compute_provider_yield_signals(
     _feed_only = False
     if sfo_list:
         feed_entry = next((e for e in sfo_list if isinstance(e, dict) and e.get("family") == "feed"), None)
-        nonfeed_attempted = [e for e in sfo_list if isinstance(e, dict) and e.get("family") in nonfeed_families and e.get("attempted")]  # noqa: E501
+        nonfeed_attempted = [
+            e for e in sfo_list if isinstance(e, dict) and e.get("family") in nonfeed_families and e.get("attempted")
+        ]  # noqa: E501
         _feed_only = (feed_entry is not None and (feed_entry.get("accepted_count") or 0) > 0) and not nonfeed_attempted  # noqa: E501
 
     # 1. dependency_gap_families — from doh_provider_errors
@@ -2529,6 +2654,7 @@ def _compute_provider_yield_signals(
     outcomes = _get_corrob_outcomes(scorecard)
     try:
         from hledac.universal.runtime.corroboration_score import compute_terminal_coverage
+
         tc = compute_terminal_coverage(outcomes)
         terminal_score = tc.terminal_coverage_score
     except Exception:
@@ -2566,15 +2692,11 @@ def _compute_provider_yield_signals(
         "recommended_provider_actions": tuple(_actions),
     }
 
-
     # [IMPORTED from components] def placeholder at L2537
-
 
     # [IMPORTED from components] def placeholder at L2615
 
-
     # [IMPORTED from components] def placeholder at L2687
-
 
     # [IMPORTED from components] def placeholder at L2745
 
@@ -2610,9 +2732,7 @@ async def _get_sprint_trend(store: Any, last_n: int = 5) -> list[dict]:
         if hasattr(store, "get_sprint_trend"):
             # Run sync wrapper in executor to avoid blocking event loop
             loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(
-                None, lambda: store.get_sprint_trend(last_n=last_n) or []
-            )
+            return await loop.run_in_executor(None, lambda: store.get_sprint_trend(last_n=last_n) or [])
     except Exception:  # noqa: BLE001
         pass
     return []
@@ -2649,16 +2769,12 @@ async def _get_source_leaderboard(store: Any, days: int = 7) -> list[dict]:
         if hasattr(store, "get_source_leaderboard"):
             # Run sync wrapper in executor to avoid blocking event loop
             loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(
-                None, lambda: store.get_source_leaderboard(days=days) or []
-            )
+            return await loop.run_in_executor(None, lambda: store.get_source_leaderboard(days=days) or [])
     except Exception:  # noqa: BLE001
         pass
     return []
 
-
     # [IMPORTED from components] def placeholder at L2887
-
 
     # [IMPORTED from components] def placeholder at L2956
 
@@ -2904,12 +3020,8 @@ def _reconcile_acquisition_terminality_from_source_outcomes(report_dict: dict) -
     # Preserve original terminality
     term_reconciled = dict(term)
     term_reconciled["missing_lanes"] = new_missing
-    term_reconciled["satisfied"] = list(
-        set((term.get("satisfied") or []) + mismatch_before)
-    )
-    term_reconciled["terminal_lanes"] = list(
-        set((term.get("terminal_lanes") or []) + mismatch_before)
-    )
+    term_reconciled["satisfied"] = list(set((term.get("satisfied") or []) + mismatch_before))
+    term_reconciled["terminal_lanes"] = list(set((term.get("terminal_lanes") or []) + mismatch_before))
 
     # Write back to acquisition_report
     ar_final = dict(ar) if ar else {}
@@ -3265,7 +3377,7 @@ def _compute_research_depth(
             "pivot_depth": round(pivot_score, 1),
         },
         "depth_signals": {
-            "unique_source_types": list(source_counts.keys()),
+            "unique_source_types": len(source_counts.keys()),
             "deep_sources_found": deep_hits,
             "total_source_hits": total_hits,
             "corroborated": is_corroborated,
@@ -3376,7 +3488,7 @@ def _build_capability_synthesis(
     nonfeed_accepted = 0
     if pvs:
         # nonfeed signals in pvs — look for ct_findings/public_findings in branch_mix
-        branch_mix = (runtime_truth.get("branch_mix", {}) if runtime_truth else {})
+        branch_mix = runtime_truth.get("branch_mix", {}) if runtime_truth else {}
         ct_findings = branch_mix.get("ct_findings", 0) if isinstance(branch_mix, dict) else 0
         public_findings = branch_mix.get("public_findings", 0) if isinstance(branch_mix, dict) else 0
         nonfeed_accepted = ct_findings + public_findings
@@ -3401,7 +3513,9 @@ def _build_capability_synthesis(
     elif len(source_types) == 2:
         source_diversity_summary = "dual_source_mixed"
     elif len(source_types) == 1:
-        source_diversity_summary = "single_source_feed_only" if source_types[0] in ("ct", "feed") else "single_source_niche"  # noqa: E501
+        source_diversity_summary = (
+            "single_source_feed_only" if source_types[0] in ("ct", "feed") else "single_source_niche"
+        )  # noqa: E501
     else:
         source_diversity_summary = "unknown_source"
 
@@ -3728,39 +3842,27 @@ def _derive_best_first_move(  # noqa: F811
 
     return "assess: gather more data before committing to approach"
 
-
     # [IMPORTED from components] def placeholder at L3699
-
 
     # [IMPORTED from components] def placeholder at L3780
 
-
     # [IMPORTED from components] def placeholder at L3789
-
 
     # [IMPORTED from components] def placeholder at L3975
 
-
     # [IMPORTED from components] def placeholder at L4010
-
 
     # [IMPORTED from components] def placeholder at L4079
 
-
     # [IMPORTED from components] def placeholder at L4125
-
 
     # [IMPORTED from components] def placeholder at L4173
 
-
     # [IMPORTED from components] def placeholder at L4231
-
 
     # [IMPORTED from components] def placeholder at L4283
 
-
     # [IMPORTED from components] def placeholder at L4333
-
 
     # [IMPORTED from components] def placeholder at L4389
 
@@ -3769,12 +3871,11 @@ def _derive_best_first_move(  # noqa: F811
 _MAX_RUNTIME_TIMING_EVENTS = 500  # mirror of _MAX_TELEMETRY_EVENTS in sprint_timer.py
 
 
-
-    # [IMPORTED from components] def placeholder at L4489
+# [IMPORTED from components] def placeholder at L4489
 
 
 # Sprint F240B: Runtime Telemetry Drives Operator Diagnosis
-    # [IMPORTED from components] def placeholder at L4528
+# [IMPORTED from components] def placeholder at L4528
 
 
 def _make_serializable(obj: Any) -> Any:
