@@ -6,15 +6,10 @@ F350M-R / Issue #P2.
 Bounded LIFO registry replacing WeakValueDictionary + deque dual-eviction.
 M1 8GB: No GC overhead — objects released deterministically.
 """
-
-
 from dataclasses import dataclass, field
 from typing import Any, Callable, Final
 
-
-# ── OwnedResource ─────────────────────────────────────────────────────────────
-
-@dataclass
+@dataclass(True)
 class OwnedResource:
     """Explicit lifecycle: acquire → use → release. Zero weakref.
 
@@ -22,7 +17,6 @@ class OwnedResource:
     reference counting. OwnedResource is NEVER collected by GC —
     only explicit release() or registry eviction.
     """
-
     obj: Any
     cleanup: Callable[[], None] | None = None
     released: bool = field(default=False)
@@ -37,9 +31,6 @@ class OwnedResource:
                 except Exception:
                     pass
 
-
-# ── ResourceLifecycleRegistry ───────────────────────────────────────────────────
-
 class ResourceLifecycleRegistry:
     """Bounded LIFO registry for resource lifecycle management.
 
@@ -52,15 +43,14 @@ class ResourceLifecycleRegistry:
     - Deterministic release_all() — no surprise GC pause mid-sprint
     - Fully testable lifecycle — explicit acquire/release/release_all
     """
-
-    MAX_REGISTRY_SIZE: Final[int] = 16  # Bounded for M1 8GB
+    MAX_REGISTRY_SIZE: Final[int] = 16
+    __slots__ = tuple(('_resources',))
 
     def __init__(self) -> None:
         self._resources: list[OwnedResource] = []
 
-    def register(self, obj: Any, cleanup_cb: Callable[[], None] | None = None) -> str:
+    def register(self, obj: Any, cleanup_cb: Callable[[], None] | None=None) -> str:
         """Register object with optional cleanup callback. Returns token."""
-        # Evict oldest (LIFO — pop from front) if at capacity
         if len(self._resources) >= self.MAX_REGISTRY_SIZE:
             oldest = self._resources.pop(0)
             oldest.release()
@@ -73,9 +63,4 @@ class ResourceLifecycleRegistry:
         """Release all resources in LIFO order. Deterministic shutdown."""
         while self._resources:
             self._resources.pop().release()
-
-
-# ── Global registry ───────────────────────────────────────────────────────────
-
-# Global registry — shared across sprints
 _graph_service_registry = ResourceLifecycleRegistry()

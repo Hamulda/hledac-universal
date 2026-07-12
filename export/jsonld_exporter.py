@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from hledac.universal.utils.async_helpers import safe_gather_return_exceptions
+from ._shared import _iso_timestamp, _safe_str, normalize_export_input  # noqa: E402  # F4.3 deduplication
 
 try:
     import orjson as _orjson
@@ -183,28 +184,7 @@ _FALLBACK_RECOMMENDATION: dict[str, str] = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Input normalisation (delegates to markdown_reporter; also standalone-safe)
-# ---------------------------------------------------------------------------
-def normalize_export_input(report: object) -> dict[str, Any]:
-    """
-    Convert ObservedRunReport (msgspec.Struct) or Mapping → plain dict.
-
-    msgspec.Structs use ``__struct_fields__`` for field order.
-    For Mapping objects, dict(report) is safe.
-    """
-    if hasattr(report, "__struct_fields__"):
-        return {f: getattr(report, f) for f in report.__struct_fields__}
-    if isinstance(report, dict):
-        return dict(report)
-    if hasattr(report, "keys"):
-        return dict(cast(Mapping, report))
-    raise TypeError(
-        f"report must be msgspec.Struct or Mapping, got {type(report).__name__}"
-    )
-
-
-# ---------------------------------------------------------------------------
+# normalize_export_input — delegated to _shared (F4.3)
 # Canonical label helpers (exported for reuse)
 # ---------------------------------------------------------------------------
 def get_root_cause_label(root_cause: str) -> str:
@@ -221,19 +201,6 @@ def get_recommendation(report: dict[str, Any]) -> str:
 
 # ---------------------------------------------------------------------------
 # JSON-LD render helpers
-# ---------------------------------------------------------------------------
-def _iso_timestamp(ts: Any) -> str:
-    """Convert unix timestamp to RFC3339 ISO string."""
-    try:
-        return datetime.fromtimestamp(float(ts), tz=UTC).isoformat()
-    except (TypeError, ValueError):
-        return "unknown"
-
-
-def _safe_str(val: Any) -> str:
-    if val is None:
-        return ""
-    return str(val)
 
 
 def _build_run_metadata(data: dict[str, Any]) -> dict[str, Any]:

@@ -15,9 +15,6 @@ Pro bezpečný výzkum v:
 - Deep web resources
 - Restricted networks
 """
-
-
-
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -25,44 +22,30 @@ from dataclasses import dataclass, field
 import msgspec
 from datetime import UTC, datetime
 from typing import Any
-
 from .audit import AuditConfig, AuditEventType, AuditLevel, AuditLogger
 from .destruction import DestructionConfig, SecureDestructor
 from .obfuscation import ObfuscationConfig, ResearchObfuscator
 from .quantum_safe import EncryptedContainer, QuantumSafeVault, SecurityLevel
 from .stealth_communicator import StealthCommunicator
-
 logger = logging.getLogger(__name__)
 
-
-@dataclass
+@dataclass(True)
 class DeepSecurityConfig:
     """Konfigurace pro deep research security"""
-
-    # Úroveň zabezpečení
     security_level: SecurityLevel = SecurityLevel.HIGH
-    privacy_level: str = "maximum"  # 'low', 'medium', 'high', 'maximum'
-
-    # Komponenty
+    privacy_level: str = 'maximum'
     enable_quantum_safe: bool = True
     enable_steganography: bool = True
     enable_obfuscation: bool = True
     enable_destruction: bool = True
     enable_audit: bool = True
-
-    # Chaff generation
     chaff_enabled: bool = True
-    chaff_ratio: float = 0.4  # 40% falešného provozu
-
-    # Auto-cleanup
+    chaff_ratio: float = 0.4
     auto_cleanup: bool = True
-    cleanup_interval: int = 300  # 5 minut
-
-    # Configy pro komponenty
+    cleanup_interval: int = 300
     audit_config: AuditConfig = field(default_factory=AuditConfig)
     obfuscation_config: ObfuscationConfig = field(default_factory=ObfuscationConfig)
     destruction_config: DestructionConfig = field(default_factory=DestructionConfig)
-
 
 class DeepResearchSecurity:
     """
@@ -92,100 +75,64 @@ class DeepResearchSecurity:
         ...
         ...     # Auto-cleanup po skončení session
     """
+    __slots__ = tuple(('_active_sessions', '_stats', 'audit', 'communicator', 'config', 'destructor', 'obfuscator', 'vault'))
 
-    def __init__(self, config: DeepSecurityConfig | None = None):
+    def __init__(self, config: DeepSecurityConfig | None=None):
         self.config = config or DeepSecurityConfig()
-
-        # Inicializace komponent
         self.vault: QuantumSafeVault | None = None
         self.communicator: StealthCommunicator | None = None
         self.obfuscator: ResearchObfuscator | None = None
         self.destructor: SecureDestructor | None = None
         self.audit: AuditLogger | None = None
-
-        # Apply privacy level
         self._apply_privacy_level()
-
-        # Session tracking
         self._active_sessions = []
-        self._stats = {
-            "sessions_created": 0,
-            "data_encrypted": 0,
-            "data_obfuscated": 0,
-            "files_destroyed": 0,
-        }
+        self._stats = {'sessions_created': 0, 'data_encrypted': 0, 'data_obfuscated': 0, 'files_destroyed': 0}
 
     def _apply_privacy_level(self):
         """Aplikovat úroveň soukromí"""
         level = self.config.privacy_level
-
         if level == 'maximum':
-            # Maximum privacy - vše zapnout
             self.config.enable_quantum_safe = True
             self.config.enable_steganography = True
             self.config.enable_obfuscation = True
             self.config.chaff_enabled = True
             self.config.chaff_ratio = 0.5
-
-            # Destruction config
             self.config.destruction_config.passes = 7
             self.config.destruction_config.compliance_standard = 'dod'
-
-            # Audit všech operací
             self.config.audit_config.min_level = AuditLevel.DEBUG
-
         elif level == 'high':
-            # High privacy - default
             pass
-
         elif level == 'medium':
-            # Medium - redukovat chaff
             self.config.chaff_ratio = 0.2
             self.config.destruction_config.passes = 3
-
         elif level == 'low':
-            # Low - audit only
             self.config.enable_obfuscation = False
             self.config.chaff_enabled = False
 
     async def initialize(self) -> None:
         """Inicializovat všechny komponenty"""
-        logger.info(f"Initializing DeepResearchSecurity ({self.config.privacy_level})")
-
-        # Quantum-safe vault
+        logger.info(f'Initializing DeepResearchSecurity ({self.config.privacy_level})')
         if self.config.enable_quantum_safe:
             self.vault = QuantumSafeVault(self.config.security_level)
             await self.vault.initialize()
-            logger.info("✓ QuantumSafeVault initialized")
-
-        # Stealth communicator
+            logger.info('✓ QuantumSafeVault initialized')
         if self.config.enable_steganography:
             self.communicator = StealthCommunicator()
-            logger.info("✓ StealthCommunicator initialized")
-
-        # Obfuscator
+            logger.info('✓ StealthCommunicator initialized')
         if self.config.enable_obfuscation:
             self.obfuscator = ResearchObfuscator(self.config.obfuscation_config)
-            logger.info("✓ ResearchObfuscator initialized")
-
-        # Destructor
+            logger.info('✓ ResearchObfuscator initialized')
         if self.config.enable_destruction:
             self.destructor = SecureDestructor(self.config.destruction_config)
-            logger.info("✓ SecureDestructor initialized")
-
-        # Audit
+            logger.info('✓ SecureDestructor initialized')
         if self.config.enable_audit:
             self.audit = AuditLogger(self.config.audit_config)
             await self.audit.initialize()
-            logger.info("✓ AuditLogger initialized")
-
-        logger.info("✓ DeepResearchSecurity fully initialized")
+            logger.info('✓ AuditLogger initialized')
+        logger.info('✓ DeepResearchSecurity fully initialized')
 
     @asynccontextmanager
-    async def protected_session(
-        self,
-        session_name: str = "research_session"
-    ) -> AsyncGenerator[SecureSession]:
+    async def protected_session(self, session_name: str='research_session') -> AsyncGenerator[SecureSession]:
         """
         Vytvořit chráněnou relaci pro výzkum.
 
@@ -197,34 +144,17 @@ class DeepResearchSecurity:
         """
         session = SecureSession(self, session_name)
         self._active_sessions.append(session)
-        self._stats["sessions_created"] += 1
-
-        # Log session start
+        self._stats['sessions_created'] += 1
         if self.audit:
-            await self.audit.log(
-                event_type=AuditEventType.SYSTEM_EVENT,
-                action="session_start",
-                resource=session_name,
-                level=AuditLevel.INFO,
-            )
-
+            await self.audit.log(event_type=AuditEventType.SYSTEM_EVENT, action='session_start', resource=session_name, level=AuditLevel.INFO)
         try:
             yield session
         finally:
-            # Cleanup
             if self.config.auto_cleanup:
                 await session.cleanup()
-
             self._active_sessions.remove(session)
-
-            # Log session end
             if self.audit:
-                await self.audit.log(
-                    event_type=AuditEventType.SYSTEM_EVENT,
-                    action="session_end",
-                    resource=session_name,
-                    level=AuditLevel.INFO,
-                )
+                await self.audit.log(event_type=AuditEventType.SYSTEM_EVENT, action='session_end', resource=session_name, level=AuditLevel.INFO)
 
     async def emergency_purge(self) -> dict[str, Any]:
         """
@@ -235,45 +165,16 @@ class DeepResearchSecurity:
         Returns:
             Statistiky vyčištění
         """
-        logger.critical("EMERGENCY PURGE initiated!")
-
-        results = {
-            "sessions_terminated": len(self._active_sessions),
-            "files_destroyed": 0,
-            "memory_wiped": False,
-        }
-
-        # Ukončit všechny sessions
+        logger.critical('EMERGENCY PURGE initiated!')
+        results = {'sessions_terminated': len(self._active_sessions), 'files_destroyed': 0, 'memory_wiped': False}
         for session in self._active_sessions[:]:
             await session.emergency_cleanup()
-
-        # NOTE: Audit logs are NEVER deleted — this is a compliance requirement.
-        # All emergency purge operations must be auditable post-hoc.
-
-        logger.critical("EMERGENCY PURGE complete")
-
+        logger.critical('EMERGENCY PURGE complete')
         return results
 
     def get_stats(self) -> dict[str, Any]:
         """Získat statistiky"""
-        return {
-            "config": {
-                "security_level": self.config.security_level.value,
-                "privacy_level": self.config.privacy_level,
-            },
-            "sessions": {
-                "active": len(self._active_sessions),
-                "total": self._stats["sessions_created"],
-            },
-            "components": {
-                "quantum_safe": self.vault is not None,
-                "steganography": self.communicator is not None,
-                "obfuscation": self.obfuscator is not None,
-                "destruction": self.destructor is not None,
-                "audit": self.audit is not None,
-            },
-        }
-
+        return {'config': {'security_level': self.config.security_level.value, 'privacy_level': self.config.privacy_level}, 'sessions': {'active': len(self._active_sessions), 'total': self._stats['sessions_created']}, 'components': {'quantum_safe': self.vault is not None, 'steganography': self.communicator is not None, 'obfuscation': self.obfuscator is not None, 'destruction': self.destructor is not None, 'audit': self.audit is not None}}
 
 class SecureSession:
     """
@@ -285,19 +186,16 @@ class SecureSession:
     - Obfuskaci
     - Bezpečné mazání
     """
+    __slots__ = tuple(('_encrypted_data', '_temp_files', 'name', 'security', 'session_id'))
 
     def __init__(self, security: DeepResearchSecurity, name: str):
         self.security = security
         self.name = name
-        self.session_id = f"{name}_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"  # noqa: DTZ005
+        self.session_id = f"{name}_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
         self._temp_files = []
         self._encrypted_data = []
 
-    async def encrypt_sensitive(
-        self,
-        data: bytes,
-        metadata: dict[str, Any] | None = None
-    ) -> bytes:
+    async def encrypt_sensitive(self, data: bytes, metadata: dict[str, Any] | None=None) -> bytes:
         """
         Zašifrovat citlivá data.
 
@@ -309,49 +207,25 @@ class SecureSession:
             Serializovaný EncryptedContainer
         """
         if not self.security.vault:
-            raise RuntimeError("QuantumSafeVault not available")
-
+            raise RuntimeError('QuantumSafeVault not available')
         import json
-
-        container = await self.security.vault.encrypt(
-            data,
-            associated_data=json.dumps(metadata).encode() if metadata else None
-        )
-
+        container = await self.security.vault.encrypt(data, associated_data=json.dumps(metadata).encode() if metadata else None)
         self._encrypted_data.append(container)
-        self.security._stats["data_encrypted"] += 1
-
-        # Log
+        self.security._stats['data_encrypted'] += 1
         if self.security.audit:
-            await self.security.audit.log(
-                event_type=AuditEventType.DATA_STORE,
-                action="encrypt",
-                resource=f"session:{self.name}",
-                details={"size": len(data)},
-                level=AuditLevel.INFO,
-                session_id=self.session_id,
-            )
-
+            await self.security.audit.log(event_type=AuditEventType.DATA_STORE, action='encrypt', resource=f'session:{self.name}', details={'size': len(data)}, level=AuditLevel.INFO, session_id=self.session_id)
         return json.dumps(container.to_dict()).encode()
 
     async def decrypt_sensitive(self, encrypted_data: bytes) -> bytes:
         """Dešifrovat data"""
         if not self.security.vault:
-            raise RuntimeError("QuantumSafeVault not available")
-
+            raise RuntimeError('QuantumSafeVault not available')
         import json
         container_data = json.loads(encrypted_data)
-
         container = EncryptedContainer.from_dict(container_data)
-
         return await self.security.vault.decrypt(container)
 
-    async def hide_in_image(
-        self,
-        data: bytes,
-        cover_image: bytes,
-        password: str | None = None
-    ) -> bytes:
+    async def hide_in_image(self, data: bytes, cover_image: bytes, password: str | None=None) -> bytes:
         """
         Schovat data v obrázku pomocí steganografie.
 
@@ -364,26 +238,16 @@ class SecureSession:
             Stego image
         """
         if not self.security.communicator:
-            raise RuntimeError("StealthCommunicator not available")
+            raise RuntimeError('StealthCommunicator not available')
+        return await self.security.communicator.hide_message(data, cover_image, password)
 
-        return await self.security.communicator.hide_message(
-            data, cover_image, password
-        )
-
-    async def extract_from_image(
-        self,
-        stego_image: bytes,
-        password: str | None = None
-    ) -> bytes:
+    async def extract_from_image(self, stego_image: bytes, password: str | None=None) -> bytes:
         """Extrahovat data z obrázku"""
         if not self.security.communicator:
-            raise RuntimeError("StealthCommunicator not available")
+            raise RuntimeError('StealthCommunicator not available')
+        return await self.security.communicator.extract_message(stego_image, password)
 
-        return await self.security.communicator.extract_message(
-            stego_image, password
-        )
-
-    def mask_query(self, query: str, strength: str = "high") -> str:
+    def mask_query(self, query: str, strength: str='high') -> str:
         """
         Maskovat výzkumný dotaz.
 
@@ -396,18 +260,11 @@ class SecureSession:
         """
         if not self.security.obfuscator:
             return query
-
         masked = self.security.obfuscator.mask_query(query, strength)
-        self.security._stats["data_obfuscated"] += 1
-
+        self.security._stats['data_obfuscated'] += 1
         return masked
 
-    async def execute_with_chaff(
-        self,
-        real_query: str,
-        execute_func,
-        chaff_count: int | None = None
-    ) -> Any:
+    async def execute_with_chaff(self, real_query: str, execute_func, chaff_count: int | None=None) -> Any:
         """
         Vykonat dotaz s chaff provozem.
 
@@ -421,17 +278,9 @@ class SecureSession:
         """
         if not self.security.obfuscator:
             return await execute_func(real_query)
+        return await self.security.obfuscator.execute_with_chaff(real_query, execute_func, chaff_count)
 
-        return await self.security.obfuscator.execute_with_chaff(
-            real_query, execute_func, chaff_count
-        )
-
-    async def secure_store(
-        self,
-        data: bytes,
-        path: str,
-        encrypt: bool = True
-    ) -> None:
+    async def secure_store(self, data: bytes, path: str, encrypt: bool=True) -> None:
         """
         Bezpečně uložit data.
 
@@ -442,21 +291,11 @@ class SecureSession:
         """
         if encrypt and self.security.vault:
             data = await self.encrypt_sensitive(data)
-
         with open(path, 'wb') as f:
             f.write(data)
-
         self._temp_files.append(path)
-
-        # Log
         if self.security.audit:
-            await self.security.audit.log(
-                event_type=AuditEventType.DATA_STORE,
-                action="secure_store",
-                resource=path,
-                details={"encrypted": encrypt, "size": len(data)},
-                session_id=self.session_id,
-            )
+            await self.security.audit.log(event_type=AuditEventType.DATA_STORE, action='secure_store', resource=path, details={'encrypted': encrypt, 'size': len(data)}, session_id=self.session_id)
 
     async def secure_destroy(self, path: str) -> bool:
         """
@@ -472,41 +311,32 @@ class SecureSession:
             import os
             os.remove(path)
             return True
-
         result = await self.security.destructor.destroy_file(path)
-
-        if result.get("success"):
-            self.security._stats["files_destroyed"] += 1
+        if result.get('success'):
+            self.security._stats['files_destroyed'] += 1
             if path in self._temp_files:
                 self._temp_files.remove(path)
-
-        return result.get("success", False)
+        return result.get('success', False)
 
     async def cleanup(self) -> None:
         """Vyčistit relaci"""
-        logger.info(f"Cleaning up session: {self.name}")
-
-        # Smazat temp files
+        logger.info(f'Cleaning up session: {self.name}')
         for path in self._temp_files[:]:
             try:
                 await self.secure_destroy(path)
             except Exception as e:
-                logger.warning(f"Failed to destroy {path}: {e}")
-
+                logger.warning(f'Failed to destroy {path}: {e}')
         self._temp_files = []
         self._encrypted_data = []
 
     async def emergency_cleanup(self) -> None:
         """Nouzové vyčištění"""
-        logger.warning(f"Emergency cleanup for session: {self.name}")
-
-        # Agresivní mazání
+        logger.warning(f'Emergency cleanup for session: {self.name}')
         for path in self._temp_files[:]:
             try:
                 import os
                 os.remove(path)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
-
         self._temp_files = []
         self._encrypted_data = []

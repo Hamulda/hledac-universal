@@ -7,9 +7,6 @@ Zajišťuje:
 - Jednotné rozhraní pro Hermes3, ModernBERT a GLiNER
 - Strict 1-model-at-a-time policy pro M1 8GB stabilitu
 """
-
-
-
 import asyncio
 import gc
 import inspect
@@ -22,67 +19,39 @@ from contextlib import asynccontextmanager
 from enum import Enum, auto
 from pathlib import Path
 from typing import Any, Literal
-
-from hledac.universal.brain.model_inference_guard import (
-    check_model_allowed,
-    record_model_failure,
-    record_model_success,
-)
+from hledac.universal.brain.model_inference_guard import check_model_allowed, record_model_failure, record_model_success
 from hledac.universal.brain.quantization_selector import QuantizationSelector
 from hledac.universal.utils.concurrency import adjust_fetch_workers
 from hledac.universal.utils.exceptions import MemoryPressureError
-
-# Sprint F180D: MLX lazy init via mlx_memory — single authority for MLX
-# DO NOT add top-level `import mlx.core as mx` here.
 MLX_AVAILABLE = False
-
-# P19: Memory guard - configurable max_rss_gb and model sizes for M1 8GB
-# Hermes-3-Llama-3.2-3B-4bit ~1.75GB (4bit quantization), ModernBERT ~500MB, GLiNER ~300MB
-# F272: Raised threshold from 5.5→6.0 GiB to account for M1 UMA overhead (metal driver ~0.3GB)
 _model_max_rss_gb: float = 6.0
-_MODEL_SIZES_GB = {
-    "hermes": 1.75,
-    "modernbert": 0.5,
-    "gliner": 0.3,
-}
-
-# P1E-B: Bounded model unload timeout — prevents shutdown hang if engine.unload() freezes
-# Default 5.0s, overridable via HLEDAC_MODEL_UNLOAD_TIMEOUT_S env var
+_MODEL_SIZES_GB = {'hermes': 1.75, 'modernbert': 0.5, 'gliner': 0.3}
 _UNLOAD_TIMEOUT_S: float = 5.0
-
 
 def _load_unload_timeout() -> float:
     """Load unload timeout from env, validated with fallback default."""
     try:
-        val = float(os.environ.get("HLEDAC_MODEL_UNLOAD_TIMEOUT_S", "5.0"))
+        val = float(os.environ.get('HLEDAC_MODEL_UNLOAD_TIMEOUT_S', '5.0'))
         if val <= 0:
-            raise ValueError("timeout must be positive")
+            raise ValueError('timeout must be positive')
         return val
     except (ValueError, TypeError):
-        logger.warning(
-            "[P1E-B] HLEDAC_MODEL_UNLOAD_TIMEOUT_S=%r invalid, using default 5.0s",
-            os.environ.get("HLEDAC_MODEL_UNLOAD_TIMEOUT_S"),
-        )
+        logger.warning('[P1E-B] HLEDAC_MODEL_UNLOAD_TIMEOUT_S=%r invalid, using default 5.0s', os.environ.get('HLEDAC_MODEL_UNLOAD_TIMEOUT_S'))
         return 5.0
-
-
 logger = logging.getLogger(__name__)
-
 
 def set_model_memory_limit(max_rss_gb: float) -> None:
     """P19: Set max RSS GB threshold for model memory guard."""
     global _model_max_rss_gb
     _model_max_rss_gb = max_rss_gb
 
-
 def _get_current_rss_gb() -> float:
     """P19: Get current RSS memory in GB. Used for memory guard checks."""
     try:
         import psutil
-        return psutil.Process().memory_info().rss / 1e9
+        return psutil.Process().memory_info().rss / 1000000000.0
     except Exception:
         return 0.0
-
 
 def _check_rss_before_load(model_key: str) -> float:
     """
@@ -100,15 +69,9 @@ def _check_rss_before_load(model_key: str) -> float:
     current_rss = _get_current_rss_gb()
     model_size = _MODEL_SIZES_GB.get(model_key.lower(), 0.5)
     threshold = _model_max_rss_gb - model_size
-
     if current_rss > threshold:
-        raise MemoryPressureError(
-            f"[MODEL MEMORY] RSS {current_rss:.2f}GB > threshold {threshold:.2f}GB "
-            f"(max_rss_gb={_model_max_rss_gb}, model={model_key}, size~{model_size}GB). "
-            f"Skipping model load."
-        )
+        raise MemoryPressureError(f'[MODEL MEMORY] RSS {current_rss:.2f}GB > threshold {threshold:.2f}GB (max_rss_gb={_model_max_rss_gb}, model={model_key}, size~{model_size}GB). Skipping model load.')
     return current_rss
-
 
 def _verify_rss_after_unload(model_key: str, rss_before: float) -> None:
     """
@@ -121,29 +84,14 @@ def _verify_rss_after_unload(model_key: str, rss_before: float) -> None:
     rss_after = _get_current_rss_gb()
     model_size = _MODEL_SIZES_GB.get(model_key.lower(), 0.5)
     dropped = rss_before - rss_after
-
-    # F271E: If RSS before unload was already below the model's footprint
-    # (with a 50% tolerance), the model was never actually loaded — this
-    # is a no-op unload (e.g., lazy registry cleared without instantiation).
-    # Skip the warning and the success log; neither would be informative.
     noop_threshold = model_size * 0.5
     if rss_before < noop_threshold:
-        logger.debug(
-            f"[MODEL MEMORY] Unload was a no-op for {model_key} "
-            f"(rss_before={rss_before:.2f}GB < expected~{model_size:.2f}GB); "
-            f"skipping RSS drop verification."
-        )
+        logger.debug(f'[MODEL MEMORY] Unload was a no-op for {model_key} (rss_before={rss_before:.2f}GB < expected~{model_size:.2f}GB); skipping RSS drop verification.')
         return
-
     if dropped < noop_threshold:
-        logger.warning(
-            f"[MODEL MEMORY] RSS did not drop expected amount after unload: "
-            f"dropped={dropped:.2f}GB, expected~{model_size:.2f}GB "
-            f"(RSS before={rss_before:.2f}GB, after={rss_after:.2f}GB, model={model_key})"
-        )
+        logger.warning(f'[MODEL MEMORY] RSS did not drop expected amount after unload: dropped={dropped:.2f}GB, expected~{model_size:.2f}GB (RSS before={rss_before:.2f}GB, after={rss_after:.2f}GB, model={model_key})')
     else:
-        logger.info(f"[MODEL MEMORY] Model unloaded (RSS dropped={dropped:.2f}GB, model={model_key})")
-
+        logger.info(f'[MODEL MEMORY] Model unloaded (RSS dropped={dropped:.2f}GB, model={model_key})')
 
 def _get_mlx_safe():
     """Get mlx.core module via mlx_memory lazy init. Returns mx or None."""
@@ -155,22 +103,16 @@ def _get_mlx_safe():
         except Exception:
             return None
     return None
-
-# Sprint 42: ANE CoreML paths
-MODELS_DIR = Path.home() / ".hledac" / "models"
+MODELS_DIR = Path.home() / '.hledac' / 'models'
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
-COREML_MODEL_PATH = MODELS_DIR / "modernbert_ane.mlpackage"
-
-# Typové aliasy pro podporované modely
-ModelName = Literal["hermes", "modernbert", "gliner"]
-
+COREML_MODEL_PATH = MODELS_DIR / 'modernbert_ane.mlpackage'
+ModelName = Literal['hermes', 'modernbert', 'gliner']
 
 class ModelType(Enum):
     """Typy podporovaných modelů."""
     HERMES = auto()
     MODERNBERT = auto()
     GLINER = auto()
-
 
 @asynccontextmanager
 async def model_lifecycle(model_name: ModelName):
@@ -193,26 +135,16 @@ async def model_lifecycle(model_name: ModelName):
         Načtená instance modelu
     """
     manager = get_model_manager()
-
-    # Kontrola že žádný jiný model není loaded
     if manager._current_model is not None:
         current = manager._current_model.name.lower()
         if current != model_name:
-            logger.warning(
-                f"[MODEL CONFLICT] Requested '{model_name}' but '{current}' is loaded. "
-                f"Releasing current model first."
-            )
+            logger.warning(f"[MODEL CONFLICT] Requested '{model_name}' but '{current}' is loaded. Releasing current model first.")
             await manager._release_current_async()
-
-    # Load nového modelu
     model = await manager._load_model_async(model_name)
-
     try:
         yield model
     finally:
-        # Proper cleanup včetně MLX cache
         await manager._release_current_async()
-
 
 class ModelManager:
     """
@@ -232,83 +164,18 @@ class ModelManager:
         # ... použití ...
         await manager.release_current()
     """
-
-    # Mapování model_name -> ModelType
-    MODEL_REGISTRY: dict[str, ModelType] = {
-        "hermes": ModelType.HERMES,
-        "modernbert": ModelType.MODERNBERT,
-        "gliner": ModelType.GLINER,
-    }
-
-    # ========================================================================
-    # F6.5: Ownership Closure — Phase Drift Guard
-    # ========================================================================
-    # WORKFLOW-LEVEL phase → model mapping.
-    #
-    # AUTHORITY (F6.5): This map is STRICTLY Layer 1 (workflow-level).
-    # It is NOT the same as the coarse-grained phase system in
-    # capabilities.ModelLifecycleManager (BRAIN/TOOLS/SYNTHESIS/CLEANUP).
-    #
-    # OWNERSHIP DECLARATION (F6.5) — F182B CORRECTED:
-    #   - Acquire/load owner:        THIS CLASS (ModelManager singleton) — canonical
-    #   - Unload helper (7K SSOT):  ENGINE.unload() — Hermes3Engine.unload() for Hermes
-    #                                brain.model_lifecycle.unload_model() delegates to engine.unload()
-    #   - Unload cleanup owner:     THIS CLASS._cleanup_memory_async() — MLX cache + gc
-    #   - Emergency seam:           brain.model_lifecycle request_emergency_unload() + flag
-    #   - Windup-local sidecar:      class ModelLifecycle (windup_engine.SynthesisRunner)
-    #   - Compat wrapper:            root model_lifecycle.py (COMPAT_BACKWARD, star-export only)
-    #
-    # F182B CLARIFICATION:
-    #   - "unload" means engine.unload() with 7K order (batch shutdown → cache evict → GC → mx.clear)
-    #   - model_lifecycle.unload_model() is a SHADOW-STATE HELPER, NOT a separate unload authority
-    #   - Both _release_model_async and _release_current_async delegate to engine.unload()
-    #
-    # LAYER MAPPING (F6.5) — MUST NOT BE CONFLATED:
-    #   Layer 1 (workflow-level, this map):
-    #     PLAN/DECIDE/GENERATE → hermes
-    #     EMBED/DEDUP/ROUTING → modernbert
-    #     NER/ENTITY → gliner
-    #   Layer 2 (coarse-grained, ModelLifecycleManager):
-    #     BRAIN/TOOLS/SYNTHESIS/CLEANUP — entirely different strings
-    #   Layer 3 (windup-local, windup_engine.SynthesisRunner):
-    #     Own isolated model plane with Qwen/SmolLM
-    #
-    # INVARIANTS (F6.5) — HARD:
-    #   - acquire != phase enforcement
-    #   - unload != phase policy
-    #   - workflow phases (Layer 1) != coarse phases (Layer 2)
-    #   - GENERATE (Layer 1) ≠ SYNTHESIS (Layer 2)
-    #   - capability layer MUST NOT become third model truth
-    #
-    # Use brain.model_phase_facts.is_same_layer() to validate before comparison.
-    # ========================================================================
-    PHASE_MODEL_MAP: dict[str, ModelName] = {
-        "PLAN": "hermes",
-        "DECIDE": "hermes",
-        "GENERATE": "hermes",
-        "EMBED": "modernbert",
-        "DEDUP": "modernbert",
-        "ROUTING": "modernbert",
-        "NER": "gliner",
-        "ENTITY": "gliner",
-    }
+    MODEL_REGISTRY: dict[str, ModelType] = {'hermes': ModelType.HERMES, 'modernbert': ModelType.MODERNBERT, 'gliner': ModelType.GLINER}
+    PHASE_MODEL_MAP: dict[str, ModelName] = {'PLAN': 'hermes', 'DECIDE': 'hermes', 'GENERATE': 'hermes', 'EMBED': 'modernbert', 'DEDUP': 'modernbert', 'ROUTING': 'modernbert', 'NER': 'gliner', 'ENTITY': 'gliner'}
+    __slots__ = tuple(('_ane_embedder', '_current_model', '_loaded_models', '_lock', '_mlx_embedder', '_model_factories', '_model_locks', '_psutil', '_psutil_available'))
 
     def __init__(self):
         self._loaded_models: dict[ModelType, Any] = {}
         self._current_model: ModelType | None = None
-        self._model_factories: dict[ModelType, Callable[[], Any]] = {
-            ModelType.HERMES: self._create_hermes_engine,
-            ModelType.MODERNBERT: self._create_modernbert_engine,
-            ModelType.GLINER: self._create_gliner_engine,
-        }
+        self._model_factories: dict[ModelType, Callable[[], Any]] = {ModelType.HERMES: self._create_hermes_engine, ModelType.MODERNBERT: self._create_modernbert_engine, ModelType.GLINER: self._create_gliner_engine}
         self._lock = asyncio.Lock()
-        # Sprint 55: ANE/MLX embedder
         self._ane_embedder = None
         self._mlx_embedder = None
-        # FIX 0: Per-model locks to prevent TOCTOU race conditions
         self._model_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
-
-        # FIX 8: psutil for RAM pressure guard — use centralized shim
         from core.psutil_shim import psutil as _ps, PSUTIL_AVAILABLE
         self._psutil = _ps
         self._psutil_available = PSUTIL_AVAILABLE
@@ -330,8 +197,8 @@ class ModelManager:
 
             class NEREngine:
                 """NER+RE Engine pomocí gliner-relex-large-v0.5."""
-
-                DEFAULT_MODEL = "knowledgator/gliner-relex-large-v0.5"
+                DEFAULT_MODEL = 'knowledgator/gliner-relex-large-v0.5'
+                __slots__ = tuple(('_is_loaded', '_model'))
 
                 def __init__(self):
                     self._model = None
@@ -340,60 +207,33 @@ class ModelManager:
                 async def load(self) -> None:
                     """Načte gliner-relex model - async verze."""
                     if not self._is_loaded:
-                        logger.info("[MODEL LOAD] gliner-relex start")
-                        self._model = await asyncio.to_thread(
-                            lambda: GLiNER.from_pretrained(self.DEFAULT_MODEL, map_location="cpu")
-                        )
+                        logger.info('[MODEL LOAD] gliner-relex start')
+                        self._model = await asyncio.to_thread(lambda: GLiNER.from_pretrained(self.DEFAULT_MODEL, map_location='cpu'))
                         self._is_loaded = True
-                        logger.info("[MODEL LOAD] gliner-relex done")
+                        logger.info('[MODEL LOAD] gliner-relex done')
 
-                def extract(
-                    self,
-                    text: str,
-                    labels: list[str],
-                    relations: list[dict] | None = None,
-                    threshold: float = 0.5
-                ) -> dict[str, Any]:
+                def extract(self, text: str, labels: list[str], relations: list[dict] | None=None, threshold: float=0.5) -> dict[str, Any]:
                     """Extract entities and optionally relations."""
                     if not self._is_loaded:
-                        raise RuntimeError("Model not loaded. Use load() first.")
-
+                        raise RuntimeError('Model not loaded. Use load() first.')
                     if relations:
-                        # Joint inference with relations
-                        entities, rels = self._model.predict(
-                            texts=[text],
-                            labels=labels,
-                            relations=relations,
-                            threshold=threshold,
-                            return_relations=True
-                        )
-                        return {"entities": entities[0] if entities else [], "relations": rels[0] if rels else []}
+                        entities, rels = self._model.predict(texts=[text], labels=labels, relations=relations, threshold=threshold, return_relations=True)
+                        return {'entities': entities[0] if entities else [], 'relations': rels[0] if rels else []}
                     else:
-                        # NER only
                         entities = self._model.predict_entities(text, labels, threshold=threshold)
-                        return {"entities": entities, "relations": []}
+                        return {'entities': entities, 'relations': []}
 
                 async def unload(self) -> None:
                     """Uvolní model z paměti - async verze."""
                     if self._is_loaded:
-                        logger.info("[MODEL RELEASE] gliner-relex start")
+                        logger.info('[MODEL RELEASE] gliner-relex start')
                         self._model = None
                         self._is_loaded = False
-                        logger.info("[MODEL RELEASE] gliner-relex done")
-
+                        logger.info('[MODEL RELEASE] gliner-relex done')
             return NEREngine()
         except ImportError:
-            logger.error("GLiNER not installed. Install with: pip install gliner")
+            logger.error('GLiNER not installed. Install with: pip install gliner')
             raise
-
-    # ========================================================================
-    # Sprint F150H: Memory admission gate — fail-fast before heavy load
-    # ========================================================================
-    # Uses canonical evaluate_uma_state from resource_governor.
-    # FAILS FAST at CRITICAL or EMERGENCY to prevent OOM on M1 8GB.
-    # Clean separation: this gate is HARD fail (raises), _check_memory_pressure
-    # remains SOFT fail (clears cache only).
-    # ========================================================================
 
     def _check_memory_admission(self) -> None:
         """
@@ -406,117 +246,77 @@ class ModelManager:
             RuntimeError: Pokud je memory pressure příliš vysoký.
         """
         try:
-            from hledac.universal.core.resource_governor import (
-                UMA_STATE_CRITICAL,
-                UMA_STATE_EMERGENCY,
-                sample_uma_status,
-            )
+            from hledac.universal.core.resource_governor import UMA_STATE_CRITICAL, UMA_STATE_EMERGENCY, sample_uma_status
         except ImportError:
-            # Fail-open: pokud resource_governor není dostupný, neblokujeme load
             return
-
         try:
             status = sample_uma_status()
-            # F183C: Use status.state directly — sample_uma_status() already
-            # computed it via evaluate_uma_state(); avoid redundant recomputation.
             if status.state == UMA_STATE_EMERGENCY:
-                raise RuntimeError(
-                    f"[MEMORY ADMISSION] EMERGENCY state ({status.system_used_gib:.2f} GiB) — "
-                    f"model load BLOCKED to prevent OOM. "
-                    f"Free up memory before retrying."
-                )
+                raise RuntimeError(f'[MEMORY ADMISSION] EMERGENCY state ({status.system_used_gib:.2f} GiB) — model load BLOCKED to prevent OOM. Free up memory before retrying.')
             if status.state == UMA_STATE_CRITICAL:
-                raise RuntimeError(
-                    f"[MEMORY ADMISSION] CRITICAL state ({status.system_used_gib:.2f} GiB) — "
-                    f"model load BLOCKED to prevent OOM. "
-                    f"Free up memory before retrying."
-                )
+                raise RuntimeError(f'[MEMORY ADMISSION] CRITICAL state ({status.system_used_gib:.2f} GiB) — model load BLOCKED to prevent OOM. Free up memory before retrying.')
         except RuntimeError:
-            raise  # už je to naše RuntimeError, propaguj
-        except Exception:  # noqa: BLE001
-            # Fail-safe: jakákoliv jiná chyba při měření nezablokuje load
+            raise
+        except Exception:
             pass
 
-    # FIX 8: RAM pressure guard (SOFT - clears cache only, doesn't block)
-    # F183C: threshold aligned with resource_governor WARN boundary (~1.9 GiB available).
-    # Previous 0.8 GiB was too aggressive — cleaned cache too late on M1 8GB.
-    def _check_memory_pressure(self, threshold_gb: float = 1.5) -> bool:
+    def _check_memory_pressure(self, threshold_gb: float=1.5) -> bool:
         """Check free RAM, clear MLX cache if below threshold (soft fail)."""
         if not self._psutil_available:
             return False
         try:
-            available = self._psutil.virtual_memory().available / 1e9
+            available = self._psutil.virtual_memory().available / 1000000000.0
             if available < threshold_gb:
                 mx = _get_mlx_safe()
                 if MLX_AVAILABLE and mx is not None:
-                    mx.eval([])  # F183C: barrier before clear (matching canonical order)
+                    mx.eval([])
                     mx.clear_cache()
-                logger.warning(f"[MEMORY] Low RAM: {available:.2f}GB, MLX cache cleared")
+                logger.warning(f'[MEMORY] Low RAM: {available:.2f}GB, MLX cache cleared')
                 return True
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
         return False
 
-    # Sprint 42: CoreML ANE embedder
     def _load_coreml_embedder(self) -> Any:
         """Load CoreML version of ModernBERT if available. Returns None if not."""
         if not COREML_MODEL_PATH.exists():
-            logger.debug("[COREML] CoreML model not found, will use MLX fallback")
+            logger.debug('[COREML] CoreML model not found, will use MLX fallback')
             return None
         try:
             import coremltools as ct
             mlmodel = ct.models.MLModel(str(COREML_MODEL_PATH))
-            logger.info("[COREML] Loaded ANE version of ModernBERT")
+            logger.info('[COREML] Loaded ANE version of ModernBERT')
             return mlmodel
         except Exception as e:
-            logger.warning(f"[COREML] Failed to load CoreML model: {e}")
+            logger.warning(f'[COREML] Failed to load CoreML model: {e}')
             return None
 
-    # Sprint 42: Convert ModernBERT to CoreML
     async def _convert_modernbert_to_coreml(self, embedder: Any) -> bool:
         """
         Convert ModernBERT embedder to CoreML format.
         Returns True if conversion succeeded and accuracy passes threshold.
         """
         if COREML_MODEL_PATH.exists():
-            return True  # Already converted
-
+            return True
         if embedder is None or not hasattr(embedder, '_model'):
-            logger.warning("[COREML] No embedder model to convert")
+            logger.warning('[COREML] No embedder model to convert')
             return False
-
         try:
             import coremltools as ct
-
-            # Try to convert via ONNX path
-            # First export MLX to ONNX, then convert to CoreML
-            logger.info("[COREML] Starting conversion to CoreML...")
-
-            # Use coremltools convert directly if possible
-            # Note: Direct MLX to CoreML is not supported, need ONNX intermediate
+            logger.info('[COREML] Starting conversion to CoreML...')
             mlx_model = embedder._model
-
-            # Try direct conversion - coremltools may support it
             try:
-                ct_model = ct.convert(
-                    mlx_model,
-                    source="pytorch",  # Try pytorch first as common intermediate
-                    convert_to="mlprogram",
-                    compute_units=ct.ComputeUnit.CPU_AND_NE
-                )
+                ct_model = ct.convert(mlx_model, source='pytorch', convert_to='mlprogram', compute_units=ct.ComputeUnit.CPU_AND_NE)
             except Exception as e:
-                logger.debug(f"[COREML] Direct conversion failed: {e}, trying alternative")
-                # Fallback: skip conversion in test environment
+                logger.debug(f'[COREML] Direct conversion failed: {e}, trying alternative')
                 return False
-
             ct_model.save(str(COREML_MODEL_PATH))
-            logger.info(f"[COREML] Model saved to {COREML_MODEL_PATH}")
+            logger.info(f'[COREML] Model saved to {COREML_MODEL_PATH}')
             return True
         except Exception as e:
-            logger.warning(f"[COREML] Conversion failed: {e}")
+            logger.warning(f'[COREML] Conversion failed: {e}')
             return False
 
-    # FIX 4: Guaranteed model unload on exception via finally block
     @asynccontextmanager
     async def acquire_model_ctx(self, model_name: str):
         """
@@ -531,17 +331,16 @@ class ModelManager:
             yield model
         finally:
             await self.release_model(model_name)
-            # F179C: mx.eval([]) barrier before clear_cache
             mx = _get_mlx_safe()
             if MLX_AVAILABLE and mx is not None:
                 try:
                     mx.eval([])
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
                 try:
                     if hasattr(mx, 'clear_cache'):
                         mx.clear_cache()
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
 
     async def with_model(self, model_name: ModelName):
@@ -560,15 +359,10 @@ class ModelManager:
         """
         return model_lifecycle(model_name)
 
-    # =========================================================================
-    # Sprint 30: KV Cache Compression Helper
-    # =========================================================================
-
     def _estimate_context_length(self, cache) -> int:
         """Estimate context length from KV cache structure."""
         try:
             if hasattr(cache, 'shape') and len(cache.shape) >= 2:
-                # Assume cache shape (layers, seq_len, ...)
                 return cache.shape[1] if len(cache.shape) > 1 else 0
             return 0
         except Exception:
@@ -602,166 +396,103 @@ class ModelManager:
         try:
             import mlx_lm
         except ImportError:
-            logger.error("[MODEL DOWNLOAD] mlx_lm not available - cannot download Hermes")
-            raise RuntimeError("mlx_lm required for Hermes model download")  # noqa: B904
-
-        model_id = "mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit"
-
-        # Check if model exists locally (mlx_lm caches in ~/.cache/huggingface/)
+            logger.error('[MODEL DOWNLOAD] mlx_lm not available - cannot download Hermes')
+            raise RuntimeError('mlx_lm required for Hermes model download')
+        model_id = 'mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit'
         try:
-            # Try to get model info - this will fail if not downloaded
             mlx_lm.load(model_id)
-            logger.info(f"[MODEL DOWNLOAD] Hermes-3 already cached at {model_id}")
+            logger.info(f'[MODEL DOWNLOAD] Hermes-3 already cached at {model_id}')
             return
-        except Exception:  # noqa: BLE001
-            pass  # noqa: BLE001  # Model not cached, proceed with download
-
-        logger.info(f"[MODEL DOWNLOAD] Hermes-3 not found, downloading {model_id}...")
-        logger.info("[MODEL DOWNLOAD] Reducing HTTP worker pool to 3 during download")
-
-        # Reduce HTTP concurrency during download to conserve memory
+        except Exception:
+            pass
+        logger.info(f'[MODEL DOWNLOAD] Hermes-3 not found, downloading {model_id}...')
+        logger.info('[MODEL DOWNLOAD] Reducing HTTP worker pool to 3 during download')
         await adjust_fetch_workers(3)
-
         try:
-            # Download the model
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(
-                None,
-                lambda: mlx_lm.download(model_id)
-            )
-            logger.info("[MODEL DOWNLOAD] Hermes-3 downloaded successfully")
+            await loop.run_in_executor(None, lambda: mlx_lm.download(model_id))
+            logger.info('[MODEL DOWNLOAD] Hermes-3 downloaded successfully')
         finally:
-            # Restore full HTTP concurrency
-            logger.info("[MODEL DOWNLOAD] Restoring HTTP worker pool to 25")
+            logger.info('[MODEL DOWNLOAD] Restoring HTTP worker pool to 25')
             await adjust_fetch_workers(25)
 
     async def _load_model_async(self, model_name: str) -> Any:
         """Interní async implementace načtení modelu."""
-        # FIX 0: Per-model lock to prevent TOCTOU race condition
         model_key = model_name.lower()
-        # P1A: Model-level circuit breaker — block before heavy work
         decision = check_model_allowed(model_key)
         if not decision.allowed:
-            raise RuntimeError(
-                f"model inference blocked: {model_key}, "
-                f"retry after {decision.retry_after_s:.1f}s"
-            )
+            raise RuntimeError(f'model inference blocked: {model_key}, retry after {decision.retry_after_s:.1f}s')
         async with self._model_locks[model_key]:
             model_type = self.MODEL_REGISTRY.get(model_key)
             if model_type is None:
-                raise ValueError(f"Unknown model: {model_name}")
-
-            # P8: Ensure Hermes model is downloaded before first load
+                raise ValueError(f'Unknown model: {model_name}')
             if model_type == ModelType.HERMES:
                 await self._ensure_hermes_model_downloaded()
-
-            # FIX 8: Check RAM pressure before loading
             self._check_memory_pressure()
-
-            # Sprint 7D: Ensure MLX runtime is initialized before model load
             from hledac.universal.brain.model_lifecycle import ensure_mlx_runtime_initialized
             ensure_mlx_runtime_initialized()
-
-            # Pokud je model již načten, vrátíme ho
             if model_type in self._loaded_models:
                 self._current_model = model_type
-                logger.debug(f"Model {model_name} already loaded")
+                logger.debug(f'Model {model_name} already loaded')
                 return self._loaded_models[model_type]
-
-            # Nejprve uvolníme aktuální model (pokud existuje)
             if self._current_model is not None:
-                logger.info(
-                    f"[PHASE SWITCH] Releasing {self._current_model.name} "
-                    f"before loading {model_name}"
-                )
+                logger.info(f'[PHASE SWITCH] Releasing {self._current_model.name} before loading {model_name}')
                 await self._release_current_async()
-
-            # F192B: Settle MLX lazy eval before admission check — prevents
-            # stale GPU state from causing spurious admission failures.
             mx = _get_mlx_safe()
             if MLX_AVAILABLE and mx is not None:
                 try:
                     mx.eval([])
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
-
-            # Sprint F150H: Hard fail-fast memory admission gate
-            # F182B FIX: Must run BEFORE factory() — prevents OOM on heavy model load
             self._check_memory_admission()
-
-            # F203J: QuantizationSelector — consult before Hermes load
-            # Advisory only: determines quantization tier and inference budget
-            # Governor denies are checked here; model_lifecycle tracks selected quantization
             if model_type == ModelType.HERMES:
                 try:
                     from hledac.universal.core.resource_governor import sample_uma_status
                     uma = sample_uma_status()
                     selector = QuantizationSelector()
-                    budget = selector.select(uma, requested_model="hermes")
+                    budget = selector.select(uma, requested_model='hermes')
                     if budget.max_tokens == 0 and budget.max_latency_ms == 0:
-                        raise RuntimeError(
-                            f"[F203J] QuantizationSelector denied Hermes load: {budget.reason}"
-                        )
-                    # F203J: Track selected quantization in model_lifecycle (read-only status)
+                        raise RuntimeError(f'[F203J] QuantizationSelector denied Hermes load: {budget.reason}')
                     from hledac.universal.brain.model_lifecycle import set_selected_quantization
                     set_selected_quantization(budget.quantization)
-                    logger.info(
-                        f"[F203J] Hermes quantization selected: {budget.quantization} "
-                        f"(tokens={budget.max_tokens}, latency={budget.max_latency_ms}ms, reason={budget.reason})"
-                    )
+                    logger.info(f'[F203J] Hermes quantization selected: {budget.quantization} (tokens={budget.max_tokens}, latency={budget.max_latency_ms}ms, reason={budget.reason})')
                 except Exception as e:
-                    logger.debug("[F203J] QuantizationSelector error (using defaults): %s", e)
-
-            # P19: RSS-based memory pressure check before load
+                    logger.debug('[F203J] QuantizationSelector error (using defaults): %s', e)
             rss_before_load = _check_rss_before_load(model_key)
-
-            # Načteme nový model
             try:
-                logger.info(f"[MODEL LOAD] {model_name} start")
+                logger.info(f'[MODEL LOAD] {model_name} start')
                 factory = self._model_factories[model_type]
                 model = factory()
-
-                # Inicializace modelu - vše async
                 if hasattr(model, 'initialize'):
                     if inspect.iscoroutinefunction(model.initialize):
                         await model.initialize()
                     else:
-                        # Sync metodu zavoláme v executoru
                         await asyncio.to_thread(model.initialize)
                 elif hasattr(model, 'load'):
                     if inspect.iscoroutinefunction(model.load):
                         await model.load()
                     else:
                         await asyncio.to_thread(model.load)
-
                 self._loaded_models[model_type] = model
                 self._current_model = model_type
-                logger.info(f"[MODEL LOAD] {model_name} done (RSS before={rss_before_load:.2f}GB)")
-                # P1A: Record successful load
+                logger.info(f'[MODEL LOAD] {model_name} done (RSS before={rss_before_load:.2f}GB)')
                 record_model_success(model_key)
-                # P3: snížit fetch concurrency při načteném LLM
                 await adjust_fetch_workers(3)
                 return model
-
             except asyncio.CancelledError:
-                # P1A: CancelledError must propagate, not be recorded
-                logger.warning(f"Model load cancelled: {model_name}")
+                logger.warning(f'Model load cancelled: {model_name}')
                 raise
-
             except RuntimeError as e:
-                # P1A: Memory admission gate blocked — record and re-raise
-                if "MEMORY ADMISSION" in str(e) or "memory_admission" in str(e).lower():
-                    record_model_failure(model_key, failure_kind="memory_admission_blocked")
+                if 'MEMORY ADMISSION' in str(e) or 'memory_admission' in str(e).lower():
+                    record_model_failure(model_key, failure_kind='memory_admission_blocked')
                 else:
-                    record_model_failure(model_key, failure_kind="load_error")
-                logger.error(f"Failed to load model {model_name}: {e}")
-                raise RuntimeError(f"Failed to load model {model_name}: {e}") from e
-
+                    record_model_failure(model_key, failure_kind='load_error')
+                logger.error(f'Failed to load model {model_name}: {e}')
+                raise RuntimeError(f'Failed to load model {model_name}: {e}') from e
             except Exception as e:
-                # P1A: Other load failures
-                record_model_failure(model_key, failure_kind="load_error")
-                logger.error(f"Failed to load model {model_name}: {e}")
-                raise RuntimeError(f"Failed to load model {model_name}: {e}") from e
+                record_model_failure(model_key, failure_kind='load_error')
+                logger.error(f'Failed to load model {model_name}: {e}')
+                raise RuntimeError(f'Failed to load model {model_name}: {e}') from e
 
     async def release_model(self, model_name: ModelName) -> None:
         """
@@ -776,67 +507,39 @@ class ModelManager:
         async with self._lock:
             model_type = self.MODEL_REGISTRY.get(model_name.lower())
             if model_type is None:
-                raise ValueError(f"Unknown model: {model_name}")
-
+                raise ValueError(f'Unknown model: {model_name}')
             if model_type not in self._loaded_models:
-                logger.debug(f"Model {model_name} not loaded")
+                logger.debug(f'Model {model_name} not loaded')
                 return
-
             await self._release_model_async(model_type, model_name)
 
     async def _release_model_async(self, model_type: ModelType, model_name: str) -> None:
         """Interní async implementace uvolnění modelu."""
         model = self._loaded_models.get(model_type)
-
-        # P19: Capture RSS before unload for verification
         rss_before_unload = _get_current_rss_gb()
-
-        # F166E: Always remove from registry first — before unload attempt
-        # This ensures no partial-init leak regardless of unload outcome
         if model_type in self._loaded_models:
             del self._loaded_models[model_type]
-
         if self._current_model == model_type:
             self._current_model = None
-
-        # Attempt unload — failure is logged but never propagated
         if model is not None and hasattr(model, 'unload'):
-            logger.info(f"[MODEL RELEASE] {model_name} start")
+            logger.info(f'[MODEL RELEASE] {model_name} start')
             try:
-                unload_coro = (
-                    model.unload()
-                    if inspect.iscoroutinefunction(model.unload)
-                    else asyncio.to_thread(model.unload)
-                )
-                # P1E-B: Bounded timeout — prevents shutdown hang if engine.unload() freezes
+                unload_coro = model.unload() if inspect.iscoroutinefunction(model.unload) else asyncio.to_thread(model.unload)
                 timeout_s = _load_unload_timeout()
                 try:
                     async with asyncio.timeout(timeout_s):
                         await unload_coro
                 except asyncio.CancelledError:
-                    # P1E-B: CancelledError propagation — re-raise per spec
                     raise
                 except TimeoutError:
-                    # P1E-B: Timeout — log warning, fail-soft, teardown continues
-                    logger.warning(
-                        "[P1E-B] Model unload timed out after %.1fs for %s — continuing shutdown",
-                        timeout_s,
-                        model_name,
-                    )
+                    logger.warning('[P1E-B] Model unload timed out after %.1fs for %s — continuing shutdown', timeout_s, model_name)
                 except Exception as e:
-                    logger.error(f"Failed to release model {model_name}: {e}")
-                    # F166E: Exception swallowed
+                    logger.error(f'Failed to release model {model_name}: {e}')
                 else:
-                    logger.info(f"[MODEL RELEASE] {model_name} done")
+                    logger.info(f'[MODEL RELEASE] {model_name} done')
             finally:
-                # Memory cleanup regardless of unload outcome
-                # F182B: Pass captured model reference — registry already cleared
                 await self._cleanup_memory_async(model_type, engine=model)
-
-        # P19: Verify RSS dropped after unload
         _verify_rss_after_unload(model_name.lower(), rss_before_unload)
-
-        # P3: obnovit fetch concurrency po uvolnění modelu
         await adjust_fetch_workers(25)
 
     async def release_current(self) -> None:
@@ -848,108 +551,63 @@ class ModelManager:
         """Interní async implementace uvolnění aktuálního modelu."""
         if self._current_model is None:
             return
-
         model_type = self._current_model
         model_name = model_type.name.lower()
-
-        # P19: Capture RSS before unload for verification
         rss_before_unload = _get_current_rss_gb()
-
-        # F168E: Capture model reference BEFORE registry deletion
-        # (for unload call — must happen after _current_model clear but before del)
         model = self._loaded_models.get(model_type)
-
-        # F168E: Always remove from registry first — before unload attempt
-        # Mirrors _release_model_async() symmetry (F166E)
         if model_type in self._loaded_models:
             del self._loaded_models[model_type]
-
         if self._current_model == model_type:
             self._current_model = None
-
-        # Attempt unload — failure is logged but never propagated
         if model is not None and hasattr(model, 'unload'):
-            logger.info(f"[MODEL RELEASE] {model_name} start")
+            logger.info(f'[MODEL RELEASE] {model_name} start')
             try:
-                unload_coro = (
-                    model.unload()
-                    if inspect.iscoroutinefunction(model.unload)
-                    else asyncio.to_thread(model.unload)
-                )
-                # P1E-B: Bounded timeout — prevents shutdown hang if engine.unload() freezes
+                unload_coro = model.unload() if inspect.iscoroutinefunction(model.unload) else asyncio.to_thread(model.unload)
                 timeout_s = _load_unload_timeout()
                 try:
                     async with asyncio.timeout(timeout_s):
                         await unload_coro
                 except asyncio.CancelledError:
-                    # P1E-B: CancelledError propagation — re-raise per spec
                     raise
                 except TimeoutError:
-                    # P1E-B: Timeout — log warning, fail-soft, teardown continues
-                    logger.warning(
-                        "[P1E-B] Model unload timed out after %.1fs for %s — continuing shutdown",
-                        timeout_s,
-                        model_name,
-                    )
+                    logger.warning('[P1E-B] Model unload timed out after %.1fs for %s — continuing shutdown', timeout_s, model_name)
                 except Exception as e:
-                    logger.error(f"Failed to release model {model_name}: {e}")
-                    # F168E: Exception swallowed — model already removed from registry
+                    logger.error(f'Failed to release model {model_name}: {e}')
                 else:
-                    logger.info(f"[MODEL RELEASE] {model_name} done")
+                    logger.info(f'[MODEL RELEASE] {model_name} done')
             finally:
-                # Memory cleanup regardless of unload outcome
-                # F182B: Pass captured model reference — registry already cleared
                 await self._cleanup_memory_async(model_type, engine=model)
-
-        # P19: Verify RSS dropped after unload
         _verify_rss_after_unload(model_name.lower(), rss_before_unload)
 
-    async def _cleanup_memory_async(
-        self,
-        model_type: ModelType | None = None,
-        engine: Any | None = None
-    ) -> None:
+    async def _cleanup_memory_async(self, model_type: ModelType | None=None, engine: Any | None=None) -> None:
         """Agresivní async čištění paměti po uvolnění modelu.
 
         Args:
             model_type: ModelType being released. If None, uses self._current_model.
             engine: Pre-captured model/engine instance (F182B: required when registry already cleared).
         """
-        # =========================================================================
-        # Sprint 30: KV Cache Compression - apply before cleanup
-        # =========================================================================
-        # Invariant 3: Quantization in cleanup() - no inference impact
-        # F182B: Use passed engine reference — registry cleared BEFORE this call
         target_model = model_type if model_type is not None else self._current_model
-        if target_model and target_model.name == "HERMES" and engine is not None:
+        if target_model and target_model.name == 'HERMES' and (engine is not None):
             try:
                 if hasattr(engine, '_prompt_cache') and engine._prompt_cache:
                     context_len = self._estimate_context_length(engine._prompt_cache)
                     if context_len > 1024:
-                        # Invariant 1: Only compress if context > 1024 tokens
                         await engine._compress_kv_cache()
-            except Exception:  # noqa: BLE001
-                pass  # noqa: BLE001  # Fail-safe - don't block cleanup
-
-        # Python garbage collection — F300-MLX invariant: mx.eval([]) PŘED gc.collect()
+            except Exception:
+                pass
         mx = _get_mlx_safe()
         if MLX_AVAILABLE and mx is not None:
             try:
-                mx.eval([])  # F179C: settle lazy eval BEFORE clearing
-            except Exception:  # noqa: BLE001
+                mx.eval([])
+            except Exception:
                 pass
             try:
                 if hasattr(mx, 'clear_cache'):
                     mx.clear_cache()
-                logger.debug("MLX cache cleared")
+                logger.debug('MLX cache cleared')
             except Exception as e:
-                logger.warning(f"Failed to clear MLX cache: {e}")
-
-        gc.collect()  # collect Python refs after Metal cache release
-
-        # F266: Second GC pass after Metal cache clear — ensures Python objects
-        # holding MLX allocations are fully collected before next lifecycle.
-        # Pattern matches vlm_analyzer.py:121 and embedding_pipeline.py:359.
+                logger.warning(f'Failed to clear MLX cache: {e}')
+        gc.collect()
         gc.collect()
 
     def get_model(self, model_name: ModelName) -> Any | None:
@@ -964,9 +622,8 @@ class ModelManager:
         """
         model_type = self.MODEL_REGISTRY.get(model_name.lower())
         if model_type is None:
-            logger.error(f"Unknown model: {model_name}")
+            logger.error(f'Unknown model: {model_name}')
             return None
-
         return self._loaded_models.get(model_type)
 
     def is_loaded(self, model_name: ModelName) -> bool:
@@ -982,12 +639,7 @@ class ModelManager:
         model_type = self.MODEL_REGISTRY.get(model_name.lower())
         if model_type is None:
             return False
-
         return model_type in self._loaded_models
-
-    # ========================================================================
-    # Sprint 55: Dynamic embedder selection (ANE vs MLX)
-    # ========================================================================
 
     async def get_embedder(self, resource_allocator=None):
         """
@@ -999,15 +651,11 @@ class ModelManager:
         Returns:
             Funkce pro embeddování textů na embeddingy
         """
-        # Lazy import to avoid circular dependencies
         try:
             from ...embeddings.modernbert_embedder import ModernBERTEmbedder
             from .ane_embedder import ANEEmbedder
         except ImportError:
-            # Fallback - just return None
             return None
-
-        # Initialize embedders if not already
         if self._ane_embedder is None:
             self._ane_embedder = ANEEmbedder()
         if self._mlx_embedder is None:
@@ -1015,28 +663,21 @@ class ModelManager:
                 self._mlx_embedder = ModernBERTEmbedder()
             except Exception:
                 self._mlx_embedder = None
-
-        # Check if we should use ANE
         use_ane = False
         if resource_allocator:
             try:
                 use_ane = await resource_allocator.can_use_ane()
             except Exception:
                 use_ane = False
-
         if use_ane:
             if not self._ane_embedder.is_loaded:
                 await self._ane_embedder.load()
             if self._ane_embedder.is_loaded:
-                # Set fallback for when ANE fails
                 if self._mlx_embedder:
                     self._ane_embedder.set_fallback(self._mlx_embedder.embed)
                 return self._ane_embedder.embed
-
-        # Fallback to MLX
         if self._mlx_embedder:
             return self._mlx_embedder.embed
-
         return None
 
     def get_current_model(self) -> str | None:
@@ -1052,8 +693,7 @@ class ModelManager:
 
     async def release_all(self) -> None:
         """Async uvolnění všech modelů z paměti."""
-        logger.info("Releasing all models...")
-
+        logger.info('Releasing all models...')
         async with self._lock:
             last_released: ModelType | None = None
             last_engine: Any | None = None
@@ -1064,34 +704,22 @@ class ModelManager:
                     model = self._loaded_models[model_type]
                     last_engine = model
                     if hasattr(model, 'unload'):
-                        logger.info(f"[MODEL RELEASE] {model_name} start")
+                        logger.info(f'[MODEL RELEASE] {model_name} start')
                         if inspect.iscoroutinefunction(model.unload):
                             await model.unload()
                         else:
                             loop = asyncio.get_running_loop()
                             await asyncio.to_thread(model.unload)
-                        logger.info(f"[MODEL RELEASE] {model_name} done")
+                        logger.info(f'[MODEL RELEASE] {model_name} done')
                     del self._loaded_models[model_type]
-                    logger.info(f"✓ Released {model_name}")
+                    logger.info(f'✓ Released {model_name}')
                 except Exception as e:
-                    logger.error(f"Failed to release {model_name}: {e}")
-
+                    logger.error(f'Failed to release {model_name}: {e}')
             self._current_model = None
-            # F182B: Pass last engine reference for KV cache compress
             await self._cleanup_memory_async(last_released, engine=last_engine)
-            logger.info("✓ All models released")
+            logger.info('✓ All models released')
 
-    # ========================================================================
-    # P12: Report generation from graph and hypotheses
-    # ========================================================================
-
-    async def generate_report(
-        self,
-        graph_summary: str,
-        hypotheses: list[str],
-        findings: list[Any] | None = None,
-        output_path: str | None = None
-    ) -> str:
+    async def generate_report(self, graph_summary: str, hypotheses: list[str], findings: list[Any] | None=None, output_path: str | None=None) -> str:
         """
         P12: Generate final OSINT report from graph summary and hypotheses.
 
@@ -1108,93 +736,48 @@ class ModelManager:
             Generated report as Markdown string
         """
         import os
-
         if output_path is None:
-            output_path = os.path.expanduser("~/hledac_report.md")
-
-        # Load Hermes for generation
-        async with self.acquire_model_ctx("hermes"):
-            pass  # Model loaded in context, will be released after
-
-        # We need to use deephermes3_engine directly for generate_report
+            output_path = os.path.expanduser('~/hledac_report.md')
+        async with self.acquire_model_ctx('hermes'):
+            pass
         from .deephermes3_engine import DeepHermes3Engine
         engine = DeepHermes3Engine()
         try:
             await engine.initialize()
         except Exception as e:
-            logger.warning(f"[GENERATE_REPORT] Hermes init failed: {e}")
-            return ""
-
-        # Build context for report generation
-        MAX_CONTEXT = 4000  # noqa: N806
-        MAX_HYPOTHESES = 10  # noqa: N806
-        MAX_FINDINGS = 20  # noqa: N806
-
-        # Truncate hypotheses
+            logger.warning(f'[GENERATE_REPORT] Hermes init failed: {e}')
+            return ''
+        MAX_CONTEXT = 4000
+        MAX_HYPOTHESES = 10
+        MAX_FINDINGS = 20
         hypo_lines = []
         for i, h in enumerate(hypotheses[:MAX_HYPOTHESES], 1):
-            hypo_lines.append(f"{i}. {str(h)[:200]}")
-        hypo_text = "\n".join(hypo_lines)
-
-        # Truncate findings
+            hypo_lines.append(f'{i}. {str(h)[:200]}')
+        hypo_text = '\n'.join(hypo_lines)
         finding_lines = []
         for f in (findings or [])[:MAX_FINDINGS]:
             finding_str = str(f)[:300]
-            finding_lines.append(f"- {finding_str}")
-        finding_text = "\n".join(finding_lines)
-
-        # Build final prompt
-        prompt = f"""Vytvoř strukturovaný OSINT report v Markdown formátu.
-
-Grafový souhrn:
-{graph_summary[:MAX_CONTEXT]}
-
-Hypotézy:
-{hypo_text}
-
-Zjištění (findings):
-{finding_text if finding_text else "Žádná zjištění"}
-
-Report musí obsahovat:
-1. # OSINT Report -标题
-2. ## Shrnutí (Executive Summary) - max 3 věty
-3. ## Klíčová zjištění (Key Findings)
-4. ## Hypotézy a výsledky
-5. ## Doporučení (Recommendations)
-6. ## Metadata (timestamp, version)
-
-Piš v češtině, buď konkrétní a stručný."""
-
+            finding_lines.append(f'- {finding_str}')
+        finding_text = '\n'.join(finding_lines)
+        prompt = f"Vytvoř strukturovaný OSINT report v Markdown formátu.\n\nGrafový souhrn:\n{graph_summary[:MAX_CONTEXT]}\n\nHypotézy:\n{hypo_text}\n\nZjištění (findings):\n{(finding_text if finding_text else 'Žádná zjištění')}\n\nReport musí obsahovat:\n1. # OSINT Report -标题\n2. ## Shrnutí (Executive Summary) - max 3 věty\n3. ## Klíčová zjištění (Key Findings)\n4. ## Hypotézy a výsledky\n5. ## Doporučení (Recommendations)\n6. ## Metadata (timestamp, version)\n\nPiš v češtině, buď konkrétní a stručný."
         try:
-            report = await engine.generate(
-                prompt=prompt,
-                temperature=0.3,
-                max_tokens=2048,
-                system_msg="Jsi OSINT research assistant. Vytvářej strukturované reporty v češtině."
-            )
+            report = await engine.generate(prompt=prompt, temperature=0.3, max_tokens=2048, system_msg='Jsi OSINT research assistant. Vytvářej strukturované reporty v češtině.')
         except Exception as e:
-            logger.warning(f"[GENERATE_REPORT] Generation failed: {e}")
-            report = f"# Report Generation Failed\n\nError: {e}"
-
-        # Add metadata header
-        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-        final_report = f"---\nGenerated: {timestamp}\nHledac OSINT Report\n---\n\n{report}"
-
-        # Save to file — fail-safe: aiofiles is optional, sync fallback if unavailable
+            logger.warning(f'[GENERATE_REPORT] Generation failed: {e}')
+            report = f'# Report Generation Failed\n\nError: {e}'
+        timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+        final_report = f'---\nGenerated: {timestamp}\nHledac OSINT Report\n---\n\n{report}'
         try:
             import aiofiles as _f273_af
-            async with _f273_af.open(output_path, "w", encoding="utf-8") as f:
+            async with _f273_af.open(output_path, 'w', encoding='utf-8') as f:
                 await f.write(final_report)
-            logger.info(f"[GENERATE_REPORT] Saved to {output_path}")
+            logger.info(f'[GENERATE_REPORT] Saved to {output_path}')
         except Exception as e:
-            logger.warning(f"[GENERATE_REPORT] Failed to save: {e}")
-
-        # Cleanup engine
+            logger.warning(f'[GENERATE_REPORT] Failed to save: {e}')
         try:
             await engine.unload()
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
-
         return final_report
 
     async def with_phase(self, phase_name: str):
@@ -1218,16 +801,14 @@ Piš v češtině, buď konkrétní a stručný."""
         """
         model_name = self.PHASE_MODEL_MAP.get(phase_name.upper())
         if model_name is None:
-            raise ValueError(f"Unknown phase: {phase_name}")
-
-        logger.info(f"[PHASE START] {phase_name} -> using {model_name}")
+            raise ValueError(f'Unknown phase: {phase_name}')
+        logger.info(f'[PHASE START] {phase_name} -> using {model_name}')
 
         @asynccontextmanager
         async def _phase_context():
             async with model_lifecycle(model_name) as model:
                 yield model
-            logger.info(f"[PHASE END] {phase_name}")
-
+            logger.info(f'[PHASE END] {phase_name}')
         return _phase_context()
 
     async def __aenter__(self) -> ModelManager:
@@ -1237,10 +818,6 @@ Piš v češtině, buď konkrétní a stručný."""
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """Async context manager exit - uvolní všechny modely."""
         await self.release_all()
-
-    # ========================================================================
-    # P13: Embedding Model Lifecycle Management
-    # ========================================================================
 
     def load_embedding_model(self) -> bool:
         """
@@ -1253,11 +830,11 @@ Piš v češtině, buď konkrétní a stručný."""
             from hledac.universal.embedding_pipeline import _get_embedder
             embedder = _get_embedder()
             if embedder is not None:
-                logger.info("[EMBED] Embedding model loaded via ModelManager")
+                logger.info('[EMBED] Embedding model loaded via ModelManager')
                 return True
             return False
         except Exception as e:
-            logger.error(f"[EMBED] Failed to load embedding model: {e}")
+            logger.error(f'[EMBED] Failed to load embedding model: {e}')
             return False
 
     def unload_embedding_model(self) -> None:
@@ -1269,9 +846,9 @@ Piš v češtině, buď konkrétní a stručný."""
         try:
             from hledac.universal.embedding_pipeline import _release_embedder
             _release_embedder()
-            logger.info("[EMBED] Embedding model unloaded via ModelManager")
+            logger.info('[EMBED] Embedding model unloaded via ModelManager')
         except Exception as e:
-            logger.debug(f"[EMBED] Failed to unload embedding model: {e}")
+            logger.debug(f'[EMBED] Failed to unload embedding model: {e}')
 
     @asynccontextmanager
     async def embedding_lifecycle(self):
@@ -1292,23 +869,14 @@ Piš v češtině, buď konkrétní a stručný."""
             yield
         finally:
             self.unload_embedding_model()
-            # Clear MLX cache after embedding operations
             mx = _get_mlx_safe()
             if MLX_AVAILABLE and mx is not None:
                 try:
                     mx.eval([])
                     mx.clear_cache()
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
-
-    # ========================================================================
-    # Sprint 55: ANE Embedder Integration (get_embedder method below)
-    # ========================================================================
-
-
-# Globální instance pro snadné použití
 _model_manager: ModelManager | None = None
-
 
 def get_model_manager() -> ModelManager:
     """Vrátí globální instanci ModelManager."""
@@ -1317,7 +885,6 @@ def get_model_manager() -> ModelManager:
         _model_manager = ModelManager()
     return _model_manager
 
-
 async def reset_model_manager() -> None:
     """Resetuje globální instanci ModelManager."""
     global _model_manager
@@ -1325,55 +892,44 @@ async def reset_model_manager() -> None:
         await _model_manager.release_all()
         _model_manager = None
 
-
-# Backward compatibility - sync wrappery (DEPRECATED)
-# Používejte async verze v novém kódu!
-
 class _SyncCompatibilityWrapper:
     """
     Wrapper pro zpětnou kompatibilitu se sync API.
 
     DEPRECATED: Používejte async metody přímo!
     """
+    __slots__ = tuple(('_manager',))
 
     def __init__(self, manager: ModelManager):
         self._manager = manager
 
     def acquire(self, model_name: str) -> bool:
         """DEPRECATED: Použijte await load_model()"""
-        logger.warning("DEPRECATED: acquire() is deprecated, use await load_model()")
+        logger.warning('DEPRECATED: acquire() is deprecated, use await load_model()')
         try:
             loop = asyncio.get_running_loop()
             if loop.is_running():
-                # Jsme v async kontextu, nemůžeme použít run()
-                raise RuntimeError(
-                    "Cannot use sync acquire() in async context. "
-                    "Use: model = await manager.load_model('hermes')"
-                )
+                raise RuntimeError("Cannot use sync acquire() in async context. Use: model = await manager.load_model('hermes')")
             else:
                 loop.run_until_complete(self._manager.load_model(model_name))
             return True
         except Exception as e:
-            logger.error(f"Failed to acquire model: {e}")
+            logger.error(f'Failed to acquire model: {e}')
             return False
 
     def release(self, model_name: str) -> bool:
         """DEPRECATED: Použijte await release_model()"""
-        logger.warning("DEPRECATED: release() is deprecated, use await release_model()")
+        logger.warning('DEPRECATED: release() is deprecated, use await release_model()')
         try:
             loop = asyncio.get_running_loop()
             if loop.is_running():
-                raise RuntimeError(
-                    "Cannot use sync release() in async context. "
-                    "Use: await manager.release_model('hermes')"
-                )
+                raise RuntimeError("Cannot use sync release() in async context. Use: await manager.release_model('hermes')")
             else:
                 loop.run_until_complete(self._manager.release_model(model_name))
             return True
         except Exception as e:
-            logger.error(f"Failed to release model: {e}")
+            logger.error(f'Failed to release model: {e}')
             return False
-
 
 def get_sync_wrapper() -> _SyncCompatibilityWrapper:
     """Vrátí sync wrapper pro zpětnou kompatibilitu. DEPRECATED!"""

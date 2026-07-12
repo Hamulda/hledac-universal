@@ -21,47 +21,19 @@ Features:
 This module is designed for OSINT research to discover non-obvious connections
 in knowledge graphs through quantum-inspired algorithms.
 """
-
-
-
 import gc
 import logging
 import math
 from dataclasses import dataclass
 import msgspec
 from typing import TYPE_CHECKING, Any
-
-# Lazy-first discipline: no heavy eager imports at module level.
-# DuckPGQGraph-only importers must NOT pay NumPy/MLX/SciPy tax.
-# Heavy deps loaded via lazy helpers only when QuantumInspiredPathFinder is used.
-
 logger = logging.getLogger(__name__)
-
-# B.6: Hard ceiling on quantum pathfinder graph size.
-# 4096 nodes × 4096 × float32 = 64 MB dense matrix — fits M1 8GB UMA.
-# Above this, mx.zeros(n) and the dense-fallback np.zeros((n,n)) at line 407
-# risk OOM (16k nodes = 1 GB; 65k = 16 GB). Caller's max_nodes is clamped
-# DOWN to this ceiling — never enlarged — to keep the cap safety-first.
-# Env override: QUANTUM_MAX_NODES for ops tuning.
-import os as _os  # noqa: E402
-
-MAX_QUANTUM_NODES: int = int(_os.environ.get("QUANTUM_MAX_NODES", "4096"))
-
-# F264: Edge ceiling — sparse COO with >50k entries would consume
-# significant RAM for the work buffers and shift matrices. M1 RAM budget
-# is 6.25GB; this keeps quantum path analysis well within budget even
-# when called repeatedly from research_coordinator. Env-tunable for ops.
-MAX_QUANTUM_EDGES: int = int(_os.environ.get("QUANTUM_MAX_EDGES", "50000"))
-
-
-# =============================================================================
-# LAZY HELPERS — loaded on-demand, not at module import time
-# =============================================================================
-
+import os as _os
+MAX_QUANTUM_NODES: int = int(_os.environ.get('QUANTUM_MAX_NODES', '4096'))
+MAX_QUANTUM_EDGES: int = int(_os.environ.get('QUANTUM_MAX_EDGES', '50000'))
 _NP_CACHE: Any | None = None
 
-
-def _duckdb_to_dicts(con: Any, sql: str, params: list[Any] | None = None) -> list[dict[str, Any]]:
+def _duckdb_to_dicts(con: Any, sql: str, params: list[Any] | None=None) -> list[dict[str, Any]]:
     """DuckDB → list[dict] via pyarrow zero-copy Arrow path (F5.4).
 
     Zero-copy Arrow path via fetch_arrow_table().to_pylist() is primary;
@@ -73,19 +45,12 @@ def _duckdb_to_dicts(con: Any, sql: str, params: list[Any] | None = None) -> lis
         arrow_tbl = con.execute(sql, params or []).fetch_arrow_table()
         return arrow_tbl.to_pylist()
     except Exception:
-        # Fallback: DuckDB 1.5+ .pl() → Polars DataFrame zero-copy (no pandas)
         try:
             return con.execute(sql, params or []).pl().to_dicts()
         except Exception:
             return []
 
-
-def _duckdb_fetch_bounded(
-    con: Any,
-    sql: str,
-    params: list[Any] | None = None,
-    batch_size: int = 2048,
-):
+def _duckdb_fetch_bounded(con: Any, sql: str, params: list[Any] | None=None, batch_size: int=2048):
     """Streaming bounded fetch — never materialises the full result set in RAM.
 
     DuckDB `.fetchall()` materialises the entire result set as a Python list.
@@ -112,9 +77,7 @@ def _duckdb_fetch_bounded(
         result = con.execute(sql, params or [])
     except Exception:
         return
-
-    # Path 1: Arrow zero-copy (DuckDB 1.2+ + pyarrow)
-    if hasattr(result, "fetch_record_batch"):
+    if hasattr(result, 'fetch_record_batch'):
         try:
             reader = result.fetch_record_batch(batch_size)
             while True:
@@ -125,41 +88,21 @@ def _duckdb_fetch_bounded(
                 if batch is None:
                     break
                 try:
-                    # M5: Zero-copy Arrow→Python via Polars iter_rows (5-10× faster).
-                    # Polars ARM64 native: .from_arrow() zero-copy, .iter_rows() 5-10× faster than to_pylist().
                     try:
                         import polars as _pl
                         pdf = _pl.from_arrow(batch)
-                        # NOTE: pdf.iter_rows(named=False) yields individual tuples per row.
-                        # Wrap in list to match the batch-list contract of all other paths.
                         yield list(pdf.iter_rows(named=False))
                     except ImportError:
-                        # Fallback: Arrow batch → zero-copy tuples without to_pylist()
                         cols = batch.columns
-                        nrows, ncols = batch.num_rows, len(cols)
-                        yield [
-                            tuple(
-                                cols[j][i].as_py() if hasattr(cols[j][i], "as_py") else cols[j][i]
-                                for j in range(ncols)
-                            )
-                            for i in range(nrows)
-                        ]
+                        nrows, ncols = (batch.num_rows, len(cols))
+                        yield [tuple((cols[j][i].as_py() if hasattr(cols[j][i], 'as_py') else cols[j][i] for j in range(ncols))) for i in range(nrows)]
                 except Exception:
-                    # Fallback: columnar unpickling for exotic types
                     cols = batch.columns
-                    nrows, ncols = batch.num_rows, len(cols)
-                    yield [
-                        tuple(
-                            cols[j][i].as_py() if hasattr(cols[j][i], "as_py") else cols[j][i]
-                            for j in range(ncols)
-                        )
-                        for i in range(nrows)
-                    ]
+                    nrows, ncols = (batch.num_rows, len(cols))
+                    yield [tuple((cols[j][i].as_py() if hasattr(cols[j][i], 'as_py') else cols[j][i] for j in range(ncols))) for i in range(nrows)]
             return
-        except Exception:  # noqa: BLE001
-            pass  # fall through to fetchmany
-
-    # Path 2: fetchmany fallback
+        except Exception:
+            pass
     try:
         while True:
             rows = result.fetchmany(batch_size)
@@ -168,10 +111,7 @@ def _duckdb_fetch_bounded(
             yield list(rows)
     except Exception:
         return
-
-
 _NP_CACHE: Any | None = None
-
 
 def _get_numpy() -> Any:
     """Lazy numpy loader with module-level cache.
@@ -184,13 +124,9 @@ def _get_numpy() -> Any:
     global _NP_CACHE
     if _NP_CACHE is None:
         import numpy as np
-
         _NP_CACHE = np
     return _NP_CACHE
-
-
 _MLX_CACHE: Any | None = None
-
 
 def _get_mlx() -> Any:
     """Lazy MLX loader — returns module or None if unavailable.
@@ -201,15 +137,11 @@ def _get_mlx() -> Any:
     if _MLX_CACHE is None:
         try:
             import mlx.core as mx
-
             _MLX_CACHE = mx
         except ImportError:
             _MLX_CACHE = None
     return _MLX_CACHE
-
-
 _SPARSE_CACHE: Any | None = None
-
 
 def _get_scipy_sparse() -> Any:
     """Lazy scipy.sparse loader — returns module or None if unavailable.
@@ -220,49 +152,36 @@ def _get_scipy_sparse() -> Any:
     if _SPARSE_CACHE is None:
         try:
             from scipy import sparse
-
             _SPARSE_CACHE = sparse
         except ImportError:
             _SPARSE_CACHE = None
     return _SPARSE_CACHE
-
-
-# Type aliases for annotation only — loaded lazily at runtime via helpers
 if TYPE_CHECKING:
-    import mlx.core as mx  # noqa: F401
-    import numpy as np  # noqa: F401
-    from scipy import sparse  # noqa: F401
+    import mlx.core as mx
+    import numpy as np
+    from scipy import sparse
 
-
-# Backward-compatibility: expose lazy-check results as module-level booleans
 def _is_mlx_available() -> bool:
     return _get_mlx() is not None
 
-
 def _is_scipy_available() -> bool:
     return _get_scipy_sparse() is not None
-
-
-# Module-level flags for existing code that checks these at runtime
-MLX_AVAILABLE = None  # Will be set on first access
+MLX_AVAILABLE = None
 SCIPY_AVAILABLE = None
 
-
-def _get_MLX_AVAILABLE():  # noqa: N802
+def _get_MLX_AVAILABLE():
     global MLX_AVAILABLE
     if MLX_AVAILABLE is None:
         MLX_AVAILABLE = _is_mlx_available()
     return MLX_AVAILABLE
 
-
-def _get_SCIPY_AVAILABLE():  # noqa: N802
+def _get_SCIPY_AVAILABLE():
     global SCIPY_AVAILABLE
     if SCIPY_AVAILABLE is None:
         SCIPY_AVAILABLE = _is_scipy_available()
     return SCIPY_AVAILABLE
 
-
-@dataclass
+@dataclass(True)
 class QuantumPathConfig:
     """Configuration for quantum-inspired pathfinding.
 
@@ -279,10 +198,9 @@ class QuantumPathConfig:
     amplification_strength: float = 1.5
     top_k_paths: int = 5
     max_nodes: int = 5000
-    coin_type: str = "hadamard"
+    coin_type: str = 'hadamard'
     use_mlx: bool = True
     memory_threshold_gb: float = 5.5
-
 
 class QuantumInspiredPathFinder:
     """
@@ -309,8 +227,9 @@ class QuantumInspiredPathFinder:
         n_nodes: Number of nodes in the graph.
         initialized: Whether the pathfinder has been initialized.
     """
+    __slots__ = tuple(('_mlx_available', 'adjacency_matrix', 'config', 'graph', 'idx_to_node', 'initialized', 'n_nodes', 'node_to_idx'))
 
-    def __init__(self, config: QuantumPathConfig | None = None) -> None:
+    def __init__(self, config: QuantumPathConfig | None=None) -> None:
         """Initialize the quantum-inspired pathfinder.
 
         Args:
@@ -324,17 +243,12 @@ class QuantumInspiredPathFinder:
         self.n_nodes: int = 0
         self.initialized: bool = False
         self._mlx_available: bool = _get_mlx() is not None and self.config.use_mlx
-
         if self._mlx_available:
-            logger.info("QuantumPathFinder: Using MLX acceleration")
+            logger.info('QuantumPathFinder: Using MLX acceleration')
         else:
-            logger.info("QuantumPathFinder: Using NumPy fallback")
+            logger.info('QuantumPathFinder: Using NumPy fallback')
 
-    async def initialize(
-        self,
-        graph: Any | np.ndarray | dict[str, list[str]],
-        max_nodes: int | None = None
-    ) -> bool:
+    async def initialize(self, graph: Any | np.ndarray | dict[str, list[str]], max_nodes: int | None=None) -> bool:
         """Initialize the pathfinder with a knowledge graph.
 
         Args:
@@ -352,46 +266,26 @@ class QuantumInspiredPathFinder:
         """
         try:
             max_nodes = max_nodes or self.config.max_nodes
-            # B.6: clamp to module-level hard ceiling. Caller's value is
-            # restricted (never enlarged) so the dense matrix and mx.zeros
-            # sites stay within M1 8GB UMA budget. Warn when clamping.
             if max_nodes > MAX_QUANTUM_NODES:
-                logger.warning(
-                    f"QuantumPathFinder: max_nodes={max_nodes} exceeds "
-                    f"MAX_QUANTUM_NODES={MAX_QUANTUM_NODES}, clamping down."
-                )
+                logger.warning(f'QuantumPathFinder: max_nodes={max_nodes} exceeds MAX_QUANTUM_NODES={MAX_QUANTUM_NODES}, clamping down.')
                 max_nodes = MAX_QUANTUM_NODES
-
-            # Convert graph to adjacency matrix representation
             if hasattr(graph, 'nodes') and hasattr(graph, 'edges'):
-                # NetworkX graph
                 await self._initialize_from_networkx(graph, max_nodes)
             elif isinstance(graph, dict):
-                # Adjacency list dictionary
                 await self._initialize_from_adjacency_list(graph, max_nodes)
             elif isinstance(graph, np.ndarray):
-                # Adjacency matrix
                 await self._initialize_from_matrix(graph, max_nodes)
             else:
-                raise ValueError(f"Unsupported graph type: {type(graph)}")
-
+                raise ValueError(f'Unsupported graph type: {type(graph)}')
             self.initialized = True
-            logger.info(
-                f"QuantumPathFinder initialized with {self.n_nodes} nodes, "
-                f"{'MLX' if self._mlx_available else 'NumPy'} backend"
-            )
+            logger.info(f"QuantumPathFinder initialized with {self.n_nodes} nodes, {('MLX' if self._mlx_available else 'NumPy')} backend")
             return True
-
         except Exception as e:
-            logger.error(f"Failed to initialize QuantumPathFinder: {e}")
+            logger.error(f'Failed to initialize QuantumPathFinder: {e}')
             self.initialized = False
             return False
 
-    async def _initialize_from_networkx(
-        self,
-        graph: Any,
-        max_nodes: int
-    ) -> None:
+    async def _initialize_from_networkx(self, graph: Any, max_nodes: int) -> None:
         """Initialize from NetworkX graph.
 
         Args:
@@ -400,37 +294,26 @@ class QuantumInspiredPathFinder:
         """
         nodes = list(graph.nodes())
         if len(nodes) > max_nodes:
-            logger.warning(
-                f"Graph has {len(nodes)} nodes, limiting to {max_nodes}"
-            )
+            logger.warning(f'Graph has {len(nodes)} nodes, limiting to {max_nodes}')
             nodes = nodes[:max_nodes]
-
         self.n_nodes = len(nodes)
         self.node_to_idx = {str(node): i for i, node in enumerate(nodes)}
         self.idx_to_node = {i: str(node) for i, node in enumerate(nodes)}
-
-        # Build sparse adjacency matrix in COO format
-        rows, cols, data = [], [], []
+        rows, cols, data = ([], [], [])
         for edge in graph.edges():
-            u, v = str(edge[0]), str(edge[1])
+            u, v = (str(edge[0]), str(edge[1]))
             if u in self.node_to_idx and v in self.node_to_idx:
-                i, j = self.node_to_idx[u], self.node_to_idx[v]
+                i, j = (self.node_to_idx[u], self.node_to_idx[v])
                 rows.append(i)
                 cols.append(j)
                 data.append(1.0)
-                # Undirected graph: add reverse edge
                 if not graph.is_directed() if hasattr(graph, 'is_directed') else True:
                     rows.append(j)
                     cols.append(i)
                     data.append(1.0)
-
         await self._build_sparse_matrix(rows, cols, data)
 
-    async def _initialize_from_adjacency_list(
-        self,
-        graph: dict[str, list[str]],
-        max_nodes: int
-    ) -> None:
+    async def _initialize_from_adjacency_list(self, graph: dict[str, list[str]], max_nodes: int) -> None:
         """Initialize from adjacency list dictionary.
 
         Args:
@@ -439,17 +322,12 @@ class QuantumInspiredPathFinder:
         """
         nodes = list(graph.keys())
         if len(nodes) > max_nodes:
-            logger.warning(
-                f"Graph has {len(nodes)} nodes, limiting to {max_nodes}"
-            )
+            logger.warning(f'Graph has {len(nodes)} nodes, limiting to {max_nodes}')
             nodes = nodes[:max_nodes]
-
         self.n_nodes = len(nodes)
         self.node_to_idx = {node: i for i, node in enumerate(nodes)}
         self.idx_to_node = dict(enumerate(nodes))
-
-        # Build sparse adjacency matrix
-        rows, cols, data = [], [], []
+        rows, cols, data = ([], [], [])
         for node, neighbors in graph.items():
             if node not in self.node_to_idx:
                 continue
@@ -460,14 +338,9 @@ class QuantumInspiredPathFinder:
                     rows.append(i)
                     cols.append(j)
                     data.append(1.0)
-
         await self._build_sparse_matrix(rows, cols, data)
 
-    async def _initialize_from_matrix(
-        self,
-        matrix: np.ndarray,
-        max_nodes: int
-    ) -> None:
+    async def _initialize_from_matrix(self, matrix: np.ndarray, max_nodes: int) -> None:
         """Initialize from adjacency matrix.
 
         Args:
@@ -476,26 +349,17 @@ class QuantumInspiredPathFinder:
         """
         n = min(matrix.shape[0], max_nodes)
         self.n_nodes = n
-
-        # Create default node IDs
-        self.node_to_idx = {f"node_{i}": i for i in range(n)}
-        self.idx_to_node = {i: f"node_{i}" for i in range(n)}
-
-        # Convert to COO format
+        self.node_to_idx = {f'node_{i}': i for i in range(n)}
+        self.idx_to_node = {i: f'node_{i}' for i in range(n)}
         sparse_mod = _get_scipy_sparse()
         if sparse_mod is not None:
             if sparse_mod.issparse(matrix):
                 coo = matrix.tocoo()
             else:
                 coo = sparse_mod.coo_matrix(matrix[:n, :n])
-            await self._build_sparse_matrix(
-                coo.row.tolist(),
-                coo.col.tolist(),
-                coo.data.tolist()
-            )
+            await self._build_sparse_matrix(coo.row.tolist(), coo.col.tolist(), coo.data.tolist())
         else:
-            # Manual COO conversion - build COO data directly from input matrix
-            rows, cols, data = [], [], []
+            rows, cols, data = ([], [], [])
             for i in range(n):
                 for j in range(n):
                     if matrix[i, j] != 0:
@@ -504,12 +368,7 @@ class QuantumInspiredPathFinder:
                         data.append(float(matrix[i, j]))
             await self._build_sparse_matrix(rows, cols, data)
 
-    async def _build_sparse_matrix(
-        self,
-        rows: list[int],
-        cols: list[int],
-        data: list[float]
-    ) -> None:
+    async def _build_sparse_matrix(self, rows: list[int], cols: list[int], data: list[float]) -> None:
         """Build sparse matrix from COO data.
 
         Args:
@@ -518,40 +377,22 @@ class QuantumInspiredPathFinder:
             data: Non-zero values.
         """
         if not rows:
-            # Empty graph
             self.adjacency_matrix = None
             return
-
-        # F264: enforce MAX_QUANTUM_EDGES — truncate to keep M1 RAM budget safe.
         if len(rows) > MAX_QUANTUM_EDGES:
-            logger.warning(
-                f"QuantumPathFinder: edge count {len(rows)} exceeds "
-                f"MAX_QUANTUM_EDGES={MAX_QUANTUM_EDGES}, truncating."
-            )
+            logger.warning(f'QuantumPathFinder: edge count {len(rows)} exceeds MAX_QUANTUM_EDGES={MAX_QUANTUM_EDGES}, truncating.')
             rows = rows[:MAX_QUANTUM_EDGES]
             cols = cols[:MAX_QUANTUM_EDGES]
             data = data[:MAX_QUANTUM_EDGES]
-
         mx_mod = _get_mlx()
         if self._mlx_available and mx_mod is not None:
-            # Use MLX arrays for sparse representation
-            self.adjacency_matrix = {
-                'rows': mx_mod.array(rows, dtype=mx_mod.int32),
-                'cols': mx_mod.array(cols, dtype=mx_mod.int32),
-                'data': mx_mod.array(data, dtype=mx_mod.float32),
-                'shape': (self.n_nodes, self.n_nodes)
-            }
+            self.adjacency_matrix = {'rows': mx_mod.array(rows, dtype=mx_mod.int32), 'cols': mx_mod.array(cols, dtype=mx_mod.int32), 'data': mx_mod.array(data, dtype=mx_mod.float32), 'shape': (self.n_nodes, self.n_nodes)}
         else:
             np_mod = _get_numpy()
             sparse_mod = _get_scipy_sparse()
             if sparse_mod is not None:
-                # Use scipy sparse
-                self.adjacency_matrix = sparse_mod.coo_matrix(
-                    (data, (rows, cols)),
-                    shape=(self.n_nodes, self.n_nodes)
-                )
+                self.adjacency_matrix = sparse_mod.coo_matrix((data, (rows, cols)), shape=(self.n_nodes, self.n_nodes))
             else:
-                # Dense fallback for small graphs
                 matrix = np_mod.zeros((self.n_nodes, self.n_nodes), dtype=np_mod.float32)
                 for r, c, d in zip(rows, cols, data, strict=False):
                     matrix[r, c] = d
@@ -574,29 +415,21 @@ class QuantumInspiredPathFinder:
             ValueError: If start nodes are not in the graph.
         """
         if not self.initialized:
-            raise RuntimeError("PathFinder not initialized. Call initialize() first.")
-
-        # Map start nodes to indices
+            raise RuntimeError('PathFinder not initialized. Call initialize() first.')
         start_indices = []
         for node in start_nodes:
             if node in self.node_to_idx:
                 start_indices.append(self.node_to_idx[node])
             else:
                 logger.warning(f"Start node '{node}' not in graph, skipping")
-
         if not start_indices:
-            raise ValueError("No valid start nodes found in graph")
-
-        # Create equal superposition
+            raise ValueError('No valid start nodes found in graph')
         n = self.n_nodes
         amplitude = 1.0 / math.sqrt(len(start_indices))
-
         if self._mlx_available and _get_mlx() is not None:
             state = mx.zeros(n, dtype=mx.float32)
-            for idx in start_indices:  # noqa: B007
-                # Build update indices and values
+            for idx in start_indices:
                 pass
-            # Create state with values at start indices
             state_values = mx.zeros(n, dtype=mx.float32)
             for idx in start_indices:
                 state_values = state_values.at[idx].add(amplitude)
@@ -605,10 +438,9 @@ class QuantumInspiredPathFinder:
             state = np.zeros(n, dtype=np.float32)
             for idx in start_indices:
                 state[idx] = amplitude
-
         return state
 
-    def step(self, state: Any, steps: int = 1) -> Any:
+    def step(self, state: Any, steps: int=1) -> Any:
         """Perform quantum random walk steps using MLX.
 
         Implements a quantum walk with coin and shift operators.
@@ -623,16 +455,13 @@ class QuantumInspiredPathFinder:
             New quantum state after the walk steps.
         """
         if not self.initialized:
-            raise RuntimeError("PathFinder not initialized")
-
+            raise RuntimeError('PathFinder not initialized')
         if self.adjacency_matrix is None:
-            logger.warning("Empty graph, returning unchanged state")
+            logger.warning('Empty graph, returning unchanged state')
             return state
-
         current_state = state
         for _ in range(steps):
             current_state = self._quantum_walk_step(current_state)
-
         return current_state
 
     def _quantum_walk_step(self, state: Any) -> Any:
@@ -644,12 +473,8 @@ class QuantumInspiredPathFinder:
         Returns:
             New state after one step.
         """
-        # Apply coin operator (creates superposition)
         coin_state = self._apply_coin_operator(state)
-
-        # Apply shift operator (moves along edges)
         shifted_state = self._apply_shift_operator(coin_state)
-
         return shifted_state
 
     def _apply_coin_operator(self, state: Any) -> Any:
@@ -663,7 +488,7 @@ class QuantumInspiredPathFinder:
         Returns:
             State after coin operation.
         """
-        if self.config.coin_type == "hadamard":
+        if self.config.coin_type == 'hadamard':
             return self._apply_hadamard_coin(state)
         else:
             return self._apply_grover_coin(state)
@@ -680,7 +505,6 @@ class QuantumInspiredPathFinder:
             State after Hadamard coin operation.
         """
         if self._mlx_available and _get_mlx() is not None:
-            # Normalize state
             norm = mx.sqrt(mx.sum(state * state))
             if norm > 0:
                 return state / norm
@@ -702,9 +526,7 @@ class QuantumInspiredPathFinder:
         Returns:
             State after Grover coin operation.
         """
-        # Grover coin: 2|s><s| - I where |s> is uniform superposition
         n = self.n_nodes
-
         if self._mlx_available and _get_mlx() is not None:
             uniform = mx.ones(n, dtype=mx.float32) / math.sqrt(n)
             overlap = mx.sum(uniform * state)
@@ -741,27 +563,18 @@ class QuantumInspiredPathFinder:
         """
         if not isinstance(self.adjacency_matrix, dict):
             return state
-
         rows = self.adjacency_matrix['rows']
         cols = self.adjacency_matrix['cols']
         data = self.adjacency_matrix['data']
-
-        # Compute degree for normalization
         n = self.n_nodes
         degrees = mx.zeros(n, dtype=mx.float32)
         for r in rows:
             degrees = degrees.at[int(r.item())].add(1.0)
-
-        # Avoid division by zero
         degrees = mx.where(degrees > 0, degrees, 1.0)
-
-        # Apply shift: move probability to neighbors
         new_state = mx.zeros(n, dtype=mx.float32)
         for r, c, v in zip(rows, cols, data):
-            # Normalize by degree
             contribution = v * state[r] / degrees[r]
             new_state = new_state.at[c].add(contribution)
-
         return new_state
 
     def _apply_shift_scipy(self, state: Any) -> Any:
@@ -776,30 +589,20 @@ class QuantumInspiredPathFinder:
         sparse_mod = _get_scipy_sparse()
         if sparse_mod is None:
             return state
-
         np_mod = _get_numpy()
-
-        # Convert to CSR for efficient multiplication
         if self.adjacency_matrix is None:
             return
         if sparse_mod.isspmatrix_coo(self.adjacency_matrix):
             adj_csr = self.adjacency_matrix.tocsr()
         else:
             adj_csr = self.adjacency_matrix
-
-        # Normalize by row degrees (stochastic matrix)
         if adj_csr is None:
             return
         degrees = np_mod.array(adj_csr.sum(axis=1)).flatten()
-        degrees[degrees == 0] = 1.0  # Avoid division by zero
-
-        # Create diagonal matrix for normalization
-        D_inv = sparse_mod.diags(1.0 / degrees)  # noqa: N806
+        degrees[degrees == 0] = 1.0
+        D_inv = sparse_mod.diags(1.0 / degrees)
         normalized = D_inv @ adj_csr
-
-        # Apply shift
         new_state = normalized.T @ state
-
         return new_state
 
     def _apply_shift_numpy(self, state: Any) -> Any:
@@ -815,22 +618,13 @@ class QuantumInspiredPathFinder:
         adj = self.adjacency_matrix
         if not isinstance(adj, np_mod.ndarray):
             return state
-
-        # Normalize by row degrees
         degrees = adj.sum(axis=1)
         degrees[degrees == 0] = 1.0
         normalized = adj / degrees[:, np_mod.newaxis]
-
-        # Apply shift
         new_state = normalized.T @ state
-
         return new_state
 
-    def amplify_targets(
-        self,
-        state: Any,
-        target_nodes: list[str]
-    ) -> Any:
+    def amplify_targets(self, state: Any, target_nodes: list[str]) -> Any:
         """Apply Grover-style amplitude amplification to target nodes.
 
         Amplifies the probability amplitudes of target nodes to increase
@@ -844,28 +638,18 @@ class QuantumInspiredPathFinder:
             State with amplified target amplitudes.
         """
         if not self.initialized:
-            raise RuntimeError("PathFinder not initialized")
-
-        # Map target nodes to indices
+            raise RuntimeError('PathFinder not initialized')
         target_indices = []
         for node in target_nodes:
             if node in self.node_to_idx:
                 target_indices.append(self.node_to_idx[node])
-
         if not target_indices:
-            logger.warning("No valid target nodes found")
+            logger.warning('No valid target nodes found')
             return state
-
-        # Apply Grover diffusion operator
         amplified_state = self._grover_diffusion(state, target_indices)
-
         return amplified_state
 
-    def _grover_diffusion(
-        self,
-        state: Any,
-        target_indices: list[int]
-    ) -> Any:
+    def _grover_diffusion(self, state: Any, target_indices: list[int]) -> Any:
         """Apply Grover diffusion operator.
 
         The diffusion operator reflects the state about the average,
@@ -880,40 +664,24 @@ class QuantumInspiredPathFinder:
         """
         n = self.n_nodes
         strength = self.config.amplification_strength
-
         if self._mlx_available and _get_mlx() is not None:
-            # Create oracle (marks target states)
             oracle = mx.ones(n, dtype=mx.float32)
             for idx in target_indices:
                 oracle = oracle.at[idx].multiply(-1.0)
-
-            # Apply oracle
             state = state * oracle
-
-            # Apply diffusion operator: 2|s><s| - I
             mean = mx.mean(state)
             diffusion = 2 * mean - state
-
-            # Scale by amplification strength
             return diffusion * strength
         else:
-            # NumPy implementation
             oracle = np.ones(n, dtype=np.float32)
             for idx in target_indices:
                 oracle[idx] = -1.0
-
             state = state * oracle
             mean = np.mean(state)
             diffusion = 2 * mean - state
-
             return diffusion * strength
 
-    async def find_paths(
-        self,
-        start_nodes: list[str],
-        target_nodes: list[str],
-        max_steps: int | None = None
-    ) -> list[list[str]]:
+    async def find_paths(self, start_nodes: list[str], target_nodes: list[str], max_steps: int | None=None) -> list[list[str]]:
         """Find paths from start nodes to target nodes using quantum walk.
 
         This is the main pathfinding method that combines quantum random walks
@@ -931,74 +699,50 @@ class QuantumInspiredPathFinder:
             RuntimeError: If pathfinder is not initialized.
         """
         if not self.initialized:
-            raise RuntimeError("PathFinder not initialized. Call initialize() first.")
-
+            raise RuntimeError('PathFinder not initialized. Call initialize() first.')
         max_steps = max_steps or self.config.max_steps
-
         try:
-            # Initialize quantum state at start nodes
             state = self.initialize_state(start_nodes)
-
-            # Evolve state through quantum walk
             for step in range(max_steps):
-                # Perform walk step
                 state = self.step(state, steps=1)
-
-                # Periodically amplify targets
                 if step % 5 == 0 and step > 0:
                     state = self.amplify_targets(state, target_nodes)
-
-                # Memory cleanup every 10 steps
                 if step % 10 == 0:
                     gc.collect()
-                    # F179C: use lazy loader, wrap in try/except
                     mx_mod = _get_mlx()
                     if self._mlx_available and mx_mod is not None:
                         try:
                             mx_mod.eval([])
-                        except Exception:  # noqa: BLE001
+                        except Exception:
                             pass
                         try:
                             mx_mod.clear_cache()
-                        except Exception:  # noqa: BLE001
+                        except Exception:
                             pass
-
-            # Extract paths from final state
             paths = self._extract_paths(state, start_nodes, target_nodes)
-
             return paths
-
         except Exception as e:
-            logger.error(f"Error in find_paths: {e}")
+            logger.error(f'Error in find_paths: {e}')
             return []
-
         finally:
-            # Always cleanup after pathfinding
             gc.collect()
-            # F185C: use _get_mlx() lazy loader instead of bare mx reference
             if self._mlx_available:
                 mx_mod = _get_mlx()
                 if mx_mod is not None:
                     try:
                         mx_mod.eval([])
-                    except Exception:  # noqa: BLE001
+                    except Exception:
                         pass
                     try:
-                        # Modern-first: mx.clear_cache(), fallback to deprecated
                         if hasattr(mx_mod, 'clear_cache'):
                             mx_mod.clear_cache()
                         elif hasattr(mx_mod.metal, 'clear_cache'):
                             mx_mod.metal.clear_cache()
-                    except Exception:  # noqa: BLE001
+                    except Exception:
                         pass
             gc.collect()
 
-    def _extract_paths(
-        self,
-        probabilities: Any,
-        start_nodes: list[str],
-        target_nodes: list[str]
-    ) -> list[list[str]]:
+    def _extract_paths(self, probabilities: Any, start_nodes: list[str], target_nodes: list[str]) -> list[list[str]]:
         """Extract paths from probability distribution.
 
         Uses the final quantum state probabilities to reconstruct
@@ -1012,50 +756,28 @@ class QuantumInspiredPathFinder:
         Returns:
             List of reconstructed paths.
         """
-        # Convert to numpy for path extraction
         if self._mlx_available and _get_mlx() is not None:
             prob_array = np.array(probabilities.tolist())
         else:
             prob_array = np.array(probabilities)
-
-        # Compute probabilities (squared amplitudes)
         probs = np.abs(prob_array) ** 2
-
-        # Find high-probability target nodes
-        target_indices = [
-            self.node_to_idx[node] for node in target_nodes
-            if node in self.node_to_idx
-        ]
-
+        target_indices = [self.node_to_idx[node] for node in target_nodes if node in self.node_to_idx]
         if not target_indices:
             return []
-
-        # Sort targets by probability
         target_probs = [(idx, probs[idx]) for idx in target_indices]
         target_probs.sort(key=lambda x: x[1], reverse=True)
-
-        # Extract top-k paths
         paths = []
         top_k = min(self.config.top_k_paths, len(target_probs))
-
         for i in range(top_k):
             target_idx, prob = target_probs[i]
-            if prob < 1e-6:  # Skip negligible probabilities
+            if prob < 1e-06:
                 continue
-
-            # Reconstruct path using greedy backtracking
             path = self._reconstruct_path(target_idx, probs, start_nodes)
             if path:
                 paths.append(path)
-
         return paths
 
-    def _reconstruct_path(
-        self,
-        target_idx: int,
-        probabilities: np.ndarray,
-        start_nodes: list[str]
-    ) -> list[str]:
+    def _reconstruct_path(self, target_idx: int, probabilities: np.ndarray, start_nodes: list[str]) -> list[str]:
         """Reconstruct a path to target using greedy backtracking.
 
         Args:
@@ -1066,50 +788,28 @@ class QuantumInspiredPathFinder:
         Returns:
             Reconstructed path as list of node IDs.
         """
-        start_indices = {
-            self.node_to_idx[node] for node in start_nodes
-            if node in self.node_to_idx
-        }
-
+        start_indices = {self.node_to_idx[node] for node in start_nodes if node in self.node_to_idx}
         path = [target_idx]
         current = target_idx
         visited = {current}
-
         max_backtrack = self.config.max_steps
-
         for _ in range(max_backtrack):
             if current in start_indices:
-                # Reached start
                 break
-
-            # Find highest probability predecessor
             best_pred = None
             best_prob = -1.0
-
-            # Get predecessors from adjacency matrix
             predecessors = self._get_predecessors(current)
-
             for pred in predecessors:
                 if pred not in visited and probabilities[pred] > best_prob:
                     best_prob = probabilities[pred]
                     best_pred = pred
-
             if best_pred is None:
                 break
-
             current = best_pred
             path.append(current)
             visited.add(current)
-
-        # Reverse to get start -> target order
         path.reverse()
-
-        # Convert indices to node IDs
-        node_path = [
-            self.idx_to_node[idx] for idx in path
-            if idx in self.idx_to_node
-        ]
-
+        node_path = [self.idx_to_node[idx] for idx in path if idx in self.idx_to_node]
         return node_path
 
     def _get_predecessors(self, node_idx: int) -> list[int]:
@@ -1122,7 +822,6 @@ class QuantumInspiredPathFinder:
             List of predecessor indices.
         """
         predecessors = []
-
         if self._mlx_available and _get_mlx() is not None:
             if isinstance(self.adjacency_matrix, dict):
                 rows = self.adjacency_matrix['rows']
@@ -1132,12 +831,10 @@ class QuantumInspiredPathFinder:
                         predecessors.append(int(rows[i].item()))
         elif _get_scipy_sparse() is not None:
             if self.adjacency_matrix is not None and sparse.isspmatrix(self.adjacency_matrix):
-                # Get column for node_idx (predecessors)
                 col = self.adjacency_matrix.tocsc()[:, node_idx]
                 predecessors = col.nonzero()[0].tolist()
         elif isinstance(self.adjacency_matrix, np.ndarray):
             predecessors = np.where(self.adjacency_matrix[:, node_idx] != 0)[0].tolist()
-
         return predecessors
 
     async def cleanup(self) -> None:
@@ -1147,42 +844,30 @@ class QuantumInspiredPathFinder:
         to ensure proper memory cleanup on M1 8GB systems.
         """
         try:
-            # Clear adjacency matrix
             if isinstance(self.adjacency_matrix, dict):
                 self.adjacency_matrix = None
             else:
                 self.adjacency_matrix = None
-
-            # Clear mappings
             self.node_to_idx.clear()
             self.idx_to_node.clear()
-
-            # Clear graph reference
             self.graph = None
-
-            # Force garbage collection
             gc.collect()
-
-            # Clear MLX cache if available
-            # F179C: use lazy loader via _get_mlx(), wrap in try/except
             if self._mlx_available:
                 mx_mod = _get_mlx()
                 if mx_mod is not None:
                     try:
                         mx_mod.eval([])
-                    except Exception:  # noqa: BLE001
+                    except Exception:
                         pass
                     try:
                         mx_mod.clear_cache()
-                    except Exception:  # noqa: BLE001
+                    except Exception:
                         pass
             gc.collect()
-
             self.initialized = False
-            logger.info("QuantumPathFinder resources cleaned up")
-
+            logger.info('QuantumPathFinder resources cleaned up')
         except Exception as e:
-            logger.error(f"Error during cleanup: {e}")
+            logger.error(f'Error during cleanup: {e}')
 
     def get_state_statistics(self, state: Any) -> dict[str, float]:
         """Get statistics about a quantum state.
@@ -1202,24 +887,10 @@ class QuantumInspiredPathFinder:
             max_prob = float(np.max(state ** 2))
             probs = state ** 2
             entropy = float(-np.sum(probs * np.log(probs + 1e-10)))
-
-        return {
-            "total_probability": prob_sum,
-            "max_probability": max_prob,
-            "entropy": entropy,
-            "n_nodes": self.n_nodes
-        }
-
-
-# =============================================================================
-# Sprint 8VE B.2: DuckPGQ IOC Graph — SQL/PGQ graph backend přes DuckDB
-# =============================================================================
-
-import hashlib as _hashlib  # noqa: E402
-
+        return {'total_probability': prob_sum, 'max_probability': max_prob, 'entropy': entropy, 'n_nodes': self.n_nodes}
+import hashlib as _hashlib
 _DUCKPGQ_AVAILABLE = False
-_duckpgq_checked   = False
-
+_duckpgq_checked = False
 
 def _ensure_duckpgq(con) -> bool:
     """
@@ -1232,13 +903,12 @@ def _ensure_duckpgq(con) -> bool:
         return _DUCKPGQ_AVAILABLE
     _duckpgq_checked = True
     try:
-        con.execute("INSTALL duckpgq FROM community; LOAD duckpgq;")
+        con.execute('INSTALL duckpgq FROM community; LOAD duckpgq;')
         _DUCKPGQ_AVAILABLE = True
     except Exception as e:
-        logger.debug(f"[GRAPH] duckpgq unavailable, using CTE fallback: {e}")
+        logger.debug(f'[GRAPH] duckpgq unavailable, using CTE fallback: {e}')
         _DUCKPGQ_AVAILABLE = False
     return _DUCKPGQ_AVAILABLE
-
 
 def _stable_node_id(value: str) -> int:
     """
@@ -1246,12 +916,8 @@ def _stable_node_id(value: str) -> int:
     NEPOUŽÍVEJ hash() — není deterministický mezi procesy (PYTHONHASHSEED).
     SHA1 prvních 8 bytů = 64bit, oríznutý na 63bit (positive BIGINT).
     """
-    # Sprint-F265B: DuckDB & bitwise AND on BIGINT not supported, use bitwise AND via multiplication trick
-    node_64bit = int.from_bytes(
-        _hashlib.sha256(value.encode("utf-8")).digest()[:8], "little"
-    )
-    return node_64bit & 0x7FFFFFFFFFFFFFFF
-
+    node_64bit = int.from_bytes(_hashlib.sha256(value.encode('utf-8')).digest()[:8], 'little')
+    return node_64bit & 9223372036854775807
 
 class DuckPGQGraph:
     """
@@ -1270,7 +936,9 @@ class DuckPGQGraph:
     Fallback: recursive CTE pokud duckpgq extension nedostupná.
     Výhody: vectorized Arrow IPC, zero-copy, zvládne 10M+ hran.
     """
-    def __init__(self, db_path: str | None = None, temp_dir: str | None = None):
+    __slots__ = tuple(('_BUFFER_FLUSH_SIZE', '_duckdb', '_ioc_buffer', '_lock_acquired', '_lock_mgr', '_obs_buffer', 'con', 'db_path'))
+
+    def __init__(self, db_path: str | None=None, temp_dir: str | None=None):
         """Initialize DuckPGQGraph.
 
         Args:
@@ -1284,34 +952,19 @@ class DuckPGQGraph:
             from hledac.universal.paths import get_ioc_db_path
             db_path = str(get_ioc_db_path())
         self.db_path = db_path
-        self._duckdb = duckdb  # Store for use in cleanup methods
-
-        # Acquire graph lock via GraphLockManager singleton (thread-safe, fork-safe)
+        self._duckdb = duckdb
         from hledac.universal.graph.lock_manager import GraphLockManager, cleanup_stale_graph_lock
-
-        # Boot-guard: clean any stale lock before acquiring
         removed, reason = cleanup_stale_graph_lock(db_path)
         if removed:
-            logger.debug(f"[GRAPH] Cleaned stale lock: {reason}")
-
+            logger.debug(f'[GRAPH] Cleaned stale lock: {reason}')
         self._lock_mgr = GraphLockManager(db_path)
         self._lock_acquired = self._lock_mgr.acquire()
         if not self._lock_acquired:
-            logger.warning(f"[GRAPH] Lock denied ({self._lock_mgr.denial_reason}), opening READ-ONLY")
-
-        # F266-LOCK FIX: Clean up stale WAL files AFTER lock acquisition.
-        # Ordering matters: if we don't hold the lock, another process owns the DB
-        # and its WAL is valid — we must NOT truncate it. Previous code called
-        # _cleanup_stale_wal_files() BEFORE acquiring the lock, so getattr(self,
-        # "_lock_acquired", True) returned the default (True) and truncation ran
-        # even when the DB was alive. Now we acquire the lock first, then decide.
+            logger.warning(f'[GRAPH] Lock denied ({self._lock_mgr.denial_reason}), opening READ-ONLY')
         self._cleanup_stale_wal_files()
-
-        # Connect - default read-write, fallback to read-only if locked or lock-denied
         try:
             read_only = not self._lock_acquired
             self.con = duckdb.connect(db_path, read_only=read_only)
-            # F320-Issue1: route DuckDB temp spill to RAMDisk when available
             if temp_dir:
                 try:
                     from pathlib import Path
@@ -1319,35 +972,28 @@ class DuckPGQGraph:
                     validated.mkdir(parents=True, exist_ok=True)
                     self.con.execute(f"PRAGMA temp_directory='{validated}';")
                 except Exception as e:
-                    logger.debug(f"[GRAPH] temp_directory pragma failed: {e}")
+                    logger.debug(f'[GRAPH] temp_directory pragma failed: {e}')
             if read_only:
-                logger.warning("[GRAPH] DuckDB operating in READ-ONLY mode (lock unavailable)")
-        except Exception as e:  # noqa: BLE001
-            # F700D-FIX: DuckDB .lock file persists after connect() failure.
-            # Clean it up so retry attempts can succeed.
-            lock_path = db_path + ".lock"
+                logger.warning('[GRAPH] DuckDB operating in READ-ONLY mode (lock unavailable)')
+        except Exception as e:
+            lock_path = db_path + '.lock'
             try:
                 import os as _os
                 if _os.path.exists(lock_path):
                     _os.unlink(lock_path)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
-            logger.error(f"[GRAPH] DuckDB connection failed: {e}")
+            logger.error(f'[GRAPH] DuckDB connection failed: {e}')
             raise
-
         _ensure_duckpgq(self.con)
-        # F320-Issue1: WAL + temp_directory on RAMDisk — keeps ioc_graph.duckdb
-        # data on SSD but ALL temp spill in RAM
         try:
-            self.con.execute("PRAGMA journal_mode=WAL")
-            self.con.execute("PRAGMA busy_timeout=5000")
-            self.con.execute("PRAGMA synchronous=NORMAL")
-            self.con.execute("PRAGMA wal_autocheckpoint=262144")
+            self.con.execute('PRAGMA journal_mode=WAL')
+            self.con.execute('PRAGMA busy_timeout=5000')
+            self.con.execute('PRAGMA synchronous=NORMAL')
+            self.con.execute('PRAGMA wal_autocheckpoint=262144')
         except Exception as e:
-            logger.debug(f"[GRAPH] WAL pragma init failed: {e}")
+            logger.debug(f'[GRAPH] WAL pragma init failed: {e}')
         self._init_schema()
-
-        # F272: Buffered write support — accumulate in ACTIVE, flush in WINDUP
         self._ioc_buffer: list[tuple[str, str, float]] = []
         self._obs_buffer: list[tuple[str, str, str, float, str]] = []
         self._BUFFER_FLUSH_SIZE: int = 500
@@ -1358,40 +1004,29 @@ class DuckPGQGraph:
         Volat po každém WINDUP aby data přežila restart.
         """
         try:
-            self.con.execute("CHECKPOINT;")
-            logger.info(f"[GRAPH] DuckDB checkpoint → {self.db_path}")
+            self.con.execute('CHECKPOINT;')
+            logger.info(f'[GRAPH] DuckDB checkpoint → {self.db_path}')
         except Exception as e:
-            logger.warning(f"[GRAPH] Checkpoint failed: {e}")
+            logger.warning(f'[GRAPH] Checkpoint failed: {e}')
 
-    # === F272: Buffered write support (truth-write path) ===
-    # F300-GRAPH: DuckPGQGraph is now the sole canonical graph backend.
-    # buffer_ioc/buffer_observation/flush_buffers are native (not a mirror of IOCGraph).
-
-    async def buffer_ioc(self, ioc_type: str, value: str, confidence: float = 1.0) -> None:
+    async def buffer_ioc(self, ioc_type: str, value: str, confidence: float=1.0) -> None:
         """
         F272: Add IOC to in-memory buffer — ZERO DuckDB I/O in ACTIVE phase.
 
         No auto-flush here — explicit flush_buffers() called in winddown.
         Thread-safe via GIL (called from async context on main thread).
         """
-        if getattr(self, "_closed", False):
+        if getattr(self, '_closed', False):
             return
         self._ioc_buffer.append((ioc_type, value, confidence))
 
-    async def buffer_observation(
-        self,
-        id_a: str,
-        id_b: str,
-        finding_id: str,
-        ts: float,
-        source_type: str,
-    ) -> None:
+    async def buffer_observation(self, id_a: str, id_b: str, finding_id: str, ts: float, source_type: str) -> None:
         """
         F272: Add observation to in-memory buffer — ZERO DuckDB I/O in ACTIVE phase.
 
         Thread-safe via GIL (called from async context on main thread).
         """
-        if getattr(self, "_closed", False):
+        if getattr(self, '_closed', False):
             return
         self._obs_buffer.append((id_a, id_b, finding_id, ts, source_type))
 
@@ -1403,43 +1038,29 @@ class DuckPGQGraph:
             ioc_flushed: count of IOC nodes written (upserted) in this flush.
             obs_flushed: count of observation edges written to the graph.
         """
-        if not self._ioc_buffer and not self._obs_buffer:
-            return {"ioc_flushed": 0, "obs_flushed": 0}
-
-        # Copy and clear atomically
+        if not self._ioc_buffer and (not self._obs_buffer):
+            return {'ioc_flushed': 0, 'obs_flushed': 0}
         ioc_copy = self._ioc_buffer[:]
         obs_copy = self._obs_buffer[:]
         self._ioc_buffer.clear()
         self._obs_buffer.clear()
-
         ioc_flushed = 0
         obs_flushed = 0
-
         try:
-            # Flush IOCs — use upsert_ioc_batch format: (value, ioc_type, confidence, source)
             if ioc_copy:
-                rows = [
-                    (value, ioc_type, confidence, "")
-                    for ioc_type, value, confidence in ioc_copy
-                ]
+                rows = [(value, ioc_type, confidence, '') for ioc_type, value, confidence in ioc_copy]
                 ioc_flushed = self.upsert_ioc_batch(rows)
-
-            # Flush observations — write as observation edges
             if obs_copy:
                 for id_a, id_b, fid, ts_val, src in obs_copy:
                     try:
-                        self.add_relation(id_a, id_b, "observed", 1.0, fid)
+                        self.add_relation(id_a, id_b, 'observed', 1.0, fid)
                         obs_flushed += 1
-                    except Exception:  # noqa: BLE001
+                    except Exception:
                         pass
-
-            logger.info(
-                f"[GRAPH] Buffers flushed: {ioc_flushed} IOCs, {obs_flushed} observations"
-            )
+            logger.info(f'[GRAPH] Buffers flushed: {ioc_flushed} IOCs, {obs_flushed} observations')
         except Exception as e:
-            logger.warning(f"[GRAPH] flush_buffers failed: {e}")
-
-        return {"ioc_flushed": ioc_flushed, "obs_flushed": obs_flushed}
+            logger.warning(f'[GRAPH] flush_buffers failed: {e}')
+        return {'ioc_flushed': ioc_flushed, 'obs_flushed': obs_flushed}
 
     def merge_from_parquet(self, parquet_glob: str) -> int:
         """
@@ -1448,32 +1069,16 @@ class DuckPGQGraph:
         Vrátí počet importovaných záznamů.
         """
         try:
-            # Sprint 1780830658 fix: DuckDB rejects `&` (bitwise AND) on BIGINT
-            # in many extension builds (Parser Error at `&`). Use DuckDB's
-            # native hash() builtin which returns UBIGINT (already 64-bit) —
-            # equivalent masking without operator dependence.
-            # Guard: parquet_glob must be a safe relative path (no wildcards, no absolute, no traversal)
             import os
             safe_glob = os.path.normpath(parquet_glob)
-            if safe_glob.startswith("..") or os.path.isabs(safe_glob):
-                raise ValueError(f"unsafe parquet path: {parquet_glob}")
-            result = self.con.execute(f"""
-                INSERT OR IGNORE INTO ioc_nodes (id, value, ioc_type, confidence, source)
-                SELECT
-                    hash(ioc),
-                    ioc,
-                    ioc_type,
-                    MAX(confidence),
-                    MAX(source)
-                FROM read_parquet('{safe_glob}')
-                WHERE ioc IS NOT NULL AND length(ioc) > 3
-                GROUP BY ioc, ioc_type
-            """).fetchone()
+            if safe_glob.startswith('..') or os.path.isabs(safe_glob):
+                raise ValueError(f'unsafe parquet path: {parquet_glob}')
+            result = self.con.execute(f"\n                INSERT OR IGNORE INTO ioc_nodes (id, value, ioc_type, confidence, source)\n                SELECT\n                    hash(ioc),\n                    ioc,\n                    ioc_type,\n                    MAX(confidence),\n                    MAX(source)\n                FROM read_parquet('{safe_glob}')\n                WHERE ioc IS NOT NULL AND length(ioc) > 3\n                GROUP BY ioc, ioc_type\n            ").fetchone()
             count = result[0] if result else 0
-            logger.info(f"[GRAPH] Merged {count} IOC nodes from {parquet_glob}")
+            logger.info(f'[GRAPH] Merged {count} IOC nodes from {parquet_glob}')
             return count
         except Exception as e:
-            logger.warning(f"[GRAPH] merge_from_parquet failed: {e}")
+            logger.warning(f'[GRAPH] merge_from_parquet failed: {e}')
             return 0
 
     def export_edge_list(self) -> list[tuple[str, str, str, float]]:
@@ -1486,42 +1091,19 @@ class DuckPGQGraph:
         """
         try:
             rows: list[tuple[str, str, str, float]] = []
-            for batch in _duckdb_fetch_bounded(
-                self.con,
-                """
-                SELECT s.value, d.value, e.rel_type, e.weight
-                FROM ioc_edges e
-                JOIN ioc_nodes s ON s.id = e.src_id
-                JOIN ioc_nodes d ON d.id = e.dst_id
-                ORDER BY e.weight DESC
-                LIMIT 50000
-                """,
-            ):
+            for batch in _duckdb_fetch_bounded(self.con, '\n                SELECT s.value, d.value, e.rel_type, e.weight\n                FROM ioc_edges e\n                JOIN ioc_nodes s ON s.id = e.src_id\n                JOIN ioc_nodes d ON d.id = e.dst_id\n                ORDER BY e.weight DESC\n                LIMIT 50000\n                '):
                 rows.extend(batch)
             return rows
         except Exception as e:
-            logger.warning(f"[GRAPH] export_edge_list failed: {e}")
+            logger.warning(f'[GRAPH] export_edge_list failed: {e}')
             return []
 
-    def get_top_nodes_by_degree(self, n: int = 20) -> list[dict]:
+    def get_top_nodes_by_degree(self, n: int=20) -> list[dict]:
         """Top N IOC nodes seřazených podle out-degree (nejpropojeno)."""
         import duckdb
         try:
-            rows_gen = _duckdb_fetch_bounded(
-                self.con,
-                """
-                SELECT n.value, n.ioc_type, n.confidence,
-                       COUNT(e.dst_id) as degree
-                FROM ioc_nodes n
-                LEFT JOIN ioc_edges e ON e.src_id = n.id
-                GROUP BY n.id, n.value, n.ioc_type, n.confidence
-                ORDER BY degree DESC
-                LIMIT ?
-                """,
-                [n],
-            )
-            # Fixed column names — no reliance on con.description introspection
-            cols = ["value", "ioc_type", "confidence", "degree"]
+            rows_gen = _duckdb_fetch_bounded(self.con, '\n                SELECT n.value, n.ioc_type, n.confidence,\n                       COUNT(e.dst_id) as degree\n                FROM ioc_nodes n\n                LEFT JOIN ioc_edges e ON e.src_id = n.id\n                GROUP BY n.id, n.value, n.ioc_type, n.confidence\n                ORDER BY degree DESC\n                LIMIT ?\n                ', [n])
+            cols = ['value', 'ioc_type', 'confidence', 'degree']
             result: list[dict] = []
             for batch in rows_gen:
                 for row in batch:
@@ -1529,10 +1111,8 @@ class DuckPGQGraph:
                         result.append(dict(zip(cols, row)))
             return result
         except (duckdb.Error, ImportError) as e:
-            logger.warning(f"[GRAPH] get_top_nodes_by_degree failed: {e}")
+            logger.warning(f'[GRAPH] get_top_nodes_by_degree failed: {e}')
             return []
-
-    # === ISSUE-1: Zombie Sprint Lock Prevention ===
 
     def _cleanup_stale_wal_files(self) -> None:
         """
@@ -1548,22 +1128,13 @@ class DuckPGQGraph:
         to avoid blocking the event loop with time.sleep() in async context.
         """
         import os
-
-        # F266-LOCK: If we don't hold the lock, another process owns the DB — don't touch WAL
-        if not getattr(self, "_lock_acquired", True):
-            logger.debug("[GRAPH] WAL cleanup skipped: lock not held (DB in use by another process)")
+        if not getattr(self, '_lock_acquired', True):
+            logger.debug('[GRAPH] WAL cleanup skipped: lock not held (DB in use by another process)')
             return
-
-        wal_path = self.db_path + ".wal"
-        shm_path = self.db_path + ".shm"
-        lock_path = self.db_path + ".lock"
-
-        # Check WAL file - if exists and DB is not running, truncate it
+        wal_path = self.db_path + '.wal'
+        shm_path = self.db_path + '.shm'
+        lock_path = self.db_path + '.lock'
         if os.path.exists(wal_path):
-            # P1-1 FIX: Retry loop for duckdb.connect() — handles IO contention
-            # during concurrent lock cleanup. Max 3 attempts.
-            # NOTE: No sleep here — asyncio.to_thread() already runs this off the
-            # event loop, so busy-waiting is acceptable (max 3 rapid attempts).
             db_alive = False
             for _attempt in range(3):
                 try:
@@ -1572,84 +1143,43 @@ class DuckPGQGraph:
                     db_alive = True
                     break
                 except Exception:
-                    pass  # rapid retry, no sleep needed off the event loop
-
+                    pass
             if db_alive:
-                # DB is alive, WAL is valid - don't touch it
                 return
-
-            # Truncate WAL if DB appears crashed (all retries exhausted)
             try:
                 if os.path.exists(wal_path):
                     os.truncate(wal_path, 0)
-                    logger.warning(f"[GRAPH] Truncated stale WAL: {wal_path}")
+                    logger.warning(f'[GRAPH] Truncated stale WAL: {wal_path}')
             except Exception as e:
-                logger.debug(f"[GRAPH] WAL truncate failed: {e}")
-
-        # Check SHM file - same logic
+                logger.debug(f'[GRAPH] WAL truncate failed: {e}')
         if os.path.exists(shm_path):
             try:
                 os.truncate(shm_path, 0)
-                logger.warning(f"[GRAPH] Cleared stale SHM: {shm_path}")
+                logger.warning(f'[GRAPH] Cleared stale SHM: {shm_path}')
             except Exception as e:
-                logger.debug(f"[GRAPH] SHM clear failed: {e}")
-
-        # F700D-FIX: DuckDB internal lock file cleanup.
-        # When a process crashes without proper disconnect, DuckDB's .lock file
-        # persists even after flock() is released. This blocks ALL new writes.
-        # Remove it when DuckDB connection test fails (proves no live holder).
+                logger.debug(f'[GRAPH] SHM clear failed: {e}')
         if os.path.exists(lock_path):
             try:
                 os.unlink(lock_path)
-                logger.warning(f"[GRAPH] Removed stale DuckDB lock: {lock_path}")
+                logger.warning(f'[GRAPH] Removed stale DuckDB lock: {lock_path}')
             except Exception as e:
-                logger.debug(f"[GRAPH] DuckDB lock file removal failed: {e}")
-    def _init_schema(self):
-        self.con.execute("""
-            CREATE TABLE IF NOT EXISTS ioc_nodes (
-                id         BIGINT PRIMARY KEY,
-                value      VARCHAR NOT NULL UNIQUE,
-                ioc_type   VARCHAR,
-                confidence FLOAT,
-                source     VARCHAR,
-                first_seen TIMESTAMP DEFAULT now()
-            )
-        """)
-        self.con.execute("""
-            CREATE TABLE IF NOT EXISTS ioc_edges (
-                src_id   BIGINT REFERENCES ioc_nodes(id),
-                dst_id   BIGINT REFERENCES ioc_nodes(id),
-                rel_type VARCHAR,
-                weight   FLOAT DEFAULT 1.0,
-                evidence VARCHAR
-            )
-        """)
-        # P2-2: Indexes for recursive CTE traversal.
-        # WITHOUT these, the recursive CTE does a full sequential scan of ioc_edges
-        # at EACH depth level — O(depth × |edges|) instead of O(depth × avg_fanout).
-        # Indexes make BFS/DFS traversal O(depth × avg_fanout) — 10-100× faster
-        # for graphs with high-degree nodes.
-        self.con.execute("CREATE INDEX IF NOT EXISTS idx_edges_src_id ON ioc_edges(src_id)")
-        self.con.execute("CREATE INDEX IF NOT EXISTS idx_edges_dst_id ON ioc_edges(dst_id)")
+                logger.debug(f'[GRAPH] DuckDB lock file removal failed: {e}')
 
-    def add_ioc(self, value: str, ioc_type: str = "unknown",
-                confidence: float = 0.5, source: str = "") -> int:
-        # F266-LOCK FIX: warn on write attempt in READ-ONLY mode
-        if getattr(self, "_lock_acquired", True) is False:
-            logger.warning(f"[GRAPH] READ-ONLY — add_ioc({value!r}) ignored")
+    def _init_schema(self):
+        self.con.execute('\n            CREATE TABLE IF NOT EXISTS ioc_nodes (\n                id         BIGINT PRIMARY KEY,\n                value      VARCHAR NOT NULL UNIQUE,\n                ioc_type   VARCHAR,\n                confidence FLOAT,\n                source     VARCHAR,\n                first_seen TIMESTAMP DEFAULT now()\n            )\n        ')
+        self.con.execute('\n            CREATE TABLE IF NOT EXISTS ioc_edges (\n                src_id   BIGINT REFERENCES ioc_nodes(id),\n                dst_id   BIGINT REFERENCES ioc_nodes(id),\n                rel_type VARCHAR,\n                weight   FLOAT DEFAULT 1.0,\n                evidence VARCHAR\n            )\n        ')
+        self.con.execute('CREATE INDEX IF NOT EXISTS idx_edges_src_id ON ioc_edges(src_id)')
+        self.con.execute('CREATE INDEX IF NOT EXISTS idx_edges_dst_id ON ioc_edges(dst_id)')
+
+    def add_ioc(self, value: str, ioc_type: str='unknown', confidence: float=0.5, source: str='') -> int:
+        if getattr(self, '_lock_acquired', True) is False:
+            logger.warning(f'[GRAPH] READ-ONLY — add_ioc({value!r}) ignored')
             return _stable_node_id(value)
         row_id = _stable_node_id(value)
-        self.con.execute(
-            """INSERT INTO ioc_nodes (id, value, ioc_type, confidence, source)
-               VALUES (?, ?, ?, ?, ?)
-               ON CONFLICT (id) DO NOTHING""",
-            [row_id, value, ioc_type, confidence, source]
-        )
+        self.con.execute('INSERT INTO ioc_nodes (id, value, ioc_type, confidence, source)\n               VALUES (?, ?, ?, ?, ?)\n               ON CONFLICT (id) DO NOTHING', [row_id, value, ioc_type, confidence, source])
         return row_id
 
-    def upsert_ioc_batch(
-        self, rows: list[tuple[str, str, float, str]]
-    ) -> int:
+    def upsert_ioc_batch(self, rows: list[tuple[str, str, float, str]]) -> int:
         """
         Batch upsert IOCs — single DuckDB round-trip for N rows.
 
@@ -1660,95 +1190,42 @@ class DuckPGQGraph:
         """
         if not rows:
             return 0
-        # F266-LOCK FIX: warn on write attempt in READ-ONLY mode
-        if getattr(self, "_lock_acquired", True) is False:
-            logger.warning(f"[GRAPH] READ-ONLY — upsert_ioc_batch({len(rows)} rows) ignored")
+        if getattr(self, '_lock_acquired', True) is False:
+            logger.warning(f'[GRAPH] READ-ONLY — upsert_ioc_batch({len(rows)} rows) ignored')
             return 0
-        batch_with_ids = [
-            (_stable_node_id(v), v, it, c, s)
-            for v, it, c, s in rows
-        ]
-        self.con.executemany(
-            """INSERT INTO ioc_nodes (id, value, ioc_type, confidence, source)
-               VALUES (?, ?, ?, ?, ?)
-               ON CONFLICT (id) DO NOTHING""",
-            batch_with_ids,
-        )
+        batch_with_ids = [(_stable_node_id(v), v, it, c, s) for v, it, c, s in rows]
+        self.con.executemany('INSERT INTO ioc_nodes (id, value, ioc_type, confidence, source)\n               VALUES (?, ?, ?, ?, ?)\n               ON CONFLICT (id) DO NOTHING', batch_with_ids)
         return len(batch_with_ids)
 
-    def add_relation(self, src: str, dst: str, rel_type: str,
-                     weight: float = 1.0, evidence: str = ""):
-        # F266-LOCK FIX: warn on write attempt in READ-ONLY mode
-        if getattr(self, "_lock_acquired", True) is False:
-            logger.warning(f"[GRAPH] READ-ONLY — add_relation({src!r}→{dst!r}) ignored")
+    def add_relation(self, src: str, dst: str, rel_type: str, weight: float=1.0, evidence: str=''):
+        if getattr(self, '_lock_acquired', True) is False:
+            logger.warning(f'[GRAPH] READ-ONLY — add_relation({src!r}→{dst!r}) ignored')
             return
         src_id = self.add_ioc(src)
         dst_id = self.add_ioc(dst)
-        self.con.execute(
-            "INSERT INTO ioc_edges VALUES (?, ?, ?, ?, ?)",
-            [src_id, dst_id, rel_type, weight, evidence]
-        )
+        self.con.execute('INSERT INTO ioc_edges VALUES (?, ?, ?, ?, ?)', [src_id, dst_id, rel_type, weight, evidence])
 
-    def find_connected(self, value: str, max_hops: int = 2) -> list[dict]:
+    def find_connected(self, value: str, max_hops: int=2) -> list[dict]:
         """SQL/PGQ MATCH s recursive CTE fallback. max_hops je vzdy respektován."""
         return self._find_connected_base(value, max_hops)
 
     def _find_connected_base(self, value: str, max_hops: int) -> list[dict]:
         """Core find_connected implementation — used by find_connected and find_connected_with_similarity."""
-        # PGQ path: TRY first, transparent fallback to CTE on any GRAPH_TABLE error.
-        # _DUCKPGQ_AVAILABLE means extension is loaded — but ioc_graph property graph
-        # may not exist, so we guard with try/except and fall back gracefully.
         if _DUCKPGQ_AVAILABLE:
             try:
-                sql = f"""
-                    FROM GRAPH_TABLE(ioc_graph
-                        MATCH (a:ioc_nodes)
-                              -[e:ioc_edges*1..{max_hops}]->
-                              (b:ioc_nodes)
-                        WHERE a.value = ?
-                        COLUMNS (b.value, b.ioc_type, b.confidence, b.source)
-                    ) LIMIT 100
-                """
-                # Polars native ARM64, zero-copy Arrow → 5-20× faster than pandas.
-                # Lazy import: polars is in graph-storage extra.
+                sql = f'\n                    FROM GRAPH_TABLE(ioc_graph\n                        MATCH (a:ioc_nodes)\n                              -[e:ioc_edges*1..{max_hops}]->\n                              (b:ioc_nodes)\n                        WHERE a.value = ?\n                        COLUMNS (b.value, b.ioc_type, b.confidence, b.source)\n                    ) LIMIT 100\n                '
                 return _duckdb_to_dicts(self.con, sql, [value])
             except Exception as e:
-                logger.debug(f"[GRAPH] PGQ path failed, falling back to CTE: {e}")
-                # Fall through to CTE path — do NOT return []
-
-        # CTE fallback: always runnable, max_hops is a bound parameter
-        sql = """
-            WITH RECURSIVE paths(dst_id, depth) AS (
-                SELECT e.dst_id, 1
-                FROM ioc_edges e
-                JOIN ioc_nodes n ON n.id = e.src_id
-                WHERE n.value = ?
-                UNION ALL
-                SELECT e.dst_id, p.depth + 1
-                FROM ioc_edges e
-                JOIN paths p ON p.dst_id = e.src_id
-                WHERE p.depth < ?
-            )
-            SELECT n.value, n.ioc_type, n.confidence, n.source
-            FROM paths p
-            JOIN ioc_nodes n ON n.id = p.dst_id
-            LIMIT 100
-        """
+                logger.debug(f'[GRAPH] PGQ path failed, falling back to CTE: {e}')
+        sql = '\n            WITH RECURSIVE paths(dst_id, depth) AS (\n                SELECT e.dst_id, 1\n                FROM ioc_edges e\n                JOIN ioc_nodes n ON n.id = e.src_id\n                WHERE n.value = ?\n                UNION ALL\n                SELECT e.dst_id, p.depth + 1\n                FROM ioc_edges e\n                JOIN paths p ON p.dst_id = e.src_id\n                WHERE p.depth < ?\n            )\n            SELECT n.value, n.ioc_type, n.confidence, n.source\n            FROM paths p\n            JOIN ioc_nodes n ON n.id = p.dst_id\n            LIMIT 100\n        '
         params = [value, max_hops]
         try:
             return _duckdb_to_dicts(self.con, sql, params)
         except Exception as e:
-            logger.warning(f"[GRAPH] find_connected failed: {e}")
+            logger.warning(f'[GRAPH] find_connected failed: {e}')
             return []
 
-    def find_connected_with_similarity(
-        self,
-        value: str,
-        max_hops: int = 2,
-        query_embedding: Any | None = None,
-        top_k: int = 10,
-        similarity_threshold: float = 0.0,
-    ) -> list[dict]:
+    def find_connected_with_similarity(self, value: str, max_hops: int=2, query_embedding: Any | None=None, top_k: int=10, similarity_threshold: float=0.0) -> list[dict]:
         """
         Hybrid graph traversal + vector similarity reranking.
 
@@ -1763,99 +1240,64 @@ class DuckPGQGraph:
         M1 8GB safe: RAM guard checks before vector similarity compute.
         Fail-soft: falls back to pure graph traversal on any error.
         """
-        # Step 1: Pure graph traversal (always runs)
         connected = self._find_connected_base(value, max_hops)
         if not connected:
             return []
-
-        # Step 2: Vector similarity reranking (only if embedding provided)
         if query_embedding is None:
             return connected[:top_k]
-
-        # RAM guard for M1 8GB — skip vector ops if <4GB available
         if not self._check_memory_available():
-            logger.debug("[GRAPH] RAM guard: skipping vector similarity, using graph order")
+            logger.debug('[GRAPH] RAM guard: skipping vector similarity, using graph order')
             return connected[:top_k]
-
         try:
-            reranked = self._rerank_by_similarity(
-                connected, query_embedding, top_k, similarity_threshold
-            )
+            reranked = self._rerank_by_similarity(connected, query_embedding, top_k, similarity_threshold)
             return reranked
         except Exception as e:
-            logger.debug(f"[GRAPH] vector similarity failed, using graph order: {e}")
+            logger.debug(f'[GRAPH] vector similarity failed, using graph order: {e}')
             return connected[:top_k]
 
-    def _check_memory_available(self, min_gb: float = 4.0) -> bool:
+    def _check_memory_available(self, min_gb: float=4.0) -> bool:
         """Check if >=min_gb RAM available. M1 8GB safety guard."""
         try:
             import psutil
-            available = psutil.virtual_memory().available / (1024**3)
+            available = psutil.virtual_memory().available / 1024 ** 3
             return available >= min_gb
         except Exception:
-            # Fail-open: if we can't measure, assume OK
             return True
 
-    def _rerank_by_similarity(
-        self,
-        connected: list[dict],
-        query_embedding: Any,
-        top_k: int,
-        similarity_threshold: float,
-    ) -> list[dict]:
+    def _rerank_by_similarity(self, connected: list[dict], query_embedding: Any, top_k: int, similarity_threshold: float) -> list[dict]:
         """Rerank connected IOCs by cosine similarity to query embedding.
 
         M1 8GB safe: uses MLX for vector similarity when available.
         Fallback: returns graph traversal order if MLX unavailable or error.
         """
-        # Lazy import MLX
         try:
             import mlx.core as mx
         except ImportError:
-            logger.debug("[GRAPH] MLX not available for similarity")
+            logger.debug('[GRAPH] MLX not available for similarity')
             return connected[:top_k]
-
         try:
-            # Build embedding matrix from connected items
-            # NOTE: This requires IOC embeddings to be stored alongside DuckDB graph nodes.
-            # Currently DuckPGQGraph only stores metadata (value, type, confidence, source).
-            # For full vector similarity, embeddings need to be added to ioc_nodes table.
-            #
-            # Fallback: use DuckDB to check if embeddings exist
-            embeddings = self._fetch_ioc_embeddings_from_db([c["value"] for c in connected])
+            embeddings = self._fetch_ioc_embeddings_from_db([c['value'] for c in connected])
             if not embeddings:
-                logger.debug("[GRAPH] no IOC embeddings found in DuckDB, using graph order")
+                logger.debug('[GRAPH] no IOC embeddings found in DuckDB, using graph order')
                 return connected[:top_k]
-
-            # Build MLX arrays
             q_emb = mx.array(query_embedding)
             c_embs = mx.array(embeddings)
-
-            # MLX cosine similarity: normalize and compute dot product
-            q_norm = q_emb / (mx.linalg.norm(q_emb) + 1e-8)
-            c_norm = c_embs / (mx.linalg.norm(c_embs, axis=1, keepdims=True) + 1e-8)
+            q_norm = q_emb / (mx.linalg.norm(q_emb) + 1e-08)
+            c_norm = c_embs / (mx.linalg.norm(c_embs, axis=1, keepdims=True) + 1e-08)
             similarities = mx.matmul(c_norm, q_norm.T if c_norm.ndim > 1 else q_norm)
-
-            # Handle 2D case for batch similarity
             if similarities.ndim == 2:
                 similarities = similarities[0]
-
             sim_raw = similarities.tolist()
             sim_list: list[float] = list(sim_raw) if isinstance(sim_raw, list) else [float(sim_raw)]
-
-            # Attach similarity scores and filter
             scored = []
             for i, item in enumerate(connected):
                 score = float(sim_list[i]) if i < len(sim_list) else 0.0
                 if score >= similarity_threshold:
-                    scored.append({**item, "similarity": score})
-
-            # Sort by similarity descending, then by confidence
-            scored.sort(key=lambda x: (x.get("similarity", 0.0), x.get("confidence", 0.0)), reverse=True)
+                    scored.append({**item, 'similarity': score})
+            scored.sort(key=lambda x: (x.get('similarity', 0.0), x.get('confidence', 0.0)), reverse=True)
             return scored[:top_k]
-
         except Exception as e:
-            logger.debug(f"[GRAPH] vector similarity failed: {e}, using graph order")
+            logger.debug(f'[GRAPH] vector similarity failed: {e}, using graph order')
             return connected[:top_k]
 
     def _fetch_ioc_embeddings_from_db(self, values: list[str]) -> list[list[float]] | None:
@@ -1868,43 +1310,33 @@ class DuckPGQGraph:
         if not values:
             return None
         try:
-            # Check if embedding column exists
-            cols = list(_duckdb_fetch_bounded(self.con, "PRAGMA table_info(ioc_nodes)"))
+            cols = list(_duckdb_fetch_bounded(self.con, 'PRAGMA table_info(ioc_nodes)'))
             col_names = [c[1] for c in cols]
-            if "embedding" not in col_names:
-                logger.debug("[GRAPH] ioc_nodes has no embedding column")
+            if 'embedding' not in col_names:
+                logger.debug('[GRAPH] ioc_nodes has no embedding column')
                 return None
-
-            # Fetch embeddings for values (limit to 100 for M1 safety)
-            placeholders = ",".join(["?" for _ in values[:100]])
-            sql = f"""
-                SELECT n.value, n.embedding
-                FROM ioc_nodes n
-                WHERE n.value IN ({placeholders})
-            """
+            placeholders = ','.join(['?' for _ in values[:100]])
+            sql = f'\n                SELECT n.value, n.embedding\n                FROM ioc_nodes n\n                WHERE n.value IN ({placeholders})\n            '
             rows = list(_duckdb_fetch_bounded(self.con, sql, values[:100]))
             if not rows:
                 return None
-
-            # Convert to embedding matrix
             embeddings = []
             value_to_emb = {r[0]: r[1] for r in rows if r[1]}
             for val in values[:100]:
                 emb = value_to_emb.get(val)
                 if emb:
-                    # Handle bytes from DuckDB (potential compression)
                     if isinstance(emb, bytes):
                         import numpy as np
                         emb = np.frombuffer(emb, dtype=np.float32).tolist()
                     embeddings.append(emb)
                 else:
-                    return None  # Not all values have embeddings
+                    return None
             return embeddings
         except Exception as e:
-            logger.debug(f"[GRAPH] could not fetch IOC embeddings: {e}")
+            logger.debug(f'[GRAPH] could not fetch IOC embeddings: {e}')
             return None
 
-    def find_connected_batch(self, values: list[str], max_hops: int = 2) -> dict[str, list[dict]]:
+    def find_connected_batch(self, values: list[str], max_hops: int=2) -> dict[str, list[dict]]:
         """
         P2-1: Batch version of find_connected for N+1 query optimization.
         Primary path: Rust batch_graph_traverse (parallel via rayon, 4 threads).
@@ -1914,90 +1346,47 @@ class DuckPGQGraph:
         """
         if not values:
             return {}
-
-        # P2-1: Try Rust parallel path first (rayon graph_traverse, 4 workers).
-        # Each worker opens its own DuckDB connection on-pool threads.
-        # Connection is !Send so all access stays inside cpu_pool().install().
-        # F265C: Use centralized rust backend
         try:
             from core.rust_backend import rust as _rust_backend
-
             if _rust_backend.is_available and _rust_backend.graph is not None:
                 raw = _rust_backend.graph.batch_graph_traverse(self.db_path, values, max_hops)
-                # Rust returns dict[str, list[dict]] — same shape as our return type.
-                # Non-empty dict means Rust path succeeded; empty dict means
-                # DB had no data (legitimate zero results, not an error).
                 if raw is not None:
                     return raw
             else:
-                raise ImportError("Rust graph not available")
+                raise ImportError('Rust graph not available')
         except ImportError:
-            logger.debug("[GRAPH] Rust batch_graph_traverse not available, using Python fallback")
+            logger.debug('[GRAPH] Rust batch_graph_traverse not available, using Python fallback')
         except Exception as e:
-            logger.debug(f"[GRAPH] Rust batch_graph_traverse failed, falling back: {e}")
-
-        # Fallback: Python CTE implementation (unchanged behavior).
+            logger.debug(f'[GRAPH] Rust batch_graph_traverse failed, falling back: {e}')
         return self._find_connected_batch_python(values, max_hops)
 
-    def _find_connected_batch_python(
-        self, values: list[str], max_hops: int = 2
-    ) -> dict[str, list[dict]]:
+    def _find_connected_batch_python(self, values: list[str], max_hops: int=2) -> dict[str, list[dict]]:
         """
         Fallback batch traversal when Rust extension is unavailable.
         Uses CTE with IN clause — same as the original find_connected_batch.
         """
-        # Use CTE with IN clause for batch query
-        sql = """  # noqa: UP031
-            WITH RECURSIVE paths(src_value, dst_id, depth) AS (
-                SELECT n.value, e.dst_id, 1
-                FROM ioc_edges e
-                JOIN ioc_nodes n ON n.id = e.src_id
-                WHERE n.value IN (%s)
-                UNION ALL
-                SELECT p.src_value, e.dst_id, p.depth + 1
-                FROM ioc_edges e
-                JOIN paths p ON p.dst_id = e.src_id
-                WHERE p.depth < ?
-            )
-            SELECT p.src_value, n.value as dst_value, n.ioc_type, n.confidence, n.source
-            FROM paths p
-            JOIN ioc_nodes n ON n.id = p.dst_id
-            LIMIT %d
-        """ % (",".join(["?"] * len(values)), len(values) * 100)
-
+        sql = '  # noqa: UP031\n            WITH RECURSIVE paths(src_value, dst_id, depth) AS (\n                SELECT n.value, e.dst_id, 1\n                FROM ioc_edges e\n                JOIN ioc_nodes n ON n.id = e.src_id\n                WHERE n.value IN (%s)\n                UNION ALL\n                SELECT p.src_value, e.dst_id, p.depth + 1\n                FROM ioc_edges e\n                JOIN paths p ON p.dst_id = e.src_id\n                WHERE p.depth < ?\n            )\n            SELECT p.src_value, n.value as dst_value, n.ioc_type, n.confidence, n.source\n            FROM paths p\n            JOIN ioc_nodes n ON n.id = p.dst_id\n            LIMIT %d\n        ' % (','.join(['?'] * len(values)), len(values) * 100)
         params = list(values) + [max_hops]
         try:
-            # Polars native ARM64, zero-copy Arrow → 5-20× faster than pandas.
             import polars as pl
             arrow_tbl = self.con.execute(sql, params).fetch_arrow_table()
             df = pl.from_arrow(arrow_tbl)
             result: dict[str, list[dict]] = {v: [] for v in values}
             for row in df.iter_rows(named=True):
-                src = row["src_value"]
+                src = row['src_value']
                 if src in result:
-                    result[src].append({
-                        "value": row["dst_value"],
-                        "ioc_type": row["ioc_type"],
-                        "confidence": row["confidence"],
-                        "source": row["source"],
-                    })
+                    result[src].append({'value': row['dst_value'], 'ioc_type': row['ioc_type'], 'confidence': row['confidence'], 'source': row['source']})
             return result
         except ImportError:
             return {v: [] for v in values}
         except Exception as e:
-            logger.warning(f"[GRAPH] _find_connected_batch_python failed: {e}")
-            # Final fallback: individual calls
+            logger.warning(f'[GRAPH] _find_connected_batch_python failed: {e}')
             result = {}
             for v in values:
                 result[v] = self.find_connected(v, max_hops=max_hops)
             return result
 
-    async def find_paths_between_iocs(
-        self,
-        source_ioc: str,
-        target_ioc: str,
-        max_hops: int = 4,
-    ) -> list[list[str]]:
+    async def find_paths_between_iocs(self, source_ioc: str, target_ioc: str, max_hops: int=4) -> list[list[str]]:
         """Find quantum-inspired paths between two IOCs.
 
         Args:
@@ -2010,22 +1399,14 @@ class DuckPGQGraph:
         """
         try:
             import asyncio as _a
-            return await _a.to_thread(
-                _find_paths_between_iocs_sync,
-                self.con,
-                source_ioc,
-                target_ioc,
-                max_hops,
-            )
+            return await _a.to_thread(_find_paths_between_iocs_sync, self.con, source_ioc, target_ioc, max_hops)
         except Exception as e:
-            logger.warning(f"[GRAPH] find_paths_between_iocs failed: {e}")
+            logger.warning(f'[GRAPH] find_paths_between_iocs failed: {e}')
             return []
 
     def stats(self) -> dict:
         """Return node/edge counts from DuckDB."""
         return _graph_stats(self.con)
-
-    # === F271: STIX / Truth-write support (DuckDB-native) ===
 
     def graph_stats(self) -> dict[str, int]:
         """
@@ -2035,13 +1416,13 @@ class DuckPGQGraph:
         GraphProtocol compatibility. No Kuzu dependency.
         """
         try:
-            nodes_row = self.con.execute("SELECT COUNT(*) FROM ioc_nodes").fetchone()
-            edges_row = self.con.execute("SELECT COUNT(*) FROM ioc_edges").fetchone()
+            nodes_row = self.con.execute('SELECT COUNT(*) FROM ioc_nodes').fetchone()
+            edges_row = self.con.execute('SELECT COUNT(*) FROM ioc_edges').fetchone()
             nodes = nodes_row[0] if nodes_row is not None else 0
             edges = edges_row[0] if edges_row is not None else 0
-            return {"nodes": nodes, "edges": edges}
+            return {'nodes': nodes, 'edges': edges}
         except Exception:
-            return {"nodes": 0, "edges": 0}
+            return {'nodes': 0, 'edges': 0}
 
     def export_stix_bundle(self) -> list[dict[str, Any]]:
         """
@@ -2063,88 +1444,30 @@ class DuckPGQGraph:
             import json
             import uuid
             from datetime import datetime, UTC
-
-            rows = self.con.execute("""
-                SELECT id, val, ioc_type, confidence, first_seen
-                FROM ioc_nodes
-                ORDER BY first_seen DESC
-            """).fetchall()
-
+            rows = self.con.execute('\n                SELECT id, val, ioc_type, confidence, first_seen\n                FROM ioc_nodes\n                ORDER BY first_seen DESC\n            ').fetchall()
             objects: list[dict[str, Any]] = []
             for row_id, val, ioc_type, confidence, first_seen in rows:
                 if not val or not ioc_type:
                     continue
-                conf = int((float(confidence or 0.5)) * 100)
+                conf = int(float(confidence or 0.5) * 100)
                 try:
-                    if ioc_type in ("ip", "ipv4"):
-                        objects.append({
-                            "type": "indicator",
-                            "spec_version": "2.1",
-                            "id": f"indicator--{uuid.uuid5(uuid.NAMESPACE_URL, str(row_id))}",
-                            "name": f"IP: {val}",
-                            "pattern": f"[ipv4-addr:value = '{val}']",
-                            "pattern_type": "stix",
-                            "valid_from": datetime.fromtimestamp(float(first_seen or 0), tz=UTC).isoformat(),
-                            "confidence": conf,
-                            "object_marking_refs": ["marking-definition--613f2e26-407d-48f7-9f6e-2c98fb47f0e9"],
-                        })
-                    elif ioc_type == "domain":
-                        objects.append({
-                            "type": "indicator",
-                            "spec_version": "2.1",
-                            "id": f"indicator--{uuid.uuid5(uuid.NAMESPACE_URL, str(row_id))}",
-                            "name": f"Domain: {val}",
-                            "pattern": f"[domain-name:value = '{val}']",
-                            "pattern_type": "stix",
-                            "valid_from": datetime.fromtimestamp(float(first_seen or 0), tz=UTC).isoformat(),
-                            "confidence": conf,
-                            "object_marking_refs": ["marking-definition--613f2e26-407d-48f7-9f6e-2c98fb47f0e9"],
-                        })
-                    elif ioc_type == "hash_sha256":
-                        objects.append({
-                            "type": "indicator",
-                            "spec_version": "2.1",
-                            "id": f"indicator--{uuid.uuid5(uuid.NAMESPACE_URL, str(row_id))}",
-                            "name": f"SHA256: {val[:16]}...",
-                            "pattern": f"[file:hashes.'SHA-256' = '{val}']",
-                            "pattern_type": "stix",
-                            "valid_from": datetime.fromtimestamp(float(first_seen or 0), tz=UTC).isoformat(),
-                            "confidence": conf,
-                            "object_marking_refs": ["marking-definition--613f2e26-407d-48f7-9f6e-2c98fb47f0e9"],
-                        })
-                    elif ioc_type == "cve":
-                        objects.append({
-                            "type": "vulnerability",
-                            "spec_version": "2.1",
-                            "id": f"vulnerability--{uuid.uuid5(uuid.NAMESPACE_URL, str(row_id))}",
-                            "name": val,
-                            "external_references": [{"source_name": "cve", "external_id": val}],
-                        })
-                    elif ".onion" in val.lower() or ioc_type == "onion":
-                        objects.append({
-                            "type": "indicator",
-                            "spec_version": "2.1",
-                            "id": f"indicator--{uuid.uuid5(uuid.NAMESPACE_URL, str(row_id))}",
-                            "name": f"Onion: {val}",
-                            "pattern": f"[url:value = 'http://{val}/']",
-                            "pattern_type": "stix",
-                            "valid_from": datetime.fromtimestamp(float(first_seen or 0), tz=UTC).isoformat(),
-                            "confidence": conf,
-                            "object_marking_refs": ["marking-definition--613f2e26-407d-48f7-9f6e-2c98fb47f0e9"],
-                        })
-                    # Skip unknown types (hash_md5, apt, malware, etc.)
+                    if ioc_type in ('ip', 'ipv4'):
+                        objects.append({'type': 'indicator', 'spec_version': '2.1', 'id': f'indicator--{uuid.uuid5(uuid.NAMESPACE_URL, str(row_id))}', 'name': f'IP: {val}', 'pattern': f"[ipv4-addr:value = '{val}']", 'pattern_type': 'stix', 'valid_from': datetime.fromtimestamp(float(first_seen or 0), tz=UTC).isoformat(), 'confidence': conf, 'object_marking_refs': ['marking-definition--613f2e26-407d-48f7-9f6e-2c98fb47f0e9']})
+                    elif ioc_type == 'domain':
+                        objects.append({'type': 'indicator', 'spec_version': '2.1', 'id': f'indicator--{uuid.uuid5(uuid.NAMESPACE_URL, str(row_id))}', 'name': f'Domain: {val}', 'pattern': f"[domain-name:value = '{val}']", 'pattern_type': 'stix', 'valid_from': datetime.fromtimestamp(float(first_seen or 0), tz=UTC).isoformat(), 'confidence': conf, 'object_marking_refs': ['marking-definition--613f2e26-407d-48f7-9f6e-2c98fb47f0e9']})
+                    elif ioc_type == 'hash_sha256':
+                        objects.append({'type': 'indicator', 'spec_version': '2.1', 'id': f'indicator--{uuid.uuid5(uuid.NAMESPACE_URL, str(row_id))}', 'name': f'SHA256: {val[:16]}...', 'pattern': f"[file:hashes.'SHA-256' = '{val}']", 'pattern_type': 'stix', 'valid_from': datetime.fromtimestamp(float(first_seen or 0), tz=UTC).isoformat(), 'confidence': conf, 'object_marking_refs': ['marking-definition--613f2e26-407d-48f7-9f6e-2c98fb47f0e9']})
+                    elif ioc_type == 'cve':
+                        objects.append({'type': 'vulnerability', 'spec_version': '2.1', 'id': f'vulnerability--{uuid.uuid5(uuid.NAMESPACE_URL, str(row_id))}', 'name': val, 'external_references': [{'source_name': 'cve', 'external_id': val}]})
+                    elif '.onion' in val.lower() or ioc_type == 'onion':
+                        objects.append({'type': 'indicator', 'spec_version': '2.1', 'id': f'indicator--{uuid.uuid5(uuid.NAMESPACE_URL, str(row_id))}', 'name': f'Onion: {val}', 'pattern': f"[url:value = 'http://{val}/']", 'pattern_type': 'stix', 'valid_from': datetime.fromtimestamp(float(first_seen or 0), tz=UTC).isoformat(), 'confidence': conf, 'object_marking_refs': ['marking-definition--613f2e26-407d-48f7-9f6e-2c98fb47f0e9']})
                 except Exception:
                     continue
             return objects
         except Exception:
             return []
 
-    def pivot(
-        self,
-        ioc_value: str,
-        ioc_type: str,
-        depth: int = 2,
-    ) -> list[dict[str, Any]]:
+    def pivot(self, ioc_value: str, ioc_type: str, depth: int=2) -> list[dict[str, Any]]:
         """
         F271: DuckDB-native STIX-style pivot.
 
@@ -2155,82 +1478,35 @@ class DuckPGQGraph:
         """
         try:
             depth_clamped = max(1, min(depth, 2))
-            result = self.con.execute(f"""
-                WITH RECURSIVE connected AS (
-                    SELECT dst_id, 1 AS depth
-                    FROM ioc_edges e
-                    JOIN ioc_nodes n ON n.id = e.src_id
-                    WHERE n.val = ? AND n.ioc_type = ?
-
-                    UNION ALL
-
-                    SELECT e.dst_id, c.depth + 1
-                    FROM ioc_edges e
-                    JOIN connected c ON c.dst_id = e.src_id
-                    WHERE c.depth < ?
-                )
-                SELECT DISTINCT n.id, n.ioc_type, n.val, n.confidence, n.first_seen
-                FROM connected c
-                JOIN ioc_nodes n ON n.id = c.dst_id
-                LIMIT 100
-            """, (ioc_value, ioc_type, depth_clamped)).fetchall()
-
-            return [
-                {
-                    "id": row[0],
-                    "ioc_type": row[1],
-                    "value": row[2],
-                    "confidence": row[3],
-                    "first_seen": row[4],
-                }
-                for row in result
-            ]
+            result = self.con.execute(f'\n                WITH RECURSIVE connected AS (\n                    SELECT dst_id, 1 AS depth\n                    FROM ioc_edges e\n                    JOIN ioc_nodes n ON n.id = e.src_id\n                    WHERE n.val = ? AND n.ioc_type = ?\n\n                    UNION ALL\n\n                    SELECT e.dst_id, c.depth + 1\n                    FROM ioc_edges e\n                    JOIN connected c ON c.dst_id = e.src_id\n                    WHERE c.depth < ?\n                )\n                SELECT DISTINCT n.id, n.ioc_type, n.val, n.confidence, n.first_seen\n                FROM connected c\n                JOIN ioc_nodes n ON n.id = c.dst_id\n                LIMIT 100\n            ', (ioc_value, ioc_type, depth_clamped)).fetchall()
+            return [{'id': row[0], 'ioc_type': row[1], 'value': row[2], 'confidence': row[3], 'first_seen': row[4]} for row in result]
         except Exception:
             return []
 
-
-def _find_paths_between_iocs_sync(
-    con,
-    source_ioc: str,
-    target_ioc: str,
-    max_hops: int = 4,
-) -> list[list[str]]:
+def _find_paths_between_iocs_sync(con, source_ioc: str, target_ioc: str, max_hops: int=4) -> list[list[str]]:
     """Sync BFS implementation (module-level for to_thread)."""
     try:
-        sql = """
-            SELECT e.src_id, e.dst_id, n_src.value as src_val, n_dst.value as dst_val
-            FROM ioc_edges e
-            JOIN ioc_nodes n_src ON n_src.id = e.src_id
-            JOIN ioc_nodes n_dst ON n_dst.id = e.dst_id
-            LIMIT 5000
-        """
+        sql = '\n            SELECT e.src_id, e.dst_id, n_src.value as src_val, n_dst.value as dst_val\n            FROM ioc_edges e\n            JOIN ioc_nodes n_src ON n_src.id = e.src_id\n            JOIN ioc_nodes n_dst ON n_dst.id = e.dst_id\n            LIMIT 5000\n        '
         rows = con.execute(sql).fetch_arrow_table()
         if rows.num_rows == 0:
             return []
-
-        # Polars native ARM64, zero-copy Arrow → 5-20× faster than pandas.
-        # .iter_rows(named=True) is 5-10× faster than pandas .iterrows().
         try:
             import polars as pl
             pdf = pl.from_arrow(rows)
             rows_iter = pdf.iter_rows(named=True)
         except ImportError:
-            # Fallback: pyarrow dict-style iteration (no pandas)
             rows_iter = (dict(zip(rows.column_names, vals, strict=False)) for vals in rows.to_pylist())
-
         adj: dict[str, list[str]] = {}
         for row in rows_iter:
-            src_val = str(row["src_val"])
-            dst_val = str(row["dst_val"])
+            src_val = str(row['src_val'])
+            dst_val = str(row['dst_val'])
             if src_val not in adj:
                 adj[src_val] = []
             if dst_val not in adj[src_val]:
                 adj[src_val].append(dst_val)
-
         paths: list[list[str]] = []
         stack: list[tuple[str, list[str]]] = [(source_ioc, [source_ioc])]
         visited: dict[str, int] = {source_ioc: 0}
-
         while stack and len(paths) < 10:
             cur, path = stack.pop()
             if len(path) > max_hops:
@@ -2243,34 +1519,25 @@ def _find_paths_between_iocs_sync(
                 if neighbor not in visited or visited[neighbor] > len(path):
                     visited[neighbor] = len(path)
                     stack.append((neighbor, path + [neighbor]))
-
         return paths
-
     except Exception as e:
-        logger.warning(f"[GRAPH] _find_paths_between_iocs_sync failed: {e}")
+        logger.warning(f'[GRAPH] _find_paths_between_iocs_sync failed: {e}')
         return []
-
 
 def _graph_stats(con) -> dict:
     """Module-level stats helper (called by DuckPGQGraph.stats wrapper)."""
     try:
-        nodes_row = con.execute("SELECT COUNT(*) FROM ioc_nodes").fetchone()
-        edges_row = con.execute("SELECT COUNT(*) FROM ioc_edges").fetchone()
+        nodes_row = con.execute('SELECT COUNT(*) FROM ioc_nodes').fetchone()
+        edges_row = con.execute('SELECT COUNT(*) FROM ioc_edges').fetchone()
         nodes = nodes_row[0] if nodes_row is not None else 0
         edges = edges_row[0] if edges_row is not None else 0
-        return {"nodes": nodes, "edges": edges, "pgq_available": _DUCKPGQ_AVAILABLE}
+        return {'nodes': nodes, 'edges': edges, 'pgq_available': _DUCKPGQ_AVAILABLE}
     except Exception as e:
-        logger.warning(f"[GRAPH] _graph_stats failed: {e}")
-        return {"nodes": 0, "edges": 0, "pgq_available": _DUCKPGQ_AVAILABLE}
-
-
-# Module availability flag
+        logger.warning(f'[GRAPH] _graph_stats failed: {e}')
+        return {'nodes': 0, 'edges': 0, 'pgq_available': _DUCKPGQ_AVAILABLE}
 QUANTUM_PATHFINDER_AVAILABLE = True
 
-
-def create_quantum_pathfinder(
-    config: QuantumPathConfig | None = None
-) -> QuantumInspiredPathFinder | None:
+def create_quantum_pathfinder(config: QuantumPathConfig | None=None) -> QuantumInspiredPathFinder | None:
     """Factory function to create a quantum pathfinder instance.
 
     This factory function provides a consistent API for creating
@@ -2285,20 +1552,10 @@ def create_quantum_pathfinder(
     try:
         return QuantumInspiredPathFinder(config)
     except Exception as e:
-        logger.error(f"Failed to create quantum pathfinder: {e}")
+        logger.error(f'Failed to create quantum pathfinder: {e}')
         return None
 
-
-# ---------------------------------------------------------------------------
-# FÁZE P14: Heuristic pathfinding wrapper
-# ---------------------------------------------------------------------------
-
-
-async def find_best_path(
-    graph: Any,
-    start: str,
-    end: str,
-) -> list[str]:
+async def find_best_path(graph: Any, start: str, end: str) -> list[str]:
     """
     FÁZE P14: Find best path between two entities using quantum-inspired pathfinding.
 
@@ -2314,46 +1571,24 @@ async def find_best_path(
     """
     if graph is None:
         return []
-
     try:
         pathfinder = QuantumInspiredPathFinder()
-        # Initialize with the graph
         if hasattr(graph, 'adjacency'):
-            # NetworkX graph - convert to adjacency dict
             adj_dict = {str(n): [str(nb) for nb in graph.neighbors(n)] for n in graph.nodes()}
             await pathfinder.initialize(adj_dict)
         elif isinstance(graph, dict):
             await pathfinder.initialize(graph)
         else:
-            logger.warning("[QuantumPathfinder] Unsupported graph type")
+            logger.warning('[QuantumPathfinder] Unsupported graph type')
             return []
-
-        # Find paths
-        paths = await pathfinder.find_paths(
-            start_nodes=[start],
-            target_nodes=[end],
-            max_steps=50
-        )
-
-        # Return shortest path (first one after sorting by length)
+        paths = await pathfinder.find_paths(start_nodes=[start], target_nodes=[end], max_steps=50)
         if paths:
             paths.sort(key=len)
             return paths[0]
         return []
-
     except Exception as e:
-        logger.warning(f"[QuantumPathfinder] find_best_path failed: {e}")
+        logger.warning(f'[QuantumPathfinder] find_best_path failed: {e}')
         return []
     finally:
         await pathfinder.cleanup()
-
-
-# Re-export for direct import
-__all__ = [
-    "QuantumInspiredPathFinder",
-    "QuantumPathConfig",
-    "create_quantum_pathfinder",
-    "QUANTUM_PATHFINDER_AVAILABLE",
-    "DuckPGQGraph",
-    "find_best_path",
-]
+__all__ = ['QuantumInspiredPathFinder', 'QuantumPathConfig', 'create_quantum_pathfinder', 'QUANTUM_PATHFINDER_AVAILABLE', 'DuckPGQGraph', 'find_best_path']

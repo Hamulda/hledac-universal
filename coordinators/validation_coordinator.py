@@ -15,45 +15,34 @@ Unique Features Integrated:
 4. Validation severity levels
 5. Custom validator support
 """
-
-
-
 import logging
 from dataclasses import dataclass, field
 import msgspec
 from enum import Enum
 from typing import Any
-
 from .base import UniversalCoordinator
-
 logger = logging.getLogger(__name__)
-
-# F214OPT-A: selectolax-first HTML→text
 try:
     from hledac.universal.utils.html_text_fast import html_to_text_fast
-
     HTML_TEXT_FAST_AVAILABLE = True
 except ImportError:
     HTML_TEXT_FAST_AVAILABLE = False
-    html_to_text_fast = None  # type: ignore[assignment]
-
+    html_to_text_fast = None
 
 class ValidationSeverity(Enum):
     """Validation severity levels."""
-    INFO = "info"
-    WARNING = "warning"
-    ERROR = "error"
-    CRITICAL = "critical"
-
+    INFO = 'info'
+    WARNING = 'warning'
+    ERROR = 'error'
+    CRITICAL = 'critical'
 
 class OutputFormat(Enum):
     """Content cleaning output formats."""
-    MARKDOWN = "markdown"
-    JSON = "json"
-    TEXT = "text"
+    MARKDOWN = 'markdown'
+    JSON = 'json'
+    TEXT = 'text'
 
-
-@dataclass
+@dataclass(True)
 class ValidationResult:
     """Result of validation operation."""
     valid: bool
@@ -62,8 +51,7 @@ class ValidationResult:
     warnings: list[str] = field(default_factory=list)
     severity: ValidationSeverity = ValidationSeverity.INFO
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CleaningResult:
     """Result of content cleaning."""
     success: bool
@@ -71,7 +59,6 @@ class CleaningResult:
     format: OutputFormat
     metadata: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
-
 
 class UniversalValidationCoordinator(UniversalCoordinator):
     """
@@ -87,70 +74,44 @@ class UniversalValidationCoordinator(UniversalCoordinator):
     - 'clean'/'convert'/'extract' → ContentCleaner
     - 'language'/'detect_lang' → LanguageDetector
     """
+    __slots__ = tuple(('_cleaner_available', '_cleanings_performed', '_content_cleaner', '_custom_validators', '_data_validator', '_validations_performed', '_validator_available'))
 
-    def __init__(self, max_concurrent: int = 10):
-        super().__init__(
-            name="universal_validation_coordinator",
-            max_concurrent=max_concurrent,
-            memory_aware=True
-        )
-
-        # Validation subsystems (lazy initialization)
+    def __init__(self, max_concurrent: int=10):
+        super().__init__(name='universal_validation_coordinator', max_concurrent=max_concurrent, memory_aware=True)
         self._data_validator: Any | None = None
         self._content_cleaner: Any | None = None
-
-        # Availability flags
         self._validator_available = False
         self._cleaner_available = False
-
-        # Statistics
         self._validations_performed = 0
         self._cleanings_performed = 0
         self._custom_validators: dict[str, Any] = {}
 
-    # ========================================================================
-    # Initialization
-    # ========================================================================
-
     async def _do_initialize(self) -> bool:
         """Initialize validation subsystems."""
         initialized_any = False
-
-        # Try DataValidator
         try:
             from hledac.tools.preserved_logic.engine_core.data_validator import DataValidator
             self._data_validator = DataValidator()
             self._validator_available = True
             initialized_any = True
-            logger.info("ValidationCoordinator: DataValidator initialized")
+            logger.info('ValidationCoordinator: DataValidator initialized')
         except ImportError:
-            logger.warning("ValidationCoordinator: DataValidator not available")
+            logger.warning('ValidationCoordinator: DataValidator not available')
         except Exception as e:
-            logger.warning(f"ValidationCoordinator: DataValidator init failed: {e}")
-
-        # Try ContentCleaner
+            logger.warning(f'ValidationCoordinator: DataValidator init failed: {e}')
         try:
             from hledac.tools.preserved_logic.content_cleaner import ContentCleaner
             self._content_cleaner = ContentCleaner()
             self._cleaner_available = True
             initialized_any = True
-            logger.info("ValidationCoordinator: ContentCleaner initialized")
+            logger.info('ValidationCoordinator: ContentCleaner initialized')
         except ImportError:
-            logger.warning("ValidationCoordinator: ContentCleaner not available")
+            logger.warning('ValidationCoordinator: ContentCleaner not available')
         except Exception as e:
-            logger.warning(f"ValidationCoordinator: ContentCleaner init failed: {e}")
-
+            logger.warning(f'ValidationCoordinator: ContentCleaner init failed: {e}')
         return initialized_any
 
-    # ========================================================================
-    # Data Validation Operations
-    # ========================================================================
-
-    async def validate_email(
-        self,
-        email: str,
-        strict: bool = True
-    ) -> dict[str, Any]:
+    async def validate_email(self, email: str, strict: bool=True) -> dict[str, Any]:
         """
         Validate email address with comprehensive checks.
 
@@ -172,29 +133,15 @@ class UniversalValidationCoordinator(UniversalCoordinator):
         """
         if not self._validator_available:
             return {'valid': False, 'error': 'DataValidator not available'}
-
         try:
             result = self._data_validator.validate_email(email, strict=strict)
             self._validations_performed += 1
-
-            return {
-                'valid': result.get('valid', False),
-                'email': email,
-                'strict_mode': strict,
-                'error_count': result.get('error_count', 0),
-                'warning_count': result.get('warning_count', 0),
-                'errors': result.get('errors', [])
-            }
-
+            return {'valid': result.get('valid', False), 'email': email, 'strict_mode': strict, 'error_count': result.get('error_count', 0), 'warning_count': result.get('warning_count', 0), 'errors': result.get('errors', [])}
         except Exception as e:
-            logger.error(f"Email validation failed: {e}")
+            logger.error(f'Email validation failed: {e}')
             return {'valid': False, 'error': str(e), 'email': email}
 
-    async def validate_url(
-        self,
-        url: str,
-        allowed_schemes: list[str] | None = None
-    ) -> dict[str, Any]:
+    async def validate_url(self, url: str, allowed_schemes: list[str] | None=None) -> dict[str, Any]:
         """
         Validate URL with scheme restrictions.
 
@@ -212,28 +159,15 @@ class UniversalValidationCoordinator(UniversalCoordinator):
         """
         if not self._validator_available:
             return {'valid': False, 'error': 'DataValidator not available'}
-
         try:
             result = self._data_validator.validate_url(url, allowed_schemes)
             self._validations_performed += 1
-
-            return {
-                'valid': result.get('valid', False),
-                'url': url,
-                'allowed_schemes': allowed_schemes or ['http', 'https'],
-                'error_count': result.get('error_count', 0),
-                'errors': result.get('errors', [])
-            }
-
+            return {'valid': result.get('valid', False), 'url': url, 'allowed_schemes': allowed_schemes or ['http', 'https'], 'error_count': result.get('error_count', 0), 'errors': result.get('errors', [])}
         except Exception as e:
-            logger.error(f"URL validation failed: {e}")
+            logger.error(f'URL validation failed: {e}')
             return {'valid': False, 'error': str(e), 'url': url}
 
-    async def validate_json_schema(
-        self,
-        data: dict[str, Any],
-        schema: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def validate_json_schema(self, data: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
         """
         Validate data against JSON schema.
 
@@ -252,29 +186,15 @@ class UniversalValidationCoordinator(UniversalCoordinator):
         """
         if not self._validator_available:
             return {'valid': False, 'error': 'DataValidator not available'}
-
         try:
             result = self._data_validator.validate_json_schema(data, schema)
             self._validations_performed += 1
-
-            return {
-                'valid': result.get('valid', False),
-                'error_count': result.get('error_count', 0),
-                'critical_count': result.get('critical_count', 0),
-                'warning_count': result.get('warning_count', 0),
-                'errors': result.get('errors', []),
-                'timestamp': result.get('timestamp')
-            }
-
+            return {'valid': result.get('valid', False), 'error_count': result.get('error_count', 0), 'critical_count': result.get('critical_count', 0), 'warning_count': result.get('warning_count', 0), 'errors': result.get('errors', []), 'timestamp': result.get('timestamp')}
         except Exception as e:
-            logger.error(f"JSON schema validation failed: {e}")
+            logger.error(f'JSON schema validation failed: {e}')
             return {'valid': False, 'error': str(e)}
 
-    async def add_custom_validator(
-        self,
-        name: str,
-        validator_func: Any
-    ) -> dict[str, Any]:
+    async def add_custom_validator(self, name: str, validator_func: Any) -> dict[str, Any]:
         """
         Add custom validation function.
 
@@ -287,31 +207,15 @@ class UniversalValidationCoordinator(UniversalCoordinator):
         """
         if not self._validator_available:
             return {'success': False, 'error': 'DataValidator not available'}
-
         try:
             self._data_validator.add_custom_validator(name, validator_func)
             self._custom_validators[name] = validator_func
-
-            return {
-                'success': True,
-                'validator_name': name,
-                'total_validators': len(self._custom_validators)
-            }
-
+            return {'success': True, 'validator_name': name, 'total_validators': len(self._custom_validators)}
         except Exception as e:
-            logger.error(f"Failed to add custom validator: {e}")
+            logger.error(f'Failed to add custom validator: {e}')
             return {'success': False, 'error': str(e)}
 
-    # ========================================================================
-    # Content Cleaning Operations
-    # ========================================================================
-
-    async def clean_html(
-        self,
-        html: str,
-        output_format: str = "markdown",
-        use_mlx: bool = True
-    ) -> dict[str, Any]:
+    async def clean_html(self, html: str, output_format: str='markdown', use_mlx: bool=True) -> dict[str, Any]:
         """
         Clean HTML and convert to specified format.
 
@@ -333,33 +237,18 @@ class UniversalValidationCoordinator(UniversalCoordinator):
             Cleaning result with converted content
         """
         if not self._cleaner_available:
-            # Fallback to simple extraction
             return await self._simple_html_extract(html, output_format)
-
         try:
             from hledac.tools.preserved_logic.content_cleaner import OutputFormat
-
             fmt = OutputFormat(output_format.lower())
             result = self._content_cleaner.clean_html(html, fmt)
             self._cleanings_performed += 1
-
-            return {
-                'success': result.success,
-                'content': result.content,
-                'format': output_format,
-                'metadata': result.metadata or {},
-                'error': result.error
-            }
-
+            return {'success': result.success, 'content': result.content, 'format': output_format, 'metadata': result.metadata or {}, 'error': result.error}
         except Exception as e:
-            logger.error(f"HTML cleaning failed: {e}")
+            logger.error(f'HTML cleaning failed: {e}')
             return await self._simple_html_extract(html, output_format)
 
-    async def _simple_html_extract(
-        self,
-        html: str,
-        output_format: str
-    ) -> dict[str, Any]:
+    async def _simple_html_extract(self, html: str, output_format: str) -> dict[str, Any]:
         """
         Simple HTML extraction fallback.
 
@@ -368,91 +257,51 @@ class UniversalValidationCoordinator(UniversalCoordinator):
         Tier 3: bs4 html.parser fallback
         Tier 4: regex ultimate fallback
         """
-        # Tier 1: selectolax-first for all formats
         try:
             from selectolax.parser import HTMLParser as _SelectolaxParser
-
             tree = _SelectolaxParser(html)
-            # Remove noise elements
-            for tag in tree.css("script, style, nav, footer, header, aside"):
+            for tag in tree.css('script, style, nav, footer, header, aside'):
                 tag.decompose()
-
             if output_format == 'text':
-                # Tier 1: selectolax body.text()
                 body = tree.body
-                content = body.text(separator=" ", strip=True) if body else ""
-                return {
-                    'success': True,
-                    'content': content,
-                    'format': output_format,
-                    'metadata': {'method': 'selectolax'},
-                    'error': None
-                }
+                content = body.text(separator=' ', strip=True) if body else ''
+                return {'success': True, 'content': content, 'format': output_format, 'metadata': {'method': 'selectolax'}, 'error': None}
             elif output_format == 'markdown':
-                # Tier 1: selectolax CSS selectors for markdown structure
                 lines_out: list[str] = []
-                for elem in tree.css("h1, h2, h3, p, li"):
+                for elem in tree.css('h1, h2, h3, p, li'):
                     text = elem.text(strip=True)
                     if not text:
                         continue
                     tag = elem.tag
-                    if tag == "h1":
-                        lines_out.append(f"# {text}")
-                    elif tag == "h2":
-                        lines_out.append(f"## {text}")
-                    elif tag == "h3":
-                        lines_out.append(f"### {text}")
-                    elif tag == "li":
-                        lines_out.append(f"- {text}")
+                    if tag == 'h1':
+                        lines_out.append(f'# {text}')
+                    elif tag == 'h2':
+                        lines_out.append(f'## {text}')
+                    elif tag == 'h3':
+                        lines_out.append(f'### {text}')
+                    elif tag == 'li':
+                        lines_out.append(f'- {text}')
                     else:
                         lines_out.append(text)
-                content = "\n\n".join(lines_out)
-                return {
-                    'success': True,
-                    'content': content,
-                    'format': output_format,
-                    'metadata': {'method': 'selectolax'},
-                    'error': None
-                }
+                content = '\n\n'.join(lines_out)
+                return {'success': True, 'content': content, 'format': output_format, 'metadata': {'method': 'selectolax'}, 'error': None}
             else:
-                # Default: plain text via selectolax
                 body = tree.body
-                content = body.text(separator=" ", strip=True) if body else ""
-                return {
-                    'success': True,
-                    'content': content,
-                    'format': output_format,
-                    'metadata': {'method': 'selectolax'},
-                    'error': None
-                }
+                content = body.text(separator=' ', strip=True) if body else ''
+                return {'success': True, 'content': content, 'format': output_format, 'metadata': {'method': 'selectolax'}, 'error': None}
         except Exception:
-            pass  # Fall through to Tier 2
-
-        # Tier 2: html_text_fast for 'text' output
+            pass
         if output_format == 'text' and HTML_TEXT_FAST_AVAILABLE:
             try:
-                content = html_to_text_fast(html)  # type: ignore[operator]
-                return {
-                    'success': True,
-                    'content': content,
-                    'format': output_format,
-                    'metadata': {'method': 'html_text_fast'},
-                    'error': None
-                }
+                content = html_to_text_fast(html)
+                return {'success': True, 'content': content, 'format': output_format, 'metadata': {'method': 'html_text_fast'}, 'error': None}
             except Exception as e:
-                logger.warning("html_to_text_fast failed, falling back to bs4: %s", e)
-                # fall through to bs4
-
-        # Tier 3: bs4 html.parser fallback
+                logger.warning('html_to_text_fast failed, falling back to bs4: %s', e)
         try:
             from bs4 import BeautifulSoup
-
             soup = BeautifulSoup(html, 'html.parser')
-
-            # Remove unwanted elements
             for tag in soup(['script', 'style', 'nav', 'footer', 'header', 'aside']):
                 tag.decompose()
-
             if output_format == 'text':
                 content = soup.get_text(separator=' ', strip=True)
             elif output_format == 'markdown':
@@ -474,34 +323,14 @@ class UniversalValidationCoordinator(UniversalCoordinator):
                 content = '\n\n'.join(lines_out)
             else:
                 content = soup.get_text(separator=' ', strip=True)
-
-            return {
-                'success': True,
-                'content': content,
-                'format': output_format,
-                'metadata': {'method': 'bs4_html_parser_fallback'},
-                'error': None
-            }
-
+            return {'success': True, 'content': content, 'format': output_format, 'metadata': {'method': 'bs4_html_parser_fallback'}, 'error': None}
         except ImportError:
-            # Tier 4: Ultimate regex fallback
             import re
-            text = re.sub(r'<[^>]+>', ' ', html)
-            text = re.sub(r'\s+', ' ', text).strip()
+            text = re.sub('<[^>]+>', ' ', html)
+            text = re.sub('\\s+', ' ', text).strip()
+            return {'success': True, 'content': text, 'format': output_format, 'metadata': {'method': 'regex_fallback'}, 'error': None}
 
-            return {
-                'success': True,
-                'content': text,
-                'format': output_format,
-                'metadata': {'method': 'regex_fallback'},
-                'error': None
-            }
-
-    async def batch_clean_html(
-        self,
-        html_list: list[str],
-        output_format: str = "markdown"
-    ) -> list[dict[str, Any]]:
+    async def batch_clean_html(self, html_list: list[str], output_format: str='markdown') -> list[dict[str, Any]]:
         """
         Clean multiple HTML documents.
 
@@ -518,32 +347,11 @@ class UniversalValidationCoordinator(UniversalCoordinator):
             results.append(result)
         return results
 
-    # ========================================================================
-    # Statistics
-    # ========================================================================
-
     def get_validation_stats(self) -> dict[str, Any]:
         """Get validation statistics."""
-        return {
-            'validations_performed': self._validations_performed,
-            'cleanings_performed': self._cleanings_performed,
-            'validator_available': self._validator_available,
-            'cleaner_available': self._cleaner_available,
-            'custom_validators': len(self._custom_validators)
-        }
+        return {'validations_performed': self._validations_performed, 'cleanings_performed': self._cleanings_performed, 'validator_available': self._validator_available, 'cleaner_available': self._cleaner_available, 'custom_validators': len(self._custom_validators)}
 
     def _get_feature_list(self) -> list[str]:
         """Report available features."""
-        features = [
-            "Email validation (RFC 5321)",
-            "URL validation with scheme checking",
-            "JSON schema validation",
-            "Custom validator support",
-            "HTML to Markdown conversion",
-            "HTML to JSON extraction",
-            "Plain text extraction",
-            "MLX-powered cleaning (if available)",
-            "BeautifulSoup fallback",
-            "Batch processing support"
-        ]
+        features = ['Email validation (RFC 5321)', 'URL validation with scheme checking', 'JSON schema validation', 'Custom validator support', 'HTML to Markdown conversion', 'HTML to JSON extraction', 'Plain text extraction', 'MLX-powered cleaning (if available)', 'BeautifulSoup fallback', 'Batch processing support']
         return features

@@ -23,6 +23,7 @@ __all__ = [
     "get_pattern_matcher",
     "configure_patterns",
     "match_text",
+    "match_text_batch",
     "reset_pattern_matcher",
     "configure_default_bootstrap_patterns_if_empty",
     "get_default_bootstrap_patterns",
@@ -938,6 +939,79 @@ def match_text(
     # Sort by start offset
     hits.sort(key=lambda h: h.start)
     return hits
+
+
+def match_text_batch(
+    texts: list[str], *, boundary_policy: str = "none"
+) -> list[list[PatternHit]]:
+    """Batch pattern matching — rayon parallel across texts, single GIL acquisition.
+
+    Issue #4: Replaces N serial match_text() calls with one batch call.
+    Uses Rust AhoCorasickMatcher.scan_batch() when available (rayon parallel,
+    single GIL acquisition). Falls back to serial Python loop for small batches.
+
+    Args:
+        texts: List of input strings to search.
+        boundary_policy: "none" or "word" (passed to per-text post-filter).
+
+    Returns:
+        List of hit lists, one per input text in same order.
+        Empty texts return empty list for that text.
+
+    M1 8GB: Rust scan_batch uses mixed_pool (adaptive 1-2 threads).
+    Python fallback uses serial loop (same as calling match_text N times).
+    """
+    if not texts:
+        return []
+
+    # Empty registry: return empty hits for all texts
+    if not _matcher_state._registry_snapshot:
+        return [[] for _ in texts]
+
+    # Ensure bootstrap applied
+    if not _matcher_state._bootstrap_applied:
+        configure_default_bootstrap_patterns_if_empty()
+
+    # Lazy build
+    if _matcher_state._dirty:
+        _build_automaton()
+
+    # Check Rust batch path
+    rust_aco_enabled = (
+        _RUST_ACO_AVAILABLE
+        and _matcher_state._rust_aco is not None
+        and _matcher_state._rust_aco is not _RUST_ACO_DISABLED
+    )
+
+    if rust_aco_enabled and len(texts) >= 4:
+        # Rust batch path — single GIL acquisition, rayon parallel scan
+        rust_aco_obj = cast(AhoCorasickMatcher, _matcher_state._rust_aco)
+        # scan_batch returns List<Vec<(start, end, pattern_str)>> — one vec per text
+        raw_results: list[list[tuple[int, int, str]]] = rust_aco_obj.scan_batch(texts)
+
+        results: list[list[PatternHit]] = []
+        for _text_idx, (text, raw_hits) in enumerate(zip(texts, raw_results)):
+            hits: list[PatternHit] = []
+            for r_start, r_end, matched_str in raw_hits:
+                if boundary_policy == "word":
+                    before_ok = r_start == 0 or not text[r_start - 1].isalnum()
+                    after_ok = r_end >= len(text) or not text[r_end].isalnum()
+                    if not (before_ok and after_ok):
+                        continue
+                label = _PATTERN_LABEL_INDEX.get(matched_str)
+                hits.append(PatternHit(
+                    pattern=sys.intern(matched_str),
+                    start=r_start,
+                    end=r_end,
+                    value=text[r_start:r_end],
+                    label=sys.intern(label) if label else None,
+                ))
+            hits.sort(key=lambda h: h.start)
+            results.append(hits)
+        return results
+
+    # Python fallback — serial per-text (same as original match_text loop)
+    return [match_text(t, boundary_policy=boundary_policy) for t in texts]
 
 
 def reset_pattern_matcher() -> None:

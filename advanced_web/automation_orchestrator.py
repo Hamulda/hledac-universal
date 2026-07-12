@@ -7,17 +7,11 @@ Interface expected by web_intelligence.py:
 
 Graceful degradation: web_intelligence.py already handles None gracefully.
 """
-
-
-
 import asyncio
 import logging
 from typing import Any
-
 from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
-
 logger = logging.getLogger(__name__)
-
 
 class AutomationOrchestrator:
     """
@@ -30,12 +24,13 @@ class AutomationOrchestrator:
     Actual automation methods are not called anywhere in web_intelligence.py
     based on analysis — this is a graceful degradation stub.
     """
+    __slots__ = tuple(('_active_tasks', '_initialized', 'config'))
 
-    def __init__(self, config: dict[str, Any] | None = None):
+    def __init__(self, config: dict[str, Any] | None=None):
         self.config = config or {}
         self._initialized = True
         self._active_tasks: set[asyncio.Task] = set()
-        logger.debug("AutomationOrchestrator initialized")
+        logger.debug('AutomationOrchestrator initialized')
 
     async def cleanup(self) -> None:
         """
@@ -43,14 +38,11 @@ class AutomationOrchestrator:
 
         Called from web_intelligence.py async def cleanup().
         """
-        logger.debug("AutomationOrchestrator cleanup")
-
-        # Cancel any pending tasks
+        logger.debug('AutomationOrchestrator cleanup')
         if self._active_tasks:
             for task in self._active_tasks:
                 if not task.done():
                     task.cancel()
-            await safe_gather_fire_and_forget(*self._active_tasks, label="automation_orchestrator:51")
+            await safe_gather_fire_and_forget(*self._active_tasks, label='automation_orchestrator:51')
             self._active_tasks.clear()
-
         self._initialized = False

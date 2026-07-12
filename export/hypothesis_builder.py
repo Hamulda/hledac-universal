@@ -17,33 +17,17 @@ M1 8GB constraints:
 - RAM check < 70% before running
 - All processing bounded and fail-soft
 """
-
-
-
 import logging
 import os
 import time
 from dataclasses import dataclass
 from datetime import UTC
 from typing import Any
-
 logger = logging.getLogger(__name__)
+HYPOTHESIS_ENABLED = os.environ.get('HLEDAC_ENABLE_HYPOTHESIS', '1') == '1'
+RAM_THRESHOLD = 0.7
 
-# =============================================================================
-# Feature gate
-# =============================================================================
-
-HYPOTHESIS_ENABLED = os.environ.get("HLEDAC_ENABLE_HYPOTHESIS", "1") == "1"
-
-# RAM threshold for M1 safety
-RAM_THRESHOLD = 0.70
-
-
-# =============================================================================
-# Data classes
-# =============================================================================
-
-@dataclass
+@dataclass(True)
 class HypothesisResult:
     """Result of hypothesis generation run."""
     enabled: bool
@@ -54,11 +38,6 @@ class HypothesisResult:
     execution_time_s: float
     stix_bundle_path: str | None = None
     error: str | None = None
-
-
-# =============================================================================
-# HypothesisBuilder
-# =============================================================================
 
 class HypothesisBuilder:
     """
@@ -75,8 +54,9 @@ class HypothesisBuilder:
     - RAM check before execution
     - fail-soft throughout
     """
+    __slots__ = tuple(('_engine', 'output_dir'))
 
-    def __init__(self, output_dir: str | None = None) -> None:
+    def __init__(self, output_dir: str | None=None) -> None:
         self.output_dir = output_dir
         self._engine: Any | None = None
 
@@ -85,12 +65,7 @@ class HypothesisBuilder:
         """Lazy load HypothesisEngine from brain."""
         if self._engine is None:
             from brain.research_hypothesis_engine import HypothesisEngine
-
-            self._engine = HypothesisEngine(
-                max_hypotheses=200,
-                enable_adversarial_verification=False,  # Causal reasoning only
-                use_dempster_shafer=False,  # Causal reasoning only
-            )
+            self._engine = HypothesisEngine(max_hypotheses=200, enable_adversarial_verification=False, use_dempster_shafer=False)
         return self._engine
 
     def _check_ram(self) -> bool:
@@ -102,12 +77,7 @@ class HypothesisBuilder:
         except ImportError:
             return True
 
-    async def run_hypothesis_generation(
-        self,
-        findings: list[Any],
-        sprint_id: str = "",
-        output_dir: str | None = None,
-    ) -> HypothesisResult:
+    async def run_hypothesis_generation(self, findings: list[Any], sprint_id: str='', output_dir: str | None=None) -> HypothesisResult:
         """
         Run hypothesis generation on findings using brain/research_hypothesis_engine.py.
 
@@ -120,152 +90,60 @@ class HypothesisBuilder:
             HypothesisResult with execution metrics
         """
         start_time = time.time()
-
         if not HYPOTHESIS_ENABLED:
-            return HypothesisResult(
-                enabled=False,
-                hypotheses_generated=0,
-                entities_extracted=0,
-                temporal_sequences=0,
-                anomalies_detected=0,
-                execution_time_s=time.time() - start_time,
-                error="Hypothesis generation disabled (HLEDAC_ENABLE_HYPOTHESIS!=1)",
-            )
-
+            return HypothesisResult(enabled=False, hypotheses_generated=0, entities_extracted=0, temporal_sequences=0, anomalies_detected=0, execution_time_s=time.time() - start_time, error='Hypothesis generation disabled (HLEDAC_ENABLE_HYPOTHESIS!=1)')
         if not self._check_ram():
-            return HypothesisResult(
-                enabled=True,
-                hypotheses_generated=0,
-                entities_extracted=0,
-                temporal_sequences=0,
-                anomalies_detected=0,
-                execution_time_s=time.time() - start_time,
-                error="RAM usage above threshold (70%), skipping",
-            )
-
+            return HypothesisResult(enabled=True, hypotheses_generated=0, entities_extracted=0, temporal_sequences=0, anomalies_detected=0, execution_time_s=time.time() - start_time, error='RAM usage above threshold (70%), skipping')
         try:
-            logger.info(f"HypothesisBuilder: starting for sprint {sprint_id} with {len(findings)} findings")
-
-            # Generate causal hypotheses using brain/research_hypothesis_engine.py
+            logger.info(f'HypothesisBuilder: starting for sprint {sprint_id} with {len(findings)} findings')
             hypotheses = await self.engine.generate_causal_hypotheses(findings)
-
-            # Detect anomalies
             anomalies = self.engine.detect_causal_anomalies(findings)
-
-            # Get metrics
             entities_extracted = len(self.engine._causal_entities)
             temporal_sequences = len(self.engine._temporal_sequences)
-
-            # Export STIX bundle if output_dir provided
             stix_path = None
             if output_dir and output_dir and hypotheses:
                 stix_bundle = self._to_stix_bundle(hypotheses)
                 import msgspec.json as _json
                 import os
                 os.makedirs(output_dir, exist_ok=True)
-                stix_path = os.path.join(output_dir, f"hypotheses_{sprint_id}.json")
-                with open(stix_path, "w") as f:
-                    f.write(_json.encode(stix_bundle, indent=2).decode("utf-8"))
-                logger.info(f"HypothesisBuilder: exported STIX bundle to {stix_path}")
-
+                stix_path = os.path.join(output_dir, f'hypotheses_{sprint_id}.json')
+                with open(stix_path, 'w') as f:
+                    f.write(_json.encode(stix_bundle, indent=2).decode('utf-8'))
+                logger.info(f'HypothesisBuilder: exported STIX bundle to {stix_path}')
             execution_time = time.time() - start_time
-            logger.info(
-                f"HypothesisBuilder: completed in {execution_time:.2f}s - "
-                f"{len(hypotheses)} hypotheses, {entities_extracted} entities, "
-                f"{temporal_sequences} sequences, {len(anomalies)} anomalies"
-            )
-
-            return HypothesisResult(
-                enabled=True,
-                hypotheses_generated=len(hypotheses),
-                entities_extracted=entities_extracted,
-                temporal_sequences=temporal_sequences,
-                anomalies_detected=len(anomalies),
-                execution_time_s=execution_time,
-                stix_bundle_path=stix_path,
-            )
-
+            logger.info(f'HypothesisBuilder: completed in {execution_time:.2f}s - {len(hypotheses)} hypotheses, {entities_extracted} entities, {temporal_sequences} sequences, {len(anomalies)} anomalies')
+            return HypothesisResult(enabled=True, hypotheses_generated=len(hypotheses), entities_extracted=entities_extracted, temporal_sequences=temporal_sequences, anomalies_detected=len(anomalies), execution_time_s=execution_time, stix_bundle_path=stix_path)
         except Exception as e:
-            logger.error(f"HypothesisBuilder: failed with {e}")
-            return HypothesisResult(
-                enabled=True,
-                hypotheses_generated=0,
-                entities_extracted=0,
-                temporal_sequences=0,
-                anomalies_detected=0,
-                execution_time_s=time.time() - start_time,
-                error=str(e),
-            )
+            logger.error(f'HypothesisBuilder: failed with {e}')
+            return HypothesisResult(enabled=True, hypotheses_generated=0, entities_extracted=0, temporal_sequences=0, anomalies_detected=0, execution_time_s=time.time() - start_time, error=str(e))
 
     def _to_stix_bundle(self, hypotheses: list[Any]) -> dict[str, Any]:
         """Convert hypotheses to STIX 2.1 relationship bundle."""
         import uuid
         from datetime import datetime
-
-        bundle_id = f"bundle--{uuid.uuid4()}"
+        bundle_id = f'bundle--{uuid.uuid4()}'
         objects = []
-
-        # Add identities for entities
         entity_ids: set[str] = set()
         for hyp in hypotheses:
             entity_ids.add(hyp.source_entity)
             entity_ids.add(hyp.target_entity)
-
         for entity_id in entity_ids:
-            identity_id = f"identity--{abs(hash(entity_id)) % (2**32)}"
-            parts = entity_id.split("_", 1)
-            entity_type = parts[0] if len(parts) > 1 else "unknown"
-            objects.append({
-                "type": "identity",
-                "spec_version": "2.1",
-                "id": identity_id,
-                "created": datetime.now(UTC).isoformat(),
-                "modified": datetime.now(UTC).isoformat(),
-                "name": entity_id,
-                "identity_class": entity_type,
-            })
-
-        # Add relationships for hypotheses
-        rel_type_map = {
-            "causal": "causes",
-            "correlative": "related-to",
-            "temporal": "preceded-by",
-        }
-
+            identity_id = f'identity--{abs(hash(entity_id)) % 2 ** 32}'
+            parts = entity_id.split('_', 1)
+            entity_type = parts[0] if len(parts) > 1 else 'unknown'
+            objects.append({'type': 'identity', 'spec_version': '2.1', 'id': identity_id, 'created': datetime.now(UTC).isoformat(), 'modified': datetime.now(UTC).isoformat(), 'name': entity_id, 'identity_class': entity_type})
+        rel_type_map = {'causal': 'causes', 'correlative': 'related-to', 'temporal': 'preceded-by'}
         for hyp in hypotheses:
-            rel_id = f"relationship--{uuid.uuid4()}"
-            stix_rel_type = rel_type_map.get(hyp.hypothesis_type, "related-to")
-
-            objects.append({
-                "type": "relationship",
-                "spec_version": "2.1",
-                "id": rel_id,
-                "created": datetime.now(UTC).isoformat(),
-                "modified": datetime.now(UTC).isoformat(),
-                "source_ref": f"identity--{abs(hash(hyp.source_entity)) % (2**32)}",
-                "target_ref": f"identity--{abs(hash(hyp.target_entity)) % (2**32)}",
-                "relationship_type": stix_rel_type,
-                "description": hyp.statement,
-                "confidence": int(hyp.confidence * 100),
-            })
-
-        return {
-            "type": "bundle",
-            "id": bundle_id,
-            "spec_version": "2.1",
-            "objects": objects,
-        }
+            rel_id = f'relationship--{uuid.uuid4()}'
+            stix_rel_type = rel_type_map.get(hyp.hypothesis_type, 'related-to')
+            objects.append({'type': 'relationship', 'spec_version': '2.1', 'id': rel_id, 'created': datetime.now(UTC).isoformat(), 'modified': datetime.now(UTC).isoformat(), 'source_ref': f'identity--{abs(hash(hyp.source_entity)) % 2 ** 32}', 'target_ref': f'identity--{abs(hash(hyp.target_entity)) % 2 ** 32}', 'relationship_type': stix_rel_type, 'description': hyp.statement, 'confidence': int(hyp.confidence * 100)})
+        return {'type': 'bundle', 'id': bundle_id, 'spec_version': '2.1', 'objects': objects}
 
     def reset(self) -> None:
         """Reset builder state."""
         self._engine = None
 
-
-async def run_hypothesis_if_enabled(
-    findings: list[Any],
-    sprint_id: str = "",
-    output_dir: str | None = None,
-) -> HypothesisResult:
+async def run_hypothesis_if_enabled(findings: list[Any], sprint_id: str='', output_dir: str | None=None) -> HypothesisResult:
     """
     Convenience function to run hypothesis generation if enabled.
 
@@ -279,12 +157,4 @@ async def run_hypothesis_if_enabled(
     """
     builder = HypothesisBuilder(output_dir=output_dir)
     return await builder.run_hypothesis_generation(findings, sprint_id, output_dir)
-
-
-__all__ = [
-    "HypothesisBuilder",
-    "HypothesisResult",
-    "run_hypothesis_if_enabled",
-    "HYPOTHESIS_ENABLED",
-    "RAM_THRESHOLD",
-]
+__all__ = ['HypothesisBuilder', 'HypothesisResult', 'run_hypothesis_if_enabled', 'HYPOTHESIS_ENABLED', 'RAM_THRESHOLD']

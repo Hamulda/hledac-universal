@@ -13,42 +13,31 @@ INVARIANTS:
 - Fail-safe: __all__ lists every exported name; unknown names raise
   AttributeError.
 """
-
-
 import time
 from dataclasses import dataclass, field
 import msgspec
 from typing import Any
-
-MAX_ENTITIES: int = 5_000
-MAX_FINDINGS: int = 5_000
+MAX_ENTITIES: int = 5000
+MAX_FINDINGS: int = 5000
 MAX_HYPOTHESES: int = 500
+_TYPE_MAP: dict[str, str] = {'ipv4': 'ip', 'ipv6': 'ip'}
 
-# Normalize IOC type to entity type (test expects "ip" not "ipv4")
-_TYPE_MAP: dict[str, str] = {
-    "ipv4": "ip",
-    "ipv6": "ip",
-}
-
-
-@dataclass
+@dataclass(True)
 class Entity:
     """Single entity in the causal graph."""
     entity_id: str
     entity_type: str
-    value: str = ""
+    value: str = ''
     attributes: dict[str, Any] = field(default_factory=dict)
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class EntityCluster:
     """Group of related entities (e.g. all hosts in the same ASN)."""
     cluster_id: str
     entities: list[Entity] = field(default_factory=list)
     cohesion: float = 0.0
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class TemporalSequence:
     """Ordered sequence of events with timestamps."""
     sequence_id: str
@@ -64,43 +53,40 @@ class TemporalSequence:
         """Timestamps in order."""
         return [ts for ts, _ in self.events]
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class AnomalySignal:
     """Flag raised when a cluster deviates from baseline behaviour."""
     signal_id: str
     cluster_id: str
     score: float
-    description: str = ""
-    anomaly_type: str = ""
+    description: str = ''
+    anomaly_type: str = ''
     entities: tuple[str, ...] = ()
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CausalHypothesis:
     """Hypothesis linking (cluster, event) -> downstream effect."""
     hypothesis_id: str
     cause_cluster_id: str
     effect_cluster_id: str
     confidence: float
-    rationale: str = ""
-    source_entity: str = ""
-    target_entity: str = ""
+    rationale: str = ''
+    source_entity: str = ''
+    target_entity: str = ''
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Contradiction:
     """Two hypotheses that cannot both be true."""
     contradiction_id: str
-    a: str  # hypothesis_id
-    b: str  # hypothesis_id
-    note: str = ""
-
+    a: str
+    b: str
+    note: str = ''
 
 class CausalEngine:
     """Minimal in-memory engine — no I/O, no MLX."""
+    __slots__ = tuple(('__sequences', '_entities', 'max_entities'))
 
-    def __init__(self, max_entities: int = MAX_ENTITIES) -> None:
+    def __init__(self, max_entities: int=MAX_ENTITIES) -> None:
         self.max_entities = max_entities
         self._entities: dict[str, Entity] = {}
         self.__sequences: list[list[str]] = []
@@ -118,45 +104,31 @@ class CausalEngine:
     def extract_entities(self, findings: list[Any]) -> list[Entity]:
         """Extrahuje entity z findings pro grafovou analýzu."""
         from brain.ner_engine import _ioc_type_to_entity_type, extract_iocs_from_text
-
         entities: list[Entity] = []
         seen: dict[str, Entity] = {}
-
         for finding in findings:
-            payload = getattr(finding, "payload_text", "") or ""
+            payload = getattr(finding, 'payload_text', '') or ''
             if not payload:
                 continue
-
             iocs = extract_iocs_from_text(payload)
             for ioc in iocs:
-                raw_type = ioc.get("ioc_type", "")
+                raw_type = ioc.get('ioc_type', '')
                 entity_type = _TYPE_MAP.get(raw_type) or _ioc_type_to_entity_type(raw_type)
-                value = ioc["value"]
-                entity_id = f"{entity_type}:{value}"
+                value = ioc['value']
+                entity_id = f'{entity_type}:{value}'
                 if entity_id not in seen and len(entities) < self.max_entities:
-                    entity = Entity(
-                        entity_id=entity_id,
-                        entity_type=entity_type,
-                        value=value,
-                        attributes={"confidence": ioc.get("confidence", 0.5)},
-                    )
+                    entity = Entity(entity_id=entity_id, entity_type=entity_type, value=value, attributes={'confidence': ioc.get('confidence', 0.5)})
                     seen[entity_id] = entity
                     entities.append(entity)
-                    # Also populate engine's internal entity store
                     self._entities[entity_id] = entity
-
         return entities
 
     def build_temporal_sequences(self) -> list[TemporalSequence]:
         """Sestaví časové sekvence z extrahovaných entit."""
-        # Group entities by type for simple temporal ordering
         if not self._entities:
             return []
         ts = time.time()
-        seq = TemporalSequence(
-            sequence_id="seq_0",
-            events=[(ts, e.entity_id) for e in self.entities()],
-        )
+        seq = TemporalSequence(sequence_id='seq_0', events=[(ts, e.entity_id) for e in self.entities()])
         return [seq]
 
     def compute_co_occurrence_matrix(self) -> dict[str, dict[str, int]] | None:
@@ -170,15 +142,7 @@ class CausalEngine:
         entities = self.entities()
         if len(entities) < 2:
             return []
-        # Simple pairwise hypothesis
-        hyp = CausalHypothesis(
-            hypothesis_id="hyp_0",
-            cause_cluster_id=entities[0].entity_id,
-            effect_cluster_id=entities[1].entity_id,
-            confidence=0.5,
-            source_entity=entities[0].entity_id,
-            target_entity=entities[1].entity_id,
-        )
+        hyp = CausalHypothesis(hypothesis_id='hyp_0', cause_cluster_id=entities[0].entity_id, effect_cluster_id=entities[1].entity_id, confidence=0.5, source_entity=entities[0].entity_id, target_entity=entities[1].entity_id)
         return [hyp]
 
     async def generate_hypotheses(self, findings: list[Any]) -> list[CausalHypothesis]:
@@ -197,17 +161,4 @@ class CausalEngine:
     @property
     def _sequences(self) -> list[list[str]]:
         return self.__sequences
-
-
-__all__ = [
-    "CausalEngine",
-    "Entity",
-    "EntityCluster",
-    "TemporalSequence",
-    "AnomalySignal",
-    "CausalHypothesis",
-    "Contradiction",
-    "MAX_ENTITIES",
-    "MAX_FINDINGS",
-    "MAX_HYPOTHESES",
-]
+__all__ = ['CausalEngine', 'Entity', 'EntityCluster', 'TemporalSequence', 'AnomalySignal', 'CausalHypothesis', 'Contradiction', 'MAX_ENTITIES', 'MAX_FINDINGS', 'MAX_HYPOTHESES']

@@ -10,8 +10,6 @@ Funkce:
 
 Migrated from networkx to native Python DAG (Issue #28).
 """
-
-
 import asyncio
 import inspect
 import logging
@@ -21,30 +19,25 @@ from dataclasses import dataclass, field
 import msgspec
 from enum import Enum
 from typing import Any
-
 from .async_helpers import safe_gather_ok
-
 logger = logging.getLogger(__name__)
-
 
 class TaskType(Enum):
     """Typy úkolů"""
-    NORMAL = "normal"
-    CONDITIONAL = "conditional"  # Podmíněný
-    LOOP = "loop"               # Smyčka
-    PARALLEL = "parallel"       # Paralelní
-
+    NORMAL = 'normal'
+    CONDITIONAL = 'conditional'
+    LOOP = 'loop'
+    PARALLEL = 'parallel'
 
 class TaskStatus(Enum):
     """Stavy úkolů"""
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    SKIPPED = "skipped"
+    PENDING = 'pending'
+    RUNNING = 'running'
+    COMPLETED = 'completed'
+    FAILED = 'failed'
+    SKIPPED = 'skipped'
 
-
-@dataclass
+@dataclass(True)
 class Task:
     """Úkol ve workflow"""
     id: str
@@ -52,13 +45,11 @@ class Task:
     task_type: TaskType = TaskType.NORMAL
     func: Callable | None = None
     params: dict[str, Any] = field(default_factory=dict)
-    condition: Callable | None = None  # Pro CONDITIONAL
-    loop_condition: Callable | None = None  # Pro LOOP
+    condition: Callable | None = None
+    loop_condition: Callable | None = None
     max_retries: int = 3
     retry_delay: float = 1.0
     dependencies: list[str] = field(default_factory=list)
-
-    # Runtime state
     status: TaskStatus = TaskStatus.PENDING
     result: Any = None
     error: str | None = None
@@ -70,27 +61,20 @@ class Task:
         """Vykonat úkol"""
         if self.func is None:
             return None
-
         self.start_time = time.time()
         self.status = TaskStatus.RUNNING
-
         try:
-            # Check condition for conditional tasks
             if self.task_type == TaskType.CONDITIONAL and self.condition:
                 if not self.condition(context):
                     self.status = TaskStatus.SKIPPED
                     return None
-
-            # Execute
             if inspect.iscoroutinefunction(self.func):
                 result = await self.func(**self.params, context=context)
             else:
                 result = self.func(**self.params, context=context)
-
             self.result = result
             self.status = TaskStatus.COMPLETED
             return result
-
         except Exception as e:
             self.error = str(e)
             self.status = TaskStatus.FAILED
@@ -104,8 +88,7 @@ class Task:
             return self.end_time - self.start_time
         return None
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Workflow:
     """Workflow definice"""
     id: str
@@ -122,7 +105,6 @@ class Workflow:
         if task_id in self.tasks:
             self.tasks[task_id].dependencies.append(depends_on)
 
-
 class WorkflowEngine:
     """
     Engine pro DAG-based workflow execution.
@@ -134,8 +116,9 @@ class WorkflowEngine:
     - Retry s exponential backoff
     - Podmíněné a smyčkové úkoly
     """
+    __slots__ = tuple(('_execution_history', 'max_concurrency'))
 
-    def __init__(self, max_concurrency: int = 5):
+    def __init__(self, max_concurrency: int=5):
         self.max_concurrency = max_concurrency
         self._execution_history = []
 
@@ -150,25 +133,18 @@ class WorkflowEngine:
             True pokud validní
         """
         try:
-            # Vytvořit DAG
             dag = self._build_dag(workflow)
-
-            # Kontrolovat cykly
             if not self._is_dag(dag):
-                logger.error("Workflow contains cycles")
+                logger.error('Workflow contains cycles')
                 return False
-
-            # Kontrolovat existence závislostí
             for task in workflow.tasks.values():
                 for dep in task.dependencies:
                     if dep not in workflow.tasks:
-                        logger.error(f"Task {task.id} depends on non-existent task {dep}")
+                        logger.error(f'Task {task.id} depends on non-existent task {dep}')
                         return False
-
             return True
-
         except Exception as e:
-            logger.error(f"Validation failed: {e}")
+            logger.error(f'Validation failed: {e}')
             return False
 
     def _build_dag(self, workflow: Workflow) -> dict[str, list[str]]:
@@ -180,16 +156,12 @@ class WorkflowEngine:
 
     def _is_dag(self, dag: dict[str, list[str]]) -> bool:
         """Kontrolovat cykly pomocí Kahn's algorithm."""
-        # Vypočítat in-degree pro každý uzel
         in_degree: dict[str, int] = {n: 0 for n in dag}
         for node in dag:
             for dep in dag[node]:
                 in_degree[dep] += 1
-
-        # Přidat uzly které nikdo nedependuje
         queue = [n for n, d in in_degree.items() if d == 0]
         count = 0
-
         while queue:
             node = queue.pop(0)
             count += 1
@@ -197,8 +169,6 @@ class WorkflowEngine:
                 in_degree[dep] -= 1
                 if in_degree[dep] == 0:
                     queue.append(dep)
-
-        # Pokud jsme neprošli všemi uzly, máme cyklus
         return count == len(dag)
 
     def _topological_sort(self, dag: dict[str, list[str]]) -> list[str]:
@@ -207,10 +177,8 @@ class WorkflowEngine:
         for node in dag:
             for dep in dag[node]:
                 in_degree[dep] += 1
-
         queue = [n for n, d in in_degree.items() if d == 0]
         result = []
-
         while queue:
             node = queue.pop(0)
             result.append(node)
@@ -218,14 +186,9 @@ class WorkflowEngine:
                 in_degree[dep] -= 1
                 if in_degree[dep] == 0:
                     queue.append(dep)
-
         return result
 
-    async def execute(
-        self,
-        workflow: Workflow,
-        on_task_complete: Callable | None = None
-    ) -> dict[str, Any]:
+    async def execute(self, workflow: Workflow, on_task_complete: Callable | None=None) -> dict[str, Any]:
         """
         Vykonat workflow.
 
@@ -237,63 +200,37 @@ class WorkflowEngine:
             Výsledky všech úkolů
         """
         if not self.validate(workflow):
-            raise ValueError("Invalid workflow")
-
-        logger.info(f"Executing workflow: {workflow.name}")
-
-        # Topologické řazení
+            raise ValueError('Invalid workflow')
+        logger.info(f'Executing workflow: {workflow.name}')
         dag = self._build_dag(workflow)
         execution_order = self._topological_sort(dag)
-
-        logger.info(f"Execution order: {execution_order}")
-
-        # Seskupit podle úrovní (pro paralelní spuštění)
+        logger.info(f'Execution order: {execution_order}')
         levels = self._group_by_levels(dag, execution_order)
-
-        # Vykonat
         for level_idx, level_tasks in enumerate(levels):
-            logger.info(f"Executing level {level_idx + 1}/{len(levels)}: {len(level_tasks)} tasks")
-
-            # Paralelní vykonání v rámci úrovně
+            logger.info(f'Executing level {level_idx + 1}/{len(levels)}: {len(level_tasks)} tasks')
             semaphore = asyncio.Semaphore(self.max_concurrency)
 
             async def run_task(task_id: str) -> None:
-                async with semaphore:  # noqa: B023
+                async with semaphore:
                     try:
                         await self._execute_task_with_retry(workflow, task_id)
                     except Exception as e:
-                        # Store exception in task.error for caller visibility
                         workflow.tasks[task_id].error = str(e)
                         workflow.tasks[task_id].status = TaskStatus.FAILED
-                        logger.error(f"Task {task_id} permanently failed: {e}")
-
-            results = await safe_gather_ok(*[run_task(tid) for tid in level_tasks], label="workflow_engine:242")
-            # Log any unexpected exceptions (shouldn't happen since run_task catches them)
+                        logger.error(f'Task {task_id} permanently failed: {e}')
+            results = await safe_gather_ok(*[run_task(tid) for tid in level_tasks], label='workflow_engine:242')
             for tid, result in zip(level_tasks, results, strict=False):
                 if isinstance(result, Exception):
-                    logger.error(f"Task {tid} unexpected exception: {result}")
-
-            # Callback
+                    logger.error(f'Task {tid} unexpected exception: {result}')
             if on_task_complete:
                 for tid in level_tasks:
                     task = workflow.tasks[tid]
                     on_task_complete(task)
-
-        # Sběr výsledků
-        results = {
-            tid: task.result
-            for tid, task in workflow.tasks.items()
-        }
-
-        logger.info(f"Workflow completed: {workflow.name}")
-
+        results = {tid: task.result for tid, task in workflow.tasks.items()}
+        logger.info(f'Workflow completed: {workflow.name}')
         return results
 
-    def _group_by_levels(
-        self,
-        dag: dict[str, list[str]],
-        execution_order: list[str]
-    ) -> list[list[str]]:
+    def _group_by_levels(self, dag: dict[str, list[str]], execution_order: list[str]) -> list[list[str]]:
         """
         Seskupit úkoly podle úrovní.
 
@@ -302,95 +239,61 @@ class WorkflowEngine:
         """
         levels = []
         completed: set[str] = set()
-
         remaining = set(execution_order)
-
         while remaining:
-            # Najít úkoly s všechny závislostmi splněnými
             ready = []
             for task_id in remaining:
                 deps = set(dag.get(task_id, []))
                 if deps <= completed:
                     ready.append(task_id)
-
             if not ready:
-                raise ValueError("Cannot resolve dependencies")
-
+                raise ValueError('Cannot resolve dependencies')
             levels.append(ready)
             completed.update(ready)
             remaining -= set(ready)
-
         return levels
 
-    async def _execute_task_with_retry(
-        self,
-        workflow: Workflow,
-        task_id: str
-    ) -> None:
+    async def _execute_task_with_retry(self, workflow: Workflow, task_id: str) -> None:
         """Vykonat úkol s retry"""
         task = workflow.tasks[task_id]
-
         while task.attempts < task.max_retries:
             task.attempts += 1
-
             try:
-                # Substituovat parametry z kontextu
                 self._resolve_params(task.params, workflow.context)
-
-                # Vykonat
                 result = await task.execute(workflow.context)
-
-                # Uložit do kontextu
-                workflow.context[f"{task_id}_result"] = result
-
-                logger.info(f"Task {task_id} completed")
+                workflow.context[f'{task_id}_result'] = result
+                logger.info(f'Task {task_id} completed')
                 return
-
             except Exception as e:
-                logger.warning(f"Task {task_id} failed (attempt {task.attempts}): {e}")
-
+                logger.warning(f'Task {task_id} failed (attempt {task.attempts}): {e}')
                 if task.attempts >= task.max_retries:
-                    logger.error(f"Task {task_id} failed after {task.max_retries} attempts")
+                    logger.error(f'Task {task_id} failed after {task.max_retries} attempts')
                     raise
-
-                # Exponential backoff
-                delay = task.retry_delay * (2 ** (task.attempts - 1))
-                logger.info(f"Retrying in {delay}s...")
+                delay = task.retry_delay * 2 ** (task.attempts - 1)
+                logger.info(f'Retrying in {delay}s...')
                 await asyncio.sleep(delay)
 
-    def _resolve_params(
-        self,
-        params: dict[str, Any],
-        context: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _resolve_params(self, params: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         """
         Substituovat parametry z kontextu.
 
         Podporuje: "${task_id_result.field}"
         """
         resolved = {}
-
         for key, value in params.items():
-            if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
-                # Resolve reference
-                ref = value[2:-1]  # Remove ${ and }
-                parts = ref.split(".")
-
-                # Get from context
+            if isinstance(value, str) and value.startswith('${') and value.endswith('}'):
+                ref = value[2:-1]
+                parts = ref.split('.')
                 val = context.get(parts[0])
-
-                # Navigate nested
                 for part in parts[1:]:
                     if isinstance(val, dict):
                         val = val.get(part)
                     else:
                         val = None
                         break
-
                 resolved[key] = val
             else:
                 resolved[key] = value
-
         return resolved
 
     def get_execution_history(self) -> list[dict[str, Any]]:

@@ -5,19 +5,14 @@ WASM Sandbox - WebAssembly Secure Execution Environment
 Secure WASM execution with fuel limits, epoch interruption,
 and resource management.
 """
-
 import asyncio
 import logging
 import threading
 import time
 from pathlib import Path
 from typing import Any
-
 logger = logging.getLogger(__name__)
-
-# WASM runtime availability
 _WASMTIME_AVAILABLE = False
-
 try:
     import wasmtime
     from wasmtime import Config, Engine, Instance, Module, Store
@@ -30,7 +25,6 @@ except ImportError:
     Module = None
     Instance = None
 
-
 class WasmSandbox:
     """
     Secure WebAssembly execution sandbox.
@@ -41,19 +35,12 @@ class WasmSandbox:
         - Timeout enforcement
         - Resource limits
     """
+    DEFAULT_FUEL_LIMIT = 1000000
+    DEFAULT_EPOCH_DEADLINE = 30
+    DEFAULT_TIMEOUT = 60
+    __slots__ = tuple(('_config', '_engine', '_epoch_ticker', '_epoch_ticker_running', '_lock', '_running_instances', 'cache_dir', 'epoch_deadline', 'fuel_limit', 'timeout'))
 
-    # Default limits
-    DEFAULT_FUEL_LIMIT = 1_000_000  # 1M fuel units
-    DEFAULT_EPOCH_DEADLINE = 30  # 30 seconds
-    DEFAULT_TIMEOUT = 60  # 60 seconds
-
-    def __init__(
-        self,
-        fuel_limit: int = DEFAULT_FUEL_LIMIT,
-        epoch_deadline: float = DEFAULT_EPOCH_DEADLINE,
-        timeout: float = DEFAULT_TIMEOUT,
-        cache_dir: Path | None = None
-    ):
+    def __init__(self, fuel_limit: int=DEFAULT_FUEL_LIMIT, epoch_deadline: float=DEFAULT_EPOCH_DEADLINE, timeout: float=DEFAULT_TIMEOUT, cache_dir: Path | None=None):
         """
         Initialize WASM sandbox.
 
@@ -67,93 +54,57 @@ class WasmSandbox:
         self.epoch_deadline = epoch_deadline
         self.timeout = timeout
         self.cache_dir = cache_dir
-
-        # Engine and store
         self._engine: Engine | None = None
         self._config: Config | None = None
-
-        # Epoch ticker
         self._epoch_ticker: threading.Thread | None = None
         self._epoch_ticker_running = False
-
-        # Running instances
         self._running_instances: set[int] = set()
         self._lock = threading.Lock()
-
-        # Initialize if available
         if _WASMTIME_AVAILABLE:
             self._init_engine()
             self._start_epoch_ticker()
-
-        logger.info(
-            f"WasmSandbox initialized: fuel={fuel_limit}, "
-            f"epoch={epoch_deadline}s, timeout={timeout}s"
-        )
+        logger.info(f'WasmSandbox initialized: fuel={fuel_limit}, epoch={epoch_deadline}s, timeout={timeout}s')
 
     def _init_engine(self):
         """Initialize WASM engine with fuel and epoch settings."""
         if not _WASMTIME_AVAILABLE:
             return
-
         try:
-            # Configure fuel consumption
             self._config = Config()
             self._config.consume_fuel(True)
-
-            # Enable epoch interruption
             self._config.epoch_interruption(True)
-
-            # Create engine
             self._engine = Engine(self._config)
-
-            logger.debug("WASM engine initialized")
-
+            logger.debug('WASM engine initialized')
         except Exception as e:
-            logger.error(f"Failed to initialize WASM engine: {e}")
+            logger.error(f'Failed to initialize WASM engine: {e}')
             self._engine = None
 
     def _start_epoch_ticker(self):
         """Start background epoch ticker thread."""
         if not _WASMTIME_AVAILABLE:
             return
-
         self._epoch_ticker_running = True
-        self._epoch_ticker = threading.Thread(
-            target=self._epoch_ticker_loop,
-            daemon=True,
-            name="wasm-epoch-ticker"
-        )
+        self._epoch_ticker = threading.Thread(target=self._epoch_ticker_loop, daemon=True, name='wasm-epoch-ticker')
         self._epoch_ticker.start()
-        logger.debug("Epoch ticker started")
+        logger.debug('Epoch ticker started')
 
     def _epoch_ticker_loop(self):
         """Background loop that increments epoch."""
         epoch_counter = 0
-
         while self._epoch_ticker_running:
             try:
-                # Increment epoch for all stores
                 with self._lock:
-                    # In wasmtime, we would call store.set_epoch_deadline()
-                    # but this requires store access - simplified here
                     pass
-
                 epoch_counter += 1
-                time.sleep(self.epoch_deadline / 3)  # Tick 3 times per deadline
-
+                time.sleep(self.epoch_deadline / 3)
             except Exception as e:
-                logger.debug(f"Epoch ticker error: {e}")
+                logger.debug(f'Epoch ticker error: {e}')
 
     def is_available(self) -> bool:
         """Check if WASM runtime is available."""
         return _WASMTIME_AVAILABLE and self._engine is not None
 
-    async def run_async(
-        self,
-        wasm_bytes: bytes,
-        function_name: str = "run",
-        args: dict[str, Any] | None = None
-    ) -> dict[str, Any]:
+    async def run_async(self, wasm_bytes: bytes, function_name: str='run', args: dict[str, Any] | None=None) -> dict[str, Any]:
         """
         Run WASM module asynchronously with timeout and fuel limits.
 
@@ -166,132 +117,64 @@ class WasmSandbox:
             Dict with 'success', 'result', 'fuel_used', 'error'
         """
         if not self.is_available():
-            return {
-                'success': False,
-                'result': None,
-                'fuel_used': 0,
-                'error': 'WASM runtime not available'
-            }
-
-        result = {
-            'success': False,
-            'result': None,
-            'fuel_used': 0,
-            'error': None
-        }
-
+            return {'success': False, 'result': None, 'fuel_used': 0, 'error': 'WASM runtime not available'}
+        result = {'success': False, 'result': None, 'fuel_used': 0, 'error': None}
         try:
-            # Run in executor to not block event loop
             loop = asyncio.get_running_loop()
-            # asyncio.timeout (3.11+) preferred over wait_for — better cancellation semantics.
             async with asyncio.timeout(self.timeout):
-                result = await loop.run_in_executor(
-                    None,
-                    self._run_sync,
-                    wasm_bytes,
-                    function_name,
-                    args
-                )
-
+                result = await loop.run_in_executor(None, self._run_sync, wasm_bytes, function_name, args)
         except TimeoutError:
-            result['error'] = f"Execution timeout ({self.timeout}s)"
-            logger.warning(
-                "WASM execution timeout: %s (%.1fs)",
-                function_name, self.timeout,
-                extra={"fn": function_name, "timeout_s": self.timeout},
-            )
+            result['error'] = f'Execution timeout ({self.timeout}s)'
+            logger.warning('WASM execution timeout: %s (%.1fs)', function_name, self.timeout, extra={'fn': function_name, 'timeout_s': self.timeout})
         except Exception as e:
             result['error'] = str(e)
-            logger.error(f"WASM execution error: {e}")
-
+            logger.error(f'WASM execution error: {e}')
         return result
 
-    def _run_sync(
-        self,
-        wasm_bytes: bytes,
-        function_name: str,
-        args: dict[str, Any] | None
-    ) -> dict[str, Any]:
+    def _run_sync(self, wasm_bytes: bytes, function_name: str, args: dict[str, Any] | None) -> dict[str, Any]:
         """
         Synchronous WASM execution with fuel tracking.
 
         This runs in a thread pool to avoid blocking.
         """
         if not _WASMTIME_AVAILABLE:
-            return {
-                'success': False,
-                'result': None,
-                'fuel_used': 0,
-                'error': 'wasmtime not available'
-            }
-
-        result: dict[str, Any] = {
-            'success': False,
-            'result': None,
-            'fuel_used': 0,
-            'error': None
-        }
-
+            return {'success': False, 'result': None, 'fuel_used': 0, 'error': 'wasmtime not available'}
+        result: dict[str, Any] = {'success': False, 'result': None, 'fuel_used': 0, 'error': None}
         store = None
         instance = None
-
         try:
-            # Engine guard — is_available() already verified this, narrow for type checker.
-            assert self._engine is not None, "Engine not initialized"
-
-            # Create store
+            assert self._engine is not None, 'Engine not initialized'
             store = Store(self._engine)
-
-            # Set fuel limit
             store.set_fuel(self.fuel_limit)
-
-            # Set epoch deadline (wasmtime v45+ requires int, not float)
             store.set_epoch_deadline(int(self.epoch_deadline))
-
-            # Add to running instances
             instance_id = id(store)
             with self._lock:
                 self._running_instances.add(instance_id)
-
-            # Load module
             module = Module(self._engine, wasm_bytes)
-
-            # Instantiate with imports
-            # wasmtime v45+ API: Instance(store, module, imports) — not (module, imports)
             instance = Instance(store, module, [])
-
-            # Get function
             if function_name in instance.exports(store):
                 func = instance.exports(store)[function_name]
-
-                # Call with arguments if provided
                 if args:
                     func(**args)
                 else:
                     func()
-
-                # Get fuel used
                 fuel_remaining = store.get_fuel()
                 result['fuel_used'] = self.fuel_limit - fuel_remaining
                 result['success'] = True
-                result['result'] = True  # Void function
-
+                result['result'] = True
             else:
                 result['error'] = f"Function '{function_name}' not found"
-
         except wasmtime.RuntimeError as e:
-            if "fuel" in str(e).lower():
-                result['error'] = "Fuel exhausted"
+            if 'fuel' in str(e).lower():
+                result['error'] = 'Fuel exhausted'
                 result['fuel_used'] = self.fuel_limit
             else:
-                result['error'] = f"Runtime error: {e}"
+                result['error'] = f'Runtime error: {e}'
         except Exception as e:
             result['error'] = str(e)
         finally:
-            # Remove from running instances
             with self._lock:
                 self._running_instances.discard(instance_id)
-
         return result
 
     def load_module(self, wasm_path: Path) -> bytes | None:
@@ -307,7 +190,7 @@ class WasmSandbox:
         try:
             return wasm_path.read_bytes()
         except Exception as e:
-            logger.error(f"Failed to load WASM module: {e}")
+            logger.error(f'Failed to load WASM module: {e}')
             return None
 
     def __aenter__(self):
@@ -320,31 +203,15 @@ class WasmSandbox:
 
     async def shutdown(self):
         """Shutdown the sandbox and cleanup resources."""
-        logger.info("Shutting down WASM sandbox")
-
-        # Stop epoch ticker
+        logger.info('Shutting down WASM sandbox')
         self._epoch_ticker_running = False
         if self._epoch_ticker:
             self._epoch_ticker.join(timeout=5)
-
-        # Note: Can't easily stop running instances
-        # They will complete or be interrupted by epoch
-
-        logger.info("WASM sandbox shutdown complete")
+        logger.info('WASM sandbox shutdown complete')
 
     def get_stats(self) -> dict[str, Any]:
         """Get sandbox statistics."""
-        return {
-            'available': self.is_available(),
-            'fuel_limit': self.fuel_limit,
-            'epoch_deadline': self.epoch_deadline,
-            'timeout': self.timeout,
-            'running_instances': len(self._running_instances),
-            'epoch_ticker_running': self._epoch_ticker_running
-        }
-
-
-# Alias for compatibility
+        return {'available': self.is_available(), 'fuel_limit': self.fuel_limit, 'epoch_deadline': self.epoch_deadline, 'timeout': self.timeout, 'running_instances': len(self._running_instances), 'epoch_ticker_running': self._epoch_ticker_running}
 Instance = None
 try:
     if _WASMTIME_AVAILABLE:

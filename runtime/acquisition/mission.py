@@ -17,6 +17,8 @@ GHOST_INVARIANTS:
 
 from enum import Enum
 
+from .profile import is_mission_profile as _is_mission_profile_ssot
+
 
 # ── Lane family map ─────────────────────────────────────────────────────────────────
 
@@ -91,10 +93,9 @@ class NonfeedMissionController:
 
         GHOST_INVARIANTS:
           - No network I/O, no model/MLX load
+        Delegated to SSOT: runtime.acquisition.profile.is_mission_profile
         """
-        if acquisition_profile is None:
-            return False
-        return acquisition_profile.startswith("nonfeed_diagnostic")
+        return _is_mission_profile_ssot(acquisition_profile)
 
     @staticmethod
     def get_required_families() -> tuple[str, ...]:

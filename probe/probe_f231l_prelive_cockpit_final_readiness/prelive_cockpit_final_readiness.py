@@ -15,7 +15,6 @@ Uses:
   - prelive_decision_gate (probe_f219f_prelive_decision_gate/prelive_decision.json)
   - prelive_artifact_pack (probe_f219i_prelive_artifact_pack/artifact_pack.json)
 """
-
 import argparse
 import json
 import os
@@ -28,7 +27,7 @@ _F231_BLOCKING_PROBES = ['probe_f231a_public_candidate_ledger', 'probe_f231b_ct_
 _CLEAN_SWAP_MAX_GIB = 2.0
 _DIAGNOSTIC_SWAP_MAX_GIB = 4.0
 
-@dataclass
+@dataclass(True)
 class ReadinessResult:
     verdict: str
     next_action: str
@@ -47,7 +46,7 @@ def load_optional_json(path: Path) -> dict | None:
     try:
         with open(path, encoding='utf-8') as f:
             return json.load(f)
-    except Exception:  # noqa: BLE001 — probe: file read errors expected in test context
+    except Exception:
         return None
 
 def extract_swap_from_decision(decision_data: dict) -> float:
@@ -64,7 +63,7 @@ def get_f231_missing(inventory_path: Path) -> tuple[bool, list[str]]:
         data = json.load(open(inventory_path))
         missing = data.get('missing', [])
         return (True, missing)
-    except Exception:  # noqa: BLE001 — probe: JSON decode errors expected in test context
+    except Exception:
         return (False, list(_F231_BLOCKING_PROBES))
 
 def check_live_allowed(decision_data: dict, artifact_pack: dict) -> tuple[str, list[str]]:

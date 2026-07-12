@@ -15,23 +15,16 @@ NOT AUTHORITY FOR:
   - Runtime fetch truth (FetchCoordinator._fetch_url())
   - Tor session pool management
 """
-
-
 import logging
 from dataclasses import dataclass
 import msgspec
 from enum import Enum, auto
 from typing import Any, cast
-
 from hledac.universal.utils.cache import PyCacheDict
-
 logger = logging.getLogger(__name__)
-
-# F3.2: PyCacheDict replaces lru_cache — bounded + TTL + thread-safe
 _extract_host_cache: PyCacheDict[str, str] = PyCacheDict(512, 300.0)
 _get_transport_cache: PyCacheDict[str, Transport] = PyCacheDict(512, 300.0)
 _get_transport_hint_cache: PyCacheDict[str, str] = PyCacheDict(512, 300.0)
-
 
 def _extract_host(url: str) -> str:
     """F3.2: Bounded TTL cache — PyCacheDict."""
@@ -40,25 +33,22 @@ def _extract_host(url: str) -> str:
         return cached
     try:
         from hledac.universal.fetching.public_fetcher import url_ops
-
         result = url_ops.extract_host(url)
         _extract_host_cache.set(url, result)
         return result
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
-    # Fallback: manual string parse (no urllib overhead in hot path)
     try:
-        netloc = url.split("://", 1)[1].split("/", 1)[0]
-        if "?" in netloc:
-            netloc = netloc.split("?", 1)[0]
-        if ":" in netloc:
-            netloc = netloc.split(":")[0]
+        netloc = url.split('://', 1)[1].split('/', 1)[0]
+        if '?' in netloc:
+            netloc = netloc.split('?', 1)[0]
+        if ':' in netloc:
+            netloc = netloc.split(':')[0]
         result = netloc.lower()
         _extract_host_cache.set(url, result)
         return result
     except Exception:
-        return ""
-
+        return ''
 
 class RouteDecision(Enum):
     """
@@ -81,7 +71,6 @@ class RouteDecision(Enum):
     TOR_OK = auto()
     CLEARNET = auto()
 
-
 class Transport(Enum):
     """
     Transport type enum — used by SourceTransportMap.
@@ -102,16 +91,7 @@ class Transport(Enum):
     FREENET = auto()
     INMEMORY = auto()
     GOPHER = auto()
-
-
-# B6: SourceTransportMap — mandatory onion routing, no DIRECT override
-_ONION_MAP: dict[str, Transport] = {
-    ".onion": Transport.TOR,       # mandatory — never override to DIRECT
-    ".i2p": Transport.I2P,         # I2P SAM/SOCKS proxy (port 7656/7654)
-    ".b32.i2p": Transport.I2P,    # base32 I2P addresses (e.g., v4.b32.i2p)
-    ".freenet": Transport.FREENET, # Freenet FProxy HTTP proxy
-}
-
+_ONION_MAP: dict[str, Transport] = {'.onion': Transport.TOR, '.i2p': Transport.I2P, '.b32.i2p': Transport.I2P, '.freenet': Transport.FREENET}
 
 class SourceTransportMap:
     """
@@ -130,14 +110,12 @@ class SourceTransportMap:
         """Return True if suffix MUST use Tor (e.g. .onion)."""
         return cls._map.get(suffix) is Transport.TOR
 
-
-@dataclass
+@dataclass(True)
 class TransportContext:
     """Runtime context for transport selection."""
     requires_anonymity: bool = False
-    risk_level: str = "medium"  # "low", "medium", "high"
-    allow_inmemory: bool = False  # Only for testing/internal bus
-
+    risk_level: str = 'medium'
+    allow_inmemory: bool = False
 
 class TransportResolver:
     """
@@ -167,6 +145,7 @@ class TransportResolver:
         2. FetchCoordinator._get_tor_session() pool is replaced by resolver-backed session
         3. NymTransport persistent session is established (currently start/stop per request)
     """
+    __slots__ = tuple(('_checked', '_nym_class', '_tor_available', '_tor_class'))
 
     def __init__(self):
         self._tor_class: type | None = None
@@ -178,27 +157,20 @@ class TransportResolver:
         """Lazy check for transport availability."""
         if self._checked:
             return
-
-        # Check Tor runtime availability (SOCKS port)
         self._tor_available = self._check_tor_available()
-        logger.debug(f"Tor runtime available: {self._tor_available}")
-
-        # Try to import Tor transport
+        logger.debug(f'Tor runtime available: {self._tor_available}')
         try:
             from .tor_transport import TorTransport
             self._tor_class = TorTransport
-            logger.debug("Tor transport importable")
+            logger.debug('Tor transport importable')
         except ImportError as e:
-            logger.debug(f"Tor transport unavailable: {e}")
-
-        # Try to import Nym transport
+            logger.debug(f'Tor transport unavailable: {e}')
         try:
             from .nym_transport import NymTransport
             self._nym_class = NymTransport
-            logger.debug("Nym transport available")
+            logger.debug('Nym transport available')
         except ImportError as e:
-            logger.debug(f"Nym transport unavailable: {e}")
-
+            logger.debug(f'Nym transport unavailable: {e}')
         self._checked = True
 
     def _check_tor_available(self) -> bool:
@@ -207,7 +179,7 @@ class TransportResolver:
         try:
             s = socket.socket()
             s.settimeout(2.0)
-            s.connect(("127.0.0.1", 9050))
+            s.connect(('127.0.0.1', 9050))
             s.close()
             return True
         except OSError:
@@ -231,7 +203,7 @@ class TransportResolver:
         try:
             s = socket.socket()
             s.settimeout(2.0)
-            s.connect(("127.0.0.1", 7654))
+            s.connect(('127.0.0.1', 7654))
             s.close()
             return True
         except OSError:
@@ -271,85 +243,43 @@ class TransportResolver:
         See class-level migration precondition.
         """
         self._check_transports()
-
-        # High anonymity requirement: prefer Nym > Tor
-        if context.requires_anonymity or context.risk_level == "high":
-            # Try Nym first (highest anonymity)
+        if context.requires_anonymity or context.risk_level == 'high':
             if self._nym_class:
                 try:
                     transport = self._nym_class()
                     await transport.start()
-                    logger.info("Using Nym transport for high anonymity")
+                    logger.info('Using Nym transport for high anonymity')
                     return transport
                 except Exception as e:
-                    logger.warning(f"Nym transport init failed: {e}")
-
-            # Fallback to Tor (only if runtime is available)
+                    logger.warning(f'Nym transport init failed: {e}')
             if self._tor_class and self.is_tor_available():
                 try:
                     transport = self._tor_class()
                     await transport.start()
-                    logger.info("Using Tor transport for anonymity (Nym unavailable)")
+                    logger.info('Using Tor transport for anonymity (Nym unavailable)')
                     return transport
                 except Exception as e:
-                    logger.warning(f"Tor transport init failed: {e}")
-
-            # If anonymity required but nothing available, log warning
-            logger.warning("Anonymity required but no anonymous transport available")
-
-        # Medium risk: try to use Tor/Nym if available, but don't require
-        if context.risk_level == "medium":
+                    logger.warning(f'Tor transport init failed: {e}')
+            logger.warning('Anonymity required but no anonymous transport available')
+        if context.risk_level == 'medium':
             if self._nym_class:
                 try:
                     transport = self._nym_class()
                     await transport.start()
-                    logger.info("Using Nym transport (medium risk)")
+                    logger.info('Using Nym transport (medium risk)')
                     return transport
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
-
             if self._tor_class and self.is_tor_available():
                 try:
                     transport = self._tor_class()
                     await transport.start()
-                    logger.info("Using Tor transport (medium risk)")
+                    logger.info('Using Tor transport (medium risk)')
                     return transport
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
-
-        # Low risk or fallback: InMemory removed — Issue 3.4
-        # allow_inmemory kept as no-op for API compat
-
-        # No transport available - return None, caller will handle
-        logger.warning("No transport available, returning None")
+        logger.warning('No transport available, returning None')
         return None
-
-
-# =============================================================================
-# Sprint 4A: Minimal Proxy-Aware Seam — Policy Gate Accessor
-# =============================================================================
-#
-# PURPOSE: Clean policy accessor for FetchCoordinator._fetch_url() entry point.
-#   Replaces hardcoded url.endswith() checks with explicit policy classification.
-#
-#   This is a SEAM, not a cutover:
-#     - Existing hardcoded logic in _fetch_url() stays as fallback truth
-#     - SourceTransportMap.get() provides the policy classification layer
-#     - No changes to actual transport execution (tor pool, darknet, curl)
-#
-#   RUNTIME TRUTH (Sprint 4A):
-#     - Policy truth: SourceTransportMap.get() — ACTIVE, fast dict lookup
-#     - Plain TCP surface: session_runtime.async_get_aiohttp_session() — separate
-#     - Proxy-aware surface: FetchCoordinator._get_tor_session() — separate pool
-#     - curl world: StealthCrawler/curl_cffi — separate TLS plane
-#     - Resolver.resolve(): DORMANT — requires lifecycle preconditions
-#
-#   ATTACH PATH (4B): SourceTransportMap.get() used as policy gate in
-#     FetchCoordinator._fetch_url() — replacing url.endswith() checks.
-#     Safe because: same boolean logic, no behavioral change.
-#
-# =============================================================================
-
 
 def get_transport_for_url(url: str) -> Transport:
     """F3.2: Bounded TTL cache — PyCacheDict."""
@@ -359,7 +289,6 @@ def get_transport_for_url(url: str) -> Transport:
     result = _get_transport_for_url_impl(url)
     _get_transport_cache.set(url, result)
     return result
-
 
 def _get_transport_for_url_impl(url: str) -> Transport:
     """
@@ -384,7 +313,6 @@ def _get_transport_for_url_impl(url: str) -> Transport:
         [4A-I3] No side effects — pure function, thread-safe
     """
     host = _extract_host(url)
-    # Check longer suffixes first (more specific)
     if host.endswith('.b32.i2p'):
         return Transport.I2P
     if host.endswith('.onion'):
@@ -393,16 +321,11 @@ def _get_transport_for_url_impl(url: str) -> Transport:
         return Transport.I2P
     if host.endswith('.freenet'):
         return Transport.FREENET
-    # Gopher protocol
     if url.startswith('gopher://'):
         return Transport.GOPHER
     return Transport.DIRECT
-
-
-# Issue #37: Bounded availability cache — 5s TTL to avoid hammering ports
 _I2P_AVAILABLE_CACHE_TTL: float = 5.0
-_i2p_available_cache: tuple[bool, float] | None = None  # (result, timestamp)
-
+_i2p_available_cache: tuple[bool, float] | None = None
 
 def _is_i2p_available_uncached() -> bool:
     """Probe I2P SOCKS port 7654 — internal uncached check."""
@@ -410,12 +333,11 @@ def _is_i2p_available_uncached() -> bool:
     try:
         s = socket.socket()
         s.settimeout(2.0)
-        s.connect(("127.0.0.1", 7654))
+        s.connect(('127.0.0.1', 7654))
         s.close()
         return True
     except OSError:
         return False
-
 
 def is_i2p_available() -> bool:
     """
@@ -438,7 +360,6 @@ def is_i2p_available() -> bool:
     _i2p_available_cache = (result, now)
     return result
 
-
 def get_route_decision(url: str) -> RouteDecision:
     """
     Issue #37: Strict fail-closed route decision combining suffix + runtime availability.
@@ -458,22 +379,17 @@ def get_route_decision(url: str) -> RouteDecision:
     if transport is Transport.I2P:
         return RouteDecision.I2P_OK if is_i2p_available() else RouteDecision.I2P_UNAVAILABLE
     if transport is Transport.TOR:
-        # Use cached Tor availability from resolver singleton
         resolver = _get_transport_resolver()
         return RouteDecision.TOR_OK if resolver.is_tor_available() else RouteDecision.TOR_UNAVAILABLE
     return RouteDecision.CLEARNET
+_resolver_instance: 'TransportResolver | None' = None
 
-
-_resolver_instance: "TransportResolver | None" = None
-
-
-def _get_transport_resolver() -> "TransportResolver":
+def _get_transport_resolver() -> 'TransportResolver':
     """Get or create the module-level TransportResolver singleton."""
     global _resolver_instance
     if _resolver_instance is None:
         _resolver_instance = TransportResolver()
     return _resolver_instance
-
 
 def get_transport_hint_string(url: str) -> str:
     """F3.2: Bounded TTL cache — PyCacheDict."""
@@ -482,69 +398,23 @@ def get_transport_hint_string(url: str) -> str:
         return cached
     transport = get_transport_for_url(url)
     if transport == Transport.TOR:
-        result = "tor"
+        result = 'tor'
     elif transport == Transport.I2P:
-        result = "i2p"
+        result = 'i2p'
     elif transport == Transport.FREENET:
-        result = "clearnet"
+        result = 'clearnet'
     else:
-        result = "clearnet"
+        result = 'clearnet'
     _get_transport_hint_cache.set(url, result)
     return result
-
-
 _I2P_TRANSPORT_SINGLETON: Any = None
-
 
 def set_i2p_transport_singleton(transport: Any) -> None:
     """F250: Register I2PTransport singleton so all consumers share one session."""
     global _I2P_TRANSPORT_SINGLETON
     _I2P_TRANSPORT_SINGLETON = transport
 
-
 def get_i2p_transport_singleton() -> Any:
     """F250: Return registered I2PTransport singleton, or None."""
     return _I2P_TRANSPORT_SINGLETON
-
-
-# Backwards compatibility alias
-Transport = Transport  # re-export via module-level alias
-
-
-# =============================================================================
-# F206AV VERDICT — TRANSPORT RESOLVER DORMANT PATH DECISION
-# =============================================================================
-#
-# ACTIVE API (sealed, Sprint 4A canonical production path):
-#   get_transport_for_url(url: str) -> Transport
-#     Fast sync suffix classifier — no lifecycle, no network, thread-safe
-#     Production call site: FetchCoordinator._fetch_url() via SourceTransportMap.get()
-#     Supports: .onion, .i2p, .b32.i2p, .freenet, clearnet
-#
-#   get_transport_hint_string(url: str) -> str
-#     Maps Transport -> opsec_policy string ("tor", "i2p", "clearnet")
-#
-# INSTANCE METHODS on TransportResolver (active but NOT the canonical path):
-#   resolver.resolve_url(url: str) -> Transport
-#     Fast sync helper — SUBSET of get_transport_for_url()
-#     Supports: .onion, .i2p (including .b32.i2p via .i2p suffix), clearnet
-#     KNOWN GAP: .freenet falls through to DIRECT (not classified)
-#     Not used by FetchCoordinator — get_transport_for_url() is used instead
-#
-#   resolver.is_tor_mandatory(url: str) -> bool
-#     True for .onion only — SourceTransportMap.is_mandatory_tor() facade
-#
-# DORMANT API (NOT recommended, not wired):
-#   TransportResolver.resolve(context: TransportContext) -> Transport | None
-#     WHY DORMANT: attempts per-request transport.start() lifecycle
-#     which is incompatible with FetchCoordinator's pooled session model.
-#     NOT called from any production path.
-#
-# MIGRATION RECOMMENDATION (future only, requires lifecycle preconditions):
-#   1. TorTransport session pool must be managed by resolver
-#   2. FetchCoordinator._get_tor_session() pool replaced by resolver-backed session
-#   3. NymTransport persistent session established
-#
-# F206AR FINDING: CLOSED — resolve() explicitly documented as DORMANT since Sprint 8VX
-# =============================================================================
-
+Transport = Transport

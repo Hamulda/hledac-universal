@@ -26,24 +26,14 @@ Architecture authority split (Sprint 8VX):
 - Tor/I2P world: THIS module (httpx-socks proxy-aware sessions)
 """
 from __future__ import annotations
-
 import asyncio
 import os
 from typing import TYPE_CHECKING
-
 import msgspec
-
-from hledac.universal.core.env_config import ENV  # noqa: E402
-
+from hledac.universal.core.env_config import ENV
 if TYPE_CHECKING:
     import httpx
     import httpx_socks
-
-
-# =============================================================================
-# Pool Configuration
-# =============================================================================
-
 
 class PoolConfig(msgspec.Struct, frozen=True):
     """
@@ -53,25 +43,16 @@ class PoolConfig(msgspec.Struct, frozen=True):
     Tor/I2P are low-throughput protocols — lower limits are acceptable.
     msgspec.Struct: ~3× faster instantiation, zero GC overhead on M1 UMA.
     """
-    total_limit: int = 10          # Total connections across all hosts
-    per_host_limit: int = 5        # Per-host limit (prevents single-host starvation)
-    ttl_dns_cache: int = 300       # DNS cache TTL (seconds) — reduces lookups
-    keepalive_timeout: int = 30    # Keep-alive timeout (M1 memory)
-    force_close: bool = True       # Close connections on GC (M1 memory safety)
-    connect_timeout: float = 30.0   # Connection timeout
-    read_timeout: float = 60.0     # Read timeout
-
-
-# Module-level singleton instances (created lazily on first use)
+    total_limit: int = 10
+    per_host_limit: int = 5
+    ttl_dns_cache: int = 300
+    keepalive_timeout: int = 30
+    force_close: bool = True
+    connect_timeout: float = 30.0
+    read_timeout: float = 60.0
 _tor_pool_instance: TorConnectionPool | None = None
 _i2p_pool_instance: I2PConnectionPool | None = None
 _pool_lock: asyncio.Lock = asyncio.Lock()
-
-
-# =============================================================================
-# Tor Connection Pool
-# =============================================================================
-
 
 class TorConnectionPool:
     """
@@ -91,8 +72,9 @@ class TorConnectionPool:
         async with session.get(url) as resp:
             ...
     """
+    __slots__ = tuple(('_config', '_lock', '_session'))
 
-    def __init__(self, config: PoolConfig | None = None) -> None:
+    def __init__(self, config: PoolConfig | None=None) -> None:
         self._config = config or PoolConfig()
         self._session: httpx.AsyncClient | None = None
         self._lock = asyncio.Lock()
@@ -109,47 +91,21 @@ class TorConnectionPool:
             - [I4] repeated calls return same instance
         """
         async with self._lock:
-            if self._session is not None and not self._session.is_closed:
+            if self._session is not None and (not self._session.is_closed):
                 return self._session
-
             try:
                 import httpx
                 import httpx_socks
             except ImportError:
                 return None
-
             try:
-                # Tor proxy URL — configurable via TOR_PROXY env
-                tor_proxy = ENV.get_str("TOR_PROXY", "socks5://127.0.0.1:9050")
-
-                # F3XX: httpx-socks AsyncProxyTransport (replaces aiohttp_socks.ProxyConnector)
-                transport = httpx_socks.AsyncProxyTransport.from_url(
-                    tor_proxy,
-                    rdns=True,  # Remote DNS resolution (for .onion)
-                )
-
-                limits = httpx.Limits(
-                    max_connections=self._config.total_limit,
-                    max_keepalive_connections=self._config.per_host_limit,
-                )
-                timeout = httpx.Timeout(
-                    connect=self._config.connect_timeout,
-                    read=self._config.read_timeout,
-                    write=self._config.keepalive_timeout,
-                    pool=self._config.keepalive_timeout,
-                )
-                self._session = httpx.AsyncClient(
-                    transport=transport,
-                    limits=limits,
-                    timeout=timeout,
-                    http2=True,  # httpx bundles h2 natively
-                    follow_redirects=True,
-                    trust_env=False,
-                )
+                tor_proxy = ENV.get_str('TOR_PROXY', 'socks5://127.0.0.1:9050')
+                transport = httpx_socks.AsyncProxyTransport.from_url(tor_proxy, rdns=True)
+                limits = httpx.Limits(max_connections=self._config.total_limit, max_keepalive_connections=self._config.per_host_limit)
+                timeout = httpx.Timeout(connect=self._config.connect_timeout, read=self._config.read_timeout, write=self._config.keepalive_timeout, pool=self._config.keepalive_timeout)
+                self._session = httpx.AsyncClient(transport=transport, limits=limits, timeout=timeout, http2=True, follow_redirects=True, trust_env=False)
                 return self._session
-
             except Exception:
-                # Fail-soft: never raises, returns None
                 self._session = None
                 return None
 
@@ -165,7 +121,6 @@ class TorConnectionPool:
                 await self._session.aclose()
                 self._session = None
 
-
 async def get_tor_pool() -> TorConnectionPool:
     """
     Get the global TorConnectionPool singleton.
@@ -178,12 +133,6 @@ async def get_tor_pool() -> TorConnectionPool:
         if _tor_pool_instance is None:
             _tor_pool_instance = TorConnectionPool()
         return _tor_pool_instance
-
-
-# =============================================================================
-# I2P Connection Pool
-# =============================================================================
-
 
 class I2PConnectionPool:
     """
@@ -204,14 +153,15 @@ class I2PConnectionPool:
         async with session.get(url) as resp:
             ...
     """
+    __slots__ = tuple(('_config', '_lock', '_session_http', '_session_socks'))
 
-    def __init__(self, config: PoolConfig | None = None) -> None:
+    def __init__(self, config: PoolConfig | None=None) -> None:
         self._config = config or PoolConfig()
         self._session_socks: httpx.AsyncClient | None = None
         self._session_http: httpx.AsyncClient | None = None
         self._lock = asyncio.Lock()
 
-    async def get_session(self, scheme: str = "socks") -> httpx.AsyncClient | None:
+    async def get_session(self, scheme: str='socks') -> httpx.AsyncClient | None:
         """
         Get or create an I2P httpx.AsyncClient.
 
@@ -227,94 +177,48 @@ class I2PConnectionPool:
             - [I4] repeated calls return same instance per scheme
         """
         async with self._lock:
-            if scheme == "socks":
+            if scheme == 'socks':
                 return await self._get_socks_session()
-            elif scheme == "http":
+            elif scheme == 'http':
                 return await self._get_http_session()
             else:
                 return None
 
     async def _get_socks_session(self) -> httpx.AsyncClient | None:
         """Get or create I2P SOCKS5 session."""
-        if self._session_socks is not None and not self._session_socks.is_closed:
+        if self._session_socks is not None and (not self._session_socks.is_closed):
             return self._session_socks
-
         try:
             import httpx
             import httpx_socks
         except ImportError:
             return None
-
         try:
-            # I2P SOCKS5 proxy (default port 7654, configurable via I2P_SOCKS_PORT)
-            socks_port = ENV.get_int("I2P_SOCKS_PORT", 7654)
-
-            # F3XX: httpx-socks AsyncProxyTransport (replaces aiohttp_socks.ProxyConnector)
-            transport = httpx_socks.AsyncProxyTransport.from_url(
-                f"socks5://127.0.0.1:{socks_port}",
-                rdns=True,  # Remote DNS for .i2p domains
-            )
-
-            limits = httpx.Limits(
-                max_connections=self._config.total_limit,
-                max_keepalive_connections=self._config.per_host_limit,
-            )
-            timeout = httpx.Timeout(
-                connect=self._config.connect_timeout,
-                read=self._config.read_timeout,
-                write=self._config.keepalive_timeout,
-                pool=self._config.keepalive_timeout,
-            )
-            self._session_socks = httpx.AsyncClient(
-                transport=transport,
-                limits=limits,
-                timeout=timeout,
-                http2=True,
-                follow_redirects=True,
-                trust_env=False,
-            )
+            socks_port = ENV.get_int('I2P_SOCKS_PORT', 7654)
+            transport = httpx_socks.AsyncProxyTransport.from_url(f'socks5://127.0.0.1:{socks_port}', rdns=True)
+            limits = httpx.Limits(max_connections=self._config.total_limit, max_keepalive_connections=self._config.per_host_limit)
+            timeout = httpx.Timeout(connect=self._config.connect_timeout, read=self._config.read_timeout, write=self._config.keepalive_timeout, pool=self._config.keepalive_timeout)
+            self._session_socks = httpx.AsyncClient(transport=transport, limits=limits, timeout=timeout, http2=True, follow_redirects=True, trust_env=False)
             return self._session_socks
-
         except Exception:
             self._session_socks = None
             return None
 
     async def _get_http_session(self) -> httpx.AsyncClient | None:
         """Get or create I2P HTTP proxy session."""
-        if self._session_http is not None and not self._session_http.is_closed:
+        if self._session_http is not None and (not self._session_http.is_closed):
             return self._session_http
-
         try:
             import httpx
         except ImportError:
             return None
-
         try:
-            # I2P HTTP proxy mode: httpx with proxy URL for SAM bridge
-            # HTTP proxy (Freenet FProxy on port 8888) or custom I2P HTTP proxy
-            http_port = ENV.get_int("I2P_HTTP_PORT", 8888)
-            proxy_url = f"http://127.0.0.1:{http_port}"
-
-            limits = httpx.Limits(
-                max_connections=self._config.total_limit,
-                max_keepalive_connections=self._config.per_host_limit,
-            )
-            timeout = httpx.Timeout(
-                connect=self._config.connect_timeout,
-                read=self._config.read_timeout,
-                write=self._config.keepalive_timeout,
-                pool=self._config.keepalive_timeout,
-            )
-            self._session_http = httpx.AsyncClient(
-                proxy=proxy_url,
-                limits=limits,
-                timeout=timeout,
-                http2=True,
-                follow_redirects=True,
-                trust_env=False,
-            )
+            http_port = ENV.get_int('I2P_HTTP_PORT', 8888)
+            proxy_url = f'http://127.0.0.1:{http_port}'
+            limits = httpx.Limits(max_connections=self._config.total_limit, max_keepalive_connections=self._config.per_host_limit)
+            timeout = httpx.Timeout(connect=self._config.connect_timeout, read=self._config.read_timeout, write=self._config.keepalive_timeout, pool=self._config.keepalive_timeout)
+            self._session_http = httpx.AsyncClient(proxy=proxy_url, limits=limits, timeout=timeout, http2=True, follow_redirects=True, trust_env=False)
             return self._session_http
-
         except Exception:
             self._session_http = None
             return None
@@ -334,7 +238,6 @@ class I2PConnectionPool:
                 await self._session_http.aclose()
                 self._session_http = None
 
-
 async def get_i2p_pool() -> I2PConnectionPool:
     """
     Get the global I2PConnectionPool singleton.
@@ -348,12 +251,6 @@ async def get_i2p_pool() -> I2PConnectionPool:
             _i2p_pool_instance = I2PConnectionPool()
         return _i2p_pool_instance
 
-
-# =============================================================================
-# Module-Level Convenience Functions
-# =============================================================================
-
-
 async def close_all_pools() -> None:
     """
     Close all connection pools (Tor + I2P).
@@ -364,7 +261,6 @@ async def close_all_pools() -> None:
         - [I5] idempotent — safe to call multiple times
     """
     global _tor_pool_instance, _i2p_pool_instance
-
     if _tor_pool_instance is not None:
         await _tor_pool_instance.close()
     if _i2p_pool_instance is not None:

@@ -39,6 +39,7 @@ Migration (F272):
 import logging
 import os
 from typing import TYPE_CHECKING, Any
+from hledac.universal.utils.msgspec_json import loads as _msgspec_loads
 
 if TYPE_CHECKING:
     pass
@@ -173,7 +174,7 @@ class UnifiedLMDBStore:
         try:
             import orjson
             key_bytes = self._key_str(prefix, key)
-            value_bytes = orjson.dumps(value)
+            value_bytes = or_msgspec_dumps_str(value)
             with self._env.begin(write=True) as txn:
                 txn.put(key_bytes, value_bytes)
             return True
@@ -192,7 +193,7 @@ class UnifiedLMDBStore:
             if raw is None:
                 return None
             # orjson.loads accepts memoryview directly — zero-copy
-            return orjson.loads(raw)
+            return or_msgspec_loads(raw)
         except Exception:
             return None
 
@@ -206,7 +207,7 @@ class UnifiedLMDBStore:
         try:
             import orjson
             encoded = [
-                (self._key_str(prefix, k), orjson.dumps(v))
+                (self._key_str(prefix, k), or_msgspec_dumps_str(v))
                 for k, v in items
             ]
             with self._env.begin(write=True) as txn:
@@ -243,7 +244,7 @@ class UnifiedLMDBStore:
                             break
                         try:
                             # orjson.loads accepts memoryview directly — zero-copy
-                            value = orjson.loads(value_bytes)
+                            value = or_msgspec_loads(value_bytes)
                             original_key = key[len(prefix) + 1:]
                             results.append((original_key, value))
                         except Exception:

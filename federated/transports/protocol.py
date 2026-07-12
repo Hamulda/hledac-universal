@@ -242,7 +242,16 @@ class _EmergencyLocalTransport:
         return None
 
 
+def set_sprint_id_attr(obj: Any, sprint_id: str) -> None:
+    """
+    Set the _sprint_id attribute on any object, truncated to 64 chars.
+    Used by all NodeTransport implementations to keep sprint IDs bounded.
+    """
+    obj._sprint_id = str(sprint_id or "")[:64]
+
+
 __all__ = [
     "NodeTransport",
     "NodeTransportFactory",
+    "set_sprint_id_attr",
 ]

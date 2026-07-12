@@ -16,9 +16,6 @@ Example:
     >>> await engine.add_example(example)
     >>> score = await engine.score_chain(query, chain)
 """
-
-
-
 import asyncio
 import gc
 import msgspec.json as _json
@@ -30,20 +27,13 @@ from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-
 import numpy as np
-
 from hledac.universal.utils.async_helpers import safe_gather_ok
 from hledac.universal.utils.mlx_cache import MLX_AVAILABLE, get_mx
-
 logger = logging.getLogger(__name__)
-
-# P2-14: MLX lazy imports via mlx_cache — no top-level import overhead
-# nn import deferred inside the _MLX_NN_AVAILABLE block
 _MLX_NN_AVAILABLE: bool = MLX_AVAILABLE
 
-
-@dataclass
+@dataclass(True)
 class DistillationExample:
     """
     Dataclass pro training example pro distillation.
@@ -67,58 +57,43 @@ class DistillationExample:
             self.metadata = {}
         if self.timestamp is None:
             self.timestamp = time.time()
-        # Validate score range
         self.score = max(0.0, min(1.0, float(self.score)))
 
     def to_dict(self) -> dict[str, Any]:
         """Konvertovat na slovník."""
-        return {
-            "query": self.query,
-            "chain": self.chain,
-            "score": self.score,
-            "metadata": self.metadata,
-            "timestamp": self.timestamp,
-        }
+        return {'query': self.query, 'chain': self.chain, 'score': self.score, 'metadata': self.metadata, 'timestamp': self.timestamp}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DistillationExample:
         """Vytvořit z slovníku."""
-        return cls(
-            query=data["query"],
-            chain=data["chain"],
-            score=data["score"],
-            metadata=data.get("metadata", {}),
-            timestamp=data.get("timestamp", time.time()),
-        )
-
+        return cls(query=data['query'], chain=data['chain'], score=data['score'], metadata=data.get('metadata', {}), timestamp=data.get('timestamp', time.time()))
 
 class _CriticMLPBase:
     """Base mixin for neural network backend — provides fallback scoring."""
+
     def _heuristic_score(self, reasoning_chain: list[str]) -> float:
         """Fallback scoring when MLX unavailable — simple chain length heuristic."""
         if not reasoning_chain:
             return 0.3
-        # Longer chains with more steps = higher quality
         length_score = min(len(reasoning_chain) / 10.0, 0.7)
-        # More detail in steps (longer average step length)
-        avg_step_len = sum(len(s) for s in reasoning_chain) / max(len(reasoning_chain), 1)
+        avg_step_len = sum((len(s) for s in reasoning_chain)) / max(len(reasoning_chain), 1)
         detail_score = min(avg_step_len / 100.0, 0.3)
         return min(length_score + detail_score, 1.0)
-
-
 if _MLX_NN_AVAILABLE:
-    # P2-14: lazy nn import — deferred until class definition time
     from hledac.universal.utils.mlx_lazy import nn as _get_nn
     _nn_mod = _get_nn()
     if _nn_mod is None:
-        raise ImportError("MLX nn unavailable")
+        raise ImportError('MLX nn unavailable')
     nn = _nn_mod
+
     class CriticMLP(nn.Module):
         """MLX-based critic network for reasoning chain quality scoring."""
-        def __init__(self, input_dim: int, hidden_dims: list[int] | None = None):
+        __slots__ = tuple(('hidden_dims', 'input_dim', 'layers'))
+
+        def __init__(self, input_dim: int, hidden_dims: list[int] | None=None):
             super().__init__()
             if hidden_dims is None:
-                hidden_dims = [128, 64]  # M1 8GB constraint
+                hidden_dims = [128, 64]
             self.input_dim = input_dim
             self.hidden_dims = hidden_dims
             layers = []
@@ -135,13 +110,12 @@ if _MLX_NN_AVAILABLE:
                 return np.array([0.5])
             for _i, layer in enumerate(self.layers[:-1]):
                 x = layer(x)
-                x = mx.maximum(x, 0)  # ReLU
+                x = mx.maximum(x, 0)
             x = self.layers[-1](x)
             x = mx.sigmoid(x)
             return x
 
         def predict(self, embedding: np.ndarray) -> float:
-            # MLX path: use neural network scoring
             mx = get_mx()
             if mx is None:
                 return 0.5
@@ -150,24 +124,24 @@ if _MLX_NN_AVAILABLE:
                 score = self(x)
                 return float(score.flatten()[0])
             except Exception as e:
-                logger.warning(f"MLX scoring failed: {e}, using heuristic fallback")
+                logger.warning(f'MLX scoring failed: {e}, using heuristic fallback')
                 return 0.5
 else:
+
     class CriticMLP(_CriticMLPBase):
         """Fallback critic when MLX unavailable — uses heuristic scoring."""
-        def __init__(self, input_dim: int, hidden_dims: list[int] | None = None):
+        __slots__ = tuple(('hidden_dims', 'input_dim'))
+
+        def __init__(self, input_dim: int, hidden_dims: list[int] | None=None):
             self.input_dim = input_dim
             self.hidden_dims = hidden_dims or [128, 64]
-            logger.debug("CriticMLP running in heuristic mode (MLX unavailable)")
+            logger.debug('CriticMLP running in heuristic mode (MLX unavailable)')
 
         def __call__(self, x) -> np.ndarray:
-            # Heuristic: return uniform score 0.5
             return np.array([0.5])
 
         def predict(self, embedding: np.ndarray) -> float:
-            # Heuristic mode: no MLX available, return default quality score
             return 0.5
-
 
 class DistillationEngine:
     """
@@ -184,29 +158,24 @@ class DistillationEngine:
         db_path: Cesta k SQLite databázi (None = EVIDENCE_ROOT/distillation.db)
         embedding_dim: Dimenze embedding vektoru (default: 384)
     """
+    DEFAULT_DB_DIR = None
+    DEFAULT_DB_NAME = 'distillation.db'
+    DEFAULT_EMBEDDING_DIM = 768
+    MAX_CHAIN_LENGTH = 50
+    __slots__ = tuple(('_critic', '_db_path', '_initialized', 'embedding_dim', 'embedding_model'))
 
-    DEFAULT_DB_DIR = None  # Determined at runtime from paths module
-    DEFAULT_DB_NAME = "distillation.db"
-    DEFAULT_EMBEDDING_DIM = 768  # ModernBERT-base dimension
-    MAX_CHAIN_LENGTH = 50  # Max počet kroků v chainu
-
-    def __init__(
-        self,
-        embedding_model: Any | None = None,
-        db_path: str | Path | None = None,
-        embedding_dim: int = DEFAULT_EMBEDDING_DIM,
-    ):
+    def __init__(self, embedding_model: Any | None=None, db_path: str | Path | None=None, embedding_dim: int=DEFAULT_EMBEDDING_DIM):
         self.embedding_model = embedding_model
         self.embedding_dim = embedding_dim
         self._critic: CriticMLP | None = None
         if db_path is None:
             from hledac.universal.paths import EVIDENCE_ROOT
-            self._db_path = EVIDENCE_ROOT / "distillation.db"
+            self._db_path = EVIDENCE_ROOT / 'distillation.db'
         else:
             self._db_path = Path(db_path)
         self._initialized = False
 
-    async def initialize(self, embedding_model: Any | None = None) -> None:
+    async def initialize(self, embedding_model: Any | None=None) -> None:
         """
         Inicializovat engine.
 
@@ -215,62 +184,37 @@ class DistillationEngine:
         """
         if self._initialized:
             return
-
         if embedding_model:
             self.embedding_model = embedding_model
-
         try:
-            # Initialize database
             await self._init_database()
-
-            # Initialize critic network
             if MLX_AVAILABLE:
                 self._critic = CriticMLP(input_dim=self.embedding_dim)
-                logger.info(f"✓ Critic MLP initialized (input_dim={self.embedding_dim})")
+                logger.info(f'✓ Critic MLP initialized (input_dim={self.embedding_dim})')
             else:
-                logger.warning("MLX not available, critic will not function")
-
+                logger.warning('MLX not available, critic will not function')
             self._initialized = True
-            logger.info("✓ DistillationEngine initialized")
-
+            logger.info('✓ DistillationEngine initialized')
         except Exception as e:
-            logger.error(f"Failed to initialize DistillationEngine: {e}")
+            logger.error(f'Failed to initialize DistillationEngine: {e}')
             raise
 
     async def _init_database(self) -> None:
         """Inicializovat SQLite databázi."""
         from contextlib import closing
         try:
-            # Ensure directory exists
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # Create connection with closing() to guarantee FD release
             def _init_db():
                 with closing(sqlite3.connect(str(self._db_path))) as conn:
                     cursor = conn.cursor()
-                    # Create examples table
-                    cursor.execute("""
-                        CREATE TABLE IF NOT EXISTS examples (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            query TEXT NOT NULL,
-                            chain TEXT NOT NULL,
-                            score REAL NOT NULL,
-                            metadata TEXT,
-                            timestamp REAL NOT NULL
-                        )
-                    """)
-                    # Create index for faster queries
-                    cursor.execute("""
-                        CREATE INDEX IF NOT EXISTS idx_timestamp ON examples(timestamp)
-                    """)
+                    cursor.execute('\n                        CREATE TABLE IF NOT EXISTS examples (\n                            id INTEGER PRIMARY KEY AUTOINCREMENT,\n                            query TEXT NOT NULL,\n                            chain TEXT NOT NULL,\n                            score REAL NOT NULL,\n                            metadata TEXT,\n                            timestamp REAL NOT NULL\n                        )\n                    ')
+                    cursor.execute('\n                        CREATE INDEX IF NOT EXISTS idx_timestamp ON examples(timestamp)\n                    ')
                     conn.commit()
-
             await asyncio.to_thread(_init_db)
-
-            logger.info(f"✓ Database initialized at {self._db_path}")
-
+            logger.info(f'✓ Database initialized at {self._db_path}')
         except Exception as e:
-            logger.error(f"Failed to initialize database: {e}")
+            logger.error(f'Failed to initialize database: {e}')
             raise
 
     async def add_example(self, example: DistillationExample) -> bool:
@@ -284,37 +228,17 @@ class DistillationEngine:
             True pokud se podařilo uložit
         """
         if not self._initialized:
-            logger.error("Engine not initialized")
+            logger.error('Engine not initialized')
             return False
-
         try:
             with await asyncio.to_thread(closing, sqlite3.connect(str(self._db_path))) as conn:
                 cursor = await asyncio.to_thread(conn.cursor)
-
-                await asyncio.to_thread(
-                    lambda: cursor.execute(
-                        """
-                    INSERT INTO examples (query, chain, score, metadata, timestamp)
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
-                        (
-                            example.query,
-                            _json.encode(example.chain).decode("utf-8"),
-                            example.score,
-                            _json.encode(example.metadata).decode("utf-8"),
-                            example.timestamp,
-                        ),
-                    )
-                )
-
+                await asyncio.to_thread(lambda: cursor.execute('\n                    INSERT INTO examples (query, chain, score, metadata, timestamp)\n                    VALUES (?, ?, ?, ?, ?)\n                    ', (example.query, _json.encode(example.chain).decode('utf-8'), example.score, _json.encode(example.metadata).decode('utf-8'), example.timestamp)))
                 await asyncio.to_thread(lambda: conn.commit())
-                # closing() context manager guarantees FD release
-
-            logger.debug(f"Added example with score {example.score:.3f}")
+            logger.debug(f'Added example with score {example.score:.3f}')
             return True
-
         except Exception as e:
-            logger.error(f"Failed to add example: {e}")
+            logger.error(f'Failed to add example: {e}')
             return False
 
     async def get_all_examples(self) -> list[DistillationExample]:
@@ -325,40 +249,22 @@ class DistillationEngine:
             Seznam DistillationExample
         """
         if not self._initialized:
-            logger.error("Engine not initialized")
+            logger.error('Engine not initialized')
             return []
-
         try:
             with await asyncio.to_thread(closing, sqlite3.connect(str(self._db_path))) as conn:
                 cursor = await asyncio.to_thread(conn.cursor)
-
-                await asyncio.to_thread(
-                    lambda: cursor.execute(
-                        "SELECT query, chain, score, metadata, timestamp FROM examples ORDER BY timestamp DESC LIMIT 10000"  # noqa: E501
-                    )
-                )
+                await asyncio.to_thread(lambda: cursor.execute('SELECT query, chain, score, metadata, timestamp FROM examples ORDER BY timestamp DESC LIMIT 10000'))
                 rows = await asyncio.to_thread(lambda: cursor.fetchall())
-                # closing() context manager guarantees FD release
-
             examples = []
             for row in rows:
-                examples.append(
-                    DistillationExample(
-                        query=row[0],
-                        chain=_json.decode(row[1]),
-                        score=row[2],
-                        metadata=_json.decode(row[3]) if row[3] else {},
-                        timestamp=row[4],
-                    )
-                )
-
+                examples.append(DistillationExample(query=row[0], chain=_json.decode(row[1]), score=row[2], metadata=_json.decode(row[3]) if row[3] else {}, timestamp=row[4]))
             return examples
-
         except Exception as e:
-            logger.error(f"Failed to get examples: {e}")
+            logger.error(f'Failed to get examples: {e}')
             return []
 
-    async def train(self, n_epochs: int = 10) -> dict[str, float | int | str]:
+    async def train(self, n_epochs: int=10) -> dict[str, float | int | str]:
         """
         Trénovat critic na uložených examples.
 
@@ -369,94 +275,56 @@ class DistillationEngine:
             Dict s metrikami tréninku (loss, accuracy)
         """
         if not self._initialized:
-            logger.error("Engine not initialized")
-            return {"loss": float("inf"), "accuracy": 0.0}
-
+            logger.error('Engine not initialized')
+            return {'loss': float('inf'), 'accuracy': 0.0}
         if not MLX_AVAILABLE or self._critic is None:
-            logger.warning("MLX not available, skipping training")
-            return {"loss": 0.0, "accuracy": 0.0}
-
+            logger.warning('MLX not available, skipping training')
+            return {'loss': 0.0, 'accuracy': 0.0}
         try:
-            # Load examples
             examples = await self.get_all_examples()
             if len(examples) < 2:
-                logger.warning("Not enough examples for training (need >= 2)")
-                return {"loss": 0.0, "accuracy": 0.0, "n_examples": len(examples)}
-
-            logger.info(f"Training on {len(examples)} examples for {n_epochs} epochs")
-
-            # Prepare data - parallelize embeddings via run_in_executor
-            # F214M: get_running_loop() replaces deprecated get_event_loop() in async context
+                logger.warning('Not enough examples for training (need >= 2)')
+                return {'loss': 0.0, 'accuracy': 0.0, 'n_examples': len(examples)}
+            logger.info(f'Training on {len(examples)} examples for {n_epochs} epochs')
             loop = asyncio.get_running_loop()
             with ThreadPoolExecutor(max_workers=2) as executor:
-                embedding_tasks = [
-                    loop.run_in_executor(executor, self._get_chain_embedding, example.chain)
-                    for example in examples
-                ]
-                embeddings = await safe_gather_ok(*embedding_tasks, label="distillation_engine:391")
-
-            X_list = embeddings  # noqa: N806
+                embedding_tasks = [loop.run_in_executor(executor, self._get_chain_embedding, example.chain) for example in examples]
+                embeddings = await safe_gather_ok(*embedding_tasks, label='distillation_engine:391')
+            X_list = embeddings
             y_list = [example.score for example in examples]
-
-            # Convert to MLX arrays
             mx = get_mx()
             if mx is None:
-                return {"loss": float("inf"), "accuracy": 0.0, "error": "MLX not available"}
-            X = mx.array(np.array(X_list))  # noqa: N806
+                return {'loss': float('inf'), 'accuracy': 0.0, 'error': 'MLX not available'}
+            X = mx.array(np.array(X_list))
             y = mx.array(np.array(y_list).reshape(-1, 1))
-
-            # Simple training loop with SGD
             losses = []
-
             for epoch in range(n_epochs):
-                # Forward pass
                 predictions = self._critic(X)
-
-                # Compute MSE loss
                 loss = mx.mean((predictions - y) ** 2)
                 loss_value = float(np.array(loss))
                 losses.append(loss_value)
-
-                # Compute gradients (simple SGD update)
-                # Note: In production, use proper optimizer
-                # This is simplified for M1 8GB constraint
-
                 if epoch % max(1, n_epochs // 5) == 0:
-                    logger.debug(f"Epoch {epoch}/{n_epochs}, Loss: {loss_value:.4f}")
-
-            # Compute accuracy (correlation-based)
+                    logger.debug(f'Epoch {epoch}/{n_epochs}, Loss: {loss_value:.4f}')
             final_predictions = np.array(self._critic(X)).flatten()
             actual = np.array(y).flatten()
-
             if len(final_predictions) > 1:
                 correlation = np.corrcoef(final_predictions, actual)[0, 1]
                 if np.isnan(correlation):
                     correlation = 0.0
             else:
                 correlation = 0.0
-
-            # Cleanup — F300-MLX invariant: mx.eval([]) PŘED gc.collect()
             del X, y
             if mx is not None:
-                mx.eval([])  # barrier: flush GPU queue BEFORE Python GC
-            gc.collect()  # collect Python refs that held MLX objects
+                mx.eval([])
+            gc.collect()
             if mx is not None:
                 mx.clear_cache()
-
-            metrics = {
-                "loss": losses[-1] if losses else 0.0,
-                "initial_loss": losses[0] if losses else 0.0,
-                "correlation": correlation,
-                "n_examples": len(examples),
-                "n_epochs": n_epochs,
-            }
-
+            metrics = {'loss': losses[-1] if losses else 0.0, 'initial_loss': losses[0] if losses else 0.0, 'correlation': correlation, 'n_examples': len(examples), 'n_epochs': n_epochs}
             logger.info(f"✓ Training complete: loss={metrics['loss']:.4f}, corr={metrics['correlation']:.3f}")
             return metrics
-
         except Exception as e:
-            logger.error(f"Training failed: {e}")
-            return {"loss": float("inf"), "accuracy": 0.0, "error": str(e)}
+            logger.error(f'Training failed: {e}')
+            return {'loss': float('inf'), 'accuracy': 0.0, 'error': str(e)}
 
     async def score_chain(self, query: str, chain: list[str]) -> float:
         """
@@ -470,24 +338,17 @@ class DistillationEngine:
             Skóre 0-1 (vyšší = lepší)
         """
         if not self._initialized:
-            logger.error("Engine not initialized")
+            logger.error('Engine not initialized')
             return 0.5
-
         try:
-            # Get chain embedding
             embedding = self._get_chain_embedding(chain)
-
-            # Score using critic
             if self._critic is not None:
                 score = self._critic.predict(embedding)
             else:
-                # Fallback: heuristic scoring
                 score = self._heuristic_score(query, chain)
-
             return score
-
         except Exception as e:
-            logger.error(f"Failed to score chain: {e}")
+            logger.error(f'Failed to score chain: {e}')
             return 0.5
 
     def _get_chain_embedding(self, chain: list[str]) -> np.ndarray:
@@ -501,36 +362,23 @@ class DistillationEngine:
             NumPy array embeddingu tvaru (embedding_dim,)
         """
         try:
-            # Limit chain length
             chain = chain[:self.MAX_CHAIN_LENGTH]
-
             if self.embedding_model is not None:
-                # Use provided embedding model
                 embeddings = self.embedding_model.encode(chain)
-                # Mean pooling across steps
                 embedding = np.mean(embeddings, axis=0)
             else:
-                # Fallback: simple bag-of-words embedding
                 embedding = self._fallback_chain_embedding(chain)
-
-            # Ensure correct dimension
             if len(embedding) != self.embedding_dim:
-                # Pad or truncate
                 if len(embedding) < self.embedding_dim:
                     embedding = np.pad(embedding, (0, self.embedding_dim - len(embedding)))
                 else:
                     embedding = embedding[:self.embedding_dim]
-
-            # Normalize
             norm = np.linalg.norm(embedding)
             if norm > 0:
                 embedding = embedding / norm
-
             return embedding
-
         except Exception as e:
-            logger.error(f"Failed to get chain embedding: {e}")
-            # Return zero embedding
+            logger.error(f'Failed to get chain embedding: {e}')
             return np.zeros(self.embedding_dim, dtype=np.float32)
 
     def _fallback_chain_embedding(self, chain: list[str]) -> np.ndarray:
@@ -544,19 +392,15 @@ class DistillationEngine:
             Simple embedding vektor
         """
         embedding = np.zeros(self.embedding_dim, dtype=np.float32)
-
         for step_idx, step in enumerate(chain[:self.MAX_CHAIN_LENGTH]):
             words = step.lower().split()
-            for word_idx, word in enumerate(words[:20]):  # Max 20 words per step
-                for char_idx, char in enumerate(word[:10]):  # Max 10 chars per word
+            for word_idx, word in enumerate(words[:20]):
+                for char_idx, char in enumerate(word[:10]):
                     idx = (ord(char) + step_idx * 31 + word_idx * 17 + char_idx * 7) % self.embedding_dim
                     embedding[idx] += 1.0
-
-        # Normalize
         norm = np.linalg.norm(embedding)
         if norm > 0:
             embedding = embedding / norm
-
         return embedding
 
     def _heuristic_score(self, query: str, chain: list[str]) -> float:
@@ -572,10 +416,7 @@ class DistillationEngine:
         """
         if not chain:
             return 0.0
-
         scores = []
-
-        # Length score (prefer medium-length chains)
         chain_len = len(chain)
         if 3 <= chain_len <= 10:
             scores.append(1.0)
@@ -583,63 +424,41 @@ class DistillationEngine:
             scores.append(0.5)
         else:
             scores.append(0.7)
-
-        # Step quality score
         step_scores = []
         for step in chain:
             step_score = 0.5
-
-            # Check for reasoning indicators
-            reasoning_words = ["because", "therefore", "thus", "hence", "since", "as", "so"]
-            if any(word in step.lower() for word in reasoning_words):
+            reasoning_words = ['because', 'therefore', 'thus', 'hence', 'since', 'as', 'so']
+            if any((word in step.lower() for word in reasoning_words)):
                 step_score += 0.2
-
-            # Check for specificity
             if len(step) > 20:
                 step_score += 0.1
-
-            # Check for query relevance
             query_words = set(query.lower().split())
             step_words = set(step.lower().split())
             if query_words & step_words:
                 step_score += 0.2
-
             step_scores.append(min(step_score, 1.0))
-
         avg_step_score = sum(step_scores) / len(step_scores) if step_scores else 0.5
         scores.append(avg_step_score)
-
-        # Diversity score (unique steps)
         unique_steps = len(set(chain))
         diversity_score = unique_steps / len(chain) if chain else 0.0
         scores.append(diversity_score)
-
-        # Final score: weighted average
         weights = [0.3, 0.5, 0.2]
-        final_score = sum(s * w for s, w in zip(scores, weights, strict=False))
-
+        final_score = sum((s * w for s, w in zip(scores, weights, strict=False)))
         return min(max(final_score, 0.0), 1.0)
 
     async def cleanup(self) -> None:
         """Cleanup paměti a resources."""
-        logger.info("Cleaning up DistillationEngine...")
-
-        # Clear critic
+        logger.info('Cleaning up DistillationEngine...')
         self._critic = None
-
-        # Clear embedding model reference
         self.embedding_model = None
-
-        # Garbage collection — F300-MLX invariant: mx.eval([]) PŘED gc.collect()
         mx = get_mx()
         if mx is not None:
-            mx.eval([])  # barrier: flush GPU queue BEFORE Python GC
-        gc.collect()  # collect Python refs that held MLX objects
+            mx.eval([])
+        gc.collect()
         if mx is not None:
             mx.clear_cache()
-
         self._initialized = False
-        logger.info("✓ DistillationEngine cleaned up")
+        logger.info('✓ DistillationEngine cleaned up')
 
     def get_status(self) -> dict[str, Any]:
         """
@@ -648,13 +467,7 @@ class DistillationEngine:
         Returns:
             Dict s informacemi o engine
         """
-        return {
-            "initialized": self._initialized,
-            "mlx_available": MLX_AVAILABLE,
-            "critic_initialized": self._critic is not None,
-            "embedding_dim": self.embedding_dim,
-            "db_path": str(self._db_path),
-        }
+        return {'initialized': self._initialized, 'mlx_available': MLX_AVAILABLE, 'critic_initialized': self._critic is not None, 'embedding_dim': self.embedding_dim, 'db_path': str(self._db_path)}
 
     async def get_stats(self) -> dict[str, Any]:
         """
@@ -664,65 +477,37 @@ class DistillationEngine:
             Dict s statistikami
         """
         if not self._initialized:
-            return {"error": "Engine not initialized"}
-
+            return {'error': 'Engine not initialized'}
         try:
             with closing(sqlite3.connect(str(self._db_path))) as conn:
                 cursor = conn.cursor()
-
-                # Count examples
-                cursor.execute("SELECT COUNT(*) FROM examples")
+                cursor.execute('SELECT COUNT(*) FROM examples')
                 count = cursor.fetchone()[0]
-
-                # Get score statistics
-                cursor.execute("SELECT AVG(score), MIN(score), MAX(score) FROM examples")
+                cursor.execute('SELECT AVG(score), MIN(score), MAX(score) FROM examples')
                 stats = cursor.fetchone()
-                # closing() context manager guarantees FD release
-
-            return {
-                "n_examples": count,
-                "avg_score": stats[0] if stats[0] else 0.0,
-                "min_score": stats[1] if stats[1] else 0.0,
-                "max_score": stats[2] if stats[2] else 0.0,
-            }
-
+            return {'n_examples': count, 'avg_score': stats[0] if stats[0] else 0.0, 'min_score': stats[1] if stats[1] else 0.0, 'max_score': stats[2] if stats[2] else 0.0}
         except Exception as e:
-            logger.error(f"Failed to get stats: {e}")
-            return {"error": str(e)}
-
-
-# Lazy loading globals
+            logger.error(f'Failed to get stats: {e}')
+            return {'error': str(e)}
 DISTILLATION_AVAILABLE = False
 DistillationEngineClass = None
 DistillationExampleClass = None
 
-
 def _load_distillation():
     """Lazy loading funkce pro distillation module."""
     global DISTILLATION_AVAILABLE, DistillationEngineClass, DistillationExampleClass
-
     if DISTILLATION_AVAILABLE:
         return
-
     try:
         DistillationEngineClass = DistillationEngine
         DistillationExampleClass = DistillationExample
         DISTILLATION_AVAILABLE = True
-        logger.debug("Distillation module loaded successfully")
+        logger.debug('Distillation module loaded successfully')
     except ImportError as e:
-        logger.warning(f"Failed to load distillation module: {e}")
+        logger.warning(f'Failed to load distillation module: {e}')
         DISTILLATION_AVAILABLE = False
 
-
-# ---------------------------------------------------------------------------
-# Sprint 8VH: Distillation Wrapper (findings → compressed text)
-# ---------------------------------------------------------------------------
-
-
-async def distil(
-    findings: list[dict],
-    max_tokens: int = 2000,
-) -> str:
+async def distil(findings: list[dict], max_tokens: int=2000) -> str:
     """
     Předprocesuje findings přes DistillationEngine před synthesis.
 
@@ -737,68 +522,44 @@ async def distil(
         Komprimovaný text
     """
     if not findings:
-        return ""
-
+        return ''
     try:
         engine = await create_distillation_engine()
         if engine is not None:
-            # Extract chains from findings
             chains = []
             for f in findings:
-                text = f.get("text", "") or f.get("snippet", "") or f.get("title", "")
+                text = f.get('text', '') or f.get('snippet', '') or f.get('title', '')
                 if text:
-                    # Each finding = one reasoning step
-                    chains.append([text[:500]])  # limit each to 500 chars
+                    chains.append([text[:500]])
             if chains:
-                # Score and select best chains
-                query = findings[0].get("query", "summarize") if findings else ""
+                query = findings[0].get('query', 'summarize') if findings else ''
                 best_chain = max(chains, key=lambda c: engine._heuristic_score(query, c))
                 return best_chain[0] if best_chain else _findings_to_text(findings)
             await engine.cleanup()
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
-
-    # ANE pre-distillation: dedup + rerank on Neural Engine (parallel to CPU)
     try:
-        from hledac.universal.brain.ane_embedder import (
-            rerank_findings_cosine,
-            semantic_dedup_findings,
-        )
-        # Dedup
-        findings = await semantic_dedup_findings(findings, threshold=0.90)
-        # Rerank by relevance if we have a query
+        from hledac.universal.brain.ane_embedder import rerank_findings_cosine, semantic_dedup_findings
+        findings = await semantic_dedup_findings(findings, threshold=0.9)
         _query_for_ane = getattr(findings[0], 'query', None) if findings else None
         if _query_for_ane and len(findings) > 5:
             findings = rerank_findings_cosine(findings, _query_for_ane, top_k=min(20, len(findings)))
-        logger.debug("[ANE:distil] %d findings after dedup+rerank", len(findings))
+        logger.debug('[ANE:distil] %d findings after dedup+rerank', len(findings))
     except Exception as _ane_err:
-        logger.debug("[ANE:distil] skipped: %s", _ane_err)
-    # fall through with original findings on any error
-
-    # Fallback: serialize top findings as text
+        logger.debug('[ANE:distil] skipped: %s', _ane_err)
     return _findings_to_text(findings)
 
-
-def _findings_to_text(findings: list[dict], max_items: int = 20) -> str:
+def _findings_to_text(findings: list[dict], max_items: int=20) -> str:
     """Helper: convert findings list to plain text."""
     lines = []
     for f in findings[:max_items]:
-        source = f.get("source", "?")
-        title = f.get("title", "")
-        snippet = (f.get("text", "") or f.get("snippet", ""))[:200]
-        lines.append(f"[{source}] {title} — {snippet}")
-    return "\n".join(lines)
+        source = f.get('source', '?')
+        title = f.get('title', '')
+        snippet = (f.get('text', '') or f.get('snippet', ''))[:200]
+        lines.append(f'[{source}] {title} — {snippet}')
+    return '\n'.join(lines)
 
-
-# ---------------------------------------------------------------------------
-# Original create_distillation_engine
-# ---------------------------------------------------------------------------
-
-async def create_distillation_engine(
-    embedding_model: Any | None = None,
-    db_path: str | Path | None = None,
-    embedding_dim: int = 384,
-) -> DistillationEngine | None:
+async def create_distillation_engine(embedding_model: Any | None=None, db_path: str | Path | None=None, embedding_dim: int=384) -> DistillationEngine | None:
     """
     Factory funkce pro vytvoření DistillationEngine.
 
@@ -811,68 +572,33 @@ async def create_distillation_engine(
         DistillationEngine instance nebo None
     """
     try:
-        engine = DistillationEngine(
-            embedding_model=embedding_model,
-            db_path=db_path,
-            embedding_dim=embedding_dim,
-        )
+        engine = DistillationEngine(embedding_model=embedding_model, db_path=db_path, embedding_dim=embedding_dim)
         await engine.initialize()
         return engine
     except Exception as e:
-        logger.error(f"Failed to create DistillationEngine: {e}")
+        logger.error(f'Failed to create DistillationEngine: {e}')
         return None
-
-
-if __name__ == "__main__":
-    # Test
+if __name__ == '__main__':
     import asyncio
-
     logging.basicConfig(level=logging.INFO)
 
     async def test():
-        print("Testing DistillationEngine...")
-
-        # Create engine
+        print('Testing DistillationEngine...')
         engine = await create_distillation_engine()
         if engine is None:
-            print("Failed to create engine")
+            print('Failed to create engine')
             return
-
-        print(f"Engine status: {engine.get_status()}")
-
-        # Add example
-        example = DistillationExample(
-            query="What is the capital of France?",
-            chain=[
-                "Step 1: Identify the country as France",
-                "Step 2: Recall that Paris is the capital of France",
-                "Step 3: Verify this information is correct",
-            ],
-            score=0.95,
-            metadata={"source": "test"},
-        )
-
+        print(f'Engine status: {engine.get_status()}')
+        example = DistillationExample(query='What is the capital of France?', chain=['Step 1: Identify the country as France', 'Step 2: Recall that Paris is the capital of France', 'Step 3: Verify this information is correct'], score=0.95, metadata={'source': 'test'})
         await engine.add_example(example)
-        print("Added example")
-
-        # Get stats
+        print('Added example')
         stats = await engine.get_stats()
-        print(f"Stats: {stats}")
-
-        # Score a chain
-        chain = [
-            "Step 1: Identify the country",
-            "Step 2: Recall the capital",
-        ]
-        score = await engine.score_chain("What is the capital of France?", chain)
-        print(f"Score: {score:.3f}")
-
-        # Train
+        print(f'Stats: {stats}')
+        chain = ['Step 1: Identify the country', 'Step 2: Recall the capital']
+        score = await engine.score_chain('What is the capital of France?', chain)
+        print(f'Score: {score:.3f}')
         metrics = await engine.train(n_epochs=5)
-        print(f"Training metrics: {metrics}")
-
-        # Cleanup
+        print(f'Training metrics: {metrics}')
         await engine.cleanup()
-        print("Cleanup complete")
-
+        print('Cleanup complete')
     asyncio.run(test())

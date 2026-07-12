@@ -10,9 +10,6 @@ with ONNX runtime, optimized for M1 MacBook Air (8GB RAM).
 FastEmbed uses quantized ONNX models for maximum inference speed
 and minimal memory footprint (~50MB vs ~420MB for PyTorch).
 """
-
-
-
 import hashlib
 import logging
 import statistics
@@ -25,80 +22,52 @@ from enum import Enum
 from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-
 from hledac.universal.utils.async_helpers import safe_gather_ok
-
-# Python 3.14+: compression.zstd is in stdlib — direct import, no fallback needed
 import compression.zstd as _zstd
-
 ZSTD_AVAILABLE = True
-
 try:
-    from hledac.universal.utils.msgspec_json import ORJSON_AVAILABLE  # noqa: F401
-except ImportError:  # pragma: no cover
+    from hledac.universal.utils.msgspec_json import ORJSON_AVAILABLE
+except ImportError:
     ORJSON_AVAILABLE = False
-
-# Sprint F264: msgspec facade replaces orjson/json for cache serialization.
-from hledac.universal.utils.msgspec_json import decode, encode  # noqa: E402
-
-# Sprint F264: defensive guard for msgspec core (utils.msgspec_json already
-# imports it at top-level, but keep this module self-contained against
-# environments where msgspec is missing or the facade is not importable).
+from hledac.universal.utils.msgspec_json import decode, encode
 try:
-    import msgspec as _msgspec_lib  # noqa: F401
+    import msgspec as _msgspec_lib
     _MSGSPEC_AVAILABLE = True
-except ImportError:  # pragma: no cover
-    _msgspec_lib = None  # type: ignore[assignment]
+except ImportError:
+    _msgspec_lib = None
     _MSGSPEC_AVAILABLE = False
-
 try:
     import numpy as _np
     NUMPY_AVAILABLE = True
 except ImportError:
     NUMPY_AVAILABLE = False
     _np = None
-
-# np is the internal alias; if numpy unavailable, raise ImportError at first use
 np = _np
-
-# Lazy imports for memory efficiency - faiss only loaded when needed
 if TYPE_CHECKING:
     pass
-
 logger = logging.getLogger(__name__)
-
-# fastembed REMOVED P0-1: MLXEmbeddingManager is primary for M1
-FASTEMBED_AVAILABLE = False  # kept for graceful degradation, no longer installed
-
-# MLX Embedding Manager (primary path for M1)
+FASTEMBED_AVAILABLE = False
 try:
-    from compat.core_mlx_embeddings import (
-        MLXEmbeddingManager,  # noqa: F401  # compat.core_mlx_embeddings.MLXEmbeddingManager
-    )
+    from compat.core_mlx_embeddings import MLXEmbeddingManager
     MLX_EMBED_AVAILABLE = True
 except ImportError:
     MLX_EMBED_AVAILABLE = False
-    logger.debug("MLXEmbeddingManager not available")
+    logger.debug('MLXEmbeddingManager not available')
+L1_MEMORY = 'l1_memory'
+L2_DISK = 'l2_disk'
+SEMANTIC = 'semantic'
+COMPUTATION = 'computation'
+QUERY = 'query'
 
-L1_MEMORY = "l1_memory"
-L2_DISK = "l2_disk"
-
-SEMANTIC = "semantic"
-COMPUTATION = "computation"
-QUERY = "query"
-
-
-def _list_to_ndarray(obj: Any, target_type: Any = None) -> Any:
+def _list_to_ndarray(obj: Any, target_type: Any=None) -> Any:
     """Convert lists back to numpy arrays after JSON deserialization."""
-    if NUMPY_AVAILABLE and isinstance(obj, list) and target_type is not None:
+    if NUMPY_AVAILABLE and isinstance(obj, list) and (target_type is not None):
         return _np.array(obj, dtype=target_type)
     if isinstance(obj, dict):
         return {k: _list_to_ndarray(v) for k, v in obj.items()}
     if isinstance(obj, list):
-        # Heuristic: if it looks like an embedding (float list), keep as list
         return [_list_to_ndarray(item) for item in obj]
     return obj
-
 
 def _serialize_cache(data: dict[str, CacheEntry]) -> bytes:
     """Serialize cache data to bytes using msgspec.CacheEntry struct wire format + zstd.
@@ -109,26 +78,17 @@ def _serialize_cache(data: dict[str, CacheEntry]) -> bytes:
     no field (embeddings, enums, metadata) is lost in the wire format.
     Falls back to the untyped facade if msgspec is unavailable.
     """
-    # Lazy import per project invariant (no top-level msgspec_struct).
     from hledac.universal.utils.msgspec_json import CacheEntry as _MsgspecCacheEntry
-
     if not _MSGSPEC_AVAILABLE or _msgspec_lib is None:
-        # Defensive fallback: msgspec missing → legacy untyped dict encode.
         return _serialize_cache_untyped(data)
-
     serializable: dict[str, _MsgspecCacheEntry] = {}
     for k, v in data.items():
         entry_dict = _entry_to_dict(v)
-        serializable[k] = _MsgspecCacheEntry(
-            key=v.cache_id,
-            value=_msgspec_lib.json.encode(entry_dict).decode("utf-8"),
-            ttl=3600,  # Sprint F264 default for context cache
-        )
+        serializable[k] = _MsgspecCacheEntry(key=v.cache_id, value=_msgspec_lib.json.encode(entry_dict).decode('utf-8'), ttl=3600)
     payload = _msgspec_lib.json.encode(serializable)
     if ZSTD_AVAILABLE and _zstd is not None:
         return _zstd.compress(payload)
     return payload
-
 
 def _serialize_cache_untyped(data: dict[str, CacheEntry]) -> bytes:
     """Legacy untyped serializer — used only when msgspec is unavailable."""
@@ -140,7 +100,6 @@ def _serialize_cache_untyped(data: dict[str, CacheEntry]) -> bytes:
         return _zstd.compress(payload)
     return payload
 
-
 def _deserialize_cache(data: bytes) -> dict[str, CacheEntry]:
     """Deserialize cache data from bytes via msgspec.CacheEntry typed fast path.
 
@@ -150,38 +109,25 @@ def _deserialize_cache(data: bytes) -> dict[str, CacheEntry]:
     back to the untyped dict parser so on-disk legacy payloads keep
     working (schema-drift tolerance).
     """
-    # Lazy import per project invariant.
     from hledac.universal.utils.msgspec_json import CacheEntry as _MsgspecCacheEntry
     from hledac.universal.utils.msgspec_json import decode_typed
-
     if ZSTD_AVAILABLE:
         try:
             payload: bytes = _zstd.decompress(data)
         except Exception:
-            # Backward compat: raw JSON (old .json files, no zstd header)
             payload = data
     else:
         payload = data
-
-    # Typed fast path (Sprint F264).
     if _MSGSPEC_AVAILABLE and _msgspec_lib is not None:
         try:
             struct_map = decode_typed(payload, dict[str, _MsgspecCacheEntry])
             if isinstance(struct_map, dict):
                 result: dict[str, CacheEntry] = {}
                 for k, struct_entry in struct_map.items():
-                    # isinstance gate per task pattern: typed fast path
-                    # vs. dict fallback for schema drift.
                     if not isinstance(struct_entry, _MsgspecCacheEntry):
-                        # Mixed shape (some typed, some dict) — fall through
-                        # to full legacy path.
-                        raise _msgspec_lib.ValidationError(
-                            "struct_map contains non-CacheEntry value"
-                        )
+                        raise _msgspec_lib.ValidationError('struct_map contains non-CacheEntry value')
                     try:
-                        inner = _msgspec_lib.json.decode(
-                            struct_entry.value.encode("utf-8")
-                        )
+                        inner = _msgspec_lib.json.decode(struct_entry.value.encode('utf-8'))
                     except Exception:
                         continue
                     if not isinstance(inner, dict):
@@ -189,10 +135,7 @@ def _deserialize_cache(data: bytes) -> dict[str, CacheEntry]:
                     result[k] = _dict_to_entry(inner, fallback_key=k)
                 return result
         except (_msgspec_lib.ValidationError, _msgspec_lib.DecodeError, Exception):
-            # Schema drift or typed decode unavailable → legacy path.
             pass
-
-    # Legacy untyped fallback.
     try:
         raw = decode(payload)
     except Exception:
@@ -201,48 +144,23 @@ def _deserialize_cache(data: bytes) -> dict[str, CacheEntry]:
         return {}
     result = {}
     for k, v in raw.items():
-        if not isinstance(v, dict) or "cache_id" not in v:
-            continue  # skip unknown shape (schema drift tolerance)
+        if not isinstance(v, dict) or 'cache_id' not in v:
+            continue
         try:
             result[k] = _dict_to_entry(v, fallback_key=k)
         except Exception:
-            continue  # skip malformed entry
+            continue
     return result
-
 
 def _entry_to_dict(v: CacheEntry) -> dict[str, Any]:
     """Convert internal ``CacheEntry`` dataclass to a JSON-serializable dict."""
-    return {
-        'cache_id': v.cache_id,
-        'content': v.content,
-        'embedding': v.embedding.tolist() if v.embedding is not None else None,
-        'access_count': v.access_count,
-        'last_accessed': v.last_accessed,
-        'created_at': v.created_at,
-        'size_bytes': v.size_bytes,
-        'cache_type': v.cache_type.value if isinstance(v.cache_type, Enum) else v.cache_type,
-        'metadata': v.metadata,
-    }
+    return {'cache_id': v.cache_id, 'content': v.content, 'embedding': v.embedding.tolist() if v.embedding is not None else None, 'access_count': v.access_count, 'last_accessed': v.last_accessed, 'created_at': v.created_at, 'size_bytes': v.size_bytes, 'cache_type': v.cache_type.value if isinstance(v.cache_type, Enum) else v.cache_type, 'metadata': v.metadata}
 
-
-def _dict_to_entry(v: dict[str, Any], fallback_key: str = "") -> CacheEntry:
+def _dict_to_entry(v: dict[str, Any], fallback_key: str='') -> CacheEntry:
     """Reconstruct internal ``CacheEntry`` dataclass from a deserialized dict."""
-    embedding_raw = v.get("embedding")
-    cache_type_raw = v.get("cache_type")
-    return CacheEntry(
-        cache_id=v.get("cache_id", fallback_key),
-        content=v.get("content"),
-        embedding=np.array(embedding_raw) if embedding_raw is not None else None,
-        access_count=v.get("access_count", 0),
-        last_accessed=v.get("last_accessed", 0.0),
-        created_at=v.get("created_at", 0.0),
-        size_bytes=v.get("size_bytes", 0),
-        cache_type=(
-            CacheType(cache_type_raw) if isinstance(cache_type_raw, str) else cache_type_raw
-        ),
-        metadata=v.get("metadata") or {},
-    )
-
+    embedding_raw = v.get('embedding')
+    cache_type_raw = v.get('cache_type')
+    return CacheEntry(cache_id=v.get('cache_id', fallback_key), content=v.get('content'), embedding=np.array(embedding_raw) if embedding_raw is not None else None, access_count=v.get('access_count', 0), last_accessed=v.get('last_accessed', 0.0), created_at=v.get('created_at', 0.0), size_bytes=v.get('size_bytes', 0), cache_type=CacheType(cache_type_raw) if isinstance(cache_type_raw, str) else cache_type_raw, metadata=v.get('metadata') or {})
 
 class CacheType(Enum):
     """Types of cache entries."""
@@ -250,14 +168,12 @@ class CacheType(Enum):
     COMPUTATION = COMPUTATION
     QUERY = QUERY
 
-
 class CacheLocation(Enum):
     """Cache location levels."""
     L1_MEMORY = L1_MEMORY
     L2_DISK = L2_DISK
 
-
-@dataclass
+@dataclass(True)
 class CacheEntry:
     """Single cache entry."""
     cache_id: str
@@ -270,8 +186,7 @@ class CacheEntry:
     cache_type: CacheType
     metadata: dict[str, Any]
 
-
-@dataclass
+@dataclass(True)
 class CacheStats:
     """Cache performance statistics."""
     total_entries: int
@@ -284,7 +199,6 @@ class CacheStats:
     l1_size_mb: float
     l2_size_mb: float
     avg_similarity_score: float
-
 
 class MultiLevelContextCache:
     """
@@ -301,16 +215,9 @@ class MultiLevelContextCache:
     - Low memory footprint (~100MB peak)
     - L1 (memory) + L2 (disk) hierarchy
     """
+    __slots__ = tuple(('_embedder_type', '_embedding_cache', '_mlx_manager', '_semantic_index', '_temp_l2_path', 'embedder', 'embedding_dim', 'embedding_model', 'embedding_to_cache_id', 'l1_cache', 'l1_max_size_bytes', 'l2_cache', 'l2_storage_path', 'max_entries', 'similarity_threshnew'))
 
-    def __init__(
-        self,
-        embedding_model: str = "snowflake/snowflake-arctic-embed-xs",
-        l1_max_size_mb: float = 100.0,
-        l2_storage_path: str = "cache_storage",
-        similarity_threshnew: float | None = None,
-        similarity_threshold: float | None = None,
-        max_entries: int = 10000
-    ):
+    def __init__(self, embedding_model: str='snowflake/snowflake-arctic-embed-xs', l1_max_size_mb: float=100.0, l2_storage_path: str='cache_storage', similarity_threshnew: float | None=None, similarity_threshold: float | None=None, max_entries: int=10000):
         """
         Initialize multi-level cache.
 
@@ -322,22 +229,16 @@ class MultiLevelContextCache:
             similarity_threshold: Threshold for semantic similarity (0.0-1.0)
             max_entries: Maximum total entries
         """
-        # Resolve threshold: prefer similarity_threshold, fallback to similarity_threshnew (legacy)
         effective_threshold: float = 0.95
         if similarity_threshold is not None:
             effective_threshold = max(0.0, min(1.0, similarity_threshold))
         elif similarity_threshnew is not None:
             effective_threshold = max(0.0, min(1.0, similarity_threshnew))
-
-        # Embedding model - initialize BEFORE cache config (for FastEmbed cache_dir)
         self.embedding_model = embedding_model
         self.embedder = None
         self.embedding_dim = None
-        self._embedder_type = None  # Track which embedder is used
-        self._temp_l2_path = l2_storage_path  # Store for FastEmbed init
-
-        # Initialize MLX Embedding Manager (primary for M1) or fallback to FastEmbed
-        # Use shared singleton to avoid duplicate model loads
+        self._embedder_type = None
+        self._temp_l2_path = l2_storage_path
         if MLX_EMBED_AVAILABLE:
             try:
                 from compat.core_mlx_embeddings import get_embedding_manager
@@ -345,9 +246,9 @@ class MultiLevelContextCache:
                 self.embedder = self._mlx_manager
                 self.embedding_dim = self._mlx_manager.EMBEDDING_DIM
                 self._embedder_type = 'mlx'
-                logger.info(f"[EMBEDDER] Using shared MLXEmbeddingManager: {self._mlx_manager.model_path}, dim={self.embedding_dim}")  # noqa: E501
+                logger.info(f'[EMBEDDER] Using shared MLXEmbeddingManager: {self._mlx_manager.model_path}, dim={self.embedding_dim}')
             except Exception as e:
-                logger.warning(f"MLXEmbeddingManager init failed: {e}, using dummy embeddings")
+                logger.warning(f'MLXEmbeddingManager init failed: {e}, using dummy embeddings')
                 self._mlx_manager = None
                 self.embedder = None
                 self.embedding_dim = 384
@@ -355,25 +256,17 @@ class MultiLevelContextCache:
         elif FASTEMBED_AVAILABLE:
             self._initialize_embedder()
         else:
-            logger.warning("MLXEmbeddingManager not available, using dummy embeddings")
+            logger.warning('MLXEmbeddingManager not available, using dummy embeddings')
             self.embedding_dim = 384
-
-        # Cache configuration
         self.l1_max_size_bytes = int(l1_max_size_mb * 1024 * 1024)
         self.l2_storage_path = Path(l2_storage_path)
         self.l2_storage_path.mkdir(parents=True, exist_ok=True)
-        self.similarity_threshnew = effective_threshold  # Keep internal name for serialization stability
+        self.similarity_threshnew = effective_threshold
         self.max_entries = max_entries
-
-        # Multi-level storage
         self.l1_cache: OrderedDict[str, CacheEntry] = OrderedDict()
         self.l2_cache: dict[str, CacheEntry] = {}
-
-        # Semantic search structures - lazy loaded
         self._semantic_index = None
         self.embedding_to_cache_id: dict[int, str] = {}
-
-        # F320-Issue2: embedding hash-cache — skip re-embed of identical normalized text
         self._embedding_cache: dict[str, Any] = {}
 
     @property
@@ -389,73 +282,54 @@ class MultiLevelContextCache:
         if self._semantic_index is None:
             import faiss
             self._semantic_index = faiss.IndexFlatIP(self.embedding_dim)
-
-        # Performance statistics
-        self.stats: dict[str, Any] = {
-            "hits": 0,
-            "misses": 0,
-            "total_requests": 0,
-            "l1_promotions": 0,
-            "l2_demotions": 0,
-            "evictions": 0,
-            "similarities": []
-        }
-
-        # Thread safety
+        self.stats: dict[str, Any] = {'hits': 0, 'misses': 0, 'total_requests': 0, 'l1_promotions': 0, 'l2_demotions': 0, 'evictions': 0, 'similarities': []}
         self._lock = threading.RLock()
-
-        # Load existing L2 cache
         self._load_l2_cache()
-
-        # Initialize FAISS index with existing embeddings
         self._rebuild_semantic_index()
 
     def _load_l2_cache(self):
         """Load L2 cache from disk. Prefer zstd-compressed .json.zst, fallback to .json."""
         try:
-            zst_file = self.l2_storage_path / "l2_cache.json.zst"
-            json_file = self.l2_storage_path / "l2_cache.json"
+            zst_file = self.l2_storage_path / 'l2_cache.json.zst'
+            json_file = self.l2_storage_path / 'l2_cache.json'
             if zst_file.exists():
-                with open(zst_file, "rb") as f:
+                with open(zst_file, 'rb') as f:
                     compressed_bytes = f.read()
-                # 20MB compressed limit for L2 cache
                 if len(compressed_bytes) > 20 * 1024 * 1024:
-                    logger.warning("Context L2 cache too large — skipping")
+                    logger.warning('Context L2 cache too large — skipping')
                     self.l2_cache = {}
                 else:
                     self.l2_cache = _deserialize_cache(compressed_bytes)
-                logger.info(f"Loaded {len(self.l2_cache)} entries from L2 cache (.zst)")
+                logger.info(f'Loaded {len(self.l2_cache)} entries from L2 cache (.zst)')
             elif json_file.exists():
-                # Backward compat: read old plain JSON
-                with open(json_file, "rb") as f:
+                with open(json_file, 'rb') as f:
                     cache_bytes = f.read()
                 if len(cache_bytes) > 20 * 1024 * 1024:
-                    logger.warning("Context L2 cache too large — skipping")
+                    logger.warning('Context L2 cache too large — skipping')
                     self.l2_cache = {}
                 else:
                     self.l2_cache = _deserialize_cache(cache_bytes)
-                logger.info(f"Loaded {len(self.l2_cache)} entries from L2 cache (.json legacy)")
+                logger.info(f'Loaded {len(self.l2_cache)} entries from L2 cache (.json legacy)')
             else:
                 self.l2_cache = {}
         except Exception as e:
-            logger.warning(f"Could not load L2 cache: {e}")
+            logger.warning(f'Could not load L2 cache: {e}')
             self.l2_cache = {}
 
     def _save_l2_cache(self):
         """Save L2 cache to disk as zstd-compressed .json.zst."""
         try:
-            cache_file = self.l2_storage_path / "l2_cache.json.zst"
+            cache_file = self.l2_storage_path / 'l2_cache.json.zst'
             with open(cache_file, 'wb') as f:
                 f.write(_serialize_cache(self.l2_cache))
         except Exception as e:
-            logger.warning(f"Could not save L2 cache: {e}")
+            logger.warning(f'Could not save L2 cache: {e}')
 
     def _rebuild_semantic_index(self):
         """Rebuild semantic index from existing cache entries."""
         import faiss
         self._semantic_index = faiss.IndexFlatIP(self.embedding_dim)
         self.embedding_to_cache_id.clear()
-
         all_entries = list(self.l1_cache.values()) + list(self.l2_cache.values())
         for entry in all_entries:
             if entry.embedding is not None:
@@ -479,16 +353,14 @@ class MultiLevelContextCache:
         F320-Issue2: Results are cached by NFC-normalized text to avoid
         re-encoding the same string across cycles."""
         import unicodedata
-        normalized = unicodedata.normalize("NFC", text)
+        normalized = unicodedata.normalize('NFC', text)
         cached = self._embedding_cache.get(normalized)
         if cached is not None:
             return cached
         if self.embedder is None:
             return None
-
         try:
             if self._embedder_type == 'mlx':
-                # Sprint 87: Use embed_query() for retrieval (SEARCH_QUERY task)
                 if hasattr(self.embedder, 'embed_query'):
                     result = self.embedder.embed_query(text)
                 else:
@@ -497,22 +369,15 @@ class MultiLevelContextCache:
                     return _np.array(result.tolist()) if NUMPY_AVAILABLE else None
                 return _np.array(result) if NUMPY_AVAILABLE else None
             else:
-                # FastEmbed uses .embed()
                 embeddings = list(self.embedder.embed([text]))
                 if embeddings:
                     return _np.array(embeddings[0]) if NUMPY_AVAILABLE else None
         except Exception as e:
-            logger.warning(f"Embedding failed: {e}")
-        # F320-Issue2: cache the embedding (bounded, corpus is finite)
+            logger.warning(f'Embedding failed: {e}')
         self._embedding_cache[normalized] = result
         return result
 
-    async def get(
-        self,
-        input_data: Any,
-        cache_type: CacheType = CacheType.COMPUTATION,
-        threshnew: float | None = None
-    ) -> Any | None:
+    async def get(self, input_data: Any, cache_type: CacheType=CacheType.COMPUTATION, threshnew: float | None=None) -> Any | None:
         """
         Get cached result or compute if not cached.
 
@@ -526,70 +391,38 @@ class MultiLevelContextCache:
         """
         if threshnew is None:
             threshnew = self.similarity_threshnew
-
         with self._lock:
-            self.stats["total_requests"] += 1
-
-        # Convert input to string for embedding
+            self.stats['total_requests'] += 1
         input_text = str(input_data)
-
-        # Check semantic cache for similar entries
         similar_entry = await self._find_similar_entry(input_text, threshnew)
-
         if similar_entry:
-            # Cache hit
             with self._lock:
-                self.stats["hits"] += 1
+                self.stats['hits'] += 1
                 self._update_access(similar_entry.cache_id)
-
-                # Promote to L1 if not already there
                 if similar_entry.cache_id in self.l2_cache:
                     self._promote_to_l1(similar_entry.cache_id)
-
             return similar_entry.content
-
-        # Cache miss - compute new result
         return None
 
-    async def _find_similar_entry(
-        self,
-        input_text: str,
-        threshnew: float
-    ) -> CacheEntry | None:
+    async def _find_similar_entry(self, input_text: str, threshnew: float) -> CacheEntry | None:
         """Find semantically similar cache entry."""
         input_embedding = self._get_embedding(input_text)
-
         if input_embedding is None:
             return None
-
-        # Search for similar embeddings — Sprint F265B: renamed from D, I to distances, indices
         query_embedding = input_embedding.reshape(1, -1).astype('float32')
         distances, indices = self.semantic_index.search(query_embedding, 10)
-
-        # Check if any similarity meets threshnew
         for idx, similarity in zip(indices[0], distances[0], strict=False):
             if float(similarity) >= threshnew:
                 cache_id = self.embedding_to_cache_id.get(int(idx))
-
                 if not cache_id:
                     continue
-
-                # Get entry from L1 or L2
                 entry = self.l1_cache.get(cache_id, self.l2_cache.get(cache_id))
-
                 if entry:
-                    # Record similarity for statistics
-                    self.stats["similarities"].append(float(similarity))
+                    self.stats['similarities'].append(float(similarity))
                     return entry
-
         return None
 
-    async def set(
-        self,
-        input_data: Any,
-        content: Any,
-        cache_type: CacheType = CacheType.COMPUTATION
-    ):
+    async def set(self, input_data: Any, content: Any, cache_type: CacheType=CacheType.COMPUTATION):
         """
         Cache a computation result.
 
@@ -598,56 +431,31 @@ class MultiLevelContextCache:
             content: Computation result to cache
             cache_type: Type of cache
         """
-        # Generate cache ID
         cache_id = self._generate_cache_id(input_data)
-
-        # Don't cache if already exists
         if cache_id in self.l1_cache or cache_id in self.l2_cache:
             return
-
-        # Create cache entry
         input_text = str(input_data)
         embedding = self._get_embedding(input_text)
-
-        cache_entry = CacheEntry(
-            cache_id=cache_id,
-            content=content,
-            embedding=embedding,
-            access_count=1,
-            last_accessed=time.time(),
-            created_at=time.time(),
-            size_bytes=self._estimate_size(content),
-            cache_type=cache_type,
-            metadata={}
-        )
-
+        cache_entry = CacheEntry(cache_id=cache_id, content=content, embedding=embedding, access_count=1, last_accessed=time.time(), created_at=time.time(), size_bytes=self._estimate_size(content), cache_type=cache_type, metadata={})
         with self._lock:
-            # Add to semantic index
             if embedding is not None:
                 embedding_id = len(self.embedding_to_cache_id)
                 self.embedding_to_cache_id[embedding_id] = cache_id
                 self.semantic_index.add(embedding.reshape(1, -1).astype('float32'))
-
-            # Add to L1 if space available
             if self._get_l1_size_bytes() + cache_entry.size_bytes <= self.l1_max_size_bytes:
                 self.l1_cache[cache_id] = cache_entry
             else:
-                # Add to L2
                 self.l2_cache[cache_id] = cache_entry
                 self._save_l2_cache()
-
-            # Check eviction
             self._check_eviction()
 
     def _update_access(self, cache_id: str):
         """Update access statistics for cache entry."""
         current_time = time.time()
-
         if cache_id in self.l1_cache:
             entry = self.l1_cache[cache_id]
             entry.access_count += 1
             entry.last_accessed = current_time
-            # Move to end (LRU)
             self.l1_cache.move_to_end(cache_id)
         elif cache_id in self.l2_cache:
             entry = self.l2_cache[cache_id]
@@ -657,248 +465,168 @@ class MultiLevelContextCache:
     def _promote_to_l1(self, cache_id: str):
         """Promote entry from L2 to L1 cache."""
         entry = self.l2_cache.pop(cache_id)
-
-        # Check if L1 has space
         if self._get_l1_size_bytes() + entry.size_bytes <= self.l1_max_size_bytes:
             self.l1_cache[cache_id] = entry
-            self.stats["l1_promotions"] += 1
+            self.stats['l1_promotions'] += 1
         else:
             self.l2_cache[cache_id] = entry
-
         self._save_l2_cache()
 
     def _evict_from_l1(self):
         """Evict least recently used entries from L1."""
-        # Evict 20% of entries
         evict_count = max(1, len(self.l1_cache) // 5)
-
         for _ in range(evict_count):
             if not self.l1_cache:
                 break
-
             cache_id, entry = self.l1_cache.popitem(last=False)
-            # Move to L2
             self.l2_cache[cache_id] = entry
-            self.stats["l2_demotions"] += 1
-
+            self.stats['l2_demotions'] += 1
         self._save_l2_cache()
 
     def _check_eviction(self):
         """Check and perform eviction if necessary."""
         total_entries = len(self.l1_cache) + len(self.l2_cache)
-
-        # Evict if over max entries
         if total_entries > self.max_entries:
             self._evict_least_valuable()
-
-        # Ensure L1 size limit
         if self._get_l1_size_bytes() > self.l1_max_size_bytes:
             self._evict_from_l1()
 
     def _evict_least_valuable(self):
         """Evict least valuable cache entries considering multiple factors."""
         all_entries = []
-
-        # Collect all entries with their scores
         for cache_id, entry in self.l1_cache.items():
             score = self._calculate_eviction_score(entry, is_l1=True)
             all_entries.append((cache_id, entry, score))
-
         for cache_id, entry in self.l2_cache.items():
             score = self._calculate_eviction_score(entry, is_l1=False)
             all_entries.append((cache_id, entry, score))
-
-        # Sort by score (lowest = least valuable)
         all_entries.sort(key=lambda x: x[2])
-
-        # Evict bottom 10% or until under limit
         target_count = max(1, int(len(all_entries) * 0.1))
         evicted = 0
-
-        for cache_id, entry, score in all_entries:  # noqa: B007
+        for cache_id, entry, score in all_entries:
             if evicted >= target_count:
                 break
-
             if cache_id in self.l1_cache:
                 self.l1_cache.pop(cache_id)
-                # Remove from semantic index
                 self._remove_from_semantic_index(cache_id)
                 evicted += 1
             elif cache_id in self.l2_cache:
                 self.l2_cache.pop(cache_id)
-                # Remove from semantic index
                 self._remove_from_semantic_index(cache_id)
                 evicted += 1
-
-        self.stats["evictions"] += evicted
+        self.stats['evictions'] += evicted
         self._save_l2_cache()
 
     def _calculate_eviction_score(self, entry: CacheEntry, is_l1: bool) -> float:
         """Calculate eviction score for entry."""
         current_time = time.time()
         age_hours = (current_time - entry.created_at) / 3600
-
-        # Recency factor (newer = lower score)
         recency_score = 1.0 / (1.0 + age_hours)
-
-        # Frequency factor (more access = higher score)
         frequency_score = min(1.0, entry.access_count / 10.0)
-
-        # Size factor (larger = lower score)
         size_penalty = 1.0 / (1.0 + entry.size_bytes / (1024 * 1024))
-
-        # L1 preference
         location_bonus = 1.2 if is_l1 else 1.0
-
-        # Combined score
-        return (recency_score * 0.4 +
-                frequency_score * 0.3 +
-                size_penalty * 0.2) * location_bonus
+        return (recency_score * 0.4 + frequency_score * 0.3 + size_penalty * 0.2) * location_bonus
 
     def _remove_from_semantic_index(self, cache_id: str):
         """Remove entry from semantic index."""
-        # Find embedding ID for cache ID
         embedding_ids_to_remove = []
         for embedding_id, cid in self.embedding_to_cache_id.items():
             if cid == cache_id:
                 embedding_ids_to_remove.append(embedding_id)
-
-        # Remove mappings (FAISS doesn't support removal, so we'll rebuild)
         for embedding_id in embedding_ids_to_remove:
             del self.embedding_to_cache_id[embedding_id]
-
-        # Rebuild index if many removals
         if len(embedding_ids_to_remove) > 10:
             self._rebuild_semantic_index()
 
     def _get_l1_size_bytes(self) -> int:
         """Get current L1 cache size in bytes."""
-        return sum(entry.size_bytes for entry in self.l1_cache.values())
+        return sum((entry.size_bytes for entry in self.l1_cache.values()))
 
     def _get_l2_size_bytes(self) -> int:
         """Get current L2 cache size in bytes."""
-        return sum(entry.size_bytes for entry in self.l2_cache.values())
+        return sum((entry.size_bytes for entry in self.l2_cache.values()))
 
-    async def invalidate(self, input_data: Any, cache_type: CacheType = CacheType.COMPUTATION):
+    async def invalidate(self, input_data: Any, cache_type: CacheType=CacheType.COMPUTATION):
         """Invalidate cache entry."""
         cache_id = self._generate_cache_id(input_data)
         invalidated = False
-
         with self._lock:
             if cache_id in self.l1_cache:
                 del self.l1_cache[cache_id]
                 invalidated = True
-
             if cache_id in self.l2_cache:
                 del self.l2_cache[cache_id]
                 invalidated = True
-
             if invalidated:
                 self._remove_from_semantic_index(cache_id)
                 self._save_l2_cache()
 
-    def clear(self, cache_type: CacheType | None = None):
+    def clear(self, cache_type: CacheType | None=None):
         """Clear cache entries."""
         with self._lock:
             if cache_type is None:
-                # Clear all
                 self.l1_cache.clear()
                 self.l2_cache.clear()
                 self._rebuild_semantic_index()
             else:
-                # Clear specific type
                 to_remove = []
                 for cache_id, entry in self.l1_cache.items():
                     if entry.cache_type == cache_type:
                         to_remove.append(cache_id)
-
                 for cache_id in to_remove:
                     del self.l1_cache[cache_id]
                     self._remove_from_semantic_index(cache_id)
-
                 to_remove = []
                 for cache_id, entry in self.l2_cache.items():
                     if entry.cache_type == cache_type:
                         to_remove.append(cache_id)
-
                 for cache_id in to_remove:
                     del self.l2_cache[cache_id]
                     self._remove_from_semantic_index(cache_id)
-
                 self._save_l2_cache()
 
     def get_stats(self) -> CacheStats:
         """Get comprehensive cache statistics."""
-        total_requests = max(1, self.stats["total_requests"])
-        hit_rate = self.stats["hits"] / total_requests
-
+        total_requests = max(1, self.stats['total_requests'])
+        hit_rate = self.stats['hits'] / total_requests
         avg_similarity = 0.0
-        if self.stats["similarities"]:
-            avg_similarity = statistics.mean(self.stats["similarities"])
+        if self.stats['similarities']:
+            avg_similarity = statistics.mean(self.stats['similarities'])
+        return CacheStats(total_entries=len(self.l1_cache) + len(self.l2_cache), l1_entries=len(self.l1_cache), l2_entries=len(self.l2_cache), hit_count=self.stats['hits'], miss_count=self.stats['misses'], hit_rate=hit_rate, total_requests=total_requests, l1_size_mb=self._get_l1_size_bytes() / (1024 * 1024), l2_size_mb=self._get_l2_size_bytes() / (1024 * 1024), avg_similarity_score=avg_similarity)
 
-        return CacheStats(
-            total_entries=len(self.l1_cache) + len(self.l2_cache),
-            l1_entries=len(self.l1_cache),
-            l2_entries=len(self.l2_cache),
-            hit_count=self.stats["hits"],
-            miss_count=self.stats["misses"],
-            hit_rate=hit_rate,
-            total_requests=total_requests,
-            l1_size_mb=self._get_l1_size_bytes() / (1024 * 1024),
-            l2_size_mb=self._get_l2_size_bytes() / (1024 * 1024),
-            avg_similarity_score=avg_similarity
-        )
-
-    async def warm_cache(
-        self,
-        inputs: list[Any],
-        compute_func: Callable,
-        cache_type: CacheType = CacheType.COMPUTATION
-    ):
+    async def warm_cache(self, inputs: list[Any], compute_func: Callable, cache_type: CacheType=CacheType.COMPUTATION):
         """Warm cache with pre-computed results."""
-        print(f"Warming cache with {len(inputs)} entries...")
-
+        print(f'Warming cache with {len(inputs)} entries...')
         tasks = []
         for input_data in inputs:
-            # Check if already cached
             cached = await self.get(input_data, cache_type)
             if cached is None:
-                # Compute and cache
                 tasks.append(compute_func(input_data))
-
-        results = await safe_gather_ok(*tasks, label="context_cache:789")
-
+        results = await safe_gather_ok(*tasks, label='context_cache:789')
         for input_data, result in zip(inputs, results, strict=False):
             await self.set(input_data, result, cache_type)
-
-        print("Cache warming complete")
-
+        print('Cache warming complete')
 
 def cache_decorator(cache: MultiLevelContextCache):
     """Decorator for caching function results."""
+
     def decorator(func):
+
         @wraps(func)
         async def wrapper(*args, **kwargs):
-            # Create input data from function arguments
             input_data = (func.__name__, args, kwargs)
-
-            # Try to get from cache
             cached = await cache.get(input_data)
-
             if cached is not None:
                 return cached
-
-            # Compute and cache
             result = await func(*args, **kwargs)
             await cache.set(input_data, result)
-
             return result
         return wrapper
     return decorator
 
-
 class CacheManager:
     """Manager for multiple cache instances."""
+    __slots__ = tuple(('caches',))
 
     def __init__(self):
         self.caches: dict[str, MultiLevelContextCache] = {}
@@ -919,38 +647,14 @@ class CacheManager:
     def get_all_stats(self) -> dict[str, CacheStats]:
         """Get statistics for all caches."""
         return {name: cache.get_stats() for name, cache in self.caches.items()}
-
-
-# Global cache manager
 _cache_manager = CacheManager()
-
 
 def get_cache_manager() -> CacheManager:
     """Get global cache manager."""
     return _cache_manager
+_global_context_cache = MultiLevelContextCache(l1_max_size_mb=128.0, l2_storage_path=str(Path.home() / '.cache' / 'hledac' / 'context_cache'))
 
-
-# Global cache instance for convenience decorator
-# M1 8GB UMA memory budget:
-# LLM (Hermes3 4bit 3B) = ~2000MB
-# MLX KV cache = ~768MB
-# DuckDB = ~200MB avg
-# Context L1 = 128MB (was 256MB — reduced 2026-05-28)
-# Other coordinators ≈ 200MB
-# Sprint execution ≈ 200MB
-# Remaining headroom ≈ 300MB before WARN (6.0GB)
-_global_context_cache = MultiLevelContextCache(
-    l1_max_size_mb=128.0,  # Reduced from 256MB — M1 8GB UMA budget
-    l2_storage_path=str(Path.home() / ".cache" / "hledac" / "context_cache")
-)
-
-
-def cached_context(
-    func=None,
-    *,
-    exclude_self: bool = True,
-    cache_type: CacheType = CacheType.QUERY
-):
+def cached_context(func=None, *, exclude_self: bool=True, cache_type: CacheType=CacheType.QUERY):
     """
     Convenience decorator for caching method results using global cache.
 
@@ -968,30 +672,23 @@ def cached_context(
         async def get_related(self, node_id: str):
             ...
     """
+
     def decorator(f):
+
         @wraps(f)
         async def wrapper(*args, **kwargs):
-            # Exclude self from cache key if requested
             if exclude_self and args:
-                # For methods, args[0] is self
                 cache_args = (f.__name__,) + args[1:] + (kwargs,)
             else:
                 cache_args = (f.__name__, args, kwargs)
-
-            # Try cache
             cached = await _global_context_cache.get(cache_args, cache_type)
             if cached is not None:
                 return cached
-
-            # Execute and cache
             result = await f(*args, **kwargs)
             await _global_context_cache.set(cache_args, result, cache_type)
             return result
         return wrapper
-
     if func is not None:
-        # Called as @cached_context
         return decorator(func)
     else:
-        # Called as @cached_context(exclude_self=True)
         return decorator

@@ -15,22 +15,11 @@ Detects and neutralizes:
 Integration point: Hermes3Engine.generate() after adaptive context preflight,
 before _sanitize_for_llm callback or fallback_sanitize.
 """
-
-
-
 import re
 from dataclasses import dataclass
+__all__ = ['PromptInjectionValidationResult', 'sanitize_prompt_injection_patterns']
 
-__all__ = [
-    "PromptInjectionValidationResult",
-    "sanitize_prompt_injection_patterns",
-]
-
-# ----------------------------------------------------------------------
-# Result type
-# ----------------------------------------------------------------------
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class PromptInjectionValidationResult:
     safe_text: str
     suspicious: bool
@@ -38,120 +27,14 @@ class PromptInjectionValidationResult:
     original_chars: int
     final_chars: int
     reason: str
+_INSTRUCTION_OVERRIDE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [('ignore_previous_instructions', re.compile('ignore[\\s\\w]*previous[\\s\\w]*instructions?', re.IGNORECASE)), ('disregard_instructions', re.compile('disregard[\\s\\w]*instructions?', re.IGNORECASE)), ('forget_instructions', re.compile('forget[\\s\\w]*instructions?', re.IGNORECASE)), ('ignore_all_previous', re.compile('ignore\\s+all\\s+previous', re.IGNORECASE)), ('do_not_follow', re.compile('do\\s+not\\s+follow', re.IGNORECASE)), ('ignore_prior', re.compile('ignore\\s+prior', re.IGNORECASE))]
+_SYSTEM_IMPERSONATION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [('system_prompt_injection', re.compile('(?:^|\\n)[\\s]*(?:system[\\s]*prompt)[\\s]*:', re.IGNORECASE | re.MULTILINE)), ('developer_message_injection', re.compile('(?:^|\\n)[\\s]*(?:developer[\\s]*message)[\\s]*:', re.IGNORECASE | re.MULTILINE)), ('you_are_chatgpt', re.compile('you\\s+are\\s+(?:ChatGPT|claude|gemini|llama|gpt)', re.IGNORECASE)), ('as_an_ai', re.compile('as\\s+an?\\s+(?:AI|artificial\\s+intelligence|ML|language\\s+model)', re.IGNORECASE)), ('you_are_an_ai', re.compile('you\\s+are\\s+an?\\s+(?:AI|artificial\\s+intelligence)', re.IGNORECASE))]
+_DELIMITER_INJECTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [('repeated_hash_system', re.compile('(?:^[ \\t]*[#]{1,6}[\\s]*system[\\s]*$){2,}', re.MULTILINE | re.IGNORECASE)), ('repeated_dash_system', re.compile('(?:^[ \\t]*[-]{3,}[\\s]*(?:system|instruction|role)[\\s]*$){2,}', re.MULTILINE | re.IGNORECASE)), ('repeated_underscore_role', re.compile('(?:^[ \\t]*[_]{3,}[\\s]*(?:system|instruction)[\\s]*$){2,}', re.MULTILINE | re.IGNORECASE)), ('triple_hash_system', re.compile('(?:^[ \\t]*###[\\s]*(?:system|instruction|role)[\\s]*$)', re.MULTILINE | re.IGNORECASE))]
+_HIDDEN_BLOCK_PATTERNS: list[tuple[str, re.Pattern[str]]] = [('html_comment_injection', re.compile('<!--[\\s\\S]*?(?:ignore|system|prompt|instruction|developer)[\\s\\S]*?-->', re.IGNORECASE)), ('markdown_details_hide', re.compile('<details>[\\s\\S]*?</details>', re.IGNORECASE)), ('zero_width_chars', re.compile('[\u200b\u200c\u200d\ufeff]')), ('bom_injection', re.compile('\ufeff'))]
+_CONTROL_CHAR_PATTERN: re.Pattern[str] = re.compile('[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f-\\x9f]')
+_ALL_PATTERNS: list[tuple[str, re.Pattern[str]]] = _INSTRUCTION_OVERRIDE_PATTERNS + _SYSTEM_IMPERSONATION_PATTERNS + _DELIMITER_INJECTION_PATTERNS + _HIDDEN_BLOCK_PATTERNS
 
-
-# ----------------------------------------------------------------------
-# Bounded pattern definitions
-# All patterns use re.IGNORECASE | re.MULTILINE where needed.
-# Compiled once at module load (not per call) — safe for unbounded re use.
-# ----------------------------------------------------------------------
-
-# 1. Instruction override phrases (case-insensitive substrings)
-_INSTRUCTION_OVERRIDE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("ignore_previous_instructions", re.compile(
-        r"ignore[\s\w]*previous[\s\w]*instructions?", re.IGNORECASE
-    )),
-    ("disregard_instructions", re.compile(
-        r"disregard[\s\w]*instructions?", re.IGNORECASE
-    )),
-    ("forget_instructions", re.compile(
-        r"forget[\s\w]*instructions?", re.IGNORECASE
-    )),
-    ("ignore_all_previous", re.compile(
-        r"ignore\s+all\s+previous", re.IGNORECASE
-    )),
-    ("do_not_follow", re.compile(
-        r"do\s+not\s+follow", re.IGNORECASE
-    )),
-    ("ignore_prior", re.compile(
-        r"ignore\s+prior", re.IGNORECASE
-    )),
-]
-
-# 2. System prompt / developer message impersonation
-_SYSTEM_IMPERSONATION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("system_prompt_injection", re.compile(
-        r"(?:^|\n)[\s]*(?:system[\s]*prompt)[\s]*:", re.IGNORECASE | re.MULTILINE
-    )),
-    ("developer_message_injection", re.compile(
-        r"(?:^|\n)[\s]*(?:developer[\s]*message)[\s]*:", re.IGNORECASE | re.MULTILINE
-    )),
-    ("you_are_chatgpt", re.compile(
-        r"you\s+are\s+(?:ChatGPT|claude|gemini|llama|gpt)", re.IGNORECASE
-    )),
-    ("as_an_ai", re.compile(
-        r"as\s+an?\s+(?:AI|artificial\s+intelligence|ML|language\s+model)", re.IGNORECASE
-    )),
-    ("you_are_an_ai", re.compile(
-        r"you\s+are\s+an?\s+(?:AI|artificial\s+intelligence)", re.IGNORECASE
-    )),
-]
-
-# 3. Delimiter injection (repeated structural markers)
-_DELIMITER_INJECTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("repeated_hash_system", re.compile(
-        r"(?:^[ \t]*[#]{1,6}[\s]*system[\s]*$){2,}",
-        re.MULTILINE | re.IGNORECASE
-    )),
-    ("repeated_dash_system", re.compile(
-        r"(?:^[ \t]*[-]{3,}[\s]*(?:system|instruction|role)[\s]*$){2,}",
-        re.MULTILINE | re.IGNORECASE
-    )),
-    ("repeated_underscore_role", re.compile(
-        r"(?:^[ \t]*[_]{3,}[\s]*(?:system|instruction)[\s]*$){2,}",
-        re.MULTILINE | re.IGNORECASE
-    )),
-    ("triple_hash_system", re.compile(
-        r"(?:^[ \t]*###[\s]*(?:system|instruction|role)[\s]*$)",
-        re.MULTILINE | re.IGNORECASE
-    )),
-]
-
-# 4. Markdown/HTML hidden instruction blocks
-_HIDDEN_BLOCK_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    # HTML comment hiding content from LLM view but visible to scraper parsers
-    ("html_comment_injection", re.compile(
-        r"<!--[\s\S]*?(?:ignore|system|prompt|instruction|developer)[\s\S]*?-->",
-        re.IGNORECASE
-    )),
-    # Markdown details/summary hide blocks
-    ("markdown_details_hide", re.compile(
-        r"<details>[\s\S]*?</details>",
-        re.IGNORECASE
-    )),
-    # Zero-width space in domain names (homoglyph attack)
-    ("zero_width_chars", re.compile(
-        # Zero-width space, zero-width joiner, zero-width non-joiner, word joiner
-        r"[​‌‍﻿]"
-    )),
-    # BOM at unexpected positions (can be used to hide patterns from naive string matching)
-    ("bom_injection", re.compile(
-        r"﻿"
-    )),
-]
-
-# 5. Control characters (extreme range — printable ASCII only)
-_CONTROL_CHAR_PATTERN: re.Pattern[str] = re.compile(
-    r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]"
-)
-
-# Compile all pattern groups for iteration
-_ALL_PATTERNS: list[tuple[str, re.Pattern[str]]] = (
-    _INSTRUCTION_OVERRIDE_PATTERNS
-    + _SYSTEM_IMPERSONATION_PATTERNS
-    + _DELIMITER_INJECTION_PATTERNS
-    + _HIDDEN_BLOCK_PATTERNS
-)
-
-# ----------------------------------------------------------------------
-# Sanitization
-# ----------------------------------------------------------------------
-
-def sanitize_prompt_injection_patterns(
-    text: str,
-    *,
-    max_chars: int = 200_000,
-) -> PromptInjectionValidationResult:
+def sanitize_prompt_injection_patterns(text: str, *, max_chars: int=200000) -> PromptInjectionValidationResult:
     """
     Scan and sanitize prompt injection patterns from scraped content.
 
@@ -166,80 +49,35 @@ def sanitize_prompt_injection_patterns(
         PromptInjectionValidationResult with sanitized text and metadata.
     """
     original_chars = len(text) if isinstance(text, str) else 0
-
-    # Fail-open: treat non-string as safe empty
     if not isinstance(text, str):
-        return PromptInjectionValidationResult(
-            safe_text="",
-            suspicious=False,
-            patterns=(),
-            original_chars=0,
-            final_chars=0,
-            reason="non_string_input",
-        )
-
-    # Hard cap — truncate before scanning to bound memory
+        return PromptInjectionValidationResult(safe_text='', suspicious=False, patterns=(), original_chars=0, final_chars=0, reason='non_string_input')
     if original_chars > max_chars:
         text = text[:max_chars]
-
     detected: list[str] = []
     result = text
-
     try:
-        # Phase 1: Zero-width / BOM characters (simple replace — no regex needed)
         zw_removed = 0
-        for zw_char in ["​", "‌", "‍", "﻿"]:
+        for zw_char in ['\u200b', '\u200c', '\u200d', '\ufeff']:
             count = result.count(zw_char)
             if count:
                 zw_removed += count
-                result = result.replace(zw_char, "")
-
+                result = result.replace(zw_char, '')
         if zw_removed:
-            detected.append("zero_width_chars")
-
-        # Phase 2: Control characters outside printable ASCII + valid Unicode categories
-        # Replace with space to preserve word boundary approx
+            detected.append('zero_width_chars')
         ctrl_removed = len(_CONTROL_CHAR_PATTERN.findall(result))
         if ctrl_removed:
-            detected.append("control_chars")
-            result = _CONTROL_CHAR_PATTERN.sub(" ", result)
-
-        # Phase 3: Pattern-based injection detection (mark detected, do NOT remove)
+            detected.append('control_chars')
+            result = _CONTROL_CHAR_PATTERN.sub(' ', result)
         for name, pattern in _ALL_PATTERNS:
             if pattern.search(result):
                 if name not in detected:
                     detected.append(name)
-
-        # Phase 4: Collapse excessive whitespace that could hide delimiters
-        # Only collapse if delimiter injection was detected — conservative
-        if "repeated_hash_system" in detected or "repeated_dash_system" in detected:
-            # Replace 2+ consecutive newlines with double newline + warning marker
-            result = re.sub(r"\n{3,}", "\n\n[WARN: repeated delimiter removed]\n", result)
+        if 'repeated_hash_system' in detected or 'repeated_dash_system' in detected:
+            result = re.sub('\\n{3,}', '\n\n[WARN: repeated delimiter removed]\n', result)
             if result != text:
-                detected.append("whitespace_collapse")
-
+                detected.append('whitespace_collapse')
     except Exception:
-        # Fail-open: return original text (within max_chars) as safe
-        return PromptInjectionValidationResult(
-            safe_text=text[:max_chars] if len(text) > max_chars else text,
-            suspicious=False,
-            patterns=(),
-            original_chars=original_chars,
-            final_chars=min(original_chars, max_chars),
-            reason="internal_error_fallback",
-        )
-
+        return PromptInjectionValidationResult(safe_text=text[:max_chars] if len(text) > max_chars else text, suspicious=False, patterns=(), original_chars=original_chars, final_chars=min(original_chars, max_chars), reason='internal_error_fallback')
     final_chars = len(result)
     detected_tuple = tuple(detected)
-
-    return PromptInjectionValidationResult(
-        safe_text=result,
-        suspicious=detected_tuple,
-        patterns=detected_tuple,
-        original_chars=original_chars,
-        final_chars=final_chars,
-        reason=(
-            f"detected {len(detected_tuple)} pattern(s): {', '.join(detected_tuple)}"
-            if detected_tuple else "clean"
-        ),
-    )
+    return PromptInjectionValidationResult(safe_text=result, suspicious=detected_tuple, patterns=detected_tuple, original_chars=original_chars, final_chars=final_chars, reason=f"detected {len(detected_tuple)} pattern(s): {', '.join(detected_tuple)}" if detected_tuple else 'clean')

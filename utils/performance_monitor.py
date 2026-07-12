@@ -7,20 +7,16 @@ Funkce:
 - Quality validation
 - Memory profiling
 """
-
 from hledac.universal.utils.async_helpers import safe_create_task, stop_task
-
 import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
 import msgspec
 from typing import Any
-
 logger = logging.getLogger(__name__)
 
-
-@dataclass
+@dataclass(True)
 class PerformanceMetrics:
     """Metriky výkonu"""
     generation_count: int = 0
@@ -29,42 +25,20 @@ class PerformanceMetrics:
     avg_speedup: float = 0.0
     quality_scores: list[float] = field(default_factory=list)
 
-    def record_generation(
-        self,
-        tokens: int,
-        duration: float,
-        baseline_time: float,
-        quality_score: float = 1.0
-    ) -> None:
+    def record_generation(self, tokens: int, duration: float, baseline_time: float, quality_score: float=1.0) -> None:
         """Zaznamenat generování"""
         self.generation_count += 1
         self.total_tokens += tokens
         self.total_time += duration
-
-        # Vypočítat speedup
         if duration > 0:
             speedup = baseline_time / duration
-            # Update running average
-            self.avg_speedup = (
-                (self.avg_speedup * (self.generation_count - 1) + speedup)
-                / self.generation_count
-            )
-
+            self.avg_speedup = (self.avg_speedup * (self.generation_count - 1) + speedup) / self.generation_count
         self.quality_scores.append(quality_score)
 
     def get_stats(self) -> dict[str, Any]:
         """Získat statistiky"""
         avg_quality = sum(self.quality_scores) / len(self.quality_scores) if self.quality_scores else 0
-
-        return {
-            "generations": self.generation_count,
-            "total_tokens": self.total_tokens,
-            "total_time_sec": self.total_time,
-            "avg_tokens_per_sec": self.total_tokens / self.total_time if self.total_time > 0 else 0,
-            "avg_speedup": self.avg_speedup,
-            "avg_quality": avg_quality,
-        }
-
+        return {'generations': self.generation_count, 'total_tokens': self.total_tokens, 'total_time_sec': self.total_time, 'avg_tokens_per_sec': self.total_tokens / self.total_time if self.total_time > 0 else 0, 'avg_speedup': self.avg_speedup, 'avg_quality': avg_quality}
 
 class PerformanceMonitor:
     """
@@ -76,6 +50,7 @@ class PerformanceMonitor:
     - Memory profiling
     - Baseline estimation
     """
+    __slots__ = tuple(('_baseline_stats', 'metrics'))
 
     def __init__(self):
         self.metrics = PerformanceMetrics()
@@ -85,12 +60,7 @@ class PerformanceMonitor:
         """Start časování"""
         return time.time()
 
-    def record(
-        self,
-        tokens: int,
-        start_time: float,
-        quality_score: float = 1.0
-    ) -> dict[str, Any]:
+    def record(self, tokens: int, start_time: float, quality_score: float=1.0) -> dict[str, Any]:
         """
         Zaznamenat generování.
 
@@ -104,18 +74,10 @@ class PerformanceMonitor:
         """
         duration = time.time() - start_time
         baseline_time = self._estimate_baseline_time(tokens)
-
         self.metrics.record_generation(tokens, duration, baseline_time, quality_score)
-
         speedup = baseline_time / duration if duration > 0 else 0
-
-        logger.info(f"Generation complete: {duration:.2f}s, speedup: {speedup:.1f}×")
-
-        return {
-            "duration": duration,
-            "speedup": speedup,
-            "tokens_per_sec": tokens / duration if duration > 0 else 0,
-        }
+        logger.info(f'Generation complete: {duration:.2f}s, speedup: {speedup:.1f}×')
+        return {'duration': duration, 'speedup': speedup, 'tokens_per_sec': tokens / duration if duration > 0 else 0}
 
     def _estimate_baseline_time(self, tokens: int) -> float:
         """
@@ -127,7 +89,6 @@ class PerformanceMonitor:
         Returns:
             Odhadovaný čas v sekundách
         """
-        # Baseline: ~10 tokens/sec bez optimalizací
         return tokens / 10.0
 
     def get_stats(self) -> dict[str, Any]:
@@ -138,22 +99,18 @@ class PerformanceMonitor:
         """Reset metrik"""
         self.metrics = PerformanceMetrics()
 
-
 class QualityValidator:
     """
     Validátor kvality výstupu.
 
     Zajišťuje 100% identitu výstupu (nebo ji měří).
     """
+    __slots__ = tuple(('_reference_outputs',))
 
     def __init__(self):
         self._reference_outputs = {}
 
-    def check_output_quality(
-        self,
-        output: str,
-        reference: str | None = None
-    ) -> dict[str, Any]:
+    def check_output_quality(self, output: str, reference: str | None=None) -> dict[str, Any]:
         """
         Zkontrolovat kvalitu výstupu.
 
@@ -164,67 +121,43 @@ class QualityValidator:
         Returns:
             Výsledky validace
         """
-        metrics = {
-            "length": len(output),
-            "tokens": len(output.split()),
-            "score": 1.0,  # Default: perfect
-        }
-
+        metrics = {'length': len(output), 'tokens': len(output.split()), 'score': 1.0}
         if reference:
-            # Porovnat s referencí
             similarity = self._calculate_similarity(output, reference)
-            metrics["similarity"] = similarity
-            metrics["score"] = similarity
-
-        # Heuristiky kvality
+            metrics['similarity'] = similarity
+            metrics['score'] = similarity
         if len(output) < 10:
-            metrics["score"] *= 0.5  # Příliš krátké
-
+            metrics['score'] *= 0.5
         return metrics
 
     def _calculate_similarity(self, a: str, b: str) -> float:
         """Vypočítat podobnost dvou textů"""
-        # Jednoduchá Jaccard podobnost
         set_a = set(a.lower().split())
         set_b = set(b.lower().split())
-
-        if not set_a and not set_b:
+        if not set_a and (not set_b):
             return 1.0
-
         intersection = len(set_a & set_b)
         union = len(set_a | set_b)
-
         return intersection / union if union > 0 else 0.0
-
-
-
-# =============================================================================
-# SYSTEM MONITOR (Integrated from hledac/utils/systemcontext.py)
-# =============================================================================
-
-from enum import Enum  # noqa: E402
-
-import psutil  # noqa: E402
-
+from enum import Enum
+import psutil
 
 class ThermalState(Enum):
     """M1 thermal states."""
-    COOL = "cool"
-    NORMAL = "normal"
-    WARM = "warm"
-    HOT = "hot"
-    CRITICAL = "critical"
-
+    COOL = 'cool'
+    NORMAL = 'normal'
+    WARM = 'warm'
+    HOT = 'hot'
+    CRITICAL = 'critical'
 
 class MemoryPressure(Enum):
     """Memory pressure levels for 8GB M1."""
-    LOW = "low"
-    MODERATE = "moderate"
-    HIGH = "high"
-    CRITICAL = "critical"
+    LOW = 'low'
+    MODERATE = 'moderate'
+    HIGH = 'high'
+    CRITICAL = 'critical'
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class SystemMetrics:
     """Current system metrics."""
     cpu_percent: float
@@ -236,7 +169,6 @@ class SystemMetrics:
     is_charging: bool | None = None
     timestamp: float = 0.0
 
-
 class SystemMonitor:
     """
     System monitor for M1 optimization.
@@ -244,8 +176,9 @@ class SystemMonitor:
     Tracks system metrics and provides callbacks for state changes.
     Optimized for M1 MacBook with 8GB RAM.
     """
+    __slots__ = tuple(('_callbacks', '_metrics', '_monitoring_task', '_running', 'sample_interval'))
 
-    def __init__(self, sample_interval: float = 1.0):
+    def __init__(self, sample_interval: float=1.0):
         """
         Initialize system monitor.
 
@@ -253,14 +186,7 @@ class SystemMonitor:
             sample_interval: How often to sample metrics (seconds)
         """
         self.sample_interval = sample_interval
-        self._metrics = SystemMetrics(
-            cpu_percent=0.0,
-            memory_percent=0.0,
-            memory_available_mb=0.0,
-            thermal_state=ThermalState.NORMAL,
-            memory_pressure=MemoryPressure.LOW,
-            timestamp=time.time()
-        )
+        self._metrics = SystemMetrics(cpu_percent=0.0, memory_percent=0.0, memory_available_mb=0.0, thermal_state=ThermalState.NORMAL, memory_pressure=MemoryPressure.LOW, timestamp=time.time())
         self._callbacks: dict[str, Any] = {}
         self._monitoring_task: asyncio.Task | None = None
         self._running = False
@@ -269,10 +195,9 @@ class SystemMonitor:
         """Start background monitoring."""
         if self._running:
             return
-
         self._running = True
         self._monitoring_task = safe_create_task(self._monitoring_loop())
-        logger.info("System monitoring started")
+        logger.info('System monitoring started')
 
     async def stop_monitoring(self) -> None:
         """Stop background monitoring."""
@@ -283,7 +208,7 @@ class SystemMonitor:
                 await self._monitoring_task
             except asyncio.CancelledError:
                 pass
-        logger.info("System monitoring stopped")
+        logger.info('System monitoring stopped')
 
     async def _monitoring_loop(self) -> None:
         """Background monitoring loop."""
@@ -292,27 +217,18 @@ class SystemMonitor:
                 await self._update_metrics()
                 await asyncio.sleep(self.sample_interval)
             except Exception as e:
-                logger.error(f"Error in monitoring loop: {e}")
+                logger.error(f'Error in monitoring loop: {e}')
                 await asyncio.sleep(self.sample_interval)
 
     async def _update_metrics(self) -> None:
         """Update system metrics."""
         try:
-            # Get CPU usage
             cpu_percent = psutil.cpu_percent(interval=0.1)
-
-            # Get memory info
             memory = psutil.virtual_memory()
             memory_percent = memory.percent
             memory_available_mb = memory.available / (1024 * 1024)
-
-            # Determine memory pressure
             memory_pressure = self._get_memory_pressure(memory_percent, memory_available_mb)
-
-            # Determine thermal state (simulated based on CPU)
             thermal_state = self._get_thermal_state(cpu_percent)
-
-            # Get battery info if available
             battery_percent = None
             is_charging = None
             try:
@@ -320,28 +236,13 @@ class SystemMonitor:
                 if battery:
                     battery_percent = battery.percent
                     is_charging = battery.power_plugged
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
-
-            # Create new metrics
-            new_metrics = SystemMetrics(
-                cpu_percent=cpu_percent,
-                memory_percent=memory_percent,
-                memory_available_mb=memory_available_mb,
-                thermal_state=thermal_state,
-                memory_pressure=memory_pressure,
-                battery_percent=battery_percent,
-                is_charging=is_charging,
-                timestamp=time.time()
-            )
-
-            # Check for state changes and trigger callbacks
+            new_metrics = SystemMetrics(cpu_percent=cpu_percent, memory_percent=memory_percent, memory_available_mb=memory_available_mb, thermal_state=thermal_state, memory_pressure=memory_pressure, battery_percent=battery_percent, is_charging=is_charging, timestamp=time.time())
             await self._check_state_changes(self._metrics, new_metrics)
-
             self._metrics = new_metrics
-
         except Exception as e:
-            logger.error(f"Error updating metrics: {e}")
+            logger.error(f'Error updating metrics: {e}')
 
     def _get_memory_pressure(self, memory_percent: float, memory_available_mb: float) -> MemoryPressure:
         """Determine memory pressure level."""
@@ -372,13 +273,10 @@ class SystemMonitor:
         if old_metrics.thermal_state != new_metrics.thermal_state:
             if 'thermal_change' in self._callbacks:
                 self._callbacks['thermal_change'](new_metrics)
-
         if old_metrics.memory_pressure != new_metrics.memory_pressure:
             if 'memory_change' in self._callbacks:
                 self._callbacks['memory_change'](new_metrics)
-
-        if (new_metrics.thermal_state == ThermalState.CRITICAL or
-            new_metrics.memory_pressure == MemoryPressure.CRITICAL):
+        if new_metrics.thermal_state == ThermalState.CRITICAL or new_metrics.memory_pressure == MemoryPressure.CRITICAL:
             if 'critical_state' in self._callbacks:
                 self._callbacks['critical_state'](new_metrics)
 
@@ -397,25 +295,19 @@ class SystemMonitor:
 
     def should_throttle(self) -> bool:
         """Check if processing should be throttled."""
-        return (
-            self._metrics.thermal_state in [ThermalState.HOT, ThermalState.CRITICAL] or
-            self._metrics.memory_pressure in [MemoryPressure.HIGH, MemoryPressure.CRITICAL]
-        )
+        return self._metrics.thermal_state in [ThermalState.HOT, ThermalState.CRITICAL] or self._metrics.memory_pressure in [MemoryPressure.HIGH, MemoryPressure.CRITICAL]
 
     def get_recommendations(self) -> list[str]:
         """Get performance recommendations based on current state."""
         recommendations = []
-
         if self._metrics.thermal_state == ThermalState.CRITICAL:
-            recommendations.append("CRITICAL: Stop intensive operations immediately")
+            recommendations.append('CRITICAL: Stop intensive operations immediately')
         elif self._metrics.thermal_state == ThermalState.HOT:
-            recommendations.append("WARNING: Reduce processing load to cool down")
-
+            recommendations.append('WARNING: Reduce processing load to cool down')
         if self._metrics.memory_pressure == MemoryPressure.CRITICAL:
-            recommendations.append("CRITICAL: Free memory immediately or risk OOM")
+            recommendations.append('CRITICAL: Free memory immediately or risk OOM')
         elif self._metrics.memory_pressure == MemoryPressure.HIGH:
-            recommendations.append("WARNING: Reduce memory usage")
-
+            recommendations.append('WARNING: Reduce memory usage')
         return recommendations
 
     def get_snapshot(self) -> dict[str, Any]:
@@ -429,32 +321,19 @@ class SystemMonitor:
             memory_pressure, and optional event_loop_lag_estimate.
         """
         m = self._metrics
-        snapshot: dict[str, Any] = {
-            "rss_mb": 0.0,
-            "cpu_percent": m.cpu_percent,
-            "memory_percent": m.memory_percent,
-            "thermal_state": m.thermal_state.value if m.thermal_state else "unknown",
-            "memory_pressure": m.memory_pressure.value if m.memory_pressure else "unknown",
-        }
-
-        # Get RSS if psutil available
+        snapshot: dict[str, Any] = {'rss_mb': 0.0, 'cpu_percent': m.cpu_percent, 'memory_percent': m.memory_percent, 'thermal_state': m.thermal_state.value if m.thermal_state else 'unknown', 'memory_pressure': m.memory_pressure.value if m.memory_pressure else 'unknown'}
         try:
             import psutil
             process = psutil.Process()
-            snapshot["rss_mb"] = process.memory_info().rss / (1024 * 1024)
-        except Exception:  # noqa: BLE001
+            snapshot['rss_mb'] = process.memory_info().rss / (1024 * 1024)
+        except Exception:
             pass
-
-        # Estimate event loop lag if we can
         try:
             asyncio.get_running_loop()
-            # Use clock_time provides a cheap lag estimate
-            snapshot["event_loop_lag_ms"] = 0.0  # Placeholder - actual lag measurement requires profiler
-        except Exception:  # noqa: BLE001
+            snapshot['event_loop_lag_ms'] = 0.0
+        except Exception:
             pass
-
         return snapshot
-
 
 class FlowTraceSnapshotEmitter:
     """
@@ -463,8 +342,9 @@ class FlowTraceSnapshotEmitter:
     Sprint 8C1: When GHOST_FLOW_TRACE=1, periodically emits system snapshots
     to the flow trace stream. Lightweight - only active when tracing is enabled.
     """
+    __slots__ = tuple(('_interval', '_monitor', '_running', '_task'))
 
-    def __init__(self, monitor: SystemMonitor, interval: float = 5.0):
+    def __init__(self, monitor: SystemMonitor, interval: float=5.0):
         self._monitor = monitor
         self._interval = interval
         self._task: asyncio.Task | None = None
@@ -474,15 +354,12 @@ class FlowTraceSnapshotEmitter:
         """Start periodic snapshot emission."""
         if self._running:
             return
-
-        # Only start if tracing is enabled
         try:
             from .flow_trace import is_enabled
             if not is_enabled():
                 return
         except Exception:
             return
-
         self._running = True
         self._task = safe_create_task(self._snapshot_loop())
 
@@ -497,35 +374,13 @@ class FlowTraceSnapshotEmitter:
             try:
                 await asyncio.sleep(self._interval)
                 snapshot = self._monitor.get_snapshot()
-
-                # Emit as trace event
                 try:
                     from .flow_trace import trace_event
-                    trace_event(
-                        component="performance_monitor",
-                        stage="system_snapshot",
-                        event_type="periodic_snapshot",
-                        status="ok",
-                        metadata=snapshot,
-                    )
-                except Exception:  # noqa: BLE001
-                    pass  # noqa: BLE001  # Fail-open
+                    trace_event(component='performance_monitor', stage='system_snapshot', event_type='periodic_snapshot', status='ok', metadata=snapshot)
+                except Exception:
+                    pass
             except asyncio.CancelledError:
                 break
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
-
-
-# Update exports
-__all__ = [
-    'PerformanceMetrics',
-    'PerformanceMonitor',
-    'QualityValidator',
-    # NEW from systemcontext:
-    'ThermalState',
-    'MemoryPressure',
-    'SystemMetrics',
-    'SystemMonitor',
-    # Sprint 8C1:
-    'FlowTraceSnapshotEmitter',
-]
+__all__ = ['PerformanceMetrics', 'PerformanceMonitor', 'QualityValidator', 'ThermalState', 'MemoryPressure', 'SystemMetrics', 'SystemMonitor', 'FlowTraceSnapshotEmitter']

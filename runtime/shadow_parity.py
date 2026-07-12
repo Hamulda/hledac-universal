@@ -66,27 +66,14 @@ Canonical facts owners:
 - branch_decision_facts → types.py (BranchDecision)
 - provider_precursor → capabilities.py (future)
 """
-
-
-
 import time
 from dataclasses import dataclass, field
 import msgspec
 from typing import TYPE_CHECKING, Any
-
 if TYPE_CHECKING:
-    from .shadow_inputs import (
-        GraphSummaryBundle,
-        LifecycleSnapshotBundle,
-        ModelControlFactsBundle,
-    )
+    from .shadow_inputs import GraphSummaryBundle, LifecycleSnapshotBundle, ModelControlFactsBundle
 
-
-# =============================================================================
-# Parity Artifact — diagnostic output, NOT a truth store
-# =============================================================================
-
-@dataclass
+@dataclass(True)
 class ParityArtifact:
     """
     Diagnostic parity artifact — output of shadow mode comparison.
@@ -113,92 +100,40 @@ class ParityArtifact:
     - EXPORT_HANDOFF: export handoff facts mismatch
     - PHASE_FIELD_MERGE: attempts to merge multiple phases into one field (BUG)
     """
-    mode: str  # runtime mode used
+    mode: str
     timestamp_monotonic: float
     timestamp_wall: str
-
-    # Lifecycle facts — SEPARATED fields, NEVER merged
     workflow_phase: str
     workflow_phase_entered_at: float | None
     control_phase_mode: str
     control_phase_thermal: str
     windup_local_mode: str | None
-
-    # Graph facts
     graph_nodes: int
     graph_edges: int
     graph_pgq_active: bool
     graph_backend: str
     graph_top_nodes_count: int
-
-    # Model/Control facts
     mc_tools_count: int
     mc_sources_count: int
     mc_privacy: str
     mc_depth: str
     mc_models_needed: list[str]
-
-    # Export handoff facts
     export_sprint_id: str
     export_synthesis_engine: str
     export_ranked_parquet_present: bool
     export_gnn_predictions: int
-
-    # Branch/Provider precursor facts (if available)
     branch_decision_id: str | None
     provider_recommend: str | None
-
-    # Correlation carrier (if already natural)
     correlation_run_id: str | None
     correlation_branch_id: str | None
-
-    # Mismatch analysis
     mismatch_categories: list[str]
     mismatch_details: dict[str, Any]
-
-    # Source tracking (for debugging which inputs were used)
-    input_sources: dict[str, str]  # bundle_name → source_module
-
-    # Fact stability breakdown — distinguishes STABLE vs COMPAT vs UNKNOWN inputs
-    # This prevents compat seams from being treated as authoritative facts
+    input_sources: dict[str, str]
     fact_stability_breakdown: dict[str, str] = field(default_factory=dict)
-    # List of bundles that used COMPAT/legacy paths (not typed contracts)
     compat_seams: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "mode": self.mode,
-            "timestamp_monotonic": self.timestamp_monotonic,
-            "timestamp_wall": self.timestamp_wall,
-            "workflow_phase": self.workflow_phase,
-            "workflow_phase_entered_at": self.workflow_phase_entered_at,
-            "control_phase_mode": self.control_phase_mode,
-            "control_phase_thermal": self.control_phase_thermal,
-            "windup_local_mode": self.windup_local_mode,
-            "graph_nodes": self.graph_nodes,
-            "graph_edges": self.graph_edges,
-            "graph_pgq_active": self.graph_pgq_active,
-            "graph_backend": self.graph_backend,
-            "graph_top_nodes_count": self.graph_top_nodes_count,
-            "mc_tools_count": self.mc_tools_count,
-            "mc_sources_count": self.mc_sources_count,
-            "mc_privacy": self.mc_privacy,
-            "mc_depth": self.mc_depth,
-            "mc_models_needed": self.mc_models_needed,
-            "export_sprint_id": self.export_sprint_id,
-            "export_synthesis_engine": self.export_synthesis_engine,
-            "export_ranked_parquet_present": self.export_ranked_parquet_present,
-            "export_gnn_predictions": self.export_gnn_predictions,
-            "branch_decision_id": self.branch_decision_id,
-            "provider_recommend": self.provider_recommend,
-            "correlation_run_id": self.correlation_run_id,
-            "correlation_branch_id": self.correlation_branch_id,
-            "mismatch_categories": self.mismatch_categories,
-            "mismatch_details": self.mismatch_details,
-            "input_sources": self.input_sources,
-            "fact_stability_breakdown": self.fact_stability_breakdown,
-            "compat_seams": self.compat_seams,
-        }
+        return {'mode': self.mode, 'timestamp_monotonic': self.timestamp_monotonic, 'timestamp_wall': self.timestamp_wall, 'workflow_phase': self.workflow_phase, 'workflow_phase_entered_at': self.workflow_phase_entered_at, 'control_phase_mode': self.control_phase_mode, 'control_phase_thermal': self.control_phase_thermal, 'windup_local_mode': self.windup_local_mode, 'graph_nodes': self.graph_nodes, 'graph_edges': self.graph_edges, 'graph_pgq_active': self.graph_pgq_active, 'graph_backend': self.graph_backend, 'graph_top_nodes_count': self.graph_top_nodes_count, 'mc_tools_count': self.mc_tools_count, 'mc_sources_count': self.mc_sources_count, 'mc_privacy': self.mc_privacy, 'mc_depth': self.mc_depth, 'mc_models_needed': self.mc_models_needed, 'export_sprint_id': self.export_sprint_id, 'export_synthesis_engine': self.export_synthesis_engine, 'export_ranked_parquet_present': self.export_ranked_parquet_present, 'export_gnn_predictions': self.export_gnn_predictions, 'branch_decision_id': self.branch_decision_id, 'provider_recommend': self.provider_recommend, 'correlation_run_id': self.correlation_run_id, 'correlation_branch_id': self.correlation_branch_id, 'mismatch_categories': self.mismatch_categories, 'mismatch_details': self.mismatch_details, 'input_sources': self.input_sources, 'fact_stability_breakdown': self.fact_stability_breakdown, 'compat_seams': self.compat_seams}
 
     @classmethod
     def is_diagnostic_only(cls) -> bool:
@@ -210,16 +145,7 @@ class ParityArtifact:
         """
         return True
 
-
-# =============================================================================
-# Helper functions — must be defined before run_shadow_parity
-# =============================================================================
-
-def _check_phase_field_merge(
-    bundle: LifecycleSnapshotBundle,
-    mismatches: list[str],
-    mismatch_details: dict[str, Any],
-) -> None:
+def _check_phase_field_merge(bundle: LifecycleSnapshotBundle, mismatches: list[str], mismatch_details: dict[str, Any]) -> None:
     """
     Check for phase value anomalies — generic validation only.
 
@@ -228,30 +154,17 @@ def _check_phase_field_merge(
     _check_phase_field_merge_bug() which emits PHASE_FIELD_MERGE.
     """
     wf = bundle.workflow_phase.phase
-
-    # Check: workflow_phase should be one of the SprintPhase enum values
-    valid_workflow_phases = {"BOOT", "WARMUP", "ACTIVE", "WINDUP", "EXPORT", "TEARDOWN"}
+    valid_workflow_phases = {'BOOT', 'WARMUP', 'ACTIVE', 'WINDUP', 'EXPORT', 'TEARDOWN'}
     if wf not in valid_workflow_phases:
-        mismatches.append("LIFECYCLE")
-        mismatch_details["workflow_phase"] = f"unexpected phase value: {wf}"
-
-    # Check: control_phase.mode should be one of the tool mode values
+        mismatches.append('LIFECYCLE')
+        mismatch_details['workflow_phase'] = f'unexpected phase value: {wf}'
     ctrl = bundle.control_phase.mode
-    valid_control_modes = {"normal", "prune", "panic"}
+    valid_control_modes = {'normal', 'prune', 'panic'}
     if ctrl not in valid_control_modes:
-        mismatches.append("LIFECYCLE")
-        mismatch_details["control_phase"] = f"unexpected control mode: {ctrl}"
+        mismatches.append('LIFECYCLE')
+        mismatch_details['control_phase'] = f'unexpected control mode: {ctrl}'
 
-    # NOTE: WINDUP/windup_local consistency is handled by _check_phase_field_merge_bug()
-    # which emits PHASE_FIELD_MERGE (not LIFECYCLE) for these structural bugs.
-    # DO NOT add LIFECYCLE emission here for those conditions.
-
-
-def _check_phase_field_merge_bug(
-    bundle: LifecycleSnapshotBundle,
-    mismatches: list[str],
-    mismatch_details: dict[str, Any],
-) -> None:
+def _check_phase_field_merge_bug(bundle: LifecycleSnapshotBundle, mismatches: list[str], mismatch_details: dict[str, Any]) -> None:
     """
     Detect explicit PHASE_FIELD_MERGE structural bugs.
 
@@ -266,31 +179,16 @@ def _check_phase_field_merge_bug(
     This is NOT the same as LIFECYCLE which covers general phase value anomalies.
     """
     wf = bundle.workflow_phase.phase
+    if wf == 'WINDUP' and bundle.windup_local_phase is None:
+        if 'PHASE_FIELD_MERGE' not in mismatches:
+            mismatches.append('PHASE_FIELD_MERGE')
+            mismatch_details['phase_field_merge'] = 'workflow_phase=WINDUP but windup_local_phase=None — windup_local synthesis mode missing in WINDUP context'
+    if wf != 'WINDUP' and bundle.windup_local_phase is not None:
+        if 'PHASE_FIELD_MERGE' not in mismatches:
+            mismatches.append('PHASE_FIELD_MERGE')
+            mismatch_details['phase_field_merge'] = f'workflow_phase={wf} but windup_local_phase is set to {bundle.windup_local_phase.mode} — windup_local leaked outside WINDUP'
 
-    # WINDUP but no windup_local_phase — explicit structural bug
-    if wf == "WINDUP" and bundle.windup_local_phase is None:
-        if "PHASE_FIELD_MERGE" not in mismatches:
-            mismatches.append("PHASE_FIELD_MERGE")
-            mismatch_details["phase_field_merge"] = (
-                "workflow_phase=WINDUP but windup_local_phase=None — "
-                "windup_local synthesis mode missing in WINDUP context"
-            )
-
-    # Not WINDUP but windup_local_phase is set — explicit structural bug
-    if wf != "WINDUP" and bundle.windup_local_phase is not None:
-        if "PHASE_FIELD_MERGE" not in mismatches:
-            mismatches.append("PHASE_FIELD_MERGE")
-            mismatch_details["phase_field_merge"] = (
-                f"workflow_phase={wf} but windup_local_phase is set to "
-                f"{bundle.windup_local_phase.mode} — windup_local leaked outside WINDUP"
-            )
-
-
-def _check_graph_capability(
-    graph_bundle: GraphSummaryBundle,
-    mismatches: list[str],
-    mismatch_details: dict[str, Any],
-) -> None:
+def _check_graph_capability(graph_bundle: GraphSummaryBundle, mismatches: list[str], mismatch_details: dict[str, Any]) -> None:
     """
     Check graph capability — truthfulness gated by fact stability.
 
@@ -298,38 +196,17 @@ def _check_graph_capability(
     - UNKNOWN or COMPAT path + unknown backend → INSUFFICIENT_INPUT (insufficient data)
     """
     graph_backend = graph_bundle.backend
+    if graph_backend == 'unknown':
+        stability = getattr(graph_bundle, 'fact_stability', 'UNKNOWN')
+        if stability == 'STABLE':
+            if 'GRAPH_CAPABILITY' not in mismatches:
+                mismatches.append('GRAPH_CAPABILITY')
+                mismatch_details['graph_backend'] = 'unknown backend — DuckPGQ not initialized'
+        elif 'INSUFFICIENT_INPUT' not in mismatches:
+            mismatches.append('INSUFFICIENT_INPUT')
+            mismatch_details['graph_backend'] = f'unknown backend (fact_stability={stability}) — insufficient input for capability determination'
 
-    if graph_backend == "unknown":
-        stability = getattr(graph_bundle, "fact_stability", "UNKNOWN")
-        if stability == "STABLE":
-            # STABLE path but backend unknown = actual capability mismatch
-            if "GRAPH_CAPABILITY" not in mismatches:
-                mismatches.append("GRAPH_CAPABILITY")
-                mismatch_details["graph_backend"] = "unknown backend — DuckPGQ not initialized"
-        else:
-            # UNKNOWN or COMPAT path = insufficient input, not capability mismatch
-            if "INSUFFICIENT_INPUT" not in mismatches:
-                mismatches.append("INSUFFICIENT_INPUT")
-                mismatch_details["graph_backend"] = (
-                    f"unknown backend (fact_stability={stability}) — "
-                    "insufficient input for capability determination"
-                )
-
-
-# =============================================================================
-# Shadow parity runner — pure function, no side effects
-# =============================================================================
-
-def run_shadow_parity(
-    lifecycle_bundle: LifecycleSnapshotBundle,
-    graph_bundle: GraphSummaryBundle,
-    model_control_bundle: ModelControlFactsBundle,
-    export_handoff_facts: dict[str, Any],
-    branch_decision: BranchDecision | None = None,
-    provider_recommend: str | None = None,
-    correlation: RunCorrelation | None = None,
-    runtime_mode: str = "scheduler_shadow",
-) -> ParityArtifact:
+def run_shadow_parity(lifecycle_bundle: LifecycleSnapshotBundle, graph_bundle: GraphSummaryBundle, model_control_bundle: ModelControlFactsBundle, export_handoff_facts: dict[str, Any], branch_decision: BranchDecision | None=None, provider_recommend: str | None=None, correlation: RunCorrelation | None=None, runtime_mode: str='scheduler_shadow') -> ParityArtifact:
     """
     Run shadow parity comparison — PURE FUNCTION, no side effects.
 
@@ -355,118 +232,34 @@ def run_shadow_parity(
         ParityArtifact — diagnostic output only, NOT a truth store
     """
     now_monotonic = time.monotonic()
-    now_wall = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
+    now_wall = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
     mismatches: list[str] = []
     mismatch_details: dict[str, Any] = {}
-
-    # --- Lifecycle phase field merge check ---
-    # This is a structural invariant: workflow_phase, control_phase, windup_local_phase
-    # must be SEPARATED fields. If any bundle has them merged, that's a PHASE_FIELD_MERGE bug.
     _check_phase_field_merge(lifecycle_bundle, mismatches, mismatch_details)
-
-    # --- Workflow phase checks ---
     wf_phase = lifecycle_bundle.workflow_phase.phase
-
-    # --- Control phase checks ---
     ctrl_mode = lifecycle_bundle.control_phase.mode
-
-    # --- Windup local phase checks ---
     windup_mode = lifecycle_bundle.windup_local_phase.mode if lifecycle_bundle.windup_local_phase else None
-
-    # --- PHASE_FIELD_MERGE explicit detection ---
-    # Structural bug: if in WINDUP but windup_local_phase is None, OR if not in WINDUP
-    # but windup_local_phase is set — these are explicit phase field merge violations,
-    # NOT generic LIFECYCLE mismatches. Emit PHASE_FIELD_MERGE explicitly.
     _check_phase_field_merge_bug(lifecycle_bundle, mismatches, mismatch_details)
-
-    # --- Graph capability checks ---
     _check_graph_capability(graph_bundle, mismatches, mismatch_details)
     graph_backend = graph_bundle.backend
-
-    # --- Model/Control checks ---
     mc_privacy = model_control_bundle.privacy_level
     mc_depth = model_control_bundle.depth
-
-    # --- Export handoff checks ---
-    export_sprint_id = export_handoff_facts.get("sprint_id", "unknown")
-    export_engine = export_handoff_facts.get("synthesis_engine", "unknown")
-    export_ranked = export_handoff_facts.get("ranked_parquet_present", False)
-    export_gnn = export_handoff_facts.get("gnn_predictions", 0)
-
-    # --- Branch decision checks ---
+    export_sprint_id = export_handoff_facts.get('sprint_id', 'unknown')
+    export_engine = export_handoff_facts.get('synthesis_engine', 'unknown')
+    export_ranked = export_handoff_facts.get('ranked_parquet_present', False)
+    export_gnn = export_handoff_facts.get('gnn_predictions', 0)
     branch_decision_id = branch_decision.decision_id if branch_decision else None
-
-    # --- Correlation checks ---
     corr_run_id = correlation.run_id if correlation else None
     corr_branch_id = correlation.branch_id if correlation else None
-
-    # --- Input source tracking ---
-    input_sources = {
-        "lifecycle_snapshot": "runtime/shadow_inputs.py",
-        "graph_summary": "runtime/shadow_inputs.py",
-        "model_control_facts": "runtime/shadow_inputs.py",
-        "export_handoff_facts": "runtime/shadow_inputs.py",
-        "branch_decision": "types.py",
-        "provider_recommend": "capabilities.py (future)",
-        "correlation": "types.py",
-    }
-
-    # --- Fact stability breakdown ---
-    # Prevents compat seams from being treated as authoritative facts
-    fact_stability_breakdown = {
-        "lifecycle_snapshot": lifecycle_bundle.fact_stability,
-        "graph_summary": graph_bundle.fact_stability,
-        "model_control_facts": model_control_bundle.fact_stability,
-    }
+    input_sources = {'lifecycle_snapshot': 'runtime/shadow_inputs.py', 'graph_summary': 'runtime/shadow_inputs.py', 'model_control_facts': 'runtime/shadow_inputs.py', 'export_handoff_facts': 'runtime/shadow_inputs.py', 'branch_decision': 'types.py', 'provider_recommend': 'capabilities.py (future)', 'correlation': 'types.py'}
+    fact_stability_breakdown = {'lifecycle_snapshot': lifecycle_bundle.fact_stability, 'graph_summary': graph_bundle.fact_stability, 'model_control_facts': model_control_bundle.fact_stability}
     compat_seams: list[str] = []
-    if lifecycle_bundle.fact_stability == "COMPAT":
-        compat_seams.append("lifecycle_snapshot/windup_local_phase")
-    if graph_bundle.fact_stability == "COMPAT":
-        compat_seams.append("graph_summary/scorecard_top_nodes")
-    if model_control_bundle.fact_stability == "COMPAT":
-        compat_seams.append("model_control_facts/raw_profile")
-
-    return ParityArtifact(
-        mode=runtime_mode,
-        timestamp_monotonic=now_monotonic,
-        timestamp_wall=now_wall,
-        workflow_phase=wf_phase,
-        workflow_phase_entered_at=lifecycle_bundle.workflow_phase.entered_at_monotonic,
-        control_phase_mode=ctrl_mode,
-        control_phase_thermal=lifecycle_bundle.control_phase.thermal_state,
-        windup_local_mode=windup_mode,
-        graph_nodes=graph_bundle.node_count,
-        graph_edges=graph_bundle.edge_count,
-        graph_pgq_active=graph_bundle.pgq_active,
-        graph_backend=graph_backend,
-        graph_top_nodes_count=len(graph_bundle.top_nodes),
-        mc_tools_count=len(model_control_bundle.tools),
-        mc_sources_count=len(model_control_bundle.sources),
-        mc_privacy=mc_privacy,
-        mc_depth=mc_depth,
-        mc_models_needed=list(model_control_bundle.models_needed),
-        export_sprint_id=export_sprint_id,
-        export_synthesis_engine=export_engine,
-        export_ranked_parquet_present=export_ranked,
-        export_gnn_predictions=export_gnn,
-        branch_decision_id=branch_decision_id,
-        provider_recommend=provider_recommend,
-        correlation_run_id=corr_run_id,
-        correlation_branch_id=corr_branch_id,
-        mismatch_categories=mismatches if mismatches else ["NONE"],
-        mismatch_details=mismatch_details if mismatch_details else {"note": "no mismatches detected"},
-        input_sources=input_sources,
-        fact_stability_breakdown=fact_stability_breakdown,
-        compat_seams=compat_seams,
-    )
-
-
-
-
-# =============================================================================
-# TYPE CHECKING imports — only used behind TYPE_CHECKING guard
-# =============================================================================
-
+    if lifecycle_bundle.fact_stability == 'COMPAT':
+        compat_seams.append('lifecycle_snapshot/windup_local_phase')
+    if graph_bundle.fact_stability == 'COMPAT':
+        compat_seams.append('graph_summary/scorecard_top_nodes')
+    if model_control_bundle.fact_stability == 'COMPAT':
+        compat_seams.append('model_control_facts/raw_profile')
+    return ParityArtifact(mode=runtime_mode, timestamp_monotonic=now_monotonic, timestamp_wall=now_wall, workflow_phase=wf_phase, workflow_phase_entered_at=lifecycle_bundle.workflow_phase.entered_at_monotonic, control_phase_mode=ctrl_mode, control_phase_thermal=lifecycle_bundle.control_phase.thermal_state, windup_local_mode=windup_mode, graph_nodes=graph_bundle.node_count, graph_edges=graph_bundle.edge_count, graph_pgq_active=graph_bundle.pgq_active, graph_backend=graph_backend, graph_top_nodes_count=len(graph_bundle.top_nodes), mc_tools_count=len(model_control_bundle.tools), mc_sources_count=len(model_control_bundle.sources), mc_privacy=mc_privacy, mc_depth=mc_depth, mc_models_needed=list(model_control_bundle.models_needed), export_sprint_id=export_sprint_id, export_synthesis_engine=export_engine, export_ranked_parquet_present=export_ranked, export_gnn_predictions=export_gnn, branch_decision_id=branch_decision_id, provider_recommend=provider_recommend, correlation_run_id=corr_run_id, correlation_branch_id=corr_branch_id, mismatch_categories=mismatches if mismatches else ['NONE'], mismatch_details=mismatch_details if mismatch_details else {'note': 'no mismatches detected'}, input_sources=input_sources, fact_stability_breakdown=fact_stability_breakdown, compat_seams=compat_seams)
 if TYPE_CHECKING:
     from ..project_types import BranchDecision, RunCorrelation

@@ -24,34 +24,26 @@ Usage:
     )
 """
 from __future__ import annotations
-
-
 import logging
 import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
-
+from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str
 import msgspec
-
 logger = logging.getLogger(__name__)
-
-# F214OPT-A: selectolax-first HTML→text (used for OutputFormat.TEXT path)
 try:
     from hledac.universal.utils.html_text_fast import html_to_text_fast
-
     HTML_TEXT_FAST_AVAILABLE = True
 except ImportError:
     HTML_TEXT_FAST_AVAILABLE = False
-    html_to_text_fast = None  # type: ignore[assignment]
-
+    html_to_text_fast = None
 
 class OutputFormat(Enum):
     """Supported output formats."""
-    MARKDOWN = "markdown"
-    JSON = "json"
-    TEXT = "text"
-
+    MARKDOWN = 'markdown'
+    JSON = 'json'
+    TEXT = 'text'
 
 class CleaningResult(msgspec.Struct):
     """Sprint F300: msgspec.Struct for HTML cleaning result."""
@@ -61,13 +53,13 @@ class CleaningResult(msgspec.Struct):
     metadata: dict[str, Any] | None = None
     error: str | None = None
 
-
 class SimpleHTMLCleaner:
     """
     BeautifulSoup-based HTML cleaner as fallback.
 
     Fast and memory-efficient without ML dependencies.
     """
+    __slots__ = tuple(('_bs4',))
 
     def __init__(self):
         """Initialize SimpleHTMLCleaner."""
@@ -80,7 +72,7 @@ class SimpleHTMLCleaner:
             from bs4 import BeautifulSoup
             self._bs4 = BeautifulSoup
         except ImportError:
-            logger.warning("BeautifulSoup not available")
+            logger.warning('BeautifulSoup not available')
 
     def _remove_unwanted_tags(self, soup: Any) -> Any:
         """Remove script, style, nav, footer elements."""
@@ -91,23 +83,20 @@ class SimpleHTMLCleaner:
     def _extract_text(self, soup: Any) -> str:
         """Extract clean text from soup."""
         text = soup.get_text(separator=' ', strip=True)
-        text = re.sub(r'\s+', ' ', text)
+        text = re.sub('\\s+', ' ', text)
         return text.strip()
 
     def _to_markdown(self, soup: Any) -> str:
         """Convert HTML to Markdown format."""
         lines = []
-
         for elem in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol', 'li', 'a', 'strong', 'em']):
             text = elem.get_text(strip=True)
             if not text:
                 continue
-
             tag = elem.name.lower()
-
             if tag.startswith('h'):
                 level = int(tag[1])
-                lines.append(f'{"#" * level} {text}')
+                lines.append(f"{'#' * level} {text}")
             elif tag == 'p':
                 lines.append(text)
             elif tag in ['ul', 'ol']:
@@ -124,57 +113,30 @@ class SimpleHTMLCleaner:
                 lines.append(f'**{text}**')
             elif tag == 'em':
                 lines.append(f'*{text}*')
-
         return '\n\n'.join(lines)
 
     def _to_json(self, soup: Any) -> str:
         """Convert HTML to structured JSON format."""
         import json
-
-        data = {
-            'title': '',
-            'headings': [],
-            'paragraphs': [],
-            'links': [],
-            'lists': []
-        }
-
+        data = {'title': '', 'headings': [], 'paragraphs': [], 'links': [], 'lists': []}
         title = soup.find('h1')
         if title:
             data['title'] = title.get_text(strip=True)
-
         for h in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
-            data['headings'].append({
-                'level': int(h.name[1]),
-                'text': h.get_text(strip=True)
-            })
-
+            data['headings'].append({'level': int(h.name[1]), 'text': h.get_text(strip=True)})
         for p in soup.find_all('p'):
             text = p.get_text(strip=True)
             if text and len(text) > 20:
                 data['paragraphs'].append(text)
-
         for a in soup.find_all('a', href=True):
-            data['links'].append({
-                'text': a.get_text(strip=True),
-                'url': a['href']
-            })
-
+            data['links'].append({'text': a.get_text(strip=True), 'url': a['href']})
         for ul in soup.find_all(['ul', 'ol']):
             items = [li.get_text(strip=True) for li in ul.find_all('li')]
             if items:
-                data['lists'].append({
-                    'type': ul.name,
-                    'items': items
-                })
+                data['lists'].append({'type': ul.name, 'items': items})
+        return _msgspec_dumps_str(data, ensure_ascii=False, indent=2)
 
-        return json.dumps(data, ensure_ascii=False, indent=2)
-
-    def clean(
-        self,
-        html: str,
-        output_format: OutputFormat = OutputFormat.MARKDOWN
-    ) -> CleaningResult:
+    def clean(self, html: str, output_format: OutputFormat=OutputFormat.MARKDOWN) -> CleaningResult:
         """
         Clean HTML using BeautifulSoup.
 
@@ -186,31 +148,16 @@ class SimpleHTMLCleaner:
             CleaningResult with cleaned content
         """
         if self._bs4 is None:
-            return CleaningResult(
-                success=False,
-                content="",
-                format=output_format,
-                error="BeautifulSoup not available"
-            )
-
-        # F214OPT-A: selectolax-first for OutputFormat.TEXT
+            return CleaningResult(success=False, content='', format=output_format, error='BeautifulSoup not available')
         if output_format == OutputFormat.TEXT and HTML_TEXT_FAST_AVAILABLE:
             try:
-                content = html_to_text_fast(html)  # type: ignore[operator]
-                return CleaningResult(
-                    success=True,
-                    content=content,
-                    format=output_format,
-                    metadata={"method": "html_text_fast"}
-                )
+                content = html_to_text_fast(html)
+                return CleaningResult(success=True, content=content, format=output_format, metadata={'method': 'html_text_fast'})
             except Exception as e:
-                logger.warning("html_to_text_fast failed for TEXT, falling back to BeautifulSoup: %s", e)
-                # fall through to BeautifulSoup path
-
+                logger.warning('html_to_text_fast failed for TEXT, falling back to BeautifulSoup: %s', e)
         try:
             soup = self._bs4(html, 'html.parser')
             soup = self._remove_unwanted_tags(soup)
-
             if output_format == OutputFormat.TEXT:
                 content = self._extract_text(soup)
             elif output_format == OutputFormat.MARKDOWN:
@@ -219,23 +166,10 @@ class SimpleHTMLCleaner:
                 content = self._to_json(soup)
             else:
                 content = self._extract_text(soup)
-
-            return CleaningResult(
-                success=True,
-                content=content,
-                format=output_format,
-                metadata={'method': 'beautifulsoup'}
-            )
-
+            return CleaningResult(success=True, content=content, format=output_format, metadata={'method': 'beautifulsoup'})
         except Exception as e:
-            logger.error(f"BeautifulSoup cleaning failed: {e}")
-            return CleaningResult(
-                success=False,
-                content="",
-                format=output_format,
-                error=str(e)
-            )
-
+            logger.error(f'BeautifulSoup cleaning failed: {e}')
+            return CleaningResult(success=False, content='', format=output_format, error=str(e))
 
 class ResiliparseCleaner:
     """
@@ -249,7 +183,7 @@ class ResiliparseCleaner:
 
     def __init__(self):
         """Initialize ResiliparseCleaner."""
-        logger.info("ResiliparseCleaner initialized")
+        logger.info('ResiliparseCleaner initialized')
 
     def _extract_text(self, html: str) -> str:
         """
@@ -263,20 +197,13 @@ class ResiliparseCleaner:
         """
         try:
             from resiliparse.extract.html2text import extract_plain_text
-
             cleaned = extract_plain_text(html)
             return cleaned.strip()
-
         except Exception as e:
-            logger.error(f"Resiliparse extraction failed: {e}")
-            return ""
+            logger.error(f'Resiliparse extraction failed: {e}')
+            return ''
 
-    def clean(
-        self,
-        html: str,
-        output_format: OutputFormat = OutputFormat.TEXT,
-        main_content_only: bool = True
-    ) -> CleaningResult:
+    def clean(self, html: str, output_format: OutputFormat=OutputFormat.TEXT, main_content_only: bool=True) -> CleaningResult:
         """
         Clean HTML using Resiliparse.
 
@@ -289,33 +216,15 @@ class ResiliparseCleaner:
             CleaningResult with cleaned content
         """
         start_time = __import__('time').time()
-
         try:
             if main_content_only:
                 html = self._extract_main_content(html)
-
             content = self._extract_text(html)
-
             elapsed = __import__('time').time() - start_time
-
-            return CleaningResult(
-                success=True,
-                content=content,
-                format=output_format,
-                metadata={
-                    'method': 'resiliparse',
-                    'elapsed_ms': round(elapsed * 1000, 2)
-                }
-            )
-
+            return CleaningResult(success=True, content=content, format=output_format, metadata={'method': 'resiliparse', 'elapsed_ms': round(elapsed * 1000, 2)})
         except Exception as e:
-            logger.error(f"Resiliparse cleaning failed: {e}")
-            return CleaningResult(
-                success=False,
-                content="",
-                format=output_format,
-                error=str(e)
-            )
+            logger.error(f'Resiliparse cleaning failed: {e}')
+            return CleaningResult(success=False, content='', format=output_format, error=str(e))
 
     def _extract_main_content(self, html: str) -> str:
         """
@@ -328,26 +237,21 @@ class ResiliparseCleaner:
             HTML with only main content
         """
         import re
-
-        html = re.sub(r'<head[^>]*>.*?</head>', '', html, flags=re.DOTALL)
-        html = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL)
-        html = re.sub(r'<style[^>]*>.*?</style>', '', html, flags=re.DOTALL)
-        html = re.sub(r'<nav[^>]*>.*?</nav>', '', html, flags=re.DOTALL)
-        html = re.sub(r'<footer[^>]*>.*?</footer>', '', html, flags=re.DOTALL)
-        html = re.sub(r'<header[^>]*>.*?</header>', '', html, flags=re.DOTALL)
-        html = re.sub(r'<aside[^>]*>.*?</aside>', '', html, flags=re.DOTALL)
-        html = re.sub(r'<!--.*?-->', '', html, flags=re.DOTALL)
-
-        main_match = re.search(r'<main[^>]*>(.*?)</main>', html, flags=re.DOTALL)
+        html = re.sub('<head[^>]*>.*?</head>', '', html, flags=re.DOTALL)
+        html = re.sub('<script[^>]*>.*?</script>', '', html, flags=re.DOTALL)
+        html = re.sub('<style[^>]*>.*?</style>', '', html, flags=re.DOTALL)
+        html = re.sub('<nav[^>]*>.*?</nav>', '', html, flags=re.DOTALL)
+        html = re.sub('<footer[^>]*>.*?</footer>', '', html, flags=re.DOTALL)
+        html = re.sub('<header[^>]*>.*?</header>', '', html, flags=re.DOTALL)
+        html = re.sub('<aside[^>]*>.*?</aside>', '', html, flags=re.DOTALL)
+        html = re.sub('<!--.*?-->', '', html, flags=re.DOTALL)
+        main_match = re.search('<main[^>]*>(.*?)</main>', html, flags=re.DOTALL)
         if main_match:
             return main_match.group(1)
-
-        body_match = re.search(r'<body[^>]*>(.*?)</body>', html, flags=re.DOTALL)
+        body_match = re.search('<body[^>]*>(.*?)</body>', html, flags=re.DOTALL)
         if body_match:
             return body_match.group(1)
-
         return html
-
 
 class ContentCleaner:
     """
@@ -356,13 +260,9 @@ class ContentCleaner:
     Optimized for M1 Silicon (8GB RAM).
     Lightweight, no ML model dependencies.
     """
+    __slots__ = tuple(('_default_format', '_fallback_to_bs4', '_simple_cleaner', '_use_mlx'))
 
-    def __init__(
-        self,
-        use_mlx: bool = True,
-        fallback_to_bs4: bool = True,
-        default_format: OutputFormat = OutputFormat.MARKDOWN
-    ):
+    def __init__(self, use_mlx: bool=True, fallback_to_bs4: bool=True, default_format: OutputFormat=OutputFormat.MARKDOWN):
         """
         Initialize ContentCleaner.
 
@@ -375,11 +275,9 @@ class ContentCleaner:
         self._use_mlx = use_mlx
         self._fallback_to_bs4 = fallback_to_bs4
         self._default_format = default_format
-
         if fallback_to_bs4:
             self._simple_cleaner = SimpleHTMLCleaner()
-
-        logger.info("ContentCleaner initialized")
+        logger.info('ContentCleaner initialized')
 
     def _build_prompt(self, html: str, output_format: OutputFormat) -> str:
         """
@@ -392,19 +290,10 @@ class ContentCleaner:
         Returns:
             Formatted prompt
         """
-        format_instruction = {
-            OutputFormat.MARKDOWN: "Convert to clean Markdown",
-            OutputFormat.JSON: "Convert to structured JSON",
-            OutputFormat.TEXT: "Extract plain text"
-        }[output_format]
+        format_instruction = {OutputFormat.MARKDOWN: 'Convert to clean Markdown', OutputFormat.JSON: 'Convert to structured JSON', OutputFormat.TEXT: 'Extract plain text'}[output_format]
+        return f'HTML:\n{html}\n\nTask: {format_instruction}\n\nOutput:'
 
-        return (
-            f"HTML:\n{html}\n\n"
-            f"Task: {format_instruction}\n\n"
-            f"Output:"
-        )
-
-    def _simplify_html(self, html: str, max_length: int = 3000) -> str:
+    def _simplify_html(self, html: str, max_length: int=3000) -> str:
         """
         Simplify HTML for model input.
 
@@ -415,38 +304,27 @@ class ContentCleaner:
         Returns:
             Simplified HTML
         """
-        # Remove script, style, head, nav, footer, header, aside
-        html = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL)
-        html = re.sub(r'<style[^>]*>.*?</style>', '', html, flags=re.DOTALL)
-        html = re.sub(r'<head[^>]*>.*?</head>', '', html, flags=re.DOTALL)
-        html = re.sub(r'<nav[^>]*>.*?</nav>', '', html, flags=re.DOTALL)
-        html = re.sub(r'<footer[^>]*>.*?</footer>', '', html, flags=re.DOTALL)
-        html = re.sub(r'<header[^>]*>.*?</header>', '', html, flags=re.DOTALL)
-        html = re.sub(r'<aside[^>]*>.*?</aside>', '', html, flags=re.DOTALL)
-        html = re.sub(r'<!--.*?-->', '', html, flags=re.DOTALL)
-
-        # Extract main content area if exists
-        main_match = re.search(r'<main[^>]*>(.*?)</main>', html, flags=re.DOTALL)
+        html = re.sub('<script[^>]*>.*?</script>', '', html, flags=re.DOTALL)
+        html = re.sub('<style[^>]*>.*?</style>', '', html, flags=re.DOTALL)
+        html = re.sub('<head[^>]*>.*?</head>', '', html, flags=re.DOTALL)
+        html = re.sub('<nav[^>]*>.*?</nav>', '', html, flags=re.DOTALL)
+        html = re.sub('<footer[^>]*>.*?</footer>', '', html, flags=re.DOTALL)
+        html = re.sub('<header[^>]*>.*?</header>', '', html, flags=re.DOTALL)
+        html = re.sub('<aside[^>]*>.*?</aside>', '', html, flags=re.DOTALL)
+        html = re.sub('<!--.*?-->', '', html, flags=re.DOTALL)
+        main_match = re.search('<main[^>]*>(.*?)</main>', html, flags=re.DOTALL)
         if main_match:
             html = main_match.group(1)
         else:
-            # Fallback to body content
-            body_match = re.search(r'<body[^>]*>(.*?)</body>', html, flags=re.DOTALL)
+            body_match = re.search('<body[^>]*>(.*?)</body>', html, flags=re.DOTALL)
             if body_match:
                 html = body_match.group(1)
-
-        html = re.sub(r'\s+', ' ', html).strip()
-
+        html = re.sub('\\s+', ' ', html).strip()
         if len(html) > max_length:
             html = html[:max_length]
-
         return html
 
-    def clean_html(
-        self,
-        raw_html: str,
-        output_format: OutputFormat | None = None
-    ) -> CleaningResult:
+    def clean_html(self, raw_html: str, output_format: OutputFormat | None=None) -> CleaningResult:
         """
         Clean HTML to specified format.
 
@@ -459,24 +337,12 @@ class ContentCleaner:
         """
         if output_format is None:
             output_format = self._default_format
-
         simplified_html = self._simplify_html(raw_html)
-
         if self._fallback_to_bs4 and self._simple_cleaner:
             return self._simple_cleaner.clean(simplified_html, output_format)
+        return CleaningResult(success=False, content='', format=output_format, error='No cleaning method available')
 
-        return CleaningResult(
-            success=False,
-            content="",
-            format=output_format,
-            error="No cleaning method available"
-        )
-
-    def clean_html_batch(
-        self,
-        html_list: list[str],
-        output_format: OutputFormat | None = None
-    ) -> list[CleaningResult]:
+    def clean_html_batch(self, html_list: list[str], output_format: OutputFormat | None=None) -> list[CleaningResult]:
         """
         Clean multiple HTML documents.
 
@@ -500,15 +366,8 @@ class ContentCleaner:
         Returns:
             Dictionary with status information
         """
-        return {
-            'use_bs4': self._simple_cleaner is not None,
-            'fallback_to_bs4': self._fallback_to_bs4,
-            'default_format': self._default_format.value,
-        }
-
-
+        return {'use_bs4': self._simple_cleaner is not None, 'fallback_to_bs4': self._fallback_to_bs4, 'default_format': self._default_format.value}
 _global_cleaner: ContentCleaner | None = None
-
 
 def get_content_cleaner() -> ContentCleaner:
     """
@@ -518,19 +377,10 @@ def get_content_cleaner() -> ContentCleaner:
         ContentCleaner singleton
     """
     global _global_cleaner
-
     if _global_cleaner is None:
         _global_cleaner = ContentCleaner()
-
     return _global_cleaner
-
-
-# =============================================================================
-# UTILITY FUNCTIONS (from stealth_crawler.py integration)
-# =============================================================================
-
-from urllib.parse import parse_qs, unquote, urlparse  # noqa: E402
-
+from urllib.parse import parse_qs, unquote, urlparse
 
 def clean_html_tags(text: str) -> str:
     """
@@ -548,10 +398,9 @@ def clean_html_tags(text: str) -> str:
         >>> clean_html_tags("<p>Hello <b>world</b></p>")
         'Hello world'
     """
-    text = re.sub(r'<[^>]+>', '', text)
-    text = re.sub(r'\s+', ' ', text)
+    text = re.sub('<[^>]+>', '', text)
+    text = re.sub('\\s+', ' ', text)
     return text.strip()
-
 
 def extract_url_from_duckduckgo_redirect(url: str) -> str | None:
     """
@@ -581,7 +430,6 @@ def extract_url_from_duckduckgo_redirect(url: str) -> str | None:
     except Exception:
         return None
 
-
 def extract_url_from_google_redirect(url: str) -> str | None:
     """
     Extract actual URL from Google redirect URL.
@@ -610,8 +458,7 @@ def extract_url_from_google_redirect(url: str) -> str | None:
     except Exception:
         return None
 
-
-def clean_search_result_url(url: str, source: str = "auto") -> str | None:
+def clean_search_result_url(url: str, source: str='auto') -> str | None:
     """
     Clean search result URL from various search engines.
 
@@ -631,33 +478,21 @@ def clean_search_result_url(url: str, source: str = "auto") -> str | None:
     """
     if not url:
         return None
-
-    # Auto-detect source
-    if source == "auto":
+    if source == 'auto':
         if '/l/?uddg=' in url or 'duckduckgo' in url:
-            source = "duckduckgo"
+            source = 'duckduckgo'
         elif '/url?' in url and 'google' in str(urlparse(url).netloc):
-            source = "google"
-
-    # Clean based on source
-    if source == "duckduckgo":
+            source = 'google'
+    if source == 'duckduckgo':
         return extract_url_from_duckduckgo_redirect(url)
-    elif source == "google":
+    elif source == 'google':
         return extract_url_from_google_redirect(url)
     else:
-        # Try both
         result = extract_url_from_duckduckgo_redirect(url)
         if result:
             return result
         return extract_url_from_google_redirect(url)
-
-
-# =============================================================================
-# SEARCH RESULT PARSERS (from stealth_crawler.py integration)
-# =============================================================================
-
-from dataclasses import dataclass  # noqa: E402
-
+from dataclasses import dataclass
 
 class SearchResultItem(msgspec.Struct):
     """Sprint F300: msgspec.Struct for search result item."""
@@ -667,8 +502,7 @@ class SearchResultItem(msgspec.Struct):
     source: str
     rank: int = 0
 
-
-def parse_duckduckgo_results(html: str, num_results: int = 10) -> list[SearchResultItem]:
+def parse_duckduckgo_results(html: str, num_results: int=10) -> list[SearchResultItem]:
     """
     Parse DuckDuckGo HTML search results.
 
@@ -687,42 +521,22 @@ def parse_duckduckgo_results(html: str, num_results: int = 10) -> list[SearchRes
         ...     print(f"{r.title}: {r.url}")
     """
     results = []
-
-    # Primary pattern: result with snippet
-    pattern = r'<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)</a>.*?<a[^>]*class="result__snippet"[^>]*>(.*?)</a>'  # noqa: E501
+    pattern = '<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)</a>.*?<a[^>]*class="result__snippet"[^>]*>(.*?)</a>'
     matches = re.findall(pattern, html, re.DOTALL)
-
     for i, (url_raw, title, snippet) in enumerate(matches[:num_results]):
         clean_url = extract_url_from_duckduckgo_redirect(url_raw)
         if clean_url:
-            results.append(SearchResultItem(
-                title=clean_html_tags(title),
-                url=clean_url,
-                snippet=clean_html_tags(snippet),
-                source="duckduckgo",
-                rank=i
-            ))
-
-    # Fallback pattern: result without snippet
+            results.append(SearchResultItem(title=clean_html_tags(title), url=clean_url, snippet=clean_html_tags(snippet), source='duckduckgo', rank=i))
     if not results:
-        pattern = r'<a[^>]*href="([^"]*)"[^>]*class="result__a"[^>]*>(.*?)</a>'
+        pattern = '<a[^>]*href="([^"]*)"[^>]*class="result__a"[^>]*>(.*?)</a>'
         matches = re.findall(pattern, html, re.DOTALL)
-
         for i, (url_raw, title) in enumerate(matches[:num_results]):
             clean_url = extract_url_from_duckduckgo_redirect(url_raw)
             if clean_url:
-                results.append(SearchResultItem(
-                    title=clean_html_tags(title),
-                    url=clean_url,
-                    snippet="",
-                    source="duckduckgo",
-                    rank=i
-                ))
-
+                results.append(SearchResultItem(title=clean_html_tags(title), url=clean_url, snippet='', source='duckduckgo', rank=i))
     return results
 
-
-def parse_google_results(html: str, num_results: int = 10) -> list[SearchResultItem]:
+def parse_google_results(html: str, num_results: int=10) -> list[SearchResultItem]:
     """
     Parse Google HTML search results.
 
@@ -741,19 +555,10 @@ def parse_google_results(html: str, num_results: int = 10) -> list[SearchResultI
         ...     print(f"{r.title}: {r.url}")
     """
     results = []
-
-    pattern = r'<div[^>]*class="g"[^>]*>.*?<h3[^>]*>.*?<a[^>]*href="([^"]*)"[^>]*>(.*?)</a>.*?<span[^>]*class="st"[^>]*>(.*?)</span>'  # noqa: E501
+    pattern = '<div[^>]*class="g"[^>]*>.*?<h3[^>]*>.*?<a[^>]*href="([^"]*)"[^>]*>(.*?)</a>.*?<span[^>]*class="st"[^>]*>(.*?)</span>'
     matches = re.findall(pattern, html, re.DOTALL)
-
     for i, (url_raw, title, snippet) in enumerate(matches[:num_results]):
         clean_url = extract_url_from_google_redirect(url_raw)
         if clean_url:
-            results.append(SearchResultItem(
-                title=clean_html_tags(title),
-                url=clean_url,
-                snippet=clean_html_tags(snippet),
-                source="google",
-                rank=i
-            ))
-
+            results.append(SearchResultItem(title=clean_html_tags(title), url=clean_url, snippet=clean_html_tags(snippet), source='google', rank=i))
     return results

@@ -20,80 +20,51 @@ Anti-patterns:
   - Rate limit obejít: 1 req/s hard limit
   - Secret do logu: mask_secret() before any log/print
 """
-
 import asyncio
 import logging
 import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
-
 import httpx
-
 from hledac.universal.utils.async_helpers import safe_gather_ok
-
 logger = logging.getLogger(__name__)
-
 _TIMEOUT_10 = httpx.Timeout(10.0)
 _TIMEOUT_15 = httpx.Timeout(15.0)
-
-# ---- Secrets masking -------------------------------------------------------
-
 _SECRET_REDACT_LEN = 4
-
 
 def _mask_secret(value: str) -> str:
     """Mask secrets: nahraď poslední 4 znaky hvězdičkami."""
     if len(value) <= _SECRET_REDACT_LEN:
-        return "*" * len(value)
-    return value[:-_SECRET_REDACT_LEN] + "*" * _SECRET_REDACT_LEN
+        return '*' * len(value)
+    return value[:-_SECRET_REDACT_LEN] + '*' * _SECRET_REDACT_LEN
 
-
-# ---- Finding type ----------------------------------------------------------
-
-
-@dataclass
+@dataclass(True)
 class PasteFinding:
     """Structured paste finding result."""
-
     uri: str
-    source: str  # "pastebin" | "paste_gg" | "rentry"
+    source: str
     extracted_secrets: list[str] = field(default_factory=list)
     emails: list[str] = field(default_factory=list)
     ip_addresses: list[str] = field(default_factory=list)
-    context_snippet: str = ""
+    context_snippet: str = ''
 
     def masked_secrets(self) -> list[str]:
         """Return masked secrets for safe logging."""
         return [_mask_secret(s) for s in self.extracted_secrets]
-
-
-# ---- Detection patterns (pre-compiled) -------------------------------------
-
-_RE_EMAIL = re.compile(r"\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b")
-_RE_IPV4 = re.compile(r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b")
-_RE_IPV6 = re.compile(r"\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b")
-_RE_URLSAFE_TOKEN = re.compile(
-    r"\b(?:token|key|secret|password|passwd|pwd|auth|credential)['\"]?[:=]?\s*['\"]?([A-Za-z0-9_\-]{16,64})['\"]?\b",
-    re.IGNORECASE,
-)  # noqa: E501
-_RE_AWS_KEY = re.compile(r"\bAKIA[0-9A-Z]{16}\b")
-_RE_BEARER = re.compile(r"\bBearer\s+[A-Za-z0-9_\.\-]{20,}\b", re.IGNORECASE)
-_RE_PKEY = re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----", re.IGNORECASE)
-
-
-# ---- Circuit breaker state -------------------------------------------------
-
+_RE_EMAIL = re.compile('\\b[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,}\\b')
+_RE_IPV4 = re.compile('\\b(?:(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\.){3}(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\b')
+_RE_IPV6 = re.compile('\\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\\b')
+_RE_URLSAFE_TOKEN = re.compile('\\b(?:token|key|secret|password|passwd|pwd|auth|credential)[\'\\"]?[:=]?\\s*[\'\\"]?([A-Za-z0-9_\\-]{16,64})[\'\\"]?\\b', re.IGNORECASE)
+_RE_AWS_KEY = re.compile('\\bAKIA[0-9A-Z]{16}\\b')
+_RE_BEARER = re.compile('\\bBearer\\s+[A-Za-z0-9_\\.\\-]{20,}\\b', re.IGNORECASE)
+_RE_PKEY = re.compile('-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----', re.IGNORECASE)
 _CIRCUIT_FAIL_LIMIT = 5
 _CIRCUIT_RESET_S = 60.0
-
-# F320: Rust MmapBloomFilter for paste content dedup — skips already-seen pastes
-# across sprints. Persists via mmap, survives restart, M1 8GB safe.
-_PASTE_BLOOM_PATH_A: str = "~/.cache/hledac/paste_bloom_a.bin"
-_PASTE_BLOOM_PATH_B: str = "~/.cache/hledac/paste_bloom_b.bin"
-_PASTE_BLOOM_CAPACITY: int = 500_000  # ~6 MB bitmap at 1% FPR
+_PASTE_BLOOM_PATH_A: str = '~/.cache/hledac/paste_bloom_a.bin'
+_PASTE_BLOOM_PATH_B: str = '~/.cache/hledac/paste_bloom_b.bin'
+_PASTE_BLOOM_CAPACITY: int = 500000
 _BLOOM: Any = None
-
 
 def _get_paste_bloom() -> Any:
     """Lazy-open rotating mmap Bloom filter for paste URI dedup."""
@@ -102,24 +73,16 @@ def _get_paste_bloom() -> Any:
         try:
             import os
             import pathlib
-
             from rust_extensions import RotatingMmapBloomFilter
-
             path_a = os.path.expanduser(_PASTE_BLOOM_PATH_A)
             path_b = os.path.expanduser(_PASTE_BLOOM_PATH_B)
             pathlib.Path(path_a).parent.mkdir(parents=True, exist_ok=True)
             _BLOOM = RotatingMmapBloomFilter(path_a, path_b, capacity=_PASTE_BLOOM_CAPACITY, fp_rate=0.01)
-        except Exception:  # noqa: BLE001
+        except Exception:
             from rust_extensions import BloomFilter
-
             _BLOOM = BloomFilter(capacity=_PASTE_BLOOM_CAPACITY, fp_rate=0.01)
     return _BLOOM
-
-
-# F320: zstd compression for context_snippet payloads (~5× ratio on text).
-# Lazy import — zstd is optional. Falls back to plain text if unavailable.
 _ZSTD_AVAILABLE: bool | None = None
-
 
 def _get_zstd_compress():
     """Lazily import zstd.compress, or return None if unavailable."""
@@ -127,20 +90,17 @@ def _get_zstd_compress():
     if _ZSTD_AVAILABLE is None:
         try:
             import zstd
-
             _ZSTD_AVAILABLE = True
             return zstd.compress
-        except Exception:  # noqa: BLE001
+        except Exception:
             _ZSTD_AVAILABLE = False
             return None
     if _ZSTD_AVAILABLE:
         import zstd
-
         return zstd.compress
     return None
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _CircuitState:
     failures: int = 0
     opened_at: float = 0.0
@@ -159,14 +119,8 @@ class _CircuitState:
         self.failures += 1
         if self.failures >= _CIRCUIT_FAIL_LIMIT:
             self.opened_at = time.time()
-            logger.warning("PastebinMonitor circuit breaker OPEN — pausing 60s")
-
-
+            logger.warning('PastebinMonitor circuit breaker OPEN — pausing 60s')
 _circuit = _CircuitState()
-
-
-# ---- Text analysis ---------------------------------------------------------
-
 
 def _extract_secrets(text: str) -> tuple[list[str], list[str], list[str]]:
     """Extract e-mails, IP addresses, and secrets from raw text.
@@ -177,31 +131,23 @@ def _extract_secrets(text: str) -> tuple[list[str], list[str], list[str]]:
     ipv4s = _RE_IPV4.findall(text)
     ipv6s = _RE_IPV6.findall(text)
     ip_addresses = ipv4s + ipv6s
-
     secrets: list[str] = []
     for pat in (_RE_AWS_KEY, _RE_BEARER, _RE_PKEY):
         secrets.extend(pat.findall(text))
-
     for m in _RE_URLSAFE_TOKEN.finditer(text):
         secrets.append(m.group(1))
+    return (emails, ip_addresses, secrets)
 
-    return emails, ip_addresses, secrets
-
-
-def _make_snippet(text: str, max_len: int = 200) -> str:
+def _make_snippet(text: str, max_len: int=200) -> str:
     """Oříznout text na max_len znaků, zachovat začátek."""
-    t = text.replace("\r", "").strip()
+    t = text.replace('\r', '').strip()
     if len(t) <= max_len:
         return t
-    return t[:max_len] + "..."
-
-
-# ---- Per-source scrapers ---------------------------------------------------
-
+    return t[:max_len] + '...'
 
 async def _scrape_pastebin_raw(paste_id: str, session: httpx.AsyncClient) -> str | None:
     """Stáhnout obsah pastebin.com/raw/{id}."""
-    url = f"https://pastebin.com/raw/{paste_id}"
+    url = f'https://pastebin.com/raw/{paste_id}'
     try:
         async with session.get(url, timeout=_TIMEOUT_10) as resp:
             if resp.status_code == 404:
@@ -211,28 +157,26 @@ async def _scrape_pastebin_raw(paste_id: str, session: httpx.AsyncClient) -> str
     except Exception:
         return None
 
-
 async def _scrape_paste_gg(paste_id: str, session: httpx.AsyncClient) -> str | None:
     """Stáhnout obsah paste.gg/api/v1/pastes/{id}."""
-    url = f"https://paste.gg/api/v1/pastes/{paste_id}"
+    url = f'https://paste.gg/api/v1/pastes/{paste_id}'
     try:
         async with session.get(url, timeout=_TIMEOUT_10) as resp:
             if resp.status_code == 404:
                 return None
             resp.raise_for_status()
             data = await resp.json()
-            data_data = data.get("data") or {}
-            files = data_data.get("files") or []
+            data_data = data.get('data') or {}
+            files = data_data.get('files') or []
             if files:
-                return files[0].get("content") or ""
-            return ""
+                return files[0].get('content') or ''
+            return ''
     except Exception:
         return None
 
-
 async def _scrape_rentry(raw_path: str, session: httpx.AsyncClient) -> str | None:
     """Stáhnout obsah rentry.co/{raw_path}/raw."""
-    url = f"https://rentry.co/{raw_path}/raw"
+    url = f'https://rentry.co/{raw_path}/raw'
     try:
         async with session.get(url, timeout=_TIMEOUT_10) as resp:
             if resp.status_code == 404:
@@ -241,18 +185,11 @@ async def _scrape_rentry(raw_path: str, session: httpx.AsyncClient) -> str | Non
             return await resp.text()
     except Exception:
         return None
-
-
-# ---- Public API ------------------------------------------------------------
-
-_RATERLIMIT_S = 1.0  # 1 req/s across all paste sources
+_RATERLIMIT_S = 1.0
 _last_request: float = 0.0
 _rate_lock = asyncio.Lock()
-
-# Bounded: max 10 pastes per source, max 5 concurrent scrapes per source
 _MAX_PASTES_PER_SOURCE = 10
-_SCRAPE_CONCURRENCY = 5  # Reference: ConcurrencyCategory.PASTE_SCRAPE
-
+_SCRAPE_CONCURRENCY = 5
 
 async def run(query: str) -> list[PasteFinding]:
     """Hledat pasty odpovídající query napříč pastebin.com, paste.gg, rentry.co.
@@ -266,80 +203,63 @@ async def run(query: str) -> list[PasteFinding]:
     - Circuit breaker after 5 consecutive failures
     """
     import httpx
-
     global _last_request
-
     findings: list[PasteFinding] = []
-
-    # Circuit breaker check
     async with _rate_lock:
         if _circuit.is_open():
-            logger.info("PastebinMonitor circuit open — skipping run")
+            logger.info('PastebinMonitor circuit open — skipping run')
             return []
-
         elapsed = time.time() - _last_request
         if elapsed < _RATERLIMIT_S:
             await asyncio.sleep(_RATERLIMIT_S - elapsed)
         _last_request = time.time()
-
     try:
         _sess = httpx.AsyncClient(timeout=_TIMEOUT_15)
         async with _sess as session:
             pb_findings = await _search_pastebin(query, session)
             findings.extend(pb_findings)
-
             gg_findings = await _search_paste_gg(query, session)
             findings.extend(gg_findings)
-
             rentry_findings = await _search_rentry(query, session)
             findings.extend(rentry_findings)
-
     except Exception as e:
-        logger.warning(f"PastebinMonitor run() failed: {e}")
+        logger.warning(f'PastebinMonitor run() failed: {e}')
         _circuit.record_failure()
-
     return findings
-
 
 async def _search_pastebin(query: str, session: httpx.AsyncClient) -> list[PasteFinding]:
     """Search pastebin.com for query, scrape matching pastes."""
     findings: list[PasteFinding] = []
-
     try:
-        search_url = f"https://pastebin.com/search?q={query}"
+        search_url = f'https://pastebin.com/search?q={query}'
         async with session.get(search_url, timeout=_TIMEOUT_15) as resp:
             if resp.status_code != 200:
                 return []
             html = await resp.text()
-
         try:
             from selectolax.parser import HTMLParser
         except ImportError:
-            logger.warning("selectolax not available — skipping pastebin search")
+            logger.warning('selectolax not available — skipping pastebin search')
             return []
-
         tree = HTMLParser(html)
         paste_links: list[str] = []
-        for a in tree.css("a"):
-            href = a.attributes.get("href", "")
-            if "/dpaste/" in href or "/raw/" in href:
-                pid = href.rstrip("/").split("/")[-1]
+        for a in tree.css('a'):
+            href = a.attributes.get('href', '')
+            if '/dpaste/' in href or '/raw/' in href:
+                pid = href.rstrip('/').split('/')[-1]
                 if pid:
                     paste_links.append(pid)
-
-        # Bounded: max 10 pastes, scrape up to 5 concurrently
         paste_ids = paste_links[:_MAX_PASTES_PER_SOURCE]
         sem = asyncio.Semaphore(_SCRAPE_CONCURRENCY)
 
         async def _scrape_one(pid: str) -> PasteFinding | None:
-            # F320: Bloom dedup — skip pastes we've already seen across sprints
-            uri = f"https://pastebin.com/{pid}"
+            uri = f'https://pastebin.com/{pid}'
             try:
                 bloom = _get_paste_bloom()
-                if not bloom.add(uri):  # returns False if already seen
+                if not bloom.add(uri):
                     return None
-            except Exception:  # noqa: BLE001
-                pass  # fail-soft: proceed if bloom is unavailable
+            except Exception:
+                pass
             async with sem:
                 text = await _scrape_pastebin_raw(pid, session)
             if text is None:
@@ -347,57 +267,36 @@ async def _search_pastebin(query: str, session: httpx.AsyncClient) -> list[Paste
             emails, ips, secrets = _extract_secrets(text)
             if not (emails or ips or secrets):
                 return None
-            return PasteFinding(
-                uri=uri,
-                source="pastebin",
-                extracted_secrets=secrets,
-                emails=emails,
-                ip_addresses=ips,
-                context_snippet=_make_snippet(text),
-            )
-
-        # F265C: migrated to safe_gather_ok (fire-and-forget style, results filtered)
-        gathered = await safe_gather_ok(*[_scrape_one(p) for p in paste_ids], label="pastebin")
+            return PasteFinding(uri=uri, source='pastebin', extracted_secrets=secrets, emails=emails, ip_addresses=ips, context_snippet=_make_snippet(text))
+        gathered = await safe_gather_ok(*[_scrape_one(p) for p in paste_ids], label='pastebin')
         for r in gathered:
             if r is not None:
                 findings.append(r)
-
     except Exception as e:
-        logger.debug(f"pastebin search failed: {e}")
-
+        logger.debug(f'pastebin search failed: {e}')
     return findings
-
 
 async def _search_paste_gg(query: str, session: ClientSession) -> list[PasteFinding]:
     """Search paste.gg for query via their API."""
-
     findings: list[PasteFinding] = []
-
     try:
-        search_url = "https://paste.gg/api/v1/pastes/search"
-        async with session.post(
-            search_url,
-            json={"query": query, "limit": _MAX_PASTES_PER_SOURCE},
-            timeout=_TIMEOUT_15,
-        ) as resp:
+        search_url = 'https://paste.gg/api/v1/pastes/search'
+        async with session.post(search_url, json={'query': query, 'limit': _MAX_PASTES_PER_SOURCE}, timeout=_TIMEOUT_15) as resp:
             if resp.status_code != 200:
                 return []
             data = await resp.json()
-
-        items = (data.get("data") or {}).get("pasties") or []
-        # Bounded: max 10 pastes, scrape up to 5 concurrently
+        items = (data.get('data') or {}).get('pasties') or []
         items_batch = items[:_MAX_PASTES_PER_SOURCE]
         sem = asyncio.Semaphore(_SCRAPE_CONCURRENCY)
 
         async def _scrape_one(item: dict) -> PasteFinding | None:
-            paste_id = item.get("id") or ""
-            # F320: Bloom dedup — skip pastes we've already seen across sprints
-            uri = f"https://paste.gg/{paste_id}"
+            paste_id = item.get('id') or ''
+            uri = f'https://paste.gg/{paste_id}'
             try:
                 bloom = _get_paste_bloom()
                 if not bloom.add(uri):
                     return None
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
             async with sem:
                 text = await _scrape_paste_gg(paste_id, session)
@@ -406,61 +305,44 @@ async def _search_paste_gg(query: str, session: ClientSession) -> list[PasteFind
             emails, ips, secrets = _extract_secrets(text)
             if not (emails or ips or secrets):
                 return None
-            return PasteFinding(
-                uri=uri,
-                source="paste_gg",
-                extracted_secrets=secrets,
-                emails=emails,
-                ip_addresses=ips,
-                context_snippet=_make_snippet(text),
-            )
-
-        gathered = await safe_gather_ok(*[_scrape_one(it) for it in items_batch], label="paste_gg")
+            return PasteFinding(uri=uri, source='paste_gg', extracted_secrets=secrets, emails=emails, ip_addresses=ips, context_snippet=_make_snippet(text))
+        gathered = await safe_gather_ok(*[_scrape_one(it) for it in items_batch], label='paste_gg')
         for r in gathered:
             if r is not None:
                 findings.append(r)
-
     except Exception as e:
-        logger.debug(f"paste.gg search failed: {e}")
-
+        logger.debug(f'paste.gg search failed: {e}')
     return findings
-
 
 async def _search_rentry(query: str, session: httpx.AsyncClient) -> list[PasteFinding]:
     """Search rentry.co for query via HTML parsing."""
     findings: list[PasteFinding] = []
-
     try:
-        search_url = f"https://rentry.co/search?query={query}"
+        search_url = f'https://rentry.co/search?query={query}'
         async with session.get(search_url, timeout=_TIMEOUT_15) as resp:
             if resp.status_code != 200:
                 return []
             html = await resp.text()
-
         try:
             from selectolax.parser import HTMLParser
         except ImportError:
             return []
-
         tree = HTMLParser(html)
         raw_paths: list[str] = []
-        for a in tree.css("a"):
-            href = a.attributes.get("href", "")
-            if href.startswith("/") and len(href) > 2:
-                raw_paths.append(href.lstrip("/"))
-
-        # Bounded: max 10 pastes, scrape up to 5 concurrently
+        for a in tree.css('a'):
+            href = a.attributes.get('href', '')
+            if href.startswith('/') and len(href) > 2:
+                raw_paths.append(href.lstrip('/'))
         raw_paths_batch = raw_paths[:_MAX_PASTES_PER_SOURCE]
         sem = asyncio.Semaphore(_SCRAPE_CONCURRENCY)
 
         async def _scrape_one(path: str) -> PasteFinding | None:
-            # F320: Bloom dedup — skip pastes we've already seen across sprints
-            uri = f"https://rentry.co/{path}"
+            uri = f'https://rentry.co/{path}'
             try:
                 bloom = _get_paste_bloom()
                 if not bloom.add(uri):
                     return None
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
             async with sem:
                 text = await _scrape_rentry(path, session)
@@ -469,31 +351,12 @@ async def _search_rentry(query: str, session: httpx.AsyncClient) -> list[PasteFi
             emails, ips, secrets = _extract_secrets(text)
             if not (emails or ips or secrets):
                 return None
-            return PasteFinding(
-                uri=uri,
-                source="rentry",
-                extracted_secrets=secrets,
-                emails=emails,
-                ip_addresses=ips,
-                context_snippet=_make_snippet(text),
-            )
-
-        gathered = await safe_gather_ok(*[_scrape_one(p) for p in raw_paths_batch], label="rentry")
+            return PasteFinding(uri=uri, source='rentry', extracted_secrets=secrets, emails=emails, ip_addresses=ips, context_snippet=_make_snippet(text))
+        gathered = await safe_gather_ok(*[_scrape_one(p) for p in raw_paths_batch], label='rentry')
         for r in gathered:
             if r is not None:
                 findings.append(r)
-
     except Exception as e:
-        logger.debug(f"rentry search failed: {e}")
-
+        logger.debug(f'rentry search failed: {e}')
     return findings
-
-
-# =============================================================================
-# EXPORTS
-# =============================================================================
-
-__all__ = [
-    "PasteFinding",
-    "run",
-]
+__all__ = ['PasteFinding', 'run']

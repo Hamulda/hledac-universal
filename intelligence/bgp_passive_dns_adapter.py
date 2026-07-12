@@ -24,7 +24,6 @@ INVARIANTS:
   - RFC1918/loopback IPs filtered before any lookup
   - Rate limiting enforced per request
 """
-
 import asyncio
 import hashlib
 import logging
@@ -33,167 +32,84 @@ import re
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
-
 if TYPE_CHECKING:
     import httpx
 else:
     import httpx
-
 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-
 logger = logging.getLogger(__name__)
-
-# Try to import CanonicalFinding (lazy to avoid boot-path overhead)
 _CanonicalFinding = None
 try:
-    from hledac.universal.knowledge.duckdb_store import CanonicalFinding as _CF  # noqa: N814
-
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding as _CF
     _CanonicalFinding = _CF
 except ImportError:
     pass
-
-# ── Environment gating ─────────────────────────────────────────────────────────
-_ENABLED: bool = os.environ.get("HLEDAC_ENABLE_BGP_PDNS", "0").lower() in ("1", "true", "yes", "on")
-
-# ── Capability flags (for capabilities.py) ─────────────────────────────────────
+_ENABLED: bool = os.environ.get('HLEDAC_ENABLE_BGP_PDNS', '0').lower() in ('1', 'true', 'yes', 'on')
 BGP_LOOKUP_AVAILABLE: bool = _ENABLED
 PASSIVE_DNS_AVAILABLE: bool = _ENABLED
-
-# ── Bounds ────────────────────────────────────────────────────────────────────────
 MAX_IPS_PER_SPRINT: int = 50
 MAX_PDNS_RECORDS: int = 100
 RATE_LIMIT_S: float = 1.0
 TIMEOUT_PER_REQUEST: float = 15.0
-
-# API endpoints
-_RIPE_PREFIX_URL = "https://stat.ripe.net/data/prefix-overview/data.json"
-_RIPE_WHOIS_URL = "https://stat.ripe.net/data/whois/data.json"
-_BGP_TOOLS_URL = "https://bgp.tools/api"
-_HACKER_TARGET_DNS = "https://api.hackertarget.com/dnslookup"
-
-# ── Private IP filter ─────────────────────────────────────────────────────────
-_PRIVATE_IP_RE = re.compile(r"^(?:10\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.|127\.|::1|fe80)")
-
+_RIPE_PREFIX_URL = 'https://stat.ripe.net/data/prefix-overview/data.json'
+_RIPE_WHOIS_URL = 'https://stat.ripe.net/data/whois/data.json'
+_BGP_TOOLS_URL = 'https://bgp.tools/api'
+_HACKER_TARGET_DNS = 'https://api.hackertarget.com/dnslookup'
+_PRIVATE_IP_RE = re.compile('^(?:10\\.|172\\.(?:1[6-9]|2\\d|3[01])\\.|192\\.168\\.|127\\.|::1|fe80)')
 
 def _is_private_ip(ip: str) -> bool:
     """Check if IP is RFC1918/loopback/private."""
     return bool(_PRIVATE_IP_RE.match(ip))
 
-
-# ── Dataclasses ──────────────────────────────────────────────────────────────
-
-
-@dataclass
+@dataclass(True)
 class BGPFinding:
     """BGP intelligence finding from RIPE/BGP.tools."""
-
-    ip: str = ""
+    ip: str = ''
     asn: int = 0
-    asn_name: str = ""
-    country_code: str = ""
-    prefix: str = ""
-    holder: str = ""
-    source: str = "ripe"
+    asn_name: str = ''
+    country_code: str = ''
+    prefix: str = ''
+    holder: str = ''
+    source: str = 'ripe'
     ts: float = 0.0
 
-    def to_canonical_finding(self, query: str = "") -> Any | None:
+    def to_canonical_finding(self, query: str='') -> Any | None:
         """Convert to CanonicalFinding for DuckDB ingestion."""
         try:
             if _CanonicalFinding is None:
                 return None
             content_hash = hashlib.sha256(f"{self.ip or ''}:{self.asn}:{self.source}".encode()).hexdigest()[:16]
-            finding_id = f"bgp_{self.asn}_{content_hash}"
-
-            metadata = {
-                "asn": str(self.asn),
-                "asn_name": self.asn_name,
-                "ip": self.ip,
-                "prefix": self.prefix,
-                "holder": self.holder,
-                "country": self.country_code,
-            }
-
-            return _CanonicalFinding(
-                finding_id=finding_id,
-                query=(query or f"bgp:{self.ip}")[:128],
-                source_type="bgp_enrichment",
-                confidence=0.88,
-                ts=self.ts or time.time(),
-                provenance=(f"asn:{self.asn}", f"ip:{self.ip}", f"prefix:{self.prefix}"),
-                payload_text=str(metadata),
-                accepted=True,
-                reason="bgp_passive_dns",
-                entropy=0.0,
-                normalized_hash=None,
-                duplicate=False,
-            )
+            finding_id = f'bgp_{self.asn}_{content_hash}'
+            metadata = {'asn': str(self.asn), 'asn_name': self.asn_name, 'ip': self.ip, 'prefix': self.prefix, 'holder': self.holder, 'country': self.country_code}
+            return _CanonicalFinding(finding_id=finding_id, query=(query or f'bgp:{self.ip}')[:128], source_type='bgp_enrichment', confidence=0.88, ts=self.ts or time.time(), provenance=(f'asn:{self.asn}', f'ip:{self.ip}', f'prefix:{self.prefix}'), payload_text=str(metadata), accepted=True, reason='bgp_passive_dns', entropy=0.0, normalized_hash=None, duplicate=False)
         except Exception:
             return None
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class PDNSRecord:
     """Passive DNS record."""
-
-    domain: str = ""
-    record_type: str = ""
-    value: str = ""
+    domain: str = ''
+    record_type: str = ''
+    value: str = ''
     first_seen: float = 0.0
     last_seen: float = 0.0
-    source: str = "hackertarget"
+    source: str = 'hackertarget'
     ts: float = 0.0
 
-    def to_canonical_finding(self, query: str = "") -> Any | None:
+    def to_canonical_finding(self, query: str='') -> Any | None:
         """Convert to CanonicalFinding for DuckDB ingestion."""
         try:
             if _CanonicalFinding is None:
                 return None
-            content_hash = hashlib.sha256(f"{self.domain}:{self.record_type}:{self.value}".encode()).hexdigest()[:16]
-            finding_id = f"pdns_{self.domain}_{self.record_type}_{content_hash[:8]}"
-
-            metadata = {
-                "domain": self.domain,
-                "record_type": self.record_type,
-                "value": self.value,
-                "first_seen": self.first_seen,
-                "last_seen": self.last_seen,
-            }
-
-            return _CanonicalFinding(
-                finding_id=finding_id,
-                query=(query or f"pdns:{self.domain}")[:128],
-                source_type="passive_dns",
-                confidence=0.82,
-                ts=self.ts or time.time(),
-                provenance=(f"domain:{self.domain}", f"type:{self.record_type}"),
-                payload_text=str(metadata),
-                accepted=True,
-                reason="passive_dns",
-                entropy=0.0,
-                normalized_hash=None,
-                duplicate=False,
-            )
+            content_hash = hashlib.sha256(f'{self.domain}:{self.record_type}:{self.value}'.encode()).hexdigest()[:16]
+            finding_id = f'pdns_{self.domain}_{self.record_type}_{content_hash[:8]}'
+            metadata = {'domain': self.domain, 'record_type': self.record_type, 'value': self.value, 'first_seen': self.first_seen, 'last_seen': self.last_seen}
+            return _CanonicalFinding(finding_id=finding_id, query=(query or f'pdns:{self.domain}')[:128], source_type='passive_dns', confidence=0.82, ts=self.ts or time.time(), provenance=(f'domain:{self.domain}', f'type:{self.record_type}'), payload_text=str(metadata), accepted=True, reason='passive_dns', entropy=0.0, normalized_hash=None, duplicate=False)
         except Exception:
             return None
+_DEFAULT_HEADERS = {'Accept': 'application/json', 'User-Agent': 'Hledac-OSINT/1.0 (research tool)'}
 
-
-# ── BGP Adapter ───────────────────────────────────────────────────────────────
-
-
-# Default headers for API requests
-_DEFAULT_HEADERS = {
-    "Accept": "application/json",
-    "User-Agent": "Hledac-OSINT/1.0 (research tool)",
-}
-
-
-async def _rate_limited_request(
-    session: httpx.AsyncClient,
-    url: str,
-    last_request: float,
-    timeout: float = TIMEOUT_PER_REQUEST,
-    extra_headers: dict | None = None,
-) -> dict[str, Any] | None:
+async def _rate_limited_request(session: httpx.AsyncClient, url: str, last_request: float, timeout: float=TIMEOUT_PER_REQUEST, extra_headers: dict | None=None) -> dict[str, Any] | None:
     """Make rate-limited JSON request, return parsed data or None."""
     elapsed = time.monotonic() - last_request
     if elapsed < RATE_LIMIT_S:
@@ -202,265 +118,163 @@ async def _rate_limited_request(
     if extra_headers:
         headers.update(extra_headers)
     try:
-        async with session.get(
-            url,
-            timeout=httpx.Timeout(timeout),
-            headers=headers,
-        ) as resp:
+        async with session.get(url, timeout=httpx.Timeout(timeout), headers=headers) as resp:
             if resp.status_code == 200:
                 return resp.json()
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
     return None
 
-
-async def _rate_limited_text(
-    session: httpx.AsyncClient,
-    url: str,
-    last_request: float,
-    timeout: float = TIMEOUT_PER_REQUEST,
-) -> str | None:
+async def _rate_limited_text(session: httpx.AsyncClient, url: str, last_request: float, timeout: float=TIMEOUT_PER_REQUEST) -> str | None:
     """Make rate-limited text request, return text or None."""
     elapsed = time.monotonic() - last_request
     if elapsed < RATE_LIMIT_S:
         await asyncio.sleep(RATE_LIMIT_S - elapsed)
     try:
-        async with session.get(
-            url,
-            timeout=httpx.Timeout(timeout),
-            headers=_DEFAULT_HEADERS,
-        ) as resp:
+        async with session.get(url, timeout=httpx.Timeout(timeout), headers=_DEFAULT_HEADERS) as resp:
             if resp.status_code == 200:
                 return resp.text()
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
     return None
 
-
-async def ripestat_lookup_ip(
-    ip: str,
-    session: httpx.AsyncClient,
-    rate_limit_ref: float | None = None,
-) -> BGPFinding | None:
+async def ripestat_lookup_ip(ip: str, session: httpx.AsyncClient, rate_limit_ref: float | None=None) -> BGPFinding | None:
     """
     RIPE Stat API: IP → ASN, prefix, holder, country, org.
     Returns BGPFinding or None on failure.
     """
     if not _ENABLED or _is_private_ip(ip):
         return None
-
     last_req = rate_limit_ref or 0.0
-
-    # RIPE prefix-overview
-    url = f"{_RIPE_PREFIX_URL}?resource={ip}"
+    url = f'{_RIPE_PREFIX_URL}?resource={ip}'
     data = await _rate_limited_request(session, url, last_req)
     if not data:
         return None
-
-    prefixes = data.get("data", {}).get("prefixes", [])
+    prefixes = data.get('data', {}).get('prefixes', [])
     if not prefixes:
         return None
-
     entry = prefixes[0]
-    asn = entry.get("asn", 0)
-    prefix = entry.get("prefix", "")
-    holder = entry.get("holder", "")
-
+    asn = entry.get('asn', 0)
+    prefix = entry.get('prefix', '')
+    holder = entry.get('holder', '')
     if not asn:
         return None
-
-    # RIPE whois for country/org
-    country = ""
-    org_name = ""
-    whois_url = f"{_RIPE_WHOIS_URL}?resource={asn}"
+    country = ''
+    org_name = ''
+    whois_url = f'{_RIPE_WHOIS_URL}?resource={asn}'
     whois_data = await _rate_limited_request(session, whois_url, last_req)
     if whois_data:
-        objects = whois_data.get("data", {}).get("objects", {})
-        for obj in objects.get("object", [])[:1]:
-            for attr in obj.get("attributes", {}).get("attribute", []):
-                name = attr.get("name", "")
-                value = attr.get("value", "")
-                if name == "country":
+        objects = whois_data.get('data', {}).get('objects', {})
+        for obj in objects.get('object', [])[:1]:
+            for attr in obj.get('attributes', {}).get('attribute', []):
+                name = attr.get('name', '')
+                value = attr.get('value', '')
+                if name == 'country':
                     country = value
-                elif name == "org-name":
+                elif name == 'org-name':
                     org_name = value
+    return BGPFinding(ip=ip, asn=asn, asn_name=org_name or holder, country_code=country, prefix=prefix, holder=holder, source='ripe', ts=time.time())
 
-    return BGPFinding(
-        ip=ip,
-        asn=asn,
-        asn_name=org_name or holder,
-        country_code=country,
-        prefix=prefix,
-        holder=holder,
-        source="ripe",
-        ts=time.time(),
-    )
-
-
-async def bgptools_prefix_history(
-    prefix: str,
-    session: httpx.AsyncClient,
-    rate_limit_ref: float = 0.0,
-) -> list[BGPFinding]:
+async def bgptools_prefix_history(prefix: str, session: httpx.AsyncClient, rate_limit_ref: float=0.0) -> list[BGPFinding]:
     """
     BGP.tools API: historical prefix announcements.
     Returns list of BGPFindings.
     """
     if not _ENABLED:
         return []
-
-    url = f"{_BGP_TOOLS_URL}/prefix/{prefix}"
+    url = f'{_BGP_TOOLS_URL}/prefix/{prefix}'
     data = await _rate_limited_request(session, url, rate_limit_ref)
     if not data:
         return []
-
     findings = []
-    for entry in data.get("asns", [])[:20]:
-        asn = entry.get("asn", 0)
+    for entry in data.get('asns', [])[:20]:
+        asn = entry.get('asn', 0)
         if asn:
-            findings.append(
-                BGPFinding(
-                    ip="",
-                    asn=asn,
-                    asn_name=entry.get("name", ""),
-                    country_code=entry.get("country", "") or "",
-                    prefix=prefix,
-                    holder="",
-                    source="bgp_tools",
-                    ts=time.time(),
-                )
-            )
+            findings.append(BGPFinding(ip='', asn=asn, asn_name=entry.get('name', ''), country_code=entry.get('country', '') or '', prefix=prefix, holder='', source='bgp_tools', ts=time.time()))
     return findings
 
-
-async def bgptools_sibling_prefixes(
-    asn: str,
-    session: httpx.AsyncClient,
-    rate_limit_ref: float = 0.0,
-) -> list[str]:
+async def bgptools_sibling_prefixes(asn: str, session: httpx.AsyncClient, rate_limit_ref: float=0.0) -> list[str]:
     """
     BGP.tools API: all prefixes announced by this ASN.
     Returns list of prefix strings.
     """
     if not _ENABLED:
         return []
-
-    asn_clean = asn.replace("AS", "").strip()
-    url = f"{_BGP_TOOLS_URL}/asn/{asn_clean}"
+    asn_clean = asn.replace('AS', '').strip()
+    url = f'{_BGP_TOOLS_URL}/asn/{asn_clean}'
     data = await _rate_limited_request(session, url, rate_limit_ref)
     if not data:
         return []
-
     prefixes = []
-    for entry in data.get("prefixes", [])[:MAX_PDNS_RECORDS]:
-        p = entry.get("prefix", "")
+    for entry in data.get('prefixes', [])[:MAX_PDNS_RECORDS]:
+        p = entry.get('prefix', '')
         if p:
             prefixes.append(p)
     return prefixes
 
-
-# ── PassiveDNS Adapter ───────────────────────────────────────────────────────
-
-
-async def hackertarget_pdns(
-    domain: str,
-    session: httpx.AsyncClient,
-    rate_limit_ref: float = 0.0,
-) -> list[PDNSRecord]:
+async def hackertarget_pdns(domain: str, session: httpx.AsyncClient, rate_limit_ref: float=0.0) -> list[PDNSRecord]:
     """
     HackerTarget API: passive DNS lookup for domain.
     Returns list of PDNSRecord.
     """
     if not _ENABLED:
         return []
-    url = f"{_HACKER_TARGET_DNS}?q={domain}"
+    url = f'{_HACKER_TARGET_DNS}?q={domain}'
     try:
         elapsed = time.monotonic() - rate_limit_ref
         if elapsed < RATE_LIMIT_S:
             await asyncio.sleep(RATE_LIMIT_S - elapsed)
-        async with session.get(
-            url,
-            timeout=httpx.Timeout(TIMEOUT_PER_REQUEST),
-        ) as resp:
+        async with session.get(url, timeout=httpx.Timeout(TIMEOUT_PER_REQUEST)) as resp:
             if resp.status_code != 200:
                 return []
-            if resp.headers.get("Content-Type", "").startswith("application/json"):
+            if resp.headers.get('Content-Type', '').startswith('application/json'):
                 return []
             text = resp.text()
-            if "error" in text.lower() or "quota" in text.lower():
-                logger.debug(
-                    "PassiveDNS HackerTarget error response for domain=%r: %r",
-                    domain,
-                    text[:200] if text else "",
-                )
+            if 'error' in text.lower() or 'quota' in text.lower():
+                logger.debug('PassiveDNS HackerTarget error response for domain=%r: %r', domain, text[:200] if text else '')
                 return []
-            if not text or text.startswith("#"):
-                logger.debug(
-                    "PassiveDNS HackerTarget empty response for domain=%r (status_code=%d)",
-                    domain,
-                    resp.status_code,
-                )
+            if not text or text.startswith('#'):
+                logger.debug('PassiveDNS HackerTarget empty response for domain=%r (status_code=%d)', domain, resp.status_code)
                 return []
             records = []
             for line in text.splitlines()[:MAX_PDNS_RECORDS]:
-                parts = re.split(r"\s*:\s*|\|", line.strip(), maxsplit=1)
+                parts = re.split('\\s*:\\s*|\\|', line.strip(), maxsplit=1)
                 if len(parts) < 2:
                     continue
                 rec_type = parts[0].strip()
                 value = parts[1].strip()
-                if rec_type in ("A", "AAAA", "MX", "NS", "TXT", "CNAME", "PTR"):
-                    records.append(
-                        PDNSRecord(
-                            domain=domain,
-                            record_type=rec_type,
-                            value=value,
-                            source="hackertarget",
-                            ts=time.time(),
-                        )
-                    )
+                if rec_type in ('A', 'AAAA', 'MX', 'NS', 'TXT', 'CNAME', 'PTR'):
+                    records.append(PDNSRecord(domain=domain, record_type=rec_type, value=value, source='hackertarget', ts=time.time()))
             return records
     except Exception:
         return []
 
-
-async def hackertarget_reverse_dns(
-    ip: str,
-    session: httpx.AsyncClient,
-    rate_limit_ref: float = 0.0,
-) -> list[str]:
+async def hackertarget_reverse_dns(ip: str, session: httpx.AsyncClient, rate_limit_ref: float=0.0) -> list[str]:
     """
     HackerTarget API: reverse DNS lookup for IP (find related domains).
     Returns list of domain strings.
     """
     if not _ENABLED or _is_private_ip(ip):
         return []
-    url = f"{_HACKER_TARGET_DNS}?q={ip}"
+    url = f'{_HACKER_TARGET_DNS}?q={ip}'
     try:
         elapsed = time.monotonic() - rate_limit_ref
         if elapsed < RATE_LIMIT_S:
             await asyncio.sleep(RATE_LIMIT_S - elapsed)
-        async with session.get(
-            url,
-            timeout=httpx.Timeout(TIMEOUT_PER_REQUEST),
-        ) as resp:
+        async with session.get(url, timeout=httpx.Timeout(TIMEOUT_PER_REQUEST)) as resp:
             if resp.status_code != 200:
                 return []
             text = resp.text()
-
             domains = []
             for line in text.splitlines()[:50]:
-                parts = re.split(r"\s*:\s*|\|", line.strip(), maxsplit=1)
-                if len(parts) >= 2 and parts[0] in ("PTR", "A", "AAAA"):
+                parts = re.split('\\s*:\\s*|\\|', line.strip(), maxsplit=1)
+                if len(parts) >= 2 and parts[0] in ('PTR', 'A', 'AAAA'):
                     val = parts[1].strip()
-                    if "." in val and not _is_private_ip(val):
+                    if '.' in val and (not _is_private_ip(val)):
                         domains.append(val)
             return domains[:50]
     except Exception:
         return []
-
-
-# ── Compound Adapter Classes (for scheduler integration) ─────────────────────
-
 
 class BGPAdapter:
     """
@@ -471,17 +285,11 @@ class BGPAdapter:
         adapter.set_session(httpx_session)
         finding = await adapter.lookup_asn("8.8.8.8")
     """
-
-    __slots__ = ("_session", "_stats", "_semaphore", "_last_request")
+    __slots__ = ('_session', '_stats', '_semaphore', '_last_request')
 
     def __init__(self) -> None:
         self._session: httpx.AsyncClient | None = None
-        self._stats: dict[str, int] = {
-            "ips_processed": 0,
-            "asns_resolved": 0,
-            "prefixes_collected": 0,
-            "errors": 0,
-        }
+        self._stats: dict[str, int] = {'ips_processed': 0, 'asns_resolved': 0, 'prefixes_collected': 0, 'errors': 0}
         self._semaphore = get_semaphore_for_testing(ConcurrencyCategory.BGP_QUERY)
         self._last_request: float = 0.0
 
@@ -493,16 +301,14 @@ class BGPAdapter:
         """RIPE Stat API: IP → ASN, prefix, holder, country, org."""
         if not _ENABLED or not self._session or _is_private_ip(ip):
             return None
-
-        if self._stats["ips_processed"] >= MAX_IPS_PER_SPRINT:
+        if self._stats['ips_processed'] >= MAX_IPS_PER_SPRINT:
             return None
-
         async with self._semaphore:
-            self._stats["ips_processed"] += 1
+            self._stats['ips_processed'] += 1
             result = await ripestat_lookup_ip(ip, self._session, self._last_request)
             self._last_request = time.monotonic()
             if result and result.asn:
-                self._stats["asns_resolved"] += 1
+                self._stats['asns_resolved'] += 1
             return result
 
     async def get_prefix_history(self, prefix: str) -> list[BGPFinding]:
@@ -518,13 +324,12 @@ class BGPAdapter:
             return []
         async with self._semaphore:
             result = await bgptools_sibling_prefixes(asn, self._session, self._last_request)
-            self._stats["prefixes_collected"] += len(result)
+            self._stats['prefixes_collected'] += len(result)
             return result
 
     def get_stats(self) -> dict[str, int]:
         """Return adapter statistics."""
         return self._stats.copy()
-
 
 class PassiveDNSAdapter:
     """
@@ -535,16 +340,11 @@ class PassiveDNSAdapter:
         adapter.set_session(httpx_session)
         records = await adapter.query_pdns("example.com")
     """
-
-    __slots__ = ("_session", "_stats", "_semaphore", "_last_request")
+    __slots__ = ('_session', '_stats', '_semaphore', '_last_request')
 
     def __init__(self) -> None:
         self._session: httpx.AsyncClient | None = None
-        self._stats: dict[str, int] = {
-            "domains_processed": 0,
-            "records_collected": 0,
-            "errors": 0,
-        }
+        self._stats: dict[str, int] = {'domains_processed': 0, 'records_collected': 0, 'errors': 0}
         self._semaphore = get_semaphore_for_testing(ConcurrencyCategory.IP_QUERY)
         self._last_request: float = 0.0
 
@@ -557,10 +357,10 @@ class PassiveDNSAdapter:
         if not _ENABLED or not self._session:
             return []
         async with self._semaphore:
-            self._stats["domains_processed"] += 1
+            self._stats['domains_processed'] += 1
             result = await hackertarget_pdns(domain, self._session, self._last_request)
             self._last_request = time.monotonic()
-            self._stats["records_collected"] += len(result)
+            self._stats['records_collected'] += len(result)
             return result
 
     async def find_related_domains(self, ip: str) -> list[str]:
@@ -573,18 +373,4 @@ class PassiveDNSAdapter:
     def get_stats(self) -> dict[str, int]:
         """Return adapter statistics."""
         return self._stats.copy()
-
-
-__all__ = [
-    "BGP_LOOKUP_AVAILABLE",
-    "PASSIVE_DNS_AVAILABLE",
-    "BGPFinding",
-    "PDNSRecord",
-    "BGPAdapter",
-    "PassiveDNSAdapter",
-    "ripestat_lookup_ip",
-    "bgptools_prefix_history",
-    "bgptools_sibling_prefixes",
-    "hackertarget_pdns",
-    "hackertarget_reverse_dns",
-]
+__all__ = ['BGP_LOOKUP_AVAILABLE', 'PASSIVE_DNS_AVAILABLE', 'BGPFinding', 'PDNSRecord', 'BGPAdapter', 'PassiveDNSAdapter', 'ripestat_lookup_ip', 'bgptools_prefix_history', 'bgptools_sibling_prefixes', 'hackertarget_pdns', 'hackertarget_reverse_dns']

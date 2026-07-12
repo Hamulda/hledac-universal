@@ -352,7 +352,35 @@ class InferenceEngineProtocol(Protocol):
         ...
 
 
+# ============================================================================
+# Shared Utilities
+# ============================================================================
+
+
+def _to_operator_shortlist(
+    raw: list[dict[str, Any]], max_items: int = 3
+) -> list[dict[str, Any]]:
+    """Bounded operator shortlist (max 3) in scheduler-consumable shape.
+
+    Transforms actionable_shortlist output to:
+    {action: query, target: rationale[:80], rationale: pivot_type}
+
+    Used by both HypothesisPack and NER-augmented correlation paths to ensure
+    shape consistency across the scheduler pipeline.
+    """
+    return [
+        {
+            "action": item.get("query", ""),
+            "target": item.get("rationale", "")[:80],
+            "rationale": item.get("pivot_type", ""),
+        }
+        for item in raw[:max_items]
+    ]
+
+
 __all__ = [
+    # Shared utilities
+    "_to_operator_shortlist",
     # Enums
     "HypothesisType",
     "HypothesisStatus",

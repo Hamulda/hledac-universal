@@ -1,17 +1,10 @@
 """
 Replay buffer pro MARL s ukládáním do numpy polí (bezpečné, serializovatelné).
 """
-
-
-
 from pathlib import Path
-
 import numpy as np
-
-# Lazy MLX accessor — defer mlx.core to first use (M1 8GB import-time savings)
 _mlx_core_mod = None
 _MLX_CORE_AVAILABLE = False
-
 
 def _get_mlx_core():
     """Lazily import mlx.core, returning None if unavailable."""
@@ -25,9 +18,10 @@ def _get_mlx_core():
             _MLX_CORE_AVAILABLE = False
     return _mlx_core_mod
 
-
 class MARLReplayBuffer:
-    def __init__(self, capacity: int = 50000, state_dim: int = 12, n_agents: int = 5):
+    __slots__ = tuple(('actions', 'capacity', 'dones', 'n_agents', 'next_states', 'pos', 'rewards', 'size', 'state_dim', 'states'))
+
+    def __init__(self, capacity: int=50000, state_dim: int=12, n_agents: int=5):
         self.capacity = capacity
         self.state_dim = state_dim
         self.n_agents = n_agents
@@ -55,30 +49,11 @@ class MARLReplayBuffer:
         idx = np.random.randint(0, self.size, batch_size)
         mx = _get_mlx_core()
         if mx is not None:
-            return {
-                'states': mx.array(self.states[idx]),
-                'actions': mx.array(self.actions[idx]),
-                'rewards': mx.array(self.rewards[idx]),
-                'next_states': mx.array(self.next_states[idx]),
-                'dones': mx.array(self.dones[idx])
-            }
-        return {
-            'states': self.states[idx],
-            'actions': self.actions[idx],
-            'rewards': self.rewards[idx],
-            'next_states': self.next_states[idx],
-            'dones': self.dones[idx]
-        }
+            return {'states': mx.array(self.states[idx]), 'actions': mx.array(self.actions[idx]), 'rewards': mx.array(self.rewards[idx]), 'next_states': mx.array(self.next_states[idx]), 'dones': mx.array(self.dones[idx])}
+        return {'states': self.states[idx], 'actions': self.actions[idx], 'rewards': self.rewards[idx], 'next_states': self.next_states[idx], 'dones': self.dones[idx]}
 
     def save(self, path: Path):
-        np.savez_compressed(
-            path.with_suffix('.npz'),
-            states=self.states[:self.size],
-            actions=self.actions[:self.size],
-            rewards=self.rewards[:self.size],
-            next_states=self.next_states[:self.size],
-            dones=self.dones[:self.size]
-        )
+        np.savez_compressed(path.with_suffix('.npz'), states=self.states[:self.size], actions=self.actions[:self.size], rewards=self.rewards[:self.size], next_states=self.next_states[:self.size], dones=self.dones[:self.size])
 
     def load(self, path: Path):
         data = np.load(path.with_suffix('.npz'))

@@ -32,7 +32,6 @@ Usage:
     print(f"Max concurrent tools: {detector.max_concurrent_tools}")  # adaptive
     print(f"Is M1 8GB: {detector.is_m1_8gb}")      # True on M1 MacBook Air 8GB
 """
-
 import os
 import platform
 import sys
@@ -40,18 +39,13 @@ import sysconfig
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Literal
-
-# Python 3.14+ compatibility: typing.Literal available directly
 try:
     from typing import Literal
 except ImportError:
     from typing_extensions import Literal
-
-# Issue #17: psutil lazy import via centralized psutil_shim.
 from core.psutil_shim import psutil_module as _psutil_mod
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class HardwareCapabilities:
     """
     Immutable hardware capability snapshot.
@@ -59,34 +53,21 @@ class HardwareCapabilities:
     Frozen dataclass ensures hashability and prevents accidental mutation.
     Created once per process, cached via SystemDetector.
     """
-    # Platform
     is_darwin: bool = False
     darwin_version: tuple[int, int, int] | None = None
     darwin_machine: str | None = None
-
-    # CPU
     cpu_count_physical: int = 0
     cpu_count_logical: int = 0
-
-    # Memory (bytes)
     memory_total_bytes: int = 0
     memory_available_bytes: int = 0
     memory_total_gb: float = 0.0
     memory_available_gb: float = 0.0
-
-    # RAM tier classification
-    ram_tier: Literal["8gb", "16gb", "32gb", "64gb", "other"] = "other"
-
-    # Python build
+    ram_tier: Literal['8gb', '16gb', '32gb', '64gb', 'other'] = 'other'
     python_build_flags: tuple[str, ...] = field(default_factory=tuple)
-
-    # Metal / GPU
     has_metal: bool = False
     has_ane: bool = False
-
-    # M1-specific
     is_m1_silicon: bool = False
-    is_m1_8gb: bool = False  # True only on M1 MacBook Air 8GB
+    is_m1_8gb: bool = False
 
     @property
     def max_memory_mb(self) -> int:
@@ -100,13 +81,7 @@ class HardwareCapabilities:
             - 64gb tier: 32768 MB
             - other: 6144 MB (safe middle ground)
         """
-        tier_limits: dict[str, int] = {
-            "8gb": 4096,
-            "16gb": 8192,
-            "32gb": 16384,
-            "64gb": 32768,
-            "other": 6144,
-        }
+        tier_limits: dict[str, int] = {'8gb': 4096, '16gb': 8192, '32gb': 16384, '64gb': 32768, 'other': 6144}
         return tier_limits.get(self.ram_tier, 6144)
 
     @property
@@ -123,13 +98,7 @@ class HardwareCapabilities:
             - 64gb tier: 12
             - other: 3
         """
-        tier_concurrency: dict[str, int] = {
-            "8gb": 2,
-            "16gb": 4,
-            "32gb": 8,
-            "64gb": 12,
-            "other": 3,
-        }
+        tier_concurrency: dict[str, int] = {'8gb': 2, '16gb': 4, '32gb': 8, '64gb': 12, 'other': 3}
         return tier_concurrency.get(self.ram_tier, 3)
 
     @property
@@ -156,7 +125,6 @@ class HardwareCapabilities:
         else:
             return 12
 
-
 class SystemDetector:
     """
     Runtime hardware capability detection.
@@ -168,49 +136,40 @@ class SystemDetector:
         detector = SystemDetector()
         caps = detector.capabilities  # HardwareCapabilities instance
     """
-
-    # Class-level cache (process-wide singleton)
     _cached_capabilities: HardwareCapabilities | None = None
 
-    def __new__(cls) -> "SystemDetector":
+    def __new__(cls) -> 'SystemDetector':
         """Singleton: return cached instance if already detected."""
         if cls._cached_capabilities is None:
             instance = super().__new__(cls)
             instance._detect()
             cls._cached_capabilities = instance._capabilities
-        return instance  # type: ignore[return-value]
+        return instance
 
     def __init__(self) -> None:
-        # Already initialized via __new__ with cached values
         pass
 
     def _detect(self) -> None:
         """Run all hardware detection (called once per process)."""
-        # Platform detection
-        is_darwin = sys.platform == "darwin"
+        is_darwin = sys.platform == 'darwin'
         darwin_version: tuple[int, int, int] | None = None
         darwin_machine: str | None = None
-
         if is_darwin:
             try:
                 ver = platform.mac_ver()
                 if ver[0]:
-                    # Parse "14.5.0" -> (14, 5, 0)
-                    version_str = ver[0].split(".")
+                    version_str = ver[0].split('.')
                     parsed = [int(x) for x in version_str[:3]]
                     darwin_version = (parsed[0], parsed[1], parsed[2]) if len(parsed) >= 3 else None
                 else:
                     darwin_version = None
-                darwin_machine = ver[2] if len(ver) > 2 else None  # machine type
+                darwin_machine = ver[2] if len(ver) > 2 else None
             except Exception:
                 darwin_version = None
                 darwin_machine = None
-
-        # CPU detection
         try:
             import os
             cpu_logical = os.cpu_count() or 0
-            # Physical CPU count via psutil if available
             cpu_physical = cpu_logical
             try:
                 psutil = _psutil_mod()
@@ -220,99 +179,62 @@ class SystemDetector:
         except Exception:
             cpu_logical = 0
             cpu_physical = 0
-
-        # Memory detection
         memory_total_bytes = 0
         memory_available_bytes = 0
         memory_total_gb = 0.0
         memory_available_gb = 0.0
-        ram_tier: Literal["8gb", "16gb", "32gb", "64gb", "other"] = "other"
-
+        ram_tier: Literal['8gb', '16gb', '32gb', '64gb', 'other'] = 'other'
         try:
             psutil = _psutil_mod()
             vm = psutil.virtual_memory()
-            memory_total_bytes = getattr(vm, "total", 0)
-            memory_available_bytes = getattr(vm, "available", 0)
-            memory_total_gb = memory_total_bytes / (1024**3)
-            memory_available_gb = memory_available_bytes / (1024**3)
-
-            # RAM tier classification
-            # 8GB: 7.5GB <= total < 9GB
-            # 16GB: 15GB <= total < 18GB
-            # 32GB: 30GB <= total < 36GB
-            # 64GB: 60GB <= total < 72GB
+            memory_total_bytes = getattr(vm, 'total', 0)
+            memory_available_bytes = getattr(vm, 'available', 0)
+            memory_total_gb = memory_total_bytes / 1024 ** 3
+            memory_available_gb = memory_available_bytes / 1024 ** 3
             if 7.5 <= memory_total_gb < 9:
-                ram_tier = "8gb"
+                ram_tier = '8gb'
             elif 15 <= memory_total_gb < 18:
-                ram_tier = "16gb"
+                ram_tier = '16gb'
             elif 30 <= memory_total_gb < 36:
-                ram_tier = "32gb"
+                ram_tier = '32gb'
             elif 60 <= memory_total_gb < 72:
-                ram_tier = "64gb"
+                ram_tier = '64gb'
             else:
-                ram_tier = "other"
+                ram_tier = 'other'
         except Exception:
             pass
-
-        # Python build flags
         python_build_flags: tuple[str, ...] = ()
         try:
             config = sysconfig.get_config_vars()
-            # Collect relevant build flags
             flags = []
             for key, value in config.items():
-                if key.endswith("FLAGS") and value:
+                if key.endswith('FLAGS') and value:
                     flags.append(str(value))
             python_build_flags = tuple(flags)
         except Exception:
             pass
-
-        # Metal / ANE detection (lazy, catch errors)
         has_metal = False
         has_ane = False
         is_m1_silicon = False
         is_m1_8gb = False
-
         if is_darwin:
             try:
                 import mlx.core as mx
                 has_metal = mx.metal.is_available()
-                has_ane = hasattr(mx.metal, "get_ane_utilization")
-                # M1 check: ARM chip on Apple Silicon
-                is_m1_silicon = darwin_machine is not None and "arm" in darwin_machine.lower()
-                # M1 8GB check: 8GB tier + ARM machine
-                is_m1_8gb = is_m1_silicon and ram_tier == "8gb"
+                has_ane = hasattr(mx.metal, 'get_ane_utilization')
+                is_m1_silicon = darwin_machine is not None and 'arm' in darwin_machine.lower()
+                is_m1_8gb = is_m1_silicon and ram_tier == '8gb'
             except ImportError:
-                # MLX not available — not an error, just no Metal
                 pass
             except Exception:
                 pass
-
-        # Build capabilities object
-        self._capabilities = HardwareCapabilities(
-            is_darwin=is_darwin,
-            darwin_version=darwin_version,
-            darwin_machine=darwin_machine,
-            cpu_count_physical=cpu_physical,
-            cpu_count_logical=cpu_logical,
-            memory_total_bytes=memory_total_bytes,
-            memory_available_bytes=memory_available_bytes,
-            memory_total_gb=memory_total_gb,
-            memory_available_gb=memory_available_gb,
-            ram_tier=ram_tier,
-            python_build_flags=python_build_flags,
-            has_metal=has_metal,
-            has_ane=has_ane,
-            is_m1_silicon=is_m1_silicon,
-            is_m1_8gb=is_m1_8gb,
-        )
+        self._capabilities = HardwareCapabilities(is_darwin=is_darwin, darwin_version=darwin_version, darwin_machine=darwin_machine, cpu_count_physical=cpu_physical, cpu_count_logical=cpu_logical, memory_total_bytes=memory_total_bytes, memory_available_bytes=memory_available_bytes, memory_total_gb=memory_total_gb, memory_available_gb=memory_available_gb, ram_tier=ram_tier, python_build_flags=python_build_flags, has_metal=has_metal, has_ane=has_ane, is_m1_silicon=is_m1_silicon, is_m1_8gb=is_m1_8gb)
 
     @property
     def capabilities(self) -> HardwareCapabilities:
         """Get cached hardware capabilities."""
         return self._capabilities
 
-    # Convenience properties delegating to capabilities
     @property
     def ram_tier(self) -> str:
         return self._capabilities.ram_tier
@@ -333,8 +255,6 @@ class SystemDetector:
     def is_m1_8gb(self) -> bool:
         return self._capabilities.is_m1_8gb
 
-
-# Module-level singleton accessor
 @lru_cache(maxsize=1)
 def get_system_detector() -> SystemDetector:
     """
@@ -345,8 +265,6 @@ def get_system_detector() -> SystemDetector:
     """
     return SystemDetector()
 
-
-# Convenience function for direct capability access
 def get_hardware_capabilities() -> HardwareCapabilities:
     """
     Get hardware capabilities snapshot.

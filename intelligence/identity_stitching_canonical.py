@@ -21,44 +21,27 @@ M1 8GB CEILING:
   - optimize_memory() called after each stitching batch
   - All methods fail-soft: sprint continues on any error
 """
-
-
-
 import logging
 import time
 from dataclasses import dataclass
 from typing import Any
-
+from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str
 logger = logging.getLogger(__name__)
-
-# ── Bounds ────────────────────────────────────────────────────────────────────
-
 MAX_COMPARISONS: int = 2000
 IDENTITY_MATCH_THRESHOLD: float = 0.7
 STITCH_THRESHOLD: float = 0.8
-
-# ── Imports ──────────────────────────────────────────────────────────────────
-
 try:
-    from ..intelligence.identity_stitching import (
-        IdentityProfile,
-        IdentityStitchingEngine,
-        UsernameEntry,
-    )
+    from ..intelligence.identity_stitching import IdentityProfile, IdentityStitchingEngine, UsernameEntry
     _STITCHING_AVAILABLE = True
 except ImportError:
     _STITCHING_AVAILABLE = False
     IdentityProfile = None
     IdentityStitchingEngine = None
     UsernameEntry = None
-
 try:
     from ..knowledge.duckdb_store import CanonicalFinding
 except ImportError:
     CanonicalFinding = None
-
-
-# ── Dataclasses ──────────────────────────────────────────────────────────────
 
 @dataclass(slots=True)
 class IdentityCandidate:
@@ -68,32 +51,18 @@ class IdentityCandidate:
     Represents a single or stitched identity with confidence and signals.
     """
     candidate_id: str
-    profile_ids: list[str]             # constituent profile IDs
+    profile_ids: list[str]
     primary_name: str
     emails: list[str]
     usernames: list[str]
     platforms: list[str]
-    confidence: float                  # 0-1
-    signals: dict[str, float]          # individual signal scores
-    evidence: list[str]                # evidence strings
-    finding_ids: list[str]             # source finding IDs
+    confidence: float
+    signals: dict[str, float]
+    evidence: list[str]
+    finding_ids: list[str]
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "candidate_id": self.candidate_id,
-            "profile_ids": self.profile_ids,
-            "primary_name": self.primary_name,
-            "emails": self.emails,
-            "usernames": self.usernames,
-            "platforms": self.platforms,
-            "confidence": self.confidence,
-            "signals": self.signals,
-            "evidence": self.evidence,
-            "finding_ids": self.finding_ids,
-        }
-
-
-# ── Adapter ───────────────────────────────────────────────────────────────────
+        return {'candidate_id': self.candidate_id, 'profile_ids': self.profile_ids, 'primary_name': self.primary_name, 'emails': self.emails, 'usernames': self.usernames, 'platforms': self.platforms, 'confidence': self.confidence, 'signals': self.signals, 'evidence': self.evidence, 'finding_ids': self.finding_ids}
 
 class IdentityStitchingAdapter:
     """
@@ -111,61 +80,27 @@ class IdentityStitchingAdapter:
         candidates = adapter.extract_and_stitch(profiles)
         findings = adapter.to_derived_findings(candidates, query)
     """
+    __slots__ = tuple(('_engine', '_match_threshold', '_stats', '_stitch_threshold'))
 
-    def __init__(
-        self,
-        match_threshold: float = IDENTITY_MATCH_THRESHOLD,
-        stitch_threshold: float = STITCH_THRESHOLD,
-    ):
+    def __init__(self, match_threshold: float=IDENTITY_MATCH_THRESHOLD, stitch_threshold: float=STITCH_THRESHOLD):
         if not _STITCHING_AVAILABLE:
-            raise ImportError(
-                "identity_stitching module not available — "
-                "install rapidfuzz for fuzzy string matching"
-            )
-
-        self._engine = IdentityStitchingEngine(
-            similarity_threshold=match_threshold,
-            enable_fuzzy=True,
-        )
+            raise ImportError('identity_stitching module not available — install rapidfuzz for fuzzy string matching')
+        self._engine = IdentityStitchingEngine(similarity_threshold=match_threshold, enable_fuzzy=True)
         self._match_threshold = match_threshold
         self._stitch_threshold = stitch_threshold
-        self._stats: dict[str, int] = {
-            "profiles_added": 0,
-            "candidates_found": 0,
-            "comparisons_run": 0,
-            "findings_produced": 0,
-            "graph_edges_written": 0,
-        }
-
-    # ── Profile conversion ─────────────────────────────────────────────────────
+        self._stats: dict[str, int] = {'profiles_added': 0, 'candidates_found': 0, 'comparisons_run': 0, 'findings_produced': 0, 'graph_edges_written': 0}
 
     @staticmethod
     def _to_identity_profile(esp: Any) -> IdentityProfile:
         """Convert EntitySignalProfile to IdentityStitchingEngine IdentityProfile."""
         usernames = []
         platforms_list = list(esp.platforms) if esp.platforms else []
-        platform = platforms_list[0] if platforms_list else "unknown"
-        for uname in esp.usernames[:10]:  # bounded: max 10 usernames per profile
-            usernames.append(UsernameEntry(
-                platform=platform,
-                username=uname,
-            ))
+        platform = platforms_list[0] if platforms_list else 'unknown'
+        for uname in esp.usernames[:10]:
+            usernames.append(UsernameEntry(platform=platform, username=uname))
+        return IdentityProfile(id=esp.id, primary_name=esp.primary_name, emails=esp.emails[:20], usernames=usernames, confidence=esp.confidence, evidence=[f'esp:{fid}' for fid in esp.finding_ids[:10]])
 
-        return IdentityProfile(
-            id=esp.id,
-            primary_name=esp.primary_name,
-            emails=esp.emails[:20],  # bounded: max 20 emails
-            usernames=usernames,
-            confidence=esp.confidence,
-            evidence=[f"esp:{fid}" for fid in esp.finding_ids[:10]],  # store ESP IDs for candidate building
-        )
-
-    # ── Stitching ──────────────────────────────────────────────────────────────
-
-    def extract_and_stitch(
-        self,
-        profiles: list[Any],
-    ) -> list[IdentityCandidate]:
+    def extract_and_stitch(self, profiles: list[Any]) -> list[IdentityCandidate]:
         """
         Run identity stitching on a list of EntitySignalProfile objects.
 
@@ -180,51 +115,28 @@ class IdentityStitchingAdapter:
         """
         if not profiles:
             return []
-
         try:
-            # Add profiles to engine
-            for esp in profiles[:500]:  # hard cap at MAX_PROFILES
+            for esp in profiles[:500]:
                 try:
                     ip = self._to_identity_profile(esp)
                     self._engine.add_profile(ip)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
-
-            self._stats["profiles_added"] = len(profiles)
-
-            # Find all matches (bounded)
+            self._stats['profiles_added'] = len(profiles)
             start = time.monotonic()
             all_matches = self._engine.find_all_matches(min_score=self._match_threshold)
             elapsed_ms = (time.monotonic() - start) * 1000
-
-            # Cap comparisons
             if len(all_matches) > MAX_COMPARISONS:
-                logger.debug(
-                    f"IdentityStitchingAdapter: capping {len(all_matches)} matches "
-                    f"to MAX_COMPARISONS={MAX_COMPARISONS}"
-                )
+                logger.debug(f'IdentityStitchingAdapter: capping {len(all_matches)} matches to MAX_COMPARISONS={MAX_COMPARISONS}')
                 all_matches = all_matches[:MAX_COMPARISONS]
-
-            self._stats["comparisons_run"] = len(all_matches)
-            logger.debug(
-                f"IdentityStitchingAdapter: {len(all_matches)} matches "
-                f"in {elapsed_ms:.1f}ms"
-            )
-
-            # Stitch identities
+            self._stats['comparisons_run'] = len(all_matches)
+            logger.debug(f'IdentityStitchingAdapter: {len(all_matches)} matches in {elapsed_ms:.1f}ms')
             stitched = []
             try:
-                stitched = self._engine.stitch_identities(
-                    match_threshold=self._stitch_threshold,
-                    transitive_threshold=self._match_threshold,
-                )
+                stitched = self._engine.stitch_identities(match_threshold=self._stitch_threshold, transitive_threshold=self._match_threshold)
             except Exception as e:
-                logger.debug(f"IdentityStitchingAdapter: stitch_identities error: {e}")
-
-            # Build IdentityCandidate list
+                logger.debug(f'IdentityStitchingAdapter: stitch_identities error: {e}')
             candidates: list[IdentityCandidate] = []
-
-            # Add stitched identities as high-confidence candidates
             for stitch in stitched:
                 platforms = set()
                 finding_ids = []
@@ -232,67 +144,30 @@ class IdentityStitchingAdapter:
                     p = self._engine.get_profile(pid)
                     if p:
                         platforms.update(p.get_platforms())
-                        # Parse esp: IDs from evidence
-                        for ev in (p.evidence or []):
-                            if ev.startswith("esp:"):
+                        for ev in p.evidence or []:
+                            if ev.startswith('esp:'):
                                 finding_ids.append(ev[4:])
-                            elif ev.startswith("source:"):
+                            elif ev.startswith('source:'):
                                 finding_ids.append(ev[7:])
-
-                candidates.append(IdentityCandidate(
-                    candidate_id=stitch.id,
-                    profile_ids=stitch.profile_ids,
-                    primary_name=stitch.merged_names[0] if stitch.merged_names else stitch.id,
-                    emails=stitch.merged_emails[:10],
-                    usernames=[u.username for u in stitch.merged_usernames[:10]],
-                    platforms=list(platforms)[:10],
-                    confidence=stitch.stitch_confidence,
-                    signals={"stitch_confidence": stitch.stitch_confidence},
-                    evidence=stitch.match_evidence[:5],
-                    finding_ids=finding_ids[:20],
-                ))
-
-            # Add unmatched profiles as low-confidence singletons
+                candidates.append(IdentityCandidate(candidate_id=stitch.id, profile_ids=stitch.profile_ids, primary_name=stitch.merged_names[0] if stitch.merged_names else stitch.id, emails=stitch.merged_emails[:10], usernames=[u.username for u in stitch.merged_usernames[:10]], platforms=list(platforms)[:10], confidence=stitch.stitch_confidence, signals={'stitch_confidence': stitch.stitch_confidence}, evidence=stitch.match_evidence[:5], finding_ids=finding_ids[:20]))
             if len(candidates) < MAX_COMPARISONS:
                 matched_pids = {pid for c in candidates for pid in c.profile_ids}
                 for esp in profiles:
                     if esp.id in matched_pids:
                         continue
-                    if len(candidates) >= 200:  # cap singleton output
+                    if len(candidates) >= 200:
                         break
                     p = self._engine.get_profile(esp.id)
                     if p:
-                        candidates.append(IdentityCandidate(
-                            candidate_id=esp.id,
-                            profile_ids=[esp.id],
-                            primary_name=esp.primary_name,
-                            emails=esp.emails[:5],
-                            usernames=esp.usernames[:5],
-                            platforms=list(esp.platforms)[:5],
-                            confidence=esp.confidence * 0.5,  # lower confidence for singletons
-                            signals={},
-                            evidence=[f"single profile from {esp.finding_ids}"],
-                            finding_ids=esp.finding_ids[:5],
-                        ))
-
-            self._stats["candidates_found"] = len(candidates)
-
-            # Memory optimization
+                        candidates.append(IdentityCandidate(candidate_id=esp.id, profile_ids=[esp.id], primary_name=esp.primary_name, emails=esp.emails[:5], usernames=esp.usernames[:5], platforms=list(esp.platforms)[:5], confidence=esp.confidence * 0.5, signals={}, evidence=[f'single profile from {esp.finding_ids}'], finding_ids=esp.finding_ids[:5]))
+            self._stats['candidates_found'] = len(candidates)
             self._engine.optimize_memory()
-
             return candidates
-
         except Exception as e:
-            logger.warning(f"IdentityStitchingAdapter.extract_and_stitch error: {e}")
+            logger.warning(f'IdentityStitchingAdapter.extract_and_stitch error: {e}')
             return []
 
-    # ── F203B: Attribution Confidence Scoring ───────────────────────────────────
-
-    def score_and_enrich_candidates(
-        self,
-        candidates: list[IdentityCandidate],
-        scorer: AttributionConfidenceScorer,  # type: ignore[name-defined]
-    ) -> list[IdentityCandidate]:
+    def score_and_enrich_candidates(self, candidates: list[IdentityCandidate], scorer: AttributionConfidenceScorer) -> list[IdentityCandidate]:
         """
         F203B: Score pairs of identity candidates using AttributionConfidenceScorer
         and enrich signals/evidence with attribution data.
@@ -311,56 +186,37 @@ class IdentityStitchingAdapter:
         """
         if not candidates or not scorer:
             return candidates
-
         try:
             from .attribution_scorer import enrich_candidate_with_attribution
-
-            # Score all candidate pairs
             scores = scorer.score_candidates(candidates)
-
             if not scores:
                 return candidates
-
-            # Build lookup of pair → score (bidirectional)
             left_to_right: dict[str, Any] = {}
             right_to_left: dict[str, Any] = {}
             for key, score in scores.items():
-                left_id, right_id = key.split("|", 1)
-                left_to_right[left_id] = score  # last score wins for each direction
+                left_id, right_id = key.split('|', 1)
+                left_to_right[left_id] = score
                 right_to_left[right_id] = score
-
-            # Enrich each candidate by averaging its pair scores
             enriched = []
             for cand in candidates:
-                # Find all scores involving this candidate (look in both directions)
                 relevant_scores: list[Any] = []
                 if cand.candidate_id in left_to_right:
                     relevant_scores.append(left_to_right[cand.candidate_id])
                 if cand.candidate_id in right_to_left:
                     relevant_scores.append(right_to_left[cand.candidate_id])
-
                 if relevant_scores:
-                    # Use the highest-confidence score to enrich
                     best_score = max(relevant_scores, key=lambda s: s.confidence)
                     enriched_cand = enrich_candidate_with_attribution(cand, best_score)
                     enriched.append(enriched_cand)
                 else:
                     enriched.append(cand)
-
-            self._stats["candidates_enriched"] = len([c for c in enriched if "attribution_confidence" in c.signals])
-
+            self._stats['candidates_enriched'] = len([c for c in enriched if 'attribution_confidence' in c.signals])
             return enriched
-
         except Exception as e:
-            logger.debug(f"IdentityStitchingAdapter.score_and_enrich_candidates error: {e}")
+            logger.debug(f'IdentityStitchingAdapter.score_and_enrich_candidates error: {e}')
             return candidates
 
-    # ── Graph edge upsert ──────────────────────────────────────────────────────
-
-    def upsert_identity_edges(
-        self,
-        candidates: list[IdentityCandidate],
-    ) -> int:
+    def upsert_identity_edges(self, candidates: list[IdentityCandidate]) -> int:
         """
         Upsert identity edges to graph_service for each candidate.
 
@@ -375,44 +231,25 @@ class IdentityStitchingAdapter:
         """
         if not candidates:
             return 0
-
         try:
             from ..knowledge import graph_service
-
             edge_count = 0
             for cand in candidates:
                 if len(cand.profile_ids) < 2:
                     continue
-
-                # Upsert edges between all constituent profiles
                 primary = cand.profile_ids[0]
                 for secondary in cand.profile_ids[1:]:
-                    # F203B: Use attribution confidence from signals if available, else fallback to cand.confidence
-                    edge_weight = cand.signals.get("attribution_confidence", cand.confidence)
-                    ok = graph_service.upsert_relation(
-                        src=primary,
-                        dst=secondary,
-                        rel_type="same_identity",
-                        weight=edge_weight,
-                        evidence=f"stitch:{cand.candidate_id}",
-                    )
+                    edge_weight = cand.signals.get('attribution_confidence', cand.confidence)
+                    ok = graph_service.upsert_relation(src=primary, dst=secondary, rel_type='same_identity', weight=edge_weight, evidence=f'stitch:{cand.candidate_id}')
                     if ok:
                         edge_count += 1
-
-            self._stats["graph_edges_written"] += edge_count
+            self._stats['graph_edges_written'] += edge_count
             return edge_count
-
         except Exception as e:
-            logger.debug(f"IdentityStitchingAdapter.upsert_identity_edges error: {e}")
+            logger.debug(f'IdentityStitchingAdapter.upsert_identity_edges error: {e}')
             return 0
 
-    # ── Derived findings ───────────────────────────────────────────────────────
-
-    def to_derived_findings(
-        self,
-        candidates: list[IdentityCandidate],
-        query: str,
-    ) -> list[Any]:
+    def to_derived_findings(self, candidates: list[IdentityCandidate], query: str) -> list[Any]:
         """
         Convert IdentityCandidate list to CanonicalFinding list.
 
@@ -430,53 +267,23 @@ class IdentityStitchingAdapter:
         """
         if not candidates or CanonicalFinding is None:
             return []
-
         findings: list[Any] = []
         try:
             for cand in candidates:
-                fid = f"identity_{cand.candidate_id[:32]}_{int(time.time() * 1000) % 1000000:06d}"
-                payload = {
-                    "candidate_id": cand.candidate_id,
-                    "profile_ids": cand.profile_ids,
-                    "primary_name": cand.primary_name,
-                    "emails": cand.emails,
-                    "usernames": cand.usernames,
-                    "platforms": cand.platforms,
-                    "confidence": cand.confidence,
-                    "signals": cand.signals,
-                    "evidence": cand.evidence,
-                    "finding_ids": cand.finding_ids[:20],  # bounded
-                }
-
+                fid = f'identity_{cand.candidate_id[:32]}_{int(time.time() * 1000) % 1000000:06d}'
+                payload = {'candidate_id': cand.candidate_id, 'profile_ids': cand.profile_ids, 'primary_name': cand.primary_name, 'emails': cand.emails, 'usernames': cand.usernames, 'platforms': cand.platforms, 'confidence': cand.confidence, 'signals': cand.signals, 'evidence': cand.evidence, 'finding_ids': cand.finding_ids[:20]}
                 import json
-                payload_text = json.dumps(payload)
-
-                # F203B: Check if candidate was enriched with attribution confidence
-                has_attribution = "attribution_confidence" in cand.signals
-                attribution_confidence = cand.signals.get("attribution_confidence", cand.confidence)
-
-                finding = CanonicalFinding(
-                    finding_id=fid,
-                    query=query,
-                    source_type="identity_attribution" if has_attribution else "identity_stitching",
-                    confidence=attribution_confidence if has_attribution else cand.confidence,
-                    ts=time.time(),
-                    provenance=("identity_attribution" if has_attribution else "identity_stitching",),
-                    payload_text=payload_text,
-                )
+                payload_text = _msgspec_dumps_str(payload)
+                has_attribution = 'attribution_confidence' in cand.signals
+                attribution_confidence = cand.signals.get('attribution_confidence', cand.confidence)
+                finding = CanonicalFinding(finding_id=fid, query=query, source_type='identity_attribution' if has_attribution else 'identity_stitching', confidence=attribution_confidence if has_attribution else cand.confidence, ts=time.time(), provenance=('identity_attribution' if has_attribution else 'identity_stitching',), payload_text=payload_text)
                 findings.append(finding)
-
-            self._stats["findings_produced"] = len(findings)
-            logger.debug(
-                f"IdentityStitchingAdapter: produced {len(findings)} derived findings"
-            )
+            self._stats['findings_produced'] = len(findings)
+            logger.debug(f'IdentityStitchingAdapter: produced {len(findings)} derived findings')
             return findings
-
         except Exception as e:
-            logger.warning(f"IdentityStitchingAdapter.to_derived_findings error: {e}")
+            logger.warning(f'IdentityStitchingAdapter.to_derived_findings error: {e}')
             return []
-
-    # ── Stats ─────────────────────────────────────────────────────────────────
 
     def get_stats(self) -> dict[str, int]:
         """Return adapter statistics."""
@@ -487,21 +294,7 @@ class IdentityStitchingAdapter:
         self._engine.clear()
         self._stats = dict.fromkeys(self._stats, 0)
 
-
-# ── Factory ───────────────────────────────────────────────────────────────────
-
-def create_identity_stitching_adapter(
-    match_threshold: float = IDENTITY_MATCH_THRESHOLD,
-) -> IdentityStitchingAdapter:
+def create_identity_stitching_adapter(match_threshold: float=IDENTITY_MATCH_THRESHOLD) -> IdentityStitchingAdapter:
     """Factory to create IdentityStitchingAdapter."""
     return IdentityStitchingAdapter(match_threshold=match_threshold)
-
-
-__all__ = [
-    "IdentityCandidate",
-    "IdentityStitchingAdapter",
-    "create_identity_stitching_adapter",
-    "MAX_COMPARISONS",
-    "IDENTITY_MATCH_THRESHOLD",
-    "STITCH_THRESHOLD",
-]
+__all__ = ['IdentityCandidate', 'IdentityStitchingAdapter', 'create_identity_stitching_adapter', 'MAX_COMPARISONS', 'IDENTITY_MATCH_THRESHOLD', 'STITCH_THRESHOLD']

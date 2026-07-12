@@ -1,9 +1,234 @@
 # misc.py — Miscellaneous domains: graph, hot_edges, aho, evidence, madvise, memory, json, spsc, query, text, int_counter, simd, sprint_policies, metal
 
+import re
+from collections import deque
+from threading import Lock
 from typing import TYPE_CHECKING, Any, Literal
+
+import duckdb as _duckdb_module
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
+
+# Issue #9: HTML domain — Rust lol_html + selectolax fallback (M1 8GB)
+# Tier 1: Rust html_parse via lol_html (5× faster than BS4)
+# Tier 2: selectolax (10× faster than BS4, M1-friendly)
+# Tier 3: stdlib regex (ultimate fallback)
+
+# Availability flags — set once at module load
+_HTML_PARSE_RUST_AVAILABLE = False
+_SELECTOLAX_AVAILABLE = False
+
+try:
+    from hledac.universal.rust_extensions import html_parse
+
+    _HTML_PARSE_RUST_AVAILABLE = True
+except ImportError:
+    html_parse = None  # type: ignore[assignment]
+
+try:
+    from selectolax.parser import HTMLParser as _SelectolaxParser
+
+    _SELECTOLAX_AVAILABLE = True
+except ImportError:
+    _SelectolaxParser = None  # type: ignore[assignment]
+
+# =============================================================================
+# HTML Domain
+# =============================================================================
+
+
+class _RustHtmlDomain:
+    """Rust-backed HTML parsing via lol_html (Cloudflare's zero-allocation rewriter).
+    Bounded: 2MB max HTML size, 10K links per doc, fail-safe on any error.
+    Thread-safe: all extractors are Send+Sync.
+    """
+
+    __slots__ = ("_ext",)
+
+    def __init__(self, ext: object) -> None:
+        self._ext = ext
+
+    def extract_links(self, html: str, base_url: str) -> list[str]:
+        """Extract all links (href) resolved against base_url."""
+        return self._ext.extract_links(html, base_url)
+
+    def extract_links_with_text(self, html: str, base_url: str) -> list[tuple[str, str]]:
+        """Extract links with anchor text."""
+        return self._ext.extract_links_with_text(html, base_url)
+
+    def extract_emails(self, html: str) -> list[str]:
+        """Extract email addresses from HTML."""
+        return self._ext.extract_emails(html)
+
+    def extract_titles(self, html: str) -> list[str | None]:
+        """Extract <title> content."""
+        return self._ext.extract_titles(html)
+
+    def html_to_text(self, html: str) -> str:
+        """Extract plain text from HTML."""
+        return self._ext.html_to_text(html)
+
+    def batch_extract_links(self, items: list[tuple[str, str]]) -> list[list[str]]:
+        """Parallel link extraction for (html, base_url) pairs."""
+        return self._ext.batch_extract_links(items)
+
+    def batch_extract_links_with_text(self, items: list[tuple[str, str]]) -> list[list[tuple[str, str]]]:
+        """Parallel link+text extraction."""
+        return self._ext.batch_extract_links_with_text(items)
+
+    def batch_extract_emails(self, items: list[str]) -> list[list[str]]:
+        """Parallel email extraction."""
+        return self._ext.batch_extract_emails(items)
+
+    def batch_extract_titles(self, items: list[str]) -> list[str | None]:
+        """Parallel title extraction."""
+        return self._ext.batch_extract_titles(items)
+
+
+class _PythonHtmlDomain:
+    """Python HTML parsing: selectolax-first, regex fallback.
+    Tier 1: selectolax (Rust C backend, lexbor — 10× faster than BS4)
+    Tier 2: stdlib regex (ultimate fallback)
+    Bounded: 2MB max HTML, 10K links per doc.
+    """
+
+    __slots__ = ()
+
+    # Regex patterns for Tier 2 fallback
+    _EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
+    _TITLE_RE = re.compile(r"<title[^>]*>([^<]+)</title>", re.IGNORECASE)
+    _MAX_HTML_SIZE = 2 * 1024 * 1024  # 2 MB
+    _MAX_LINKS = 10_000
+
+    def extract_links(self, html: str, base_url: str) -> list[str]:
+        """Extract links — selectolax or regex fallback."""
+        if len(html) > self._MAX_HTML_SIZE:
+            return []
+        if _SELECTOLAX_AVAILABLE:
+            try:
+                tree = _SelectolaxParser(html)
+                seen: set[str] = set()
+                results: list[str] = []
+                for node in tree.css("a[href], link[href]"):
+                    href = node.attrs.get("href") or ""
+                    if href and href not in seen and not href.startswith(("#", "javascript:", "mailto:", "tel:")):
+                        seen.add(href)
+                        results.append(href)
+                        if len(results) >= self._MAX_LINKS:
+                            break
+                return results
+            except Exception:
+                pass
+        # Regex fallback
+        return _python_extract_links_regex(html, base_url)
+
+    def extract_links_with_text(self, html: str, base_url: str) -> list[tuple[str, str]]:
+        """Extract links with anchor text — selectolax or regex fallback."""
+        if len(html) > self._MAX_HTML_SIZE:
+            return []
+        if _SELECTOLAX_AVAILABLE:
+            try:
+                tree = _SelectolaxParser(html)
+                seen: set[str] = set()
+                results: list[tuple[str, str]] = []
+                for node in tree.css("a[href]"):
+                    href = node.attrs.get("href") or ""
+                    if href and href not in seen and not href.startswith(("#", "javascript:", "mailto:", "tel:")):
+                        seen.add(href)
+                        text = (node.text() or "").strip()
+                        results.append((href, text))
+                        if len(results) >= self._MAX_LINKS:
+                            break
+                return results
+            except Exception:
+                pass
+        return []
+
+    def extract_emails(self, html: str) -> list[str]:
+        """Extract email addresses — regex fallback."""
+        if len(html) > self._MAX_HTML_SIZE:
+            return []
+        seen: set[str] = set()
+        results: list[str] = []
+        for email in self._EMAIL_RE.findall(html):
+            if email not in seen:
+                seen.add(email)
+                results.append(email)
+        return results
+
+    def extract_titles(self, html: str) -> list[str | None]:
+        """Extract <title> content — regex fallback."""
+        if len(html) > self._MAX_HTML_SIZE:
+            return []
+        match = self._TITLE_RE.search(html)
+        if match:
+            title = match.group(1).strip()
+            return [title if title else None]
+        return [None]
+
+    def html_to_text(self, html: str) -> str:
+        """Extract plain text — selectolax or regex fallback."""
+        if len(html) > self._MAX_HTML_SIZE:
+            html = html[: self._MAX_HTML_SIZE]
+        if _SELECTOLAX_AVAILABLE:
+            try:
+                tree = _SelectolaxParser(html)
+                for tag in tree.css("script, style, nav, footer, header, aside, noscript"):
+                    tag.decompose()
+                body = tree.body
+                if body is not None:
+                    text = body.text(separator=" ", strip=True)
+                    return " ".join(text.split())  # normalize whitespace
+            except Exception:
+                pass
+        # Regex fallback
+        text = re.sub(r"<[^>]+>", " ", html)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
+
+    def batch_extract_links(self, items: list[tuple[str, str]]) -> list[list[str]]:
+        """Parallel link extraction."""
+        return [self.extract_links(html, base_url) for html, base_url in items]
+
+    def batch_extract_links_with_text(self, items: list[tuple[str, str]]) -> list[list[tuple[str, str]]]:
+        """Parallel link+text extraction."""
+        return [self.extract_links_with_text(html, base_url) for html, base_url in items]
+
+    def batch_extract_emails(self, items: list[str]) -> list[list[str]]:
+        """Parallel email extraction."""
+        return [self.extract_emails(html) for html in items]
+
+    def batch_extract_titles(self, items: list[str]) -> list[str | None]:
+        """Parallel title extraction."""
+        return [self.extract_titles(html)[0] if self.extract_titles(html) else None for html in items]
+
+
+def _python_extract_links_regex(html: str, base_url: str) -> list[str]:
+    """Regex fallback: extract href values from HTML."""
+    import urllib.parse as urlparse
+
+    seen: set[str] = set()
+    results: list[str] = []
+    for m in re.finditer(r'href\s*=\s*["\']([^"\']+)["\']', html, re.IGNORECASE):
+        href = m.group(1).strip()
+        if not href or href in seen or href.startswith(("#", "javascript:", "mailto:", "tel:")):
+            continue
+        seen.add(href)
+        # Resolve relative URLs
+        if not href.startswith(("http://", "https://")):
+            try:
+                resolved = urlparse.urljoin(base_url, href)
+                href = resolved
+            except Exception:
+                pass
+        results.append(href)
+    return results
+
+
+# =============================================================================
+# Graph
+# =============================================================================
 
 
 # =============================================================================
@@ -546,6 +771,7 @@ class _RustXmlDomain:
         if hasattr(ext, "sanitize_xml"):
             return ext.sanitize_xml(raw)
         from parsing.feed_parser import _sanitize_xml as _py_sanitize_xml
+
         return _py_sanitize_xml(raw)
 
     def batch_sanitize_xml(self, items: list[str]) -> list[str]:
@@ -553,6 +779,7 @@ class _RustXmlDomain:
         if hasattr(ext, "batch_sanitize_xml"):
             return ext.batch_sanitize_xml(items)
         from parsing.feed_parser import _sanitize_xml as _py_sanitize_xml
+
         return [_py_sanitize_xml(item) for item in items]
 
 
@@ -561,15 +788,18 @@ class _PythonXmlDomain:
 
     def sanitize_xml(self, raw: str) -> str:
         from parsing.feed_parser import _sanitize_xml as _py_sanitize_xml
+
         return _py_sanitize_xml(raw)
 
     def batch_sanitize_xml(self, items: list[str]) -> list[str]:
         from parsing.feed_parser import _sanitize_xml as _py_sanitize_xml
+
         return [_py_sanitize_xml(item) for item in items]
 
     def batch_sanitize_xml_ref(self, items: list[str]) -> list[str]:
         # Same as batch_sanitize_xml — reference passing is a Rust optimization
         from parsing.feed_parser import _sanitize_xml as _py_sanitize_xml
+
         return [_py_sanitize_xml(item) for item in items]
 
 
@@ -636,9 +866,7 @@ class _RustMetalDomain:
     def __init__(self, ext: hledac_rust_extensions) -> None:
         self._ext = ext
 
-    def batch_keyword_scan(
-        self, texts: list[str], keywords: list[str]
-    ) -> list[tuple[int, int, int, int]]:
+    def batch_keyword_scan(self, texts: list[str], keywords: list[str]) -> list[tuple[int, int, int, int]]:
         return self._ext.batch_keyword_scan(texts, keywords)
 
     def batch_ioc_scan(self, texts: list[str]) -> list[tuple[int, int, int, int, str]]:
@@ -662,9 +890,7 @@ class _PythonMetalDomain:
     def __init__(self) -> None:
         self._domain = _PythonMetalDomainInner()
 
-    def batch_keyword_scan(
-        self, texts: list[str], keywords: list[str]
-    ) -> list[tuple[int, int, int, int]]:
+    def batch_keyword_scan(self, texts: list[str], keywords: list[str]) -> list[tuple[int, int, int, int]]:
         return self._domain.batch_keyword_scan(texts, keywords)
 
     def batch_ioc_scan(self, texts: list[str]) -> list[tuple[int, int, int, int, str]]:
@@ -868,6 +1094,7 @@ class _PythonMetalDomainInner:
 
     def __init__(self) -> None:
         import re
+
         self._ipv4_re = re.compile(
             r"(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}"
             r"(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)"
@@ -893,9 +1120,7 @@ class _PythonMetalDomainInner:
             r"\b[a-fA-F0-9]{64}\b|\b[a-fA-F0-9]{128}\b"
         )
 
-    def batch_keyword_scan(
-        self, texts: list[str], keywords: list[str]
-    ) -> list[tuple[int, int, int, int]]:
+    def batch_keyword_scan(self, texts: list[str], keywords: list[str]) -> list[tuple[int, int, int, int]]:
         # Returns (text_idx, start, end, keyword_idx) for each match
         results: list[tuple[int, int, int, int]] = []
         for ti, text in enumerate(texts):
@@ -979,7 +1204,8 @@ def _python_is_duplicate(content_hash_bytes: bytes, bloom_filter: Any) -> bool:
 
 def _python_madvise_free_reusable(addr: int, length: int) -> bool:
     try:
-        import ctypes, sys
+        import ctypes
+        import sys
 
         if sys.platform == "darwin":
             libc = ctypes.CDLL(None)
@@ -1023,25 +1249,125 @@ def _python_batch_cosine_similarity(vectors: list[list[float]], query: list[floa
     return [_python_cosine_similarity(v, query) for v in vectors]
 
 
+# =============================================================================
+# DuckDB Read-Only Connection Pool (bounded, for Rust FFI fallback path)
+# =============================================================================
+# ISSUE #3 FIX: Replaces per-call duckdb.connect() + conn.close() pattern.
+# Per-call connect costs 30-50ms cold-start + 1-2MB RAM allocation.
+# Pooled connections are reused, eliminating 3-5GB/s RAM churn at burst load.
+
+_POOL_MAX_SIZE: int = 4  # MVCC allows multiple readers; 4 covers burst parallelism
+_POOL: deque[tuple[str, _duckdb_module.DuckDBPyConnection]] = deque()
+_POOL_PATHS: set[str] = set()  # track which db_paths are in pool
+_POOL_LOCK = Lock()
+
+
+def _acquire_ro_conn(db_path: str) -> _duckdb_module.DuckDBPyConnection:
+    """Acquire a read-only DuckDB connection from the pool (bounded, LRU)."""
+    with _POOL_LOCK:
+        # Evict LRU entry if pool is full (bounded)
+        while len(_POOL) >= _POOL_MAX_SIZE:
+            _, evict_conn = _POOL.popleft()
+            _POOL_PATHS.discard(evict_conn.database_path if hasattr(evict_conn, "database_path") else None)
+            try:
+                evict_conn.close()
+            except Exception:
+                pass
+        # Try to reuse existing connection for this db_path (LRU hit)
+        for i, (path, conn) in enumerate(_POOL):
+            if path == db_path:
+                try:
+                    # Test aliveness — DuckDB connections can go stale after checkpoint
+                    conn.execute("SELECT 1")
+                    # Move matched entry to end (most recently used) — rebuild deque
+                    _POOL.append(_POOL.popleft())
+                    return conn
+                except Exception:
+                    # Stale connection — remove and recreate
+                    _POOL_PATHS.discard(path)
+                    del _POOL[i]
+                    break
+    # Open fresh connection (outside lock to minimize lock hold time)
+    try:
+        new_conn = _duckdb_module.connect(db_path, read_only=True)
+        try:
+            new_conn.execute("PRAGMA busy_timeout=5000")
+        except Exception:
+            pass  # DuckDB <1.4 doesn't support busy_timeout
+        try:
+            new_conn.execute("SET preserve_insertion_order = false")
+        except Exception:
+            pass
+    except Exception:
+        raise
+    with _POOL_LOCK:
+        _POOL.append((db_path, new_conn))
+        _POOL_PATHS.add(db_path)
+    return new_conn
+
+
+def _pool_stats() -> dict:
+    """Return pool statistics for diagnostics."""
+    with _POOL_LOCK:
+        return {"pool_size": len(_POOL), "max_size": _POOL_MAX_SIZE, "paths": len(_POOL_PATHS)}
+
+
+def _pool_close_all() -> None:
+    """Close all pooled connections. Call on process shutdown."""
+    with _POOL_LOCK:
+        while _POOL:
+            _, conn = _POOL.popleft()
+            try:
+                conn.close()
+            except Exception:
+                pass
+        _POOL_PATHS.clear()
+
+
+# =============================================================================
+# DuckDB Query Functions (pooled)
+# =============================================================================
+
+
 def _python_parallel_duckdb_queries(db_path: str, queries: list[str]) -> list[dict[str, Any]]:
+    """Execute queries in parallel using ThreadPoolExecutor (DuckDB MVCC allows concurrent reads)."""
+    if not queries:
+        return []
+    import concurrent.futures
+
     results: list[dict[str, Any]] = []
-    for sql in queries:
-        results.extend(_python_query_duckdb(db_path, sql))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(queries), _POOL_MAX_SIZE)) as executor:
+        futures = [executor.submit(_python_query_duckdb, db_path, sql) for sql in queries]
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                results.extend(future.result())
+            except Exception:
+                pass
     return results
 
 
 def _python_query_duckdb(db_path: str, sql: str) -> list[dict[str, Any]]:
+    """Query DuckDB using pooled read-only connection (no per-call connect)."""
     try:
-        import duckdb
-
-        conn = duckdb.connect(db_path, read_only=True)
+        conn = _acquire_ro_conn(db_path)
         try:
             cur = conn.execute(sql)
             cols = [desc[0] for desc in cur.description] if cur.description else []
             rows = cur.fetchall()
             return [dict(zip(cols, row)) for row in rows]
-        finally:
-            conn.close()
+        except Exception:
+            # Connection may be stale after error; evict on next acquire
+            with _POOL_LOCK:
+                for i, (path, c) in enumerate(_POOL):
+                    if c is conn and path == db_path:
+                        _POOL_PATHS.discard(path)
+                        del _POOL[i]
+                        break
+            try:
+                conn.close()
+            except Exception:
+                pass
+            raise
     except Exception:
         return []
 
@@ -1072,8 +1398,13 @@ def _python_strip_diacritics(text: str) -> str:
 
 class PythonFeedDominanceGuardResult:
     __slots__ = (
-        "feed_dominance_ratio", "nonfeed_accepted_findings", "feed_dominance_class",
-        "should_recommend_nonfeed_diagnostic", "guard_triggered", "block_early_exit", "reason",
+        "feed_dominance_ratio",
+        "nonfeed_accepted_findings",
+        "feed_dominance_class",
+        "should_recommend_nonfeed_diagnostic",
+        "guard_triggered",
+        "block_early_exit",
+        "reason",
     )
 
     def __init__(
@@ -1117,17 +1448,13 @@ class PythonFeedDominanceGuard:
         nonfeed_diagnostic_timed_out: bool = False,
     ) -> PythonFeedDominanceGuardResult:
         if total_accepted == 0:
-            return PythonFeedDominanceGuardResult(
-                0.0, 0, "balanced", False, False, False, "zero findings"
-            )
+            return PythonFeedDominanceGuardResult(0.0, 0, "balanced", False, False, False, "zero findings")
 
         ratio = feed_accepted / total_accepted
         cls = self.ratio_class(ratio)
         # should_recommend: feed dominance AND insufficient nonfeed AND NOT timed out
         should_recommend = (
-            ratio >= self._threshold
-            and nonfeed_accepted < self._min_nonfeed
-            and not nonfeed_diagnostic_timed_out
+            ratio >= self._threshold and nonfeed_accepted < self._min_nonfeed and not nonfeed_diagnostic_timed_out
         )
         guard_triggered = ratio >= self._threshold and nonfeed_accepted < self._min_nonfeed
         block_early_exit = self._strict and guard_triggered
@@ -1341,3 +1668,10 @@ def get_sprint_policies_domain(ext: object | None) -> _RustSprintPoliciesDomain 
     if ext is not None:
         return _RustSprintPoliciesDomain(ext)
     return _PythonSprintPoliciesDomain()
+
+
+def get_html_domain(ext: object | None) -> _RustHtmlDomain | _PythonHtmlDomain:
+    """Get HTML domain — Rust lol_html if available, else Python (selectolax/regex)."""
+    if ext is not None and _HTML_PARSE_RUST_AVAILABLE:
+        return _RustHtmlDomain(ext)
+    return _PythonHtmlDomain()

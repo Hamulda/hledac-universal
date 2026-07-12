@@ -5,9 +5,6 @@ Sprint 7A additions:
   - PersistentActorExecutor: bridge worker-thread → event-loop
   - ANE_EXECUTOR, DB_EXECUTOR, CPU_EXECUTOR named pools
 """
-
-
-
 import asyncio
 import concurrent.futures
 import ctypes
@@ -16,22 +13,13 @@ import os
 import threading
 from collections.abc import Callable
 from typing import Any
-
 logger = logging.getLogger(__name__)
 
-
-# Detekce jader na Apple Silicon
 def _get_core_counts() -> dict:
     """Detekce P/E jader na Apple Silicon s fallbackem."""
     try:
         libc = ctypes.CDLL('/usr/lib/libc.dylib')
-        libc.sysctlbyname.argtypes = [
-            ctypes.c_char_p,
-            ctypes.c_void_p,
-            ctypes.POINTER(ctypes.c_size_t),
-            ctypes.c_void_p,
-            ctypes.c_size_t
-        ]
+        libc.sysctlbyname.argtypes = [ctypes.c_char_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_size_t), ctypes.c_void_p, ctypes.c_size_t]
         libc.sysctlbyname.restype = ctypes.c_int
 
         def sysctl_int(name: bytes) -> int:
@@ -39,82 +27,53 @@ def _get_core_counts() -> dict:
             size = ctypes.c_size_t(4)
             ret = libc.sysctlbyname(name, ctypes.byref(val), ctypes.byref(size), None, 0)
             return max(1, val.value) if ret == 0 else 4
-
-        p = sysctl_int(b"hw.perflevel0.physicalcpu")
-        e = sysctl_int(b"hw.perflevel1.physicalcpu")
+        p = sysctl_int(b'hw.perflevel0.physicalcpu')
+        e = sysctl_int(b'hw.perflevel1.physicalcpu')
         return {'p_cores': p, 'e_cores': e}
     except Exception:
         cpu_count = os.cpu_count() or 4
         return {'p_cores': cpu_count // 2, 'e_cores': cpu_count // 2}
-
 
 def _set_thread_qos(qos_class: int) -> None:
     """Nastavit QoS třídu pro vlákno."""
     try:
         libpthread = ctypes.CDLL('/usr/lib/libSystem.B.dylib')
         libpthread.pthread_set_qos_class_self_np(qos_class, 0)
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
-
 
 def _set_background() -> None:
     """Nastavit Background QoS pro I/O vlákna."""
-    _set_thread_qos(0x09)  # QOS_CLASS_BACKGROUND
-
+    _set_thread_qos(9)
 
 def _set_user_initiated() -> None:
     """Nastavit User Initiated QoS pro CPU vlákna."""
-    _set_thread_qos(0x19)  # QOS_CLASS_USER_INITIATED
-
-
-# Inicializace
+    _set_thread_qos(25)
 _cores = _get_core_counts()
 _io_pool: concurrent.futures.ThreadPoolExecutor | None = None
 _cpu_pool: concurrent.futures.ThreadPoolExecutor | None = None
 _pool_lock = threading.Lock()
-
-# Sprint 7A: Named executors
 _ane_pool: Any | None = None
 _db_pool: Any | None = None
-
-# Issue #32 FIX: Stack size guard for M1 8GB.
-# threading.stack_size() is PROCESS-GLOBAL and MUST be called before any threads
-# are created. Default macOS stack is ~8 MB per thread — on M1 8GB this can
-# cause stack overflow in deep recursion (e.g. SprintScheduler.run()'s 27k-line
-# monolithic run() with deep async call chains).
-# 2.5 MB = 2_621_440 bytes — enough for normal async work, prevents stack bloat.
-_STACK_SIZE_BYTES = 2_512_000
-
+_STACK_SIZE_BYTES = 2512000
 
 def _apply_stack_size_guard() -> None:
     """Apply stack size limit once at module import. Must be called before any threads exist."""
     try:
         current = threading.stack_size()
         if current == 0:
-            # 0 means system default (very large on macOS) — apply our limit
             threading.stack_size(_STACK_SIZE_BYTES)
-            logger.debug(
-                "[thread_pools] stack_size guard applied: %d bytes (was system default)",
-                _STACK_SIZE_BYTES,
-            )
+            logger.debug('[thread_pools] stack_size guard applied: %d bytes (was system default)', _STACK_SIZE_BYTES)
         elif current > _STACK_SIZE_BYTES:
             threading.stack_size(_STACK_SIZE_BYTES)
-            logger.debug(
-                "[thread_pools] stack_size reduced from %d to %d bytes",
-                current, _STACK_SIZE_BYTES,
-            )
-        # else: already set to our limit or smaller — no action needed
+            logger.debug('[thread_pools] stack_size reduced from %d to %d bytes', current, _STACK_SIZE_BYTES)
     except Exception as exc:
-        logger.debug("[thread_pools] stack_size guard failed: %s", exc)
-
-
+        logger.debug('[thread_pools] stack_size guard failed: %s', exc)
 _apply_stack_size_guard()
-
 
 def get_core_counts() -> dict:
     """Vrátit počet P/E jader."""
     return _cores.copy()
-
 
 def get_io_pool() -> concurrent.futures.ThreadPoolExecutor:
     """Získat I/O ThreadPoolExecutor (Background QoS, E-cores)."""
@@ -122,13 +81,8 @@ def get_io_pool() -> concurrent.futures.ThreadPoolExecutor:
     if _io_pool is None:
         with _pool_lock:
             if _io_pool is None:
-                _io_pool = concurrent.futures.ThreadPoolExecutor(
-                    max_workers=_cores['e_cores'],
-                    thread_name_prefix="io_worker",
-                    initializer=_set_background,
-                )
+                _io_pool = concurrent.futures.ThreadPoolExecutor(max_workers=_cores['e_cores'], thread_name_prefix='io_worker', initializer=_set_background)
     return _io_pool
-
 
 def get_cpu_pool() -> concurrent.futures.ThreadPoolExecutor:
     """Získat CPU ThreadPoolExecutor (User Initiated QoS, P-cores)."""
@@ -136,13 +90,8 @@ def get_cpu_pool() -> concurrent.futures.ThreadPoolExecutor:
     if _cpu_pool is None:
         with _pool_lock:
             if _cpu_pool is None:
-                _cpu_pool = concurrent.futures.ThreadPoolExecutor(
-                    max_workers=_cores['p_cores'],
-                    thread_name_prefix="cpu_worker",
-                    initializer=_set_user_initiated
-                )
+                _cpu_pool = concurrent.futures.ThreadPoolExecutor(max_workers=_cores['p_cores'], thread_name_prefix='cpu_worker', initializer=_set_user_initiated)
     return _cpu_pool
-
 
 def shutdown_pools() -> None:
     """Shutdown všech poolů."""
@@ -154,27 +103,7 @@ def shutdown_pools() -> None:
     _cpu_pool = None
     _ane_pool = None
     _db_pool = None
-
-
-# =============================================================================
-# PersistentActorExecutor — worker thread → event-loop bridge (Sprint 7A)
-# =============================================================================
-#
-# Design:
-#   - Worker thread runs init_fn once, then loops consuming from a queue
-#   - Each submitted job: (fn, args, kwargs, future)
-#   - Worker places result / exception into the future via loop.call_soon_threadsafe
-#   - shutdown() sends sentinel None job; worker exits gracefully
-#
-# This replaces the forbidden pattern of killing threads (Python cannot safely do so).
-# Instead, we provide a health seam: jobs that take too long can have their future
-# timeout on the await side, and the worker continues (marking the job as orphaned
-# via the future's internal state).
-# =============================================================================
-
-
 _SENTINEL = object()
-
 
 class PersistentActorExecutor:
     """
@@ -189,13 +118,9 @@ class PersistentActorExecutor:
 
     Health metadata: tracks submitted / completed / orphaned job counts.
     """
+    __slots__ = tuple(('_completed_count', '_condition', '_initializer', '_lock', '_loop', '_name', '_orphaned_count', '_queue', '_shutdown_event', '_started', '_submitted_count', '_thread'))
 
-    def __init__(
-        self,
-        name: str,
-        *,
-        initializer: Callable[[], Any] | None = None,
-    ) -> None:
+    def __init__(self, name: str, *, initializer: Callable[[], Any] | None=None) -> None:
         """
         Args:
             name:           thread name prefix
@@ -203,20 +128,16 @@ class PersistentActorExecutor:
         """
         self._name = name
         self._initializer = initializer
-        self._queue: list = []          # thread-safe list used as stack: append + pop
+        self._queue: list = []
         self._lock = threading.Lock()
-        self._condition = threading.Condition(self._lock)  # replaces sleep-polling in worker
+        self._condition = threading.Condition(self._lock)
         self._started = False
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._shutdown_event = threading.Event()
-
-        # Health metadata (for monitoring / timeout seams)
         self._submitted_count: int = 0
         self._completed_count: int = 0
         self._orphaned_count: int = 0
-
-    # ---- public API ----
 
     def start(self, loop: asyncio.AbstractEventLoop) -> None:
         """Start the worker thread. Must be called from the event-loop thread."""
@@ -224,11 +145,7 @@ class PersistentActorExecutor:
             return
         self._loop = loop
         self._started = True
-        self._thread = threading.Thread(
-            target=self._worker_loop,
-            name=f"actor_{self._name}",
-            daemon=True,
-        )
+        self._thread = threading.Thread(target=self._worker_loop, name=f'actor_{self._name}', daemon=True)
         self._thread.start()
 
     def submit(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> asyncio.Future:
@@ -239,23 +156,18 @@ class PersistentActorExecutor:
         The future is NOT tied to the worker lifecycle — it can be awaited independently.
         """
         if not self._started:
-            raise RuntimeError("PersistentActorExecutor.start() must be called first")
+            raise RuntimeError('PersistentActorExecutor.start() must be called first')
         loop = self._loop
         assert loop is not None
-
         fut = loop.create_future()
-
-        # Serialize work item: (fn, args, kwargs, future)
         item = (fn, args, kwargs, fut)
-
         with self._lock:
             self._queue.append(item)
             self._submitted_count += 1
             self._condition.notify()
-
         return fut
 
-    def shutdown(self, timeout: float | None = None) -> None:
+    def shutdown(self, timeout: float | None=None) -> None:
         """
         Graceful shutdown: send sentinel, wait for thread to finish.
 
@@ -264,25 +176,14 @@ class PersistentActorExecutor:
         """
         if not self._started:
             return
-
-        # Send sentinel
         with self._lock:
             self._queue.append(_SENTINEL)
-
-        # Wait for thread
         self._shutdown_event.wait(timeout=timeout)
 
     @property
     def health(self) -> dict:
         """Return health metadata for monitoring / timeout seams."""
-        return {
-            "submitted": self._submitted_count,
-            "completed": self._completed_count,
-            "orphaned": self._orphaned_count,
-            "running": self._thread is not None and self._thread.is_alive(),
-        }
-
-    # ---- internal ----
+        return {'submitted': self._submitted_count, 'completed': self._completed_count, 'orphaned': self._orphaned_count, 'running': self._thread is not None and self._thread.is_alive()}
 
     def _worker_loop(self) -> None:
         """Worker thread main loop. Runs initializer once, then processes jobs."""
@@ -290,44 +191,31 @@ class PersistentActorExecutor:
             if self._initializer is not None:
                 self._initializer()
         except Exception:
-            # Initializer failure is fatal — log and exit thread
             return
-
         while True:
             item: Any = None
-            # Wait for work: Condition.wait() blocks until notify() is called.
-            # Timeout (1s) prevents indefinite hang if notify is missed.
             with self._condition:
                 while not self._queue:
                     if not self._condition.wait(timeout=1.0):
-                        continue  # timeout, loop will re-check
+                        continue
                 item = self._queue.pop()
-
             if item is _SENTINEL:
                 break
-
             fn, args, kwargs, fut = item
             try:
                 result = fn(*args, **kwargs)
                 with self._lock:
                     self._completed_count += 1
-                # Bridge result → event loop
                 loop = self._loop
-                if loop is not None and not loop.is_closed():
+                if loop is not None and (not loop.is_closed()):
                     loop.call_soon_threadsafe(fut.set_result, result)
             except Exception as exc:
                 with self._lock:
                     self._completed_count += 1
                 loop = self._loop
-                if loop is not None and not loop.is_closed():
+                if loop is not None and (not loop.is_closed()):
                     loop.call_soon_threadsafe(fut.set_exception, exc)
-
         self._shutdown_event.set()
-
-
-# =============================================================================
-# Named executors (Sprint 7A)
-# =============================================================================
 
 def get_ane_executor() -> PersistentActorExecutor:
     """Return the ANE (Apple Neural Engine) dedicated actor executor."""
@@ -335,12 +223,8 @@ def get_ane_executor() -> PersistentActorExecutor:
     if _ane_pool is None:
         with _pool_lock:
             if _ane_pool is None:
-                _ane_pool = PersistentActorExecutor(
-                    name="ane",
-                    initializer=lambda: _set_thread_qos(0x19),  # USER_INITIATED
-                )
+                _ane_pool = PersistentActorExecutor(name='ane', initializer=lambda: _set_thread_qos(25))
     return _ane_pool
-
 
 def get_db_executor() -> PersistentActorExecutor:
     """Return the database (DuckDB/Kuzu) dedicated actor executor."""
@@ -348,17 +232,11 @@ def get_db_executor() -> PersistentActorExecutor:
     if _db_pool is None:
         with _pool_lock:
             if _db_pool is None:
-                _db_pool = PersistentActorExecutor(
-                    name="db",
-                    initializer=lambda: _set_thread_qos(0x11),  # UTILITY
-                )
+                _db_pool = PersistentActorExecutor(name='db', initializer=lambda: _set_thread_qos(17))
     return _db_pool
 
-
-# Backwards compatibility aliases
 def get_ane_pool() -> Any:
     return get_io_pool()
-
 
 def get_db_pool() -> Any:
     return get_cpu_pool()

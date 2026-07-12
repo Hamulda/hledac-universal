@@ -18,29 +18,15 @@ GHOST_INVARIANTS:
 - No blocking ops in async context
 - Canonical write path only inside bus runners (not here)
 """
-
-
-
 import asyncio
 import time as _time
 from dataclasses import dataclass
 from typing import Any
-
-from hledac.universal.runtime.sidecar_bus import (
-    SidecarBatch,
-    classify_sidecar_network,
-    classify_sidecar_risk,
-    sidecar_results_to_source_family_outcomes,
-)
+from hledac.universal.runtime.sidecar_bus import SidecarBatch, classify_sidecar_network, classify_sidecar_risk, sidecar_results_to_source_family_outcomes
 from hledac.universal.utils.deduplication import SimHash
+__all__ = ['SidecarDispatcher', 'DispatchOutcome']
 
-__all__ = ["SidecarDispatcher", "DispatchOutcome"]
-
-
-# ── Dispatch Outcome ────────────────────────────────────────────────────────────
-
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class DispatchOutcome:
     """
     Result of a sidecar dispatch call.
@@ -53,25 +39,18 @@ class DispatchOutcome:
     counts, not just skipped counts, so operators can see which sidecar classes
     were attempted vs. skipped per dispatch call.
     """
-
     sprint_id: str
     source_branch: str
     sidecars_skipped: tuple[str, ...]
     source_family_outcomes: tuple[dict, ...] = ()
-    # F247C telemetry — per-network-class counts
     active_network_sidecars_attempted: int = 0
     active_network_sidecars_skipped: int = 0
     core_sidecars_attempted: int = 0
     duplicate_compat_sidecars_attempted: int = 0
-    # F248C telemetry — network-risk sub-classification
     active_target_sidecars_attempted: int = 0
     active_target_sidecars_skipped: int = 0
     third_party_provider_sidecars_attempted: int = 0
     third_party_provider_sidecars_skipped: int = 0
-
-
-# ── Sidecar Dispatcher ────────────────────────────────────────────────────────
-
 
 class SidecarDispatcher:
     """
@@ -88,12 +67,9 @@ class SidecarDispatcher:
     The bus itself (staged asyncio.gather runner execution) lives in
     runtime/sidecar_bus.py and is NOT duplicated here.
     """
+    __slots__ = tuple(('_bus', '_governor', '_sidecars_skipped', '_simhash_store', '_simhash_threshold'))
 
-    def __init__(
-        self,
-        bus: Any,
-        governor: Any = None,
-    ) -> None:
+    def __init__(self, bus: Any, governor: Any=None) -> None:
         """
         Args:
             bus: FindingSidecarBus instance (may be None for testing)
@@ -101,24 +77,11 @@ class SidecarDispatcher:
         """
         self._bus = bus
         self._governor = governor
-        # In-memory tracking mirror — cleared by caller on sprint reset
         self._sidecars_skipped: set[str] = set()
-        # Tier 2: SimHashStore for near-duplicate finding filtering.
-        # Hamming-distance threshold = 3 bits (≈95% recall for 64-bit SimHash).
-        # Capacity = 100_000 findings per sprint, bounded by M1 8GB RAM.
         self._simhash_store: SimHash | None = None
         self._simhash_threshold: int = 3
 
-    # ── Public API ─────────────────────────────────────────────────────────────
-
-    async def dispatch(
-        self,
-        source_branch: str,
-        findings: list[Any],
-        store: Any,
-        query: str,
-        sprint_id: str,
-    ) -> DispatchOutcome:
+    async def dispatch(self, source_branch: str, findings: list[Any], store: Any, query: str, sprint_id: str) -> DispatchOutcome:
         """
         Route accepted findings from any branch through the FindingSidecarBus.
 
@@ -140,56 +103,25 @@ class SidecarDispatcher:
         Returns:
             DispatchOutcome with sidecars_skipped tuple.
         """
-        # Empty guard — same behaviour as before refactor
         if not findings or store is None:
-            return DispatchOutcome(
-                sprint_id=sprint_id,
-                source_branch=source_branch,
-                sidecars_skipped=(),
-            )
-
+            return DispatchOutcome(sprint_id=sprint_id, source_branch=source_branch, sidecars_skipped=())
         if self._bus is None:
-            return DispatchOutcome(
-                sprint_id=sprint_id,
-                source_branch=source_branch,
-                sidecars_skipped=(),
-            )
-
-        # Tier 2: SimHash near-duplicate filtering — remove findings that are
-        # within Hamming distance threshold (default 3 bits) of already-seen findings.
-        # Reduces redundant sidecar work on near-identical content.
+            return DispatchOutcome(sprint_id=sprint_id, source_branch=source_branch, sidecars_skipped=())
         filtered_findings: list[Any] = []
         if self._simhash_store is None:
             self._simhash_store = SimHash(hashbits=64, simhash_threshold=self._simhash_threshold)
         for finding in findings:
-            content = getattr(finding, "payload_text", None) or ""
+            content = getattr(finding, 'payload_text', None) or ''
             if not content:
                 filtered_findings.append(finding)
                 continue
             fp = self._simhash_store.compute(content)
             if self._simhash_store._is_near_duplicate(fp):
-                continue  # skip near-duplicate
+                continue
             filtered_findings.append(finding)
-
         if not filtered_findings:
-            return DispatchOutcome(
-                sprint_id=sprint_id,
-                source_branch=source_branch,
-                sidecars_skipped=(),
-            )
-
-        batch = SidecarBatch(
-            sprint_id=sprint_id,
-            query=query,
-            source_branch=source_branch,
-            findings=tuple(filtered_findings),
-            created_ts=_time.time(),
-        )
-
-        # F250C: Single-pass accumulation — classify once per sidecar, cache results.
-        # Previously: 3 separate iterations over sidecar_results (skipped-tracking,
-        # network-class telemetry, risk-class telemetry) — each re-computing
-        # classify_sidecar_network/risk per sidecar. Now: one loop, O(1) cache.
+            return DispatchOutcome(sprint_id=sprint_id, source_branch=source_branch, sidecars_skipped=())
+        batch = SidecarBatch(sprint_id=sprint_id, query=query, source_branch=source_branch, findings=tuple(filtered_findings), created_ts=_time.time())
         an_attempted = 0
         an_skipped = 0
         core_attempted = 0
@@ -199,74 +131,42 @@ class SidecarDispatcher:
         tpp_attempted = 0
         tpp_skipped = 0
         cached_classifications: dict[str, tuple[str, str]] = {}
-
         try:
             sidecar_results = await self._bus.run_all_sidecars(batch, store)
-
             for sr in sidecar_results:
-                # UMA / high_water / rss_exceeds skip tracking (first pass duty)
-                if not sr.attempted and (
-                    "uma_" in sr.skipped_reason
-                    or "high_water" in sr.skipped_reason
-                    or "rss_exceeds" in sr.skipped_reason
-                ):
+                if not sr.attempted and ('uma_' in sr.skipped_reason or 'high_water' in sr.skipped_reason or 'rss_exceeds' in sr.skipped_reason):
                     self._sidecars_skipped.add(sr.sidecar_name)
-
-                # F247C + F248C: classification with per-name cache
                 if sr.sidecar_name not in cached_classifications:
-                    cached_classifications[sr.sidecar_name] = (
-                        classify_sidecar_network(sr.sidecar_name),
-                        classify_sidecar_risk(sr.sidecar_name),
-                    )
+                    cached_classifications[sr.sidecar_name] = (classify_sidecar_network(sr.sidecar_name), classify_sidecar_risk(sr.sidecar_name))
                 cls, risk = cached_classifications[sr.sidecar_name]
-
-                if cls == "active_network":
+                if cls == 'active_network':
                     if sr.attempted:
                         an_attempted += 1
                     else:
                         an_skipped += 1
-                elif cls == "core":
+                elif cls == 'core':
                     if sr.attempted:
                         core_attempted += 1
-                elif cls == "duplicate_compat":
+                elif cls == 'duplicate_compat':
                     if sr.attempted:
                         dup_attempted += 1
-
-                if risk == "active_target":
+                if risk == 'active_target':
                     if sr.attempted:
                         at_attempted += 1
                     else:
                         at_skipped += 1
-                elif risk == "third_party_provider":
+                elif risk == 'third_party_provider':
                     if sr.attempted:
                         tpp_attempted += 1
                     else:
                         tpp_skipped += 1
-
-            # F245B: Convert sidecar results to source_family_outcomes entries
             outcomes = sidecar_results_to_source_family_outcomes(sidecar_results)
-
         except asyncio.CancelledError:
-            raise  # [I6] propagate CancelledError — never swallowed
-
-        except Exception:  # noqa: BLE001
-            pass  # noqa: BLE001  # Fail-soft: sidecar errors never crash the sprint
+            raise
+        except Exception:
+            pass
             outcomes = ()
-
-        return DispatchOutcome(
-            sprint_id=sprint_id,
-            source_branch=source_branch,
-            sidecars_skipped=tuple(sorted(self._sidecars_skipped)),
-            source_family_outcomes=outcomes,
-            active_network_sidecars_attempted=an_attempted,
-            active_network_sidecars_skipped=an_skipped,
-            core_sidecars_attempted=core_attempted,
-            duplicate_compat_sidecars_attempted=dup_attempted,
-            active_target_sidecars_attempted=at_attempted,
-            active_target_sidecars_skipped=at_skipped,
-            third_party_provider_sidecars_attempted=tpp_attempted,
-            third_party_provider_sidecars_skipped=tpp_skipped,
-        )
+        return DispatchOutcome(sprint_id=sprint_id, source_branch=source_branch, sidecars_skipped=tuple(sorted(self._sidecars_skipped)), source_family_outcomes=outcomes, active_network_sidecars_attempted=an_attempted, active_network_sidecars_skipped=an_skipped, core_sidecars_attempted=core_attempted, duplicate_compat_sidecars_attempted=dup_attempted, active_target_sidecars_attempted=at_attempted, active_target_sidecars_skipped=at_skipped, third_party_provider_sidecars_attempted=tpp_attempted, third_party_provider_sidecars_skipped=tpp_skipped)
 
     def reset(self) -> None:
         """Clear in-memory skipped-sidecar tracking. Called on sprint teardown."""

@@ -7,144 +7,81 @@ All changes are backward-compatible: the original class remains in
 runtime/sprint_scheduler.py and is re-imported / aliased there.
 This file is the canonical home for the type definitions.
 """
-
-
 import logging
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Final, Protocol
-
 import msgspec
-
 logger = logging.getLogger(__name__)
-
-
-# ── IntCounterLayout protocol (PEP 544) ────────────────────────────────────────
 
 class IntCounterLayoutProto(Protocol):
     """Minimal duck-typed interface for IntCounterLayout (used in hot-path properties)."""
 
-    def get(self, key: str) -> int: ...
-    def set(self, key: str, value: int) -> None: ...
-    def bump(self, name: str, n: int) -> int: ...
+    def get(self, key: str) -> int:
+        ...
 
+    def set(self, key: str, value: int) -> None:
+        ...
 
-# ── Source tier ────────────────────────────────────────────────────────────────
-
-# Tier priority (high→low): surface → structured_ti → deep → archive → other
+    def bump(self, name: str, n: int) -> int:
+        ...
 
 class SourceTier(Enum):
-    SURFACE = auto()       # SERP, public DNS, direct crawls
-    STRUCTURED_TI = auto()  # Certificate Transparency, Passive DNS, RDAP
-    DEEP = auto()          # Wayback, CommonCrawl, dark pivots
-    ARCHIVE = auto()       # academic, IPFS, DHT
-    OTHER = auto()         # anything not mapped above
+    SURFACE = auto()
+    STRUCTURED_TI = auto()
+    DEEP = auto()
+    ARCHIVE = auto()
+    OTHER = auto()
 
     def __repr__(self) -> str:
-        return f"SourceTier.{self.name}"
+        return f'SourceTier.{self.name}'
+_TIER_ORDER = [SourceTier.SURFACE, SourceTier.STRUCTURED_TI, SourceTier.DEEP, SourceTier.ARCHIVE, SourceTier.OTHER]
 
-
-_TIER_ORDER = [
-    SourceTier.SURFACE,
-    SourceTier.STRUCTURED_TI,
-    SourceTier.DEEP,
-    SourceTier.ARCHIVE,
-    SourceTier.OTHER,
-]
-
-
-# ── Feed dominance guard ───────────────────────────────────────────────────────
-
-@dataclass
+@dataclass(True)
 class EarlyExitClass:
     """Canonical early-exit classification labels."""
-    NATURAL = "natural"                        # hard deadline hit, all lanes terminal
-    FEED_DOMINANT = "feed_dominant"           # feed > 95%, nonfeed exhausted
-    NONFEED_ONLY = "nonfeed_only"             # feed suppressed by nonfeed budget
-    PREWINDUP_TIMEOUT = "prewindup_timeout"   # pre-windup barrier timed out
-    ABORT = "abort"                            # explicit abort / SIGINT
-    UNKNOWN = "unknown"
-
-
-
-# ── SprintSchedulerConfig ─────────────────────────────────────────────────────
-
-# Sentinel for "unset" on optional fields that also have non-None defaults
+    NATURAL = 'natural'
+    FEED_DOMINANT = 'feed_dominant'
+    NONFEED_ONLY = 'nonfeed_only'
+    PREWINDUP_TIMEOUT = 'prewindup_timeout'
+    ABORT = 'abort'
+    UNKNOWN = 'unknown'
 _UNSET: Any = object()
 
-
-@dataclass
+@dataclass(True)
 class SprintSchedulerConfig:
     """Configuration for one sprint run.
 
     STEP 1 extracted from sprint_scheduler.py (33 449 LOC → modular package).
     F350M-R / Issue #P2.
     """
-
-    sprint_duration_s: float = 1800.0          # 30 min
-
-    windup_lead_s: float = 180.0              # enter wind-down 3 min before end
-
-    cycle_sleep_s: float = 5.0                 # sleep between cycles
-
-    # Sprint F-A3: per-cycle hard deadline. Wraps `_run_one_cycle` in
-    # `asyncio.timeout(cycle_budget_s)`. If a cycle exceeds this budget,
-    # TimeoutError propagates and the cycle is counted as empty so the F228G
-    # consecutive-empty-cycles guard eventually forces windup.
-    cycle_budget_s: float = 60.0                # hard per-cycle deadline
-
-    max_cycles: int = 100                      # safety cap
-
-    max_parallel_sources: int = 4              # concurrent source fetches
-
-    stop_on_first_accepted: bool = False       # early exit on first accepted
-
+    sprint_duration_s: float = 1800.0
+    windup_lead_s: float = 180.0
+    cycle_sleep_s: float = 5.0
+    cycle_budget_s: float = 60.0
+    max_cycles: int = 100
+    max_parallel_sources: int = 4
+    stop_on_first_accepted: bool = False
     export_enabled: bool = True
-
-    export_dir: str = ""
-
-    max_entries_per_cycle: int = 50             # per-source cap
-
-    # Sprint F193B: Hypothesis -> finding feedback loop caps
-    max_hypothesis_depth: int = 3              # max iteration depth for hypothesis-driven pivots
-    max_hypothesis_queries: int = 10           # max total hypothesis-driven pivot queries
-
-    # Aggressive mode: fans out feed/public/CT branches concurrently per cycle
-    aggressive_mode: bool = True               # if True, run branches in parallel (P1-06 default)
-    aggressive_branch_timeout_s: float = 45.0  # per-branch timeout in aggressive mode
-
-    # Sprint F195B: Per-branch timeout budget in seconds (aggressive mode uses 8.0)
-    branch_timeout_budget_s: float = 0.0       # 0 = use aggressive_branch_timeout_s
-
-    _MAX_BRANCH_TIMEOUT_CAP: float = 300.0    # absolute per-branch cap
-
-    # F273A: Dynamic branch-remaining floor
+    export_dir: str = ''
+    max_entries_per_cycle: int = 50
+    max_hypothesis_depth: int = 3
+    max_hypothesis_queries: int = 10
+    aggressive_mode: bool = True
+    aggressive_branch_timeout_s: float = 45.0
+    branch_timeout_budget_s: float = 0.0
+    _MAX_BRANCH_TIMEOUT_CAP: float = 300.0
     _MIN_BRANCH_REMAINING_S_DEFAULT: float = 2.0
     _MIN_BRANCH_REMAINING_S_CAP: float = 5.0
-    _MIN_BRANCH_REMAINING_S: float = 2.0       # back-compat alias
-
+    _MIN_BRANCH_REMAINING_S: float = 2.0
     partial_export_findings_interval: int = 10
-
-    # Tier budgets in seconds — Sources NOT listed here fall to OTHER tier
     source_tier_map: dict[str, SourceTier] = field(default_factory=dict)
-
-    # F223A: Explicit acquisition profile -- overrides env var / profile-name inference
     acquisition_profile: str | None = None
-
-    # Sprint F214: Optional strict feed dominance guard
     require_nonfeed_corrob_for_early_exit: bool = False
-
-    # Sprint F250: Preferred transport for sensitive queries
-    sensitive_query_transport: str = "auto"
-
-    # F233C: Optional predecessor sprint_id for next_sprint_seeds consumption
+    sensitive_query_transport: str = 'auto'
     predecessor_sprint_id: str | None = None
-
-    # F11: Deep research advisory (post-WINDUP, fire-and-forget)
     deep_research_enabled: bool = False
     extreme_mode: bool = False
-
-    # ── Computed properties ────────────────────────────────────────────────────
 
     @property
     def effective_windup_lead_s(self) -> float:
@@ -159,11 +96,11 @@ class SprintSchedulerConfig:
         if self.aggressive_mode:
             ratio = 0.15
         elif self.sprint_duration_s <= 120.0:
-            ratio = 0.20
+            ratio = 0.2
         elif self.sprint_duration_s <= 300.0:
             ratio = 0.25
         else:
-            ratio = 0.30
+            ratio = 0.3
         raw = self.sprint_duration_s * ratio
         return float(max(15.0, min(180.0, raw)))
 
@@ -175,19 +112,19 @@ class SprintSchedulerConfig:
         """
         if self.windup_lead_s != 180.0:
             result = float(min(45.0, self.windup_lead_s))
-            logger.info("[WINDUP] final_windup=%.1fs (explicit)", result)
+            logger.info('[WINDUP] final_windup=%.1fs (explicit)', result)
             return result
         if self.aggressive_mode:
             ratio = 0.15
         elif self.sprint_duration_s <= 120.0:
-            ratio = 0.20
+            ratio = 0.2
         elif self.sprint_duration_s <= 300.0:
             ratio = 0.25
         else:
-            ratio = 0.30
+            ratio = 0.3
         raw = self.sprint_duration_s * ratio
         result = float(max(30.0, min(180.0, raw)))
-        logger.info("[WINDUP] lead=%.1fs", result)
+        logger.info('[WINDUP] lead=%.1fs', result)
         return result
 
     def windup_for_cycle(self, cycle_time_ema: float) -> float:

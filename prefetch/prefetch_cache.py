@@ -1,38 +1,30 @@
 """
 PrefetchCache – dočasné úložiště pro prefetched data s LRU, TTL a background writerem.
 """
-
-
 import asyncio
 import logging
 import time
 from pathlib import Path
 from typing import Any
-
 import orjson
-
 from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_fire_and_forget
-
 logger = logging.getLogger(__name__)
 
-
 class PrefetchCache:
-    def __init__(self, db_path: str | None = None, max_size_mb: int = 100,
-                 max_entries: int = 10000):
+    __slots__ = tuple(('_background_tasks', '_running', '_write_queue', '_writer_task', 'db_path', 'env', 'max_entries'))
+
+    def __init__(self, db_path: str | None=None, max_size_mb: int=100, max_entries: int=10000):
         from hledac.universal.paths import SPRINT_LMDB_ROOT, open_lmdb
         if db_path is None:
-            self.db_path = SPRINT_LMDB_ROOT / "prefetch.lmdb"
+            self.db_path = SPRINT_LMDB_ROOT / 'prefetch.lmdb'
         else:
             self.db_path = Path(db_path).expanduser()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        # Sprint 3D: use open_lmdb() for env-driven discipline + lock recovery
         self.env = open_lmdb(self.db_path, map_size=max_size_mb * 1024 * 1024)
         self.max_entries = max_entries
-        self._write_queue = asyncio.Queue(maxsize=1000)  # C2: bounded to prevent unbounded growth
+        self._write_queue = asyncio.Queue(maxsize=1000)
         self._writer_task: asyncio.Task | None = None
         self._running = True
-
-        # F196B: Track background tasks for proper cleanup
         self._background_tasks: set[asyncio.Task] = set()
 
     def _track_task(self, coro) -> asyncio.Task:
@@ -48,14 +40,12 @@ class PrefetchCache:
     async def stop(self):
         """Bezpečně ukončí writer a zpracuje zbytek fronty."""
         self._running = False
-        await self._write_queue.put(("__stop__", "", None))
+        await self._write_queue.put(('__stop__', '', None))
         await self._write_queue.join()
-
-        # F196B: Cancel all tracked background tasks
         for task in list(self._background_tasks):
             task.cancel()
         if self._background_tasks:
-            await safe_gather_fire_and_forget(*self._background_tasks, label="prefetch_cache:55")
+            await safe_gather_fire_and_forget(*self._background_tasks, label='prefetch_cache:55')
             self._background_tasks.clear()
 
     def close(self):
@@ -64,15 +54,11 @@ class PrefetchCache:
             self.env.close()
             self.env = None
 
-    async def put(self, url: str, data: dict[str, Any], ttl: int = 3600):
+    async def put(self, url: str, data: dict[str, Any], ttl: int=3600):
         """Zařadí zápis do fronty (neblokující)."""
         if not self._running:
-            raise RuntimeError("Cache is shutting down, cannot put new data")
-        entry = {
-            'data': data,
-            'expires': time.time() + ttl,
-            'access_count': 0
-        }
+            raise RuntimeError('Cache is shutting down, cannot put new data')
+        entry = {'data': data, 'expires': time.time() + ttl, 'access_count': 0}
         await self._write_queue.put(('put', url, entry))
 
     async def get(self, url: str) -> dict | None:
@@ -96,7 +82,7 @@ class PrefetchCache:
         while True:
             try:
                 op, url, entry = await self._write_queue.get()
-                if op == "__stop__":
+                if op == '__stop__':
                     self._write_queue.task_done()
                     break
                 with self.env.begin(write=True) as txn:
@@ -106,10 +92,8 @@ class PrefetchCache:
                         txn.delete(url.encode())
                 self._write_queue.task_done()
             except Exception as e:
-                logger.error(f"Cache writer error: {e}")
+                logger.error(f'Cache writer error: {e}')
                 self._write_queue.task_done()
-
-        # Zpracujeme zbytek fronty (drain) – už žádné nové položky nepřibývají
         while True:
             try:
                 op, url, entry = self._write_queue.get_nowait()
@@ -122,5 +106,5 @@ class PrefetchCache:
             except asyncio.QueueEmpty:
                 break
             except Exception as e:
-                logger.error(f"Final drain error: {e}")
+                logger.error(f'Final drain error: {e}')
                 self._write_queue.task_done()

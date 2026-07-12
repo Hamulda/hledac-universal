@@ -16,53 +16,45 @@ Usage in sprint path:
   3. Store signature in telemetry/sidecar
   4. Return chunks unchanged (chunks are NOT mutated)
 """
-
-
 import hashlib
 import logging
 from dataclasses import dataclass, field
 import msgspec
 from enum import Enum
 from typing import Protocol, runtime_checkable
-
 logger = logging.getLogger(__name__)
-
 
 class EnclaveAvailability(Enum):
     """Truthful enclave availability states."""
-    DISABLED = "disabled"           # Feature flag off
-    UNAVAILABLE = "unavailable"     # Backend not available/import failed
-    AVAILABLE = "available"         # Backend loaded
-    SIGNED = "signed"              # Backend signed batch digest
-    FAIL_SOFT = "fail_soft"        # Backend raised but was caught
+    DISABLED = 'disabled'
+    UNAVAILABLE = 'unavailable'
+    AVAILABLE = 'available'
+    SIGNED = 'signed'
+    FAIL_SOFT = 'fail_soft'
 
-
-@dataclass
+@dataclass(True)
 class EnclaveStatus:
     """Current status of the secure enclave backend."""
     availability: EnclaveAvailability = EnclaveAvailability.DISABLED
-    backend_name: str = "null"
+    backend_name: str = 'null'
     error_message: str | None = None
     signed_batch_digest: str | None = None
     chunk_count: int = 0
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class SignedDigest:
     """A single Secure Enclave signature over a canonical batch digest."""
-    batch_digest: str          # SHA-256 of canonical manifest
-    signature: bytes           # Raw signature bytes
-    backend_name: str          # Which backend produced this
-    chunk_count: int           # How many chunks in the batch
+    batch_digest: str
+    signature: bytes
+    backend_name: str
+    chunk_count: int
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class BatchManifest:
     """Canonical manifest for a chunk batch — used for signing."""
     chunk_count: int
-    chunk_hashes: list[str]    # SHA-256 of each chunk (hex)
-    batch_digest: str           # SHA-256 of concatenated hashes
-
+    chunk_hashes: list[str]
+    batch_digest: str
 
 @runtime_checkable
 class SecureEnclaveBackend(Protocol):
@@ -96,11 +88,9 @@ class SecureEnclaveBackend(Protocol):
         """
         ...
 
-
 class SecureEnclaveError(Exception):
     """Base exception for Secure Enclave operations."""
     pass
-
 
 class NullSecureEnclaveBackend:
     """
@@ -111,18 +101,14 @@ class NullSecureEnclaveBackend:
     - External import failed
     - Hardware not supported
     """
-
-    name: str = "null"
-    _status: EnclaveStatus = field(default_factory=lambda: EnclaveStatus(
-        availability=EnclaveAvailability.DISABLED
-    ))
+    name: str = 'null'
+    _status: EnclaveStatus = field(default_factory=lambda: EnclaveStatus(availability=EnclaveAvailability.DISABLED))
 
     def is_available(self) -> bool:
         return False
 
     async def sign_batch_digest(self, manifest: BatchManifest) -> SignedDigest:
-        raise SecureEnclaveError("Null backend cannot sign")
-
+        raise SecureEnclaveError('Null backend cannot sign')
 
 def build_batch_manifest(chunks: list[str]) -> BatchManifest:
     """
@@ -135,24 +121,14 @@ def build_batch_manifest(chunks: list[str]) -> BatchManifest:
     """
     chunk_hashes = []
     for chunk in chunks:
-        h = hashlib.sha256(chunk.encode("utf-8")).hexdigest()
+        h = hashlib.sha256(chunk.encode('utf-8')).hexdigest()
         chunk_hashes.append(h)
-
-    # Canonical ordering: sorted by hash to ensure deterministic digest
     sorted_hashes = sorted(chunk_hashes)
-    concat = "".join(sorted_hashes).encode("utf-8")
+    concat = ''.join(sorted_hashes).encode('utf-8')
     batch_digest = hashlib.sha256(concat).hexdigest()
+    return BatchManifest(chunk_count=len(chunks), chunk_hashes=chunk_hashes, batch_digest=batch_digest)
 
-    return BatchManifest(
-        chunk_count=len(chunks),
-        chunk_hashes=chunk_hashes,
-        batch_digest=batch_digest,
-    )
-
-
-async def create_secure_enclave_backend(
-    enabled: bool = True,
-) -> tuple[SecureEnclaveBackend, EnclaveStatus]:
+async def create_secure_enclave_backend(enabled: bool=True) -> tuple[SecureEnclaveBackend, EnclaveStatus]:
     """
     Create appropriate Secure Enclave backend based on environment.
 
@@ -164,34 +140,17 @@ async def create_secure_enclave_backend(
     """
     if not enabled:
         status = EnclaveStatus(availability=EnclaveAvailability.DISABLED)
-        return NullSecureEnclaveBackend(), status
-
-    # Try loading real backend
+        return (NullSecureEnclaveBackend(), status)
     try:
         from hledac.ultra_context.secure_enclave_manager import SecureEnclaveManager
-
-        # Real backend is available
         backend = SecureEnclaveManager()
-        status = EnclaveStatus(
-            availability=EnclaveAvailability.AVAILABLE,
-            backend_name="hledac.ultra_context.secure_enclave_manager",
-        )
-        return backend, status
-
+        status = EnclaveStatus(availability=EnclaveAvailability.AVAILABLE, backend_name='hledac.ultra_context.secure_enclave_manager')
+        return (backend, status)
     except ImportError as e:
-        logger.debug(f"SecureEnclaveManager not available: {e}")
-        status = EnclaveStatus(
-            availability=EnclaveAvailability.UNAVAILABLE,
-            backend_name="null",
-            error_message=f"Import failed: {e}",
-        )
-        return NullSecureEnclaveBackend(), status
-
+        logger.debug(f'SecureEnclaveManager not available: {e}')
+        status = EnclaveStatus(availability=EnclaveAvailability.UNAVAILABLE, backend_name='null', error_message=f'Import failed: {e}')
+        return (NullSecureEnclaveBackend(), status)
     except Exception as e:
-        logger.warning(f"SecureEnclaveManager init failed: {e}")
-        status = EnclaveStatus(
-            availability=EnclaveAvailability.FAIL_SOFT,
-            backend_name="null",
-            error_message=str(e),
-        )
-        return NullSecureEnclaveBackend(), status
+        logger.warning(f'SecureEnclaveManager init failed: {e}')
+        status = EnclaveStatus(availability=EnclaveAvailability.FAIL_SOFT, backend_name='null', error_message=str(e))
+        return (NullSecureEnclaveBackend(), status)

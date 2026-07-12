@@ -11,26 +11,21 @@ Usage:
     if eig > EIG_THRESHOLD:
         await enrichment_queue.add(task)
 """
-
-
 import math
 from typing import Any
-
 try:
-    from brain.evidence_fusion import DempsterShafer  # type: ignore[import-not-found]
+    from brain.evidence_fusion import DempsterShafer
     _DS_AVAILABLE = True
 except ImportError:
     _DS_AVAILABLE = False
-    # ty: invalid-assignment is the correct code for "None not assignable to <class>"
-    DempsterShafer = None  # type: ignore
-
+    DempsterShafer = None
 
 class EIGCalculator:
     """Expected Information Gain calculator for action selection."""
+    EIG_THRESHOLD = 0.1
+    __slots__ = tuple(('bandit_arms',))
 
-    EIG_THRESHOLD = 0.1  # Default threshold for adding enrichment task
-
-    def __init__(self, bandit_arms: dict | None = None):
+    def __init__(self, bandit_arms: dict | None=None):
         self.bandit_arms = bandit_arms or {}
 
     def compute_eig(self, hypothesis_set: list, action: dict[str, Any]) -> float:
@@ -42,7 +37,6 @@ class EIGCalculator:
         """
         if not _DS_AVAILABLE or not hypothesis_set:
             return 0.0
-
         current_entropy = self._entropy(hypothesis_set)
         expected_entropy = self._expected_entropy_after_action(hypothesis_set, action)
         return max(0.0, current_entropy - expected_entropy)
@@ -56,10 +50,9 @@ class EIGCalculator:
             else:
                 b = float(h)
             beliefs.append(max(0.0, min(1.0, b)))
-
-        total = sum(beliefs) + 1e-8
+        total = sum(beliefs) + 1e-08
         probs = [b / total for b in beliefs]
-        entropy = -sum(p * math.log(p + 1e-8) for p in probs if p > 0)
+        entropy = -sum((p * math.log(p + 1e-08) for p in probs if p > 0))
         return float(entropy)
 
     def _expected_entropy_after_action(self, hypothesis_set: list, action: dict) -> float:
@@ -70,7 +63,6 @@ class EIGCalculator:
         Real implementation would simulate possible outcomes.
         """
         current = self._entropy(hypothesis_set)
-        # Simplified: assume 20% entropy reduction on average
         reduction_factor = action.get('expected_reduction', 0.2)
         return current * (1.0 - reduction_factor)
 
@@ -85,6 +77,5 @@ class EIGCalculator:
         for action in candidates:
             eig = self.compute_eig(hypothesis_set, action)
             scored.append((action, eig))
-
         scored.sort(key=lambda x: x[1], reverse=True)
         return scored

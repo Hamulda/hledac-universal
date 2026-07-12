@@ -5,33 +5,23 @@ Shared Memory Manager with Apache Arrow
 Zero-copy data transfer between phases using Apache Arrow.
 Provides ArrowSharedMemory for efficient serialization/deserialization.
 """
-
-
 import logging
 import os
 from typing import Any
-
 logger = logging.getLogger(__name__)
-
-# Try to import pyarrow for zero-copy operations
 try:
     import pyarrow as pa
     PYARROW_AVAILABLE = True
 except ImportError:
     PA = None
     PYARROW_AVAILABLE = False
-
-# Sprint F264: Use msgspec facade for fast JSON serialization.
-# Falls back to orjson (then stdlib json) on type errors.
-from hledac.universal.utils.msgspec_json import ORJSON_AVAILABLE as _FACADE_ORJSON_AVAILABLE  # noqa: E402
-from hledac.universal.utils.msgspec_json import decode as _msgspec_decode  # noqa: E402
-from hledac.universal.utils.msgspec_json import encode as _msgspec_encode  # noqa: E402
-
+from hledac.universal.utils.msgspec_json import ORJSON_AVAILABLE as _FACADE_ORJSON_AVAILABLE
+from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
+from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
 
 def _json_dumps(obj: Any) -> bytes:
     """Serialize object to JSON bytes via msgspec facade (10-20x stdlib)."""
     return _msgspec_encode(obj)
-
 
 def _json_loads(data) -> Any:
     """Deserialize JSON bytes to object via msgspec facade."""
@@ -40,14 +30,10 @@ def _json_loads(data) -> Any:
     if isinstance(data, (bytes, bytearray, memoryview, str)):
         try:
             return _msgspec_decode(data)
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
     return {}
-
-
-# Backwards-compat aliases (some callers inspect the flag).
 ORJSON_AVAILABLE = _FACADE_ORJSON_AVAILABLE
-
 
 class ArrowSharedMemory:
     """
@@ -65,8 +51,9 @@ class ArrowSharedMemory:
             loaded = shm.deserialize()
         # Memory released after exiting with block
     """
+    __slots__ = tuple(('_buffer', '_closed', '_file_path', 'name', 'size'))
 
-    def __init__(self, name: str, size: int = 50_000_000):
+    def __init__(self, name: str, size: int=50000000):
         """
         Initialize Arrow shared memory.
 
@@ -90,13 +77,12 @@ class ArrowSharedMemory:
         Returns:
             Size of serialized data in bytes
         """
-        # Always use JSON for reliability - Arrow is optional optimization
         try:
             self._buffer = _json_dumps(data)
             self.size = len(self._buffer)
             return self.size
         except Exception as e:
-            logger.warning(f"JSON serialization failed: {e}")
+            logger.warning(f'JSON serialization failed: {e}')
             self._buffer = b'{}'
             self.size = len(self._buffer)
             return self.size
@@ -109,20 +95,14 @@ class ArrowSharedMemory:
             Deserialized Python object
         """
         if self._buffer is None:
-            raise ValueError("No data to deserialize. Call serialize() first.")
-
-        # Check if it's Arrow format and we have pyarrow available
+            raise ValueError('No data to deserialize. Call serialize() first.')
         if PYARROW_AVAILABLE and self._is_arrow_format():
             try:
-                # Read Arrow IPC format
                 reader = pa.ipc.open_stream(pa.py_buffer(self._buffer))
                 table = reader.read_all()
-
-                # Convert to Python dict
                 result = {}
                 for col in table.column_names:
                     arr = table.column(col)
-                    # Convert to Python list
                     if arr.type == pa.string():
                         result[col] = arr.to_pylist()
                     elif pa.types.is_integer(arr.type):
@@ -133,25 +113,19 @@ class ArrowSharedMemory:
                         result[col] = arr.to_pylist()
                     else:
                         result[col] = arr.to_pylist()
-
                 return result
-
             except Exception as e:
-                logger.warning(f"Arrow deserialization failed, falling back to JSON: {e}")
-
-        # Fallback to JSON deserialization
+                logger.warning(f'Arrow deserialization failed, falling back to JSON: {e}')
         try:
             return _json_loads(self._buffer)
         except Exception as e:
-            logger.warning(f"JSON deserialization also failed: {e}")
-            # Last resort: return empty dict
+            logger.warning(f'JSON deserialization also failed: {e}')
             return {}
 
     def _is_arrow_format(self) -> bool:
         """Check if buffer starts with Arrow IPC magic bytes."""
         if self._buffer is None or len(self._buffer) < 6:
             return False
-        # Arrow IPC file format magic bytes
         return self._buffer[:6] == b'ARROW'
 
     def close(self):
@@ -162,9 +136,9 @@ class ArrowSharedMemory:
                 try:
                     os.unlink(self._file_path)
                 except Exception as e:
-                    logger.debug(f"Failed to remove temp file: {e}")
+                    logger.debug(f'Failed to remove temp file: {e}')
             self._closed = True
-            logger.debug(f"Closed ArrowSharedMemory {self.name}")
+            logger.debug(f'Closed ArrowSharedMemory {self.name}')
 
     def __enter__(self):
         return self

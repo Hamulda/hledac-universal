@@ -16,8 +16,6 @@ Provides identity stitching capabilities using LanceDB with:
 Sprint 71: Bounded, fail-safe, MLX fallback for similarity.
 Sprint 77: Embedding optimization (float16, writeback buffer, batched embedding, health check).
 """
-
-
 import asyncio
 from hledac.universal.utils.async_helpers import safe_wait_for
 import contextlib
@@ -30,18 +28,13 @@ from collections import OrderedDict, defaultdict, deque
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-
+from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str, loads as _msgspec_loads
 import numpy as np
 import orjson
-
 from context_optimization.mmr import maximal_marginal_relevance
 from hledac.universal.tools.file_cache import apply_nocache_to_path, madv_free_reusable_on_path
-
 logger = logging.getLogger(__name__)
-
-# P1-12: RAM guard for M1 8GB — import lazily to avoid circular deps
 _uma_budget = None
-
 
 def _get_uma_budget():
     global _uma_budget
@@ -49,13 +42,9 @@ def _get_uma_budget():
         from utils.uma_budget import is_uma_critical
         _uma_budget = is_uma_critical
     return _uma_budget
-
-
-# Compiled similarity function - conditional import for MLX (fail gracefully in CI)
 try:
     import mlx.core as mx
 
-    # P4.2: Fixed batch cosine similarity — supports (B, D) × (N, D) → (B, N)
     @mx.compile
     def _cosine_sim_batch(a: mx.array, b: mx.array) -> mx.array:
         """MLX-compiled cosine similarity for batch processing.
@@ -67,115 +56,80 @@ try:
         Returns:
             Similarity scores (B, N) — squeeze to (N,) if B=1
         """
-        # Handle single vector case (expand to batch of 1)
         if a.ndim == 1:
             a = a[None, :]
-
-        eps = 1e-8
+        eps = 1e-08
         a_norm = mx.linalg.norm(a, axis=-1, keepdims=True)
         b_norm = mx.linalg.norm(b, axis=-1, keepdims=True)
         a_n = a / (a_norm + eps)
         b_n = b / (b_norm + eps)
         return a_n @ b_n.T
-
     MLX_AVAILABLE = True
 except ImportError:
-    # Numpy fallback for non-Metal environments (CI, testing)
     import numpy as np
 
-    def _cosine_sim_batch(a, b):  # type: ignore
+    def _cosine_sim_batch(a, b):
         """Numpy fallback for cosine similarity."""
-        # Handle single vector case
         a = np.asarray(a)
         b = np.asarray(b)
         if a.ndim == 1:
             a = a[None, :]
-        eps = 1e-8
+        eps = 1e-08
         a_n = a / (np.linalg.norm(a, axis=-1, keepdims=True) + eps)
         b_n = b / (np.linalg.norm(b, axis=-1, keepdims=True) + eps)
         return a_n @ b_n.T
-
     MLX_AVAILABLE = False
-
-
-# P4.2: Persistent compilation cache — avoid recompilation overhead
 _COMPILED_CACHE: dict[str, mx.array] = {}
-
-
-# AREA H+ (2026 cutting-edge): LanceDB 0.8+ native hybrid search with RRF reranker.
-# Pure vector search has 15-30% lower recall on OSINT text than hybrid (BM25 + vector ANN
-# fused via Reciprocal Rank Fusion). RRFReranker is built into lancedb.rerankers — no
-# external index needed. Lazy import with cache so non-graph-storage extras degrade
-# fail-soft to pure vector.
 _RRF_RERANKER_CACHE: dict[str, Any] = {}
-
 
 def _get_rrf_reranker() -> Any | None:
     """Lazy-init LanceDB RRF reranker. Returns None if rerankers unavailable."""
-    if "rrf" in _RRF_RERANKER_CACHE:
-        return _RRF_RERANKER_CACHE["rrf"]
+    if 'rrf' in _RRF_RERANKER_CACHE:
+        return _RRF_RERANKER_CACHE['rrf']
     try:
         from lancedb.rerankers import RRFReranker
-        # K=60 is the canonical RRF constant; return_score='all' adds _relevance_score column.
-        _RRF_RERANKER_CACHE["rrf"] = RRFReranker(K=60, return_score="all")
-        return _RRF_RERANKER_CACHE["rrf"]
+        _RRF_RERANKER_CACHE['rrf'] = RRFReranker(K=60, return_score='all')
+        return _RRF_RERANKER_CACHE['rrf']
     except ImportError:
-        logger.debug("[LANCEDB:H] lancedb.rerankers unavailable — hybrid without RRF")
-        _RRF_RERANKER_CACHE["rrf"] = None
+        logger.debug('[LANCEDB:H] lancedb.rerankers unavailable — hybrid without RRF')
+        _RRF_RERANKER_CACHE['rrf'] = None
         return None
     except Exception as e:
-        logger.debug(f"[LANCEDB:H] RRFReranker init failed: {e}")
-        _RRF_RERANKER_CACHE["rrf"] = None
+        logger.debug(f'[LANCEDB:H] RRFReranker init failed: {e}')
+        _RRF_RERANKER_CACHE['rrf'] = None
         return None
-
-
-# Default database URI
-_DEFAULT_URI = Path(__file__).parent.parent.parent / "data" / "identity.lance"
-
-# Sprint F214OPT-C: M1 8GB-safe LanceDB cache bound
-# Default 256MB for M1-safe mode; env HLEDAC_LANCEDB_CACHE_MB overrides
+_DEFAULT_URI = Path(__file__).parent.parent.parent / 'data' / 'identity.lance'
 _HLEDAC_DEFAULT_CACHE_MB = 256
-_HLEDAC_HARD_MAX_CACHE_MB = 512  # hard cap without override
-_HLEDAC_LARGE_OVERRIDE_VAR = "HLEDAC_ALLOW_LARGE_LANCEDB_CACHE"
-_HLEDAC_CACHE_MB_VAR = "HLEDAC_LANCEDB_CACHE_MB"
-
+_HLEDAC_HARD_MAX_CACHE_MB = 512
+_HLEDAC_LARGE_OVERRIDE_VAR = 'HLEDAC_ALLOW_LARGE_LANCEDB_CACHE'
+_HLEDAC_CACHE_MB_VAR = 'HLEDAC_LANCEDB_CACHE_MB'
 
 def _resolve_lancedb_cache_size() -> int:
     """Resolve LMDB map_size from env with M1-safe defaults."""
     import os
-    override_enabled = os.environ.get(_HLEDAC_LARGE_OVERRIDE_VAR, "").strip() in ("1", "true", "True")
-    raw = os.environ.get(_HLEDAC_CACHE_MB_VAR, "").strip()
+    override_enabled = os.environ.get(_HLEDAC_LARGE_OVERRIDE_VAR, '').strip() in ('1', 'true', 'True')
+    raw = os.environ.get(_HLEDAC_CACHE_MB_VAR, '').strip()
     if raw:
         try:
             mb = int(raw)
             if mb <= 0:
-                logger.warning(f"[LANCEDB_CACHE] Invalid {_HLEDAC_CACHE_MB_VAR}={raw}, using default {_HLEDAC_DEFAULT_CACHE_MB}MB")  # noqa: E501
+                logger.warning(f'[LANCEDB_CACHE] Invalid {_HLEDAC_CACHE_MB_VAR}={raw}, using default {_HLEDAC_DEFAULT_CACHE_MB}MB')
                 mb = _HLEDAC_DEFAULT_CACHE_MB
             elif not override_enabled and mb > _HLEDAC_HARD_MAX_CACHE_MB:
-                logger.warning(f"[LANCEDB_CACHE] {mb}MB exceeds hard max {_HLEDAC_HARD_MAX_CACHE_MB}MB without {_HLEDAC_LARGE_OVERRIDE_VAR}=1, capping")  # noqa: E501
+                logger.warning(f'[LANCEDB_CACHE] {mb}MB exceeds hard max {_HLEDAC_HARD_MAX_CACHE_MB}MB without {_HLEDAC_LARGE_OVERRIDE_VAR}=1, capping')
                 mb = _HLEDAC_HARD_MAX_CACHE_MB
             return mb * 1024 * 1024
         except ValueError:
-            logger.warning(f"[LANCEDB_CACHE] Non-integer {_HLEDAC_CACHE_MB_VAR}={raw}, using default {_HLEDAC_DEFAULT_CACHE_MB}MB")  # noqa: E501
+            logger.warning(f'[LANCEDB_CACHE] Non-integer {_HLEDAC_CACHE_MB_VAR}={raw}, using default {_HLEDAC_DEFAULT_CACHE_MB}MB')
             return _HLEDAC_DEFAULT_CACHE_MB * 1024 * 1024
     if override_enabled:
-        # Large override: allow up to 1GB (backward compat with prior default)
         return 1024 * 1024 * 1024
     return _HLEDAC_DEFAULT_CACHE_MB * 1024 * 1024
-
-
-# Sprint 77: Writeback buffer limits
-# S3: LFU eviction + batch flush (was FIFO single-item)
 _WRITEBACK_MAX = 1000
-_WRITEBACK_BATCH_SIZE = 100  # S3: Flush 10% at once instead of 1 item
-
-# Issue #24: Serialize LanceDB writes to prevent M1 segfaults
-# LanceDB 0.33+ has a bug causing segfaults with 2+ concurrent writers.
-# Single-writer guarantee: all add_entity calls go through _write_queue.
+_WRITEBACK_BATCH_SIZE = 100
 _WRITE_QUEUE: asyncio.Queue[tuple[list[dict[str, Any]], float]] | None = None
 _WRITE_QUEUE_LOCK = asyncio.Lock()
 _WRITE_WORKER_TASK: asyncio.Task | None = None
-
 
 async def _get_write_queue() -> asyncio.Queue:
     """Get or create the global write queue (singleton, async-safe)."""
@@ -186,16 +140,14 @@ async def _get_write_queue() -> asyncio.Queue:
                 _WRITE_QUEUE = asyncio.Queue(maxsize=1)
     return _WRITE_QUEUE
 
-
 async def _ensure_write_worker(table: Any) -> None:
     """Start the write worker if not already running (idempotent, thread-safe)."""
     global _WRITE_WORKER_TASK
-    if _WRITE_WORKER_TASK is not None and not _WRITE_WORKER_TASK.done():
+    if _WRITE_WORKER_TASK is not None and (not _WRITE_WORKER_TASK.done()):
         return
     queue = await _get_write_queue()
     _WRITE_WORKER_TASK = asyncio.create_task(_write_worker(table, queue))
-    logger.info("[LANCEDB:QW] Write worker started")
-
+    logger.info('[LANCEDB:QW] Write worker started')
 
 async def _write_worker(table: Any, queue: asyncio.Queue) -> None:
     """Background worker that drains the write queue serially.
@@ -208,32 +160,22 @@ async def _write_worker(table: Any, queue: asyncio.Queue) -> None:
             batch, deadline = await queue.get()
             if batch is None:
                 break
-            # Skip if deadline expired (stale batch from aborted sprint)
             if time.monotonic() > deadline + 30:
-                logger.debug("[LANCEDB:QW] Skipping stale batch (deadline expired)")
+                logger.debug('[LANCEDB:QW] Skipping stale batch (deadline expired)')
                 continue
             try:
-                # S2 FIX: Run blocking add in thread pool with timeout to prevent
-                # worker deadlock when LanceDB disk I/O stalls. 30s timeout is
-                # generous — normal add takes <100ms. Stale batches (deadline+30s)
-                # are handled by the skip above; here we protect against I/O hangs.
-                await safe_wait_for(
-                    asyncio.to_thread(table.add, batch),
-                    timeout=30.0, label="lancedb_table_add",
-                )
+                await safe_wait_for(asyncio.to_thread(table.add, batch), timeout=30.0, label='lancedb_table_add')
             except asyncio.TimeoutError:
-                logger.warning("[LANCEDB:QW] add timed out after 30s, skipping batch")
+                logger.warning('[LANCEDB:QW] add timed out after 30s, skipping batch')
             except Exception as e:
-                logger.warning(f"[LANCEDB:QW] add failed: {e}")
+                logger.warning(f'[LANCEDB:QW] add failed: {e}')
             finally:
                 queue.task_done()
         except asyncio.CancelledError:
-            # S3 FIX: must call task_done even on cancellation to unblock queue.join()
             queue.task_done()
             raise
         except Exception:
             pass
-
 
 class LanceDBIdentityStore:
     """
@@ -258,14 +200,13 @@ class LanceDBIdentityStore:
     - Sprint 76: Adaptive reranking (ColBERT/FlashRank/MLX)
     - Sprint 76: usearch index support (lazy)
     """
-
-    # Sprint 76: Bounded limits
-    _MAX_CACHE_SIZE = _resolve_lancedb_cache_size()  # F214OPT-C: env-configurable M1-safe default
+    _MAX_CACHE_SIZE = _resolve_lancedb_cache_size()
     _BINARY_FILTER_COUNT = 500
     _MMR_TOP_K = 50
-    _EVICTION_THRESHOLD_RATIO = 0.85  # F214OPT-C: evict when map is 85% full
+    _EVICTION_THRESHOLD_RATIO = 0.85
+    __slots__ = tuple(('_cache_db', '_cache_env', '_embedding_dim', '_mlx_embeddings', '_mlx_embeddings_total_count', '_mlx_id_to_idx', '_mlx_ids', '_mlx_load_chunk_size', '_orch', '_table', 'db', 'uri'))
 
-    def __init__(self, uri: str = str(_DEFAULT_URI), orchestrator=None):
+    def __init__(self, uri: str=str(_DEFAULT_URI), orchestrator=None):
         """
         Initialize LanceDB identity store.
 
@@ -277,21 +218,15 @@ class LanceDBIdentityStore:
         self.db = None
         self._table = None
         self._orch = orchestrator
-        # Sprint F259: Changed from 768 to 256 for M1 memory efficiency
         self._embedding_dim = 256
-
-        # Sprint 76: LMDB embedding cache with float16 quantization
         self._cache_env = None
         self._cache_db = None
         self._init_cache()
-
-        # Sprint 76: MLX embeddings (index mapping only, not full copies)
         self._mlx_embeddings = None
         self._mlx_ids = None
         self._mlx_id_to_idx = {}
-        # Sprint P6-fix: chunked streaming load for M1 8GB safety
         self._mlx_embeddings_total_count = 0
-        self._mlx_load_chunk_size = 10_000  # rows per chunk, M1 8GB safe
+        self._mlx_load_chunk_size = 10000
 
     def _get_mlx_chunk_size(self) -> int:
         """
@@ -309,136 +244,65 @@ class LanceDBIdentityStore:
         """
         try:
             from hledac.universal.core.resource_governor import sample_uma_status
-
             uma = sample_uma_status()
             if uma.swap_detected:
-                return 1_000
+                return 1000
             state = uma.state
-            if state == "emergency":
-                return 1_000
-            if state == "critical":
-                return 3_000
-            if state == "warn":
-                return 5_000
+            if state == 'emergency':
+                return 1000
+            if state == 'critical':
+                return 3000
+            if state == 'warn':
+                return 5000
             return self._mlx_load_chunk_size
-        except Exception:  # noqa: BLE001
+        except Exception:
             return self._mlx_load_chunk_size
-
-        # Sprint 76: Binary embeddings for fast pre-filter
         self._binary_embeddings = None
-
-        # Sprint 76: Lazy-loaded rerankers
         self._colbert_reranker = None
         self._flashrank_ranker = None
         self._colbert_loaded = False
         self._flashrank_loaded = False
-
-        # Sprint 76: Memory prediction
-        self._memory_history: Any = None  # deque, initialized in _init_cache
+        self._memory_history: Any = None
         self._eviction_threshold = 0.8
-
-        # Sprint 76: usearch index (experimental)
         self._usearch_index = None
         self._usearch_loaded = False
-
-        # P4.2: Compiled similarity now module-level _cosine_sim_batch (compiled once at import)
-        # Removed: self._compiled_similarity = None
-
-        # AREA H: LanceDB FTS capability detection (initialized in _initialize)
         self._lancedb_has_fts = False
-
-        # Sprint 77: Embedder and MRL
         self._embedder = None
         self._embedder_type: str | None = None
         self._embed_lock = asyncio.Lock()
-        # Sprint F259: Changed from 768 to 256 for M1 memory efficiency
-        # WARNING: existing768d embeddings require re-embed with: hledac --reembed
         self._current_mrl_dim = 256
         self._mrl_enabled = False
-        # Sprint 81 Fáze 4: MLXEmbeddingManager reference
         self._mlx_embed_manager = None
-        # Sprint 81 Fáze 4: Numpy fallback dimension
         self._fallback_dim = 256
-
-        # Sprint 77: Writeback buffer
         self._writeback_buffer: OrderedDict = OrderedDict()
         self._writeback_lock = asyncio.Lock()
         self._access_counts = defaultdict(int)
-
-        # Sprint 77: Index build status
-        self._index_build_status: dict[str, Any] = {
-            'in_progress': False,
-            'started_at': None,
-            'completed_at': None,
-            'failed': False,
-            'index_type': None,
-            'progress_percent': 0
-        }
+        self._index_build_status: dict[str, Any] = {'in_progress': False, 'started_at': None, 'completed_at': None, 'failed': False, 'index_type': None, 'progress_percent': 0}
         self._index_cache: bool | None = None
         self._index_cache_time: float = 0.0
         self._index_build_deferred = False
-
-        # Sprint 77: Metrics
-        self._metrics = {
-            'cache_hits': 0,
-            'cache_misses': 0,
-            'quantization_errors': deque(maxlen=100),
-            'search_latencies': deque(maxlen=1000),
-            'cache_evictions': 0,  # F214OPT-C: eviction count
-        }
-        # F214OPT-C: telemetry flags
-        self._large_override_enabled = _resolve_lancedb_cache_size() > (_HLEDAC_HARD_MAX_CACHE_MB * 1024 * 1024)
-
-        # Sprint F264D: IVF-PQ vector quantization (default ON since F265C, M1 8GB friendly).
-        # Lazy: index is trained only on first search/add when >= 256 rows.
-        # Fail-soft: any training error → log warning + fallback to brute-force cosine.
-        # F265C change: default changed from "0" (opt-in) to "1" (always-on) because
-        # O(N) flat search is unacceptable at 10K+ entities. Opt-out via "0" for
-        # CI/hermetic environments that need deterministic brute-force.
-        self._ivfpq_enabled: bool = (
-            os.environ.get("HLEDAC_LANCEDB_QUANTIZE", "1") != "0"
-        )
-        self._ivfpq_num_partitions: int = max(
-            8, min(256, int(os.environ.get("HLEDAC_LANCEDB_IVFPQ_NUM_PARTITIONS", "64")))
-        )
-        self._ivfpq_num_sub_vectors: int = max(
-            4, min(64, int(os.environ.get("HLEDAC_LANCEDB_IVFPQ_NUM_SUB_VECTORS", "12")))
-        )
+        self._metrics = {'cache_hits': 0, 'cache_misses': 0, 'quantization_errors': deque(maxlen=100), 'search_latencies': deque(maxlen=1000), 'cache_evictions': 0}
+        self._large_override_enabled = _resolve_lancedb_cache_size() > _HLEDAC_HARD_MAX_CACHE_MB * 1024 * 1024
+        self._ivfpq_enabled: bool = os.environ.get('HLEDAC_LANCEDB_QUANTIZE', '1') != '0'
+        self._ivfpq_num_partitions: int = max(8, min(256, int(os.environ.get('HLEDAC_LANCEDB_IVFPQ_NUM_PARTITIONS', '64'))))
+        self._ivfpq_num_sub_vectors: int = max(4, min(64, int(os.environ.get('HLEDAC_LANCEDB_IVFPQ_NUM_SUB_VECTORS', '12'))))
         self._ivfpq_trained: bool = False
         self._ivfpq_lock: asyncio.Lock = asyncio.Lock()
-
-        # Sprint F264E: IVF-PQ adaptive auto-tuner (opt-in, M1 8GB friendly).
-        # Single source of truth shared with knowledge/_ANNIndex. State persisted
-        # as JSON next to the LanceDB URI for cross-session continuity.
         try:
             from knowledge.lancedb_auto_tuner import make_default_tuner
-            self._autotune = make_default_tuner(
-                table_name="entities",
-                state_dir=Path(uri).parent,
-                num_sub_vectors=self._ivfpq_num_sub_vectors,
-                vector_column="embedding",
-                key_column="id",
-            )
+            self._autotune = make_default_tuner(table_name='entities', state_dir=Path(uri).parent, num_sub_vectors=self._ivfpq_num_sub_vectors, vector_column='embedding', key_column='id')
         except Exception:
-            # Fail-soft — tuner is optional, never blocks __init__.
             self._autotune = None
-
         self._initialize()
-
-    # =============================================================================
-    # Sprint 76: LMDB Embedding Cache Methods
-    # =============================================================================
 
     def _lmdb_put(self, key: str, data: dict) -> None:
         """Synchronous LMDB put operation - zero-copy via orjson."""
         try:
             with self._cache_env.begin(write=True) as txn:
-                # Sprint F180E: orjson místo pickle - zero-copy, rychlejší
-                txn.put(key.encode(), orjson.dumps(data))
+                txn.put(key.encode(), or_msgspec_dumps_str(data))
         except Exception as e:
-            logger.debug(f"LMDB put failed: {e}")
+            logger.debug(f'LMDB put failed: {e}')
 
-    # S3: Batch LMDB put for LFU eviction flush
     def _lmdb_put_multi(self, items: list[tuple[str, dict]]) -> None:
         """Synchronous batch LMDB put - single transaction for multiple items.
 
@@ -449,16 +313,16 @@ class LanceDBIdentityStore:
         try:
             with self._cache_env.begin(write=True) as txn:
                 for key, data in items:
-                    txn.put(key.encode(), orjson.dumps(data))
+                    txn.put(key.encode(), or_msgspec_dumps_str(data))
         except Exception as e:
-            logger.debug(f"LMDB batch put failed ({len(items)} items): {e}")
+            logger.debug(f'LMDB batch put failed ({len(items)} items): {e}')
 
     def _delete_cached_embedding(self, text_hash: str) -> None:
         """Delete embedding from cache."""
         try:
             with self._cache_env.begin(write=True) as txn:
                 txn.delete(text_hash.encode())
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
 
     async def _flush_writeback(self) -> None:
@@ -466,7 +330,6 @@ class LanceDBIdentityStore:
         async with self._writeback_lock:
             items = list(self._writeback_buffer.items())
             self._writeback_buffer.clear()
-
         if not items:
             return
 
@@ -474,12 +337,11 @@ class LanceDBIdentityStore:
             try:
                 with self._cache_env.begin(write=True) as txn:
                     for key, val in items:
-                        txn.put(key.encode(), orjson.dumps(val))
-                return None  # success
+                        txn.put(key.encode(), or_msgspec_dumps_str(val))
+                return None
             except Exception as e:
-                logger.warning(f"LMDB batch put failed ({len(items)} items): {e}")
-                return items  # return failed items for re-queue
-
+                logger.warning(f'LMDB batch put failed ({len(items)} items): {e}')
+                return items
         failed_items = await asyncio.to_thread(_batch_put)
         if failed_items:
             async with self._writeback_lock:
@@ -489,76 +351,55 @@ class LanceDBIdentityStore:
 
     async def _initialize_embedder(self) -> bool:
         """Initialize embedder: MLX/GPU → CoreML/ANE → Numpy fallback."""
-        # 1. MLXEmbeddingManager on GPU (primary) - Sprint 81 Fáze 4
-        # Use shared singleton to avoid duplicate model loads
         try:
             from compat.core_mlx_embeddings import get_embedding_manager
             self._mlx_embed_manager = get_embedding_manager()
             self._embedder = self._mlx_embed_manager
             self._embedder_type = 'mlx_gpu'
-            logger.info(f"[EMBEDDER] Using shared MLXEmbeddingManager: {self._mlx_embed_manager.model_path}, dim={self._mlx_embed_manager.EMBEDDING_DIM}")  # noqa: E501
+            logger.info(f'[EMBEDDER] Using shared MLXEmbeddingManager: {self._mlx_embed_manager.model_path}, dim={self._mlx_embed_manager.EMBEDDING_DIM}')
             return True
         except ImportError:
-            logger.debug("[EMBEDDER] mlx_embeddings not available, trying MLX direct")
+            logger.debug('[EMBEDDER] mlx_embeddings not available, trying MLX direct')
         except Exception as e:
-            logger.debug(f"[EMBEDDER] MLXEmbeddingManager init failed: {e}")
-
-        # CoreML→MLX migration: CoreML ANE path removed — MLX is primary on Apple Silicon.
-        # Only numpy fallback remains if MLXEmbeddingManager is unavailable.
-
-        # 3. Numpy random fallback (Sprint 81 Fáze 4 - minimal footprint)
-        logger.warning("[EMBEDDER] No hardware acceleration, using numpy fallback")
+            logger.debug(f'[EMBEDDER] MLXEmbeddingManager init failed: {e}')
+        logger.warning('[EMBEDDER] No hardware acceleration, using numpy fallback')
         self._embedder_type = 'numpy_fallback'
         self._fallback_dim = self._current_mrl_dim
         return True
 
     async def _embed_single(self, text: str) -> list[float]:
         """Embed single text via current embedder (for indexing - uses embed_document)."""
-        # Sprint 81 Fáze 4: Support MLXEmbeddingManager, CoreML, and numpy fallback
-        # Lazy init guard — trigger embedder init on first use
         if self._embedder_type is None:
             await self._initialize_embedder()
-
         if self._embedder_type == 'numpy_fallback':
-            # Minimal footprint fallback - random normalized embedding
             emb = np.random.randn(self._fallback_dim).astype(np.float32)
             norm = np.linalg.norm(emb)
             if norm > 0:
                 emb = (emb / norm).tolist()
             return emb
-
         if self._embedder is None:
             return []
         try:
             if self._embedder_type == 'mlx_gpu':
-                # MLXEmbeddingManager - use embed_document for indexing (task safety)
                 result = await asyncio.to_thread(self._embedder.embed_document, text)
                 emb = result.tolist() if hasattr(result, 'tolist') else list(result)
             else:
-                # sentence_transformers or unknown - use encode (will validate in MLX path)
                 result = await asyncio.to_thread(self._embedder.encode, text)
                 emb = result.tolist() if hasattr(result, 'tolist') else list(result)
-
-            # Truncate to MRL dimension
             if len(emb) > self._current_mrl_dim:
                 emb = emb[:self._current_mrl_dim]
             return emb
         except Exception as e:
-            logger.warning(f"[EMBED] Single embed failed: {e}")
+            logger.warning(f'[EMBED] Single embed failed: {e}')
             return []
 
-    async def _embed_batch(self, texts: list[str], batch_size: int = 16) -> list[list[float]]:
+    async def _embed_batch(self, texts: list[str], batch_size: int=16) -> list[list[float]]:
         """Generate embeddings in batches - thread-safe (uses embed_document for indexing)."""
-        # Sprint 81 Fáze 4: Support MLXEmbeddingManager, CoreML, and numpy fallback
         if not texts:
             return []
-
-        # Lazy init guard — trigger embedder init on first use
         if self._embedder_type is None:
             await self._initialize_embedder()
-
         if self._embedder_type == 'numpy_fallback':
-            # Minimal footprint fallback - random normalized embeddings
             all_embs = []
             for _ in texts:
                 emb = np.random.randn(self._fallback_dim).astype(np.float32)
@@ -567,40 +408,25 @@ class LanceDBIdentityStore:
                     emb = emb / norm
                 all_embs.append(emb.tolist())
             return all_embs
-
         all_embs = []
-
-        # P1-12: M1 8GB RAM guard — skip embedding under critical memory pressure
         if _get_uma_budget()():
-            logger.warning(
-                f"[EMBED] Skipping {len(texts)} embeddings — M1 critical memory pressure "
-                f"({len(texts)} texts, batch_size={batch_size})"
-            )
-            # Return zero embeddings of correct dimensionality (fail-safe degradation)
+            logger.warning(f'[EMBED] Skipping {len(texts)} embeddings — M1 critical memory pressure ({len(texts)} texts, batch_size={batch_size})')
             return [[0.0] * self._current_mrl_dim for _ in texts]
-
         async with self._embed_lock:
             for i in range(0, len(texts), batch_size):
                 batch = texts[i:i + batch_size]
                 try:
                     if self._embedder_type == 'mlx_gpu':
-                        # MLXEmbeddingManager - use embed_document for indexing (task safety)
-                        emb_result = await asyncio.to_thread(
-                            self._embedder._embed_for_indexing, batch
-                        )
+                        emb_result = await asyncio.to_thread(self._embedder._embed_for_indexing, batch)
                         batch_embs = emb_result.tolist() if hasattr(emb_result, 'tolist') else list(emb_result)
                     else:
-                        # sentence_transformers or unknown
                         embs = await asyncio.to_thread(self._embedder.encode, batch)
                         batch_embs = embs.tolist() if hasattr(embs, 'tolist') else list(embs)
-
-                    # Truncate each embedding
                     for emb in batch_embs:
                         if len(emb) > self._current_mrl_dim:
                             emb = emb[:self._current_mrl_dim]
                         all_embs.append(emb)
                 except Exception:
-                    # Fallback to single embedding
                     for t in batch:
                         all_embs.append(await self._embed_single(t))
         return all_embs
@@ -625,25 +451,20 @@ class LanceDBIdentityStore:
 
     async def _detect_query_type(self, query_text: str) -> str:
         """Decide whether to use FTS, hybrid, or pure vector search."""
-        # AREA H+: Empty text or no FTS capability → pure vector (only option)
         if not query_text or not self._lancedb_has_fts:
-            return "vector"
+            return 'vector'
         words = query_text.split()
-        # If query contains quotes or is very short -> FTS
         if '"' in query_text or len(words) <= 2:
             return 'fts'
-        # If query is long and has no uppercase/digits -> semantic -> vector
-        if len(words) >= 10 and not any((w[0].isupper() or w[0].isdigit()) for w in words if w):
+        if len(words) >= 10 and (not any((w[0].isupper() or w[0].isdigit() for w in words if w))):
             return 'vector'
         return 'hybrid'
 
-    def _rrf_fusion(self, fts_results: list[dict], vec_results: list[dict], top_k: int, k: int = 60) -> list[dict]:
+    def _rrf_fusion(self, fts_results: list[dict], vec_results: list[dict], top_k: int, k: int=60) -> list[dict]:
         """Reciprocal Rank Fusion with robust keying — NumPy vectorized."""
         scores: dict[str, float] = defaultdict(float)
         docs: dict[str, dict] = {}
-
-        # Build key lists and compute ranks
-        fts_keys, fts_ranks = [], []
+        fts_keys, fts_ranks = ([], [])
         for rank, doc in enumerate(fts_results):
             key = doc.get('id') or doc.get('_rowid')
             if key is None:
@@ -651,8 +472,7 @@ class LanceDBIdentityStore:
             fts_keys.append(key)
             fts_ranks.append(rank)
             docs[key] = doc
-
-        vec_keys, vec_ranks = [], []
+        vec_keys, vec_ranks = ([], [])
         for rank, doc in enumerate(vec_results):
             key = doc.get('id') or doc.get('_rowid')
             if key is None:
@@ -660,98 +480,77 @@ class LanceDBIdentityStore:
             vec_keys.append(key)
             vec_ranks.append(rank)
             docs[key] = doc
-
-        # NumPy vectorized RRF score computation
         if fts_keys:
             fts_arr = np.array(fts_ranks, dtype=float)
             fts_arr = 1.0 / (k + fts_arr + 1)
             for key, score in zip(fts_keys, fts_arr, strict=True):
                 scores[key] += score
-
         if vec_keys:
             vec_arr = np.array(vec_ranks, dtype=float)
             vec_arr = 1.0 / (k + vec_arr + 1)
             for key, score in zip(vec_keys, vec_arr, strict=True):
                 scores[key] += score
-
         sorted_keys = sorted(scores, key=scores.get, reverse=True)
         return [docs[key] for key in sorted_keys[:top_k]]
 
-    async def ensure_index(self, force: bool = False) -> None:
+    async def ensure_index(self, force: bool=False) -> None:
         """Create index with respect to available RAM and thermal state."""
-        # Check RAM availability
         try:
             import psutil
-            available_gb = psutil.virtual_memory().available / (1024**3)
-
+            available_gb = psutil.virtual_memory().available / 1024 ** 3
             if available_gb < 1.5:
-                logger.warning("[INDEX] Critical memory (<1.5GB), skipping index build")
+                logger.warning('[INDEX] Critical memory (<1.5GB), skipping index build')
                 return
             if available_gb < 3.0:
-                logger.info("[INDEX] Low memory (<3GB), deferring index build")
+                logger.info('[INDEX] Low memory (<3GB), deferring index build')
                 self._index_build_deferred = True
                 return
         except Exception as e:
-            logger.debug(f"[LANCE] memory check failed: {e}")
-
-        # If we have deferred index build and now have enough memory, build it
-        if self._index_build_deferred and not force:
+            logger.debug(f'[LANCE] memory check failed: {e}')
+        if self._index_build_deferred and (not force):
             try:
                 import psutil
-                if psutil.virtual_memory().available / (1024**3) >= 3.0:
+                if psutil.virtual_memory().available / 1024 ** 3 >= 3.0:
                     self._index_build_deferred = False
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
 
-    async def _warm_embedding_cache(self, queries: list[str], top_k: int = 50) -> None:
+    async def _warm_embedding_cache(self, queries: list[str], top_k: int=50) -> None:
         """Pre-load embeddings for frequently used queries."""
         if not queries:
             return
-        logger.info(f"[CACHE WARM] Warming {len(queries)} query embeddings")
+        logger.info(f'[CACHE WARM] Warming {len(queries)} query embeddings')
         for query in queries[:top_k]:
             q_hash = hashlib.sha256(query.encode()).hexdigest()[:16]
             if await self._get_cached_embedding(q_hash) is None:
                 emb = await self._embed_single(query)
                 if emb:
                     await self._store_embedding(q_hash, emb)
-        logger.info("[CACHE WARM] Complete")
+        logger.info('[CACHE WARM] Complete')
 
     async def _cache_maintenance_loop(self) -> None:
         """Background cache maintenance task."""
         while True:
             try:
-                await asyncio.sleep(300)  # 5 minutes
+                await asyncio.sleep(300)
                 await self._flush_writeback()
             except asyncio.CancelledError:
                 break
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
 
     async def health_check(self) -> dict[str, Any]:
         """Check embedding store health."""
-        result = {
-            'healthy': True,
-            'cache_size': len(self._writeback_buffer),
-            'index_exists': False,
-            'embedder_type': getattr(self, '_embedder_type', 'not_initialized'),
-            'errors': [],
-            **self.get_cache_telemetry(),  # F214OPT-C: include telemetry in health check
-        }
+        result = {'healthy': True, 'cache_size': len(self._writeback_buffer), 'index_exists': False, 'embedder_type': getattr(self, '_embedder_type', 'not_initialized'), 'errors': [], **self.get_cache_telemetry()}
         try:
-            # Check embedder
             if self._embedder is None:
                 result['healthy'] = False
                 result['errors'].append('embedder_not_initialized')
-
-            # Flush writeback
             await self._flush_writeback()
             result['writeback_healthy'] = True
-
-            # Check cache
             if self._cache_env is None:
                 result['healthy'] = False
                 result['errors'].append('cache_not_initialized')
-
         except Exception as e:
             result['healthy'] = False
             result['errors'].append(str(e))
@@ -759,12 +558,7 @@ class LanceDBIdentityStore:
 
     def get_cache_telemetry(self) -> dict[str, Any]:
         """F214OPT-C: Telemetry accessor for LanceDB cache bounds and stats."""
-        result = {
-            'lancedb_cache_limit_mb': self._MAX_CACHE_SIZE / (1024 * 1024),
-            'lancedb_cache_current_items': len(self._writeback_buffer),
-            'lancedb_cache_evictions': self._metrics.get('cache_evictions', 0),
-            'lancedb_cache_large_override_enabled': self._large_override_enabled,
-        }
+        result = {'lancedb_cache_limit_mb': self._MAX_CACHE_SIZE / (1024 * 1024), 'lancedb_cache_current_items': len(self._writeback_buffer), 'lancedb_cache_evictions': self._metrics.get('cache_evictions', 0), 'lancedb_cache_large_override_enabled': self._large_override_enabled}
         try:
             if self._cache_env is not None:
                 info = self._cache_env.info()
@@ -772,33 +566,24 @@ class LanceDBIdentityStore:
                 result['lancedb_cache_map_size_bytes'] = info['map_size']
                 result['lancedb_cache_used_bytes'] = stat['last_pgno'] * stat['psize']
                 result['lancedb_cache_used_ratio'] = result['lancedb_cache_used_bytes'] / info['map_size']
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
         return result
 
     async def shutdown(self) -> None:
         """Cleanup resources."""
-        # Cancel background tasks
         for task_name in ['_cache_maintenance_task', '_write_worker_task']:
             task = getattr(self, task_name, None)
             if task:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
-
-        # Flush writeback buffer
         await self._flush_writeback()
-
-        # Close LMDB
         if self._cache_env is not None:
             try:
                 self._cache_env.close()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
-
-        # F265FIX: Release MLX GPU tensors BEFORE eval/clear_cache
-        # _mlx_embeddings holds entire embedding table in GPU for process lifetime
-        # Only released on shutdown — without this, Metal memory stays allocated
         if self._mlx_embeddings is not None:
             del self._mlx_embeddings
             self._mlx_embeddings = None
@@ -808,20 +593,16 @@ class LanceDBIdentityStore:
         self._mlx_ids = None
         self._mlx_id_to_idx = {}
         self._mlx_embeddings_total_count = 0
-
-        # P4.2: Compiled similarity is module-level — no instance cleanup needed
-
-        # Clear MLX memory — gc.freeze() M1-safe, pak Metal clear
         try:
             import gc
             gc.freeze()
-        except Exception:  # noqa: BLE001
-            pass  # noqa: BLE001  # Python <3.12
+        except Exception:
+            pass
         try:
             import mlx.core as mx
             mx.eval([])
             mx.clear_cache()
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
 
     def _init_cache(self) -> None:
@@ -831,22 +612,19 @@ class LanceDBIdentityStore:
             cache_path = Path(self.uri).parent / 'embedding_cache'
             cache_path.mkdir(parents=True, exist_ok=True)
             self._cache_env = open_lmdb_with_guard(cache_path, map_size=self._MAX_CACHE_SIZE)
-            # F273F: tell Darwin not to cache LMDB mmap pages — they compete with Metal budget
             madv_free_reusable_on_path(cache_path)
             apply_nocache_to_path(cache_path)
             self._cache_db = self._cache_env.open_db()
             self._memory_history = deque(maxlen=10)
-            logger.debug("LMDB embedding cache initialized")
+            logger.debug('LMDB embedding cache initialized')
         except Exception as e:
-            logger.warning(f"Failed to init embedding cache: {e}")
+            logger.warning(f'Failed to init embedding cache: {e}')
             self._cache_env = None
 
     async def _get_cached_embedding(self, text_hash: str) -> list[float] | None:
         """Get embedding from LMDB cache with writeback buffer."""
         if self._cache_env is None:
             return None
-
-        # Check writeback buffer first
         async with self._writeback_lock:
             if text_hash in self._writeback_buffer:
                 data = self._writeback_buffer[text_hash]
@@ -862,123 +640,77 @@ class LanceDBIdentityStore:
                 with self._cache_env.begin() as txn:
                     cached = txn.get(text_hash.encode())
                     if cached:
-                        # Sprint F180E: orjson místo pickle - zero-copy read
-                        data = orjson.loads(cached)
-                        # Check TTL if present
+                        data = or_msgspec_loads(cached)
                         if 'ttl' in data and 'stored_at' in data:
                             if time.time() - data['stored_at'] > data['ttl']:
-                                return None, True  # Expired
+                                return (None, True)
                         emb_np = np.frombuffer(data['embedding'], dtype=np.float16)
-                        return emb_np.astype(np.float32).tolist(), False
-            except Exception:  # noqa: BLE001
+                        return (emb_np.astype(np.float32).tolist(), False)
+            except Exception:
                 pass
-            return None, False
-
+            return (None, False)
         result = await asyncio.to_thread(_sync)
         if result is None or result[0] is None:
             self._metrics['cache_misses'] += 1
             return None
-        if result[1]:  # Expired
+        if result[1]:
             await asyncio.to_thread(self._delete_cached_embedding, text_hash)
             self._metrics['cache_misses'] += 1
             return None
-
         data, _ = result
-        # Update access count and add to writeback buffer
-        new_data = {
-            'embedding': data.get('embedding'),
-            'dtype': data.get('dtype', 'float16'),
-            'dim': data.get('dim', 768),
-            'ttl': data.get('ttl', 86400),
-            'stored_at': data.get('stored_at', time.time()),
-            'access_count': data.get('access_count', 0) + 1,
-            'last_access': time.time()
-        }
-
-        # S3: LFU eviction — increment access count for this key
+        new_data = {'embedding': data.get('embedding'), 'dtype': data.get('dtype', 'float16'), 'dim': data.get('dim', 768), 'ttl': data.get('ttl', 86400), 'stored_at': data.get('stored_at', time.time()), 'access_count': data.get('access_count', 0) + 1, 'last_access': time.time()}
         self._access_counts[text_hash] = self._access_counts.get(text_hash, 0) + 1
-
         async with self._writeback_lock:
             self._writeback_buffer[text_hash] = new_data
-            # S3: LFU batch flush — evict 10% least-frequently-used when buffer full
             if len(self._writeback_buffer) > _WRITEBACK_MAX:
-                # Find LFU items to evict (sort by access count ascending)
-                items_to_evict = sorted(
-                    self._writeback_buffer.items(),
-                    key=lambda x: self._access_counts.get(x[0], 0)
-                )[:_WRITEBACK_BATCH_SIZE]
+                items_to_evict = sorted(self._writeback_buffer.items(), key=lambda x: self._access_counts.get(x[0], 0))[:_WRITEBACK_BATCH_SIZE]
                 flush_items = items_to_evict
                 for flush_key, _ in flush_items:
                     self._writeback_buffer.pop(flush_key, None)
                     self._access_counts.pop(flush_key, None)
             else:
                 flush_items = []
-
-        # Flush outside lock
         if flush_items:
             await asyncio.to_thread(self._lmdb_put_multi, flush_items)
             self._metrics['cache_evictions'] += len(flush_items)
-
         self._metrics['cache_hits'] += 1
         return data
 
-    async def _store_embedding(self, text_hash: str, embedding: list[float], ttl: float | None = None) -> None:
+    async def _store_embedding(self, text_hash: str, embedding: list[float], ttl: float | None=None) -> None:
         """Store embedding with float16 quantization (50% memory savings) and writeback buffer."""
         if self._cache_env is None:
             return
-
-        # F214OPT-C: byte-limit guard — skip storing if map is near full (fail-safe degradation)
         try:
             info = self._cache_env.info()
             stat = self._cache_env.stat()
             map_size = info['map_size']
             cache_usage = stat['last_pgno'] * stat['psize']
             if cache_usage / map_size >= self._EVICTION_THRESHOLD_RATIO:
-                logger.debug(f"[LANCEDB_CACHE] Skipping store — map near full ({cache_usage / map_size:.2f})")
+                logger.debug(f'[LANCEDB_CACHE] Skipping store — map near full ({cache_usage / map_size:.2f})')
                 return
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
-
         try:
             emb_np = np.array(embedding, dtype=np.float16)
-            data = {
-                'embedding': emb_np.tobytes(),
-                'dtype': 'float16',
-                'dim': len(embedding),
-                'ttl': ttl or 86400,
-                'stored_at': time.time(),
-                'access_count': 0,
-            }
-
-            # Add to writeback buffer
-            # S3: LFU eviction — increment access count for this key
+            data = {'embedding': emb_np.tobytes(), 'dtype': 'float16', 'dim': len(embedding), 'ttl': ttl or 86400, 'stored_at': time.time(), 'access_count': 0}
             self._access_counts[text_hash] = self._access_counts.get(text_hash, 0) + 1
-
             async with self._writeback_lock:
                 self._writeback_buffer[text_hash] = data
-                # S3: LFU batch flush — evict 10% least-frequently-used when buffer full
                 if len(self._writeback_buffer) > _WRITEBACK_MAX:
-                    # Find LFU items to evict (sort by access count ascending)
-                    items_to_evict = sorted(
-                        self._writeback_buffer.items(),
-                        key=lambda x: self._access_counts.get(x[0], 0)
-                    )[:_WRITEBACK_BATCH_SIZE]
+                    items_to_evict = sorted(self._writeback_buffer.items(), key=lambda x: self._access_counts.get(x[0], 0))[:_WRITEBACK_BATCH_SIZE]
                     flush_items = items_to_evict
                     for flush_key, _ in flush_items:
                         self._writeback_buffer.pop(flush_key, None)
                         self._access_counts.pop(flush_key, None)
                 else:
                     flush_items = []
-
-            # Flush outside lock
             if flush_items:
                 await asyncio.to_thread(self._lmdb_put_multi, flush_items)
                 self._metrics['cache_evictions'] += len(flush_items)
-
         except Exception as e:
-            logger.debug(f"Failed to store embedding: {e}")
+            logger.debug(f'Failed to store embedding: {e}')
 
-    async def _warm_cache(self, top_k: int = 100) -> None:
+    async def _warm_cache(self, top_k: int=100) -> None:
         """Pre-load frequently accessed embeddings."""
         if not self._orch or not hasattr(self._orch, '_evidence_log') or self._orch._evidence_log is None:
             return
@@ -989,9 +721,9 @@ class LanceDBIdentityStore:
                 cached = await self._get_cached_embedding(text_hash)
                 if cached is None and hasattr(ev, 'embedding') and ev.embedding:
                     await self._store_embedding(text_hash, ev.embedding)
-            logger.info(f"Cache warmed with {top_k} embeddings")
+            logger.info(f'Cache warmed with {top_k} embeddings')
         except Exception as e:
-            logger.debug(f"Cache warming failed: {e}")
+            logger.debug(f'Cache warming failed: {e}')
 
     async def _load_embeddings_to_mlx(self) -> None:
         """
@@ -1006,120 +738,72 @@ class LanceDBIdentityStore:
             return
         try:
             import mlx.core as mx
-
-            # F265FIX: RAM guard — skip MLX path when memory is low
-            # This prevents OOM on M1 8GB when table has >50k rows
             try:
                 if self._orch and hasattr(self._orch, '_memory_mgr'):
                     available_gb = self._orch._memory_mgr.get_available_memory_gb()
                 else:
-                    available_gb = 8.0  # Default assumption
+                    available_gb = 8.0
                 if available_gb < 3.0:
-                    logger.debug(
-                        f"[LANCEDB_MLX] Skipping MLX load — only {available_gb:.1f}GB available "
-                        f"(need >3GB for embedding table)"
-                    )
+                    logger.debug(f'[LANCEDB_MLX] Skipping MLX load — only {available_gb:.1f}GB available (need >3GB for embedding table)')
                     return
-            except Exception:  # noqa: BLE001
-                pass  # noqa: BLE001  # Fall through with guard disabled
-
+            except Exception:
+                pass
             total_count = self._table.count_rows()
             if total_count == 0:
                 return
-
-            # F265FIX: Hard cap on total rows loaded to GPU
-            # 50k rows × 256 dims × 1 byte (binary packed) ≈ 200MB GPU
-            MAX_MLX_ROWS = 50_000
+            MAX_MLX_ROWS = 50000
             if total_count > MAX_MLX_ROWS:
-                logger.debug(
-                    f"[LANCEDB_MLX] Capping load from {total_count} to {MAX_MLX_ROWS} rows "
-                    f"(M1 8GB GPU memory budget)"
-                )
+                logger.debug(f'[LANCEDB_MLX] Capping load from {total_count} to {MAX_MLX_ROWS} rows (M1 8GB GPU memory budget)')
                 total_count = MAX_MLX_ROWS
-
-            # Issue #15: Adaptive chunk sizing — sample once at load start
             chunk_size = self._get_mlx_chunk_size()
             all_embeddings: list[mx.array] = []
             all_ids: list[str] = []
             id_to_idx_global: dict[str, int] = {}
-
             for offset in range(0, total_count, chunk_size):
-                # Issue #15: Sample memory pressure every chunk — abort if swap detected mid-load
                 try:
                     from hledac.universal.core.resource_governor import sample_uma_status
-
                     uma = sample_uma_status()
                     if uma.swap_detected:
-                        logger.debug(
-                            f"[LANCEDB_MLX] Aborting load at chunk offset {offset} — "
-                            f"swap detected mid-load (used {uma.swap_used_gib:.1f}GiB)"
-                        )
+                        logger.debug(f'[LANCEDB_MLX] Aborting load at chunk offset {offset} — swap detected mid-load (used {uma.swap_used_gib:.1f}GiB)')
                         break
-                except Exception:  # noqa: BLE001
-                    pass  # noqa: BLE001 — keep loading on sampling error
-
+                except Exception:
+                    pass
                 limit = min(chunk_size, total_count - offset)
-                chunk_data = self._table.to_lance().to_table(
-                    columns=['_embedding', 'id'],
-                    offset=offset,
-                    limit=limit,
-                ).to_pydict()
-
+                chunk_data = self._table.to_lance().to_table(columns=['_embedding', 'id'], offset=offset, limit=limit).to_pydict()
                 if not chunk_data.get('_embedding'):
                     continue
-
-                # G-3 FIX: Zero-copy path for MLX embedding load
-                # Convert to contiguous numpy array first — MLX auto-infers
-                # share=True for contiguous float32 buffers on Apple Silicon M1.
-                # Before: mx.array(chunk_data['_embedding']) — Python list copy
-                # After:  mx.array(np.ascontiguousarray(...)) — zero-copy when possible
                 raw_emb = chunk_data['_embedding']
-                import numpy as np  # F823 FIX: moved to function scope, used in both branches
+                import numpy as np
                 if raw_emb and isinstance(raw_emb[0], (list, tuple)):
-                    # 2D list — reshape via contiguous numpy
                     emb_np = np.ascontiguousarray(raw_emb, dtype=np.float32)
                 else:
-                    # Already flat or single vector
                     emb_np = np.ascontiguousarray(raw_emb, dtype=np.float32) if raw_emb else np.array([], dtype=np.float32)
-                # MLX auto-shares contiguous float32 buffers on M1 UMA — zero-copy
                 emb_chunk = mx.array(emb_np)
                 ids_chunk = chunk_data['id']
-
-                # Binary pack this chunk
                 signs = (emb_chunk > 0).astype(mx.uint8)
                 batch, dim = signs.shape
-                padded_dim = ((dim + 7) // 8) * 8
+                padded_dim = (dim + 7) // 8 * 8
                 padded = mx.zeros((batch, padded_dim), dtype=mx.uint8)
                 padded[:, :dim] = signs
                 packed = mx.zeros((batch, padded_dim // 8), dtype=mx.uint8)
                 for i in range(8):
-                    packed |= (padded[:, i::8] << (7 - i))
-
+                    packed |= padded[:, i::8] << 7 - i
                 all_embeddings.append(packed)
                 base_idx = len(all_ids)
                 for i, row_id in enumerate(ids_chunk):
                     id_to_idx_global[str(row_id)] = base_idx + i
-                all_ids.extend(str(r) for r in ids_chunk)
-
+                all_ids.extend((str(r) for r in ids_chunk))
                 self._mlx_embeddings_total_count = offset + limit
-                logger.debug(
-                    f"MLX chunk {offset}-{offset + limit}/{total_count} loaded"
-                )
-
+                logger.debug(f'MLX chunk {offset}-{offset + limit}/{total_count} loaded')
             if not all_embeddings:
                 return
-
             self._mlx_embeddings = mx.concatenate(all_embeddings, axis=0)
             self._mlx_ids = all_ids
             self._mlx_id_to_idx = id_to_idx_global
             self._embedding_dim = len(chunk_data['_embedding'][0]) if chunk_data.get('_embedding') else 256
-
-            logger.info(
-                f"Loaded {len(all_ids)} embeddings to MLX in "
-                f"{len(all_embeddings)} chunks (M1 8GB safe)"
-            )
+            logger.info(f'Loaded {len(all_ids)} embeddings to MLX in {len(all_embeddings)} chunks (M1 8GB safe)')
         except Exception as e:
-            logger.warning(f"Failed to load embeddings to MLX: {e}")
+            logger.warning(f'Failed to load embeddings to MLX: {e}')
 
     async def _mlx_rerank(self, query_emb: list[float], candidates: list[dict], top_k: int) -> list[dict]:
         """Rerank candidates using MLX cosine similarity.
@@ -1133,9 +817,7 @@ class LanceDBIdentityStore:
             await self._load_embeddings_to_mlx()
         if self._mlx_embeddings is None:
             return candidates[:top_k]
-
         import mlx.core as mx
-
         cand_indices = []
         valid_candidates = []
         for c in candidates:
@@ -1143,22 +825,14 @@ class LanceDBIdentityStore:
             if idx is not None:
                 cand_indices.append(idx)
                 valid_candidates.append(c)
-
         if not valid_candidates:
             return candidates[:top_k]
-
         q = mx.array(query_emb).reshape(1, -1)
         d = self._mlx_embeddings[cand_indices]
-
-        # P4.2: Use module-level compiled similarity (single compilation at import)
-        scores = _cosine_sim_batch(q, d)  # Returns (1, N)
-        scores_np = np.array(scores.squeeze(0))  # → (N,)
+        scores = _cosine_sim_batch(q, d)
+        scores_np = np.array(scores.squeeze(0))
         sorted_idx = np.argsort(scores_np)[::-1][:top_k]
         return [valid_candidates[i] for i in sorted_idx]
-
-    # ---------------------------------------------------------------------------
-    # Binary pre-filter (Hamming distance) — P4.2 / F265B
-    # ---------------------------------------------------------------------------
 
     def _pack_query_to_binary(self, query_vec: list[float]) -> bytes:
         """Pack float32 query vector to packed binary bytes.
@@ -1172,20 +846,17 @@ class LanceDBIdentityStore:
         """
         import numpy as np
         arr = np.asarray(query_vec, dtype=np.float32)
-        # Sign bits: 1 if >= 0, 0 if < 0
         bits = (arr >= 0).astype(np.uint8)
-        # Pad to byte boundary (big-endian)
         dim = len(bits)
         num_bytes = (dim + 7) // 8
         padded = np.zeros(num_bytes * 8, dtype=np.uint8)
         padded[:dim] = bits
-        # Pack 8 bits per byte, big-endian (MSB first) — same as _load_embeddings_to_mlx
         packed = np.zeros(num_bytes, dtype=np.uint8)
         for i in range(8):
-            packed |= (padded[i::8] << (7 - i))
+            packed |= padded[i::8] << 7 - i
         return packed.tobytes()
 
-    async def _binary_prefilter(self, query_emb: list[float], candidates: list[dict], count: int = 500) -> list[dict]:
+    async def _binary_prefilter(self, query_emb: list[float], candidates: list[dict], count: int=500) -> list[dict]:
         """Fast pre-filter using binary embeddings (Hamming distance).
 
         Tier 0: Rust SIMD hamming (batch_hamming_scores) — correct bit-level popcount
@@ -1199,8 +870,6 @@ class LanceDBIdentityStore:
         """
         if self._mlx_embeddings is None or len(candidates) == 0:
             return candidates
-
-        # Build candidate index list
         cand_indices = []
         valid_candidates = []
         for c in candidates:
@@ -1210,132 +879,89 @@ class LanceDBIdentityStore:
                 valid_candidates.append(c)
         if not valid_candidates:
             return candidates
-
         num_bytes = self._mlx_embeddings.shape[1]
-
-        # Tier 0: Rust SIMD Hamming (correct popcount, no byte-summing bug)
         try:
             from hledac.compat.core_simd_similarity import batch_hamming_scores as _bhs
             query_packed = self._pack_query_to_binary(query_emb)
             candidates_flat = self._mlx_embeddings[cand_indices].tolist()
-            all_bytes = b''.join(
-                bytes(int(x) for x in row) for row in candidates_flat
-            )
-            scores: list[float] = _bhs(
-                query_packed,
-                list(all_bytes),
-                len(cand_indices),
-                num_bytes,
-            )
-            # Sort ascending (fewer bits = more similar), take top `count`
+            all_bytes = b''.join((bytes((int(x) for x in row)) for row in candidates_flat))
+            scores: list[float] = _bhs(query_packed, list(all_bytes), len(cand_indices), num_bytes)
             sorted_idx = sorted(range(len(scores)), key=lambda i: scores[i])[:count]
             return [valid_candidates[i] for i in sorted_idx]
-        except Exception:  # noqa: BLE001
-            pass  # fail-soft → Tier 1
-
-        # Tier 1: MLX fallback with correct popcount via lookup table
+        except Exception:
+            pass
         try:
             import mlx.core as mx
             q_packed = self._pack_query_to_binary(query_emb)
             q_mx = mx.array(list(q_packed), dtype=mx.uint8)
-            d_mx = self._mlx_embeddings[cand_indices]  # (N, num_bytes) uint8
-            xor_res = mx.bitwise_xor(q_mx, d_mx)  # (N, num_bytes)
-
-            # Correct bit-level popcount via MLX lookup table
-            # _POPCOUNT[b] = number of set bits in byte b (precomputed for all 256 values)
-            _POPCOUNT = mx.array(
-                [bin(i).count('1') for i in range(256)], dtype=mx.float32
-            )
-            bits_set = _POPCOUNT[xor_res.astype(mx.uint8)]  # (N, num_bytes)
+            d_mx = self._mlx_embeddings[cand_indices]
+            xor_res = mx.bitwise_xor(q_mx, d_mx)
+            _POPCOUNT = mx.array([bin(i).count('1') for i in range(256)], dtype=mx.float32)
+            bits_set = _POPCOUNT[xor_res.astype(mx.uint8)]
             total_bits = float(num_bytes * 8)
-            hamming_dist = mx.sum(bits_set, axis=1)  # (N,)
-            scores = 1.0 - hamming_dist / total_bits  # (N,) similarity [0,1]
-
+            hamming_dist = mx.sum(bits_set, axis=1)
+            scores = 1.0 - hamming_dist / total_bits
             scores_np = np.array(scores)
-            top_indices = np.argsort(scores_np)[::-1][:count]  # descending (higher = more similar)
+            top_indices = np.argsort(scores_np)[::-1][:count]
             return [valid_candidates[i] for i in top_indices]
         except Exception as e:
-            logger.debug(f"Binary prefilter failed: {e}")
+            logger.debug(f'Binary prefilter failed: {e}')
             return candidates
 
-    def _mmr(self, candidates: list[dict], query_emb: list[float], lambda_param: float = 0.5, top_k: int = 30) -> list[dict]:  # noqa: E501
+    def _mmr(self, candidates: list[dict], query_emb: list[float], lambda_param: float=0.5, top_k: int=30) -> list[dict]:
         """Maximal Marginal Relevance - reduce duplicates in results."""
         if len(candidates) <= top_k:
             return candidates
-
         selected = []
         remaining = candidates.copy()
         query_emb_np = np.array(query_emb)
-
         while len(selected) < top_k and remaining:
             mmr_scores = []
             for doc in remaining:
                 doc_emb = np.array(doc.get('_embedding', [0] * len(query_emb)))
-                sim_to_query = np.dot(query_emb_np, doc_emb) / (np.linalg.norm(query_emb_np) * np.linalg.norm(doc_emb) + 1e-8)  # noqa: E501
-
+                sim_to_query = np.dot(query_emb_np, doc_emb) / (np.linalg.norm(query_emb_np) * np.linalg.norm(doc_emb) + 1e-08)
                 max_sim_to_selected = 0
                 if selected:
                     selected_embs = np.array([s.get('_embedding', [0] * len(query_emb)) for s in selected])
-                    sims = np.dot(selected_embs, doc_emb) / (np.linalg.norm(selected_embs, axis=1) * np.linalg.norm(doc_emb) + 1e-8)  # noqa: E501
+                    sims = np.dot(selected_embs, doc_emb) / (np.linalg.norm(selected_embs, axis=1) * np.linalg.norm(doc_emb) + 1e-08)
                     max_sim_to_selected = np.max(sims) if sims.size > 0 else 0
-
                 mmr = lambda_param * sim_to_query - (1 - lambda_param) * max_sim_to_selected
                 mmr_scores.append(mmr)
-
             best_idx = np.argmax(mmr_scores)
             selected.append(remaining.pop(best_idx))
-
         return selected
 
-    # C4: RAM guard — skip index build if <4GB available to avoid OOM on M1 8GB
     async def _ensure_usearch_index(self) -> None:
         """Lazy load usearch index (experimental)."""
         if self._usearch_loaded or self._table is None:
             return
-
-        # M1 8GB RAM guard — skip index build if <4GB available
         try:
             import psutil
-
-            available_gb = psutil.virtual_memory().available / (1024**3)
+            available_gb = psutil.virtual_memory().available / 1024 ** 3
             if available_gb < 4.0:
-                logger.warning(
-                    f"[INDEX] M1 memory pressure ({available_gb:.1f}GB available), "
-                    "skipping usearch index build"
-                )
+                logger.warning(f'[INDEX] M1 memory pressure ({available_gb:.1f}GB available), skipping usearch index build')
                 self._usearch_loaded = True
                 return
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
-
         try:
             from usearch.index import Index
-
             if self._table.count_rows() < 1000:
                 self._usearch_loaded = True
                 return
-
             data = self._table.to_lance().to_table(columns=['_embedding', 'id']).to_pydict()
             if len(data.get('_embedding', [])) == 0:
                 return
-
-            self._usearch_index = Index(
-                ndim=self._embedding_dim,
-                metric='cos',
-                dtype='f32',
-                connectivity=16,
-                expansion_add=128,
-                expansion_search=64
-            )
+            self._usearch_index = Index(ndim=self._embedding_dim, metric='cos', dtype='f32', connectivity=16, expansion_add=128, expansion_search=64)
             for i, emb in enumerate(data['_embedding'][:10000]):
                 self._usearch_index.add(i, np.array(emb, dtype=np.float32))
             logger.info(f"usearch index loaded with {len(data['_embedding'][:10000])} vectors")
         except Exception as e:
-            logger.warning(f"usearch unavailable: {e}")
+            logger.warning(f'usearch unavailable: {e}')
             self._usearch_index = None
         self._usearch_loaded = True
 
-    async def _usearch_search(self, query_emb: list[float], count: int = 200) -> list[dict]:
+    async def _usearch_search(self, query_emb: list[float], count: int=200) -> list[dict]:
         """Search using usearch (if available)."""
         if self._usearch_index is None:
             return []
@@ -1349,7 +975,7 @@ class LanceDBIdentityStore:
                     results.append(doc)
             return results
         except Exception as e:
-            logger.debug(f"usearch search failed: {e}")
+            logger.debug(f'usearch search failed: {e}')
             return []
 
     async def _predict_memory_pressure(self) -> float:
@@ -1362,7 +988,6 @@ class LanceDBIdentityStore:
             map_size = self._cache_env.info()['map_size']
             current_ratio = cache_usage / map_size
             self._memory_history.append(current_ratio)
-
             if len(self._memory_history) >= 3:
                 y = np.array(list(self._memory_history))
                 x = np.arange(len(y))
@@ -1380,16 +1005,12 @@ class LanceDBIdentityStore:
         try:
             info = self._cache_env.info()
             map_size = info['map_size']
-            # Use page-level usage: last_pgno * psize
             stat = self._cache_env.stat()
             cache_usage = stat['last_pgno'] * stat['psize']
             ratio = cache_usage / map_size
-
             if ratio < self._EVICTION_THRESHOLD_RATIO:
                 return
-
-            # F214OPT-C: actual LRU eviction — evict oldest 10% of entries
-            logger.info(f"[LANCEDB_CACHE] Eviction triggered: ratio={ratio:.2f}, map_size={map_size}")
+            logger.info(f'[LANCEDB_CACHE] Eviction triggered: ratio={ratio:.2f}, map_size={map_size}')
             evicted = 0
 
             def _scan_and_evict():
@@ -1400,13 +1021,12 @@ class LanceDBIdentityStore:
                         entries = []
                         for key, value in cursor:
                             try:
-                                data = orjson.loads(value)
+                                data = or_msgspec_loads(value)
                                 entries.append((key, data))
-                            except Exception:  # noqa: BLE001
+                            except Exception:
                                 pass
                     if not entries:
                         return
-                    # Sort by access_count then last_access (LRU)
                     entries.sort(key=lambda x: (x[1].get('access_count', 0), x[1].get('last_access', 0)))
                     evict_count = max(1, len(entries) // 10)
                     to_evict = entries[:evict_count]
@@ -1415,14 +1035,13 @@ class LanceDBIdentityStore:
                             txn.delete(key)
                             evicted += 1
                 except Exception as e:
-                    logger.debug(f"[LANCEDB_CACHE] Eviction scan failed: {e}")
-
+                    logger.debug(f'[LANCEDB_CACHE] Eviction scan failed: {e}')
             await asyncio.to_thread(_scan_and_evict)
             if evicted > 0:
                 self._metrics['cache_evictions'] = self._metrics.get('cache_evictions', 0) + evicted
-                logger.info(f"[LANCEDB_CACHE] Evicted {evicted} entries")
+                logger.info(f'[LANCEDB_CACHE] Evicted {evicted} entries')
         except Exception as e:
-            logger.debug(f"[LANCEDB_CACHE] Eviction error: {e}")
+            logger.debug(f'[LANCEDB_CACHE] Eviction error: {e}')
 
     async def _get_colbert_reranker(self):
         """Lazy load ColBERT."""
@@ -1432,10 +1051,10 @@ class LanceDBIdentityStore:
             from knowledge.colbert_retriever import ColBERTReranker
             self._colbert_reranker = ColBERTReranker()
             self._colbert_loaded = True
-            logger.info("ColBERT reranker loaded")
+            logger.info('ColBERT reranker loaded')
             return self._colbert_reranker
         except Exception as e:
-            logger.warning(f"ColBERT load failed: {e}")
+            logger.warning(f'ColBERT load failed: {e}')
             return None
 
     async def _get_flashrank_ranker(self):
@@ -1449,12 +1068,12 @@ class LanceDBIdentityStore:
             return self._flashrank_ranker
         try:
             from flashrank import Ranker
-            self._flashrank_ranker = Ranker(model_name="ms-marco-MiniLM-L-12-v2")
+            self._flashrank_ranker = Ranker(model_name='ms-marco-MiniLM-L-12-v2')
             self._flashrank_loaded = True
-            logger.info("FlashRank loaded")
+            logger.info('FlashRank loaded')
             return self._flashrank_ranker
         except Exception as e:
-            logger.warning(f"FlashRank load failed: {e}")
+            logger.warning(f'FlashRank load failed: {e}')
             return None
 
     def _initialize(self) -> None:
@@ -1462,54 +1081,26 @@ class LanceDBIdentityStore:
         try:
             from knowledge.lancedb_pool import get_connection
             import pyarrow as pa
-
-            # Ensure directory exists
             Path(self.uri).parent.mkdir(parents=True, exist_ok=True)
-
-            # Connect to database (shared connection pool)
             self.db = get_connection(self.uri)
-
-            # Create table with schema
-            self._table = self.db.create_table(
-                "entities",
-                schema=pa.schema([
-                    pa.field("id", pa.string()),
-                    # Sprint F259: Changed from 768 to 256 for M1 memory efficiency
-                    pa.field("embedding", pa.list_(pa.float32(), list_size=256)),
-                    pa.field("aliases", pa.list_(pa.string())),
-                    pa.field("first_seen", pa.timestamp('s')),
-                    pa.field("last_seen", pa.timestamp('s')),
-                ]),
-                exist_ok=True
-            )
-
-            # Create FTS index only if not already present
+            self._table = self.db.create_table('entities', schema=pa.schema([pa.field('id', pa.string()), pa.field('embedding', pa.list_(pa.float32(), list_size=256)), pa.field('aliases', pa.list_(pa.string())), pa.field('first_seen', pa.timestamp('s')), pa.field('last_seen', pa.timestamp('s'))]), exist_ok=True)
             try:
                 list_indices_fn = getattr(self._table, 'list_indices', None)
                 existing_indices = list_indices_fn() if callable(list_indices_fn) else []
-                # LanceDB auto-generates index name as {column}_idx, not {column}_fts
-                if not any(getattr(idx, 'name', '') == 'aliases_idx' for idx in existing_indices):
-                    self._table.create_fts_index(
-                        "aliases",
-                        replace=False,
-                        with_position=True,    # enables phrase + proximity queries
-                        tokenizer_name="en_stem",  # Porter stemmer for better recall
-                    )
+                if not any((getattr(idx, 'name', '') == 'aliases_idx' for idx in existing_indices)):
+                    self._table.create_fts_index('aliases', replace=False, with_position=True, tokenizer_name='en_stem')
                 self._lancedb_has_fts = True
-                logger.info("[LANCEDB:H] FTS index available — hybrid search enabled")
+                logger.info('[LANCEDB:H] FTS index available — hybrid search enabled')
             except Exception as e:
                 self._lancedb_has_fts = False
-                logger.debug("[LANCEDB:H] FTS index not available: %s", e)
-
-            logger.info(f"LanceDB identity store initialized at {self.uri}")
-            # Sprint F264D: lancedb.table_opened event with size_mb
+                logger.debug('[LANCEDB:H] FTS index not available: %s', e)
+            logger.info(f'LanceDB identity store initialized at {self.uri}')
             self._log_table_opened()
-
         except ImportError:
-            logger.warning("LanceDB not available, identity store disabled")
+            logger.warning('LanceDB not available, identity store disabled')
             self.db = None
         except Exception as e:
-            logger.warning(f"Failed to initialize LanceDB: {e}")
+            logger.warning(f'Failed to initialize LanceDB: {e}')
             self.db = None
 
     def _log_table_opened(self) -> None:
@@ -1524,12 +1115,9 @@ class LanceDBIdentityStore:
             row_count = self._table.count_rows()
             size_bytes = row_count * self._embedding_dim * 4 + 8192
             size_mb = size_bytes / (1024 * 1024)
-            logger.info(
-                f"[LANCEDB] lancedb.table_opened table=entities "
-                f"rows={row_count} size_mb={size_mb:.2f} uri={self.uri}"
-            )
+            logger.info(f'[LANCEDB] lancedb.table_opened table=entities rows={row_count} size_mb={size_mb:.2f} uri={self.uri}')
         except Exception as e:
-            logger.debug(f"[LANCEDB] lancedb.table_opened log failed: {e}")
+            logger.debug(f'[LANCEDB] lancedb.table_opened log failed: {e}')
 
     async def _ensure_ivf_pq_index_async(self) -> None:
         """Sprint F264D: Lazy IVF-PQ training (M1 8GB friendly, fail-soft).
@@ -1543,57 +1131,35 @@ class LanceDBIdentityStore:
         NOTE: Uses ``getattr`` for flags so the helper is safe under ``__new__``
         test-mock paths that bypass ``__init__``.
         """
-        if not getattr(self, "_ivfpq_enabled", False):
+        if not getattr(self, '_ivfpq_enabled', False):
             return
-        if self._table is None or getattr(self, "_ivfpq_trained", False):
+        if self._table is None or getattr(self, '_ivfpq_trained', False):
             return
-        # Lazy attr init for test-mock paths (LanceDBIdentityStore.__new__)
-        if not hasattr(self, "_ivfpq_lock"):
+        if not hasattr(self, '_ivfpq_lock'):
             self._ivfpq_lock = asyncio.Lock()
         async with self._ivfpq_lock:
-            if self._ivfpq_trained:  # double-checked
+            if self._ivfpq_trained:
                 return
             try:
                 row_count = self._table.count_rows()
                 if row_count < 256:
-                    logger.debug(
-                        f"[LANCEDB] IVF-PQ skipped: only {row_count} rows "
-                        f"(need >= 256 for meaningful PQ training)"
-                    )
-                    self._ivfpq_trained = True  # mark as attempted; don't retry
+                    logger.debug(f'[LANCEDB] IVF-PQ skipped: only {row_count} rows (need >= 256 for meaningful PQ training)')
+                    self._ivfpq_trained = True
                     return
                 loop = asyncio.get_running_loop()
-                num_partitions = getattr(self, "_ivfpq_num_partitions", 64)
-                num_sub_vectors = getattr(self, "_ivfpq_num_sub_vectors", 12)
+                num_partitions = getattr(self, '_ivfpq_num_partitions', 64)
+                num_sub_vectors = getattr(self, '_ivfpq_num_sub_vectors', 12)
 
                 def _train() -> None:
-                    # LanceDB Python API: tbl.create_index(metric, index_type, num_partitions, num_sub_vectors)
-                    self._table.create_index(
-                        metric="cosine",
-                        index_type="IVF_PQ",
-                        num_partitions=num_partitions,
-                        num_sub_vectors=num_sub_vectors,
-                    )
-
+                    self._table.create_index(metric='cosine', index_type='IVF_PQ', num_partitions=num_partitions, num_sub_vectors=num_sub_vectors)
                 await asyncio.to_thread(_train)
                 self._ivfpq_trained = True
-                logger.info(
-                    f"[LANCEDB] IVF-PQ trained: table=entities rows={row_count} "
-                    f"num_partitions={num_partitions} "
-                    f"num_sub_vectors={num_sub_vectors}"
-                )
+                logger.info(f'[LANCEDB] IVF-PQ trained: table=entities rows={row_count} num_partitions={num_partitions} num_sub_vectors={num_sub_vectors}')
             except Exception as e:
-                self._ivfpq_trained = True  # don't retry on every call
-                logger.warning(
-                    f"[LANCEDB] IVF-PQ training failed (fallback brute-force): {e}"
-                )
+                self._ivfpq_trained = True
+                logger.warning(f'[LANCEDB] IVF-PQ training failed (fallback brute-force): {e}')
 
-    async def add_entity(
-        self,
-        entity_id: str,
-        embedding: list[float],
-        aliases: list[str]
-    ) -> bool:
+    async def add_entity(self, entity_id: str, embedding: list[float], aliases: list[str]) -> bool:
         """
         Add entity to identity store.
 
@@ -1607,78 +1173,34 @@ class LanceDBIdentityStore:
         """
         if self._table is None:
             return False
-
-        # Sprint F264D: lazy IVF-PQ training (after first row, before write)
         await self._ensure_ivf_pq_index_async()
-
         try:
-
             now = datetime.now(UTC)
-
-            # Convert to pyarrow format
-            data = [{
-                "id": entity_id,
-                "embedding": embedding,
-                "aliases": aliases,
-                "first_seen": now,
-                "last_seen": now,
-            }]
-
-            # Issue #24: Serialize writes through queue to prevent LanceDB 0.33+ segfaults.
-            # LanceDB's segfault bug triggers when 2+ concurrent writers access the
-            # same table. Single-writer guarantee: queue worker serializes all writes.
-            # Issue #24-A FIX: put() with deadline timeout instead of put_nowait
-            # to prevent silent data loss when queue is full (1-item buffer).
+            data = [{'id': entity_id, 'embedding': embedding, 'aliases': aliases, 'first_seen': now, 'last_seen': now}]
             await _ensure_write_worker(self._table)
             queue = await _get_write_queue()
             deadline = time.monotonic() + 60.0
             try:
-                await safe_wait_for(queue.put((data, deadline)), timeout=max(0.0, deadline - time.monotonic()), label="lancedb_queue_put")
+                await safe_wait_for(queue.put((data, deadline)), timeout=max(0.0, deadline - time.monotonic()), label='lancedb_queue_put')
             except asyncio.TimeoutError:
-                # S4 FIX: return False so caller knows write was dropped
-                logger.warning("[LANCEDB:QW] Queue full, write dropped (deadline expired)")
+                logger.warning('[LANCEDB:QW] Queue full, write dropped (deadline expired)')
                 return False
-
-            # Sprint F264E: trigger adaptive auto-tune (off-thread, fire-and-forget).
-            # P1-2 Enhancement: Now tunes BOTH num_partitions AND num_sub_vectors.
-            tuner = getattr(self, "_autotune", None)
-            if tuner is not None and getattr(self, "_ivfpq_enabled", False):
+            tuner = getattr(self, '_autotune', None)
+            if tuner is not None and getattr(self, '_ivfpq_enabled', False):
                 try:
-                    result = await tuner.tune_if_due_async(
-                        self._table,
-                        current_num_partitions=self._ivfpq_num_partitions,
-                        current_num_sub_vectors=self._ivfpq_num_sub_vectors,
-                        inserts_delta=1,
-                    )
+                    result = await tuner.tune_if_due_async(self._table, current_num_partitions=self._ivfpq_num_partitions, current_num_sub_vectors=self._ivfpq_num_sub_vectors, inserts_delta=1)
                     if result.changed():
                         self._ivfpq_num_partitions = result.new_partitions
                         self._ivfpq_num_sub_vectors = result.new_num_sub_vectors
-                        logger.info(
-                            f"[LANCEDB] auto-tune adjusted "
-                            f"num_partitions={result.old_partitions}->{result.new_partitions} "
-                            f"num_sub_vectors={result.old_num_sub_vectors}->{result.new_num_sub_vectors} "
-                            f"recall={result.recall:.3f} avg_ms={result.avg_search_ms:.2f}"
-                        )
-                        # F265C: re-indexing via retrain() creates new fragments;
-                        # compact after retrain to merge them and avoid RSS bloat on M1 8GB.
+                        logger.info(f'[LANCEDB] auto-tune adjusted num_partitions={result.old_partitions}->{result.new_partitions} num_sub_vectors={result.old_num_sub_vectors}->{result.new_num_sub_vectors} recall={result.recall:.3f} avg_ms={result.avg_search_ms:.2f}')
                         await self._maybe_compact_async()
-                except Exception:  # noqa: BLE001
-                    # Fail-soft: any tuner error must not break add_entity.
+                except Exception:
                     pass
-
             return True
-
         except Exception as e:
-            logger.warning(f"Failed to add entity: {e}")
+            logger.warning(f'Failed to add entity: {e}')
             return False
 
-    # ── STORAGE-FIX-2: LanceDB compaction scheduler ──────────────────────────
-    # Bound semantics:
-    #   - Trigger A: _insert_count_since_compact >= 1000
-    #   - Trigger B: time-based >= 1h since last compact
-    #   - Min interval: 60s (prevent thrashing on hot ingestion)
-    #   - Off event loop: blocking I/O in executor
-    #   - Fail-soft: any exception -> _metrics["compaction_failures"]++
     async def _maybe_compact_async(self) -> None:
         """Non-blocking compaction trigger; actual work in executor."""
         if self._compact_in_flight:
@@ -1687,22 +1209,21 @@ class LanceDBIdentityStore:
             return
         now = time.time()
         count_due = self._insert_count_since_compact >= self._COMPACT_FRAGMENT_THRESHOLD
-        time_due = (now - self._last_compact_ts) >= self._COMPACT_TIME_THRESHOLD_S
+        time_due = now - self._last_compact_ts >= self._COMPACT_TIME_THRESHOLD_S
         if not (count_due or time_due):
             return
-        # Min interval guard
-        if (now - self._last_compact_ts) < self._COMPACT_MIN_INTERVAL_S:
+        if now - self._last_compact_ts < self._COMPACT_MIN_INTERVAL_S:
             return
         self._compact_in_flight = True
         try:
             loop = asyncio.get_running_loop()
             await asyncio.to_thread(self._maybe_compact_blocking)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             try:
-                self._metrics["compaction_failures"] += 1
-            except Exception:  # noqa: BLE001
+                self._metrics['compaction_failures'] += 1
+            except Exception:
                 pass
-            logger.debug(f"[LANCEDB] compact dispatch failed: {e}")
+            logger.debug(f'[LANCEDB] compact dispatch failed: {e}')
         finally:
             self._compact_in_flight = False
 
@@ -1716,35 +1237,28 @@ class LanceDBIdentityStore:
         if self._table is None:
             return
         try:
-            if hasattr(self._table, "optimize"):
+            if hasattr(self._table, 'optimize'):
                 self._table.optimize()
-            elif hasattr(self._table, "compact_files"):
+            elif hasattr(self._table, 'compact_files'):
                 self._table.compact_files()
             else:
                 return
             self._insert_count_since_compact = 0
             self._last_compact_ts = time.time()
             try:
-                self._metrics["compaction_runs"] += 1
-                self._metrics["last_compaction_ts"] = self._last_compact_ts
-            except Exception:  # noqa: BLE001
+                self._metrics['compaction_runs'] += 1
+                self._metrics['last_compaction_ts'] = self._last_compact_ts
+            except Exception:
                 pass
-            logger.debug("[LANCEDB] compact ok (reset, ts=%d)", int(self._last_compact_ts))
-        except Exception as e:  # noqa: BLE001
+            logger.debug('[LANCEDB] compact ok (reset, ts=%d)', int(self._last_compact_ts))
+        except Exception as e:
             try:
-                self._metrics["compaction_failures"] += 1
-            except Exception:  # noqa: BLE001
+                self._metrics['compaction_failures'] += 1
+            except Exception:
                 pass
-            logger.debug(f"[LANCEDB] compact failed (fail-soft): {e}")
+            logger.debug(f'[LANCEDB] compact failed (fail-soft): {e}')
 
-    async def search_similar(
-        self,
-        embedding: list[float],
-        text_hint: str = "",
-        threshold: float = 0.85,
-        limit: int = 20,
-        query_type: str = "auto",
-    ) -> list[dict[str, Any]]:
+    async def search_similar(self, embedding: list[float], text_hint: str='', threshold: float=0.85, limit: int=20, query_type: str='auto') -> list[dict[str, Any]]:
         """
         Search for similar entities.
 
@@ -1764,94 +1278,46 @@ class LanceDBIdentityStore:
         """
         if self._table is None:
             return []
-
-        # Sprint F264D: lazy IVF-PQ training (after first query, off event loop)
         await self._ensure_ivf_pq_index_async()
-
         try:
-            # Polars native ARM64, zero-copy Arrow → 5-20× faster than pandas.
-            # Lazy import: polars is in graph-storage extra.
             import polars as pl
-
-            # AREA H+: Resolve effective query_type when caller didn't override.
-            # "auto" + text + FTS → hybrid (with RRF); "auto" + no FTS → vector.
             effective_qt = query_type
-            if effective_qt == "auto":
-                effective_qt = await self._detect_query_type(text_hint or "")
-
-            # Capture for closure (executor runs in worker thread)
+            if effective_qt == 'auto':
+                effective_qt = await self._detect_query_type(text_hint or '')
             _qt = effective_qt
             _emb = embedding
             _txt = text_hint
             _lim = limit
-
             loop = asyncio.get_running_loop()
 
             def _search():
-                # AREA H+ (2026): native hybrid path with RRF reranker.
-                # Falls back to vector-only when FTS unavailable or query_type=vector.
-                if _qt == "hybrid" and _txt and self._lancedb_has_fts:
+                if _qt == 'hybrid' and _txt and self._lancedb_has_fts:
                     reranker = _get_rrf_reranker()
-                    builder = (
-                        self._table.search(query_type="hybrid", vector_column_name="embedding")
-                        .vector(_emb)
-                        .text(_txt)
-                        .limit(_lim)
-                    )
+                    builder = self._table.search(query_type='hybrid', vector_column_name='embedding').vector(_emb).text(_txt).limit(_lim)
                     if reranker is not None:
                         builder = builder.rerank(reranker=reranker)
-                    # AREA H+ (2026): native .to_polars() skips the intermediate
-                    # Arrow allocation that pl.from_arrow(.to_arrow()) requires.
-                    # Polars 1.x + LanceDB ≥0.9 support direct Polars output.
                     return builder.to_polars()
-                elif _qt == "fts" and _txt and self._lancedb_has_fts:
-                    # FTS-only (rare; caller explicitly requested)
-                    return self._table.search(_txt, query_type="fts").limit(_lim).to_polars()
-                elif _txt and not self._lancedb_has_fts:
-                    # AREA H: FTS not available locally — pure vector only
-                    logger.debug("[LANCEDB:H] text_hint=%r ignored — FTS not supported in local LanceDB", str(_txt)[:50])  # noqa: E501
-                    return self._table.search(_emb, vector_column_name="embedding").limit(_lim).to_polars()
+                elif _qt == 'fts' and _txt and self._lancedb_has_fts:
+                    return self._table.search(_txt, query_type='fts').limit(_lim).to_polars()
+                elif _txt and (not self._lancedb_has_fts):
+                    logger.debug('[LANCEDB:H] text_hint=%r ignored — FTS not supported in local LanceDB', str(_txt)[:50])
+                    return self._table.search(_emb, vector_column_name='embedding').limit(_lim).to_polars()
                 else:
-                    # Pure vector (existing path) — covers no text, vector explicit, hybrid w/o FTS
-                    return self._table.search(_emb, vector_column_name="embedding").limit(_lim).to_polars()
-
+                    return self._table.search(_emb, vector_column_name='embedding').limit(_lim).to_polars()
             df = await asyncio.to_thread(_search)
-
-            # AREA H+: Handle BOTH pure vector (_distance) AND RRF reranked (_relevance_score).
-            # RRF reranker is the final ranking — threshold is NOT applied (would over-filter
-            # normalized scores in [0, 1]). For pure vector, threshold is applied as before.
-            if "_relevance_score" in df.columns:
-                # RRF normalized [0, 1] — higher is better. Use directly, no threshold filter.
-                df = df.with_columns(pl.col("_relevance_score").alias("similarity"))
-            elif "_distance" in df.columns:
-                # Cosine distance → similarity. Apply threshold.
-                df = df.with_columns(
-                    (1 - pl.col("_distance")).alias("similarity")
-                ).filter(pl.col("similarity") >= threshold)
-
-            # Convert to list of dicts — polars .iter_rows(named=True) is
-            # 5-10× faster than pandas .iterrows() (no Series overhead per row).
+            if '_relevance_score' in df.columns:
+                df = df.with_columns(pl.col('_relevance_score').alias('similarity'))
+            elif '_distance' in df.columns:
+                df = df.with_columns((1 - pl.col('_distance')).alias('similarity')).filter(pl.col('similarity') >= threshold)
             results = []
             for row in df.iter_rows(named=True):
-                results.append({
-                    "id": row.get("id", ""),
-                    "aliases": row.get("aliases", []),
-                    "similarity": row.get("similarity", 0.0),
-                    "first_seen": row.get("first_seen"),
-                    "last_seen": row.get("last_seen"),
-                })
-
+                results.append({'id': row.get('id', ''), 'aliases': row.get('aliases', []), 'similarity': row.get('similarity', 0.0), 'first_seen': row.get('first_seen'), 'last_seen': row.get('last_seen')})
             return results[:limit]
-
         except Exception as e:
-            logger.warning(f"Search failed: {e}")
+            logger.warning(f'Search failed: {e}')
             return []
 
-    async def compute_similarity(
-        self,
-        emb1: list[float],
-        emb2: list[float]
-    ) -> float:
+    async def compute_similarity(self, emb1: list[float], emb2: list[float]) -> float:
         """
         Compute cosine similarity between two embeddings.
 
@@ -1864,19 +1330,18 @@ class LanceDBIdentityStore:
         """
         try:
             if MLX_AVAILABLE:
-                a = mx.array([emb1])  # (1, D)
-                b = mx.array([emb2])  # (1, D)
-                result = _cosine_sim_batch(a, b)  # (1, 1)
-                return float(result[0, 0])  # P4.2: fixed indexing for (B, N) output
+                a = mx.array([emb1])
+                b = mx.array([emb2])
+                result = _cosine_sim_batch(a, b)
+                return float(result[0, 0])
             else:
-                # Numpy fallback
                 a = np.array(emb1)
                 b = np.array(emb2)
                 a_n = a / np.linalg.norm(a)
                 b_n = b / np.linalg.norm(b)
                 return float(np.dot(a_n, b_n))
         except Exception as e:
-            logger.warning(f"Similarity computation failed: {e}")
+            logger.warning(f'Similarity computation failed: {e}')
             return 0.0
 
     async def reembed_all(self) -> dict:
@@ -1887,101 +1352,64 @@ class LanceDBIdentityStore:
         required. Falls back to .to_pandas() on polars ImportError or if
         .to_polars() itself fails. Polars 1.x + LanceDB ≥0.9.
         """
-        """
-        Re-embed all stored entities at new MRL dimension (256d).
-
-        Lazy migration: only run when explicitly called.
-        Use case: existing768d embeddings need re-embedding after dimension change.
-
-        Returns:
-            dict with 'reembedded' count, 'failed' count, 'skipped' count.
-        """
-        # Lazy polars import (graph-storage extra). Fall back to pandas if absent
-        # or if .to_polars() fails on this LanceDB version. Both paths converge
-        # on a unified list[dict] row format below to keep the batch loop simple.
+        "\n        Re-embed all stored entities at new MRL dimension (256d).\n\n        Lazy migration: only run when explicitly called.\n        Use case: existing768d embeddings need re-embedding after dimension change.\n\n        Returns:\n            dict with 'reembedded' count, 'failed' count, 'skipped' count.\n        "
         try:
-            import polars as pl  # lazy: graph-storage extra  # noqa: F401  # polars
+            import polars as pl
             use_polars = True
         except ImportError:
             use_polars = False
-
-        logger.info("[REEMBED] Starting re-embedding at 256d dimension")
-        stats = {"reembedded": 0, "failed": 0, "skipped": 0}
-
+        logger.info('[REEMBED] Starting re-embedding at 256d dimension')
+        stats = {'reembedded': 0, 'failed': 0, 'skipped': 0}
         if self._table is None:
-            logger.warning("[REEMBED] No table available")
+            logger.warning('[REEMBED] No table available')
             return stats
-
         try:
-            # Prefer LanceDB native .to_polars() (F265+) — skips the intermediate
-            # Arrow table allocation that pl.from_arrow(.to_arrow()) required.
-            # Cold-path admin op, so the perf win is real but not critical.
             if use_polars:
                 try:
                     all_data = self._table.to_polars()
                     total = all_data.height
                     if total == 0:
-                        logger.info("[REEMBED] No entities to re-embed")
+                        logger.info('[REEMBED] No entities to re-embed')
                         return stats
                 except Exception:
                     use_polars = False
-
             if not use_polars:
                 all_data = self._table.to_pandas()
                 total = len(all_data)
                 if all_data.empty:
-                    logger.info("[REEMBED] No entities to re-embed")
+                    logger.info('[REEMBED] No entities to re-embed')
                     return stats
-
-            logger.info(f"[REEMBED] Found {total} entities to re-embed")
-
-            # Re-embed in batches. polars: .slice() + .iter_rows(named=True).
-            # pandas: .iloc + .iterrows() with .to_dict() so both branches yield
-            # the same list[dict] shape — no per-branch divergence in the loop.
+            logger.info(f'[REEMBED] Found {total} entities to re-embed')
             batch_size = 16
             for i in range(0, total, batch_size):
                 if use_polars:
                     batch = all_data.slice(i, batch_size)
-                    rows = list(batch.iter_rows(named=True))  # list[dict]
+                    rows = list(batch.iter_rows(named=True))
                 else:
                     batch = all_data.iloc[i:i + batch_size]
-                    rows = [row.to_dict() for _, row in batch.iterrows()]  # list[dict]
+                    rows = [row.to_dict() for _, row in batch.iterrows()]
                 batch_len = len(rows)
-
-                texts = [
-                    r.get("text") or r.get("content") or str(r.get("id", ""))
-                    for r in rows
-                ]
-
+                texts = [r.get('text') or r.get('content') or str(r.get('id', '')) for r in rows]
                 try:
                     embeddings = await self._embed_batch(texts, batch_size=batch_size)
-                    # Update embeddings in table
                     for idx, r in enumerate(rows):
-                        entity_id = r["id"]
+                        entity_id = r['id']
                         if idx < len(embeddings) and embeddings[idx]:
-                            self._table.merge_insert("id").on("id").execute([{
-                                "id": entity_id,
-                                "embedding": embeddings[idx]
-                            }])
-                            stats["reembedded"] += 1
+                            self._table.merge_insert('id').on('id').execute([{'id': entity_id, 'embedding': embeddings[idx]}])
+                            stats['reembedded'] += 1
                         else:
-                            stats["skipped"] += 1
+                            stats['skipped'] += 1
                 except Exception as e:
-                    logger.warning(f"[REEMBED] Batch failed: {e}")
-                    stats["failed"] += batch_len
-
-            logger.info(f"[REEMBED] Complete: {stats}")
+                    logger.warning(f'[REEMBED] Batch failed: {e}')
+                    stats['failed'] += batch_len
+            logger.info(f'[REEMBED] Complete: {stats}')
         except Exception as e:
-            logger.error(f"[REEMBED] Failed: {e}")
-
+            logger.error(f'[REEMBED] Failed: {e}')
         return stats
 
     async def close(self) -> None:
         """Close database connection and cache."""
-        # Sprint F265-L: Clear writeback buffer before closing
         self._writeback_buffer.clear()
-
-        # Release MLX GPU tensors (same as shutdown)
         if self._mlx_embeddings is not None:
             del self._mlx_embeddings
             self._mlx_embeddings = None
@@ -1991,36 +1419,24 @@ class LanceDBIdentityStore:
         self._mlx_ids = None
         self._mlx_id_to_idx = {}
         self._mlx_embeddings_total_count = 0
-
-        # Clear MLX memory
         try:
             import mlx.core as mx
             mx.eval([])
             mx.clear_cache()
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
-
         if self.db is not None:
             try:
                 self.db.close()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
         if self._cache_env is not None:
             try:
                 self._cache_env.close()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
 
-    # =============================================================================
-    # Sprint 76: Extended search_similar with adaptive reranking
-    # =============================================================================
-
-    async def search_similar_adaptive(
-        self,
-        query_text: str,
-        query_emb: list[float],
-        top_k: int = 10
-    ) -> list[dict]:
+    async def search_similar_adaptive(self, query_text: str, query_emb: list[float], top_k: int=10) -> list[dict]:
         """
         Hybrid search with adaptive reranking and MMR (Sprint 76).
 
@@ -2032,88 +1448,51 @@ class LanceDBIdentityStore:
         Returns:
             List of ranked documents.
         """
-        # Narrow seam: self._orch._memory_mgr.get_reranking_context() je jediný entry point
-        # pro thermal/battery awareness. Store funguje i bez orchestratoru (default values).
-        ctx = {"thermal": "NORMAL", "on_battery": False, "available_gb": 8.0}
+        ctx = {'thermal': 'NORMAL', 'on_battery': False, 'available_gb': 8.0}
         try:
             if self._orch and hasattr(self._orch, '_memory_mgr') and self._orch._memory_mgr:
                 ctx = self._orch._memory_mgr.get_reranking_context()
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
-        thermal = ctx.get("thermal", "NORMAL")
-        on_battery = ctx.get("on_battery", False)
-        available_gb = ctx.get("available_gb", 8.0)
-
-        # Stage 1: Primary search - LanceDB hybrid (vector + FTS via RRF) or pure vector.
-        # AREA H+: forward query_text as text_hint so _detect_query_type() in search_similar
-        # can route to hybrid path with native RRFReranker when FTS is available.
+        thermal = ctx.get('thermal', 'NORMAL')
+        on_battery = ctx.get('on_battery', False)
+        available_gb = ctx.get('available_gb', 8.0)
         try:
-            candidates = await self.search_similar(
-                query_emb,
-                text_hint=query_text or "",
-                limit=200,
-                query_type="auto",
-                threshold=0.0,  # RRF reranked results: don't filter — RRF is the final ranking
-            )
+            candidates = await self.search_similar(query_emb, text_hint=query_text or '', limit=200, query_type='auto', threshold=0.0)
         except Exception:
             if self._usearch_index is not None:
                 candidates = await self._usearch_search(query_emb, count=200)
             else:
                 candidates = []
-
         if not candidates:
             return []
-
-        # Stage 2: Binary pre-filter (if many candidates)
         if len(candidates) > 100:
             candidates = await self._binary_prefilter(query_emb, candidates, count=self._BINARY_FILTER_COUNT)
-
-        # Stage 3: MMR diversity filter
         candidates = self._mmr(candidates, query_emb, top_k=min(self._MMR_TOP_K, len(candidates)))
-
-        # Stage 4: Speculative reranking - skip if low variance
         scores = [c.get('similarity', 0.5) for c in candidates]
         if scores:
             mean_score = sum(scores) / len(scores)
-            variance = sum((s - mean_score) ** 2 for s in scores) / len(scores)
+            variance = sum(((s - mean_score) ** 2 for s in scores)) / len(scores)
             if variance < 0.1:
                 return candidates[:top_k]
-
-        # Stage 5: Adaptive reranking based on resources (available_gb from get_reranking_context)
-        # ColBERT (GPU) - requires >4GB and cool temperature
-        if available_gb > 4.0 and thermal not in ("HOT", "CRITICAL") and not on_battery:
+        if available_gb > 4.0 and thermal not in ('HOT', 'CRITICAL') and (not on_battery):
             reranker = await self._get_colbert_reranker()
             if reranker:
                 return await reranker.rerank(query_text, candidates, top_k)
-
-        # FlashRank (CPU) - requires >2GB
         if available_gb > 2.0:
             reranker = await self._get_flashrank_ranker()
             if reranker:
                 try:
                     from flashrank import RerankRequest
-                    passages = [{"id": i, "text": c.get('text', '')} for i, c in enumerate(candidates[:50])]
+                    passages = [{'id': i, 'text': c.get('text', '')} for i, c in enumerate(candidates[:50])]
                     request = RerankRequest(query=query_text, passages=passages)
                     results = reranker.rerank(request)
                     return [candidates[r['id']] for r in results[:top_k]]
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
-
-        # Fallback: MLX rerank
         return await self._mlx_rerank(query_emb, candidates, top_k)
 
-    # =============================================================================
-    # MMR Reranking via context_optimization (Sprint 77)
-    # =============================================================================
-
-    async def search_with_mmr(
-        self,
-        query_text: str,
-        query_emb: list[float],
-        top_k: int = 10,
-        lambda_mult: float = 0.5,
-        fetch_k: int = 30,
-    ) -> list[dict]:
+    async def search_with_mmr(self, query_text: str, query_emb: list[float], top_k: int=10, lambda_mult: float=0.5, fetch_k: int=30) -> list[dict]:
         """
         Diversity-aware search using Maximal Marginal Relevance from context_optimization.
 
@@ -2127,26 +1506,15 @@ class LanceDBIdentityStore:
         Returns:
             List of diverse, relevant documents.
         """
-        # Stage 1: Fetch candidates from LanceDB (hybrid w/ RRF or pure vector)
-        # AREA H+: forward query_text as text_hint so hybrid path is considered.
         try:
-            candidates = await self.search_similar(
-                query_emb,
-                text_hint=query_text or "",
-                limit=fetch_k,
-                query_type="auto",
-                threshold=0.0,  # RRF reranked: don't filter; MMR does the selection
-            )
+            candidates = await self.search_similar(query_emb, text_hint=query_text or '', limit=fetch_k, query_type='auto', threshold=0.0)
         except Exception:
             if self._usearch_index is not None:
                 candidates = await self._usearch_search(query_emb, count=fetch_k)
             else:
                 candidates = []
-
         if not candidates:
             return []
-
-        # Stage 2: Extract candidate embeddings for MMR
         candidate_embs: list[np.ndarray] = []
         for c in candidates:
             emb = c.get('_embedding')
@@ -2156,31 +1524,13 @@ class LanceDBIdentityStore:
                 candidate_embs.append(np.array(emb, dtype='float32'))
             else:
                 candidate_embs.append(np.zeros(len(query_emb), dtype='float32'))
-
         if not candidate_embs:
             return candidates[:top_k]
-
-        # Stage 3: MMR reranking via context_optimization.mmr
         query_emb_np = np.array(query_emb, dtype='float32')
         if query_emb_np.ndim == 1:
             query_emb_np = query_emb_np.reshape(1, -1)
-
-        selected_indices = maximal_marginal_relevance(
-            query_vector=query_emb_np,
-            candidate_vectors=candidate_embs,
-            top_k=top_k,
-            lambda_param=lambda_mult,
-        )
-
+        selected_indices = maximal_marginal_relevance(query_vector=query_emb_np, candidate_vectors=candidate_embs, top_k=top_k, lambda_param=lambda_mult)
         return [candidates[i] for i in selected_indices]
-
-
-# =============================================================================
-# Phase 11.2: SqliteVecIdentityStore — zero-process replacement for LanceDB
-# Eliminates ~200MB LanceDB subprocess overhead on M1 8GB.
-# Plug-in replacement for LanceDBIdentityStore: same public API surface.
-# =============================================================================
-
 
 class SqliteVecIdentityStore:
     """
@@ -2203,15 +1553,14 @@ class SqliteVecIdentityStore:
         - search_similar_adaptive(query_text, query_emb, top_k) -> list[dict]
         - _embed_single(text) -> list[float] (internal)
     """
+    MAX_DIM = 384
+    __slots__ = tuple(('_embedding_manager', '_orch', '_sprint_id', '_store'))
 
-    MAX_DIM = 384  # Matches MLX embedding dimension
-
-    def __init__(self, uri: str = "default", orchestrator=None) -> None:
-        # uri parameter kept for API compat — we derive path from sprint_id
-        self._sprint_id = uri if uri else "default"
+    def __init__(self, uri: str='default', orchestrator=None) -> None:
+        self._sprint_id = uri if uri else 'default'
         self._orch = orchestrator
-        self._store: Any = None  # SqliteVecStore instance
-        self._embedding_manager: Any = None  # MLXEmbeddingManager
+        self._store: Any = None
+        self._embedding_manager: Any = None
 
     async def _ensure_store(self) -> bool:
         """Lazily initialize SqliteVecStore."""
@@ -2240,36 +1589,20 @@ class SqliteVecIdentityStore:
         try:
             mgr = await self._get_embedding_manager()
             emb = mgr.embed_query(text)
-            return emb.tolist() if hasattr(emb, "tolist") else list(emb)
+            return emb.tolist() if hasattr(emb, 'tolist') else list(emb)
         except Exception:
             return None
 
-    async def add_entity(
-        self,
-        entity_id: str,
-        embedding: list[float],
-        aliases: list[str],
-    ) -> bool:
+    async def add_entity(self, entity_id: str, embedding: list[float], aliases: list[str]) -> bool:
         """Add entity to identity store. API-compatible with LanceDBIdentityStore."""
         if not await self._ensure_store():
             return False
         try:
-            return await self._store.upsert_entity(
-                entity_id=entity_id,
-                embedding=embedding,
-                aliases=aliases,
-            )
+            return await self._store.upsert_entity(entity_id=entity_id, embedding=embedding, aliases=aliases)
         except Exception:
             return False
 
-    async def search_similar(
-        self,
-        embedding: list[float],
-        text_hint: str = "",
-        threshold: float = 0.85,
-        limit: int = 20,
-        query_type: str = "auto",
-    ) -> list[dict[str, Any]]:
+    async def search_similar(self, embedding: list[float], text_hint: str='', threshold: float=0.85, limit: int=20, query_type: str='auto') -> list[dict[str, Any]]:
         """
         ANN search for similar entities. API-compatible with LanceDBIdentityStore.
 
@@ -2286,32 +1619,13 @@ class SqliteVecIdentityStore:
         if not await self._ensure_store():
             return []
         try:
-            results = await self._store.search_entities(
-                query_embedding=embedding,
-                top_k=limit,
-                threshold=1.0 - threshold,  # vec0: distance, lower is better
-            )
-            # Normalize to LanceDB-compatible format
+            results = await self._store.search_entities(query_embedding=embedding, top_k=limit, threshold=1.0 - threshold)
             now = datetime.now(UTC)
-            return [
-                {
-                    "id": r.get("id") or r.get("item_id", ""),
-                    "aliases": (r.get("metadata") or {}).get("aliases", []),
-                    "similarity": r.get("similarity", 1.0 - r.get("distance", 1.0)),
-                    "first_seen": now,
-                    "last_seen": now,
-                }
-                for r in results
-            ]
+            return [{'id': r.get('id') or r.get('item_id', ''), 'aliases': (r.get('metadata') or {}).get('aliases', []), 'similarity': r.get('similarity', 1.0 - r.get('distance', 1.0)), 'first_seen': now, 'last_seen': now} for r in results]
         except Exception:
             return []
 
-    async def search_similar_adaptive(
-        self,
-        query_text: str,
-        query_emb: list[float],
-        top_k: int = 10,
-    ) -> list[dict[str, Any]]:
+    async def search_similar_adaptive(self, query_text: str, query_emb: list[float], top_k: int=10) -> list[dict[str, Any]]:
         """
         Hybrid search with adaptive reranking. API-compatible with LanceDBIdentityStore.
 
@@ -2328,57 +1642,26 @@ class SqliteVecIdentityStore:
         """
         if not await self._ensure_store():
             return []
-        # Pure ANN search (no FTS available in sqlite-vec)
         try:
-            results = await self._store.search_entities(
-                query_embedding=query_emb,
-                top_k=min(top_k * 2, 100),
-                threshold=0.0,  # No pre-filter; apply in caller
-            )
+            results = await self._store.search_entities(query_embedding=query_emb, top_k=min(top_k * 2, 100), threshold=0.0)
         except Exception:
             return []
-
         if not results:
             return []
-
-        # Normalize format
         now = datetime.now(UTC)
-        entities = [
-            {
-                "id": r.get("id") or r.get("item_id", ""),
-                "aliases": (r.get("metadata") or {}).get("aliases", []),
-                "similarity": r.get("similarity", 1.0 - r.get("distance", 1.0)),
-                "first_seen": now,
-                "last_seen": now,
-                "text": (r.get("metadata") or {}).get("aliases", []),
-            }
-            for r in results
-        ]
-
-        # MMR diversity filter
+        entities = [{'id': r.get('id') or r.get('item_id', ''), 'aliases': (r.get('metadata') or {}).get('aliases', []), 'similarity': r.get('similarity', 1.0 - r.get('distance', 1.0)), 'first_seen': now, 'last_seen': now, 'text': (r.get('metadata') or {}).get('aliases', [])} for r in results]
         try:
             from context_optimization.mmr import maximal_marginal_relevance
-            entities = maximal_marginal_relevance(
-                candidates=entities,
-                query_emb=query_emb,
-                lambda_param=0.5,
-                top_k=top_k,
-            )
+            entities = maximal_marginal_relevance(candidates=entities, query_emb=query_emb, lambda_param=0.5, top_k=top_k)
         except Exception:
-            # MMR unavailable — return raw ANN results
             pass
-
         return entities[:top_k]
 
     async def initialize(self) -> bool:
         """Explicit init (optional). Stores are lazy inited on first use."""
         return await self._ensure_store()
-
-
-# Module-level singleton — async-safe via asyncio.Lock
 _identity_store: LanceDBIdentityStore | None = None
 _identity_store_lock = asyncio.Lock()
-
 
 async def get_identity_store() -> LanceDBIdentityStore:
     """Get or create the singleton identity store (async-safe).
@@ -2394,40 +1677,19 @@ async def get_identity_store() -> LanceDBIdentityStore:
     if _identity_store is None:
         async with _identity_store_lock:
             if _identity_store is None:
-                # Phase 11.2: Try sqlite-vec first (zero-process, M1-native)
                 _identity_store = SqliteVecIdentityStore()
                 ok = await _identity_store._ensure_store()
                 if not ok:
-                    # Fallback to LanceDB if sqlite-vec unavailable
                     _identity_store = LanceDBIdentityStore()
-                    logger.info("[IdentityStore] sqlite-vec unavailable, falling back to LanceDB")
+                    logger.info('[IdentityStore] sqlite-vec unavailable, falling back to LanceDB')
     return _identity_store
-
-
-# =============================================================================
-# Sprint F259: LanceDBAcademicStore for semantic search over academic papers
-# =============================================================================
-# M1 8GB: Uses FastEmbed BAAI/bge-small-en-v1.5 (384d, 33MB) NOT ModernBERT
-
 
 class AcademicPaper:
     """Academic paper with metadata for LanceDB storage."""
+    TABLE_NAME = 'academic_papers'
+    __slots__ = tuple(('abstract', 'authors', 'citation_count', 'doi', 'embedding', 'paper_id', 'source', 'title', 'url', 'year'))
 
-    TABLE_NAME = "academic_papers"
-
-    def __init__(
-        self,
-        paper_id: str,
-        title: str,
-        abstract: str = "",
-        authors: list[str] | None = None,
-        year: int | None = None,
-        source: str = "",  # arxiv, s2orc, openalex, core, unpaywall
-        doi: str = "",
-        url: str = "",
-        citation_count: int = 0,
-        embedding: list[float] | None = None,
-    ) -> None:
+    def __init__(self, paper_id: str, title: str, abstract: str='', authors: list[str] | None=None, year: int | None=None, source: str='', doi: str='', url: str='', citation_count: int=0, embedding: list[float] | None=None) -> None:
         self.paper_id = paper_id
         self.title = title
         self.abstract = abstract
@@ -2441,19 +1703,7 @@ class AcademicPaper:
 
     def to_dict(self) -> dict:
         """Convert to dict for LanceDB storage."""
-        return {
-            "paper_id": self.paper_id,
-            "title": self.title,
-            "abstract": self.abstract,
-            "authors": self.authors,
-            "year": self.year,
-            "source": self.source,
-            "doi": self.doi,
-            "url": self.url,
-            "citation_count": self.citation_count,
-            "embedding": self.embedding or [0.0] * 384,
-        }
-
+        return {'paper_id': self.paper_id, 'title': self.title, 'abstract': self.abstract, 'authors': self.authors, 'year': self.year, 'source': self.source, 'doi': self.doi, 'url': self.url, 'citation_count': self.citation_count, 'embedding': self.embedding or [0.0] * 384}
 
 class LanceDBAcademicStore:
     """
@@ -2474,91 +1724,49 @@ class LanceDBAcademicStore:
         - citation_count: number of citations
         - embedding: 384d FastEmbed vector
     """
-
-    # FastEmbed BAAI/bge-small-en-v1.5 dimension
     EMBEDDING_DIM = 384
+    __slots__ = tuple(('_db', '_db_path', '_dim', '_embed_model', '_embedder', '_embedder_backend', '_initialized', '_lancedb_has_fts', '_table'))
 
-    def __init__(
-        self,
-        db_path: str | None = None,
-        dim: int = 384,
-    ) -> None:
+    def __init__(self, db_path: str | None=None, dim: int=384) -> None:
         """
         Args:
             db_path: Path to LanceDB database. If None, uses default.
             dim: Embedding dimension (default 384 for FastEmbed BAAI).
         """
         import lancedb
-
         from hledac.universal.paths import LMDB_ROOT
-
         self._dim = dim
         if db_path is None:
-            db_path = str(LMDB_ROOT / "academic_papers.lance")
+            db_path = str(LMDB_ROOT / 'academic_papers.lance')
         self._db_path = db_path
         from knowledge.lancedb_pool import get_connection
         self._db = get_connection(db_path)
         self._table = None
         self._embedder = None
         self._embedder_backend: str | None = None
-        self._embed_model = "BAAI/bge-small-en-v1.5"
+        self._embed_model = 'BAAI/bge-small-en-v1.5'
         self._initialized = False
-        # AREA H+: FTS capability flag (set in initialize after FTS index creation)
         self._lancedb_has_fts = False
 
     async def initialize(self) -> None:
         """Initialize table and embedder."""
         if self._initialized:
             return
-
         import pyarrow as pa
-
-        # Create table with schema
-        self._table = self._db.create_table(
-            AcademicPaper.TABLE_NAME,
-            schema=pa.schema([
-                pa.field("paper_id", pa.string()),
-                pa.field("title", pa.string()),
-                pa.field("abstract", pa.string()),
-                pa.field("authors", pa.list_(pa.string())),
-                pa.field("year", pa.int32()),
-                pa.field("source", pa.string()),
-                pa.field("doi", pa.string()),
-                pa.field("url", pa.string()),
-                pa.field("citation_count", pa.int32()),
-                pa.field("embedding", pa.list_(pa.float32(), list_size=self._dim)),
-            ]),
-            exist_ok=True
-        )
-
-        # AREA H+: Create FTS indexes on title and abstract for hybrid search.
-        # Native FTS only supports single-column indexes, so we create 2 separate ones
-        # and reference both via fts_columns=[] in the search builder.
+        self._table = self._db.create_table(AcademicPaper.TABLE_NAME, schema=pa.schema([pa.field('paper_id', pa.string()), pa.field('title', pa.string()), pa.field('abstract', pa.string()), pa.field('authors', pa.list_(pa.string())), pa.field('year', pa.int32()), pa.field('source', pa.string()), pa.field('doi', pa.string()), pa.field('url', pa.string()), pa.field('citation_count', pa.int32()), pa.field('embedding', pa.list_(pa.float32(), list_size=self._dim))]), exist_ok=True)
         try:
             list_indices_fn = getattr(self._table, 'list_indices', None)
             existing = list_indices_fn() if callable(list_indices_fn) else []
             existing_names = {getattr(idx, 'name', '') for idx in existing}
             if 'title_idx' not in existing_names:
-                self._table.create_fts_index(
-                    "title",
-                    replace=False,
-                    with_position=True,    # enables phrase + proximity queries
-                    tokenizer_name="en_stem",  # Porter stemmer for better recall
-                )
+                self._table.create_fts_index('title', replace=False, with_position=True, tokenizer_name='en_stem')
             if 'abstract_idx' not in existing_names:
-                self._table.create_fts_index(
-                    "abstract",
-                    replace=False,
-                    with_position=True,    # enables phrase + proximity queries
-                    tokenizer_name="en_stem",  # Porter stemmer for better recall
-                )
+                self._table.create_fts_index('abstract', replace=False, with_position=True, tokenizer_name='en_stem')
             self._lancedb_has_fts = True
-            logger.info("[LANCEDB:H] Academic FTS indexes (title, abstract) — hybrid search enabled")
+            logger.info('[LANCEDB:H] Academic FTS indexes (title, abstract) — hybrid search enabled')
         except Exception as e:
             self._lancedb_has_fts = False
-            logger.debug(f"[LANCEDB:H] Academic FTS not available: {e}")
-
-        # Initialize FastEmbed embedder (M1-safe: 33MB model)
+            logger.debug(f'[LANCEDB:H] Academic FTS not available: {e}')
         await self._init_embedder()
         self._initialized = True
 
@@ -2570,27 +1778,15 @@ class LanceDBAcademicStore:
         MLX path is tried first (M1 ANE/GPU, zero-copy UMA).
         ``self._embedder_backend`` is set in every success path.
         """
-        # 1) MLX path — preferred on M1 (ANE/GPU, zero-copy UMA)
         try:
-            import mlx.core  # noqa: F401
-
-            # F265-4×-FIX: use singleton get_mlx_embedder() instead of direct
-            # instantiation to prevent 4× model loading from concurrent calls.
+            import mlx.core
             from core.mlx_embeddings import get_mlx_embedder
             self._embedder = get_mlx_embedder()
-            self._embedder_backend = "mlx"
+            self._embedder_backend = 'mlx'
             return
         except (ImportError, Exception):
             pass
-
-        # 2) MLX-only: no sentence-transformers fallback
-        raise RuntimeError(
-            "_init_embedder: MLX backend unavailable.\n"
-            "  Likely cause: running via `python3` instead of `uv run python`.\n"
-            f"  sys.executable: {sys.executable!r}\n"
-            "  Fix: use `uv run python -m hledac.universal ...`\n"
-            "  Verify: `uv run python -c 'from mlx_embeddings import load; print(\"OK\")'`"
-        )
+        raise RuntimeError(f"""_init_embedder: MLX backend unavailable.\n  Likely cause: running via `python3` instead of `uv run python`.\n  sys.executable: {sys.executable!r}\n  Fix: use `uv run python -m hledac.universal ...`\n  Verify: `uv run python -c 'from mlx_embeddings import load; print("OK")'`""")
 
     async def _embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Embed texts via the initialized embedder backend.
@@ -2601,13 +1797,8 @@ class LanceDBAcademicStore:
         """
         if not texts:
             return []
-
         if self._embedder is None:
-            raise RuntimeError(
-                "_embed_texts called before _init_embedder succeeded. "
-                "Check that initialize() was awaited and a backend is installed."
-            )
-
+            raise RuntimeError('_embed_texts called before _init_embedder succeeded. Check that initialize() was awaited and a backend is installed.')
         import asyncio
         return await asyncio.to_thread(self._embedder.encode, texts)
 
@@ -2620,14 +1811,10 @@ class LanceDBAcademicStore:
         """
         if not self._initialized:
             await self.initialize()
-
-        # Embed if needed
         if paper.embedding is None:
-            embeddings = await self._embed_texts([paper.title + " " + paper.abstract])
+            embeddings = await self._embed_texts([paper.title + ' ' + paper.abstract])
             paper.embedding = embeddings[0] if embeddings else [0.0] * self._dim
-
-        # Upsert to LanceDB
-        self._table.merge_insert("paper_id").on("paper_id").execute([paper.to_dict()])
+        self._table.merge_insert('paper_id').on('paper_id').execute([paper.to_dict()])
 
     async def upsert_papers(self, papers: list[AcademicPaper]) -> None:
         """
@@ -2638,47 +1825,32 @@ class LanceDBAcademicStore:
         """
         if not self._initialized:
             await self.initialize()
-
         if not papers:
             return
-
-        # Batch embed
-        texts = [p.title + " " + p.abstract for p in papers]
+        texts = [p.title + ' ' + p.abstract for p in papers]
         embeddings = await self._embed_texts(texts)
-
         for i, paper in enumerate(papers):
             if paper.embedding is None and i < len(embeddings):
                 paper.embedding = embeddings[i]
-
-        # Batch upsert
         dicts = [p.to_dict() for p in papers]
-        self._table.merge_insert("paper_id").on("paper_id").execute(dicts)
+        self._table.merge_insert('paper_id').on('paper_id').execute(dicts)
 
     async def _detect_query_type(self, query_text: str) -> str:
         """AREA H+: Decide whether to use FTS, hybrid, or pure vector search.
         Same heuristic as LanceDBIdentityStore for consistency.
         """
         if not query_text:
-            return "vector"
+            return 'vector'
         if not self._lancedb_has_fts:
-            return "vector"
+            return 'vector'
         words = query_text.split()
-        # Quoted phrase or very short → FTS (exact match)
         if '"' in query_text or len(words) <= 2:
-            return "fts"
-        # Long prose without proper nouns/digits → semantic → vector
-        if len(words) >= 10 and not any((w[0].isupper() or w[0].isdigit()) for w in words if w):
-            return "vector"
-        # Default: hybrid (vector ANN + BM25 + RRF)
-        return "hybrid"
+            return 'fts'
+        if len(words) >= 10 and (not any((w[0].isupper() or w[0].isdigit() for w in words if w))):
+            return 'vector'
+        return 'hybrid'
 
-    async def search_similar(
-        self,
-        query: str,
-        top_k: int = 10,
-        filters: dict | None = None,
-        query_type: str = "auto",
-    ) -> list[AcademicPaper]:
+    async def search_similar(self, query: str, top_k: int=10, filters: dict | None=None, query_type: str='auto') -> list[AcademicPaper]:
         """
         Semantic search for similar papers.
 
@@ -2695,86 +1867,46 @@ class LanceDBAcademicStore:
         """
         if not self._initialized:
             await self.initialize()
-
-        # Embed query
         embeddings = await self._embed_texts([query])
         query_emb = embeddings[0] if embeddings else [0.0] * self._dim
-
-        # AREA H+: Resolve effective query_type when caller didn't override
         effective_qt = query_type
-        if effective_qt == "auto":
-            effective_qt = await self._detect_query_type(query or "")
-
-        # Capture for closure
+        if effective_qt == 'auto':
+            effective_qt = await self._detect_query_type(query or '')
         _qt = effective_qt
         _q = query
         _emb = query_emb
         _k = top_k
         _filters = filters
-
         try:
             loop = asyncio.get_running_loop()
 
             def _search():
-                if _qt == "hybrid" and _q and self._lancedb_has_fts:
+                if _qt == 'hybrid' and _q and self._lancedb_has_fts:
                     reranker = _get_rrf_reranker()
-                    builder = (
-                        self._table.search(
-                            query_type="hybrid",
-                            vector_column_name="embedding",
-                            fts_columns=["title", "abstract"],
-                        )
-                        .vector(_emb)
-                        .text(_q)
-                        .limit(_k)
-                    )
+                    builder = self._table.search(query_type='hybrid', vector_column_name='embedding', fts_columns=['title', 'abstract']).vector(_emb).text(_q).limit(_k)
                     if reranker is not None:
                         builder = builder.rerank(reranker=reranker)
                     results = builder
-                elif _qt == "fts" and _q and self._lancedb_has_fts:
-                    results = (
-                        self._table.search(_q, query_type="fts", fts_columns=["title", "abstract"])
-                        .limit(_k)
-                    )
-                elif _q and not self._lancedb_has_fts:
-                    # FTS not available — pure vector
-                    logger.debug("[LANCEDB:H] academic query=%r — FTS not available, vector only", str(_q)[:50])
-                    results = self._table.search(_emb, vector_column_name="embedding")
+                elif _qt == 'fts' and _q and self._lancedb_has_fts:
+                    results = self._table.search(_q, query_type='fts', fts_columns=['title', 'abstract']).limit(_k)
+                elif _q and (not self._lancedb_has_fts):
+                    logger.debug('[LANCEDB:H] academic query=%r — FTS not available, vector only', str(_q)[:50])
+                    results = self._table.search(_emb, vector_column_name='embedding')
                 else:
-                    # No query text — pure vector
-                    results = self._table.search(_emb, vector_column_name="embedding")
-
+                    results = self._table.search(_emb, vector_column_name='embedding')
                 if _filters:
                     for key, value in _filters.items():
                         results = results.where(f"{key} = '{value}'")
                 return results.to_list()
-
             rows = await asyncio.to_thread(_search)
         except Exception:
             return []
-
-        # Convert to AcademicPaper
         papers = []
         for row in rows:
-            papers.append(AcademicPaper(
-                paper_id=row.get("paper_id", ""),
-                title=row.get("title", ""),
-                abstract=row.get("abstract", ""),
-                authors=row.get("authors", []),
-                year=row.get("year"),
-                source=row.get("source", ""),
-                doi=row.get("doi", ""),
-                url=row.get("url", ""),
-                citation_count=row.get("citation_count", 0),
-                embedding=row.get("embedding"),
-            ))
+            papers.append(AcademicPaper(paper_id=row.get('paper_id', ''), title=row.get('title', ''), abstract=row.get('abstract', ''), authors=row.get('authors', []), year=row.get('year'), source=row.get('source', ''), doi=row.get('doi', ''), url=row.get('url', ''), citation_count=row.get('citation_count', 0), embedding=row.get('embedding')))
         return papers
 
-    async def get_citation_context(
-        self,
-        paper_id: str,
-        max_papers: int = 20,
-    ) -> list[AcademicPaper]:
+    async def get_citation_context(self, paper_id: str, max_papers: int=20) -> list[AcademicPaper]:
         """
         Get papers that cite or are cited by the given paper.
 
@@ -2787,38 +1919,15 @@ class LanceDBAcademicStore:
         """
         if not self._initialized:
             await self.initialize()
-
         try:
-            # Find paper
-            results = self._table.search(
-                [0.0] * self._dim,
-                vector_column_name="embedding"
-            ).where(f"paper_id = '{paper_id}'").limit(1).to_list()
-
+            results = self._table.search([0.0] * self._dim, vector_column_name='embedding').where(f"paper_id = '{paper_id}'").limit(1).to_list()
             if not results:
                 return []
-
-            # Find similar papers by citation count
-            similar = self._table.search(
-                results[0].get("embedding", [0.0] * self._dim),
-                vector_column_name="embedding"
-            ).where(f"citation_count > {results[0].get('citation_count', 0) * 0.5}").limit(max_papers).to_list()
-
+            similar = self._table.search(results[0].get('embedding', [0.0] * self._dim), vector_column_name='embedding').where(f"citation_count > {results[0].get('citation_count', 0) * 0.5}").limit(max_papers).to_list()
             papers = []
             for row in similar:
-                if row.get("paper_id") != paper_id:
-                    papers.append(AcademicPaper(
-                        paper_id=row.get("paper_id", ""),
-                        title=row.get("title", ""),
-                        abstract=row.get("abstract", ""),
-                        authors=row.get("authors", []),
-                        year=row.get("year"),
-                        source=row.get("source", ""),
-                        doi=row.get("doi", ""),
-                        url=row.get("url", ""),
-                        citation_count=row.get("citation_count", 0),
-                        embedding=row.get("embedding"),
-                    ))
+                if row.get('paper_id') != paper_id:
+                    papers.append(AcademicPaper(paper_id=row.get('paper_id', ''), title=row.get('title', ''), abstract=row.get('abstract', ''), authors=row.get('authors', []), year=row.get('year'), source=row.get('source', ''), doi=row.get('doi', ''), url=row.get('url', ''), citation_count=row.get('citation_count', 0), embedding=row.get('embedding')))
             return papers
         except Exception:
             return []
@@ -2828,21 +1937,16 @@ class LanceDBAcademicStore:
         if self._db is not None:
             try:
                 self._db.close()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
-
-
-# Module-level singleton — async-safe via asyncio.Lock
 _academic_store: LanceDBAcademicStore | None = None
 _academic_store_lock = asyncio.Lock()
-
 
 async def get_academic_store() -> LanceDBAcademicStore:
     """Get or create the singleton academic store (async-safe)."""
     global _academic_store
     if _academic_store is None:
         async with _academic_store_lock:
-            # Double-check after acquiring lock
             if _academic_store is None:
                 _academic_store = LanceDBAcademicStore()
     return _academic_store

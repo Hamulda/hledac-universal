@@ -10,12 +10,8 @@ For persistent knowledge graph storage, use:
 - IOCGraph (KuzuDB) for IOC entity truth store
 - DuckPGQGraph (DuckDB) for analytics donor backend
 """
-
-
-
 import msgspec.json as _json
 from typing import Any
-
 
 class ContextGraph:
     """
@@ -24,31 +20,21 @@ class ContextGraph:
     NOT a storage backend — data is not persisted.
     Use IOCGraph (KuzuDB) for authoritative IOC storage.
     """
+    __slots__ = tuple(('edges', 'nodes'))
 
     def __init__(self) -> None:
         self.nodes: list[dict[str, Any]] = []
         self.edges: list[dict[str, Any]] = []
 
-    def add_node(
-        self, node_id: str, node_type: str, attributes: dict[str, Any] | None = None
-    ) -> None:
+    def add_node(self, node_id: str, node_type: str, attributes: dict[str, Any] | None=None) -> None:
         """Adds a node to the graph."""
-        if not any(n["id"] == node_id for n in self.nodes):
-                self.nodes.append({"id": node_id, "type": node_type, "attributes": attributes or {}})
+        if not any((n['id'] == node_id for n in self.nodes)):
+            self.nodes.append({'id': node_id, 'type': node_type, 'attributes': attributes or {}})
 
-    def add_edge(
-        self, source: str, target: str, edge_type: str, attributes: dict[str, Any] | None = None
-    ) -> None:
+    def add_edge(self, source: str, target: str, edge_type: str, attributes: dict[str, Any] | None=None) -> None:
         """Adds an edge to the graph."""
-        self.edges.append(
-            {
-                "source": source,
-                "target": target,
-                "type": edge_type,
-                "attributes": attributes or {},
-            }
-        )
+        self.edges.append({'source': source, 'target': target, 'type': edge_type, 'attributes': attributes or {}})
 
     def to_json(self) -> str:
         """Serializes the graph to a JSON string."""
-        return _json.encode({"nodes": self.nodes, "edges": self.edges}).decode("utf-8")
+        return _json.encode({'nodes': self.nodes, 'edges': self.edges}).decode('utf-8')

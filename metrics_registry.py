@@ -11,127 +11,37 @@ M1 8GB Optimization:
 - Ring buffer for recent snapshots
 - No raw strings or large payloads
 """
-
-
 import json
 import logging
 import os
 from collections import deque
-
-# orjson is optional — faster serialization for metrics flush
 try:
     import orjson as _orjson
-
     _ORJSON_AVAILABLE = True
 except ImportError:
-    _orjson = None  # type: ignore[assignment]
+    _orjson = None
     _ORJSON_AVAILABLE = False
-
-# psutil is optional — lazy import with fail-soft fallback
 try:
     import psutil
-
     _PSUTIL_AVAILABLE = True
 except ImportError:
-    psutil = None  # type: ignore[assignment]
+    psutil = None
     _PSUTIL_AVAILABLE = False
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-
 logger = logging.getLogger(__name__)
+METRIC_NAMES = frozenset(['orchestrator_rss_mb', 'orchestrator_frontier_size', 'orchestrator_evidence_ring_len', 'orchestrator_tool_exec_events', 'orchestrator_budget_remaining_tokens', 'orchestrator_budget_remaining_time', 'orchestrator_budget_remaining_api_calls', 'cache_http_size', 'cache_snapshot_size', 'cache_frontier_size', 'memory_open_fds', 'memory_rss_mb', 'memory_vms_mb', 'mlx_cache_hits', 'mlx_cache_misses', 'mlx_cache_size_bytes', 'mlx_active_memory_bytes', 'mlx_peak_memory_bytes', 'mlx_cache_fragmentation_ratio', 'mlx_kernel_compilation_time_ms', 'mlx_kernel_cache_hit_rate', 'model_load_duration_ms', 'model_unload_count', 'model_load_failures', 'action_latency_ms', 'thermal_throttle_events', 'thermal_recovery_events', 'memory_zone_normal_seconds', 'memory_zone_high_seconds', 'circuit_breaker_state_transitions', 'circuit_breaker_open_count', 'circuit_breaker_half_open_count', 'circuit_breaker_closed_count', 'circuit_breaker_recovery_success', 'circuit_breaker_open_duration_s', 'circuit_breaker_closed_duration_s', 'memory_zone_critical_seconds', 'dark_surface_pivots_attempted', 'dark_surface_pivots_successful', 'cover_traffic_fired', 'alert_warning_circuit_breaker_open_over_30s', 'memory_pressure_vs_finding_yield', 'windup_entry_count', 'sprint_budget_elapsed_ms', 'sprint_budget_remaining_ms', 'sprint_budget_phase', 'sprint_phase_duration_avg_ms', 'sprint_phase_duration_p50_ms', 'sprint_phase_duration_p95_ms', 'duckdb_ingest_latency_ms', 'duckdb_query_latency_ms', 'bounded_gather_tasks_gathered', 'bounded_gather_tasks_errors', 'bounded_gather_errors_suppressed', 'memory_layer_pressure_pct', 'fetch_coordinator_active', 'fetch_coordinator_blocked_domains', 'fetch_coordinator_circuit_open'])
 
-
-# Bounded metric names (no arbitrary labels)
-METRIC_NAMES = frozenset(
-    [
-        # Orchestrator metrics
-        "orchestrator_rss_mb",
-        "orchestrator_frontier_size",
-        "orchestrator_evidence_ring_len",
-        "orchestrator_tool_exec_events",
-        "orchestrator_budget_remaining_tokens",
-        "orchestrator_budget_remaining_time",
-        "orchestrator_budget_remaining_api_calls",
-        # Cache metrics
-        "cache_http_size",
-        "cache_snapshot_size",
-        "cache_frontier_size",
-        # Memory metrics
-        "memory_open_fds",
-        "memory_rss_mb",
-        "memory_vms_mb",
-        # MLX metrics
-        "mlx_cache_hits",
-        "mlx_cache_misses",
-        "mlx_cache_size_bytes",
-        "mlx_active_memory_bytes",
-        "mlx_peak_memory_bytes",
-        "mlx_cache_fragmentation_ratio",
-        "mlx_kernel_compilation_time_ms",
-        "mlx_kernel_cache_hit_rate",
-        "model_load_duration_ms",
-        "model_unload_count",
-        "model_load_failures",
-        "action_latency_ms",
-        "thermal_throttle_events",
-        "thermal_recovery_events",
-        "memory_zone_normal_seconds",
-        "memory_zone_high_seconds",
-        "circuit_breaker_state_transitions",
-        # Circuit breaker metrics (F228F)
-        "circuit_breaker_open_count",
-        "circuit_breaker_half_open_count",
-        "circuit_breaker_closed_count",
-        "circuit_breaker_recovery_success",
-        "circuit_breaker_open_duration_s",
-        "circuit_breaker_closed_duration_s",
-        # Crawl budget metrics
-        "memory_zone_critical_seconds",
-        # Dark surface pivot metrics (F214K)
-        "dark_surface_pivots_attempted",
-        "dark_surface_pivots_successful",
-        # Sprint F214Q: Cover traffic OPSEC noise
-        "cover_traffic_fired",
-        # Sprint F-2026-07-03: Additional runtime metrics (see sprint 8sa_1783086726853)
-        "alert_warning_circuit_breaker_open_over_30s",
-        "memory_pressure_vs_finding_yield",
-        "windup_entry_count",
-        # Sprint F360: Unified metrics dashboard — sprint budget consumption
-        "sprint_budget_elapsed_ms",
-        "sprint_budget_remaining_ms",
-        "sprint_budget_phase",
-        "sprint_phase_duration_avg_ms",
-        "sprint_phase_duration_p50_ms",
-        "sprint_phase_duration_p95_ms",
-        # Sprint F360: DuckDB write latency
-        "duckdb_ingest_latency_ms",
-        "duckdb_query_latency_ms",
-        # Sprint F360: bounded_gather stats
-        "bounded_gather_tasks_gathered",
-        "bounded_gather_tasks_errors",
-        "bounded_gather_errors_suppressed",
-        # Sprint F360: Memory layer pressure
-        "memory_layer_pressure_pct",
-        # Sprint F360: Fetch coordinator telemetry
-        "fetch_coordinator_active",
-        "fetch_coordinator_blocked_domains",
-        "fetch_coordinator_circuit_open",
-    ]
-)
-
-
-@dataclass
+@dataclass(True)
 class MetricSnapshot:
     """A single metric snapshot"""
-
     ts: datetime
     name: str
     value: float
-    labels: dict[str, str] | None = None  # Only if bounded
-    correlation: dict[str, str | None] | None = None  # run_id, branch_id, provider_id, action_id
-
+    labels: dict[str, str] | None = None
+    correlation: dict[str, str | None] | None = None
 
 class MetricsRegistry:
     """
@@ -143,20 +53,12 @@ class MetricsRegistry:
     - Ring buffer for recent snapshots (maxlen)
     - No raw strings or large payloads
     """
-
-    # Flush cadence
-    FLUSH_EVENTS = 100  # Flush every N events
-    FLUSH_SECONDS = 60  # Or every N seconds
-
-    # Ring buffer size
+    FLUSH_EVENTS = 100
+    FLUSH_SECONDS = 60
     MAX_SNAPSHOTS = 100
+    __slots__ = tuple(('_closed', '_correlation', '_counters', '_event_count', '_gauges', '_last_flush', '_last_persist_failure', '_persist_available', '_persist_file', '_run_dir', '_run_id', '_snapshots', '_sprint_events'))
 
-    def __init__(
-        self,
-        run_dir: Path,
-        run_id: str = "default",
-        correlation: dict[str, str | None] | None = None,
-    ):
+    def __init__(self, run_dir: Path, run_id: str='default', correlation: dict[str, str | None] | None=None):
         """
         Initialize metrics registry.
 
@@ -169,66 +71,42 @@ class MetricsRegistry:
         """
         self._run_dir = run_dir
         self._run_id = run_id
-        # Merge run_id into correlation if no correlation provided — ensures run_id
-        # propagates to persisted JSONL (tiny local patch for F200B drift).
-        # Grammar normalization: only shared RunCorrelation keys survive.
-        _GRAMMAR_KEYS = frozenset(["run_id", "branch_id", "provider_id", "action_id"])  # noqa: N806
+        _GRAMMAR_KEYS = frozenset(['run_id', 'branch_id', 'provider_id', 'action_id'])
         if correlation is None:
-            self._correlation = {"run_id": run_id}
+            self._correlation = {'run_id': run_id}
         else:
-            # Normalize to shared grammar keys only; merge run_id from __init__.
             self._correlation = {k: correlation.get(k) for k in _GRAMMAR_KEYS}
-            self._correlation["run_id"] = run_id
+            self._correlation['run_id'] = run_id
         self._last_flush = datetime.now(UTC)
-
-        # Counters (integers)
         self._counters: dict[str, int] = {}
-
-        # Gauges (floats)
         self._gauges: dict[str, float] = {}
-
-        # Ring buffer for recent snapshots
         self._snapshots: deque = deque(maxlen=self.MAX_SNAPSHOTS)
-
-        # Event count for flush cadence
         self._event_count = 0
-
-        # Sprint event ring buffer (telemetry handoff from runtime/telemetry.py)
         self._sprint_events: deque = deque(maxlen=100)
-
-        # Closed state — prevents post-close mutation drift (F200E)
         self._closed = False
-
-        # Persist state tracking for degraded mode visibility (F200K)
         self._persist_available = True
         self._last_persist_failure: str | None = None
-
-        # Persist file — fail-soft, caller tracks degraded state
         self._persist_file = self._init_persist_file()
         self._persist_available = self._persist_file is not None
-
-        logger.info(f"MetricsRegistry initialized: run_id={run_id}")
+        logger.info(f'MetricsRegistry initialized: run_id={run_id}')
 
     def _init_persist_file(self) -> Any | None:
         """Initialize persistence file. Fail-soft: returns None on failure, caller tracks degraded state."""
-        metrics_dir = self._run_dir / "logs"
+        metrics_dir = self._run_dir / 'logs'
         metrics_dir.mkdir(parents=True, exist_ok=True)
-        metrics_file = metrics_dir / "metrics.jsonl"
-
+        metrics_file = metrics_dir / 'metrics.jsonl'
         try:
-            return open(metrics_file, "ab")
+            return open(metrics_file, 'ab')
         except Exception as e:
-            # Capture failure message — caller (_persist_available, _last_persist_failure)
-            # is already initialized before this call
             self._last_persist_failure = str(e)
-            logger.warning(f"Failed to open metrics file: {e}")
+            logger.warning(f'Failed to open metrics file: {e}')
             return None
 
     def _validate_metric_name(self, name: str) -> bool:
         """Validate metric name is in bounded set (exact match only — no arbitrary prefixes)"""
         return name in METRIC_NAMES
 
-    def inc(self, name: str, delta: int = 1) -> None:
+    def inc(self, name: str, delta: int=1) -> None:
         """
         Increment a counter.
 
@@ -239,9 +117,8 @@ class MetricsRegistry:
         if self._closed:
             return
         if not self._validate_metric_name(name):
-            logger.warning(f"Invalid metric name: {name}")
+            logger.warning(f'Invalid metric name: {name}')
             return
-
         self._counters[name] = self._counters.get(name, 0) + delta
         self._event_count += 1
         self._maybe_flush()
@@ -257,9 +134,8 @@ class MetricsRegistry:
         if self._closed:
             return
         if not self._validate_metric_name(name):
-            logger.warning(f"Invalid metric name: {name}")
+            logger.warning(f'Invalid metric name: {name}')
             return
-
         self._gauges[name] = value
         self._event_count += 1
         self._maybe_flush()
@@ -281,69 +157,46 @@ class MetricsRegistry:
             return
         if not _PSUTIL_AVAILABLE:
             return
-
-        # Process memory
         try:
-            process = psutil.Process(os.getpid())  # type: ignore[union-attr]
+            process = psutil.Process(os.getpid())
             mem_info = process.memory_info()
-            self.set_gauge("memory_rss_mb", mem_info.rss / (1024 * 1024))
-            self.set_gauge("memory_vms_mb", mem_info.vms / (1024 * 1024))
+            self.set_gauge('memory_rss_mb', mem_info.rss / (1024 * 1024))
+            self.set_gauge('memory_vms_mb', mem_info.vms / (1024 * 1024))
         except Exception:
             pass
-
-        # Open file descriptors (Unix)
         try:
-            process = psutil.Process(os.getpid())  # type: ignore[union-attr]
-            self.set_gauge("memory_open_fds", process.num_fds())
+            process = psutil.Process(os.getpid())
+            self.set_gauge('memory_open_fds', process.num_fds())
         except Exception:
             pass
 
-    def flush(self, force: bool = False) -> None:
+    def flush(self, force: bool=False) -> None:
         """
         Flush metrics to disk.
 
         Args:
             force: If True, always flush regardless of time/event thresholds.
         """
-        # Post-close flush guard — force=True bypasses for close() semantics
-        if getattr(self, "_closed", False) and not force:
+        if getattr(self, '_closed', False) and (not force):
             return
         now = datetime.now(UTC)
-
-        # Check time-based flush (skip if not forced and thresholds not met)
         if not force:
             elapsed = (now - self._last_flush).total_seconds()
             if elapsed < self.FLUSH_SECONDS and self._event_count < self.FLUSH_EVENTS:
                 return
-
-        # Collect metrics
         metrics = []
         for name, value in self._counters.items():
-            m: dict[str, Any] = {
-                "ts": now.isoformat(),
-                "name": name,
-                "type": "counter",
-                "value": value,
-            }
+            m: dict[str, Any] = {'ts': now.isoformat(), 'name': name, 'type': 'counter', 'value': value}
             if self._correlation:
-                m["correlation"] = self._correlation
+                m['correlation'] = self._correlation
             metrics.append(m)
         for name, value in self._gauges.items():
-            m: dict[str, Any] = {
-                "ts": now.isoformat(),
-                "name": name,
-                "type": "gauge",
-                "value": value,
-            }
+            m: dict[str, Any] = {'ts': now.isoformat(), 'name': name, 'type': 'gauge', 'value': value}
             if self._correlation:
-                m["correlation"] = self._correlation
+                m['correlation'] = self._correlation
             metrics.append(m)
-
-        # Add to ring buffer
         for m in metrics:
             self._snapshots.append(m)
-
-        # Persist
         if self._persist_file:
             try:
                 for m in metrics:
@@ -351,17 +204,15 @@ class MetricsRegistry:
                         line = _orjson.dumps(m, option=_orjson.OPT_APPEND_NEWLINE)
                         self._persist_file.write(line)
                     else:
-                        line = json.dumps(m, separators=(",", ":"))
-                        self._persist_file.write(line.encode("utf-8") + b"\n")
+                        line = json.dumps(m, separators=(',', ':'))
+                        self._persist_file.write(line.encode('utf-8') + b'\n')
                 self._persist_file.flush()
                 os.fsync(self._persist_file.fileno())
             except Exception as e:
-                logger.error(f"Failed to flush metrics: {e}")
-
+                logger.error(f'Failed to flush metrics: {e}')
         self._last_flush = now
         self._event_count = 0
-
-        logger.debug(f"Flushed {len(metrics)} metrics to disk")
+        logger.debug(f'Flushed {len(metrics)} metrics to disk')
 
     def get_summary(self) -> dict[str, Any]:
         """
@@ -370,34 +221,14 @@ class MetricsRegistry:
         Returns lightweight state snapshot for debugging and monitoring.
         No execution authority, no policy, no audit chain.
         """
-        return {
-            "run_id": self._run_id,
-            # Lifecycle truth
-            "closed": self._closed,
-            # Persistence truth
-            "persist_available": getattr(self, "_persist_available", None),
-            "degraded_ram_only": getattr(self, "_persist_available", True) is False,
-            "last_persist_failure": getattr(self, "_last_persist_failure", None),
-            # Counts
-            "counter_count": len(self._counters),
-            "gauge_count": len(self._gauges),
-            "snapshot_count": len(self._snapshots),
-            "sprint_event_count": len(self._sprint_events),
-            # Live data (ring buffer contains recent snapshots)
-            "counters": dict(self._counters),
-            "gauges": dict(self._gauges),
-            # Sprint F250: Nym mixnet state for sensitive query routing
-            "nym_address": self._nym_address_if_available(),
-            "nym_circuit_open": self._nym_circuit_open_if_open(),
-        }
+        return {'run_id': self._run_id, 'closed': self._closed, 'persist_available': getattr(self, '_persist_available', None), 'degraded_ram_only': getattr(self, '_persist_available', True) is False, 'last_persist_failure': getattr(self, '_last_persist_failure', None), 'counter_count': len(self._counters), 'gauge_count': len(self._gauges), 'snapshot_count': len(self._snapshots), 'sprint_event_count': len(self._sprint_events), 'counters': dict(self._counters), 'gauges': dict(self._gauges), 'nym_address': self._nym_address_if_available(), 'nym_circuit_open': self._nym_circuit_open_if_open()}
 
     def _nym_address_if_available(self) -> str | None:
         """Get NymTransport nym_address if available."""
         try:
             from hledac.universal.transport.nym_transport import NymTransport
-
             nym = NymTransport()
-            return getattr(nym, "nym_address", None)
+            return getattr(nym, 'nym_address', None)
         except Exception:
             return None
 
@@ -405,9 +236,8 @@ class MetricsRegistry:
         """Check if NymTransport circuit breaker is open."""
         try:
             from hledac.universal.transport.nym_transport import NymTransport
-
             nym = NymTransport()
-            return getattr(nym, "circuit_breaker_open", False)
+            return getattr(nym, 'circuit_breaker_open', False)
         except Exception:
             return False
 
@@ -424,24 +254,14 @@ class MetricsRegistry:
         try:
             if self._closed:
                 return
-            # Validate required fields present
-            required = {"session_id", "phase", "component", "event", "elapsed_ms"}
+            required = {'session_id', 'phase', 'component', 'event', 'elapsed_ms'}
             if not required.issubset(event.keys()):
                 return
             self._sprint_events.append(event)
         except Exception:
             pass
 
-    # ── Sprint F360: bounded_gather stats recording ─────────────────────────
-
-    def record_bounded_gather(
-        self,
-        ctx: str,
-        total_tasks: int,
-        ok_count: int,
-        error_count: int,
-        suppressed_count: int,
-    ) -> None:
+    def record_bounded_gather(self, ctx: str, total_tasks: int, ok_count: int, error_count: int, suppressed_count: int) -> None:
         """
         Record bounded_gather execution stats.
 
@@ -458,26 +278,15 @@ class MetricsRegistry:
         try:
             if self._closed:
                 return
-            # Increment global counters
-            self._counters["bounded_gather_tasks_gathered"] = (
-                self._counters.get("bounded_gather_tasks_gathered", 0) + ok_count
-            )
-            self._counters["bounded_gather_tasks_errors"] = (
-                self._counters.get("bounded_gather_tasks_errors", 0) + error_count
-            )
-            self._counters["bounded_gather_errors_suppressed"] = (
-                self._counters.get("bounded_gather_errors_suppressed", 0) + suppressed_count
-            )
+            self._counters['bounded_gather_tasks_gathered'] = self._counters.get('bounded_gather_tasks_gathered', 0) + ok_count
+            self._counters['bounded_gather_tasks_errors'] = self._counters.get('bounded_gather_tasks_errors', 0) + error_count
+            self._counters['bounded_gather_errors_suppressed'] = self._counters.get('bounded_gather_errors_suppressed', 0) + suppressed_count
             self._event_count += 3
             self._maybe_flush()
         except Exception:
             pass
 
-    def record_fetch_telemetry(
-        self,
-        blocked_domains: int,
-        circuit_open: bool,
-    ) -> None:
+    def record_fetch_telemetry(self, blocked_domains: int, circuit_open: bool) -> None:
         """
         Record fetch coordinator telemetry.
 
@@ -488,22 +297,14 @@ class MetricsRegistry:
         try:
             if self._closed:
                 return
-            self._gauges["fetch_coordinator_blocked_domains"] = float(blocked_domains)
-            self._gauges["fetch_coordinator_circuit_open"] = 1.0 if circuit_open else 0.0
+            self._gauges['fetch_coordinator_blocked_domains'] = float(blocked_domains)
+            self._gauges['fetch_coordinator_circuit_open'] = 1.0 if circuit_open else 0.0
             self._event_count += 2
             self._maybe_flush()
         except Exception:
             pass
 
-    def record_sprint_budget(
-        self,
-        elapsed_ms: float,
-        remaining_ms: float,
-        phase: str,
-        phase_avg_ms: float | None = None,
-        phase_p50_ms: float | None = None,
-        phase_p95_ms: float | None = None,
-    ) -> None:
+    def record_sprint_budget(self, elapsed_ms: float, remaining_ms: float, phase: str, phase_avg_ms: float | None=None, phase_p50_ms: float | None=None, phase_p95_ms: float | None=None) -> None:
         """
         Record sprint budget consumption metrics.
 
@@ -518,15 +319,15 @@ class MetricsRegistry:
         try:
             if self._closed:
                 return
-            self._gauges["sprint_budget_elapsed_ms"] = elapsed_ms
-            self._gauges["sprint_budget_remaining_ms"] = remaining_ms
-            self._gauges["sprint_budget_phase"] = float(hash(phase) % 1000)  # categorical as float
+            self._gauges['sprint_budget_elapsed_ms'] = elapsed_ms
+            self._gauges['sprint_budget_remaining_ms'] = remaining_ms
+            self._gauges['sprint_budget_phase'] = float(hash(phase) % 1000)
             if phase_avg_ms is not None:
-                self._gauges["sprint_phase_duration_avg_ms"] = phase_avg_ms
+                self._gauges['sprint_phase_duration_avg_ms'] = phase_avg_ms
             if phase_p50_ms is not None:
-                self._gauges["sprint_phase_duration_p50_ms"] = phase_p50_ms
+                self._gauges['sprint_phase_duration_p50_ms'] = phase_p50_ms
             if phase_p95_ms is not None:
-                self._gauges["sprint_phase_duration_p95_ms"] = phase_p95_ms
+                self._gauges['sprint_phase_duration_p95_ms'] = phase_p95_ms
             self._event_count += 1
             self._maybe_flush()
         except Exception:
@@ -537,14 +338,12 @@ class MetricsRegistry:
         if self._closed:
             return
         self._closed = True
-        # flush(force=True) already calls _persist_file.flush() + fsync inside.
-        # No need to flush again — that would double-flush.
         self.flush(force=True)
         if self._persist_file:
             try:
                 self._persist_file.close()
             except Exception as e:
-                logger.error(f"Error closing metrics: {e}")
+                logger.error(f'Error closing metrics: {e}')
             finally:
                 self._persist_file = None
 
@@ -554,16 +353,10 @@ class MetricsRegistry:
     def __exit__(self, _exc_type, _exc_val, _exc_tb) -> None:
         self.close()
 
-
-# Convenience function
-def create_metrics_registry(run_dir: Path, run_id: str = "default") -> MetricsRegistry:
+def create_metrics_registry(run_dir: Path, run_id: str='default') -> MetricsRegistry:
     """Create a MetricsRegistry instance"""
     return MetricsRegistry(run_dir=run_dir, run_id=run_id)
-
-
-# Module-level singleton for fire-and-forget access (circuit breaker safe)
 _metrics_registry_singleton: MetricsRegistry | None = None
-
 
 def get_metrics_registry() -> MetricsRegistry:
     """Get or create the module-level singleton MetricsRegistry.
@@ -573,5 +366,5 @@ def get_metrics_registry() -> MetricsRegistry:
     """
     global _metrics_registry_singleton
     if _metrics_registry_singleton is None:
-        _metrics_registry_singleton = MetricsRegistry(run_dir=Path("/tmp/hledac_metrics"), run_id="default")
+        _metrics_registry_singleton = MetricsRegistry(run_dir=Path('/tmp/hledac_metrics'), run_id='default')
     return _metrics_registry_singleton

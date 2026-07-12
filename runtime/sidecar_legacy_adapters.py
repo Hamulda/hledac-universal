@@ -32,28 +32,13 @@ GHOST_INVARIANTS (per CLAUDE.md):
   - No blocking ops in async context (delegate uses `await`).
   - Always-on, no new feature flags (env gates already exist in scheduler).
 """
-
-
-
 import logging
 from typing import TYPE_CHECKING, Any
-
-from runtime.sidecar_protocol import (
-    BaseSidecarAdapter,
-    SidecarContext,
-    SidecarRegistry,
-)
-
-if TYPE_CHECKING:  # pragma: no cover
+from runtime.sidecar_protocol import BaseSidecarAdapter, SidecarContext, SidecarRegistry
+if TYPE_CHECKING:
     from runtime.sprint_scheduler import SprintScheduler
-
 logger = logging.getLogger(__name__)
-
-# Lazy weak reference holder: SidecarOrchestrator sets this once at __init__.
-# We avoid a hard import of SprintScheduler to prevent a circular dep at
-# module load (sprint_scheduler imports sidecar_orchestrator).
 _scheduler_ref: SprintScheduler | None = None
-
 
 def bind_scheduler(scheduler: SprintScheduler | None) -> None:
     """Bind the live SprintScheduler instance for delegation.
@@ -63,10 +48,6 @@ def bind_scheduler(scheduler: SprintScheduler | None) -> None:
     """
     global _scheduler_ref
     _scheduler_ref = scheduler
-
-
-# ── Delegate base ──────────────────────────────────────────────────────────────
-
 
 class SchedulerBackedSidecarAdapter(BaseSidecarAdapter):
     """
@@ -82,12 +63,9 @@ class SchedulerBackedSidecarAdapter(BaseSidecarAdapter):
     an empty finding list. This makes the previous silent no-op behavior
     observable and documentable.
     """
-
-    scheduler_method_name: str = ""  # set by subclass
-    # When True, the missing-method case is logged at INFO (expected for
-    # `commoncrawl` / `ti_feed` which are placeholder adapters). When False,
-    # missing methods are logged at WARNING (regression indicator).
+    scheduler_method_name: str = ''
     missing_method_expected: bool = False
+    __slots__ = tuple(('_missing_logged',))
 
     def __init__(self) -> None:
         super().__init__()
@@ -97,66 +75,42 @@ class SchedulerBackedSidecarAdapter(BaseSidecarAdapter):
         scheduler = _scheduler_ref
         if scheduler is None:
             return []
-        logger.debug(
-            "%s: delegating to scheduler.%s (sprint=%s, mode=%s)",
-            self.sidecar_id,
-            self.scheduler_method_name,
-            ctx.sprint_id,
-            ctx.sprint_mode,
-        )
+        logger.debug('%s: delegating to scheduler.%s (sprint=%s, mode=%s)', self.sidecar_id, self.scheduler_method_name, ctx.sprint_id, ctx.sprint_mode)
         method = getattr(scheduler, self.scheduler_method_name, None)
         if method is None:
             if not self._missing_logged:
                 level = logging.INFO if self.missing_method_expected else logging.WARNING
-                logger.log(
-                    level,
-                    "%s: scheduler method %r not implemented (returning empty findings)",
-                    self.sidecar_id,
-                    self.scheduler_method_name,
-                )
+                logger.log(level, '%s: scheduler method %r not implemented (returning empty findings)', self.sidecar_id, self.scheduler_method_name)
                 self._missing_logged = True
             return []
-        # The scheduler methods are designed to be called with no args from
-        # the sidecar orchestrator's getattr pattern. Findings are written
-        # directly via async_ingest_findings_batch inside the method body.
         result = method()
-        if hasattr(result, "__await__"):
+        if hasattr(result, '__await__'):
             result = await result
-        # Most scheduler sidecar methods return None and ingest findings
-        # directly. Normalise to list for the SidecarContext contract.
         if result is None:
             return []
         if isinstance(result, list):
             return result
         return [result]
 
-
-# ── Registered adapters ───────────────────────────────────────────────────────
-
-
-@SidecarRegistry.register("onion_discovery")
+@SidecarRegistry.register('onion_discovery')
 class OnionDiscoverySidecarAdapter(SchedulerBackedSidecarAdapter):
     """F251: Dark web .onion discovery via Tor transport."""
-
-    sidecar_id: str = "onion_discovery"
-    env_gate: str = "HLEDAC_ENABLE_TOR"
+    sidecar_id: str = 'onion_discovery'
+    env_gate: str = 'HLEDAC_ENABLE_TOR'
     ram_budget_mb: int = 50
     priority: int = 4
-    scheduler_method_name: str = "_run_onion_discovery_sidecar"
+    scheduler_method_name: str = '_run_onion_discovery_sidecar'
 
-
-@SidecarRegistry.register("i2p_discovery")
+@SidecarRegistry.register('i2p_discovery')
 class I2PDiscoverySidecarAdapter(SchedulerBackedSidecarAdapter):
     """F2P: I2P .i2p discovery via I2P transport."""
-
-    sidecar_id: str = "i2p_discovery"
-    env_gate: str = "HLEDAC_ENABLE_I2P"
+    sidecar_id: str = 'i2p_discovery'
+    env_gate: str = 'HLEDAC_ENABLE_I2P'
     ram_budget_mb: int = 50
     priority: int = 4
-    scheduler_method_name: str = "_run_i2p_discovery_sidecar"
+    scheduler_method_name: str = '_run_i2p_discovery_sidecar'
 
-
-@SidecarRegistry.register("ipfs_discovery")
+@SidecarRegistry.register('ipfs_discovery')
 class IPFSDiscoverySidecarAdapter(SchedulerBackedSidecarAdapter):
     """F229: IPFS discovery — fetch unindexed content from IPFS network.
 
@@ -165,59 +119,49 @@ class IPFSDiscoverySidecarAdapter(SchedulerBackedSidecarAdapter):
     that caused silent no-op execution. This adapter binds the CORRECT
     method name, restoring IPFS discovery functionality.
     """
-
-    sidecar_id: str = "ipfs_discovery"
-    env_gate: str = "HLEDAC_ENABLE_IPFS"
+    sidecar_id: str = 'ipfs_discovery'
+    env_gate: str = 'HLEDAC_ENABLE_IPFS'
     ram_budget_mb: int = 80
     priority: int = 5
-    scheduler_method_name: str = "_run_ipfs_discovery_sidecar"
+    scheduler_method_name: str = '_run_ipfs_discovery_sidecar'
 
-
-@SidecarRegistry.register("bgp_enrichment")
+@SidecarRegistry.register('bgp_enrichment')
 class BGPEnrichmentSidecarAdapter(SchedulerBackedSidecarAdapter):
     """F229: BGP enrichment — AS path analysis for IP/ASN in query."""
-
-    sidecar_id: str = "bgp_enrichment"
-    env_gate: str = "HLEDAC_ENABLE_BGP"
+    sidecar_id: str = 'bgp_enrichment'
+    env_gate: str = 'HLEDAC_ENABLE_BGP'
     ram_budget_mb: int = 60
     priority: int = 5
-    scheduler_method_name: str = "_run_bgp_enrichment_sidecar"
+    scheduler_method_name: str = '_run_bgp_enrichment_sidecar'
 
-
-@SidecarRegistry.register("banner_grab")
+@SidecarRegistry.register('banner_grab')
 class BannerGrabSidecarAdapter(SchedulerBackedSidecarAdapter):
     """F229: TCP banner enumeration for service fingerprinting."""
-
-    sidecar_id: str = "banner_grab"
-    env_gate: str = "HLEDAC_ENABLE_BANNER_GRAB"
+    sidecar_id: str = 'banner_grab'
+    env_gate: str = 'HLEDAC_ENABLE_BANNER_GRAB'
     ram_budget_mb: int = 40
     priority: int = 3
-    scheduler_method_name: str = "_run_banner_grab_sidecar"
+    scheduler_method_name: str = '_run_banner_grab_sidecar'
 
-
-@SidecarRegistry.register("digital_ghost")
+@SidecarRegistry.register('digital_ghost')
 class DigitalGhostSidecarAdapter(SchedulerBackedSidecarAdapter):
     """F3FORENSICS: Digital ghost detection on file artifacts."""
-
-    sidecar_id: str = "digital_ghost"
-    env_gate: str = "HLEDAC_ENABLE_DIGITAL_GHOST"
+    sidecar_id: str = 'digital_ghost'
+    env_gate: str = 'HLEDAC_ENABLE_DIGITAL_GHOST'
     ram_budget_mb: int = 100
     priority: int = 2
-    scheduler_method_name: str = "_run_digital_ghost_sidecar"
+    scheduler_method_name: str = '_run_digital_ghost_sidecar'
 
-
-@SidecarRegistry.register("steganography")
+@SidecarRegistry.register('steganography')
 class SteganographySidecarAdapter(SchedulerBackedSidecarAdapter):
     """F3FORENSICS: Steganography detection on image artifacts."""
-
-    sidecar_id: str = "steganography"
-    env_gate: str = "HLEDAC_ENABLE_STEGANOGRAPHY"
+    sidecar_id: str = 'steganography'
+    env_gate: str = 'HLEDAC_ENABLE_STEGANOGRAPHY'
     ram_budget_mb: int = 100
     priority: int = 2
-    scheduler_method_name: str = "_run_steganography_sidecar"
+    scheduler_method_name: str = '_run_steganography_sidecar'
 
-
-@SidecarRegistry.register("dht_discovery")
+@SidecarRegistry.register('dht_discovery')
 class DHTDiscoverySidecarAdapter(SchedulerBackedSidecarAdapter):
     """F214Q: DHT torrent discovery via BitTorrent DHT network.
 
@@ -227,15 +171,13 @@ class DHTDiscoverySidecarAdapter(SchedulerBackedSidecarAdapter):
     which has its own Kademlia client wiring. Future work: pick one as
     canonical and deprecate the other.
     """
-
-    sidecar_id: str = "dht_discovery"
-    env_gate: str = "HLEDAC_ENABLE_DHT"
+    sidecar_id: str = 'dht_discovery'
+    env_gate: str = 'HLEDAC_ENABLE_DHT'
     ram_budget_mb: int = 100
     priority: int = 4
-    scheduler_method_name: str = "_run_dht_sidecar"
+    scheduler_method_name: str = '_run_dht_sidecar'
 
-
-@SidecarRegistry.register("commoncrawl")
+@SidecarRegistry.register('commoncrawl')
 class CommonCrawlSidecarAdapter(SchedulerBackedSidecarAdapter):
     """F250F: CommonCrawl CDX domain discovery.
 
@@ -244,16 +186,14 @@ class CommonCrawlSidecarAdapter(SchedulerBackedSidecarAdapter):
     `getattr` and silently no-op'd). This adapter documents the gap and
     makes it observable in `SidecarRegistry.get_all_registered()` output.
     """
-
-    sidecar_id: str = "commoncrawl"
-    env_gate: str = "HLEDAC_ENABLE_COMMONCRAWL"
+    sidecar_id: str = 'commoncrawl'
+    env_gate: str = 'HLEDAC_ENABLE_COMMONCRAWL'
     ram_budget_mb: int = 60
     priority: int = 3
-    scheduler_method_name: str = "_run_commoncrawl_sidecar"
+    scheduler_method_name: str = '_run_commoncrawl_sidecar'
     missing_method_expected: bool = True
 
-
-@SidecarRegistry.register("ti_feed")
+@SidecarRegistry.register('ti_feed')
 class TIFeedSidecarAdapter(SchedulerBackedSidecarAdapter):
     """F252: Threat intelligence feed advisory (NVD + CISA KEV).
 
@@ -261,16 +201,11 @@ class TIFeedSidecarAdapter(SchedulerBackedSidecarAdapter):
     via SprintScheduler._run_ti_feed_sidecar(). Registered adapters are
     dispatched with safe_gather_ok for bounded concurrent execution.
     """
-
-    sidecar_id: str = "ti_feed"
-    env_gate: str = "HLEDAC_ENABLE_TI_FEEDS"
+    sidecar_id: str = 'ti_feed'
+    env_gate: str = 'HLEDAC_ENABLE_TI_FEEDS'
     ram_budget_mb: int = 50
     priority: int = 4
-    scheduler_method_name: str = "_run_ti_feed_sidecar"
-
-
-# ── Self-registration hook ────────────────────────────────────────────────────
-
+    scheduler_method_name: str = '_run_ti_feed_sidecar'
 
 def ensure_legacy_adapters_registered() -> None:
     """
@@ -281,7 +216,4 @@ def ensure_legacy_adapters_registered() -> None:
     successful import, but provides a stable hook for test code that
     needs to guarantee registration order.
     """
-    # All registration happens at import time via decorators above.
-    # This function exists to mirror `ensure_adapters_registered()` in
-    # `sidecar_protocol.py` so callers have a consistent surface.
     return None

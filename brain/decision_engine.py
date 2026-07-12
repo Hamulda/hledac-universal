@@ -7,54 +7,39 @@ DEPRECATED: This module is deprecated. Use brain/research_flow_decider.py instea
 This module is kept for backward compatibility. All new code should import from:
     from hledac.universal.brain.research_flow_decider import DecisionEngine, DecisionType, Decision
 """
-
-
-
 import logging
 import math
 from dataclasses import dataclass
 import msgspec
 from enum import Enum
 from typing import TYPE_CHECKING, Any
-
 if TYPE_CHECKING:
     pass
-
 logger = logging.getLogger(__name__)
-
 
 class DecisionType(Enum):
     """Typy rozhodnutí"""
-    RESEARCH = "research"           # Výzkumná akce
-    EXECUTION = "execution"         # Vykonávací akce
-    ANALYSIS = "analysis"           # Analytická akce
-    PLANNING = "planning"           # Plánovací akce
-    SYNTHESIS = "synthesis"         # Syntéza
-    ERROR = "error"                 # Chyba
-    COMPLETE = "complete"           # Dokončení
+    RESEARCH = 'research'
+    EXECUTION = 'execution'
+    ANALYSIS = 'analysis'
+    PLANNING = 'planning'
+    SYNTHESIS = 'synthesis'
+    ERROR = 'error'
+    COMPLETE = 'complete'
 
-
-@dataclass
+@dataclass(True)
 class Decision:
     """Rozhodnutí orchestrátoru"""
     decision_type: DecisionType
     action: str
     params: dict[str, Any]
     reasoning: str
-    confidence: float  # 0-1
+    confidence: float
     complete: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Konvertovat na slovník"""
-        return {
-            "type": self.decision_type.value,
-            "action": self.action,
-            "params": self.params,
-            "reasoning": self.reasoning,
-            "confidence": self.confidence,
-            "complete": self.complete,
-        }
-
+        return {'type': self.decision_type.value, 'action': self.action, 'params': self.params, 'reasoning': self.reasoning, 'confidence': self.confidence, 'complete': self.complete}
 
 class DecisionEngine:
     """
@@ -65,8 +50,9 @@ class DecisionEngine:
     - llm_based: Rozhodnutí pomocí LLM
     - hybrid: Kombinace (pravidla + LLM pro edge cases)
     """
+    __slots__ = tuple(('_bandit_counts', '_bandit_rewards', '_bandit_total_trials', '_rules', 'strategy'))
 
-    def __init__(self, strategy: str = "hybrid"):
+    def __init__(self, strategy: str='hybrid'):
         """
         Inicializace DecisionEngine.
 
@@ -74,63 +60,19 @@ class DecisionEngine:
             strategy: Strategie rozhodování ("rule_based", "llm_based", "hybrid")
         """
         self.strategy = strategy
-
-        # Pravidla pro rule-based rozhodování
         self._rules = self._init_rules()
-
-        # Multi-armed bandit for adaptive module selection
-        self._bandit_counts: dict[tuple[str, str], int] = {}  # (input_type, module) -> trials
-        self._bandit_rewards: dict[tuple[str, str], float] = {}  # cumulative reward
-        self._bandit_total_trials: dict[str, int] = {}  # input_type -> total trials
+        self._bandit_counts: dict[tuple[str, str], int] = {}
+        self._bandit_rewards: dict[tuple[str, str], float] = {}
+        self._bandit_total_trials: dict[str, int] = {}
 
     def _init_rules(self) -> list[dict[str, Any]]:
         """Inicializovat pravidla pro rozhodování"""
-        return [
-            {
-                "name": "first_step_search",
-                "condition": lambda ctx: ctx.get("step", 0) == 0,
-                "action": "search",
-                "params": {"query": "{query}"},
-                "reasoning": "Start with broad search",
-            },
-            {
-                "name": "archive_fallback",
-                "condition": lambda ctx: ctx.get("consecutive_failures", 0) >= 2,
-                "action": "archive_fallback",
-                "params": {"url": "{last_url}"},
-                "reasoning": "Multiple failures, try archive",
-            },
-            {
-                "name": "fact_check_claims",
-                "condition": lambda ctx: len(ctx.get("claims", [])) > 0,
-                "action": "fact_check",
-                "params": {"claims": "{claims}"},
-                "reasoning": "Verify collected claims",
-            },
-            {
-                "name": "deep_research_complex",
-                "condition": lambda ctx: self._is_complex_query(ctx.get("query", "")),
-                "action": "deep_research",
-                "params": {"query": "{query}", "depth": 5},
-                "reasoning": "Complex query requires deep research",
-            },
-            {
-                "name": "synthesize_complete",
-                "condition": lambda ctx: ctx.get("step", 0) >= ctx.get("max_steps", 20) - 2,
-                "action": "synthesize",
-                "params": {},
-                "reasoning": "Approaching step limit, synthesize",
-                "complete": True,
-            },
-        ]
+        return [{'name': 'first_step_search', 'condition': lambda ctx: ctx.get('step', 0) == 0, 'action': 'search', 'params': {'query': '{query}'}, 'reasoning': 'Start with broad search'}, {'name': 'archive_fallback', 'condition': lambda ctx: ctx.get('consecutive_failures', 0) >= 2, 'action': 'archive_fallback', 'params': {'url': '{last_url}'}, 'reasoning': 'Multiple failures, try archive'}, {'name': 'fact_check_claims', 'condition': lambda ctx: len(ctx.get('claims', [])) > 0, 'action': 'fact_check', 'params': {'claims': '{claims}'}, 'reasoning': 'Verify collected claims'}, {'name': 'deep_research_complex', 'condition': lambda ctx: self._is_complex_query(ctx.get('query', '')), 'action': 'deep_research', 'params': {'query': '{query}', 'depth': 5}, 'reasoning': 'Complex query requires deep research'}, {'name': 'synthesize_complete', 'condition': lambda ctx: ctx.get('step', 0) >= ctx.get('max_steps', 20) - 2, 'action': 'synthesize', 'params': {}, 'reasoning': 'Approaching step limit, synthesize', 'complete': True}]
 
     def _is_complex_query(self, query: str) -> bool:
         """Detekovat komplexní dotaz"""
-        complex_indicators = [
-            "analyze", "compare", "contrast", "evaluate", "critique",
-            "relationship", "impact", "cause", "effect", "synthesize"
-        ]
-        return any(ind in query.lower() for ind in complex_indicators)
+        complex_indicators = ['analyze', 'compare', 'contrast', 'evaluate', 'critique', 'relationship', 'impact', 'cause', 'effect', 'synthesize']
+        return any((ind in query.lower() for ind in complex_indicators))
 
     def decide(self, context: dict[str, Any]) -> Decision:
         """
@@ -148,57 +90,36 @@ class DecisionEngine:
         """Rozhodnout podle pravidel"""
         for rule in self._rules:
             try:
-                if rule["condition"](context):
-                    # Substitute params
+                if rule['condition'](context):
                     params = {}
-                    for key, value in rule.get("params", {}).items():
-                        if isinstance(value, str) and value.startswith("{") and value.endswith("}"):
+                    for key, value in rule.get('params', {}).items():
+                        if isinstance(value, str) and value.startswith('{') and value.endswith('}'):
                             var_name = value[1:-1]
                             params[key] = context.get(var_name, value)
                         else:
                             params[key] = value
-
-                    return Decision(
-                        decision_type=DecisionType.EXECUTION,
-                        action=rule["action"],
-                        params=params,
-                        reasoning=rule["reasoning"],
-                        confidence=0.8,
-                        complete=rule.get("complete", False),
-                    )
+                    return Decision(decision_type=DecisionType.EXECUTION, action=rule['action'], params=params, reasoning=rule['reasoning'], confidence=0.8, complete=rule.get('complete', False))
             except Exception as e:
                 logger.warning(f"Rule {rule.get('name')} failed: {e}")
                 continue
-
-        # Default: search
-        return Decision(
-            decision_type=DecisionType.RESEARCH,
-            action="search",
-            params={"query": context.get("query", "")},
-            reasoning="No rule matched, default to search",
-            confidence=0.5,
-        )
+        return Decision(decision_type=DecisionType.RESEARCH, action='search', params={'query': context.get('query', '')}, reasoning='No rule matched, default to search', confidence=0.5)
 
     def _select_bandit_action(self, input_type: str, candidates: list[str]) -> str:
         """Select module using UCB1 multi-armed bandit."""
-        total = self._bandit_total_trials.get(input_type, 0) + 1  # +1 for optimism
+        total = self._bandit_total_trials.get(input_type, 0) + 1
         best_score = -float('inf')
         best_action = None
-
         for module in candidates:
             key = (input_type, module)
             n = self._bandit_counts.get(key, 0)
             if n == 0:
-                return module  # explore untried action
-
+                return module
             r = self._bandit_rewards.get(key, 0) / n
             exploration = math.sqrt(2 * math.log(total) / n)
             score = r + exploration
-
             if score > best_score:
                 best_score = score
                 best_action = module
-
         return best_action or candidates[0]
 
     def _update_bandit(self, input_type: str, module: str, reward: float):
@@ -218,19 +139,12 @@ class DecisionEngine:
         Returns:
             True pokud pokračovat, False pokud ukončit
         """
-        step = context.get("step", 0)
-        max_steps = context.get("max_steps", 20)
-
-        # Hard limit
+        step = context.get('step', 0)
+        max_steps = context.get('max_steps', 20)
         if step >= max_steps:
             return False
-
-        # Soft limit - dostatek dat
-        if step >= max_steps * 0.8 and len(context.get("collected_data", [])) >= 5:
+        if step >= max_steps * 0.8 and len(context.get('collected_data', [])) >= 5:
             return False
-
-        # Stagnation detection
-        if context.get("stagnation_count", 0) >= 3:
+        if context.get('stagnation_count', 0) >= 3:
             return False
-
         return True

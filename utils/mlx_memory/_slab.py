@@ -17,7 +17,6 @@ M1 8GB budget (pro slabs = ~0.5 GiB volitelné):
     KV cache:         ~0.75 GiB
     Metal slabs:       ~0.5 GiB  (bounded, model má prioritu)
 """
-
 import gc
 import logging
 import threading
@@ -25,42 +24,21 @@ import time as _time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
-
 logger = logging.getLogger(__name__)
-
-# ── Slab Size Classes ─────────────────────────────────────────────────────────
-
-_SLAB_CLASSES_BYTES: tuple[int, ...] = (
-    64 * 1024,       # 64 KB
-    256 * 1024,      # 256 KB
-    1024 * 1024,     # 1 MB
-    4 * 1024 * 1024, # 4 MB
-    16 * 1024 * 1024, # 16 MB
-    64 * 1024 * 1024, # 64 MB
-    128 * 1024 * 1024, # 128 MB
-    256 * 1024 * 1024, # 256 MB
-)
-
-_SLAB_CLASS_NAMES: tuple[str, ...] = (
-    "64KB", "256KB", "1MB", "4MB", "16MB", "64MB", "128MB", "256MB",
-)
-
+_SLAB_CLASSES_BYTES: tuple[int, ...] = (64 * 1024, 256 * 1024, 1024 * 1024, 4 * 1024 * 1024, 16 * 1024 * 1024, 64 * 1024 * 1024, 128 * 1024 * 1024, 256 * 1024 * 1024)
+_SLAB_CLASS_NAMES: tuple[str, ...] = ('64KB', '256KB', '1MB', '4MB', '16MB', '64MB', '128MB', '256MB')
 _SLABS_PER_CLASS: int = 2
-_MAX_SLAB_TOTAL_BYTES: int = 512 * 1024 * 1024  # 512 MB hard cap
+_MAX_SLAB_TOTAL_BYTES: int = 512 * 1024 * 1024
 
-
-@dataclass
+@dataclass(True)
 class _Slab:
     """A single Metal buffer slab."""
     slab_id: str
-    size_class: int  # index into _SLAB_CLASSES_BYTES
+    size_class: int
     size_bytes: int
-    memoryview: Any = field(default=None)  # zero-copy Metal buffer
+    memoryview: Any = field(default=None)
     last_access: float = field(default=0.0)
     in_use: bool = field(default=False)
-
-
-# ── Slab Pool ──────────────────────────────────────────────────────────────────
 
 class MetalSlabPool:
     """
@@ -75,15 +53,14 @@ class MetalSlabPool:
             finally:
                 pool.release_slab(slab)
     """
-
-    _instance: "MetalSlabPool | None" = None
+    _instance: 'MetalSlabPool | None' = None
     _init_lock = threading.Lock()
-
     _slabs: dict[int, dict[str, _Slab]]
     _slab_lock: threading.Lock
     _stats_hits: int
     _stats_misses: int
     _stats_allocated_bytes: int
+    __slots__ = tuple(('_slab_lock', '_slabs', '_stats_allocated_bytes', '_stats_hits', '_stats_misses'))
 
     def __init__(self) -> None:
         self._slabs = {i: {} for i in range(len(_SLAB_CLASSES_BYTES))}
@@ -93,7 +70,7 @@ class MetalSlabPool:
         self._stats_allocated_bytes = 0
 
     @classmethod
-    def get_instance(cls) -> "MetalSlabPool":
+    def get_instance(cls) -> 'MetalSlabPool':
         """Get the singleton MetalSlabPool instance."""
         if cls._instance is None:
             with cls._init_lock:
@@ -110,8 +87,6 @@ class MetalSlabPool:
                     cls._instance.release_all()
                 cls._instance = None
 
-    # ── Size class helpers ────────────────────────────────────────────────────
-
     @staticmethod
     def _size_class_for(size_bytes: int) -> int:
         """Return the smallest size class >= size_bytes."""
@@ -119,8 +94,6 @@ class MetalSlabPool:
             if cls >= size_bytes:
                 return i
         return len(_SLAB_CLASSES_BYTES) - 1
-
-    # ── Core allocation ───────────────────────────────────────────────────────
 
     def acquire_slab(self, size_bytes: int) -> _Slab | None:
         """
@@ -131,62 +104,36 @@ class MetalSlabPool:
         """
         size_cls = self._size_class_for(size_bytes)
         actual_size = _SLAB_CLASSES_BYTES[size_cls]
-
         with self._slab_lock:
             slabs = self._slabs[size_cls]
-
-            # Check for free slab (LRU hit)
             for slab_id, slab in slabs.items():
                 if not slab.in_use:
                     slab.in_use = True
                     slab.last_access = _time.monotonic()
                     self._stats_hits += 1
-                    logger.debug(
-                        f"[MetalSlabPool] HIT slab={slab_id[:8]} "
-                        f"size={actual_size // 1024}KB"
-                    )
+                    logger.debug(f'[MetalSlabPool] HIT slab={slab_id[:8]} size={actual_size // 1024}KB')
                     return slab
-
-            # No free slab — try LRU eviction
             if len(slabs) >= _SLABS_PER_CLASS:
                 lru_slab = min(slabs.values(), key=lambda s: s.last_access)
                 self._evict_slab(lru_slab, size_cls)
-
-            # Check total cap
             if self._stats_allocated_bytes + actual_size > _MAX_SLAB_TOTAL_BYTES:
                 self._aggressive_cleanup()
                 if self._stats_allocated_bytes + actual_size > _MAX_SLAB_TOTAL_BYTES:
                     self._stats_misses += 1
-                    logger.debug(
-                        f"[MetalSlabPool] MISS — total cap reached "
-                        f"({self._stats_allocated_bytes / 1024**2:.0f}MB)"
-                    )
+                    logger.debug(f'[MetalSlabPool] MISS — total cap reached ({self._stats_allocated_bytes / 1024 ** 2:.0f}MB)')
                     return None
-
-        # Allocate new slab outside the lock (slow path)
         try:
             import mlx.core as mx
-
-            buf = mx.zeros([actual_size // 4], dtype=mx.int32)  # int32 = 4 bytes → exact size
-            slab = _Slab(
-                slab_id=str(uuid.uuid4()),
-                size_class=size_cls,
-                size_bytes=actual_size,
-                memoryview=buf,
-                last_access=_time.monotonic(),
-                in_use=True,
-            )
+            buf = mx.zeros([actual_size // 4], dtype=mx.int32)
+            slab = _Slab(slab_id=str(uuid.uuid4()), size_class=size_cls, size_bytes=actual_size, memoryview=buf, last_access=_time.monotonic(), in_use=True)
             with self._slab_lock:
                 self._slabs[size_cls][slab.slab_id] = slab
                 self._stats_allocated_bytes += actual_size
                 self._stats_hits += 1
-            logger.debug(
-                f"[MetalSlabPool] ALLOC slab={slab.slab_id[:8]} "
-                f"size={actual_size // 1024}KB"
-            )
+            logger.debug(f'[MetalSlabPool] ALLOC slab={slab.slab_id[:8]} size={actual_size // 1024}KB')
             return slab
         except Exception as e:
-            logger.debug(f"[MetalSlabPool] ALLOC FAILED: {e}")
+            logger.debug(f'[MetalSlabPool] ALLOC FAILED: {e}')
             with self._slab_lock:
                 self._stats_misses += 1
             return None
@@ -197,10 +144,7 @@ class MetalSlabPool:
             if slab.slab_id in self._slabs[slab.size_class]:
                 slab.in_use = False
                 slab.last_access = _time.monotonic()
-                logger.debug(
-                    f"[MetalSlabPool] RELEASE slab={slab.slab_id[:8]} "
-                    f"size={slab.size_bytes // 1024}KB"
-                )
+                logger.debug(f'[MetalSlabPool] RELEASE slab={slab.slab_id[:8]} size={slab.size_bytes // 1024}KB')
 
     def release_all(self) -> None:
         """Release all slabs back to the system."""
@@ -218,10 +162,7 @@ class MetalSlabPool:
             self._stats_allocated_bytes -= slab.size_bytes
             slab.memoryview = None
             slab.in_use = False
-            logger.debug(
-                f"[MetalSlabPool] EVICT slab={slab.slab_id[:8]} "
-                f"size={slab.size_bytes // 1024}KB"
-            )
+            logger.debug(f'[MetalSlabPool] EVICT slab={slab.slab_id[:8]} size={slab.size_bytes // 1024}KB')
 
     def _aggressive_cleanup(self) -> None:
         """Aggressive cleanup: clear MLX cache and retry."""
@@ -229,28 +170,19 @@ class MetalSlabPool:
             import mlx.core as mx
             mx.eval([])
             gc.collect()
-            if hasattr(mx, "clear_cache"):
+            if hasattr(mx, 'clear_cache'):
                 mx.clear_cache()
-            elif hasattr(mx, "metal") and hasattr(mx.metal, "clear_cache"):
+            elif hasattr(mx, 'metal') and hasattr(mx.metal, 'clear_cache'):
                 mx.metal.clear_cache()
             gc.collect()
         except Exception as e:
-            logger.debug(f"[MetalSlabPool] aggressive_cleanup: {e}")
-
-    # ── Stats ────────────────────────────────────────────────────────────────
+            logger.debug(f'[MetalSlabPool] aggressive_cleanup: {e}')
 
     def get_stats(self) -> dict[str, Any]:
         """Return pool statistics."""
         with self._slab_lock:
-            total_slabs = sum(len(s) for s in self._slabs.values())
-            return {
-                "total_slabs": total_slabs,
-                "max_slabs": len(_SLAB_CLASSES_BYTES) * _SLABS_PER_CLASS,
-                "allocated_bytes": self._stats_allocated_bytes,
-                "max_bytes": _MAX_SLAB_TOTAL_BYTES,
-                "hits": self._stats_hits,
-                "misses": self._stats_misses,
-            }
+            total_slabs = sum((len(s) for s in self._slabs.values()))
+            return {'total_slabs': total_slabs, 'max_slabs': len(_SLAB_CLASSES_BYTES) * _SLABS_PER_CLASS, 'allocated_bytes': self._stats_allocated_bytes, 'max_bytes': _MAX_SLAB_TOTAL_BYTES, 'hits': self._stats_hits, 'misses': self._stats_misses}
 
     def get_buffer_for_size(self, size_bytes: int) -> Any | None:
         """
@@ -259,7 +191,6 @@ class MetalSlabPool:
         """
         slab = self.acquire_slab(size_bytes)
         return slab.memoryview if slab else None
-
 
 def release_slab_pool() -> None:
     """Module-level convenience alias."""

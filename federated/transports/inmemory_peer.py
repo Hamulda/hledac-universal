@@ -54,7 +54,7 @@ import logging
 import time
 from typing import Any
 
-from .protocol import NodeTransportFactory
+from .protocol import NodeTransportFactory, set_sprint_id_attr
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +114,7 @@ class InMemoryPeerNodeTransport:
 
     def set_sprint_id(self, sprint_id: str) -> None:
         """Set sprint id for traceability."""
-        self._sprint_id = str(sprint_id or "")[:64]
+        set_sprint_id_attr(self, sprint_id)
 
     def set_seed(self, lane_to_findings: dict[str, list[dict[str, Any]]]) -> None:
         """

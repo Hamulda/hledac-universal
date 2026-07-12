@@ -18,9 +18,6 @@ Bounded for M1 8GB:
 Role: feeds identity_stitching_canonical.py adapter which produces
 derived identity findings for async_ingest_findings_batch().
 """
-
-
-
 import asyncio
 import logging
 import re
@@ -29,72 +26,36 @@ from dataclasses import dataclass, field
 import msgspec
 from datetime import datetime
 from typing import Any
-
 from hledac.universal.utils.async_helpers import safe_gather_shielded
-
 logger = logging.getLogger(__name__)
-
-# ── Thread pool for parallel extraction ────────────────────────────────────────
-# M1 dual-core: 2 workers optimal (mem vs speed tradeoff on 8GB UMA)
 _NUM_EXTRACTION_WORKERS: int = 2
-_CHUNK_SIZE: int = 32  # findings per chunk — balances overhead vs. parallelism
+_CHUNK_SIZE: int = 32
 _executor: ThreadPoolExecutor | None = None
-
 
 def _get_executor() -> ThreadPoolExecutor:
     global _executor
     if _executor is None:
-        _executor = ThreadPoolExecutor(
-            max_workers=_NUM_EXTRACTION_WORKERS,
-            thread_name_prefix="entity_extract",
-        )
+        _executor = ThreadPoolExecutor(max_workers=_NUM_EXTRACTION_WORKERS, thread_name_prefix='entity_extract')
     return _executor
-
-# ── Bounds ────────────────────────────────────────────────────────────────────
-
 MAX_PROFILES: int = 500
 MAX_COMPARISONS: int = 2000
+_EMAIL_RE = re.compile('[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}')
+_USERNAME_RE = re.compile('(?:^|[@\\s])([a-zA-Z0-9][a-zA-Z0-9_.-]{1,30})(?:@([a-zA-Z0-9][a-zA-Z0-9.-]*\\.[a-zA-Z]{2,})|$)', re.MULTILINE)
+_DOMAIN_HANDLE_RE = re.compile('\\b([a-zA-Z0-9][a-zA-Z0-9_.-]{2,20})@([a-zA-Z0-9][a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})\\b')
+_HANDLE_RE = re.compile('@([a-zA-Z0-9][a-zA-Z0-9_.-]{1,30})')
+_URL_HOST_RE = re.compile('https?://([a-zA-Z0-9][a-zA-Z0-9-]*\\.[a-zA-Z]{2,})')
 
-# ── Patterns ──────────────────────────────────────────────────────────────────
-
-# Email: standard email pattern
-_EMAIL_RE = re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}')
-
-# Platform handle patterns: @username or username@platform.domain
-_USERNAME_RE = re.compile(
-    r'(?:^|[@\s])([a-zA-Z0-9][a-zA-Z0-9_.-]{1,30})'
-    r'(?:@([a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,})|$)',
-    re.MULTILINE,
-)
-
-# Domain handle: user@domain (extrapolated handles from domains)
-_DOMAIN_HANDLE_RE = re.compile(
-    r'\b([a-zA-Z0-9][a-zA-Z0-9_.-]{2,20})@([a-zA-Z0-9][a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b',
-)
-
-# Generic handle: starts with @ followed by 2+ chars
-_HANDLE_RE = re.compile(r'@([a-zA-Z0-9][a-zA-Z0-9_.-]{1,30})')
-
-# URL host extractor for domain-based handles
-_URL_HOST_RE = re.compile(
-    r'https?://([a-zA-Z0-9][a-zA-Z0-9-]*\.[a-zA-Z]{2,})',
-)
-
-
-# ── Dataclasses ────────────────────────────────────────────────────────────────
-
-@dataclass
+@dataclass(True)
 class ExtractedEntity:
     """A single extracted entity from a finding."""
-    entity_type: str          # "email" | "username" | "domain_handle"
-    value: str                # normalized value
-    raw_value: str            # original raw value (for display)
-    platform: str             # platform context if known
-    finding_id: str           # source finding
-    confidence: float          # extraction confidence [0-1]
+    entity_type: str
+    value: str
+    raw_value: str
+    platform: str
+    finding_id: str
+    confidence: float
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class EntitySignalProfile:
     """
     Simplified identity profile for entity signal extraction.
@@ -103,40 +64,25 @@ class EntitySignalProfile:
     extraction-only profile used to pass entity signals to the stitching adapter.
     """
     id: str
-    primary_name: str          # extracted from payload or finding_id
+    primary_name: str
     emails: list[str] = field(default_factory=list)
     usernames: list[str] = field(default_factory=list)
     domain_handles: list[str] = field(default_factory=list)
     platforms: set[str] = field(default_factory=set)
-    finding_ids: list[str] = field(default_factory=list)   # source findings
+    finding_ids: list[str] = field(default_factory=list)
     confidence: float = 0.5
     created_at: datetime = field(default_factory=datetime.now)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "primary_name": self.primary_name,
-            "emails": self.emails,
-            "usernames": self.usernames,
-            "domain_handles": self.domain_handles,
-            "platforms": list(self.platforms),
-            "finding_ids": self.finding_ids,
-            "confidence": self.confidence,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-        }
-
-
-# ── Normalization ─────────────────────────────────────────────────────────────
+        return {'id': self.id, 'primary_name': self.primary_name, 'emails': self.emails, 'usernames': self.usernames, 'domain_handles': self.domain_handles, 'platforms': list(self.platforms), 'finding_ids': self.finding_ids, 'confidence': self.confidence, 'created_at': self.created_at.isoformat() if self.created_at else None}
 
 def _normalize_email(email: str) -> str:
     return email.lower().strip()
 
-
 def _normalize_username(username: str) -> str:
     normalized = username.lower().strip().lstrip('@')
-    normalized = re.sub(r'[._-]', '', normalized)
+    normalized = re.sub('[._-]', '', normalized)
     return normalized
-
 
 def _extract_platform_from_finding(finding: Any) -> str:
     """Extract platform/source context from finding."""
@@ -148,16 +94,12 @@ def _extract_platform_from_finding(finding: Any) -> str:
             return first_prov
     return src
 
-
 def _extract_domain_from_payload(payload_text: str | None) -> str | None:
     """Extract a domain from payload text (URL host)."""
     if not payload_text:
         return None
     m = _URL_HOST_RE.search(payload_text)
     return m.group(1) if m else None
-
-
-# ── Extraction ────────────────────────────────────────────────────────────────
 
 def extract_entities_from_finding(finding: Any) -> list[ExtractedEntity]:
     """
@@ -173,72 +115,33 @@ def extract_entities_from_finding(finding: Any) -> list[ExtractedEntity]:
     fid = getattr(finding, 'finding_id', None)
     if not fid:
         return entities
-
     payload = getattr(finding, 'payload_text', None) or ''
     platform = _extract_platform_from_finding(finding)
     confidence = getattr(finding, 'confidence', 0.5) or 0.5
-
-    # 1. Emails
     for match in _EMAIL_RE.finditer(payload):
         raw = match.group(0)
-        entities.append(ExtractedEntity(
-            entity_type="email",
-            value=_normalize_email(raw),
-            raw_value=raw,
-            platform=platform,
-            finding_id=fid,
-            confidence=min(confidence + 0.1, 1.0),
-        ))
-
-    # 2. Domain handles (user@domain patterns)
+        entities.append(ExtractedEntity(entity_type='email', value=_normalize_email(raw), raw_value=raw, platform=platform, finding_id=fid, confidence=min(confidence + 0.1, 1.0)))
     for match in _DOMAIN_HANDLE_RE.finditer(payload):
         handle = match.group(1).lower()
         domain = match.group(2).lower()
         if len(handle) >= 2 and len(domain) >= 3:
-            entities.append(ExtractedEntity(
-                entity_type="domain_handle",
-                value=f"{handle}@{domain}",
-                raw_value=f"{handle}@{domain}",
-                platform=platform,
-                finding_id=fid,
-                confidence=min(confidence + 0.05, 1.0),
-            ))
-
-    # 3. Username handles (bare @username)
+            entities.append(ExtractedEntity(entity_type='domain_handle', value=f'{handle}@{domain}', raw_value=f'{handle}@{domain}', platform=platform, finding_id=fid, confidence=min(confidence + 0.05, 1.0)))
     seen_usernames: set[str] = set()
     for match in _HANDLE_RE.finditer(payload):
         raw = match.group(1)
         if len(raw) >= 2 and raw.lower() not in seen_usernames:
             seen_usernames.add(raw.lower())
-            entities.append(ExtractedEntity(
-                entity_type="username",
-                value=_normalize_username(raw),
-                raw_value=raw,
-                platform=platform,
-                finding_id=fid,
-                confidence=min(confidence + 0.05, 1.0),
-            ))
-
-    # 4. Domain-extracted handles (username@subdomain.domain)
+            entities.append(ExtractedEntity(entity_type='username', value=_normalize_username(raw), raw_value=raw, platform=platform, finding_id=fid, confidence=min(confidence + 0.05, 1.0)))
     domain = _extract_domain_from_payload(payload)
     if domain:
         for match in _USERNAME_RE.finditer(payload):
             raw = match.group(1)
             if raw and len(raw) >= 2:
-                full_handle = f"{raw}@{domain}"
+                full_handle = f'{raw}@{domain}'
                 if full_handle.lower() not in seen_usernames:
                     seen_usernames.add(full_handle.lower())
-                    entities.append(ExtractedEntity(
-                        entity_type="domain_handle",
-                        value=_normalize_username(raw),
-                        raw_value=full_handle,
-                        platform=platform,
-                        finding_id=fid,
-                        confidence=min(confidence, 1.0),
-                    ))
-
+                    entities.append(ExtractedEntity(entity_type='domain_handle', value=_normalize_username(raw), raw_value=full_handle, platform=platform, finding_id=fid, confidence=min(confidence, 1.0)))
     return entities
-
 
 def _extract_chunk(findings_chunk: list[Any]) -> list[tuple[str, Any, ExtractedEntity]]:
     """
@@ -255,11 +158,7 @@ def _extract_chunk(findings_chunk: list[Any]) -> list[tuple[str, Any, ExtractedE
             results.append((fid, finding, ent))
     return results
 
-
-def extract_entities_from_findings(
-    findings: list[Any],
-    max_profiles: int = MAX_PROFILES,
-) -> list[EntitySignalProfile]:
+def extract_entities_from_findings(findings: list[Any], max_profiles: int=MAX_PROFILES) -> list[EntitySignalProfile]:
     """
     Extract entity signals from a batch of CanonicalFinding objects (sync version).
 
@@ -278,40 +177,23 @@ def extract_entities_from_findings(
     """
     if not findings:
         return []
-
-    # Parallel extraction via ThreadPoolExecutor
-    chunks: list[list[Any]] = [
-        findings[i:i + _CHUNK_SIZE]
-        for i in range(0, len(findings), _CHUNK_SIZE)
-    ]
-
+    chunks: list[list[Any]] = [findings[i:i + _CHUNK_SIZE] for i in range(0, len(findings), _CHUNK_SIZE)]
     executor = _get_executor()
     futures = [executor.submit(_extract_chunk, chunk) for chunk in chunks]
-
-    # Collect results
     all_results: list[tuple[str, Any, ExtractedEntity]] = []
     for f in futures:
         try:
             all_results.extend(f.result())
         except Exception as exc:
-            logger.warning(f"Entity extraction chunk failed: {exc}")
-
-    # Group into profiles (sequential — cheap dict ops)
+            logger.warning(f'Entity extraction chunk failed: {exc}')
     profile_map: dict[str, EntitySignalProfile] = {}
     for fid, _finding, ent in all_results:
         if len(profile_map) >= max_profiles:
             break
-
-        if ent.entity_type == "email":
-            key = f"email:{ent.value}"
+        if ent.entity_type == 'email':
+            key = f'email:{ent.value}'
             if key not in profile_map:
-                profile_map[key] = EntitySignalProfile(
-                    id=key,
-                    primary_name=ent.value.split('@')[0],
-                    emails=[ent.raw_value],
-                    finding_ids=[fid],
-                    confidence=ent.confidence,
-                )
+                profile_map[key] = EntitySignalProfile(id=key, primary_name=ent.value.split('@')[0], emails=[ent.raw_value], finding_ids=[fid], confidence=ent.confidence)
             else:
                 prof = profile_map[key]
                 if ent.raw_value not in prof.emails:
@@ -319,38 +201,24 @@ def extract_entities_from_findings(
                 if fid not in prof.finding_ids:
                     prof.finding_ids.append(fid)
                 prof.platforms.add(ent.platform)
-
-        elif ent.entity_type in ("username", "domain_handle"):
-            key = f"handle:{ent.value}"
+        elif ent.entity_type in ('username', 'domain_handle'):
+            key = f'handle:{ent.value}'
             if key not in profile_map:
-                profile_map[key] = EntitySignalProfile(
-                    id=key,
-                    primary_name=ent.raw_value,
-                    usernames=[ent.raw_value],
-                    domain_handles=[ent.raw_value] if ent.entity_type == "domain_handle" else [],
-                    finding_ids=[fid],
-                    confidence=ent.confidence,
-                )
+                profile_map[key] = EntitySignalProfile(id=key, primary_name=ent.raw_value, usernames=[ent.raw_value], domain_handles=[ent.raw_value] if ent.entity_type == 'domain_handle' else [], finding_ids=[fid], confidence=ent.confidence)
             else:
                 prof = profile_map[key]
                 if ent.raw_value not in prof.usernames:
                     prof.usernames.append(ent.raw_value)
-                if ent.entity_type == "domain_handle" and ent.raw_value not in prof.domain_handles:
+                if ent.entity_type == 'domain_handle' and ent.raw_value not in prof.domain_handles:
                     prof.domain_handles.append(ent.raw_value)
                 if fid not in prof.finding_ids:
                     prof.finding_ids.append(fid)
                 prof.platforms.add(ent.platform)
                 prof.confidence = max(prof.confidence, ent.confidence)
-
-    logger.debug(f"EntitySignalExtractor: {len(profile_map)} profiles from {len(findings)} findings")
+    logger.debug(f'EntitySignalExtractor: {len(profile_map)} profiles from {len(findings)} findings')
     return list(profile_map.values())
 
-
-async def extract_entities_from_findings_async(
-    findings: list[Any],
-    max_profiles: int = MAX_PROFILES,
-    max_concurrency: int = 4,
-) -> list[EntitySignalProfile]:
+async def extract_entities_from_findings_async(findings: list[Any], max_profiles: int=MAX_PROFILES, max_concurrency: int=4) -> list[EntitySignalProfile]:
     """
     P1-2: Async batch entity signal extraction via asyncio.gather.
 
@@ -380,51 +248,29 @@ async def extract_entities_from_findings_async(
     """
     if not findings:
         return []
-
-    # Chunk findings for concurrent extraction
-    chunks: list[list[Any]] = [
-        findings[i:i + _CHUNK_SIZE]
-        for i in range(0, len(findings), _CHUNK_SIZE)
-    ]
-
-    # P1-2: asyncio.gather with asyncio.to_thread — concurrent extraction
-    # each to_thread call runs sync _extract_chunk in thread pool without blocking event loop
-    # Semaphore bounds concurrency to max_concurrency for M1 8GB safety
+    chunks: list[list[Any]] = [findings[i:i + _CHUNK_SIZE] for i in range(0, len(findings), _CHUNK_SIZE)]
     semaphore = asyncio.Semaphore(max_concurrency)
 
     async def _run_chunk_with_sem(chunk: list[Any]) -> list[tuple[str, Any, ExtractedEntity]]:
         async with semaphore:
             return await asyncio.to_thread(_extract_chunk, chunk)
-
     tasks = [_run_chunk_with_sem(chunk) for chunk in chunks]
-    # F265C: migrated to safe_gather_shielded (structured TaskGroup concurrency)
-    gathered = await safe_gather_shielded(*tasks, label="entity_extraction", logger_instance=logger)
-
-    # Collect results (handle exceptions from individual chunks)
+    gathered = await safe_gather_shielded(*tasks, label='entity_extraction', logger_instance=logger)
     all_results: list[tuple[str, Any, ExtractedEntity]] = []
     for chunk_results in gathered.ok:
         all_results.extend(chunk_results)
     for exc in gathered.errors:
-        logger.warning(f"Entity extraction chunk failed: {exc}")
+        logger.warning(f'Entity extraction chunk failed: {exc}')
     if gathered.re_raised is not None:
         raise gathered.re_raised
-
-    # Group into profiles (sequential — cheap dict ops)
     profile_map: dict[str, EntitySignalProfile] = {}
     for fid, _finding, ent in all_results:
         if len(profile_map) >= max_profiles:
             break
-
-        if ent.entity_type == "email":
-            key = f"email:{ent.value}"
+        if ent.entity_type == 'email':
+            key = f'email:{ent.value}'
             if key not in profile_map:
-                profile_map[key] = EntitySignalProfile(
-                    id=key,
-                    primary_name=ent.value.split('@')[0],
-                    emails=[ent.raw_value],
-                    finding_ids=[fid],
-                    confidence=ent.confidence,
-                )
+                profile_map[key] = EntitySignalProfile(id=key, primary_name=ent.value.split('@')[0], emails=[ent.raw_value], finding_ids=[fid], confidence=ent.confidence)
             else:
                 prof = profile_map[key]
                 if ent.raw_value not in prof.emails:
@@ -432,38 +278,24 @@ async def extract_entities_from_findings_async(
                 if fid not in prof.finding_ids:
                     prof.finding_ids.append(fid)
                 prof.platforms.add(ent.platform)
-
-        elif ent.entity_type in ("username", "domain_handle"):
-            key = f"handle:{ent.value}"
+        elif ent.entity_type in ('username', 'domain_handle'):
+            key = f'handle:{ent.value}'
             if key not in profile_map:
-                profile_map[key] = EntitySignalProfile(
-                    id=key,
-                    primary_name=ent.raw_value,
-                    usernames=[ent.raw_value],
-                    domain_handles=[ent.raw_value] if ent.entity_type == "domain_handle" else [],
-                    finding_ids=[fid],
-                    confidence=ent.confidence,
-                )
+                profile_map[key] = EntitySignalProfile(id=key, primary_name=ent.raw_value, usernames=[ent.raw_value], domain_handles=[ent.raw_value] if ent.entity_type == 'domain_handle' else [], finding_ids=[fid], confidence=ent.confidence)
             else:
                 prof = profile_map[key]
                 if ent.raw_value not in prof.usernames:
                     prof.usernames.append(ent.raw_value)
-                if ent.entity_type == "domain_handle" and ent.raw_value not in prof.domain_handles:
+                if ent.entity_type == 'domain_handle' and ent.raw_value not in prof.domain_handles:
                     prof.domain_handles.append(ent.raw_value)
                 if fid not in prof.finding_ids:
                     prof.finding_ids.append(fid)
                 prof.platforms.add(ent.platform)
                 prof.confidence = max(prof.confidence, ent.confidence)
-
-    logger.debug(f"EntitySignalExtractor: {len(profile_map)} profiles from {len(findings)} findings")
+    logger.debug(f'EntitySignalExtractor: {len(profile_map)} profiles from {len(findings)} findings')
     return list(profile_map.values())
-
-
-# ── Module-level counter for probe tests ──────────────────────────────────────
-
 _extracted_profiles_total: int = 0
 _extracted_entities_total: int = 0
-
 
 def reset_extractor_stats() -> None:
     """Reset module-level statistics. Call at sprint teardown."""
@@ -471,14 +303,9 @@ def reset_extractor_stats() -> None:
     _extracted_profiles_total = 0
     _extracted_entities_total = 0
 
-
 def get_extractor_stats() -> dict[str, int]:
     """Return extractor statistics."""
-    return {
-        "profiles_extracted": _extracted_profiles_total,
-        "entities_extracted": _extracted_entities_total,
-    }
-
+    return {'profiles_extracted': _extracted_profiles_total, 'entities_extracted': _extracted_entities_total}
 
 def shutdown_executor() -> None:
     """Shutdown thread pool executor. Call at sprint teardown."""
@@ -486,17 +313,4 @@ def shutdown_executor() -> None:
     if _executor is not None:
         _executor.shutdown(wait=False)
         _executor = None
-
-
-__all__ = [
-    "ExtractedEntity",
-    "EntitySignalProfile",
-    "extract_entities_from_finding",
-    "extract_entities_from_findings",
-    "extract_entities_from_findings_async",
-    "reset_extractor_stats",
-    "get_extractor_stats",
-    "shutdown_executor",
-    "MAX_PROFILES",
-    "MAX_COMPARISONS",
-]
+__all__ = ['ExtractedEntity', 'EntitySignalProfile', 'extract_entities_from_finding', 'extract_entities_from_findings', 'extract_entities_from_findings_async', 'reset_extractor_stats', 'get_extractor_stats', 'shutdown_executor', 'MAX_PROFILES', 'MAX_COMPARISONS']

@@ -32,6 +32,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from hledac.universal.utils.msgspec_json import loads as _msgspec_loads, dumps_str as _msgspec_dumps_str
 
 from hledac.universal.core.concurrency_registry import ConcurrencyBudgetRegistry, ConcurrencyCategory
 from hledac.universal.utils.async_helpers import safe_gather_ok
@@ -111,7 +112,7 @@ async def search_openalex(query: str, max_results: int = 20) -> list[AcademicPap
         result = await async_fetch_public_text(url, timeout_s=30.0, use_stealth=True)
         if not result or not result.content:
             return []
-        data = orjson.loads(result.content)
+        data = or_msgspec_loads(result.content)
         papers = []
         for work in data.get("results", [])[:max_results]:
             authors = [au.get("display_name", "") for au in work.get("authorships", [])]
@@ -143,7 +144,7 @@ async def search_ia_scholar(query: str, max_results: int = 20) -> list[AcademicP
         result = await async_fetch_public_text(url, timeout_s=30.0, use_stealth=True)
         if not result or not result.content:
             return []
-        data = orjson.loads(result.content)
+        data = or_msgspec_loads(result.content)
         papers = []
         for item in data.get("items", [])[:max_results]:
             papers.append(AcademicPaper(
@@ -170,7 +171,7 @@ async def search_core(query: str, max_results: int = 20) -> list[AcademicPaper]:
         result = await async_fetch_public_text(url, timeout_s=30.0, use_stealth=True)
         if not result or not result.content:
             return []
-        data = orjson.loads(result.content)
+        data = or_msgspec_loads(result.content)
         papers = []
         for item in data.get("results", [])[:max_results]:
             papers.append(AcademicPaper(
@@ -198,7 +199,7 @@ async def search_biorxiv(query: str, max_results: int = 20) -> list[AcademicPape
         result = await async_fetch_public_text(url, timeout_s=30.0, use_stealth=True)
         if not result or not result.content:
             return []
-        data = orjson.loads(result.content)
+        data = or_msgspec_loads(result.content)
         papers = []
         for item in data.get("messages", [])[:max_results]:
             papers.append(AcademicPaper(
@@ -226,7 +227,7 @@ async def search_medrxiv(query: str, max_results: int = 20) -> list[AcademicPape
         result = await async_fetch_public_text(url, timeout_s=30.0, use_stealth=True)
         if not result or not result.content:
             return []
-        data = orjson.loads(result.content)
+        data = or_msgspec_loads(result.content)
         papers = []
         for item in data.get("messages", [])[:max_results]:
             papers.append(AcademicPaper(

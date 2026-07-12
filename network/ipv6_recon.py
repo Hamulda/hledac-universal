@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 IPv6 Reconnaissance — RDAP, WHOIS, DoH AAAA, BGP peer lookups.
 
@@ -23,39 +22,31 @@ GHOST_INVARIANTS:
   - Bounded deques, 50MB response caps, TTL caches
   - Fail-soft: source error returns empty dict, never raises
 """
-
 import asyncio
 import logging
 import time
 from dataclasses import dataclass
 from typing import Any
 import httpx
-
 from hledac.universal.network.session_runtime import async_get_httpx_session
 from hledac.universal.utils.async_helpers import safe_gather_ok, safe_gather_shielded
-
 logger = logging.getLogger(__name__)
-
-# ── Bounds ────────────────────────────────────────────────────────────────────
 MAX_IPV6_TARGETS: int = 50
 RDAP_TIMEOUT_S: float = 8.0
 WHOIS_TIMEOUT_S: float = 10.0
 MAX_RDAP_CACHE_SIZE: int = 500
-RDAP_CACHE_TTL_S: int = 3600  # 1 hour
+RDAP_CACHE_TTL_S: int = 3600
 
-
-# ── RDAP Cache ────────────────────────────────────────────────────────────────
 class _RDAPCache:
     """TTL-cached RDAP/WHOIS responses."""
-
-    __slots__ = ("_cache", "_timestamps")
+    __slots__ = ('_cache', '_timestamps')
 
     def __init__(self):
         self._cache: dict[str, dict] = {}
         self._timestamps: dict[str, float] = {}
 
     def _key(self, rdap_url: str, ip: str) -> str:
-        return f"{rdap_url}:{ip}"
+        return f'{rdap_url}:{ip}'
 
     def get(self, rdap_url: str, ip: str) -> dict | None:
         k = self._key(rdap_url, ip)
@@ -74,29 +65,11 @@ class _RDAPCache:
             self._timestamps.pop(oldest, None)
         self._cache[k] = data
         self._timestamps[k] = time.time()
-
-
 _rdap_cache = _RDAPCache()
+RDAP_BOOTSTRAP: dict[str, str] = {'arin': 'https://rdap.arin.net/registry/ip', 'ripe': 'https://rdap.ripe.net/rdap/ip', 'apnic': 'https://rdap.apnic.net/ip', 'lacnic': 'https://rdap.lacnic.net/rdap/ip', 'afrinic': 'https://rdap.afrinic.net/rdap/ip'}
+WHOIS_SERVERS: dict[str, str] = {'arin': 'whois.arin.net', 'ripe': 'whois.ripe.net', 'apnic': 'whois.apnic.net'}
 
-# ── RDAP bootstrap servers ────────────────────────────────────────────────────
-RDAP_BOOTSTRAP: dict[str, str] = {
-    "arin": "https://rdap.arin.net/registry/ip",
-    "ripe": "https://rdap.ripe.net/rdap/ip",
-    "apnic": "https://rdap.apnic.net/ip",
-    "lacnic": "https://rdap.lacnic.net/rdap/ip",
-    "afrinic": "https://rdap.afrinic.net/rdap/ip",
-}
-
-# ── WHOIS servers ─────────────────────────────────────────────────────────────
-WHOIS_SERVERS: dict[str, str] = {
-    "arin": "whois.arin.net",
-    "ripe": "whois.ripe.net",
-    "apnic": "whois.apnic.net",
-}
-
-
-# ── Result Dataclass ──────────────────────────────────────────────────────────
-@dataclass
+@dataclass(True)
 class IPv6Result:
     target: str
     rdap: dict[str, Any]
@@ -106,8 +79,6 @@ class IPv6Result:
     errors: list[str]
     elapsed_ms: float
 
-
-# ── Main Class ────────────────────────────────────────────────────────────────
 class IPv6Recon:
     """
     IPv6 reconnaissance client.
@@ -118,6 +89,7 @@ class IPv6Recon:
       - get_aaaa(domain)        → list of AAAA records via DoH
       - get_bgp_peer(ip)        → BGP peer info from bgpkit.com
     """
+    __slots__ = tuple(('_session',))
 
     def __init__(self):
         self._session: httpx.AsyncClient | None = None
@@ -127,107 +99,91 @@ class IPv6Recon:
             self._session = await async_get_httpx_session()
         return self._session
 
-    # ── RDAP ──────────────────────────────────────────────────────────────────
     async def _rdap_lookup(self, ip: str) -> dict[str, Any]:
         """RDAP lookup for an IP — auto-detect registry from IP range."""
-        # Check cache across all RDAP servers
         for rdap_url in RDAP_BOOTSTRAP.values():
             cached = _rdap_cache.get(rdap_url, ip)
             if cached is not None:
                 return cached
-
-        # Circuit breaker
         try:
             from hledac.universal.transport.circuit_breaker import get_breaker
-
-            if not get_breaker("rdap.arin.net").check_circuit().allowed:
-                raise RuntimeError(f"circuit_open: {'rdap.arin.net'}")  # noqa: E501
-            if not get_breaker("rdap.ripe.net").check_circuit().allowed:
-                raise RuntimeError(f"circuit_open: {'rdap.ripe.net'}")  # noqa: E701
-            if not get_breaker("rdap.apnic.net").check_circuit().allowed:
-                raise RuntimeError(f"circuit_open: {'rdap.apnic.net'}")  # noqa: E701
+            if not get_breaker('rdap.arin.net').check_circuit().allowed:
+                raise RuntimeError(f"circuit_open: {'rdap.arin.net'}")
+            if not get_breaker('rdap.ripe.net').check_circuit().allowed:
+                raise RuntimeError(f"circuit_open: {'rdap.ripe.net'}")
+            if not get_breaker('rdap.apnic.net').check_circuit().allowed:
+                raise RuntimeError(f"circuit_open: {'rdap.apnic.net'}")
         except Exception as e:
-            logger.debug(f"[IPv6] RDAP circuit breaker: {e}")
-
+            logger.debug(f'[IPv6] RDAP circuit breaker: {e}')
         session = await self._ensure_session()
-
-        # Try each RDAP server until one works
         for name, rdap_url in RDAP_BOOTSTRAP.items():
             try:
-                url = f"{rdap_url}/{ip}"
-                resp = await session.get(
-                    url,
-                    timeout=httpx.Timeout(total=RDAP_TIMEOUT_S),
-                )
+                url = f'{rdap_url}/{ip}'
+                resp = await session.get(url, timeout=httpx.Timeout(total=RDAP_TIMEOUT_S))
                 if resp.status_code == 200:
                     data = resp.json()
                     _rdap_cache.set(rdap_url, ip, data)
                     return data
                 elif resp.status_code == 404:
-                    continue  # Try next server
+                    continue
                 else:
                     continue
             except Exception as e:
-                logger.debug(f"[IPv6] RDAP {name} failed: {e}")
+                logger.debug(f'[IPv6] RDAP {name} failed: {e}')
                 continue
         return {}
 
-    # ── WHOIS ─────────────────────────────────────────────────────────────────
     async def _whois_lookup(self, ip: str) -> dict[str, Any]:
         """WHOIS lookup via asyncio.open_connection() — no run_in_executor."""
-        # Determine appropriate WHOIS server from IP range
         server = self._whois_server_for_ip(ip)
         if not server:
             return {}
-
         try:
             async with asyncio.timeout(WHOIS_TIMEOUT_S):
                 reader, writer = await asyncio.open_connection(server, 43)
         except Exception as e:
-            logger.debug(f"[IPv6] WHOIS connection failed: {e}")
+            logger.debug(f'[IPv6] WHOIS connection failed: {e}')
             return {}
-
         try:
-            writer.write(f"{ip}\r\n".encode())
+            writer.write(f'{ip}\r\n'.encode())
             await writer.drain()
-
             async with asyncio.timeout(WHOIS_TIMEOUT_S):
                 data = await reader.read(4096)
-            text = data.decode("utf-8", errors="replace")
+            text = data.decode('utf-8', errors='replace')
             return self._parse_whois(text)
         except Exception as e:
-            logger.debug(f"[IPv6] WHOIS read failed: {e}")
+            logger.debug(f'[IPv6] WHOIS read failed: {e}')
             return {}
         finally:
             writer.close()
             try:
                 await writer.wait_closed()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
 
     def _whois_server_for_ip(self, ip: str) -> str | None:
         """Select appropriate WHOIS server based on IP prefix."""
         try:
-            first_octet = int(ip.split(".")[0])
+            first_octet = int(ip.split('.')[0])
             if 0 <= first_octet <= 63:
-                return "whois.arin.net"
+                return 'whois.arin.net'
             elif 64 <= first_octet <= 127:
-                return "whois.ripe.net"
+                return 'whois.ripe.net'
             elif 128 <= first_octet <= 191:
-                return "whois.apnic.net"
+                return 'whois.apnic.net'
             elif 192 <= first_octet <= 223:
-                return "whois.apnic.net"
-        except Exception:  # noqa: BLE001
+                return 'whois.apnic.net'
+        except Exception:
             pass
-        return "whois.arin.net"
+        return 'whois.arin.net'
 
     def _parse_whois(self, text: str) -> dict[str, Any]:
         """Parse WHOIS text into structured dict."""
-        result: dict[str, Any] = {"raw": text[:2000]}
-        for line in text.split("\n"):
-            if ":" in line:
-                key, _, value = line.partition(":")
-                key = key.strip().lower().replace("-", "_")
+        result: dict[str, Any] = {'raw': text[:2000]}
+        for line in text.split('\n'):
+            if ':' in line:
+                key, _, value = line.partition(':')
+                key = key.strip().lower().replace('-', '_')
                 value = value.strip()
                 if key and value:
                     if key in result:
@@ -239,49 +195,35 @@ class IPv6Recon:
                         result[key] = value
         return result
 
-    # ── DoH AAAA ────────────────────────────────────────────────────────────────
     async def get_aaaa(self, domain: str) -> list[str]:
         """Get AAAA records for a domain via DoH."""
         try:
             from hledac.universal.network.passive_dns import DOH_RESOLVERS
         except Exception:
-            DOH_RESOLVERS = {  # noqa: N806
-                "cloudflare": "https://cloudflare-dns.com/dns-query",
-                "google": "https://dns.google/resolve",
-            }
-
+            DOH_RESOLVERS = {'cloudflare': 'https://cloudflare-dns.com/dns-query', 'google': 'https://dns.google/resolve'}
         results: list[str] = []
 
         async def _query(url: str) -> list[str]:
             try:
                 session = await self._ensure_session()
-
-                params = {"name": domain, "type": "AAAA"}
-                resp = await session.get(
-                    url,
-                    params=params,
-                    timeout=httpx.Timeout(total=8.0),
-                    headers={"Accept": "application/dns-json"},
-                )
+                params = {'name': domain, 'type': 'AAAA'}
+                resp = await session.get(url, params=params, timeout=httpx.Timeout(total=8.0), headers={'Accept': 'application/dns-json'})
                 if resp.status_code != 200:
                     return []
                 data = resp.json()
             except Exception:
                 return []
             answers: list[str] = []
-            for item in data.get("Answer", []) or []:
-                answer_str = item.get("data", "")
+            for item in data.get('Answer', []) or []:
+                answer_str = item.get('data', '')
                 if answer_str:
                     answers.append(answer_str)
             return answers
-
         tasks = [_query(url) for url in DOH_RESOLVERS.values()]
-        all_results = await safe_gather_ok(*tasks, label="ipv6_recon:273")
+        all_results = await safe_gather_ok(*tasks, label='ipv6_recon:273')
         for res in all_results:
             if isinstance(res, list):
                 results.extend(res)
-
-        # Deduplicate
         seen: set[str] = set()
         unique: list[str] = []
         for a in results:
@@ -290,132 +232,79 @@ class IPv6Recon:
                 unique.append(a)
         return unique
 
-    # ── BGP Peer ────────────────────────────────────────────────────────────────
     async def get_bgp_peer(self, ip: str) -> dict[str, Any]:
         """Get BGP peer info from bgpkit.com/v4/peer/{ip}."""
-        # Check circuit breaker
         try:
             from hledac.universal.transport.circuit_breaker import get_breaker
-
-            if not get_breaker("bgpkit.com").check_circuit().allowed:
-                raise RuntimeError(f"circuit_open: {'bgpkit.com'}")  # noqa: E701
+            if not get_breaker('bgpkit.com').check_circuit().allowed:
+                raise RuntimeError(f"circuit_open: {'bgpkit.com'}")
         except Exception:
             return {}
-
         session = await self._ensure_session()
-        url = f"https://bgpkit.com/v4/peer/{ip}"
+        url = f'https://bgpkit.com/v4/peer/{ip}'
         try:
-            resp = await session.get(
-                url,
-                timeout=httpx.Timeout(total=RDAP_TIMEOUT_S),
-            )
+            resp = await session.get(url, timeout=httpx.Timeout(total=RDAP_TIMEOUT_S))
             if resp.status_code != 200:
                 return {}
             return resp.json()
         except Exception as e:
-            logger.debug(f"[IPv6] BGP peer lookup failed: {e}")
+            logger.debug(f'[IPv6] BGP peer lookup failed: {e}')
             return {}
 
-    # ── Unified Recon ──────────────────────────────────────────────────────────
     async def recon_ip(self, ip: str) -> IPv6Result:
         """Full IPv6 recon for an IP address."""
         t0 = time.monotonic()
         errors: list[str] = []
-
-        # F265C: migrated to safe_gather_shielded (structured TaskGroup concurrency)
-        # Replaces: asyncio.create_task() + asyncio.wait() + manual result collection
-        gathered = await safe_gather_shielded(
-            self._rdap_lookup(ip),
-            self._whois_lookup(ip),
-            self.get_bgp_peer(ip),
-            label="ipv6_recon",
-            logger_instance=logger,
-        )
-
+        gathered = await safe_gather_shielded(self._rdap_lookup(ip), self._whois_lookup(ip), self.get_bgp_peer(ip), label='ipv6_recon', logger_instance=logger)
         rdap_result: dict[str, Any] = {}
         whois_result: dict[str, Any] = {}
         bgp_result: dict[str, Any] = {}
-
-        # Coroutines in order: rdap_lookup, whois_lookup, get_bgp_peer
         for res in gathered.ok:
             if isinstance(res, dict):
-                if "handle" in res or "network" in res:
+                if 'handle' in res or 'network' in res:
                     rdap_result = res
-                elif "raw" in res:
+                elif 'raw' in res:
                     whois_result = res
                 else:
                     bgp_result = res
-
         for exc in gathered.errors:
             errors.append(str(exc))
         if gathered.re_raised is not None:
             errors.append(str(gathered.re_raised))
-
         elapsed_ms = (time.monotonic() - t0) * 1000
-        return IPv6Result(
-            target=ip,
-            rdap=rdap_result,
-            whois=whois_result,
-            aaaa_records=[],  # Only used for domain recon
-            bgp_peer=bgp_result,
-            errors=errors,
-            elapsed_ms=elapsed_ms,
-        )
+        return IPv6Result(target=ip, rdap=rdap_result, whois=whois_result, aaaa_records=[], bgp_peer=bgp_result, errors=errors, elapsed_ms=elapsed_ms)
 
     async def recon_domain(self, domain: str) -> IPv6Result:
         """Full IPv6 recon for a domain — gets AAAA records, then RDAP for each."""
         t0 = time.monotonic()
         errors: list[str] = []
-
-        # F265C: migrated to safe_gather_shielded (structured TaskGroup concurrency)
-        # First: get AAAA records
-        aaaa_gathered = await safe_gather_shielded(
-            self.get_aaaa(domain),
-            label="ipv6_recon:aaaa",
-            logger_instance=logger,
-        )
+        aaaa_gathered = await safe_gather_shielded(self.get_aaaa(domain), label='ipv6_recon:aaaa', logger_instance=logger)
         aaaa_records: list[str] = []
         for res in aaaa_gathered.ok:
             if isinstance(res, list):
                 aaaa_records.extend(res)
         for exc in aaaa_gathered.errors:
-            errors.append(f"aaaa:{exc}")
-
-        # Second: recon each AAAA in parallel (max 10)
-        bgp_gathered = await safe_gather_shielded(
-            *[self.get_bgp_peer(ip) for ip in aaaa_records[:10]],
-            label="ipv6_recon:bgp",
-            logger_instance=logger,
-        )
+            errors.append(f'aaaa:{exc}')
+        bgp_gathered = await safe_gather_shielded(*[self.get_bgp_peer(ip) for ip in aaaa_records[:10]], label='ipv6_recon:bgp', logger_instance=logger)
         bgp_results: list[dict] = []
         for res in bgp_gathered.ok:
             if isinstance(res, dict):
                 bgp_results.append(res)
         for exc in bgp_gathered.errors:
             errors.append(str(exc))
-
         elapsed_ms = (time.monotonic() - t0) * 1000
-        return IPv6Result(
-            target=domain,
-            rdap={},
-            whois={},
-            aaaa_records=aaaa_records,
-            bgp_peer={"records": bgp_results},
-            errors=errors,
-            elapsed_ms=elapsed_ms,
-        )
+        return IPv6Result(target=domain, rdap={}, whois={}, aaaa_records=aaaa_records, bgp_peer={'records': bgp_results}, errors=errors, elapsed_ms=elapsed_ms)
 
     async def close(self) -> None:
-        if self._session and not self._session.is_closed:
+        if self._session and (not self._session.is_closed):
             await self._session.aclose()
 
-
-# ── IPv6ReconAdapter for sidecar bus ─────────────────────────────────────────
 class IPv6ReconAdapter:
     """
     IPv6 recon adapter for sidecar runners.
     Wraps IPv6Recon, returns CanonicalFinding-compatible dicts.
     """
+    __slots__ = tuple(('_recon',))
 
     def __init__(self):
         self._recon = IPv6Recon()
@@ -423,58 +312,28 @@ class IPv6ReconAdapter:
     async def query(self, target: str) -> list[dict]:
         """Run IPv6 recon on a target (IP or domain)."""
         findings: list[dict[str, Any]] = []
-
         try:
             if _is_ip(target):
                 result = await self._recon.recon_ip(target)
                 if result.bgp_peer:
-                    findings.append(
-                        {
-                            "source_type": "ipv6_recon",
-                            "ioc_type": "ipv4",
-                            "ioc_value": target,
-                            "target": target,
-                            "confidence": 0.7,
-                            "ts": time.time(),
-                            "payload_text": f"bgp_peer:{result.bgp_peer.get('asn', 'unknown')}",
-                        }
-                    )
+                    findings.append({'source_type': 'ipv6_recon', 'ioc_type': 'ipv4', 'ioc_value': target, 'target': target, 'confidence': 0.7, 'ts': time.time(), 'payload_text': f"bgp_peer:{result.bgp_peer.get('asn', 'unknown')}"})
             else:
                 result = await self._recon.recon_domain(target)
                 for aaaa in result.aaaa_records[:50]:
-                    findings.append(
-                        {
-                            "source_type": "ipv6_recon",
-                            "ioc_type": "ipv6",
-                            "ioc_value": aaaa,
-                            "target": target,
-                            "confidence": 0.6,
-                            "ts": time.time(),
-                            "payload_text": f"aaaa:{target}:{aaaa}",
-                        }
-                    )
+                    findings.append({'source_type': 'ipv6_recon', 'ioc_type': 'ipv6', 'ioc_value': aaaa, 'target': target, 'confidence': 0.6, 'ts': time.time(), 'payload_text': f'aaaa:{target}:{aaaa}'})
         except Exception as e:
-            logger.debug(f"[IPv6Recon] Error: {e}")
-
-        return findings[:100]  # bounded
+            logger.debug(f'[IPv6Recon] Error: {e}')
+        return findings[:100]
 
     async def close(self) -> None:
         await self._recon.close()
 
-
 def _is_ip(value: str) -> bool:
-    parts = value.split(".")
+    parts = value.split('.')
     if len(parts) == 4:
         try:
-            return all(0 <= int(p) <= 255 for p in parts)
+            return all((0 <= int(p) <= 255 for p in parts))
         except ValueError:
             pass
     return False
-
-
-__all__ = [
-    "IPv6Recon",
-    "IPv6ReconAdapter",
-    "IPv6Result",
-    "MAX_IPV6_TARGETS",
-]
+__all__ = ['IPv6Recon', 'IPv6ReconAdapter', 'IPv6Result', 'MAX_IPV6_TARGETS']

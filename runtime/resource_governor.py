@@ -31,59 +31,31 @@ Invariant table:
   sidecar_admission checks uma_state | test_m1_mission_budget.py:test_sidecar_admission_uma_critical
 """
 from __future__ import annotations
-
-
-
 import asyncio
 import logging
 import threading
-
 from hledac.universal.utils.async_helpers import safe_create_task
-
 import msgspec
-
-from hledac.universal.core.resource_governor import (
-    UMA_STATE_CRITICAL,
-    UMA_STATE_EMERGENCY,
-    UMA_STATE_WARN,
-    sample_uma_status,
-)
-
-# F290-O6: Sync adaptive thread thresholds to Rust (memory-pressure aware mixed_pool)
+from hledac.universal.core.resource_governor import UMA_STATE_CRITICAL, UMA_STATE_EMERGENCY, UMA_STATE_WARN, sample_uma_status
 try:
     from hledac_rust_extensions import sync_adaptive_state
 except Exception:
-    sync_adaptive_state = None  # type: ignore[assignment, unused]
-
+    sync_adaptive_state = None
 logger = logging.getLogger(__name__)
-
-# Default concurrency limits
 DEFAULT_FETCH_LIMIT = 25
-MODEL_LOADED_FETCH_LIMIT = 3  # F202H spec: limit=3 while model loaded
-# F265H: CRITICAL fetch_limit = 6 (not 3) — at 6.7 GiB CRITICAL the system has
-# 1.3 GiB headroom before EMERGENCY; fetch_limit=3 is too aggressive.
-# Model loaded path still uses 3 (M1 Metal GPU context is active, truly memory-constrained).
+MODEL_LOADED_FETCH_LIMIT = 3
 CRITICAL_FETCH_LIMIT = 6
-# F265H-EXT: Graduated branch concurrency — prevents 178 timeouts from 4→1 snap.
-# CRITICAL at 6.7 GiB → 3 branches (mild pressure, 0.3 GiB to EMERGENCY)
-# Near-EMERGENCY 6.85 GiB → 2 branches (severe pressure)
-# EMERGENCY 7.0 GiB → 1 branch (emergency mode)
 CRITICAL_BRANCH_CONCURRENCY = 1
-CRITICAL_NEAR_EMERGENCY_BRANCH_CONCURRENCY = 2  # 6.85 GiB+
-CRITICAL_MILD_BRANCH_CONCURRENCY = 3  # 6.7-6.85 GiB
+CRITICAL_NEAR_EMERGENCY_BRANCH_CONCURRENCY = 2
+CRITICAL_MILD_BRANCH_CONCURRENCY = 3
 MODEL_LOADED_BRANCH_CONCURRENCY = 2
 CRITICAL_ALLOW_RENDERER = False
 CRITICAL_ALLOW_MODEL_LOAD = False
-
-# F2-2: EMA timeout history for adaptive branch concurrency
-_EMA_ALPHA = 0.3  # Smoothing factor — responsive without hyperreactivity
-
-# F204J: Mission budget constants
+_EMA_ALPHA = 0.3
 MISSION_PEAK_RSS_GIB: float = 5.5
 SIDECAR_DEFAULT_ESTIMATE_MB: int = 128
-HEAVY_SIDECARS: tuple[str, ...] = ("embedding", "wayback_diff", "social_identity", "rir_correlation")
+HEAVY_SIDECARS: tuple[str, ...] = ('embedding', 'wayback_diff', 'social_identity', 'rir_correlation')
 MAX_BUDGET_EVENTS: int = 100
-
 
 class SidecarAdmission(msgspec.Struct, frozen=True):
     """F204J: Result of sidecar admission check."""
@@ -93,7 +65,6 @@ class SidecarAdmission(msgspec.Struct, frozen=True):
     rss_gib: float
     uma_state: str
     estimated_mb: int
-
 
 class RendererAdmission(msgspec.Struct, frozen=True):
     """F214R: Result of renderer admission check.
@@ -106,7 +77,6 @@ class RendererAdmission(msgspec.Struct, frozen=True):
     uma_state: str
     model_loaded: bool
 
-
 class ModelAdmission(msgspec.Struct, frozen=True):
     """F214R: Result of model load admission check.
 
@@ -117,7 +87,6 @@ class ModelAdmission(msgspec.Struct, frozen=True):
     reason: str
     uma_state: str
     free_uma_gib: float
-
 
 class BranchAdmission(msgspec.Struct, frozen=True):
     """F214R: Result of branch admission check.
@@ -131,7 +100,6 @@ class BranchAdmission(msgspec.Struct, frozen=True):
     branch_concurrency: int
     estimated_mb: int
 
-
 class LaneAdmission(msgspec.Struct, frozen=True):
     """F214R: Result of lane admission check.
 
@@ -144,7 +112,6 @@ class LaneAdmission(msgspec.Struct, frozen=True):
     uma_state: str
     risk_level: str
 
-
 class MissionBudgetSnapshot(msgspec.Struct, frozen=True):
     """F204J: Budget snapshot for scorecard export."""
     sprint_id: str
@@ -154,7 +121,6 @@ class MissionBudgetSnapshot(msgspec.Struct, frozen=True):
     model_loaded: bool
     renderer_allowed: bool
     fetch_limit: int
-
 
 class GovernorDecision(msgspec.Struct, frozen=True):
     """Output of M1ResourceGovernor.evaluate()."""
@@ -167,12 +133,9 @@ class GovernorDecision(msgspec.Struct, frozen=True):
     model_loaded: bool
     renderer_denied_count: int = 0
     model_denied_count: int = 0
-    # F203J: Free UMA GiB hint for QuantizationSelector
     free_uma_gib: float = 0.0
-    # F265H:UMA telemetry for hardware_critical diagnostics
     system_used_gib: float = 0.0
     swap_detected: bool = False
-
 
 class GovernorSnapshot(msgspec.Struct, frozen=True):
     """Snapshot of governor internal state for dashboard rendering."""
@@ -184,13 +147,9 @@ class GovernorSnapshot(msgspec.Struct, frozen=True):
     model_denied_count: int
     system_used_gib: float
     io_only: bool
-    # F203J: Free UMA GiB hint for QuantizationSelector
     free_uma_gib: float = 0.0
-    # F265H:UMA telemetry for hardware_critical diagnostics
     swap_detected: bool = False
-    # F2-2: EMA branch timeout pressure for scorecard export
     ema_branch_pressure: float = 0.0
-
 
 class M1ResourceGovernor:
     """
@@ -204,6 +163,7 @@ class M1ResourceGovernor:
         core.resource_governor.sample_uma_status()
         utils.concurrency.FETCH_SEMAPHORE.limit()
     """
+    __slots__ = tuple(('_branch_concurrency', '_current_workers', '_ema_branch_timeouts', '_fetch_limit', '_lock', '_model_denied_count', '_model_loaded', '_renderer_denied_count', '_snapshot_lock', '_uma_state', '_worker_adjust_queue', '_worker_adjust_task'))
 
     def __init__(self) -> None:
         self._fetch_limit = DEFAULT_FETCH_LIMIT
@@ -211,27 +171,13 @@ class M1ResourceGovernor:
         self._model_denied_count = 0
         self._model_loaded = False
         self._lock = asyncio.Lock()
-        # Issue #22: threading.RLock — snapshot() is sync (called from _branch_timeout_s)
-        # but record_branch_*() runs in executor threads; RLock is reentrant across threads.
         self._snapshot_lock = threading.RLock()
-        self._uma_state = "ok"
-        # F2-2: EMA branch timeout pressure (0.0 = no pressure, 1.0 = sustained timeouts)
+        self._uma_state = 'ok'
         self._ema_branch_timeouts: float = 0.0
-        # ISSUE-3: Persist branch_concurrency so snapshot() reads atomically.
-        # _evaluate_locked() and evaluate_adaptive() write this; snapshot() reads it.
-        # Reading/writing an int is atomic in CPython, so no lock needed for _branch_concurrency.
         self._branch_concurrency: int = 4
-        # Issue #6: Queue-based worker adjustment — eliminates cross-thread deadlock.
-        # evaluate() / evaluate_adaptive() / apply_decision() enqueue request (no lock held).
-        # _worker_adjust_consumer() applies changes while holding self._lock — the ONLY
-        # place where _current_workers is written. This breaks the circular wait.
         self._worker_adjust_queue: asyncio.Queue[int] = asyncio.Queue()
         self._worker_adjust_task: asyncio.Task[None] | None = None
         self._current_workers: int = DEFAULT_FETCH_LIMIT
-
-    # -------------------------------------------------------------------------
-    # F2-2: EMA timeout tracking
-    # -------------------------------------------------------------------------
 
     @property
     def ema_branch_pressure(self) -> float:
@@ -264,27 +210,21 @@ class M1ResourceGovernor:
         with self._snapshot_lock:
             self._ema_branch_timeouts = (1 - _EMA_ALPHA) * self._ema_branch_timeouts
 
-    # F290-O6: Sync memory pressure → Rust adaptive_scheduler (mixed_pool threshold)
     def _sync_adaptive_threshold(self, uma_state: str) -> None:
         """Push memory pressure to Rust adaptive_scheduler for thread pool adaptation."""
         if sync_adaptive_state is None:
             return
-        # Map uma_state string → pressure level (0=idle, 1=normal, 2+=pressure)
         pressure: int
-        if uma_state in ("ok", "soft_warn"):
+        if uma_state in ('ok', 'soft_warn'):
             pressure = 0
-        elif uma_state == "warn":
+        elif uma_state == 'warn':
             pressure = 1
-        else:  # critical, emergency
+        else:
             pressure = 2
         try:
-            sync_adaptive_state(pressure, 0)  # cpu_saturation=0 (not tracked yet)
+            sync_adaptive_state(pressure, 0)
         except Exception:
-            pass  # fail-soft
-
-    # -------------------------------------------------------------------------
-    # Issue #6: Queue-based worker adjustment — lock-free producer, locked consumer
-    # -------------------------------------------------------------------------
+            pass
 
     def _ensure_consumer_running(self) -> None:
         """
@@ -308,15 +248,13 @@ class M1ResourceGovernor:
             try:
                 new_count = await self._worker_adjust_queue.get()
             except asyncio.CancelledError:
-                break  # Graceful shutdown
-
+                break
             try:
-                # Only place where _current_workers changes — lock held briefly
                 async with self._lock:
                     self._current_workers = new_count
                     await self._adjust_workers_locked(new_count)
             except Exception as exc:
-                logger.debug("[Governor] _adjust_workers_locked failed: %s", exc)
+                logger.debug('[Governor] _adjust_workers_locked failed: %s', exc)
 
     async def _adjust_workers_locked(self, new_count: int) -> None:
         """
@@ -329,7 +267,7 @@ class M1ResourceGovernor:
             await adjust_fetch_workers(new_count)
             self._fetch_limit = new_count
         except Exception as exc:
-            logger.debug("[Governor] adjust_fetch_workers failed: %s", exc)
+            logger.debug('[Governor] adjust_fetch_workers failed: %s', exc)
 
     async def evaluate(self) -> GovernorDecision:
         """
@@ -354,12 +292,8 @@ class M1ResourceGovernor:
         """
         async with self._lock:
             decision = self._evaluate_locked()
-
-        # Issue #6: Enqueue worker adjustment (lock-free path).
-        # Consumer applies the change while holding self._lock.
         self._ensure_consumer_running()
         self._worker_adjust_queue.put_nowait(decision.fetch_limit)
-
         return decision
 
     def _evaluate_locked(self) -> GovernorDecision:
@@ -378,111 +312,64 @@ class M1ResourceGovernor:
             system_used_gib = uma.system_used_gib
             swap_detected = uma.swap_detected
             free_uma_gib = uma.system_available_gib
-            # F290-O6: Sync memory pressure → Rust adaptive_scheduler
             self._sync_adaptive_threshold(uma.state)
         except Exception as exc:
-            logger.debug("[Governor] sample_uma_status failed: %s", exc)
-            self._uma_state = "ok"
-
+            logger.debug('[Governor] sample_uma_status failed: %s', exc)
+            self._uma_state = 'ok'
         try:
             model_status = self._get_model_status()
-            self._model_loaded = model_status.get("loaded", False)
+            self._model_loaded = model_status.get('loaded', False)
         except Exception as exc:
-            logger.debug("[Governor] get_model_lifecycle_status failed: %s", exc)
+            logger.debug('[Governor] get_model_lifecycle_status failed: %s', exc)
             self._model_loaded = False
-
-        # Counter updates (idempotent, called every evaluation)
         if not self._model_loaded:
-            pass  # no counter update needed for model state
-        # Renderer/model deny counters are tracked here for telemetry
-        # (actual denial enforcement is via return values)
-
-        # Decision logic
+            pass
         fetch_limit = DEFAULT_FETCH_LIMIT
         allow_renderer = True
         allow_model_load = True
         branch_concurrency = 4
-
         if self._uma_state == UMA_STATE_EMERGENCY:
             fetch_limit = CRITICAL_FETCH_LIMIT
             allow_renderer = CRITICAL_ALLOW_RENDERER
             allow_model_load = CRITICAL_ALLOW_MODEL_LOAD
             branch_concurrency = CRITICAL_BRANCH_CONCURRENCY
-            logger.info(
-                "[Governor] emergency triggered: uma_state=%s system_used_gib=%.2f swap_detected=%s "
-                "→ fetch_limit=%d branch_concurrency=%d",
-                self._uma_state,
-                system_used_gib,
-                swap_detected,
-                fetch_limit,
-                branch_concurrency,
-            )
-            reason = f"UMA {self._uma_state}: safe mode"
+            logger.info('[Governor] emergency triggered: uma_state=%s system_used_gib=%.2f swap_detected=%s → fetch_limit=%d branch_concurrency=%d', self._uma_state, system_used_gib, swap_detected, fetch_limit, branch_concurrency)
+            reason = f'UMA {self._uma_state}: safe mode'
         elif self._uma_state == UMA_STATE_CRITICAL:
             fetch_limit = CRITICAL_FETCH_LIMIT
             allow_renderer = CRITICAL_ALLOW_RENDERER
             allow_model_load = CRITICAL_ALLOW_MODEL_LOAD
             if system_used_gib >= 6.85:
                 branch_concurrency = CRITICAL_NEAR_EMERGENCY_BRANCH_CONCURRENCY
-                reason = f"UMA {self._uma_state}: near_emergency reduced concurrency"
+                reason = f'UMA {self._uma_state}: near_emergency reduced concurrency'
             else:
                 branch_concurrency = CRITICAL_MILD_BRANCH_CONCURRENCY
-                reason = f"UMA {self._uma_state}: mild reduced concurrency"
-            logger.info(
-                "[Governor] critical triggered: uma_state=%s system_used_gib=%.2f swap_detected=%s "
-                "→ fetch_limit=%d branch_concurrency=%d",
-                self._uma_state,
-                system_used_gib,
-                swap_detected,
-                fetch_limit,
-                branch_concurrency,
-            )
+                reason = f'UMA {self._uma_state}: mild reduced concurrency'
+            logger.info('[Governor] critical triggered: uma_state=%s system_used_gib=%.2f swap_detected=%s → fetch_limit=%d branch_concurrency=%d', self._uma_state, system_used_gib, swap_detected, fetch_limit, branch_concurrency)
         elif self._model_loaded:
             fetch_limit = MODEL_LOADED_FETCH_LIMIT
             allow_renderer = False
             allow_model_load = False
             branch_concurrency = 2
-            reason = "model_loaded: reduced concurrency"
+            reason = 'model_loaded: reduced concurrency'
         elif self._uma_state == UMA_STATE_WARN:
             fetch_limit = max(3, DEFAULT_FETCH_LIMIT // 2)
             allow_renderer = True
             allow_model_load = True
             branch_concurrency = 3
-            reason = "UMA warn: reduced concurrency"
+            reason = 'UMA warn: reduced concurrency'
         else:
             fetch_limit = DEFAULT_FETCH_LIMIT
             allow_renderer = True
             allow_model_load = True
             branch_concurrency = 4
-            reason = "normal: full concurrency"
-
-        # Counter updates (idempotent, tracked for telemetry)
+            reason = 'normal: full concurrency'
         if not allow_renderer:
             self._renderer_denied_count += 1
         if not allow_model_load:
             self._model_denied_count += 1
-
-        # ISSUE-3: Persist branch_concurrency so snapshot() reads atomically
         self._branch_concurrency = branch_concurrency
-
-        return GovernorDecision(
-            fetch_limit=fetch_limit,
-            allow_renderer=allow_renderer,
-            allow_model_load=allow_model_load,
-            branch_concurrency=branch_concurrency,
-            reason=reason,
-            uma_state=self._uma_state,
-            model_loaded=self._model_loaded,
-            renderer_denied_count=self._renderer_denied_count,
-            model_denied_count=self._model_denied_count,
-            free_uma_gib=free_uma_gib,
-            system_used_gib=system_used_gib,
-            swap_detected=swap_detected,
-        )
-
-    # -------------------------------------------------------------------------
-    # F2-2: EMA-adaptive evaluate
-    # -------------------------------------------------------------------------
+        return GovernorDecision(fetch_limit=fetch_limit, allow_renderer=allow_renderer, allow_model_load=allow_model_load, branch_concurrency=branch_concurrency, reason=reason, uma_state=self._uma_state, model_loaded=self._model_loaded, renderer_denied_count=self._renderer_denied_count, model_denied_count=self._model_denied_count, free_uma_gib=free_uma_gib, system_used_gib=system_used_gib, swap_detected=swap_detected)
 
     async def evaluate_adaptive(self) -> GovernorDecision:
         """
@@ -507,53 +394,25 @@ class M1ResourceGovernor:
             try:
                 base = self._evaluate_locked()
             except Exception as exc:
-                logger.debug("[Governor] evaluate_adaptive base _evaluate_locked failed: %s", exc)
-                return GovernorDecision(
-                    fetch_limit=DEFAULT_FETCH_LIMIT,
-                    allow_renderer=True,
-                    allow_model_load=True,
-                    branch_concurrency=4,
-                    reason="evaluate_adaptive_fallback: base_evaluate_locked_failed",
-                    uma_state="ok",
-                    model_loaded=False,
-                )
-
+                logger.debug('[Governor] evaluate_adaptive base _evaluate_locked failed: %s', exc)
+                return GovernorDecision(fetch_limit=DEFAULT_FETCH_LIMIT, allow_renderer=True, allow_model_load=True, branch_concurrency=4, reason='evaluate_adaptive_fallback: base_evaluate_locked_failed', uma_state='ok', model_loaded=False)
             ema = self._ema_branch_timeouts
             if ema > 0.7:
                 branch_concurrency = 1
-                reason = f"{base.reason} | ema_timeout:{ema:.2f}>0.7→branch=1"
+                reason = f'{base.reason} | ema_timeout:{ema:.2f}>0.7→branch=1'
             elif ema > 0.4:
                 branch_concurrency = min(base.branch_concurrency, 2)
-                reason = f"{base.reason} | ema_timeout:{ema:.2f}>0.4→branch=min({base.branch_concurrency},2)"
+                reason = f'{base.reason} | ema_timeout:{ema:.2f}>0.4→branch=min({base.branch_concurrency},2)'
             else:
                 branch_concurrency = base.branch_concurrency
                 reason = base.reason
-
-            decision = GovernorDecision(
-                fetch_limit=base.fetch_limit,
-                allow_renderer=base.allow_renderer,
-                allow_model_load=base.allow_model_load,
-                branch_concurrency=branch_concurrency,
-                reason=reason,
-                uma_state=base.uma_state,
-                model_loaded=base.model_loaded,
-                renderer_denied_count=base.renderer_denied_count,
-                model_denied_count=base.model_denied_count,
-                free_uma_gib=base.free_uma_gib,
-                system_used_gib=base.system_used_gib,
-                swap_detected=base.swap_detected,
-            )
-
-            # ISSUE-3: Persist branch_concurrency so snapshot() reads atomically
+            decision = GovernorDecision(fetch_limit=base.fetch_limit, allow_renderer=base.allow_renderer, allow_model_load=base.allow_model_load, branch_concurrency=branch_concurrency, reason=reason, uma_state=base.uma_state, model_loaded=base.model_loaded, renderer_denied_count=base.renderer_denied_count, model_denied_count=base.model_denied_count, free_uma_gib=base.free_uma_gib, system_used_gib=base.system_used_gib, swap_detected=base.swap_detected)
             self._branch_concurrency = branch_concurrency
-
-        # Issue #6: Enqueue worker adjustment (lock-free path).
         self._ensure_consumer_running()
         self._worker_adjust_queue.put_nowait(decision.fetch_limit)
-
         return decision
 
-    def sidecar_admission(self, sidecar_name: str, estimated_mb: int = SIDECAR_DEFAULT_ESTIMATE_MB) -> SidecarAdmission:
+    def sidecar_admission(self, sidecar_name: str, estimated_mb: int=SIDECAR_DEFAULT_ESTIMATE_MB) -> SidecarAdmission:
         """
         F204J: Check if a sidecar can be admitted given current memory state.
 
@@ -568,63 +427,23 @@ class M1ResourceGovernor:
         """
         try:
             uma = sample_uma_status()
-            rss_gib = uma.system_used_gib / 1024**3 if uma.system_used_gib else 0.0
+            rss_gib = uma.system_used_gib / 1024 ** 3 if uma.system_used_gib else 0.0
             uma_state = uma.state
         except Exception as exc:
-            logger.debug("[Governor] sidecar_admission sample_uma_status failed: %s", exc)
-            return SidecarAdmission(
-                allowed=True,
-                sidecar_name=sidecar_name,
-                reason="uma_check_failed_allowing",
-                rss_gib=0.0,
-                uma_state="unknown",
-                estimated_mb=estimated_mb,
-            )
-
-        # CRITICAL/EMERGENCY → block heavy sidecars
+            logger.debug('[Governor] sidecar_admission sample_uma_status failed: %s', exc)
+            return SidecarAdmission(allowed=True, sidecar_name=sidecar_name, reason='uma_check_failed_allowing', rss_gib=0.0, uma_state='unknown', estimated_mb=estimated_mb)
         if uma_state in (UMA_STATE_CRITICAL, UMA_STATE_EMERGENCY):
             if sidecar_name in HEAVY_SIDECARS:
-                return SidecarAdmission(
-                    allowed=False,
-                    sidecar_name=sidecar_name,
-                    reason=f"uma_{uma_state}_blocking_heavy_sidecar",
-                    rss_gib=rss_gib,
-                    uma_state=uma_state,
-                    estimated_mb=estimated_mb,
-                )
-
-        # RAM guard: skip heavy sidecar if RSS > 85% high_water or > 5.0 GiB
+                return SidecarAdmission(allowed=False, sidecar_name=sidecar_name, reason=f'uma_{uma_state}_blocking_heavy_sidecar', rss_gib=rss_gib, uma_state=uma_state, estimated_mb=estimated_mb)
         if sidecar_name in HEAVY_SIDECARS:
             try:
-                if hasattr(uma, "high_water") and uma.high_water > 0.85:
-                    return SidecarAdmission(
-                        allowed=False,
-                        sidecar_name=sidecar_name,
-                        reason="high_water_exceeded_85pct",
-                        rss_gib=rss_gib,
-                        uma_state=uma_state,
-                        estimated_mb=estimated_mb,
-                    )
-                if rss_gib > MISSION_PEAK_RSS_GIB - 0.5:  # 0.5 GiB headroom
-                    return SidecarAdmission(
-                        allowed=False,
-                        sidecar_name=sidecar_name,
-                        reason="rss_exceeds_headroom_limit",
-                        rss_gib=rss_gib,
-                        uma_state=uma_state,
-                        estimated_mb=estimated_mb,
-                    )
-            except Exception:  # noqa: BLE001
-                pass  # noqa: BLE001  # Fail-soft: allow sidecar
-
-        return SidecarAdmission(
-            allowed=True,
-            sidecar_name=sidecar_name,
-            reason="admitted",
-            rss_gib=rss_gib,
-            uma_state=uma_state,
-            estimated_mb=estimated_mb,
-        )
+                if hasattr(uma, 'high_water') and uma.high_water > 0.85:
+                    return SidecarAdmission(allowed=False, sidecar_name=sidecar_name, reason='high_water_exceeded_85pct', rss_gib=rss_gib, uma_state=uma_state, estimated_mb=estimated_mb)
+                if rss_gib > MISSION_PEAK_RSS_GIB - 0.5:
+                    return SidecarAdmission(allowed=False, sidecar_name=sidecar_name, reason='rss_exceeds_headroom_limit', rss_gib=rss_gib, uma_state=uma_state, estimated_mb=estimated_mb)
+            except Exception:
+                pass
+        return SidecarAdmission(allowed=True, sidecar_name=sidecar_name, reason='admitted', rss_gib=rss_gib, uma_state=uma_state, estimated_mb=estimated_mb)
 
     def _get_model_status(self) -> dict:
         """Read-only model status from canonical lifecycle API."""
@@ -632,8 +451,8 @@ class M1ResourceGovernor:
             from hledac.universal.brain.model_lifecycle import get_model_lifecycle_status
             return get_model_lifecycle_status()
         except Exception as exc:
-            logger.debug("[Governor] get_model_lifecycle_status failed: %s", exc)
-            return {"loaded": False, "current_model": None, "initialized": False, "last_error": None}
+            logger.debug('[Governor] get_model_lifecycle_status failed: %s', exc)
+            return {'loaded': False, 'current_model': None, 'initialized': False, 'last_error': None}
 
     def renderer_admission(self) -> RendererAdmission:
         """
@@ -650,47 +469,26 @@ class M1ResourceGovernor:
         Combines model lifecycle + UMA state in one authoritative call.
         Fail-soft: returns allowed=False with "unknown" reason on errors.
         """
-        uma_state = "ok"
+        uma_state = 'ok'
         try:
             uma = sample_uma_status()
             uma_state = uma.state
         except Exception as exc:
-            logger.debug("[Governor] renderer_admission sample_uma_status failed: %s", exc)
-            return RendererAdmission(allowed=False, reason="uma_check_failed", uma_state="unknown", model_loaded=False)
-
+            logger.debug('[Governor] renderer_admission sample_uma_status failed: %s', exc)
+            return RendererAdmission(allowed=False, reason='uma_check_failed', uma_state='unknown', model_loaded=False)
         model_loaded = False
         try:
             model_status = self._get_model_status()
-            model_loaded = model_status.get("loaded", False)
+            model_loaded = model_status.get('loaded', False)
         except Exception as exc:
-            logger.debug("[Governor] renderer_admission get_model_status failed: %s", exc)
-
-        # CRITICAL/EMERGENCY → deny renderer
+            logger.debug('[Governor] renderer_admission get_model_status failed: %s', exc)
         if uma_state in (UMA_STATE_CRITICAL, UMA_STATE_EMERGENCY):
-            return RendererAdmission(
-                allowed=False,
-                reason=f"uma_{uma_state}_blocking_renderer",
-                uma_state=uma_state,
-                model_loaded=model_loaded,
-            )
-
-        # Model loaded → deny renderer (M1 constraint: no model + JS renderer)
+            return RendererAdmission(allowed=False, reason=f'uma_{uma_state}_blocking_renderer', uma_state=uma_state, model_loaded=model_loaded)
         if model_loaded:
-            return RendererAdmission(
-                allowed=False,
-                reason="model_loaded_blocking_renderer",
-                uma_state=uma_state,
-                model_loaded=True,
-            )
+            return RendererAdmission(allowed=False, reason='model_loaded_blocking_renderer', uma_state=uma_state, model_loaded=True)
+        return RendererAdmission(allowed=True, reason='admitted', uma_state=uma_state, model_loaded=model_loaded)
 
-        return RendererAdmission(
-            allowed=True,
-            reason="admitted",
-            uma_state=uma_state,
-            model_loaded=model_loaded,
-        )
-
-    def model_admission(self, _model_name: str = "", estimated_mb: int = 0) -> ModelAdmission:
+    def model_admission(self, _model_name: str='', estimated_mb: int=0) -> ModelAdmission:
         """
         F214R: Canonical model load admission check.
         @pending_integration: no confirmed production call sites as of F214R audit.
@@ -706,43 +504,23 @@ class M1ResourceGovernor:
         This only checks UMA state suitability for a new load.
         Fail-soft: returns allowed=False with "unknown" reason on errors.
         """
-        uma_state = "ok"
+        uma_state = 'ok'
         free_uma_gib = 0.0
         try:
             uma = sample_uma_status()
             uma_state = uma.state
-            free_uma_gib = getattr(uma, "system_available_gib", 0.0)
+            free_uma_gib = getattr(uma, 'system_available_gib', 0.0)
         except Exception as exc:
-            logger.debug("[Governor] model_admission sample_uma_status failed: %s", exc)
-            return ModelAdmission(allowed=False, reason="uma_check_failed", uma_state="unknown", free_uma_gib=0.0)
-
-        # CRITICAL/EMERGENCY → deny new model load
+            logger.debug('[Governor] model_admission sample_uma_status failed: %s', exc)
+            return ModelAdmission(allowed=False, reason='uma_check_failed', uma_state='unknown', free_uma_gib=0.0)
         if uma_state in (UMA_STATE_CRITICAL, UMA_STATE_EMERGENCY):
-            return ModelAdmission(
-                allowed=False,
-                reason=f"uma_{uma_state}_blocking_model_load",
-                uma_state=uma_state,
-                free_uma_gib=free_uma_gib,
-            )
-
-        # Check estimated MB vs free UMA
+            return ModelAdmission(allowed=False, reason=f'uma_{uma_state}_blocking_model_load', uma_state=uma_state, free_uma_gib=free_uma_gib)
         if estimated_mb > 0 and free_uma_gib > 0:
             if estimated_mb / 1024 > free_uma_gib * 0.9:
-                return ModelAdmission(
-                    allowed=False,
-                    reason="insufficient_uma_for_model_load",
-                    uma_state=uma_state,
-                    free_uma_gib=free_uma_gib,
-                )
+                return ModelAdmission(allowed=False, reason='insufficient_uma_for_model_load', uma_state=uma_state, free_uma_gib=free_uma_gib)
+        return ModelAdmission(allowed=True, reason='admitted', uma_state=uma_state, free_uma_gib=free_uma_gib)
 
-        return ModelAdmission(
-            allowed=True,
-            reason="admitted",
-            uma_state=uma_state,
-            free_uma_gib=free_uma_gib,
-        )
-
-    def branch_admission(self, _branch_name: str = "", estimated_mb: int = 0) -> BranchAdmission:
+    def branch_admission(self, _branch_name: str='', estimated_mb: int=0) -> BranchAdmission:
         """
         F214R: Canonical branch admission check.
         @pending_integration: no confirmed production call sites as of F214R audit.
@@ -757,70 +535,37 @@ class M1ResourceGovernor:
 
         Fail-soft: returns allowed=True with normal concurrency on errors.
         """
-        uma_state = "ok"
-        system_used_gib = 5.0  # safe default
+        uma_state = 'ok'
+        system_used_gib = 5.0
         branch_concurrency = 4
         try:
             uma = sample_uma_status()
             uma_state = uma.state
             system_used_gib = uma.system_used_gib
         except Exception as exc:
-            logger.debug("[Governor] branch_admission sample_uma_status failed: %s", exc)
-            return BranchAdmission(allowed=True, reason="uma_check_failed_allowing", uma_state="unknown", branch_concurrency=4, estimated_mb=estimated_mb)  # noqa: E501
-
-        # CRITICAL/EMERGENCY → graduated minimal concurrency
-        # F265H-EXT: graduated 4→3→2→1 based on proximity to EMERGENCY
+            logger.debug('[Governor] branch_admission sample_uma_status failed: %s', exc)
+            return BranchAdmission(allowed=True, reason='uma_check_failed_allowing', uma_state='unknown', branch_concurrency=4, estimated_mb=estimated_mb)
         if uma_state == UMA_STATE_EMERGENCY:
-            return BranchAdmission(
-                allowed=True,
-                reason=f"uma_{uma_state}_reduced_concurrency",
-                uma_state=uma_state,
-                branch_concurrency=1,
-                estimated_mb=estimated_mb,
-            )
+            return BranchAdmission(allowed=True, reason=f'uma_{uma_state}_reduced_concurrency', uma_state=uma_state, branch_concurrency=1, estimated_mb=estimated_mb)
         elif uma_state == UMA_STATE_CRITICAL:
-            # 6.85+ GiB → 2, else 6.7-6.85 → 3
             if system_used_gib >= 6.85:
                 branch_concurrency = 2
             else:
                 branch_concurrency = 3
-            return BranchAdmission(
-                allowed=True,
-                reason=f"uma_{uma_state}_graduated_concurrency",
-                uma_state=uma_state,
-                branch_concurrency=branch_concurrency,
-                estimated_mb=estimated_mb,
-            )
-
-        # Model loaded → reduced concurrency (evaluated before WARN to match evaluate() priority)
+            return BranchAdmission(allowed=True, reason=f'uma_{uma_state}_graduated_concurrency', uma_state=uma_state, branch_concurrency=branch_concurrency, estimated_mb=estimated_mb)
         model_loaded = False
         try:
             model_status = self._get_model_status()
-            model_loaded = model_status.get("loaded", False)
-        except Exception:  # noqa: BLE001
+            model_loaded = model_status.get('loaded', False)
+        except Exception:
             pass
         if model_loaded:
-            return BranchAdmission(
-                allowed=True,
-                reason="model_loaded_reduced_concurrency",
-                uma_state=uma_state,
-                branch_concurrency=2,
-                estimated_mb=estimated_mb,
-            )
-
-        # WARN → reduced concurrency
+            return BranchAdmission(allowed=True, reason='model_loaded_reduced_concurrency', uma_state=uma_state, branch_concurrency=2, estimated_mb=estimated_mb)
         if uma_state == UMA_STATE_WARN:
             branch_concurrency = 3
+        return BranchAdmission(allowed=True, reason='admitted', uma_state=uma_state, branch_concurrency=branch_concurrency, estimated_mb=estimated_mb)
 
-        return BranchAdmission(
-            allowed=True,
-            reason="admitted",
-            uma_state=uma_state,
-            branch_concurrency=branch_concurrency,
-            estimated_mb=estimated_mb,
-        )
-
-    def lane_admission(self, _lane_name: str = "", risk_level: str = "medium", _estimated_mb: int = 0) -> LaneAdmission:
+    def lane_admission(self, _lane_name: str='', risk_level: str='medium', _estimated_mb: int=0) -> LaneAdmission:
         """
         F214R: Canonical lane admission check.
 
@@ -834,70 +579,42 @@ class M1ResourceGovernor:
         Heavy lanes (high/critical risk) are blocked under critical/emergency UMA.
         Fail-soft: returns allowed=True on errors.
         """
-        uma_state = "ok"
+        uma_state = 'ok'
         try:
             uma = sample_uma_status()
             uma_state = uma.state
         except Exception as exc:
-            logger.debug("[Governor] lane_admission sample_uma_status failed: %s", exc)
-            return LaneAdmission(allowed=True, reason="uma_check_failed_allowing", uma_state="unknown", risk_level=risk_level)  # noqa: E501
-
-        # CRITICAL/EMERGENCY → block high/critical risk lanes
+            logger.debug('[Governor] lane_admission sample_uma_status failed: %s', exc)
+            return LaneAdmission(allowed=True, reason='uma_check_failed_allowing', uma_state='unknown', risk_level=risk_level)
         if uma_state in (UMA_STATE_CRITICAL, UMA_STATE_EMERGENCY):
-            if risk_level in ("high", "critical"):
-                # Sprint F4: Track lane_blocked_reason metric
+            if risk_level in ('high', 'critical'):
                 try:
                     from metrics_registry import get_metrics_registry
-                    get_metrics_registry().inc("lane_blocked_reason")
-                except Exception:  # noqa: BLE001
-                    pass  # fail-safe
-                return LaneAdmission(
-                    allowed=False,
-                    reason=f"uma_{uma_state}_blocking_{risk_level}_lane",
-                    uma_state=uma_state,
-                    risk_level=risk_level,
-                )
-
-        # RAM guard for heavy lanes
-        if risk_level in ("high", "critical"):
+                    get_metrics_registry().inc('lane_blocked_reason')
+                except Exception:
+                    pass
+                return LaneAdmission(allowed=False, reason=f'uma_{uma_state}_blocking_{risk_level}_lane', uma_state=uma_state, risk_level=risk_level)
+        if risk_level in ('high', 'critical'):
             try:
                 uma = sample_uma_status()
-                rss_gib = uma.system_used_gib / (1024**3) if uma.system_used_gib else 0.0
-                if hasattr(uma, "high_water") and uma.high_water > 0.85:
-                    # Sprint F4: Track lane_blocked_reason metric
+                rss_gib = uma.system_used_gib / 1024 ** 3 if uma.system_used_gib else 0.0
+                if hasattr(uma, 'high_water') and uma.high_water > 0.85:
                     try:
                         from metrics_registry import get_metrics_registry
-                        get_metrics_registry().inc("lane_blocked_reason")
-                    except Exception:  # noqa: BLE001
-                        pass  # fail-safe
-                    return LaneAdmission(
-                        allowed=False,
-                        reason="high_water_exceeded_85pct",
-                        uma_state=uma_state,
-                        risk_level=risk_level,
-                    )
+                        get_metrics_registry().inc('lane_blocked_reason')
+                    except Exception:
+                        pass
+                    return LaneAdmission(allowed=False, reason='high_water_exceeded_85pct', uma_state=uma_state, risk_level=risk_level)
                 if rss_gib > MISSION_PEAK_RSS_GIB - 0.5:
-                    # Sprint F4: Track lane_blocked_reason metric
                     try:
                         from metrics_registry import get_metrics_registry
-                        get_metrics_registry().inc("lane_blocked_reason")
-                    except Exception:  # noqa: BLE001
-                        pass  # fail-safe
-                    return LaneAdmission(
-                        allowed=False,
-                        reason="rss_exceeds_headroom_limit",
-                        uma_state=uma_state,
-                        risk_level=risk_level,
-                    )
-            except Exception:  # noqa: BLE001
-                pass  # noqa: BLE001  # Fail-soft
-
-        return LaneAdmission(
-            allowed=True,
-            reason="admitted",
-            uma_state=uma_state,
-            risk_level=risk_level,
-        )
+                        get_metrics_registry().inc('lane_blocked_reason')
+                    except Exception:
+                        pass
+                    return LaneAdmission(allowed=False, reason='rss_exceeds_headroom_limit', uma_state=uma_state, risk_level=risk_level)
+            except Exception:
+                pass
+        return LaneAdmission(allowed=True, reason='admitted', uma_state=uma_state, risk_level=risk_level)
 
     def snapshot(self) -> GovernorSnapshot:
         """Current state snapshot for dashboard rendering.
@@ -917,21 +634,9 @@ class M1ResourceGovernor:
                 system_used_gib = uma.system_used_gib
                 swap_detected = uma.swap_detected
                 io_only = uma.io_only
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
-            return GovernorSnapshot(
-                uma_state=self._uma_state,
-                model_loaded=self._model_loaded,
-                fetch_limit=self._fetch_limit,
-                branch_concurrency=self._branch_concurrency,
-                renderer_denied_count=self._renderer_denied_count,
-                model_denied_count=self._model_denied_count,
-                system_used_gib=system_used_gib,
-                io_only=io_only,
-                free_uma_gib=free_uma_gib,
-                swap_detected=swap_detected,
-                ema_branch_pressure=round(self._ema_branch_timeouts, 3),
-            )
+            return GovernorSnapshot(uma_state=self._uma_state, model_loaded=self._model_loaded, fetch_limit=self._fetch_limit, branch_concurrency=self._branch_concurrency, renderer_denied_count=self._renderer_denied_count, model_denied_count=self._model_denied_count, system_used_gib=system_used_gib, io_only=io_only, free_uma_gib=free_uma_gib, swap_detected=swap_detected, ema_branch_pressure=round(self._ema_branch_timeouts, 3))
 
     async def apply_decision(self, decision: GovernorDecision) -> None:
         """
@@ -945,15 +650,9 @@ class M1ResourceGovernor:
                 self._renderer_denied_count += 1
             if not decision.allow_model_load:
                 self._model_denied_count += 1
-
-        # Issue #6: Enqueue worker adjustment (lock-free path).
         self._ensure_consumer_running()
         self._worker_adjust_queue.put_nowait(decision.fetch_limit)
-
-
-# Singleton instance
 _governor: M1ResourceGovernor | None = None
-
 
 def get_governor() -> M1ResourceGovernor:
     """Get or create the singleton M1ResourceGovernor."""

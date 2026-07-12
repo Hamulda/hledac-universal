@@ -23,27 +23,21 @@ Example:
     ]
     results = await bounded_map(tasks, max_concurrent=3, max_retries=2)
 """
-
-
-
 import asyncio
 import logging
 import random
 import sys
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from typing import Any, TypeVar, cast
-
 from .async_helpers import safe_create_task, safe_gather_fire_and_forget, safe_gather_ok, safe_gather_strict
-
 logger = logging.getLogger(__name__)
-
-T = TypeVar('T', default=Any)  # PEP 696: TypeVar with default
-
+T = TypeVar('T', default=Any)
 
 class TaskResult:
     """Výsledek úlohy s indexem pro zachování mapování."""
+    __slots__ = tuple(('error', 'index', 'value'))
 
-    def __init__(self, index: int, value: T | None, error: Exception | None = None):
+    def __init__(self, index: int, value: T | None, error: Exception | None=None):
         self.index = index
         self.value = value
         self.error = error
@@ -54,17 +48,13 @@ class TaskResult:
 
     def __repr__(self) -> str:
         if self.success:
-            return f"TaskResult({self.index}, success)"
-        return f"TaskResult({self.index}, error={self.error})"
-
-
-# Memory monitor import - fail-safe
+            return f'TaskResult({self.index}, success)'
+        return f'TaskResult({self.index}, error={self.error})'
 _UnifiedMemoryMonitor = None
 try:
     from .memory_dashboard import UnifiedMemoryMonitor as _UnifiedMemoryMonitor
 except ImportError:
     pass
-
 
 def _get_memory_level() -> float:
     """Get current memory pressure level (0.0-1.0)."""
@@ -73,20 +63,11 @@ def _get_memory_level() -> float:
             monitor = _UnifiedMemoryMonitor()
             snap = monitor.snapshot()
             return snap.pressure
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
     return 0.0
 
-
-async def bounded_map[T](
-    tasks: Sequence[tuple[Callable[..., Awaitable[T]], tuple, dict]],
-    max_concurrent: int = 3,
-    max_retries: int = 0,
-    cancel_on_error: bool = True,
-    memory_pressure_check: bool = True,
-    retryable_exceptions: tuple[type[Exception], ...] = (Exception,),
-    timeout: float | None = None
-) -> list[T | None]:
+async def bounded_map[T](tasks: Sequence[tuple[Callable[..., Awaitable[T]], tuple, dict]], max_concurrent: int=3, max_retries: int=0, cancel_on_error: bool=True, memory_pressure_check: bool=True, retryable_exceptions: tuple[type[Exception], ...]=(Exception,), timeout: float | None=None) -> list[T | None]:
     """
     Spouští úlohy s omezenou concurrency.
 
@@ -107,9 +88,7 @@ async def bounded_map[T](
         mem_level = _get_memory_level()
         if mem_level > 0.85:
             max_concurrent = min(max_concurrent, 2)
-            logger.warning("Memory pressure high (%.1f%%), reducing concurrency to %d",
-                          mem_level * 100, max_concurrent)
-
+            logger.warning('Memory pressure high (%.1f%%), reducing concurrency to %d', mem_level * 100, max_concurrent)
     sem = asyncio.BoundedSemaphore(max_concurrent)
 
     async def _run(index: int, fn: Callable[..., Awaitable[T]], args: tuple, kwargs: dict) -> T | None:
@@ -117,8 +96,6 @@ async def bounded_map[T](
             try:
                 async with sem:
                     if timeout is not None:
-                        # asyncio.timeout (3.11+) — preferred over wait_for:
-                        # better cancellation semantics, less Python overhead (M1 8GB UMA).
                         async with asyncio.timeout(timeout):
                             return await fn(*args, **kwargs)
                     else:
@@ -128,28 +105,16 @@ async def bounded_map[T](
             except Exception as e:
                 if attempt == max_retries or not isinstance(e, retryable_exceptions):
                     raise
-                # Jitter: random 0.5-1.5 × exponenciální backoff
-                delay = 0.5 * (2 ** attempt) * random.uniform(0.5, 1.5)
-                logger.debug(f"Task {index} retry {attempt + 1}/{max_retries} after {delay:.2f}s")
+                delay = 0.5 * 2 ** attempt * random.uniform(0.5, 1.5)
+                logger.debug(f'Task {index} retry {attempt + 1}/{max_retries} after {delay:.2f}s')
                 await asyncio.sleep(delay)
         return None
-
     results: list[T | None] = [None] * len(tasks)
-
     if sys.version_info >= (3, 11) and cancel_on_error:
-        # F262D: standardized asyncio.TaskGroup → safe_gather_strict
-        # (PEP 654 / 3.11+ TaskGroup-based, all-or-nothing preserved)
         coros = [_run(i, fn, a, k) for i, (fn, a, k) in enumerate(tasks)]
-        # ty: safe_gather_strict return is `list[T]`, our callable is
-        # `_run(...) -> T | None`. The union widens to include the
-        # coroutine type before the call — a type-inference artefact
-        # of *unpacking inside await. Suppress.
-        return await safe_gather_strict(*coros, label=f"async_utils:run[{len(tasks)}]")  # type: ignore[ty:invalid-return-type]
-
-    # Python < 3.11 nebo cancel_on_error=False
+        return await safe_gather_strict(*coros, label=f'async_utils:run[{len(tasks)}]')
     coros = [_run(i, fn, a, k) for i, (fn, a, k) in enumerate(tasks)]
-    gathered = await safe_gather_ok(*coros, label="async_utils:149")
-
+    gathered = await safe_gather_ok(*coros, label='async_utils:149')
     if cancel_on_error:
         for res in gathered:
             if isinstance(res, BaseException):
@@ -157,23 +122,13 @@ async def bounded_map[T](
         return gathered
     else:
         for i, res in enumerate(gathered):
-            # ty: results: list[T | None]; res: T | Exception from
-            # safe_gather_ok. safe_gather_ok awaits all coros before
-            # returning, so `res` here is `T | Exception` — no CoroutineType
-            # in the runtime union. ty's narrow through `isinstance` does
-            # not peel off the wider element type, so cast explicitly.
             if isinstance(res, BaseException):
                 results[i] = None
             else:
                 results[i] = cast(T, res)
         return results
 
-
-async def map_as_completed[T](
-    tasks: Sequence[tuple[Callable[..., Awaitable[T]], tuple, dict]],
-    max_concurrent: int = 3,
-    **kwargs
-) -> AsyncIterator[tuple[int, T]]:
+async def map_as_completed[T](tasks: Sequence[tuple[Callable[..., Awaitable[T]], tuple, dict]], max_concurrent: int=3, **kwargs) -> AsyncIterator[tuple[int, T]]:
     """
     Průběžně vrací výsledky dle as_completed, index zachován.
     Užitečné pro OSINT fetching – dostáváme findings postupně.
@@ -186,7 +141,7 @@ async def map_as_completed[T](
     Yields:
         (index, result) tuple - výsledky jakmile jsou hotové
     """
-    q: asyncio.Queue = asyncio.Queue(maxsize=max_concurrent * 2)  # C2: bounded to prevent unbounded memory growth
+    q: asyncio.Queue = asyncio.Queue(maxsize=max_concurrent * 2)
     sem = asyncio.Semaphore(max_concurrent)
 
     async def _worker(idx: int, fn: Callable[..., Awaitable[T]], args: tuple, kw: dict):
@@ -196,28 +151,18 @@ async def map_as_completed[T](
                 await q.put((idx, result, None))
             except Exception as e:
                 await q.put((idx, None, e))
-
-    # Start all tasks
     for i, (fn, args, kw) in enumerate(tasks):
-        safe_create_task(_worker(i, fn, args, kw), name=f"async_utils:map-{i}")
-
+        safe_create_task(_worker(i, fn, args, kw), name=f'async_utils:map-{i}')
     remaining = len(tasks)
     while remaining > 0:
         idx, val, err = await q.get()
         remaining -= 1
         if err is not None:
-            # For streaming, we log and continue
-            logger.warning(f"Task {idx} failed: {err}")
+            logger.warning(f'Task {idx} failed: {err}')
             continue
-        yield idx, val
+        yield (idx, val)
 
-
-async def bounded_gather[T](
-    *coros: Awaitable[T],
-    max_concurrent: int = 3,
-    return_exceptions: bool = False,
-    per_task_timeout: float | None = None
-) -> list[T]:
+async def bounded_gather[T](*coros: Awaitable[T], max_concurrent: int=3, return_exceptions: bool=False, per_task_timeout: float | None=None) -> list[T]:
     """
     Jednodušší wrapper pro bounded gather s per-task timeout (asyncio.timeout).
 
@@ -239,7 +184,6 @@ async def bounded_gather[T](
     """
     if not coros:
         return []
-
     sem = asyncio.Semaphore(max_concurrent)
 
     async def _run(coro: Awaitable[T]) -> T:
@@ -248,11 +192,7 @@ async def bounded_gather[T](
                 async with asyncio.timeout(per_task_timeout):
                     return await coro
             return await coro
-
-    # Note: return_exceptions=True not yet supported — safe_gather_ok
-    # always filters exceptions (callers handle this via try/except downstream).
-    return await safe_gather_ok(*(_run(c) for c in coros), label="async_utils:242")  # type: ignore[ty:invalid-return-type,return-value]
-
+    return await safe_gather_ok(*(_run(c) for c in coros), label='async_utils:242')
 
 class BoundedTaskSet:
     """
@@ -283,8 +223,9 @@ class BoundedTaskSet:
         t = await ts.spawn(my_coro(), name="fetch:example.com")
         await ts.cancel()  # broadcast cancel + drain
     """
+    __slots__ = tuple(('_cancel_requested', '_lock', '_maxsize', '_sem', '_tasks'))
 
-    def __init__(self, maxsize: int = 256) -> None:
+    def __init__(self, maxsize: int=256) -> None:
         self._maxsize = maxsize
         self._tasks: dict[asyncio.Task, str] = {}
         self._sem = asyncio.Semaphore(maxsize)
@@ -296,11 +237,7 @@ class BoundedTaskSet:
         """Počet active (nedokončených) tasks."""
         return len(self._tasks)
 
-    async def spawn(
-        self,
-        coro: Awaitable[Any],
-        name: str | None = None,
-    ) -> asyncio.Task:
+    async def spawn(self, coro: Awaitable[Any], name: str | None=None) -> asyncio.Task:
         """
         Vytvoří a registeruje task — blokuje pokud `maxsize` reached.
 
@@ -318,13 +255,9 @@ class BoundedTaskSet:
             t = safe_create_task(asyncio.sleep(0))
             t.cancel()
             return t
-
         await self._sem.acquire()
-        # cast: Awaitable[Any] → Coroutine (create_task requires Coroutine in py <3.11;
-        # runtime dispatch is correct either way)
-        task = safe_create_task(cast(Any, coro), name=name or "bounded_taskset:anon")
+        task = safe_create_task(cast(Any, coro), name=name or 'bounded_taskset:anon')
         task_name = task.get_name()
-
         async with self._lock:
             self._tasks[task] = task_name
 
@@ -335,12 +268,9 @@ class BoundedTaskSet:
                 if not f.cancelled():
                     exc = f.exception()
                     if exc is not None:
-                        logger.warning(
-                            f"[BoundedTaskSet] Task {f.get_name()} failed: {exc!r}"
-                        )
+                        logger.warning(f'[BoundedTaskSet] Task {f.get_name()} failed: {exc!r}')
             except asyncio.InvalidStateError:
                 pass
-
         task.add_done_callback(_done_callback)
         return task
 
@@ -355,36 +285,17 @@ class BoundedTaskSet:
             tasks = list(self._tasks.keys())
         if not tasks:
             return
-        logger.debug(f"[BoundedTaskSet] Cancelling {len(tasks)} tasks")
+        logger.debug(f'[BoundedTaskSet] Cancelling {len(tasks)} tasks')
         for t in tasks:
             t.cancel()
-        # F314: asyncio.gather -> safe_gather_fire_and_forget (fire-and-forget,
-        # result discarded, only waits for tasks to complete after cancellation)
-        await safe_gather_fire_and_forget(*tasks, label="async_utils:BoundedTaskSet:cancel", logger_instance=logger)
+        await safe_gather_fire_and_forget(*tasks, label='async_utils:BoundedTaskSet:cancel', logger_instance=logger)
         async with self._lock:
             self._tasks.clear()
+__all__ = ['TaskResult', 'bounded_map', 'map_as_completed', 'bounded_gather', 'BoundedTaskSet']
 
-
-__all__ = [
-    'TaskResult',
-    'bounded_map',
-    'map_as_completed',
-    'bounded_gather',
-    'BoundedTaskSet',
-]
-
-
-# F320-B4 deprecation: BoundedTaskSet emituje DeprecationWarning při importu.
-# Python 3.11+ asyncio.TaskGroup je preferovaná alternativa.
 def __getattr__(name: str):
     if name == 'BoundedTaskSet':
         import warnings as _warnings
-
-        _warnings.warn(
-            "BoundedTaskSet is deprecated. Use Python 3.11+ asyncio.TaskGroup instead. "
-            "This module will be removed in a future sprint.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+        _warnings.warn('BoundedTaskSet is deprecated. Use Python 3.11+ asyncio.TaskGroup instead. This module will be removed in a future sprint.', DeprecationWarning, stacklevel=2)
         return BoundedTaskSet
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

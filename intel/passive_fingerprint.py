@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Passive Fingerprinting — Shodan InternetDB, GreyNoise Community, CIRCL, VirusTotal, SecurityTrails.
 
@@ -25,36 +24,28 @@ GHOST_INVARIANTS:
   - Bounded deques, 50MB response caps
   - Fail-soft: source error returns empty dict, never raises
 """
-
-
-
 import asyncio
 import logging
 import time
 from typing import Any
-
 import httpx
-
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.utils.async_helpers import safe_gather_ok
-
 logger = logging.getLogger(__name__)
-
-# ── Bounds ────────────────────────────────────────────────────────────────────
 MAX_FP_CACHE_SIZE: int = 500
 FP_CACHE_TTL_S: int = 300
 FP_SOURCE_TIMEOUT_S: float = 8.0
 
-# ── Fingerprint Cache ─────────────────────────────────────────────────────────
 class _FPCache:
     """TTL-cached fingerprint lookups, bounded by MAX_FP_CACHE_SIZE."""
-    __slots__ = ("_cache", "_timestamps")
+    __slots__ = ('_cache', '_timestamps')
+
     def __init__(self):
         self._cache: dict[str, dict] = {}
         self._timestamps: dict[str, float] = {}
 
     def _key(self, source: str, value: str) -> str:
-        return f"{source}:{value}"
+        return f'{source}:{value}'
 
     def get(self, source: str, value: str) -> dict | None:
         k = self._key(source, value)
@@ -73,10 +64,7 @@ class _FPCache:
             self._timestamps.pop(oldest, None)
         self._cache[k] = data
         self._timestamps[k] = time.time()
-
 _fp_cache = _FPCache()
-
-# ── Per-source rate limiter ───────────────────────────────────────────────────
 _source_rate_limiters: dict[str, asyncio.Semaphore] = {}
 _rate_limit_lock = asyncio.Lock()
 
@@ -87,7 +75,6 @@ async def _get_rate_limiter(source: str) -> asyncio.Semaphore:
             _source_rate_limiters[source] = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
         return _source_rate_limiters[source]
 
-# ── Main Class ─────────────────────────────────────────────────────────────────
 class PassiveFingerprint:
     """
     Multi-source passive fingerprinting client.
@@ -96,6 +83,7 @@ class PassiveFingerprint:
       - lookup_ip(ip)    → dict with tags, ports, cpes, hostnames, etc.
       - lookup_domain(domain) → dict with subdomains, emails, etc.
     """
+    __slots__ = tuple(('_session',))
 
     def __init__(self):
         self._session: httpx.AsyncClient | None = None
@@ -105,198 +93,133 @@ class PassiveFingerprint:
             self._session = await async_get_aiohttp_session()
         return self._session
 
-    async def _lookup(
-        self,
-        source: str,
-        url: str,
-        params: dict | None = None,
-    ) -> dict:
+    async def _lookup(self, source: str, url: str, params: dict | None=None) -> dict:
         """Generic lookup with cache, rate limit, circuit breaker."""
-        # Check cache
-        cache_key = url.split("/")[-1] if params is None else f"{url}/{params.get('query', params.get('ip', params.get('domain', '')))}"  # noqa: E501
+        cache_key = url.split('/')[-1] if params is None else f"{url}/{params.get('query', params.get('ip', params.get('domain', '')))}"
         cached = _fp_cache.get(source, cache_key)
         if cached is not None:
             return cached
-
-        # Rate limit
         sem = await _get_rate_limiter(source)
         async with sem:
-            # Circuit breaker
             try:
                 from hledac.universal.transport.circuit_breaker import get_breaker
-                domain = url.split("/")[2] if "//" in url else url
-                if not get_breaker(domain).check_circuit().allowed: raise RuntimeError(f"circuit_open: {domain}")  # noqa: E701
+                domain = url.split('/')[2] if '//' in url else url
+                if not get_breaker(domain).check_circuit().allowed:
+                    raise RuntimeError(f'circuit_open: {domain}')
             except Exception as e:
-                logger.debug(f"[FP] Circuit breaker blocked {source}: {e}")
+                logger.debug(f'[FP] Circuit breaker blocked {source}: {e}')
                 return {}
-
             session = await self._ensure_session()
             try:
-                async with session.get(
-                    url,
-                    params=params or {},
-                    timeout=httpx.Timeout(FP_SOURCE_TIMEOUT_S),
-                ) as resp:
+                async with session.get(url, params=params or {}, timeout=httpx.Timeout(FP_SOURCE_TIMEOUT_S)) as resp:
                     if resp.status == 404:
                         return {}
                     if resp.status != 200:
                         return {}
                     data = await resp.json()
             except Exception as e:
-                logger.debug(f"[FP] {source} lookup failed: {e}")
+                logger.debug(f'[FP] {source} lookup failed: {e}')
                 return {}
-
         _fp_cache.set(source, cache_key, data)
         return data
 
-    # ── Shodan InternetDB ──────────────────────────────────────────────────────
     async def shodan_internetdb(self, ip: str) -> dict:
         """Shodan InternetDB — free, no API key. Returns tags, ports, cpes, hostnames."""
-        url = f"https://internetdb.shodan.io/{ip}"
-        return await self._lookup("shodan_internetdb", url)
+        url = f'https://internetdb.shodan.io/{ip}'
+        return await self._lookup('shodan_internetdb', url)
 
-    # ── GreyNoise Community ────────────────────────────────────────────────────
     async def greynoise_community(self, ip: str) -> dict:
         """GreyNoise Community — free tier, no API key. Returns classification, tags, metadata."""
-        url = f"https://api.greynoise.io/v3/community/{ip}"
-        return await self._lookup("greynoise", url)
+        url = f'https://api.greynoise.io/v3/community/{ip}'
+        return await self._lookup('greynoise', url)
 
-    # ── CIRCL Passive DNS ─────────────────────────────────────────────────────
     async def circl_pdns(self, domain: str) -> dict:
         """CIRCL Passive DNS — free, no API key. Returns A/AAAA/CNAME records."""
-        url = f"https://api.circl.lu/pdns/f/{domain}"
-        return await self._lookup("circl_pdns", url)
+        url = f'https://api.circl.lu/pdns/f/{domain}'
+        return await self._lookup('circl_pdns', url)
 
-    # ── VirusTotal v3 ─────────────────────────────────────────────────────────
-    async def virustotal(self, value: str, vtype: str = "ip") -> dict:
+    async def virustotal(self, value: str, vtype: str='ip') -> dict:
         """VirusTotal v3 — free tier, API key optional. Returns last_analysis_stats."""
-        url = f"https://www.virustotal.com/api/v3/{vtype}s/{value}"
-        # Note: VT free tier is heavily rate-limited. Fail-soft.
-        return await self._lookup("virustotal", url)
+        url = f'https://www.virustotal.com/api/v3/{vtype}s/{value}'
+        return await self._lookup('virustotal', url)
 
-    # ── SecurityTrails ────────────────────────────────────────────────────────
-    async def securitytrails(self, value: str, vtype: str = "domain") -> dict:
+    async def securitytrails(self, value: str, vtype: str='domain') -> dict:
         """SecurityTrails — requires API key, fail-soft if not configured."""
         import os
-        api_key = os.environ.get("SECURITYTRAILS_API_KEY", "")
+        api_key = os.environ.get('SECURITYTRAILS_API_KEY', '')
         if not api_key:
             return {}
-        url = f"https://api.securitytrails.com/v1/{vtype}/{value}"
-        return await self._lookup("securitytrails", url, params={"apikey": api_key})
+        url = f'https://api.securitytrails.com/v1/{vtype}/{value}'
+        return await self._lookup('securitytrails', url, params={'apikey': api_key})
 
-    # ── Unified lookup ─────────────────────────────────────────────────────────
     async def lookup_ip(self, ip: str) -> dict:
         """Look up an IP across all available sources in parallel."""
-        tasks = [
-            self.shodan_internetdb(ip),
-            self.greynoise_community(ip),
-            self.virustotal(ip, "ip"),
-        ]
-        results = await safe_gather_ok(*tasks, label="passive_fingerprint:193")
-        merged: dict[str, Any] = {"ip": ip, "sources": {}}
-        source_names = ["shodan_internetdb", "greynoise", "virustotal"]
+        tasks = [self.shodan_internetdb(ip), self.greynoise_community(ip), self.virustotal(ip, 'ip')]
+        results = await safe_gather_ok(*tasks, label='passive_fingerprint:193')
+        merged: dict[str, Any] = {'ip': ip, 'sources': {}}
+        source_names = ['shodan_internetdb', 'greynoise', 'virustotal']
         for name, res in zip(source_names, results, strict=False):
             if isinstance(res, dict) and res:
-                merged["sources"][name] = res
+                merged['sources'][name] = res
         return merged
 
     async def lookup_domain(self, domain: str) -> dict:
         """Look up a domain across all available sources in parallel."""
-        tasks = [
-            self.circl_pdns(domain),
-            self.virustotal(domain, "domain"),
-            self.securitytrails(domain, "domain"),
-        ]
-        results = await safe_gather_ok(*tasks, label="passive_fingerprint:208")
-        merged: dict[str, Any] = {"domain": domain, "sources": {}}
-        source_names = ["circl_pdns", "virustotal", "securitytrails"]
+        tasks = [self.circl_pdns(domain), self.virustotal(domain, 'domain'), self.securitytrails(domain, 'domain')]
+        results = await safe_gather_ok(*tasks, label='passive_fingerprint:208')
+        merged: dict[str, Any] = {'domain': domain, 'sources': {}}
+        source_names = ['circl_pdns', 'virustotal', 'securitytrails']
         for name, res in zip(source_names, results, strict=False):
             if isinstance(res, dict) and res:
-                merged["sources"][name] = res
+                merged['sources'][name] = res
         return merged
 
     async def close(self) -> None:
-        if self._session and not self._session.is_closed:
+        if self._session and (not self._session.is_closed):
             await self._session.aclose()
 
-
-# ── PassiveFingerprintAdapter for sidecar bus ─────────────────────────────────
 class PassiveFingerprintAdapter:
     """
     Passive fingerprint adapter for sidecar runners.
     Wraps PassiveFingerprint, returns CanonicalFinding-compatible dicts.
     """
+    __slots__ = tuple(('_fp',))
+
     def __init__(self):
         self._fp = PassiveFingerprint()
 
     async def query(self, target: str) -> list[dict]:
         findings: list[dict[str, Any]] = []
-
         if _is_ip(target):
             result = await self._fp.lookup_ip(target)
         else:
             result = await self._fp.lookup_domain(target)
-
-        if not result.get("sources"):
+        if not result.get('sources'):
             return findings
-
         ts = time.time()
-        sources = result.get("sources", {})
-
-        if "shodan_internetdb" in sources:
-            shodan = sources["shodan_internetdb"]
-            for tag in shodan.get("tags", [])[:20]:
-                findings.append({
-                    "source_type": "passive_fingerprint",
-                    "ioc_type": "ip",
-                    "ioc_value": target,
-                    "target": target,
-                    "confidence": 0.7,
-                    "ts": ts,
-                    "payload_text": f"shodan:tag:{tag}",
-                })
-            for port in shodan.get("ports", [])[:30]:
-                findings.append({
-                    "source_type": "passive_fingerprint",
-                    "ioc_type": "ip",
-                    "ioc_value": target,
-                    "target": target,
-                    "confidence": 0.7,
-                    "ts": ts,
-                    "payload_text": f"shodan:port:{port}",
-                })
-
-        if "greynoise" in sources:
-            gn = sources["greynoise"]
-            classification = gn.get("classification", "")
+        sources = result.get('sources', {})
+        if 'shodan_internetdb' in sources:
+            shodan = sources['shodan_internetdb']
+            for tag in shodan.get('tags', [])[:20]:
+                findings.append({'source_type': 'passive_fingerprint', 'ioc_type': 'ip', 'ioc_value': target, 'target': target, 'confidence': 0.7, 'ts': ts, 'payload_text': f'shodan:tag:{tag}'})
+            for port in shodan.get('ports', [])[:30]:
+                findings.append({'source_type': 'passive_fingerprint', 'ioc_type': 'ip', 'ioc_value': target, 'target': target, 'confidence': 0.7, 'ts': ts, 'payload_text': f'shodan:port:{port}'})
+        if 'greynoise' in sources:
+            gn = sources['greynoise']
+            classification = gn.get('classification', '')
             if classification:
-                findings.append({
-                    "source_type": "passive_fingerprint",
-                    "ioc_type": "ip",
-                    "ioc_value": target,
-                    "target": target,
-                    "confidence": 0.8,
-                    "ts": ts,
-                    "payload_text": f"greynoise:classification:{classification}",
-                })
-
-        return findings[:100]  # bounded
+                findings.append({'source_type': 'passive_fingerprint', 'ioc_type': 'ip', 'ioc_value': target, 'target': target, 'confidence': 0.8, 'ts': ts, 'payload_text': f'greynoise:classification:{classification}'})
+        return findings[:100]
 
     async def close(self) -> None:
         await self._fp.close()
 
-
 def _is_ip(value: str) -> bool:
-    parts = value.split(".")
+    parts = value.split('.')
     if len(parts) == 4:
         try:
-            return all(0 <= int(p) <= 255 for p in parts)
+            return all((0 <= int(p) <= 255 for p in parts))
         except ValueError:
             pass
     return False
-
-
-__all__ = [
-    "PassiveFingerprint",
-    "PassiveFingerprintAdapter",
-]
+__all__ = ['PassiveFingerprint', 'PassiveFingerprintAdapter']

@@ -13,30 +13,20 @@ Design:
     - All `self._result.X = Y` → `ctx.result.X = Y`
     - Lazy imports avoid M1 Metal init at import time
 """
-
-
 import asyncio
 import time as _time
 from hledac.universal.utils.async_helpers import safe_create_task
 from dataclasses import dataclass, field
 from typing import Any
 
-# ── Winddown Result Types ──────────────────────────────────────────────────────
-
-
-@dataclass
+@dataclass(True)
 class WinddownPhaseResult:
     """Result from the winddown phase."""
-
     export_paths: list[str] = field(default_factory=list)
     synthesis_success: bool = False
     teardown_duration_s: float | None = None
     export_errors: list[str] = field(default_factory=list)
     error: str | None = None
-
-
-# ── WinddownOrchestrator ───────────────────────────────────────────────────────
-
 
 class WinddownOrchestrator:
     """Orchestrates the winddown phase: export, synthesis, teardown.
@@ -63,234 +53,115 @@ class WinddownOrchestrator:
             → _graceful_sidecar_shutdown()
             → _close_duckdb()
     """
-
     __slots__ = ()
 
     def __init__(self) -> None:
         pass
 
-    async def run(
-        self,
-        ctx: Any,  # SprintContext
-        lifecycle: Any,
-        query: str,
-    ) -> WinddownPhaseResult:
+    async def run(self, ctx: Any, lifecycle: Any, query: str) -> WinddownPhaseResult:
         """Run the complete winddown sequence.
 
         Returns WinddownPhaseResult with export paths and telemetry.
         """
         from runtime.scheduler_v2.protocol import WinddownPhaseResult
-
         _t_winddown_start = _time.monotonic()
         _result = ctx.result
         _config = ctx.config
-
         export_paths: list[str] = []
         export_errors: list[str] = []
         synthesis_success = False
-
         try:
-            # ── 1. Pressure relief at winddown start ──────────────────────────
             self._maybe_call_pressure_relief(ctx)
-
-            # ── 2. Runner teardown ────────────────────────────────────────────
             if ctx.runner:
                 ctx.runner.teardown()
-
-            # ── 3. Entity signal extractor teardown ───────────────────────────
             await self._shutdown_entity_signal_extractor()
-
-            # ── 4. Browser pool teardown ─────────────────────────────────────
             await self._teardown_browser_pool(ctx)
-
-            # ── 5. Run export ─────────────────────────────────────────────────
             _exp_result = await self._run_export(ctx, lifecycle, query)
             export_paths = _exp_result.get('paths', [])
             export_errors = _exp_result.get('errors', [])
-
-            # ── 6. Await synthesis task ───────────────────────────────────────
             _synth_success = await self._await_synthesis(ctx)
             synthesis_success = _synth_success
-
-            # ── 7. DuckDB vacuum ───────────────────────────────────────────────
             await self._run_vacuum(ctx)
-
-            # ── 8. Dedup close ────────────────────────────────────────────────
             await self._close_dedup(ctx)
-
-            # ── 9. Graph save + sync ──────────────────────────────────────────
             await self._close_graph(ctx)
-
-            # ── 10. Enrichment services close ──────────────────────────────────
             await self._close_enrichment(ctx)
-
-            # ── 11. Privacy layer close ────────────────────────────────────────
             await self._close_privacy_layer(ctx)
-
-            # ── 12. Sidecar advisory runner ────────────────────────────────────
             await self._run_sidecars(ctx)
-
-            # ── 13. ANE semantic dedup advisory ────────────────────────────────
             await self._run_ane_semantic_dedup_advisory(ctx)
-
-            # ── 14. Enhanced research ─────────────────────────────────────────
             self._maybe_launch_enhanced_research(ctx)
-
-            # ── 15. Hermes unload ─────────────────────────────────────────────
             await self._unload_hermes_at_teardown(ctx)
-
-            # ── 16. Lazy model unload ─────────────────────────────────────────
             self._unload_lazy_models(ctx)
-
-            # ── 17. Cancel bg tasks ───────────────────────────────────────────
             await self._cancel_bg_tasks(ctx)
-
-            # ── 18. Graceful sidecar shutdown ─────────────────────────────────
             await self._graceful_sidecar_shutdown(ctx)
-
-            # ── 19. DuckDB close ──────────────────────────────────────────────
             await self._close_duckdb(ctx)
-
-            # ── 20. Nullify ctx lifecycle artifacts for GC ────────────────────
-            # Issue #49: explicit None-ification after winddown completes
             ctx._sidecar_tasks = None
             ctx._acquisition_plan = None
             ctx._lifecycle = None
-
-            # Finalize result
-            _result.final_phase = ctx.runner.current_phase if ctx.runner else "WINDDOWN"
-
+            _result.final_phase = ctx.runner.current_phase if ctx.runner else 'WINDDOWN'
         except Exception as exc:
             _result.aborted = True
-            _result.abort_reason = f"winddown_exception:{type(exc).__name__}"
-            return WinddownPhaseResult(
-                export_paths=export_paths,
-                synthesis_success=synthesis_success,
-                teardown_duration_s=_time.monotonic() - _t_winddown_start,
-                export_errors=export_errors,
-                error=f"{type(exc).__name__}:{exc}",
-            )
+            _result.abort_reason = f'winddown_exception:{type(exc).__name__}'
+            return WinddownPhaseResult(export_paths=export_paths, synthesis_success=synthesis_success, teardown_duration_s=_time.monotonic() - _t_winddown_start, export_errors=export_errors, error=f'{type(exc).__name__}:{exc}')
+        return WinddownPhaseResult(export_paths=export_paths, synthesis_success=synthesis_success, teardown_duration_s=_time.monotonic() - _t_winddown_start, export_errors=export_errors)
 
-        return WinddownPhaseResult(
-            export_paths=export_paths,
-            synthesis_success=synthesis_success,
-            teardown_duration_s=_time.monotonic() - _t_winddown_start,
-            export_errors=export_errors,
-        )
-
-    # ── Export ────────────────────────────────────────────────────────────────
-
-    async def _run_export(
-        self,
-        ctx: Any,
-        lifecycle: Any,
-        query: str,
-    ) -> dict[str, Any]:
+    async def _run_export(self, ctx: Any, lifecycle: Any, query: str) -> dict[str, Any]:
         """Run all four exporters + CTI + hypothesis. Returns {paths, errors}."""
         _result = ctx.result
         _config = ctx.config
         paths: list[str] = []
         errors: list[str] = []
-
         if not _config.export_enabled:
             return {'paths': paths, 'errors': errors}
-
-        # Lazy import exporters
-        (
-            rend_md,
-            rend_jsonld,
-            rend_stix,
-            rend_cti_stix,
-            collect_cti_inputs,
-        ) = _import_exporters()
-
-        # Build diagnostic report
+        rend_md, rend_jsonld, rend_stix, rend_cti_stix, collect_cti_inputs = _import_exporters()
         report = await self._build_diagnostic_report(ctx, lifecycle)
-
         export_dir = _config.export_dir
-
-        for render_fn, suffix in [
-            (rend_md, "md"),
-            (rend_jsonld, "jsonld"),
-            (rend_stix, "stix.json"),
-        ]:
+        for render_fn, suffix in [(rend_md, 'md'), (rend_jsonld, 'jsonld'), (rend_stix, 'stix.json')]:
             try:
                 path = render_fn(report, export_dir or None)
                 paths.append(str(path))
                 _result.export_paths.append(str(path))
             except Exception as exc:
-                errors.append(f"EXPORT_ERROR:{suffix}:{exc}")
-                _result.export_paths.append(f"EXPORT_ERROR:{suffix}:{exc}")
-
-        # CTI STIX export
+                errors.append(f'EXPORT_ERROR:{suffix}:{exc}')
+                _result.export_paths.append(f'EXPORT_ERROR:{suffix}:{exc}')
         await self._run_cti_export(ctx, rend_cti_stix, collect_cti_inputs, report, export_dir)
-
-        # Hypothesis export (F259)
         await self._run_hypothesis_export(ctx, report, export_dir)
-
         return {'paths': paths, 'errors': errors}
 
-    async def _run_cti_export(
-        self,
-        ctx: Any,
-        rend_cti_stix: Any,
-        collect_cti_inputs: Any,
-        report: dict[str, Any],
-        export_dir: str | None,
-    ) -> None:
+    async def _run_cti_export(self, ctx: Any, rend_cti_stix: Any, collect_cti_inputs: Any, report: dict[str, Any], export_dir: str | None) -> None:
         """Run CTI STIX export."""
         try:
             await self._cti_export_impl(ctx, rend_cti_stix, collect_cti_inputs, report, export_dir)
         except Exception as exc:
-            ctx.result.export_paths.append(f"EXPORT_ERROR:cti_stix:{exc}")
+            ctx.result.export_paths.append(f'EXPORT_ERROR:cti_stix:{exc}')
 
-    async def _cti_export_impl(
-        self,
-        ctx: Any,
-        rend_cti_stix: Any,
-        collect_cti_inputs: Any,
-        report: dict[str, Any],
-        export_dir: str | None,
-    ) -> None:
+    async def _cti_export_impl(self, ctx: Any, rend_cti_stix: Any, collect_cti_inputs: Any, report: dict[str, Any], export_dir: str | None) -> None:
         """CTI STIX export implementation (lazy import inner)."""
         try:
             cti_inputs = collect_cti_inputs()
             path = rend_cti_stix(cti_inputs, report, export_dir or None)
             ctx.result.export_paths.append(str(path))
         except Exception:
-            pass  # fail-soft
+            pass
 
-    async def _run_hypothesis_export(
-        self,
-        ctx: Any,
-        report: dict[str, Any],
-        export_dir: str | None,
-    ) -> None:
+    async def _run_hypothesis_export(self, ctx: Any, report: dict[str, Any], export_dir: str | None) -> None:
         """Sprint F259: Run causal hypothesis generation and export."""
         try:
             _hypothesis_result = await self._hypothesis_export_impl(ctx, report, export_dir)
             if _hypothesis_result:
                 ctx.result.hypothesis_export_path = _hypothesis_result
         except Exception as exc:
-            ctx.result.export_paths.append(f"EXPORT_ERROR:hypothesis:{exc}")
+            ctx.result.export_paths.append(f'EXPORT_ERROR:hypothesis:{exc}')
 
-    async def _hypothesis_export_impl(
-        self,
-        ctx: Any,
-        report: dict[str, Any],
-        export_dir: str | None,
-    ) -> str | None:
+    async def _hypothesis_export_impl(self, ctx: Any, report: dict[str, Any], export_dir: str | None) -> str | None:
         """Hypothesis export implementation (lazy import inner)."""
-        # Lazy import to avoid pulling in heavy hypothesis dependencies at import time
         try:
             from hledac.universal.brain.hypothesis_engine import HypothesisEngine
             engine = HypothesisEngine()
             hypotheses = await engine.generate_hypotheses(report, ctx.query)
-            # Export hypotheses as JSON
             import json
             import os
             if export_dir:
-                path = os.path.join(export_dir, "hypotheses.json")
+                path = os.path.join(export_dir, 'hypotheses.json')
                 with open(path, 'w') as f:
                     json.dump([h.as_dict() if hasattr(h, 'as_dict') else str(h) for h in hypotheses], f)
                 return path
@@ -298,15 +169,10 @@ class WinddownOrchestrator:
             pass
         return None
 
-    # ── Sub-operation stubs ──────────────────────────────────────────────────
-
     async def _shutdown_entity_signal_extractor(self) -> None:
         """Shutdown entity_signal_extractor ThreadPoolExecutor."""
         try:
-            from hledac.universal.intelligence.entity_signal_extractor import (
-                reset_extractor_stats,
-                shutdown_executor,
-            )
+            from hledac.universal.intelligence.entity_signal_extractor import reset_extractor_stats, shutdown_executor
             shutdown_executor()
             reset_extractor_stats()
         except Exception:
@@ -316,7 +182,7 @@ class WinddownOrchestrator:
         """Teardown nodriver/camoufox lazy state at sprint winddown."""
         try:
             from hledac.universal.core.env_config import ENV
-            if ENV.get_bool("HLEDAC_ENABLE_NODRIVER"):
+            if ENV.get_bool('HLEDAC_ENABLE_NODRIVER'):
                 from fetching.public_fetcher import _teardown_browser_pool
                 await _teardown_browser_pool()
         except Exception:
@@ -339,7 +205,7 @@ class WinddownOrchestrator:
         _store = getattr(ctx, '_duckdb_store', None) or getattr(ctx, 'duckdb_store', None)
         if _store is not None:
             try:
-                await _store.async_vacuum_if_needed(threshold_bytes=2 * (1024**3))
+                await _store.async_vacuum_if_needed(threshold_bytes=2 * 1024 ** 3)
             except Exception:
                 pass
 
@@ -358,7 +224,7 @@ class WinddownOrchestrator:
         if _engine is not None:
             try:
                 from hledac.universal.paths import LMDB_ROOT
-                _engine.save_graph(LMDB_ROOT / "rel_discovery_graph.pkl")
+                _engine.save_graph(LMDB_ROOT / 'rel_discovery_graph.pkl')
                 self._sync_latent_relationships_to_graph(ctx)
             except Exception:
                 pass
@@ -371,9 +237,7 @@ class WinddownOrchestrator:
                 if _engine and hasattr(_engine, 'get_latent_relationships'):
                     rels = _engine.get_latent_relationships()
                     if rels:
-                        safe_create_task(
-                            ctx.graph_service.upsert_relationship_batch(rels)
-                        )
+                        safe_create_task(ctx.graph_service.upsert_relationship_batch(rels))
         except Exception:
             pass
 
@@ -389,7 +253,7 @@ class WinddownOrchestrator:
         """Close privacy context at TEARDOWN."""
         try:
             from hledac.universal.core.env_config import ENV
-            if ENV.get_bool("HLEDAC_ENABLE_PRIVACY_LAYER"):
+            if ENV.get_bool('HLEDAC_ENABLE_PRIVACY_LAYER'):
                 _privacy = getattr(ctx, '_privacy_layer', None)
                 if not _privacy and hasattr(ctx, 'layer_manager'):
                     _privacy = getattr(ctx.layer_manager, 'privacy', None)
@@ -406,9 +270,7 @@ class WinddownOrchestrator:
         if _so and hasattr(_so, 'run_advisory_runner'):
             try:
                 task = safe_create_task(_so.run_advisory_runner())
-                task.add_done_callback(
-                    lambda t: None  # fail-soft done callback
-                )
+                task.add_done_callback(lambda t: None)
             except Exception:
                 pass
 
@@ -456,7 +318,7 @@ class WinddownOrchestrator:
         if _bg_tasks:
             try:
                 from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
-                await safe_gather_fire_and_forget(*_bg_tasks, label="sprint_scheduler:winddown_bg")
+                await safe_gather_fire_and_forget(*_bg_tasks, label='sprint_scheduler:winddown_bg')
             except Exception:
                 pass
             _bg_tasks.clear()
@@ -470,9 +332,7 @@ class WinddownOrchestrator:
         try:
             async with asyncio.timeout(15.0):
                 from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
-                await safe_gather_fire_and_forget(
-                    *_pending, label="sprint_scheduler:sidecar_tasks"
-                )
+                await safe_gather_fire_and_forget(*_pending, label='sprint_scheduler:sidecar_tasks')
         except TimeoutError:
             for t in _pending:
                 if not t.done():
@@ -491,46 +351,13 @@ class WinddownOrchestrator:
             except Exception:
                 pass
 
-    # ── Report building ────────────────────────────────────────────────────────
-
-    async def _build_diagnostic_report(
-        self,
-        ctx: Any,
-        lifecycle: Any,
-    ) -> dict[str, Any]:
+    async def _build_diagnostic_report(self, ctx: Any, lifecycle: Any) -> dict[str, Any]:
         """Build minimal diagnostic report from result + config."""
-        return {
-            'query': ctx.query,
-            'config': {
-                'sprint_duration_s': ctx.config.sprint_duration_s,
-                'aggressive_mode': ctx.config.aggressive_mode,
-                'export_dir': ctx.config.export_dir,
-            },
-            'result': ctx.result.__dict__ if hasattr(ctx.result, '__dict__') else {},
-            'lifecycle_phase': lifecycle.current_phase if lifecycle else 'UNKNOWN',
-        }
-
-
-# ── Lazy import helpers ───────────────────────────────────────────────────────
-
+        return {'query': ctx.query, 'config': {'sprint_duration_s': ctx.config.sprint_duration_s, 'aggressive_mode': ctx.config.aggressive_mode, 'export_dir': ctx.config.export_dir}, 'result': ctx.result.__dict__ if hasattr(ctx.result, '__dict__') else {}, 'lifecycle_phase': lifecycle.current_phase if lifecycle else 'UNKNOWN'}
 
 def _import_exporters() -> tuple:
     """Lazy import all four exporters + CTI collector."""
-    from hledac.universal.export.report_render import (
-        render_markdown as rend_md,
-        render_jsonld as rend_jsonld,
-        render_stix as rend_stix,
-        render_cti_stix as rend_cti_stix,
-        collect_cti_inputs,
-    )
+    from hledac.universal.export.report_render import render_markdown as rend_md, render_jsonld as rend_jsonld, render_stix as rend_stix, render_cti_stix as rend_cti_stix, collect_cti_inputs
     return (rend_md, rend_jsonld, rend_stix, rend_cti_stix, collect_cti_inputs)
-
-
-# ── Protocol re-export ────────────────────────────────────────────────────────
-
-from runtime.scheduler_v2.protocol import WinddownPhaseResult  # noqa: E402
-
-__all__ = [
-    "WinddownOrchestrator",
-    "WinddownPhaseResult",
-]
+from runtime.scheduler_v2.protocol import WinddownPhaseResult
+__all__ = ['WinddownOrchestrator', 'WinddownPhaseResult']

@@ -32,44 +32,27 @@ INVARIANTS:
   [TP-4] Retry escalation always goes to T0 (curl_cffi_stealth)
   [TP-5] Policy is fail-safe — any error returns T0 decision
 """
-
-
-
 import os
 from dataclasses import dataclass
-
-from core.env_config import ENV  # noqa: E402
+from core.env_config import ENV
 from enum import Enum
 from typing import Literal
-
-from hledac.universal.fetching.memory_budget_gate import (
-    BrowserDecision,
-    _rss_gib,
-)
+from hledac.universal.fetching.memory_budget_gate import BrowserDecision, _rss_gib
 from hledac.universal.fetching.memory_budget_gate import decide as _browser_decide
-from hledac.universal.transport.http3_lane import (
-    is_enabled as _http3_lane_enabled,
-)
+from hledac.universal.transport.http3_lane import is_enabled as _http3_lane_enabled
 from hledac.universal.transport.httpx_client import is_httpx_h2_enabled
-
 
 class TransportTier(Enum):
     """Explicit tier labels — mirrors policy.py decision tree."""
-
-    T0 = "T0_curl_cffi"
-    T1 = "T1_httpx_h2"
-    T2 = "T2_httpx_h3"
-    T3 = "T3_js_renderer"
-
-
-Tier = Literal["T0_curl_cffi", "T1_httpx_h2", "T2_httpx_h3", "T3_js_renderer"]
-
-# Memory thresholds (must match memory_budget_gate.py)
+    T0 = 'T0_curl_cffi'
+    T1 = 'T1_httpx_h2'
+    T2 = 'T2_httpx_h3'
+    T3 = 'T3_js_renderer'
+Tier = Literal['T0_curl_cffi', 'T1_httpx_h2', 'T2_httpx_h3', 'T3_js_renderer']
 _SOFT_GIB: float = 4.5
 _HARD_GIB: float = 6.0
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class TransportPolicyDecision:
     """
     Output of get_transport_policy().
@@ -85,50 +68,31 @@ class TransportPolicyDecision:
       reason            — human-readable why this tier was chosen
       blocked_tiers     — list of tiers that were blocked and why
     """
-
     tier: Tier
     transport_lane: str
     js_allowed: bool
     h2_allowed: bool
     h3_allowed: bool
     rss_gib: float
-    memory_tier: Literal["normal", "soft", "hard"]
+    memory_tier: Literal['normal', 'soft', 'hard']
     reason: str
     blocked_tiers: list[str]
 
-
-def _memory_tier() -> tuple[Literal["normal", "soft", "hard"], float]:
+def _memory_tier() -> tuple[Literal['normal', 'soft', 'hard'], float]:
     """Return current memory pressure tier and RSS in GiB."""
     rss = _rss_gib()
     if rss >= _HARD_GIB:
-        return "hard", rss
+        return ('hard', rss)
     if rss >= _SOFT_GIB:
-        return "soft", rss
-    return "normal", rss
-
+        return ('soft', rss)
+    return ('normal', rss)
 
 def _tier_from_lane(lane: str) -> Tier:
     """Map TransportRouter lane literal to tier."""
-    mapping: dict[str, Tier] = {
-        "curl_cffi_stealth": "T0_curl_cffi",
-        "httpx_h2": "T1_httpx_h2",
-        "httpx_h3": "T2_httpx_h3",
-        "js_renderer": "T3_js_renderer",
-        "aiohttp_default": "T0_curl_cffi",  # aiohttp mapped to T0 as fallback
-    }
-    return mapping.get(lane, "T0_curl_cffi")
+    mapping: dict[str, Tier] = {'curl_cffi_stealth': 'T0_curl_cffi', 'httpx_h2': 'T1_httpx_h2', 'httpx_h3': 'T2_httpx_h3', 'js_renderer': 'T3_js_renderer', 'aiohttp_default': 'T0_curl_cffi'}
+    return mapping.get(lane, 'T0_curl_cffi')
 
-
-def get_transport_policy(
-    *,
-    use_stealth: bool = False,
-    use_js: bool = False,
-    retry_after_status: int | None = None,
-    js_confidence: float = 0.8,
-    priority: int = 5,
-    is_httpx_h2_candidate: bool = False,
-    is_httpx_h3_candidate: bool = False,
-) -> TransportPolicyDecision:
+def get_transport_policy(*, use_stealth: bool=False, use_js: bool=False, retry_after_status: int | None=None, js_confidence: float=0.8, priority: int=5, is_httpx_h2_candidate: bool=False, is_httpx_h3_candidate: bool=False) -> TransportPolicyDecision:
     """
     Determine which transport tier to use given current memory pressure
     and request characteristics.
@@ -151,175 +115,53 @@ def get_transport_policy(
     """
     memory_tier, rss = _memory_tier()
     blocked: list[str] = []
-
-    # [TP-1] T0 is always-on — this function must NEVER return a decision
-    # where T0 is the blocked tier. Verify as an assertion at the decision point.
-    # (assertion fires only on programmer error in this module, not user input)
-
-    # T0 is always allowed — never blocked by memory
-    # It IS the fallback when other tiers are blocked
-
-    # T1: H2 — env gate + memory gate
     h2_enabled = is_httpx_h2_enabled()
-    h2_allowed = h2_enabled and memory_tier in ("normal", "soft")
+    h2_allowed = h2_enabled and memory_tier in ('normal', 'soft')
     if not h2_allowed:
         if not h2_enabled:
-            blocked.append("T1_httpx_h2:HLEDAC_ENABLE_HTTPX_H2=0")
-        elif memory_tier == "hard":
-            blocked.append("T1_httpx_h2:memory_hard_block")
+            blocked.append('T1_httpx_h2:HLEDAC_ENABLE_HTTPX_H2=0')
+        elif memory_tier == 'hard':
+            blocked.append('T1_httpx_h2:memory_hard_block')
         else:
-            blocked.append("T1_httpx_h2:memory_soft_block")
-
-    # T2: H3 — env gate + memory gate + http3_lane enabled
-    h3_gate_on = ENV.get_bool("HLEDAC_ENABLE_HTTPX_H3") or ENV.get_bool("HLEDAC_HTTP3")
+            blocked.append('T1_httpx_h2:memory_soft_block')
+    h3_gate_on = ENV.get_bool('HLEDAC_ENABLE_HTTPX_H3') or ENV.get_bool('HLEDAC_HTTP3')
     h3_lane_ok = _http3_lane_enabled()
-    h3_allowed = (
-        h3_gate_on
-        and h3_lane_ok
-        and memory_tier in ("normal", "soft")
-        and is_httpx_h3_candidate
-    )
+    h3_allowed = h3_gate_on and h3_lane_ok and (memory_tier in ('normal', 'soft')) and is_httpx_h3_candidate
     if not h3_allowed:
         if not h3_gate_on:
-            blocked.append("T2_httpx_h3:HLEDAC_ENABLE_HTTPX_H3=0")
+            blocked.append('T2_httpx_h3:HLEDAC_ENABLE_HTTPX_H3=0')
         elif not h3_lane_ok:
-            blocked.append("T2_httpx_h3:http3_lane_disabled")
+            blocked.append('T2_httpx_h3:http3_lane_disabled')
         elif not is_httpx_h3_candidate:
-            blocked.append("T2_httpx_h3:no_Alt-Svc_h3_advertisement")
-        elif memory_tier == "hard":
-            blocked.append("T2_httpx_h3:memory_hard_block")
+            blocked.append('T2_httpx_h3:no_Alt-Svc_h3_advertisement')
+        elif memory_tier == 'hard':
+            blocked.append('T2_httpx_h3:memory_hard_block')
         else:
-            blocked.append("T2_httpx_h3:memory_soft_block")
-
-    # T3: JS renderer — memory gate via browser_decide()
-    browser_decision: BrowserDecision = _browser_decide(
-        js_confidence=js_confidence,
-        priority=priority,
-    )
-    js_allowed = browser_decision.allowed and memory_tier != "hard"
+            blocked.append('T2_httpx_h3:memory_soft_block')
+    browser_decision: BrowserDecision = _browser_decide(js_confidence=js_confidence, priority=priority)
+    js_allowed = browser_decision.allowed and memory_tier != 'hard'
     if not js_allowed:
-        if memory_tier == "hard":
-            blocked.append(f"T3_js_renderer:memory_hard_block(RSS={rss:.2f}GiB)")
+        if memory_tier == 'hard':
+            blocked.append(f'T3_js_renderer:memory_hard_block(RSS={rss:.2f}GiB)')
         elif not browser_decision.allowed:
-            blocked.append(f"T3_js_renderer:{browser_decision.reason}")
-
-    # [TP-1] T0 is always-on — invariant: T0 is NEVER in blocked list
-    # Enforced at every return point below.
-    _tp1_assert = (
-        "T0_curl_cffi" not in blocked,
-        f"[TP-1] T0 must never be blocked! blocked={blocked}",
-    )
+            blocked.append(f'T3_js_renderer:{browser_decision.reason}')
+    _tp1_assert = ('T0_curl_cffi' not in blocked, f'[TP-1] T0 must never be blocked! blocked={blocked}')
     assert _tp1_assert[0], _tp1_assert[1]
-
-    # === TIER SELECTION ===
-
-    # Hard block: only T0 allowed
-    if memory_tier == "hard":
-        return TransportPolicyDecision(
-            tier="T0_curl_cffi",
-            transport_lane="curl_cffi_stealth",
-            js_allowed=False,
-            h2_allowed=False,
-            h3_allowed=False,
-            rss_gib=rss,
-            memory_tier="hard",
-            reason=f"memory_hard_block_RSS={rss:.2f}GiB",
-            blocked_tiers=blocked,
-        )
-
-    # Escalation always goes to T0
+    if memory_tier == 'hard':
+        return TransportPolicyDecision(tier='T0_curl_cffi', transport_lane='curl_cffi_stealth', js_allowed=False, h2_allowed=False, h3_allowed=False, rss_gib=rss, memory_tier='hard', reason=f'memory_hard_block_RSS={rss:.2f}GiB', blocked_tiers=blocked)
     if retry_after_status in (403, 429):
-        return TransportPolicyDecision(
-            tier="T0_curl_cffi",
-            transport_lane="curl_cffi_stealth",
-            js_allowed=js_allowed,
-            h2_allowed=h2_allowed,
-            h3_allowed=h3_allowed,
-            rss_gib=rss,
-            memory_tier=memory_tier,
-            reason=f"retry_escalation_http_{retry_after_status}",
-            blocked_tiers=blocked,
-        )
-
-    # Explicit stealth → T0
+        return TransportPolicyDecision(tier='T0_curl_cffi', transport_lane='curl_cffi_stealth', js_allowed=js_allowed, h2_allowed=h2_allowed, h3_allowed=h3_allowed, rss_gib=rss, memory_tier=memory_tier, reason=f'retry_escalation_http_{retry_after_status}', blocked_tiers=blocked)
     if use_stealth:
-        return TransportPolicyDecision(
-            tier="T0_curl_cffi",
-            transport_lane="curl_cffi_stealth",
-            js_allowed=js_allowed,
-            h2_allowed=h2_allowed,
-            h3_allowed=h3_allowed,
-            rss_gib=rss,
-            memory_tier=memory_tier,
-            reason="explicit_stealth",
-            blocked_tiers=blocked,
-        )
-
-    # JS rendering → T3 (memory-gated)
+        return TransportPolicyDecision(tier='T0_curl_cffi', transport_lane='curl_cffi_stealth', js_allowed=js_allowed, h2_allowed=h2_allowed, h3_allowed=h3_allowed, rss_gib=rss, memory_tier=memory_tier, reason='explicit_stealth', blocked_tiers=blocked)
     if use_js and js_allowed:
-        return TransportPolicyDecision(
-            tier="T3_js_renderer",
-            transport_lane="js_renderer",
-            js_allowed=True,
-            h2_allowed=h2_allowed,
-            h3_allowed=h3_allowed,
-            rss_gib=rss,
-            memory_tier=memory_tier,
-            reason=f"js_required_tier={browser_decision.tier}",
-            blocked_tiers=blocked,
-        )
-
-    # H3 candidate → T2 (if allowed)
+        return TransportPolicyDecision(tier='T3_js_renderer', transport_lane='js_renderer', js_allowed=True, h2_allowed=h2_allowed, h3_allowed=h3_allowed, rss_gib=rss, memory_tier=memory_tier, reason=f'js_required_tier={browser_decision.tier}', blocked_tiers=blocked)
     if is_httpx_h3_candidate and h3_allowed:
-        return TransportPolicyDecision(
-            tier="T2_httpx_h3",
-            transport_lane="httpx_h3",
-            js_allowed=js_allowed,
-            h2_allowed=h2_allowed,
-            h3_allowed=True,
-            rss_gib=rss,
-            memory_tier=memory_tier,
-            reason="api_like_httpx_h3_Alt-Svc_cached",
-            blocked_tiers=blocked,
-        )
-
-    # H2 candidate → T1 (if allowed)
+        return TransportPolicyDecision(tier='T2_httpx_h3', transport_lane='httpx_h3', js_allowed=js_allowed, h2_allowed=h2_allowed, h3_allowed=True, rss_gib=rss, memory_tier=memory_tier, reason='api_like_httpx_h3_Alt-Svc_cached', blocked_tiers=blocked)
     if is_httpx_h2_candidate and h2_allowed:
-        return TransportPolicyDecision(
-            tier="T1_httpx_h2",
-            transport_lane="httpx_h2",
-            js_allowed=js_allowed,
-            h2_allowed=True,
-            h3_allowed=h3_allowed,
-            rss_gib=rss,
-            memory_tier=memory_tier,
-            reason="api_like_httpx_h2",
-            blocked_tiers=blocked,
-        )
-
-    # Default: T0 (curl_cffi_stealth is always-on)
-    return TransportPolicyDecision(
-        tier="T0_curl_cffi",
-        transport_lane="curl_cffi_stealth",
-        js_allowed=js_allowed,
-        h2_allowed=h2_allowed,
-        h3_allowed=h3_allowed,
-        rss_gib=rss,
-        memory_tier=memory_tier,
-        reason="clearnet_default_t0_always_on",
-        blocked_tiers=blocked,
-    )
-
+        return TransportPolicyDecision(tier='T1_httpx_h2', transport_lane='httpx_h2', js_allowed=js_allowed, h2_allowed=True, h3_allowed=h3_allowed, rss_gib=rss, memory_tier=memory_tier, reason='api_like_httpx_h2', blocked_tiers=blocked)
+    return TransportPolicyDecision(tier='T0_curl_cffi', transport_lane='curl_cffi_stealth', js_allowed=js_allowed, h2_allowed=h2_allowed, h3_allowed=h3_allowed, rss_gib=rss, memory_tier=memory_tier, reason='clearnet_default_t0_always_on', blocked_tiers=blocked)
 
 def get_tier_for_lane(lane: str) -> Tier:
     """Map a TransportRouter lane to its tier. Convenience for telemetry."""
     return _tier_from_lane(lane)
-
-
-__all__ = [
-    "TransportPolicyDecision",
-    "Tier",
-    "TransportTier",
-    "get_transport_policy",
-    "get_tier_for_lane",
-]
+__all__ = ['TransportPolicyDecision', 'Tier', 'TransportTier', 'get_transport_policy', 'get_tier_for_lane']

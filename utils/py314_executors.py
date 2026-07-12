@@ -27,66 +27,35 @@ RATIONALE:
   - InterpreterPoolExecutor: PEP 756 unstable, MLX incompatible (single interpreter)
   - Rust rayon: GIL-free via PyO3 allow_threads, NEON SIMD on M1
 """
-
 import math
 import os
 from collections.abc import Callable, Iterator
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, TypeVar
-
-__all__ = [
-    "ChunkedExecutor",
-    "smart_executor",
-    "ExecutorType",
-    "get_optimal_chunksize",
-]
-
-T = TypeVar("T")
-R = TypeVar("R")
-
-
-# ------------------------------------------------------------------|
-# Executor type enumeration                                          |
-# ------------------------------------------------------------------|
-
+__all__ = ['ChunkedExecutor', 'smart_executor', 'ExecutorType', 'get_optimal_chunksize']
+T = TypeVar('T')
+R = TypeVar('R')
 
 class ExecutorType:
-    THREAD = "thread"
-    PROCESS = "process"
-    INTERPRETER = "interpreter"  # Python 3.14+ subinterpreters
-
-
-# ------------------------------------------------------------------|
-# Configuration                                                      |
-# ------------------------------------------------------------------|
-
-# M1 8GB safe limits
+    THREAD = 'thread'
+    PROCESS = 'process'
+    INTERPRETER = 'interpreter'
 _MAX_THREAD_WORKERS = 25
 _MAX_PROCESS_WORKERS = 4
-_MAX_INTERPRETER_WORKERS = 2  # M1 8GB: ~15-30MB per subinterpreter, cap at 2
-
-# Chunk size floor (never submit smaller chunks than this)
+_MAX_INTERPRETER_WORKERS = 2
 _MIN_CHUNKSIZE = 100
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ExecutorConfig:
     """Immutable executor configuration."""
-
     executor_type: str
     max_workers: int
     chunksize: int
     use_process_pool: bool
-    reason: str  # human-readable why this config was chosen
+    reason: str
 
-
-# ------------------------------------------------------------------|
-# Chunk size calculator                                              |
-# ------------------------------------------------------------------|
-
-
-def get_optimal_chunksize(n_items: int, n_workers: int, executor_type: str = ExecutorType.THREAD) -> int:
+def get_optimal_chunksize(n_items: int, n_workers: int, executor_type: str=ExecutorType.THREAD) -> int:
     """
     Calculate optimal chunksize for parallel execution.
 
@@ -110,30 +79,12 @@ def get_optimal_chunksize(n_items: int, n_workers: int, executor_type: str = Exe
         return 1
     if n_items <= _MIN_CHUNKSIZE:
         return max(1, n_items)
-
-    # Target number of chunks based on executor type
-    target_chunks = {
-        ExecutorType.INTERPRETER: n_workers * 4,  # more chunks = less overhead per chunk
-        ExecutorType.THREAD: n_workers * 2,
-        ExecutorType.PROCESS: n_workers * 2,
-    }.get(executor_type, n_workers * 2)
-
+    target_chunks = {ExecutorType.INTERPRETER: n_workers * 4, ExecutorType.THREAD: n_workers * 2, ExecutorType.PROCESS: n_workers * 2}.get(executor_type, n_workers * 2)
     raw_chunksize = math.ceil(n_items / target_chunks)
-
-    # Enforce minimum
     chunksize = max(raw_chunksize, _MIN_CHUNKSIZE)
-
-    # Clamp maximum (avoid OOM on large items)
-    max_chunk = n_items  # at most one chunk per worker is fine
+    max_chunk = n_items
     chunksize = min(chunksize, max_chunk)
-
     return chunksize
-
-
-# ------------------------------------------------------------------|
-# ChunkedExecutor — amortizes subinterpreter overhead               |
-# ------------------------------------------------------------------|
-
 
 class ChunkedExecutor:
     """
@@ -161,21 +112,14 @@ class ChunkedExecutor:
         with ChunkedExecutor(max_workers=4, chunksize=2500) as ex:
             results = list(ex.map(fn, items))
     """
+    __slots__ = tuple(('_chunksize_override', '_executor', 'executor_type', 'max_workers'))
 
-    def __init__(
-        self,
-        max_workers: int | None = None,
-        chunksize: int | None = None,
-        executor_type: str = ExecutorType.THREAD,
-    ) -> None:
+    def __init__(self, max_workers: int | None=None, chunksize: int | None=None, executor_type: str=ExecutorType.THREAD) -> None:
         if max_workers is None:
             max_workers = min(os.cpu_count() or 4, _MAX_THREAD_WORKERS)
-
         self.max_workers = max_workers
         self.executor_type = executor_type
         self._executor: ThreadPoolExecutor | ProcessPoolExecutor | None = None
-
-        # Chunksize: user override or auto-calculate
         self._chunksize_override = chunksize
 
     def _get_chunksize(self, n_items: int) -> int:
@@ -187,12 +131,7 @@ class ChunkedExecutor:
         if self.executor_type == ExecutorType.PROCESS:
             self._executor = ProcessPoolExecutor(max_workers=self.max_workers)
         elif self.executor_type == ExecutorType.INTERPRETER:
-            # Python 3.14+ InterpreterPoolExecutor with pre-warmed subinterpreters.
-            # Each subinterpreter has its own GIL → true parallelism for pure-Python.
-            # Pool stays warm during context lifetime → amortizes ~1-5ms startup overhead.
-            # M1 8GB: ~15-30MB per subinterpreter, cap workers at 2 for safety.
             from concurrent.futures import InterpreterPoolExecutor
-
             self._executor = InterpreterPoolExecutor(max_workers=self.max_workers)
         else:
             self._executor = ThreadPoolExecutor(max_workers=self.max_workers)
@@ -203,7 +142,7 @@ class ChunkedExecutor:
             self._executor.__exit__(*args)
             self._executor = None
 
-    def map(self, fn: Callable[[T], R], items: list[T], chunksize: int | None = None) -> Iterator[R]:
+    def map(self, fn: Callable[[T], R], items: list[T], chunksize: int | None=None) -> Iterator[R]:
         """
         Map fn over items with automatic chunking.
 
@@ -224,43 +163,22 @@ class ChunkedExecutor:
         """
         if not items:
             return
-
         if self._executor is None:
-            raise RuntimeError("ChunkedExecutor must be used as context manager")
-
+            raise RuntimeError('ChunkedExecutor must be used as context manager')
         chunk_size = chunksize if chunksize is not None else self._get_chunksize(len(items))
-
-        # Yield from executor with chunksize parameter
         yield from self._executor.map(fn, items, chunksize=chunk_size)
 
-
-# ------------------------------------------------------------------|
-# Smart executor selection                                           |
-# ------------------------------------------------------------------|
-
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class WorkloadProfile:
     """Describes a workload's characteristics for executor selection."""
-
     name: str
-    estimated_cpu_ms_per_item: float  # 0 = instant, 1000 = 1 second
-    item_size_bytes: int  # serialized size of one item
-    releases_gil: bool  # C extension or I/O bound?
-    needs_isolation: bool  # requires process-level isolation?
-    n_items: int  # total number of items to process
+    estimated_cpu_ms_per_item: float
+    item_size_bytes: int
+    releases_gil: bool
+    needs_isolation: bool
+    n_items: int
 
-
-def smart_executor(
-    profile: WorkloadProfile | None = None,
-    *,
-    n_items: int = 0,
-    cpu_ms_per_item: float = 1.0,
-    item_size_bytes: int = 100,
-    releases_gil: bool = True,
-    needs_isolation: bool = False,
-    executor_type_hint: str | None = None,
-) -> ChunkedExecutor:
+def smart_executor(profile: WorkloadProfile | None=None, *, n_items: int=0, cpu_ms_per_item: float=1.0, item_size_bytes: int=100, releases_gil: bool=True, needs_isolation: bool=False, executor_type_hint: str | None=None) -> ChunkedExecutor:
     """
     Create an optimally configured ChunkedExecutor for the given workload.
 
@@ -300,69 +218,34 @@ def smart_executor(
         item_size_bytes = profile.item_size_bytes
         releases_gil = profile.releases_gil
         needs_isolation = profile.needs_isolation
-
-    # Step 1: hint override
     if executor_type_hint is not None:
         ex_type = executor_type_hint
-        reason = f"hint={executor_type_hint}"
-    # Step 2: isolation requirement
+        reason = f'hint={executor_type_hint}'
     elif needs_isolation:
         ex_type = ExecutorType.PROCESS
-        reason = "needs_isolation=True"
-    # Step 3: heavy pure-Python (no GIL release, slow)
+        reason = 'needs_isolation=True'
     elif not releases_gil and cpu_ms_per_item > 50:
         ex_type = ExecutorType.PROCESS
-        reason = f"pure-Python slow ({cpu_ms_per_item:.0f}ms > 50ms)"
-    # Step 4: very heavy items
-    elif cpu_ms_per_item > 500 and item_size_bytes > 100_000:
+        reason = f'pure-Python slow ({cpu_ms_per_item:.0f}ms > 50ms)'
+    elif cpu_ms_per_item > 500 and item_size_bytes > 100000:
         ex_type = ExecutorType.PROCESS
-        reason = f"heavy workload ({cpu_ms_per_item:.0f}ms, {item_size_bytes}B)"
-    # Step 5: InterpreterPoolExecutor for pure-Python CPU-bound
-    # - Pre-warmed pool keeps subinterpreters alive → amortizes startup overhead
-    # - Large chunks (≥5000 items) required for net positive speedup
-    # - M1 8GB: cap at 2 workers (~30MB overhead)
-    # Falls back to ThreadPoolExecutor if overhead exceeds threshold.
+        reason = f'heavy workload ({cpu_ms_per_item:.0f}ms, {item_size_bytes}B)'
     else:
-        if n_items >= 5000 and cpu_ms_per_item >= 1.0 and not releases_gil:
+        if n_items >= 5000 and cpu_ms_per_item >= 1.0 and (not releases_gil):
             ex_type = ExecutorType.INTERPRETER
-            reason = f"pure-Python CPU ({cpu_ms_per_item:.0f}ms/item), IPP chunking beneficial"
+            reason = f'pure-Python CPU ({cpu_ms_per_item:.0f}ms/item), IPP chunking beneficial'
         else:
             ex_type = ExecutorType.THREAD
-            reason = "lightweight/IO/GIL-releasing workload, ThreadPoolExecutor optimal"
+            reason = 'lightweight/IO/GIL-releasing workload, ThreadPoolExecutor optimal'
         if not releases_gil:
-            reason = f"pure-Python fast ({cpu_ms_per_item:.0f}ms < 50ms), ThreadPoolExecutor sufficient"
+            reason = f'pure-Python fast ({cpu_ms_per_item:.0f}ms < 50ms), ThreadPoolExecutor sufficient'
         else:
-            reason = "GIL-releasing C-extension/I/O workload, ThreadPoolExecutor optimal"
-
-    # Max workers based on type (M1 8GB safe)
-    max_workers = {
-        ExecutorType.PROCESS: _MAX_PROCESS_WORKERS,
-        ExecutorType.INTERPRETER: _MAX_INTERPRETER_WORKERS,
-    }.get(ex_type, _MAX_THREAD_WORKERS)
-
-    # Auto-calculate chunksize
+            reason = 'GIL-releasing C-extension/I/O workload, ThreadPoolExecutor optimal'
+    max_workers = {ExecutorType.PROCESS: _MAX_PROCESS_WORKERS, ExecutorType.INTERPRETER: _MAX_INTERPRETER_WORKERS}.get(ex_type, _MAX_THREAD_WORKERS)
     chunksize = get_optimal_chunksize(n_items, max_workers, ex_type)
+    return ChunkedExecutor(max_workers=max_workers, chunksize=chunksize, executor_type=ex_type)
 
-    return ChunkedExecutor(
-        max_workers=max_workers,
-        chunksize=chunksize,
-        executor_type=ex_type,
-    )
-
-
-# ------------------------------------------------------------------|
-# Convenience batch processors                                       |
-# ------------------------------------------------------------------|
-
-
-def batch_map[T, R](
-    fn: Callable[[T], R],
-    items: list[T],
-    *,
-    max_workers: int | None = None,
-    chunksize: int | None = None,
-    executor_type: str = ExecutorType.THREAD,
-) -> list[R]:
+def batch_map[T, R](fn: Callable[[T], R], items: list[T], *, max_workers: int | None=None, chunksize: int | None=None, executor_type: str=ExecutorType.THREAD) -> list[R]:
     """
     Process items in parallel using ChunkedExecutor.
 
@@ -384,31 +267,17 @@ def batch_map[T, R](
     with ChunkedExecutor(max_workers=max_workers, chunksize=chunksize, executor_type=executor_type) as ex:
         return list(ex.map(fn, items))
 
-
-# ------------------------------------------------------------------|
-# Version detection                                                  |
-# ------------------------------------------------------------------|
-
-
 def interpreter_pool_available() -> bool:
     """Check if InterpreterPoolExecutor is available (Python 3.14+)."""
     try:
-        from concurrent.futures import InterpreterPoolExecutor  # noqa: F401
-
+        from concurrent.futures import InterpreterPoolExecutor
         return True
     except ImportError:
         return False
 
-
-# ------------------------------------------------------------------|
-# Benchmark utilities                                                 |
-# ------------------------------------------------------------------|
-
-
-@dataclass
+@dataclass(True)
 class BenchmarkResult:
     """Result of a parallel execution benchmark."""
-
     name: str
     serial_ms: float
     thread_ms: float
@@ -420,14 +289,7 @@ class BenchmarkResult:
     optimal_chunksize: int
     recommended_executor: str
 
-
-def benchmark_parallel[T, R](
-    fn: Callable[[T], R],
-    items: list[T],
-    *,
-    name: str = "unnamed",
-    max_workers: int = 4,
-) -> BenchmarkResult:
+def benchmark_parallel[T, R](fn: Callable[[T], R], items: list[T], *, name: str='unnamed', max_workers: int=4) -> BenchmarkResult:
     """
     Benchmark serial vs ThreadPoolExecutor vs ChunkedExecutor vs ProcessPoolExecutor.
 
@@ -448,27 +310,19 @@ def benchmark_parallel[T, R](
     """
     import gc
     import time
-
-    # Warmup
     for _ in range(2):
-        [fn(item) for item in items[: min(100, len(items))]]
-
-    # Serial baseline
+        [fn(item) for item in items[:min(100, len(items))]]
     gc.collect()
     t0 = time.perf_counter()
     for _ in range(3):
         serial_result = [fn(item) for item in items]
     serial_ms = (time.perf_counter() - t0) / 3 * 1000
-
-    # ThreadPoolExecutor
     gc.collect()
     t0 = time.perf_counter()
     for _ in range(3):
         with ThreadPoolExecutor(max_workers=max_workers) as ex:
             thread_result = list(ex.map(fn, items))
     thread_ms = (time.perf_counter() - t0) / 3 * 1000
-
-    # ChunkedExecutor
     gc.collect()
     chunksize = get_optimal_chunksize(len(items), max_workers, ExecutorType.THREAD)
     t0 = time.perf_counter()
@@ -476,32 +330,12 @@ def benchmark_parallel[T, R](
         with ChunkedExecutor(max_workers=max_workers, chunksize=chunksize) as ex:
             chunked_result = list(ex.map(fn, items))
     chunked_ms = (time.perf_counter() - t0) / 3 * 1000
-
-    # ProcessPoolExecutor
     gc.collect()
     t0 = time.perf_counter()
     for _ in range(3):
         with ProcessPoolExecutor(max_workers=max_workers) as ex:
             process_result = list(ex.map(fn, items))
     process_ms = (time.perf_counter() - t0) / 3 * 1000
-
-    # Determine best
-    times = {
-        "thread": thread_ms,
-        "chunked": chunked_ms,
-        "process": process_ms,
-    }
+    times = {'thread': thread_ms, 'chunked': chunked_ms, 'process': process_ms}
     best = min(times, key=times.__getitem__)
-
-    return BenchmarkResult(
-        name=name,
-        serial_ms=serial_ms,
-        thread_ms=thread_ms,
-        chunked_ms=chunked_ms,
-        process_ms=process_ms,
-        thread_speedup=serial_ms / thread_ms if thread_ms > 0 else 0,
-        chunked_speedup=serial_ms / chunked_ms if chunked_ms > 0 else 0,
-        process_speedup=serial_ms / process_ms if process_ms > 0 else 0,
-        optimal_chunksize=chunksize,
-        recommended_executor=best,
-    )
+    return BenchmarkResult(name=name, serial_ms=serial_ms, thread_ms=thread_ms, chunked_ms=chunked_ms, process_ms=process_ms, thread_speedup=serial_ms / thread_ms if thread_ms > 0 else 0, chunked_speedup=serial_ms / chunked_ms if chunked_ms > 0 else 0, process_speedup=serial_ms / process_ms if process_ms > 0 else 0, optimal_chunksize=chunksize, recommended_executor=best)

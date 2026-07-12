@@ -33,9 +33,6 @@ VERDICT (F260 SecurityLayer / MissionAudit audit, 2026-06-02):
     log_action(action, data, metadata) signature and the chained hash links.
   - See SECURITY_MEMORY_LAYER_AUDIT.md (F260) for full evidence.
 """
-
-
-
 import asyncio
 import concurrent.futures
 import hashlib
@@ -43,17 +40,8 @@ import logging
 import msgspec.json as _json
 from pathlib import Path
 from typing import Any
-
-from hledac.universal.project_types import (
-    DestructionResult,
-    ObfuscationLevel,
-    ObfuscationResult,
-    SecurityConfig,
-    WipeStandard,
-)
-
+from hledac.universal.project_types import DestructionResult, ObfuscationLevel, ObfuscationResult, SecurityConfig, WipeStandard
 logger = logging.getLogger(__name__)
-
 
 class SecurityLayer:
     """
@@ -95,8 +83,9 @@ class SecurityLayer:
         # Log privacy event (compliance mode)
         await security.log_privacy_event("data_access", "user123", "profile")
     """
+    __slots__ = tuple(('_audit_mode', '_chaff_generated', '_destruction_count', '_file_destroy_executor', '_mission_audit', '_obfuscation_count', '_privacy_audit', '_research_obfuscator', '_secure_destructor', '_string_obfuscator', 'config'))
 
-    def __init__(self, config: SecurityConfig | None = None):
+    def __init__(self, config: SecurityConfig | None=None):
         """
         Initialize SecurityLayer.
 
@@ -104,29 +93,17 @@ class SecurityLayer:
             config: Security configuration (uses defaults if None)
         """
         self.config = config or SecurityConfig()
-
-        # Core components (lazy loaded)
         self._string_obfuscator = None
         self._research_obfuscator = None
         self._secure_destructor = None
-
-        # Dedicated executor for blocking file I/O (avoids event loop blocking)
-        self._file_destroy_executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=1,
-            thread_name_prefix="security_destroy"
-        )
-
-        # Unified Audit System
-        self._mission_audit: MissionAudit | None = None  # Forensic mode
-        self._privacy_audit: Any | None = None  # Compliance mode (PrivacyAuditLog)
-        self._audit_mode: str = "forensic"  # "forensic" | "compliance" | "both"
-
-        # Statistics
+        self._file_destroy_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix='security_destroy')
+        self._mission_audit: MissionAudit | None = None
+        self._privacy_audit: Any | None = None
+        self._audit_mode: str = 'forensic'
         self._obfuscation_count = 0
         self._destruction_count = 0
         self._chaff_generated = 0
-
-        logger.info("SecurityLayer initialized")
+        logger.info('SecurityLayer initialized')
 
     async def initialize(self) -> bool:
         """
@@ -136,30 +113,17 @@ class SecurityLayer:
             True if initialization successful
         """
         try:
-            logger.info("🚀 Initializing SecurityLayer...")
-
-            # Initialize StringObfuscator
-            if self.config.obfuscation_level != "none":
+            logger.info('🚀 Initializing SecurityLayer...')
+            if self.config.obfuscation_level != 'none':
                 await self._init_string_obfuscator()
-
-            # Initialize ResearchObfuscator
             if self.config.enable_query_masking or self.config.enable_chaff_traffic:
                 await self._init_research_obfuscator()
-
-            # Initialize SecureDestructor
             await self._init_secure_destructor()
-
-            # Initialize MissionAudit (forensic mode)
             await self._init_mission_audit()
-
-            # Initialize PrivacyAudit (compliance mode) - lazy loaded
-            # Will be initialized on first privacy log event
-
-            logger.info("✅ SecurityLayer initialized successfully")
+            logger.info('✅ SecurityLayer initialized successfully')
             return True
-
         except Exception as e:
-            logger.error(f"❌ SecurityLayer initialization failed: {e}")
+            logger.error(f'❌ SecurityLayer initialization failed: {e}')
             return False
 
     async def _init_string_obfuscator(self) -> None:
@@ -167,12 +131,10 @@ class SecurityLayer:
         if self._string_obfuscator is None:
             try:
                 from hledac.crypto.string_obfuscator import StringObfuscator
-
                 self._string_obfuscator = StringObfuscator()
-                logger.info("✅ StringObfuscator initialized")
-
+                logger.info('✅ StringObfuscator initialized')
             except ImportError as e:
-                logger.warning(f"⚠️ StringObfuscator not available: {e}")
+                logger.warning(f'⚠️ StringObfuscator not available: {e}')
                 self._string_obfuscator = None
 
     async def _init_research_obfuscator(self) -> None:
@@ -180,12 +142,10 @@ class SecurityLayer:
         if self._research_obfuscator is None:
             try:
                 from hledac.research_security.research_obfuscation import ResearchObfuscator
-
                 self._research_obfuscator = ResearchObfuscator()
-                logger.info("✅ ResearchObfuscator initialized")
-
+                logger.info('✅ ResearchObfuscator initialized')
             except ImportError as e:
-                logger.warning(f"⚠️ ResearchObfuscator not available: {e}")
+                logger.warning(f'⚠️ ResearchObfuscator not available: {e}')
                 self._research_obfuscator = None
 
     async def _init_secure_destructor(self) -> None:
@@ -193,25 +153,20 @@ class SecurityLayer:
         if self._secure_destructor is None:
             try:
                 from hledac.research_security.secure_destruction import DestructionConfig, SecureDestructor
-
-                destructor_config = DestructionConfig(
-                    standard=self.config.wipe_standard,
-                    verify=self.config.verification_enabled
-                )
+                destructor_config = DestructionConfig(standard=self.config.wipe_standard, verify=self.config.verification_enabled)
                 self._secure_destructor = SecureDestructor(destructor_config)
-                logger.info("✅ SecureDestructor initialized")
-
+                logger.info('✅ SecureDestructor initialized')
             except ImportError as e:
-                logger.warning(f"⚠️ SecureDestructor not available: {e}")
+                logger.warning(f'⚠️ SecureDestructor not available: {e}')
                 self._secure_destructor = None
 
     async def _init_mission_audit(self) -> None:
         """Initialize MissionAudit for forensic audit chain."""
         try:
             self._mission_audit = MissionAudit()
-            logger.info("✅ MissionAudit initialized (forensic mode)")
+            logger.info('✅ MissionAudit initialized (forensic mode)')
         except Exception as e:
-            logger.warning(f"⚠️ MissionAudit not available: {e}")
+            logger.warning(f'⚠️ MissionAudit not available: {e}')
             self._mission_audit = None
 
     async def _init_privacy_audit(self) -> None:
@@ -219,13 +174,10 @@ class SecurityLayer:
         if self._privacy_audit is None:
             try:
                 from ...privacy_protection.privacy_audit_log import AnonymizationLevel, PrivacyAuditLog
-                self._privacy_audit = await PrivacyAuditLog.create(
-                    retention_days=90,
-                    anonymization_level=AnonymizationLevel.FULL
-                )
-                logger.info("✅ PrivacyAuditLog initialized (compliance mode)")
+                self._privacy_audit = await PrivacyAuditLog.create(retention_days=90, anonymization_level=AnonymizationLevel.FULL)
+                logger.info('✅ PrivacyAuditLog initialized (compliance mode)')
             except Exception as e:
-                logger.warning(f"⚠️ PrivacyAuditLog not available: {e}")
+                logger.warning(f'⚠️ PrivacyAuditLog not available: {e}')
                 self._privacy_audit = None
 
     def set_audit_mode(self, mode: str) -> None:
@@ -235,23 +187,12 @@ class SecurityLayer:
         Args:
             mode: Audit mode to use
         """
-        if mode not in ("forensic", "compliance", "both"):
-            raise ValueError(f"Invalid audit mode: {mode}")
+        if mode not in ('forensic', 'compliance', 'both'):
+            raise ValueError(f'Invalid audit mode: {mode}')
         self._audit_mode = mode
-        logger.info(f"🔒 Audit mode set to: {mode}")
+        logger.info(f'🔒 Audit mode set to: {mode}')
 
-    # ====================================================================
-    # Unified Audit System - Forensic + Compliance
-    # ====================================================================
-
-    async def log_privacy_event(
-        self,
-        action: str,
-        subject_id: str,
-        resource: str,
-        details: dict | None = None,
-        category: str = "DATA_ACCESS"
-    ) -> str | None:
+    async def log_privacy_event(self, action: str, subject_id: str, resource: str, details: dict | None=None, category: str='DATA_ACCESS') -> str | None:
         """
         Log privacy event for GDPR/CCPA compliance.
 
@@ -265,53 +206,25 @@ class SecurityLayer:
         Returns:
             Entry ID if successful
         """
-        if self._audit_mode not in ("compliance", "both"):
-            logger.debug("Privacy audit disabled (mode: {self._audit_mode})")
+        if self._audit_mode not in ('compliance', 'both'):
+            logger.debug('Privacy audit disabled (mode: {self._audit_mode})')
             return None
-
-        # Lazy init privacy audit
         if self._privacy_audit is None:
             await self._init_privacy_audit()
-
         if self._privacy_audit is None:
-            # Fallback: log to MissionAudit with privacy prefix
             if self._mission_audit:
-                return self._mission_audit.log_action(
-                    f"privacy:{action}",
-                    f"{subject_id}:{resource}".encode(),
-                    details or {}
-                )
+                return self._mission_audit.log_action(f'privacy:{action}', f'{subject_id}:{resource}'.encode(), details or {})
             return None
-
         try:
             from ...privacy_protection.privacy_audit_log import PrivacyEventCategory, Severity
-
-            cat_map = {
-                "DATA_ACCESS": PrivacyEventCategory.DATA_ACCESS,
-                "DATA_MODIFICATION": PrivacyEventCategory.DATA_MODIFICATION,
-                "DATA_DELETION": PrivacyEventCategory.DATA_DELETION,
-                "CONSENT_GRANTED": PrivacyEventCategory.CONSENT_GRANTED,
-                "CONSENT_REVOKED": PrivacyEventCategory.CONSENT_REVOKED,
-            }
-
-            entry = await self._privacy_audit.log_event(
-                category=cat_map.get(category, PrivacyEventCategory.DATA_ACCESS),
-                action=action,
-                subject_id=subject_id,
-                resource=resource,
-                details=details or {},
-                severity=Severity.INFO
-            )
+            cat_map = {'DATA_ACCESS': PrivacyEventCategory.DATA_ACCESS, 'DATA_MODIFICATION': PrivacyEventCategory.DATA_MODIFICATION, 'DATA_DELETION': PrivacyEventCategory.DATA_DELETION, 'CONSENT_GRANTED': PrivacyEventCategory.CONSENT_GRANTED, 'CONSENT_REVOKED': PrivacyEventCategory.CONSENT_REVOKED}
+            entry = await self._privacy_audit.log_event(category=cat_map.get(category, PrivacyEventCategory.DATA_ACCESS), action=action, subject_id=subject_id, resource=resource, details=details or {}, severity=Severity.INFO)
             return entry.entry_id if entry else None
-
         except Exception as e:
-            logger.warning(f"⚠️ Privacy audit log failed: {e}")
+            logger.warning(f'⚠️ Privacy audit log failed: {e}')
             return None
 
-    async def generate_compliance_report(
-        self,
-        days: int = 30
-    ) -> dict[str, Any] | None:
+    async def generate_compliance_report(self, days: int=30) -> dict[str, Any] | None:
         """
         Generate GDPR/CCPA compliance report.
 
@@ -323,21 +236,16 @@ class SecurityLayer:
         """
         if self._privacy_audit is None:
             await self._init_privacy_audit()
-
         if self._privacy_audit is None:
             return None
-
         try:
             from datetime import datetime, timedelta
-            return await self._privacy_audit.generate_compliance_report(
-                start_date=datetime.now(UTC) - timedelta(days=days),  # noqa: DTZ005
-                end_date=datetime.now(UTC)  # noqa: DTZ005
-            )
+            return await self._privacy_audit.generate_compliance_report(start_date=datetime.now(UTC) - timedelta(days=days), end_date=datetime.now(UTC))
         except Exception as e:
-            logger.warning(f"⚠️ Compliance report generation failed: {e}")
+            logger.warning(f'⚠️ Compliance report generation failed: {e}')
             return None
 
-    def anonymize_text(self, text: str, level: str = "full") -> str:
+    def anonymize_text(self, text: str, level: str='full') -> str:
         """
         Anonymize PII in text.
 
@@ -351,42 +259,19 @@ class SecurityLayer:
         if self._privacy_audit and hasattr(self._privacy_audit, 'anonymizer'):
             try:
                 from ...privacy_protection.privacy_audit_log import AnonymizationLevel
-                level_map = {
-                    "none": AnonymizationLevel.NONE,
-                    "partial": AnonymizationLevel.PARTIAL,
-                    "full": AnonymizationLevel.FULL,
-                }
-                return self._privacy_audit.anonymizer.anonymize(
-                    text, level_map.get(level, AnonymizationLevel.FULL)
-                )
+                level_map = {'none': AnonymizationLevel.NONE, 'partial': AnonymizationLevel.PARTIAL, 'full': AnonymizationLevel.FULL}
+                return self._privacy_audit.anonymizer.anonymize(text, level_map.get(level, AnonymizationLevel.FULL))
             except Exception as e:
-                logger.warning(f"⚠️ Anonymization failed: {e}")
-
-        # Fallback: basic redaction
+                logger.warning(f'⚠️ Anonymization failed: {e}')
         import re
-        text = re.sub(r'\S+@\S+\.\S+', '[EMAIL_REDACTED]', text)
-        text = re.sub(r'\b\d{3}-\d{2}-\d{4}\b', '[SSN_REDACTED]', text)
+        text = re.sub('\\S+@\\S+\\.\\S+', '[EMAIL_REDACTED]', text)
+        text = re.sub('\\b\\d{3}-\\d{2}-\\d{4}\\b', '[SSN_REDACTED]', text)
         return text
-
-    # Sprint F250E: Security gate — lightweight finding validator
-    BLOCKLISTED_DOMAINS = frozenset([
-        "honeypot.example.com",
-        "sinkhole.example.net",
-        "known-false-positive.osint.local",
-    ])
-
+    BLOCKLISTED_DOMAINS = frozenset(['honeypot.example.com', 'sinkhole.example.net', 'known-false-positive.osint.local'])
     ENTROPY_THRESHOLD = 1.5
-
-    # Pre-compiled regex patterns for PII detection (F265B: moved out of hot path)
-    _PII_EMAIL_RE = __import__('re').compile(
-        r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
-    )
-    _PII_PHONE_RE = __import__('re').compile(
-        r'\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b'
-    )
-    _PII_SSN_RE = __import__('re').compile(
-        r'\b\d{3}-\d{2}-\d{4}\b'
-    )
+    _PII_EMAIL_RE = __import__('re').compile('\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b')
+    _PII_PHONE_RE = __import__('re').compile('\\b\\d{3}[-.\\s]?\\d{3}[-.\\s]?\\d{4}\\b')
+    _PII_SSN_RE = __import__('re').compile('\\b\\d{3}-\\d{2}-\\d{4}\\b')
     _PII_PATTERNS = (_PII_EMAIL_RE, _PII_PHONE_RE, _PII_SSN_RE)
 
     def validate_finding(self, finding: dict) -> tuple[bool, str]:
@@ -402,39 +287,29 @@ class SecurityLayer:
             (should_accept, reason) — True/"ok" = pass, False/"reason" = reject
         """
         try:
-            payload = finding.get("payload_text", "") or ""
-            provenance = finding.get("provenance", "") or ""
-
-            # (b) Blocklisted domain check
+            payload = finding.get('payload_text', '') or ''
+            provenance = finding.get('provenance', '') or ''
             if provenance:
                 import urllib.parse
                 try:
                     parsed = urllib.parse.urlparse(provenance)
                     host = parsed.netloc.lower()
-                    if any(bad in host for bad in self.BLOCKLISTED_DOMAINS):
-                        return (False, "blocklisted_domain")
-                except Exception:  # noqa: BLE001
+                    if any((bad in host for bad in self.BLOCKLISTED_DOMAINS)):
+                        return (False, 'blocklisted_domain')
+                except Exception:
                     pass
-
-            # (a) PII pattern check — flag for redaction, don't reject
-            # F265B: Use pre-compiled patterns from class level (moved out of hot path)
-            has_pii = any(p.search(payload) for p in self._PII_PATTERNS)
+            has_pii = any((p.search(payload) for p in self._PII_PATTERNS))
             if has_pii:
                 redacted = self.anonymize_text(payload)
-                finding["payload_text"] = redacted
-                # Don't reject — just redact and continue
-                return (True, "pii_redacted")
-
-            # (c) Low entropy check
+                finding['payload_text'] = redacted
+                return (True, 'pii_redacted')
             if payload:
                 entropy = self._shannon_entropy(payload)
                 if entropy < self.ENTROPY_THRESHOLD:
-                    return (False, "low_entropy_payload")
-
-            return (True, "ok")
+                    return (False, 'low_entropy_payload')
+            return (True, 'ok')
         except Exception:
-            # Fail-soft: accept on any error
-            return (True, "ok")
+            return (True, 'ok')
 
     @staticmethod
     def _shannon_entropy(text: str) -> float:
@@ -453,11 +328,7 @@ class SecurityLayer:
                 entropy -= prob * math.log2(prob)
         return entropy
 
-    # ====================================================================
-    # MissionAudit Integration (Forensic Mode)
-    # ====================================================================
-
-    def log_action(self, action_type: str, data: bytes, metadata: dict | None = None) -> str | None:
+    def log_action(self, action_type: str, data: bytes, metadata: dict | None=None) -> str | None:
         """
         Log an action to the cryptographic audit chain.
 
@@ -473,7 +344,7 @@ class SecurityLayer:
             try:
                 return self._mission_audit.log_action(action_type, data, metadata or {})
             except Exception as e:
-                logger.warning(f"⚠️ MissionAudit log failed: {e}")
+                logger.warning(f'⚠️ MissionAudit log failed: {e}')
         return None
 
     def get_audit_chain(self) -> list[dict]:
@@ -500,11 +371,7 @@ class SecurityLayer:
             return self._mission_audit.export_chain(output_path)
         return False
 
-    async def obfuscate_string(
-        self,
-        content: str,
-        level: ObfuscationLevel | None = None
-    ) -> ObfuscationResult:
+    async def obfuscate_string(self, content: str, level: ObfuscationLevel | None=None) -> ObfuscationResult:
         """
         Obfuscate a string with multi-stage encoding.
 
@@ -517,68 +384,32 @@ class SecurityLayer:
         """
         level = level or ObfuscationLevel(self.config.obfuscation_level)
         self._obfuscation_count += 1
-
-        logger.debug(f"🔐 Obfuscating string (level: {level.value})")
-
+        logger.debug(f'🔐 Obfuscating string (level: {level.value})')
         try:
             if self._string_obfuscator:
-                # Use real StringObfuscator
                 original_hash = hashlib.sha256(content.encode()).hexdigest()[:16]
-
-                # Determine encoding stages based on level
                 if level == ObfuscationLevel.LIGHT:
-                    stages = ["xor", "base64"]
+                    stages = ['xor', 'base64']
                     obfuscated = self._string_obfuscator.multi_stage_encode(content)
                 elif level == ObfuscationLevel.MEDIUM:
-                    stages = ["xor", "base64", "zlib"]
+                    stages = ['xor', 'base64', 'zlib']
                     obfuscated = self._string_obfuscator.multi_stage_encode(content)
                 elif level in (ObfuscationLevel.HEAVY, ObfuscationLevel.MAXIMUM):
-                    stages = ["xor", "base64", "zlib", "xor"]
+                    stages = ['xor', 'base64', 'zlib', 'xor']
                     obfuscated = self._string_obfuscator.multi_stage_encode(content)
-
-                    # Generate decoys for heavy/maximum
                     if self.config.generate_decoys:
-                        self._string_obfuscator.generate_decoy_strings(
-                            count=self.config.decoy_count
-                        )
+                        self._string_obfuscator.generate_decoy_strings(count=self.config.decoy_count)
                 else:
                     stages = []
                     obfuscated = content
-
-                # Log to audit chain
-                self.log_action(
-                    "obfuscation",
-                    content.encode(),
-                    {"level": level.value, "stages": stages}
-                )
-
-                return ObfuscationResult(
-                    original_hash=original_hash,
-                    obfuscated_data=obfuscated,
-                    encoding_chain=stages,
-                    decoy_count=self.config.decoy_count if level in (ObfuscationLevel.HEAVY, ObfuscationLevel.MAXIMUM) else 0,  # noqa: E501
-                    success=True
-                )
+                self.log_action('obfuscation', content.encode(), {'level': level.value, 'stages': stages})
+                return ObfuscationResult(original_hash=original_hash, obfuscated_data=obfuscated, encoding_chain=stages, decoy_count=self.config.decoy_count if level in (ObfuscationLevel.HEAVY, ObfuscationLevel.MAXIMUM) else 0, success=True)
             else:
-                # Fallback: simple base64
                 import base64
-                return ObfuscationResult(
-                    original_hash=hashlib.sha256(content.encode()).hexdigest()[:16],
-                    obfuscated_data=base64.b64encode(content.encode()).decode(),
-                    encoding_chain=["base64"],
-                    decoy_count=0,
-                    success=True
-                )
-
+                return ObfuscationResult(original_hash=hashlib.sha256(content.encode()).hexdigest()[:16], obfuscated_data=base64.b64encode(content.encode()).decode(), encoding_chain=['base64'], decoy_count=0, success=True)
         except Exception as e:
-            logger.error(f"❌ String obfuscation failed: {e}")
-            return ObfuscationResult(
-                original_hash="",
-                obfuscated_data=content,
-                encoding_chain=[],
-                decoy_count=0,
-                success=False
-            )
+            logger.error(f'❌ String obfuscation failed: {e}')
+            return ObfuscationResult(original_hash='', obfuscated_data=content, encoding_chain=[], decoy_count=0, success=False)
 
     def mask_query(self, query: str) -> str:
         """
@@ -592,30 +423,20 @@ class SecurityLayer:
         """
         if not self.config.enable_query_masking:
             return query
-
         if self._research_obfuscator:
             try:
                 return self._research_obfuscator.mask_query(query)
             except Exception as e:
-                logger.warning(f"⚠️ Query masking failed: {e}")
+                logger.warning(f'⚠️ Query masking failed: {e}')
                 return query
         else:
-            # Fallback: simple synonym replacement
-            replacements = {
-                "corporate espionage": "market research",
-                "trade secrets": "proprietary methods",
-                "hack": "security analysis",
-                "exploit": "vulnerability assessment",
-                "bypass": "circumvention testing",
-            }
-
+            replacements = {'corporate espionage': 'market research', 'trade secrets': 'proprietary methods', 'hack': 'security analysis', 'exploit': 'vulnerability assessment', 'bypass': 'circumvention testing'}
             masked = query.lower()
             for original, replacement in replacements.items():
                 masked = masked.replace(original, replacement)
-
             return masked if masked != query.lower() else query
 
-    def generate_chaff(self, count: int | None = None) -> list[str]:
+    def generate_chaff(self, count: int | None=None) -> list[str]:
         """
         Generate chaff queries to mask real research.
 
@@ -627,45 +448,21 @@ class SecurityLayer:
         """
         if not self.config.enable_chaff_traffic:
             return []
-
         count = count or int(1 / self.config.chaff_ratio) if self.config.chaff_ratio > 0 else 3
-
         if self._research_obfuscator:
             try:
                 chaff = self._research_obfuscator.generate_chaff(count)
                 self._chaff_generated += count
                 return chaff
             except Exception as e:
-                logger.warning(f"⚠️ Chaff generation failed: {e}")
-
-        # Fallback chaff
-        fallback_chaff = [
-            "weather forecast today",
-            "healthy dinner recipes",
-            "how to meditate",
-            "best programming tutorials",
-            "latest science discoveries",
-            "workout routines",
-            "productivity tips",
-            "travel destinations 2024",
-            "book recommendations",
-            "time management techniques",
-        ]
-
+                logger.warning(f'⚠️ Chaff generation failed: {e}')
+        fallback_chaff = ['weather forecast today', 'healthy dinner recipes', 'how to meditate', 'best programming tutorials', 'latest science discoveries', 'workout routines', 'productivity tips', 'travel destinations 2024', 'book recommendations', 'time management techniques']
         import random
         chaff = random.sample(fallback_chaff, min(count, len(fallback_chaff)))
         self._chaff_generated += len(chaff)
         return chaff
 
-    # ====================================================================
-    # Secure File Destruction (non-blocking)
-    # ====================================================================
-
-    def _destroy_file_fallback_sync(
-        self,
-        file_path: str,
-        standard: WipeStandard
-    ) -> DestructionResult:
+    def _destroy_file_fallback_sync(self, file_path: str, standard: WipeStandard) -> DestructionResult:
         """
         Synchronous fallback for file destruction - runs in ThreadPoolExecutor.
 
@@ -682,52 +479,21 @@ class SecurityLayer:
         """
         import os
         import time as time_module
-
         try:
             p = Path(file_path)
             if p.exists():
                 size = p.stat().st_size
-
-                # Simple overwrite with random bytes (best-effort on SSD/APFS)
                 with open(p, 'wb') as f:
                     f.write(os.urandom(size))
-
-                # Remove file
                 p.unlink()
-
-                return DestructionResult(
-                    file_path=file_path,
-                    standard=standard,
-                    passes_completed=1,
-                    bytes_overwritten=size,
-                    verification_passed=not p.exists(),
-                    timestamp=time_module.time()
-                )
+                return DestructionResult(file_path=file_path, standard=standard, passes_completed=1, bytes_overwritten=size, verification_passed=not p.exists(), timestamp=time_module.time())
             else:
-                return DestructionResult(
-                    file_path=file_path,
-                    standard=standard,
-                    passes_completed=0,
-                    bytes_overwritten=0,
-                    verification_passed=False,
-                    timestamp=time_module.time()
-                )
+                return DestructionResult(file_path=file_path, standard=standard, passes_completed=0, bytes_overwritten=0, verification_passed=False, timestamp=time_module.time())
         except Exception as e:
-            logger.error(f"❌ File destruction fallback failed: {e}")
-            return DestructionResult(
-                file_path=file_path,
-                standard=standard,
-                passes_completed=0,
-                bytes_overwritten=0,
-                verification_passed=False,
-                timestamp=time_module.time()
-            )
+            logger.error(f'❌ File destruction fallback failed: {e}')
+            return DestructionResult(file_path=file_path, standard=standard, passes_completed=0, bytes_overwritten=0, verification_passed=False, timestamp=time_module.time())
 
-    async def destroy_file(
-        self,
-        file_path: str,
-        standard: WipeStandard | None = None
-    ) -> DestructionResult:
+    async def destroy_file(self, file_path: str, standard: WipeStandard | None=None) -> DestructionResult:
         """
         Securely destroy a file.
 
@@ -740,64 +506,22 @@ class SecurityLayer:
         """
         standard = standard or WipeStandard(self.config.wipe_standard)
         self._destruction_count += 1
-
-        logger.info(f"🗑️ Securely destroying file: {file_path} (standard: {standard.value})")
-
+        logger.info(f'🗑️ Securely destroying file: {file_path} (standard: {standard.value})')
         try:
             if self._secure_destructor:
-                # Use real SecureDestructor
                 result = await self._secure_destructor.destroy_file(file_path)
-
-                # Log to audit chain
-                self.log_action(
-                    "file_destruction",
-                    file_path.encode(),
-                    {"standard": standard.value, "passes": result.passes if hasattr(result, 'passes') else 1}
-                )
-
-                return DestructionResult(
-                    file_path=file_path,
-                    standard=standard,
-                    passes_completed=result.passes if hasattr(result, 'passes') else 1,
-                    bytes_overwritten=result.bytes if hasattr(result, 'bytes') else 0,
-                    verification_passed=result.verified if hasattr(result, 'verified') else True,
-                    timestamp=__import__('time').time()
-                )
+                self.log_action('file_destruction', file_path.encode(), {'standard': standard.value, 'passes': result.passes if hasattr(result, 'passes') else 1})
+                return DestructionResult(file_path=file_path, standard=standard, passes_completed=result.passes if hasattr(result, 'passes') else 1, bytes_overwritten=result.bytes if hasattr(result, 'bytes') else 0, verification_passed=result.verified if hasattr(result, 'verified') else True, timestamp=__import__('time').time())
             else:
-                # Fallback: run sync destruction in thread pool to avoid blocking event loop
                 loop = asyncio.get_running_loop()
-                result = await loop.run_in_executor(
-                    self._file_destroy_executor,
-                    self._destroy_file_fallback_sync,
-                    file_path,
-                    standard
-                )
-
-                # Log to audit chain
-                self.log_action(
-                    "file_destruction",
-                    file_path.encode(),
-                    {"standard": standard.value, "fallback": True}
-                )
-
+                result = await loop.run_in_executor(self._file_destroy_executor, self._destroy_file_fallback_sync, file_path, standard)
+                self.log_action('file_destruction', file_path.encode(), {'standard': standard.value, 'fallback': True})
                 return result
-
         except Exception as e:
-            logger.error(f"❌ File destruction failed: {e}")
-            return DestructionResult(
-                file_path=file_path,
-                standard=standard,
-                passes_completed=0,
-                bytes_overwritten=0,
-                verification_passed=False,
-                timestamp=__import__('time').time()
-            )
+            logger.error(f'❌ File destruction failed: {e}')
+            return DestructionResult(file_path=file_path, standard=standard, passes_completed=0, bytes_overwritten=0, verification_passed=False, timestamp=__import__('time').time())
 
-    async def destroy_directory(
-        self,
-        dir_path: str,
-        recursive: bool = True
-    ) -> list[DestructionResult]:
+    async def destroy_directory(self, dir_path: str, recursive: bool=True) -> list[DestructionResult]:
         """
         Securely destroy a directory.
 
@@ -808,17 +532,13 @@ class SecurityLayer:
         Returns:
             List of DestructionResults
         """
-        logger.info(f"🗑️ Securely destroying directory: {dir_path}")
-
+        logger.info(f'🗑️ Securely destroying directory: {dir_path}')
         results = []
-
         try:
             import os
-            # Walk directory in thread pool to avoid blocking event loop
             loop = asyncio.get_running_loop()
-
             if recursive:
-                # Collect all file paths first (sync in thread pool)
+
                 def _walk_sync():
                     file_paths = []
                     for root, _dirs, files in os.walk(dir_path, topdown=False):
@@ -826,18 +546,11 @@ class SecurityLayer:
                         for file in files:
                             file_paths.append(str(root_p / file))
                     return file_paths
-
-                all_files = await loop.run_in_executor(
-                    self._file_destroy_executor,
-                    _walk_sync
-                )
-
-                # Destroy each file via async destroy_file (non-blocking calls)
+                all_files = await loop.run_in_executor(self._file_destroy_executor, _walk_sync)
                 for file_path in all_files:
                     result = await self.destroy_file(file_path)
                     results.append(result)
 
-                # Remove directory structure (sync in thread pool)
                 def _remove_dirs_sync():
                     for root, dirs, _files in os.walk(dir_path, topdown=False):
                         root_p = Path(root)
@@ -845,88 +558,47 @@ class SecurityLayer:
                             (root_p / d).rmdir()
                     if Path(dir_path).exists():
                         Path(dir_path).rmdir()
-
-                await loop.run_in_executor(
-                    self._file_destroy_executor,
-                    _remove_dirs_sync
-                )
+                await loop.run_in_executor(self._file_destroy_executor, _remove_dirs_sync)
             else:
-                # Non-recursive: glob and destroy files only
+
                 def _glob_sync():
                     import glob
-                    return [f for f in glob.glob(str(Path(dir_path) / "*")) if Path(f).is_file()]
-
-                files = await loop.run_in_executor(
-                    self._file_destroy_executor,
-                    _glob_sync
-                )
-
+                    return [f for f in glob.glob(str(Path(dir_path) / '*')) if Path(f).is_file()]
+                files = await loop.run_in_executor(self._file_destroy_executor, _glob_sync)
                 for file_path in files:
                     result = await self.destroy_file(file_path)
                     results.append(result)
-
         except Exception as e:
-            logger.error(f"❌ Directory destruction failed: {e}")
-
+            logger.error(f'❌ Directory destruction failed: {e}')
         return results
 
     def get_statistics(self) -> dict[str, Any]:
         """Get security layer statistics"""
-        stats = {
-            "obfuscation_count": self._obfuscation_count,
-            "destruction_count": self._destruction_count,
-            "chaff_generated": self._chaff_generated,
-            "string_obfuscator_available": self._string_obfuscator is not None,
-            "research_obfuscator_available": self._research_obfuscator is not None,
-            "secure_destructor_available": self._secure_destructor is not None,
-            "mission_audit_available": self._mission_audit is not None,
-            "audit_chain_length": len(self._mission_audit.audit_chain) if self._mission_audit else 0,
-            "merkle_root": self.get_merkle_root(),
-            "config": {
-                "obfuscation_level": self.config.obfuscation_level,
-                "wipe_standard": self.config.wipe_standard,
-                "enable_query_masking": self.config.enable_query_masking,
-                "enable_chaff_traffic": self.config.enable_chaff_traffic,
-            }
-        }
+        stats = {'obfuscation_count': self._obfuscation_count, 'destruction_count': self._destruction_count, 'chaff_generated': self._chaff_generated, 'string_obfuscator_available': self._string_obfuscator is not None, 'research_obfuscator_available': self._research_obfuscator is not None, 'secure_destructor_available': self._secure_destructor is not None, 'mission_audit_available': self._mission_audit is not None, 'audit_chain_length': len(self._mission_audit.audit_chain) if self._mission_audit else 0, 'merkle_root': self.get_merkle_root(), 'config': {'obfuscation_level': self.config.obfuscation_level, 'wipe_standard': self.config.wipe_standard, 'enable_query_masking': self.config.enable_query_masking, 'enable_chaff_traffic': self.config.enable_chaff_traffic}}
         return stats
 
     async def cleanup(self) -> None:
         """Cleanup resources - idempotent shutdown of all components."""
-        logger.info("🧹 Cleaning up SecurityLayer...")
-
-        # Shutdown file destroy executor (idempotent - shutdown() is safe to call multiple times)
+        logger.info('🧹 Cleaning up SecurityLayer...')
         if self._file_destroy_executor is not None:
             self._file_destroy_executor.shutdown(wait=False)
             self._file_destroy_executor = None
-
-        # Cleanup components
         if self._secure_destructor and hasattr(self._secure_destructor, 'cleanup'):
             try:
                 await self._secure_destructor.cleanup()
             except Exception as e:
-                logger.warning(f"⚠️ SecureDestructor cleanup error: {e}")
-
-        # Cleanup MissionAudit
+                logger.warning(f'⚠️ SecureDestructor cleanup error: {e}')
         if self._mission_audit and hasattr(self._mission_audit, 'cleanup'):
             try:
                 self._mission_audit.cleanup()
             except Exception as e:
-                logger.warning(f"⚠️ MissionAudit cleanup error: {e}")
+                logger.warning(f'⚠️ MissionAudit cleanup error: {e}')
+        logger.info('✅ SecurityLayer cleanup complete')
+import json
+import time
+from dataclasses import dataclass, field
 
-        logger.info("✅ SecurityLayer cleanup complete")
-
-
-# =============================================================================
-# MISSION AUDIT - Merkle Tree Audit Chain (from kernel/integrity.py)
-# =============================================================================
-
-import json  # noqa: E402
-import time  # noqa: E402
-from dataclasses import dataclass, field  # noqa: E402
-
-
-@dataclass
+@dataclass(True)
 class AuditEntry:
     """
     Immutable audit entry with SHA-256 hashing.
@@ -940,7 +612,7 @@ class AuditEntry:
     action_type: str
     data_hash: str
     previous_hash: str
-    entry_hash: str = ""
+    entry_hash: str = ''
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -950,24 +622,16 @@ class AuditEntry:
 
     def _calculate_hash(self) -> str:
         """Calculate SHA-256 hash of entry data."""
-        data = f"{self.timestamp}:{self.action_type}:{self.data_hash}:{self.previous_hash}"
+        data = f'{self.timestamp}:{self.action_type}:{self.data_hash}:{self.previous_hash}'
         return hashlib.sha256(data.encode()).hexdigest()
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
-        return {
-            "timestamp": self.timestamp,
-            "action_type": self.action_type,
-            "data_hash": self.data_hash,
-            "previous_hash": self.previous_hash,
-            "entry_hash": self.entry_hash,
-            "metadata": self.metadata
-        }
+        return {'timestamp': self.timestamp, 'action_type': self.action_type, 'data_hash': self.data_hash, 'previous_hash': self.previous_hash, 'entry_hash': self.entry_hash, 'metadata': self.metadata}
 
     def verify_integrity(self) -> bool:
         """Verify entry hasn't been tampered with."""
         return self.entry_hash == self._calculate_hash()
-
 
 class MissionAudit:
     """
@@ -996,12 +660,13 @@ class MissionAudit:
         # Get Merkle root for verification
         root = audit.get_merkle_root()
     """
+    __slots__ = tuple(('_audit_file', 'audit_chain'))
 
     def __init__(self):
         """Initialize MissionAudit with empty chain."""
         self.audit_chain: list[AuditEntry] = []
         self._audit_file: Path | None = None
-        logger.info("MissionAudit initialized")
+        logger.info('MissionAudit initialized')
 
     def log_action(self, action_type: str, data: bytes, metadata: dict) -> str:
         """
@@ -1015,26 +680,11 @@ class MissionAudit:
         Returns:
             Entry hash
         """
-        # Hash the data
         data_hash = hashlib.sha256(data).hexdigest()
-
-        # Get previous hash
-        previous_hash = self.audit_chain[-1].entry_hash if self.audit_chain else "0" * 64
-
-        # Create entry
-        entry = AuditEntry(
-            timestamp=time.time(),
-            action_type=action_type,
-            data_hash=data_hash,
-            previous_hash=previous_hash,
-            metadata=metadata
-        )
-
-        # Add to chain
+        previous_hash = self.audit_chain[-1].entry_hash if self.audit_chain else '0' * 64
+        entry = AuditEntry(timestamp=time.time(), action_type=action_type, data_hash=data_hash, previous_hash=previous_hash, metadata=metadata)
         self.audit_chain.append(entry)
-
         logger.debug(f"MissionAudit: Logged action '{action_type}' -> {entry.entry_hash[:16]}...")
-
         return entry.entry_hash
 
     def get_merkle_root(self) -> str | None:
@@ -1046,36 +696,24 @@ class MissionAudit:
         """
         if not self.audit_chain:
             return None
-
-        # Get all entry hashes
         hashes = [entry.entry_hash for entry in self.audit_chain]
-
-        # Build Merkle tree
         return self._calculate_merkle_root(hashes)
 
     def _calculate_merkle_root(self, hashes: list[str]) -> str:
         """Calculate Merkle root from list of hashes."""
         if not hashes:
-            return "0" * 64
+            return '0' * 64
         if len(hashes) == 1:
             return hashes[0]
-
-        # Build tree bottom-up
         current_level = hashes
-
         while len(current_level) > 1:
             next_level = []
-
             for i in range(0, len(current_level), 2):
                 left = current_level[i]
                 right = current_level[i + 1] if i + 1 < len(current_level) else left
-
-                # Combine and hash
                 combined = hashlib.sha256((left + right).encode()).hexdigest()
                 next_level.append(combined)
-
             current_level = next_level
-
         return current_level[0]
 
     def verify_chain(self) -> bool:
@@ -1092,25 +730,20 @@ class MissionAudit:
         """
         if not self.audit_chain:
             return True
-
         for i, entry in enumerate(self.audit_chain):
-            # Verify entry hash
             if not entry.verify_integrity():
-                logger.error(f"MissionAudit: Entry {i} hash mismatch")
+                logger.error(f'MissionAudit: Entry {i} hash mismatch')
                 return False
-
-            # Verify previous hash link
             if i == 0:
-                if entry.previous_hash != "0" * 64:
-                    logger.error("MissionAudit: First entry previous_hash should be zeros")
+                if entry.previous_hash != '0' * 64:
+                    logger.error('MissionAudit: First entry previous_hash should be zeros')
                     return False
             else:
                 expected_previous = self.audit_chain[i - 1].entry_hash
                 if entry.previous_hash != expected_previous:
-                    logger.error(f"MissionAudit: Entry {i} previous_hash mismatch")
+                    logger.error(f'MissionAudit: Entry {i} previous_hash mismatch')
                     return False
-
-        logger.debug("MissionAudit: Chain verification passed")
+        logger.debug('MissionAudit: Chain verification passed')
         return True
 
     def get_entry(self, entry_hash: str) -> AuditEntry | None:
@@ -1151,20 +784,13 @@ class MissionAudit:
             True if successful
         """
         try:
-            data = {
-                "merkle_root": self.get_merkle_root(),
-                "entry_count": len(self.audit_chain),
-                "entries": [entry.to_dict() for entry in self.audit_chain]
-            }
-
+            data = {'merkle_root': self.get_merkle_root(), 'entry_count': len(self.audit_chain), 'entries': [entry.to_dict() for entry in self.audit_chain]}
             with open(output_path, 'w') as f:
-                f.write(_json.encode(data, indent=2).decode("utf-8"))
-
-            logger.info(f"MissionAudit: Exported chain to {output_path}")
+                f.write(_json.encode(data, indent=2).decode('utf-8'))
+            logger.info(f'MissionAudit: Exported chain to {output_path}')
             return True
-
         except Exception as e:
-            logger.error(f"MissionAudit: Export failed: {e}")
+            logger.error(f'MissionAudit: Export failed: {e}')
             return False
 
     def import_chain(self, input_path: str) -> bool:
@@ -1180,45 +806,25 @@ class MissionAudit:
         try:
             with open(input_path) as f:
                 data = _json.decode(f.read())
-
-            # Reconstruct chain
             self.audit_chain = []
-            for entry_data in data.get("entries", []):
-                entry = AuditEntry(
-                    timestamp=entry_data["timestamp"],
-                    action_type=entry_data["action_type"],
-                    data_hash=entry_data["data_hash"],
-                    previous_hash=entry_data["previous_hash"],
-                    entry_hash=entry_data["entry_hash"],
-                    metadata=entry_data.get("metadata", {})
-                )
+            for entry_data in data.get('entries', []):
+                entry = AuditEntry(timestamp=entry_data['timestamp'], action_type=entry_data['action_type'], data_hash=entry_data['data_hash'], previous_hash=entry_data['previous_hash'], entry_hash=entry_data['entry_hash'], metadata=entry_data.get('metadata', {}))
                 self.audit_chain.append(entry)
-
-            # Verify imported chain
             if not self.verify_chain():
-                logger.error("MissionAudit: Imported chain verification failed")
+                logger.error('MissionAudit: Imported chain verification failed')
                 return False
-
-            logger.info(f"MissionAudit: Imported chain from {input_path}")
+            logger.info(f'MissionAudit: Imported chain from {input_path}')
             return True
-
         except Exception as e:
-            logger.error(f"MissionAudit: Import failed: {e}")
+            logger.error(f'MissionAudit: Import failed: {e}')
             return False
 
     def get_chain_stats(self) -> dict[str, Any]:
         """Get statistics about the audit chain."""
-        return {
-            "entry_count": len(self.audit_chain),
-            "merkle_root": self.get_merkle_root(),
-            "verified": self.verify_chain(),
-            "action_types": list({e.action_type for e in self.audit_chain}),
-            "first_entry_time": self.audit_chain[0].timestamp if self.audit_chain else None,
-            "last_entry_time": self.audit_chain[-1].timestamp if self.audit_chain else None,
-        }
+        return {'entry_count': len(self.audit_chain), 'merkle_root': self.get_merkle_root(), 'verified': self.verify_chain(), 'action_types': list({e.action_type for e in self.audit_chain}), 'first_entry_time': self.audit_chain[0].timestamp if self.audit_chain else None, 'last_entry_time': self.audit_chain[-1].timestamp if self.audit_chain else None}
 
     def cleanup(self) -> None:
         """Clear the audit chain."""
         entry_count = len(self.audit_chain)
         self.audit_chain.clear()
-        logger.debug(f"MissionAudit: Cleaned up {entry_count} entries")
+        logger.debug(f'MissionAudit: Cleaned up {entry_count} entries')

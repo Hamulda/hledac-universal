@@ -5,49 +5,31 @@ Prevents repeated model load/inference crash loops on M1 8GB.
 Bounded, fail-safe, no external deps.
 """
 from __future__ import annotations
-
-
 import asyncio
 import time
 from dataclasses import dataclass
 from enum import StrEnum
-
 import msgspec
-
-# Lazy import resolver — PEP 451 importlib path, eliminates try/except ImportError overhead
 from hledac.universal.utils.import_resolver import lazy
+_sample_uma_status = lazy('hledac.universal.core.resource_governor.sample_uma_status', fallback=None)
 
-# Internal imports only — no new dependencies
-
-# Module-level lazy reference — resolved once, cached forever (importlib.import_module C-path)
-_sample_uma_status = lazy(
-    "hledac.universal.core.resource_governor.sample_uma_status",
-    fallback=None,
-)
-
-# Failure taxonomy
 class FailureKind(str):
-    LOAD_ERROR = "load_error"
-    MEMORY_ADMISSION_BLOCKED = "memory_admission_blocked"
-    OOM = "oom"
-    METAL_ERROR = "metal_error"
-    TIMEOUT = "timeout"
-    INFERENCE_ERROR = "inference_error"
-    UNKNOWN_ERROR = "unknown_error"
-
+    LOAD_ERROR = 'load_error'
+    MEMORY_ADMISSION_BLOCKED = 'memory_admission_blocked'
+    OOM = 'oom'
+    METAL_ERROR = 'metal_error'
+    TIMEOUT = 'timeout'
+    INFERENCE_ERROR = 'inference_error'
+    UNKNOWN_ERROR = 'unknown_error'
 
 class GuardState(StrEnum):
-    CLOSED = "closed"      # normal operation, failures tracked
-    OPEN = "open"          # blocked, cooling down
-    HALF_OPEN = "half_open"  # testing recovery after cooldown
-
-
-# Config constants
+    CLOSED = 'closed'
+    OPEN = 'open'
+    HALF_OPEN = 'half_open'
 _FAILURE_THRESHOLD = 3
 _FAILURE_WINDOW_S = 60.0
 _COOLDOWN_S = 30.0
 _MAX_TRACKED_MODELS = 16
-
 
 class ModelGuardDecision(msgspec.Struct, frozen=True):
     """Sprint F300: Frozen msgspec.Struct for model guard decisions."""
@@ -57,8 +39,7 @@ class ModelGuardDecision(msgspec.Struct, frozen=True):
     retry_after_s: float
     reason: str
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ModelGuardSnapshot:
     model_key: str
     state: str
@@ -67,10 +48,9 @@ class ModelGuardSnapshot:
     retry_after_s: float
     last_failure_kind: str
 
-
 class _ModelBreaker:
     """Single-model breaker state. Not a dataclass — mutable internal state."""
-    __slots__ = ("failure_count", "failure_timestamps", "state", "opened_at", "retry_after_s", "last_failure_kind")
+    __slots__ = ('failure_count', 'failure_timestamps', 'state', 'opened_at', 'retry_after_s', 'last_failure_kind')
 
     def __init__(self) -> None:
         self.failure_count: int = 0
@@ -78,8 +58,7 @@ class _ModelBreaker:
         self.state: GuardState = GuardState.CLOSED
         self.opened_at: float = 0.0
         self.retry_after_s: float = 0.0
-        self.last_failure_kind: str = ""
-
+        self.last_failure_kind: str = ''
 
 class ModelInferenceGuard:
     """
@@ -89,6 +68,7 @@ class ModelInferenceGuard:
     3 failures / 60s → OPEN for 30s → HALF_OPEN → CLOSED on success.
     Registry bounded to MAX_TRACKED_MODELS with LRU-style eviction.
     """
+    __slots__ = tuple(('_breakers', '_lock'))
 
     def __init__(self) -> None:
         self._breakers: dict[str, _ModelBreaker] = {}
@@ -101,10 +81,7 @@ class ModelInferenceGuard:
     def _evict_if_needed(self) -> None:
         """Evict oldest model if at capacity — simple LRU-ish eviction."""
         if len(self._breakers) >= _MAX_TRACKED_MODELS:
-            oldest_key = min(
-                self._breakers,
-                key=lambda k: self._breakers[k].opened_at or self._now_monotonic(),
-            )
+            oldest_key = min(self._breakers, key=lambda k: self._breakers[k].opened_at or self._now_monotonic())
             self._breakers.pop(oldest_key, None)
 
     def check_model_allowed(self, model_key: str) -> ModelGuardDecision:
@@ -119,75 +96,26 @@ class ModelInferenceGuard:
         succeed (if memory frees up) or fail naturally and be recorded.
         """
         now = self._now_monotonic()
-
-        # F288 FIX: Memory-aware fail-open — bypass circuit breaker in EMERGENCY.
-        # The 30s block is counterproductive when root cause is memory pressure,
-        # not a crash loop. Check sample_uma_status() cheaply before the breaker logic.
-        # Uses module-level lazy resolver (importlib.import_module C-path) — no try/except overhead.
         uma_fn = _sample_uma_status()
         if uma_fn is not None:
             try:
                 _uma = uma_fn()
-                if getattr(_uma, 'state', None) == "emergency":
-                    # Fail-open: allow inference attempt even if breaker is OPEN.
-                    # The inference itself will handle OOM via mx.eval([]) barriers.
-                    return ModelGuardDecision(
-                        allowed=True,
-                        model_key=model_key,
-                        state="emergency_bypass",
-                        retry_after_s=0.0,
-                        reason="UMA emergency — circuit breaker bypassed (memory-aware fail-open)",
-                    )
-            except Exception:  # noqa: BLE001
-                pass  # noqa: BLE001  # Fall through to normal breaker logic
-
+                if getattr(_uma, 'state', None) == 'emergency':
+                    return ModelGuardDecision(allowed=True, model_key=model_key, state='emergency_bypass', retry_after_s=0.0, reason='UMA emergency — circuit breaker bypassed (memory-aware fail-open)')
+            except Exception:
+                pass
         breaker = self._breakers.get(model_key)
-
         if breaker is None:
-            return ModelGuardDecision(
-                allowed=True,
-                model_key=model_key,
-                state=GuardState.CLOSED.value,
-                retry_after_s=0.0,
-                reason="model not tracked, allowed",
-            )
-
-        # Evict stale OPEN/HALF_OPEN after cooldown passed
+            return ModelGuardDecision(allowed=True, model_key=model_key, state=GuardState.CLOSED.value, retry_after_s=0.0, reason='model not tracked, allowed')
         if breaker.state == GuardState.OPEN:
             if now >= breaker.opened_at + _COOLDOWN_S:
                 breaker.state = GuardState.HALF_OPEN
                 breaker.retry_after_s = 0.0
-                return ModelGuardDecision(
-                    allowed=True,
-                    model_key=model_key,
-                    state=GuardState.HALF_OPEN.value,
-                    retry_after_s=0.0,
-                    reason="cooldown elapsed, testing recovery",
-                )
-            return ModelGuardDecision(
-                allowed=False,
-                model_key=model_key,
-                state=GuardState.OPEN.value,
-                retry_after_s=breaker.retry_after_s,
-                reason=f"model inference blocked: {model_key}, retry after {breaker.retry_after_s:.1f}s",
-            )
-
+                return ModelGuardDecision(allowed=True, model_key=model_key, state=GuardState.HALF_OPEN.value, retry_after_s=0.0, reason='cooldown elapsed, testing recovery')
+            return ModelGuardDecision(allowed=False, model_key=model_key, state=GuardState.OPEN.value, retry_after_s=breaker.retry_after_s, reason=f'model inference blocked: {model_key}, retry after {breaker.retry_after_s:.1f}s')
         if breaker.state == GuardState.HALF_OPEN:
-            return ModelGuardDecision(
-                allowed=True,
-                model_key=model_key,
-                state=GuardState.HALF_OPEN.value,
-                retry_after_s=0.0,
-                reason="half-open, allowing test inference",
-            )
-
-        return ModelGuardDecision(
-            allowed=True,
-            model_key=model_key,
-            state=GuardState.CLOSED.value,
-            retry_after_s=0.0,
-            reason="closed, allowed",
-        )
+            return ModelGuardDecision(allowed=True, model_key=model_key, state=GuardState.HALF_OPEN.value, retry_after_s=0.0, reason='half-open, allowing test inference')
+        return ModelGuardDecision(allowed=True, model_key=model_key, state=GuardState.CLOSED.value, retry_after_s=0.0, reason='closed, allowed')
 
     def record_success(self, model_key: str) -> None:
         """Record successful load/inference — resets failure count."""
@@ -199,33 +127,25 @@ class ModelInferenceGuard:
         breaker.state = GuardState.CLOSED
         breaker.opened_at = 0.0
         breaker.retry_after_s = 0.0
-        breaker.last_failure_kind = ""
+        breaker.last_failure_kind = ''
 
     def record_failure(self, model_key: str, failure_kind: str) -> None:
         """Record failure — may open the breaker."""
         now = self._now_monotonic()
         self._evict_if_needed()
-
         if model_key not in self._breakers:
             self._breakers[model_key] = _ModelBreaker()
-
         breaker = self._breakers[model_key]
         breaker.last_failure_kind = failure_kind
-
-        # Sliding window: remove timestamps outside window
         cutoff = now - _FAILURE_WINDOW_S
         breaker.failure_timestamps = [ts for ts in breaker.failure_timestamps if ts >= cutoff]
-
         breaker.failure_timestamps.append(now)
         breaker.failure_count = len(breaker.failure_timestamps)
-
         if breaker.state == GuardState.HALF_OPEN:
-            # Failure in half-open → immediate OPEN
             breaker.state = GuardState.OPEN
             breaker.opened_at = now
             breaker.retry_after_s = _COOLDOWN_S
             return
-
         if breaker.failure_count >= _FAILURE_THRESHOLD:
             breaker.state = GuardState.OPEN
             breaker.opened_at = now
@@ -236,14 +156,7 @@ class ModelInferenceGuard:
         breaker = self._breakers.get(model_key)
         if breaker is None:
             return None
-        return ModelGuardSnapshot(
-            model_key=model_key,
-            state=breaker.state.value,
-            failure_count=breaker.failure_count,
-            opened_at_monotonic=breaker.opened_at,
-            retry_after_s=breaker.retry_after_s,
-            last_failure_kind=breaker.last_failure_kind,
-        )
+        return ModelGuardSnapshot(model_key=model_key, state=breaker.state.value, failure_count=breaker.failure_count, opened_at_monotonic=breaker.opened_at, retry_after_s=breaker.retry_after_s, last_failure_kind=breaker.last_failure_kind)
 
     def get_all_snapshots(self) -> list[ModelGuardSnapshot]:
         """Return snapshots for all tracked models."""
@@ -252,11 +165,7 @@ class ModelInferenceGuard:
     def clear_all(self) -> None:
         """Clear all breaker state — for testing."""
         self._breakers.clear()
-
-
-# Module-level singleton
 _GUARD: ModelInferenceGuard | None = None
-
 
 def get_guard() -> ModelInferenceGuard:
     global _GUARD
@@ -264,60 +173,43 @@ def get_guard() -> ModelInferenceGuard:
         _GUARD = ModelInferenceGuard()
     return _GUARD
 
-
 def check_model_allowed(model_key: str) -> ModelGuardDecision:
     return get_guard().check_model_allowed(model_key)
-
 
 def record_model_success(model_key: str) -> None:
     get_guard().record_success(model_key)
 
-
 def record_model_failure(model_key: str, *, failure_kind: str) -> None:
     get_guard().record_failure(model_key, failure_kind)
-
 
 def get_model_guard_snapshot(model_key: str) -> ModelGuardSnapshot | None:
     return get_guard().get_snapshot(model_key)
 
-
 def get_all_model_guard_snapshots() -> list[ModelGuardSnapshot]:
     return get_guard().get_all_snapshots()
-
 
 def clear_model_guards() -> None:
     get_guard().clear_all()
 
-
 def classify_failure_kind(exc: Exception) -> str:
     """Classify exception into failure taxonomy."""
     msg = str(exc).lower()
-
     if isinstance(exc, asyncio.TimeoutError):
-        return "timeout"
-
-    if "memory" in msg and ("admission" in msg or "blocked" in msg or "pressure" in msg or "uma" in msg or "8gb" in msg):  # noqa: E501
-        return "memory_admission_blocked"
-
-    if "oom" in msg or "out of memory" in msg or "cannot allocate" in msg or "allocation failed" in msg:
-        return "oom"
-
-    if "metal" in msg or "gpu" in msg:
-        return "metal_error"
-
-    if "mlx" in msg and ("lm" in msg or "generate" in msg or "inference" in msg):
-        return "inference_error"
-
-    if "timeout" in msg or "timed out" in msg:
-        return "timeout"
-
-    if "load" in msg or "initialize" in msg or "load_model" in msg:
-        return "load_error"
-
-    if "inference" in msg or "generate" in msg or "mlx_lm" in msg:
-        return "inference_error"
-
+        return 'timeout'
+    if 'memory' in msg and ('admission' in msg or 'blocked' in msg or 'pressure' in msg or ('uma' in msg) or ('8gb' in msg)):
+        return 'memory_admission_blocked'
+    if 'oom' in msg or 'out of memory' in msg or 'cannot allocate' in msg or ('allocation failed' in msg):
+        return 'oom'
+    if 'metal' in msg or 'gpu' in msg:
+        return 'metal_error'
+    if 'mlx' in msg and ('lm' in msg or 'generate' in msg or 'inference' in msg):
+        return 'inference_error'
+    if 'timeout' in msg or 'timed out' in msg:
+        return 'timeout'
+    if 'load' in msg or 'initialize' in msg or 'load_model' in msg:
+        return 'load_error'
+    if 'inference' in msg or 'generate' in msg or 'mlx_lm' in msg:
+        return 'inference_error'
     if isinstance(exc, IndexError) or isinstance(exc, KeyError):
-        return "internal_error"  # programming bug — trips GAP-3/1 breaker hard
-
-    return "unknown_error"
+        return 'internal_error'
+    return 'unknown_error'

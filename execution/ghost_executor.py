@@ -28,20 +28,14 @@ Tool handlery, GhostExecutor se stane kandidátem na deprecation.
 Do té doby zůstává donor/compat vrstvou s tímto bridge seamem.
 ═══════════════════════════════════════════════════════════════
 """
-
-
-
 import logging
 from dataclasses import dataclass
 import msgspec
 from enum import Enum
 from typing import TYPE_CHECKING, Any
-
 if TYPE_CHECKING:
     from hledac.universal.project_types import ExecutionRequest, ExecutionResult, RunCorrelation
-
 logger = logging.getLogger(__name__)
-
 
 class ActionType(Enum):
     """
@@ -64,27 +58,26 @@ class ActionType(Enum):
 
     See: types.py CANONICAL SCAFFOLD header (line 1269)
     """
-    SCAN = "scan"
-    GOOGLE = "google"
-    DOWNLOAD = "download"
-    SEARCH = "search"
-    SMART_SEARCH = "smart_search"
-    MEMORIZE = "memorize"
-    PROBE = "probe"
-    TRACK = "track"
-    RESEARCH_PAPER = "research_paper"
-    DEEP_RESEARCH = "deep_research"
-    DEEP_READ = "deep_read"
-    ANSWER = "answer"
-    CRACK = "crack"
-    ERROR = "error"
-    ARCHIVE_FALLBACK = "archive_fallback"
-    FACT_CHECK = "fact_check"
-    STEALTH_HARVEST = "stealth_harvest"
-    OSINT_DISCOVERY = "osint_discovery"
+    SCAN = 'scan'
+    GOOGLE = 'google'
+    DOWNLOAD = 'download'
+    SEARCH = 'search'
+    SMART_SEARCH = 'smart_search'
+    MEMORIZE = 'memorize'
+    PROBE = 'probe'
+    TRACK = 'track'
+    RESEARCH_PAPER = 'research_paper'
+    DEEP_RESEARCH = 'deep_research'
+    DEEP_READ = 'deep_read'
+    ANSWER = 'answer'
+    CRACK = 'crack'
+    ERROR = 'error'
+    ARCHIVE_FALLBACK = 'archive_fallback'
+    FACT_CHECK = 'fact_check'
+    STEALTH_HARVEST = 'stealth_harvest'
+    OSINT_DISCOVERY = 'osint_discovery'
 
-
-@dataclass
+@dataclass(True)
 class ActionResult:
     """Výsledek akce"""
     success: bool
@@ -94,119 +87,11 @@ class ActionResult:
     execution_time: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "success": self.success,
-            "action": self.action,
-            "data": self.data,
-            "error": self.error,
-            "execution_time": self.execution_time,
-        }
-
-
-# =============================================================================
-# Sprint 8VF: Thin Typed Bridge Seam
-# =============================================================================
-# READ-SIDE ADAPTER — nemění GhostExecutor.execute() path
-# Pouze typová konverze mezi Ghost světem a canonical ExecutionRequest/ExecutionResult
-# Neprodukuje side effects, nevolá ToolRegistry.execute_with_limits()
-# =============================================================================
-
-# =============================================================================
-# Sprint 8VF: Delegation Matrix — Ghost Action → Canonical Tool
-# =============================================================================
-# STRICT CLASSIFICATION — nepřekládat vyšší coverage než repo skutečně má
-#
-# 3 kategorie:
-#   canonical_ready       = plná sémantická shoda, lze delegovat
-#   mapped_but_lossy      = mapping exists, ale sémantika ≠ (viz blokery)
-#   runtime_only_compat   = žádný canonical ekvivalent, zůstává v Ghost path
-#
-# Audit pravidla:
-#   - canonical_ready pouze když Ghost action a Tool handler dělajÍ TOTÉŽ
-#   - mapped_but_lossy když mapping existuje ale sémantika se liší
-#   - runtime_only_compat když není canonical ekvivalent
-# =============================================================================
-
-# === CANONICAL-READY SLICE ===
-# Kritérium: Ghost action a ToolRegistry tool DĚLAJÍ TOTÉŽ (ne jen podobně)
-# Aktuální stav: ŽÁDNÁ akce nesplňuje toto kritérium.
-# Důvod: Ghost akce mají vlastní implementace (byť placeholder),
-#        ToolRegistry handlery jsou placeholder/univerzální.
-# SPRINT 8VF: Delegation seam existuje, ale canonical-ready slice je PRÁZDNÁ.
-_CANONICAL_READY_ACTIONS: set[str] = set()  # prázdná — audit viz níže
-
-# === MAPPED-BUT-LOSSY SLICE ===
-# Kritérium: Ghost action má mapping na ToolRegistry tool,
-#            ale sémantika provádění se ZÁSADNĚ liší.
-#
-# Blokery pro canonical-ready:
-#   SEARCH/GOOGLE/SMART_SEARCH → web_search:
-#     Ghost: harvestuje URL přes network driver + stealth + Bloom dedup
-#     TR: placeholder handler (vrací prázdné výsledky)
-#     Sémantika ≠ → MAPPED-BUT-LOSSY, ne canonical-ready
-#
-#   RESEARCH_PAPER → academic_search:
-#     Ghost: placeholder (vrací prázdné)
-#     TR: placeholder (vrací prázdné)
-#     Žádný skutečný obsah → MAPPED-BUT-LOSSY
-#
-#   DEEP_READ → file_read:
-#     Ghost: URL harvest + BloomFilter dedup + context update + 8KB chunking + 5MB limit
-#     TR: local file read (žádný network, žádný Bloom, žádný context)
-#     Sémantika ≠ → MAPPED-BUT-LOSSY
-#
-_MAPPED_BUT_LOSSY_ACTIONS: set[str] = {
-    ActionType.SEARCH.value,
-    ActionType.GOOGLE.value,
-    ActionType.SMART_SEARCH.value,
-    ActionType.RESEARCH_PAPER.value,
-    ActionType.DEEP_READ.value,
-}
-
-# === RUNTIME-ONLY-COMPAT SLICE ===
-# Kritérium: žádný canonical ekvivalent v ToolRegistry
-_RUNTIME_ONLY_COMPAT_ACTIONS: set[str] = {
-    ActionType.SCAN.value,
-    ActionType.DOWNLOAD.value,
-    ActionType.MEMORIZE.value,
-    ActionType.PROBE.value,
-    ActionType.TRACK.value,
-    ActionType.DEEP_RESEARCH.value,
-    ActionType.ANSWER.value,
-    ActionType.CRACK.value,
-    ActionType.ERROR.value,
-    ActionType.ARCHIVE_FALLBACK.value,
-    ActionType.FACT_CHECK.value,
-    ActionType.STEALTH_HARVEST.value,
-    ActionType.OSINT_DISCOVERY.value,
-}
-
-# === UNIFIED MAPPING pro diagnostiku a delegation seam ===
-# Současný stav: pouze diagnostický — obsahuje i mapped-but-lossy položky
-# Future: po F9 cutover bude obsahovat pouze canonical-ready
-_ACTION_TO_CANONICAL_TOOL: dict[str, str] = {
-    # Mapped (ale lossy) akce
-    ActionType.SEARCH.value: "web_search",
-    ActionType.GOOGLE.value: "web_search",
-    ActionType.SMART_SEARCH.value: "web_search",
-    ActionType.RESEARCH_PAPER.value: "academic_search",
-    ActionType.DEEP_READ.value: "file_read",
-    # Runtime-only akce — žádný canonical ekvivalent
-    ActionType.SCAN.value: "",
-    ActionType.DOWNLOAD.value: "",
-    ActionType.MEMORIZE.value: "",
-    ActionType.PROBE.value: "",
-    ActionType.TRACK.value: "",
-    ActionType.DEEP_RESEARCH.value: "",
-    ActionType.ANSWER.value: "",
-    ActionType.CRACK.value: "",
-    ActionType.ERROR.value: "",
-    ActionType.ARCHIVE_FALLBACK.value: "",
-    ActionType.FACT_CHECK.value: "",
-    ActionType.STEALTH_HARVEST.value: "",
-    ActionType.OSINT_DISCOVERY.value: "",
-}
-
+        return {'success': self.success, 'action': self.action, 'data': self.data, 'error': self.error, 'execution_time': self.execution_time}
+_CANONICAL_READY_ACTIONS: set[str] = set()
+_MAPPED_BUT_LOSSY_ACTIONS: set[str] = {ActionType.SEARCH.value, ActionType.GOOGLE.value, ActionType.SMART_SEARCH.value, ActionType.RESEARCH_PAPER.value, ActionType.DEEP_READ.value}
+_RUNTIME_ONLY_COMPAT_ACTIONS: set[str] = {ActionType.SCAN.value, ActionType.DOWNLOAD.value, ActionType.MEMORIZE.value, ActionType.PROBE.value, ActionType.TRACK.value, ActionType.DEEP_RESEARCH.value, ActionType.ANSWER.value, ActionType.CRACK.value, ActionType.ERROR.value, ActionType.ARCHIVE_FALLBACK.value, ActionType.FACT_CHECK.value, ActionType.STEALTH_HARVEST.value, ActionType.OSINT_DISCOVERY.value}
+_ACTION_TO_CANONICAL_TOOL: dict[str, str] = {ActionType.SEARCH.value: 'web_search', ActionType.GOOGLE.value: 'web_search', ActionType.SMART_SEARCH.value: 'web_search', ActionType.RESEARCH_PAPER.value: 'academic_search', ActionType.DEEP_READ.value: 'file_read', ActionType.SCAN.value: '', ActionType.DOWNLOAD.value: '', ActionType.MEMORIZE.value: '', ActionType.PROBE.value: '', ActionType.TRACK.value: '', ActionType.DEEP_RESEARCH.value: '', ActionType.ANSWER.value: '', ActionType.CRACK.value: '', ActionType.ERROR.value: '', ActionType.ARCHIVE_FALLBACK.value: '', ActionType.FACT_CHECK.value: '', ActionType.STEALTH_HARVEST.value: '', ActionType.OSINT_DISCOVERY.value: ''}
 
 def _get_action_classification(action: str) -> str:
     """
@@ -218,13 +103,12 @@ def _get_action_classification(action: str) -> str:
         "runtime_only_compat" — žádný canonical ekvivalent
     """
     if action in _CANONICAL_READY_ACTIONS:
-        return "canonical_ready"
+        return 'canonical_ready'
     elif action in _MAPPED_BUT_LOSSY_ACTIONS:
-        return "mapped_but_lossy"
+        return 'mapped_but_lossy'
     elif action in _RUNTIME_ONLY_COMPAT_ACTIONS:
-        return "runtime_only_compat"
-    return "unknown"
-
+        return 'runtime_only_compat'
+    return 'unknown'
 
 class GhostBridge:
     """
@@ -258,7 +142,7 @@ class GhostBridge:
 
         DIAGNOSTIC ONLY — čte z _ACTION_TO_CANONICAL_TOOL.
         """
-        canonical = _ACTION_TO_CANONICAL_TOOL.get(action, "")
+        canonical = _ACTION_TO_CANONICAL_TOOL.get(action, '')
         return bool(canonical)
 
     @staticmethod
@@ -268,15 +152,10 @@ class GhostBridge:
 
         DIAGNOSTIC ONLY — read-only mapping lookup.
         """
-        return _ACTION_TO_CANONICAL_TOOL.get(action, "")
+        return _ACTION_TO_CANONICAL_TOOL.get(action, '')
 
     @staticmethod
-    def to_execution_request(
-        action: str,
-        params: dict[str, Any],
-        priority: int = 5,
-        correlation: RunCorrelation | None = None,
-    ) -> ExecutionRequest:
+    def to_execution_request(action: str, params: dict[str, Any], priority: int=5, correlation: RunCorrelation | None=None) -> ExecutionRequest:
         """
         Konvertuje Ghost akci + params na canonical ExecutionRequest.
 
@@ -297,18 +176,10 @@ class GhostBridge:
         Použij action_has_canonical_tool() pro diagnostiku před konverzí.
         """
         from hledac.universal.project_types import ExecutionRequest as _ExecReq
-        return _ExecReq(
-            action_type=action,
-            parameters=params,
-            priority=priority,
-            correlation=correlation,
-        )
+        return _ExecReq(action_type=action, parameters=params, priority=priority, correlation=correlation)
 
     @staticmethod
-    def to_execution_result(
-        ghost_result: ActionResult,
-        correlation: RunCorrelation | None = None,
-    ) -> ExecutionResult:
+    def to_execution_result(ghost_result: ActionResult, correlation: RunCorrelation | None=None) -> ExecutionResult:
         """
         Konvertuje Ghost ActionResult na canonical ExecutionResult.
 
@@ -325,14 +196,7 @@ class GhostBridge:
         canonical execution time (protože Ghost nevolá execute_with_limits).
         """
         from hledac.universal.project_types import ExecutionResult as _ExecRes
-        return _ExecRes(
-            action_type=ghost_result.action,
-            success=ghost_result.success,
-            data=ghost_result.data,
-            execution_time=ghost_result.execution_time,
-            error=ghost_result.error,
-            correlation=correlation,
-        )
+        return _ExecRes(action_type=ghost_result.action, success=ghost_result.success, data=ghost_result.data, execution_time=ghost_result.execution_time, error=ghost_result.error, correlation=correlation)
 
     @staticmethod
     def get_action_classification(action: str) -> str:
@@ -358,15 +222,10 @@ class GhostBridge:
         Returns:
             True pouze pro canonical-ready akce
         """
-        return _get_action_classification(action) == "canonical_ready"
+        return _get_action_classification(action) == 'canonical_ready'
 
     @staticmethod
-    def to_delegation_request(
-        action: str,
-        params: dict[str, Any],
-        priority: int = 5,
-        correlation: RunCorrelation | None = None,
-    ) -> ExecutionRequest | None:
+    def to_delegation_request(action: str, params: dict[str, Any], priority: int=5, correlation: RunCorrelation | None=None) -> ExecutionRequest | None:
         """
         Konvertuje Ghost akci na canonical ExecutionRequest PRO CANONICAL-READY AKCE.
 
@@ -390,18 +249,11 @@ class GhostBridge:
         """
         if not GhostBridge.is_delegation_allowed(action):
             return None
-
-        canonical_tool = _ACTION_TO_CANONICAL_TOOL.get(action, "")
+        canonical_tool = _ACTION_TO_CANONICAL_TOOL.get(action, '')
         if not canonical_tool:
             return None
-
         from hledac.universal.project_types import ExecutionRequest as _ExecReq
-        return _ExecReq(
-            action_type=canonical_tool,
-            parameters=params,
-            priority=priority,
-            correlation=correlation,
-        )
+        return _ExecReq(action_type=canonical_tool, parameters=params, priority=priority, correlation=correlation)
 
     @staticmethod
     def get_delegation_matrix() -> dict[str, str]:
@@ -441,7 +293,6 @@ class GhostBridge:
         """
         return dict(_ACTION_TO_CANONICAL_TOOL)
 
-
 class GhostExecutor:
     """
     Donor/compatibility backend for research actions.
@@ -479,79 +330,44 @@ class GhostExecutor:
     - ArchiveDiscovery pro Wayback fallback
     - Bloom Filter pro deduplikaci
     """
+    __slots__ = tuple(('_actions', '_bloom_filter', '_network_driver', 'enable_stealth'))
 
-    def __init__(self, enable_stealth: bool = True):
+    def __init__(self, enable_stealth: bool=True):
         self.enable_stealth = enable_stealth
-
-        # Lazy-loaded komponenty
         self._network_driver = None
         self._bloom_filter = None
-
-        # Registr akcí
         self._actions = self._init_actions()
 
     def _init_actions(self) -> dict[str, callable]:
         """Inicializovat mapování akcí"""
-        return {
-            ActionType.SCAN.value: self._action_scan,
-            ActionType.GOOGLE.value: self._action_google,
-            ActionType.DOWNLOAD.value: self._action_download,
-            ActionType.SEARCH.value: self._action_search,
-            ActionType.SMART_SEARCH.value: self._action_smart_search,
-            ActionType.MEMORIZE.value: self._action_memorize,
-            ActionType.PROBE.value: self._action_probe,
-            ActionType.TRACK.value: self._action_track,
-            ActionType.RESEARCH_PAPER.value: self._action_research_paper,
-            ActionType.DEEP_RESEARCH.value: self._action_deep_research,
-            ActionType.DEEP_READ.value: self._action_deep_read,
-            ActionType.ANSWER.value: self._action_answer,
-            ActionType.CRACK.value: self._action_crack,
-            ActionType.ARCHIVE_FALLBACK.value: self._action_archive_fallback,
-            ActionType.FACT_CHECK.value: self._action_fact_check,
-            ActionType.STEALTH_HARVEST.value: self._action_stealth_harvest,
-            ActionType.OSINT_DISCOVERY.value: self._action_osint_discovery,
-            ActionType.ERROR.value: self._action_error,
-        }
+        return {ActionType.SCAN.value: self._action_scan, ActionType.GOOGLE.value: self._action_google, ActionType.DOWNLOAD.value: self._action_download, ActionType.SEARCH.value: self._action_search, ActionType.SMART_SEARCH.value: self._action_smart_search, ActionType.MEMORIZE.value: self._action_memorize, ActionType.PROBE.value: self._action_probe, ActionType.TRACK.value: self._action_track, ActionType.RESEARCH_PAPER.value: self._action_research_paper, ActionType.DEEP_RESEARCH.value: self._action_deep_research, ActionType.DEEP_READ.value: self._action_deep_read, ActionType.ANSWER.value: self._action_answer, ActionType.CRACK.value: self._action_crack, ActionType.ARCHIVE_FALLBACK.value: self._action_archive_fallback, ActionType.FACT_CHECK.value: self._action_fact_check, ActionType.STEALTH_HARVEST.value: self._action_stealth_harvest, ActionType.OSINT_DISCOVERY.value: self._action_osint_discovery, ActionType.ERROR.value: self._action_error}
 
     async def initialize(self) -> None:
         """Inicializovat executor"""
-        logger.info("Initializing GhostExecutor...")
-
-        # Inicializovat Bloom Filter pro URL deduplikaci
+        logger.info('Initializing GhostExecutor...')
         await self._init_bloom_filter()
-
-        logger.info("✓ GhostExecutor initialized")
+        logger.info('✓ GhostExecutor initialized')
 
     async def _init_bloom_filter(self) -> None:
         """Inicializovat Bloom Filter — bounded RotatingBloomFilter."""
         try:
-            # Sprint F1: Use canonical RotatingBloomFilter from url_dedup (bounded)
-            # instead of ScalableBloomFilter (unbounded growth)
             from ..tools.url_dedup import create_rotating_bloom_filter
-            self._bloom_filter = create_rotating_bloom_filter(
-                est_elements=10000,
-                false_positive_rate=0.01
-            )
-            logger.info("✓ Bloom Filter initialized (RotatingBloomFilter, 10K URLs, bounded)")
+            self._bloom_filter = create_rotating_bloom_filter(est_elements=10000, false_positive_rate=0.01)
+            logger.info('✓ Bloom Filter initialized (RotatingBloomFilter, 10K URLs, bounded)')
         except Exception as e:
-            logger.warning(f"Bloom Filter not available: {e}")
+            logger.warning(f'Bloom Filter not available: {e}')
 
     async def _get_network_driver(self):
         """Lazy load network driver"""
         if self._network_driver is None:
             from hledac.network.ghost_network_driver import GhostNetworkDriver
-            logger.info("Loading GhostNetworkDriver...")
+            logger.info('Loading GhostNetworkDriver...')
             self._network_driver = GhostNetworkDriver(headless=True)
             await self._network_driver.initialize()
-            logger.info("✓ GhostNetworkDriver loaded")
+            logger.info('✓ GhostNetworkDriver loaded')
         return self._network_driver
 
-    async def execute(
-        self,
-        action: str,
-        params: dict[str, Any],
-        context=None
-    ) -> dict[str, Any]:
+    async def execute(self, action: str, params: dict[str, Any], context=None) -> dict[str, Any]:
         """
         Vykonat akci.
 
@@ -563,89 +379,45 @@ class GhostExecutor:
         Returns:
             Výsledek akce jako slovník
         """
-        logger.info(f"Executing action: {action}")
-
-        # Najít handler
+        logger.info(f'Executing action: {action}')
         handler = self._actions.get(action)
         if handler is None:
-            return ActionResult(
-                success=False,
-                action=action,
-                data={},
-                error=f"Unknown action: {action}"
-            ).to_dict()
-
-        # Vykonat
+            return ActionResult(success=False, action=action, data={}, error=f'Unknown action: {action}').to_dict()
         try:
             result = await handler(params, context)
             return result
         except Exception as e:
-            logger.error(f"Action {action} failed: {e}")
-            return ActionResult(
-                success=False,
-                action=action,
-                data={},
-                error=str(e)
-            ).to_dict()
-
-    # =====================================================================
-    # AKCE
-    # =====================================================================
+            logger.error(f'Action {action} failed: {e}')
+            return ActionResult(success=False, action=action, data={}, error=str(e)).to_dict()
 
     async def _ddgs_search(self, query: str) -> list[dict]:
         """
         Provede DuckDuckGo search v thread pool (neblokuje event loop).
         """
         from hledac.universal.tools.ddgs_client import search_text_sync
-
-        return await asyncio.to_thread(
-            search_text_sync, query, max_results_per_backend=5, timeout=10
-        )
+        return await asyncio.to_thread(search_text_sync, query, max_results_per_backend=5, timeout=10)
 
     async def _action_search(self, params: dict[str, Any], context) -> dict[str, Any]:
         """Vyhledávání přes DuckDuckGo a další backendy"""
-        query = params.get("query", "")
-        logger.info(f"Searching: {query}")
-
+        query = params.get('query', '')
+        logger.info(f'Searching: {query}')
         try:
             results = await self._ddgs_search(query)
-
-            return ActionResult(
-                success=True,
-                action="search",
-                data={"query": query, "results": results, "count": len(results)},
-            ).to_dict()
-
+            return ActionResult(success=True, action='search', data={'query': query, 'results': results, 'count': len(results)}).to_dict()
         except Exception as e:
-            logger.warning(f"Search failed: {e}")
-            return ActionResult(
-                success=True,
-                action="search",
-                data={"query": query, "results": [], "error": str(e)},
-            ).to_dict()
+            logger.warning(f'Search failed: {e}')
+            return ActionResult(success=True, action='search', data={'query': query, 'results': [], 'error': str(e)}).to_dict()
 
     async def _action_google(self, params: dict[str, Any], context) -> dict[str, Any]:
         """Google vyhledávání přes stealth browser (GhostNetworkDriver)"""
-        query = params.get("query", "")
-        logger.info(f"Google search: {query}")
-
+        query = params.get('query', '')
+        logger.info(f'Google search: {query}')
         try:
-            # DuckDuckGo s Google backend emulací
             results = await self._ddgs_search(query)
-
-            return ActionResult(
-                success=True,
-                action="google",
-                data={"query": query, "results": results, "count": len(results)},
-            ).to_dict()
-
+            return ActionResult(success=True, action='google', data={'query': query, 'results': results, 'count': len(results)}).to_dict()
         except Exception as e:
-            logger.warning(f"Google search failed: {e}")
-            return ActionResult(
-                success=True,
-                action="google",
-                data={"query": query, "results": [], "error": str(e)},
-            ).to_dict()
+            logger.warning(f'Google search failed: {e}')
+            return ActionResult(success=True, action='google', data={'query': query, 'results': [], 'error': str(e)}).to_dict()
 
     async def _action_deep_read(self, params: dict[str, Any], context) -> dict[str, Any]:
         """
@@ -661,171 +433,70 @@ class GhostExecutor:
           ne na ResearchContext (research_context.py)
         - Fallback: používá pouze visited_urls.add() pro compatibility
         """
-        url = params.get("url", "")
-
-        # Kontrola duplicity
+        url = params.get('url', '')
         if self._bloom_filter and self._bloom_filter.contains(url):
-            logger.info(f"Skipping duplicate URL: {url}")
-            return ActionResult(
-                success=True,
-                action="deep_read",
-                data={"url": url, "skipped": True, "reason": "duplicate"},
-            ).to_dict()
-
-        logger.info(f"Deep reading: {url}")
-
+            logger.info(f'Skipping duplicate URL: {url}')
+            return ActionResult(success=True, action='deep_read', data={'url': url, 'skipped': True, 'reason': 'duplicate'}).to_dict()
+        logger.info(f'Deep reading: {url}')
         try:
             driver = await self._get_network_driver()
-
-            # Harvestovat stránku
             result = await driver.harvest(url)
-
             if result.success:
-                # Přidat do Bloom Filter
                 if self._bloom_filter:
                     self._bloom_filter.add(url)
-
-                # Přidat do kontextu přes canonical carrier method
                 if context:
-                    # Sprint F900A: Use add_visited_url() instead of direct .add()
-                    # This properly extracts domain and updates timestamp
                     if hasattr(context, 'add_visited_url'):
                         context.add_visited_url(url)
                     elif hasattr(context, 'visited_urls'):
-                        # Fallback for ExecutionContext (types.py)
                         context.visited_urls.add(url)
-                    # Note: content_hashes and collected_data are NOT written here
-                    # They exist on ExecutionContext but NOT on ResearchContext.
-                    # Writing them directly would cause AttributeError with RC.
-
-                return ActionResult(
-                    success=True,
-                    action="deep_read",
-                    data={
-                        "url": url,
-                        "title": result.metadata.get("title", ""),
-                        "content_length": len(result.main_content),
-                        "content_preview": result.main_content[:500],
-                    },
-                ).to_dict()
+                return ActionResult(success=True, action='deep_read', data={'url': url, 'title': result.metadata.get('title', ''), 'content_length': len(result.main_content), 'content_preview': result.main_content[:500]}).to_dict()
             else:
-                return ActionResult(
-                    success=False,
-                    action="deep_read",
-                    data={"url": url},
-                    error=result.error or "Harvest failed"
-                ).to_dict()
-
+                return ActionResult(success=False, action='deep_read', data={'url': url}, error=result.error or 'Harvest failed').to_dict()
         except Exception as e:
-            return ActionResult(
-                success=False,
-                action="deep_read",
-                data={"url": url},
-                error=str(e)
-            ).to_dict()
+            return ActionResult(success=False, action='deep_read', data={'url': url}, error=str(e)).to_dict()
 
     async def _action_research_paper(self, params: dict[str, Any], context) -> dict[str, Any]:
         """Vyhledávání akademických prací"""
-        query = params.get("query", "")
-        logger.info(f"Research paper search: {query}")
-
+        query = params.get('query', '')
+        logger.info(f'Research paper search: {query}')
         try:
             from hledac.universal.intelligence.academic_search import search_academic
-
             result = await search_academic(query, max_results=20, enable_expansion=True)
-
             papers = []
             for r in result.deduplicated_results[:20]:
-                papers.append({
-                    "title": r.title,
-                    "url": r.url,
-                    "snippet": r.snippet,
-                    "source": r.source,
-                    "relevance_score": r.relevance_score,
-                    "metadata": r.metadata,
-                })
-
-            return ActionResult(
-                success=True,
-                action="research_paper",
-                data={"query": query, "papers": papers, "total_results": len(papers)},
-            ).to_dict()
-
+                papers.append({'title': r.title, 'url': r.url, 'snippet': r.snippet, 'source': r.source, 'relevance_score': r.relevance_score, 'metadata': r.metadata})
+            return ActionResult(success=True, action='research_paper', data={'query': query, 'papers': papers, 'total_results': len(papers)}).to_dict()
         except Exception as e:
-            return ActionResult(
-                success=False,
-                action="research_paper",
-                data={},
-                error=str(e)
-            ).to_dict()
+            return ActionResult(success=False, action='research_paper', data={}, error=str(e)).to_dict()
 
     async def _action_archive_fallback(self, params: dict[str, Any], context) -> dict[str, Any]:
         """Wayback Machine fallback"""
-        url = params.get("url", "")
-        logger.info(f"Archive fallback: {url}")
-
+        url = params.get('url', '')
+        logger.info(f'Archive fallback: {url}')
         try:
             from hledac.universal.intelligence.archive_discovery import search_archives
-
             archive_result = await search_archives(url)
-
             if archive_result and archive_result.snapshots:
                 latest = archive_result.snapshots[0]
-
-                return ActionResult(
-                    success=True,
-                    action="archive_fallback",
-                    data={
-                        "original_url": url,
-                        "archive_url": latest.archive_url,
-                        "timestamp": latest.timestamp,
-                    },
-                ).to_dict()
+                return ActionResult(success=True, action='archive_fallback', data={'original_url': url, 'archive_url': latest.archive_url, 'timestamp': latest.timestamp}).to_dict()
             else:
-                return ActionResult(
-                    success=False,
-                    action="archive_fallback",
-                    data={"url": url},
-                    error="No archive snapshots found"
-                ).to_dict()
-
+                return ActionResult(success=False, action='archive_fallback', data={'url': url}, error='No archive snapshots found').to_dict()
         except Exception as e:
-            return ActionResult(
-                success=False,
-                action="archive_fallback",
-                data={},
-                error=str(e)
-            ).to_dict()
+            return ActionResult(success=False, action='archive_fallback', data={}, error=str(e)).to_dict()
 
     async def _action_fact_check(self, params: dict[str, Any], context) -> dict[str, Any]:
         """Ověření faktů"""
-        claims = params.get("claims", [])
-        logger.info(f"Fact checking {len(claims)} claims")
-
+        claims = params.get('claims', [])
+        logger.info(f'Fact checking {len(claims)} claims')
         try:
             from hledac.fact_checking import quick_fact_check
-
             results = []
             for claim in claims:
                 result = await quick_fact_check(claim)
-                results.append({
-                    "claim": claim,
-                    "verdict": result.verdict if hasattr(result, 'verdict') else "unknown",
-                })
-
-            return ActionResult(
-                success=True,
-                action="fact_check",
-                data={"results": results},
-            ).to_dict()
-
+                results.append({'claim': claim, 'verdict': result.verdict if hasattr(result, 'verdict') else 'unknown'})
+            return ActionResult(success=True, action='fact_check', data={'results': results}).to_dict()
         except Exception as e:
-            return ActionResult(
-                success=False,
-                action="fact_check",
-                data={},
-                error=str(e)
-            ).to_dict()
+            return ActionResult(success=False, action='fact_check', data={}, error=str(e)).to_dict()
 
     async def _action_stealth_harvest(self, params: dict[str, Any], context) -> dict[str, Any]:
         """
@@ -843,111 +514,64 @@ class GhostExecutor:
         exist at hledac.advanced_web.detection_evader.
         Returns truthful stub result with stub=True metadata.
         """
-        url = params.get("url", "")
-        logger.warning("stealth_harvest is stub-only — DetectionEvader not available at hledac.advanced_web.detection_evader")  # noqa: E501
-        return ActionResult(
-            success=True,
-            action="stealth_harvest",
-            data={"url": url, "stub": True, "reason": "detection_evader_not_available"},
-        ).to_dict()
+        url = params.get('url', '')
+        logger.warning('stealth_harvest is stub-only — DetectionEvader not available at hledac.advanced_web.detection_evader')
+        return ActionResult(success=True, action='stealth_harvest', data={'url': url, 'stub': True, 'reason': 'detection_evader_not_available'}).to_dict()
 
     async def _action_osint_discovery(self, params: dict[str, Any], context) -> dict[str, Any]:
         """OSINT objevování skrytých zdrojů"""
-        query = params.get("query", "")
-        logger.info(f"OSINT discovery: {query}")
-
+        query = params.get('query', '')
+        logger.info(f'OSINT discovery: {query}')
         try:
             from hledac.osint import HiddenSourcesCrawler
-
             crawler = HiddenSourcesCrawler()
             discovered = await crawler.discover_sources(query, max_sources=5)
-
-            sources = [
-                {
-                    "url": d.url,
-                    "title": d.title,
-                    "source_type": d.source_type,
-                }
-                for d in discovered
-            ]
-
-            return ActionResult(
-                success=True,
-                action="osint_discovery",
-                data={
-                    "query": query,
-                    "sources": sources,
-                    "count": len(sources),
-                },
-            ).to_dict()
-
+            sources = [{'url': d.url, 'title': d.title, 'source_type': d.source_type} for d in discovered]
+            return ActionResult(success=True, action='osint_discovery', data={'query': query, 'sources': sources, 'count': len(sources)}).to_dict()
         except Exception as e:
-            return ActionResult(
-                success=False,
-                action="osint_discovery",
-                data={},
-                error=str(e)
-            ).to_dict()
-
-    # Placeholder akce — Sprint F130F: stub metadata pro truthful distinguishability
-    STUB_METADATA = {
-        "stub": True,
-        "degraded": True,
-        "implemented": False,
-        "contract": "noop_placeholder",
-    }
+            return ActionResult(success=False, action='osint_discovery', data={}, error=str(e)).to_dict()
+    STUB_METADATA = {'stub': True, 'degraded': True, 'implemented': False, 'contract': 'noop_placeholder'}
 
     async def _action_scan(self, params, context):
-        return ActionResult(success=True, action="scan", data=self.STUB_METADATA.copy()).to_dict()
+        return ActionResult(success=True, action='scan', data=self.STUB_METADATA.copy()).to_dict()
 
     async def _action_download(self, params, context):
-        return ActionResult(success=True, action="download", data=self.STUB_METADATA.copy()).to_dict()
+        return ActionResult(success=True, action='download', data=self.STUB_METADATA.copy()).to_dict()
 
     async def _action_smart_search(self, params, context):
-        return ActionResult(success=True, action="smart_search", data=self.STUB_METADATA.copy()).to_dict()
+        return ActionResult(success=True, action='smart_search', data=self.STUB_METADATA.copy()).to_dict()
 
     async def _action_memorize(self, params, context):
-        return ActionResult(success=True, action="memorize", data=self.STUB_METADATA.copy()).to_dict()
+        return ActionResult(success=True, action='memorize', data=self.STUB_METADATA.copy()).to_dict()
 
     async def _action_probe(self, params, context):
-        return ActionResult(success=True, action="probe", data=self.STUB_METADATA.copy()).to_dict()
+        return ActionResult(success=True, action='probe', data=self.STUB_METADATA.copy()).to_dict()
 
     async def _action_track(self, params, context):
-        return ActionResult(success=True, action="track", data=self.STUB_METADATA.copy()).to_dict()
+        return ActionResult(success=True, action='track', data=self.STUB_METADATA.copy()).to_dict()
 
     async def _action_deep_research(self, params, context):
-        return ActionResult(success=True, action="deep_research", data=self.STUB_METADATA.copy()).to_dict()
+        return ActionResult(success=True, action='deep_research', data=self.STUB_METADATA.copy()).to_dict()
 
     async def _action_answer(self, params, context):
-        return ActionResult(success=True, action="answer", data=self.STUB_METADATA.copy()).to_dict()
+        return ActionResult(success=True, action='answer', data=self.STUB_METADATA.copy()).to_dict()
 
     async def _action_crack(self, params, context):
-        return ActionResult(success=True, action="crack", data=self.STUB_METADATA.copy()).to_dict()
+        return ActionResult(success=True, action='crack', data=self.STUB_METADATA.copy()).to_dict()
 
     async def _action_error(self, params, context):
         """Error placeholder — used when an action fails to resolve."""
-        error_msg = params.get("error", "Unknown error") if params else "Unknown error"
-        return ActionResult(
-            success=False,
-            action="error",
-            data={"error": error_msg},
-        ).to_dict()
-
-    # =====================================================================
-    # CLEANUP
-    # =====================================================================
+        error_msg = params.get('error', 'Unknown error') if params else 'Unknown error'
+        return ActionResult(success=False, action='error', data={'error': error_msg}).to_dict()
 
     async def unload(self) -> None:
         """Uvolnit zdroje"""
-        logger.info("Unloading GhostExecutor...")
-
+        logger.info('Unloading GhostExecutor...')
         if self._network_driver:
             await self._network_driver.close()
             self._network_driver = None
-
         self._bloom_filter = None
-
-        logger.info("✓ GhostExecutor unloaded")
+        logger.info('✓ GhostExecutor unloaded')
 
     async def close(self) -> None:
         """Zavřít executor"""

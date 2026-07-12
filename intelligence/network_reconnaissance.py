@@ -19,9 +19,6 @@ Features:
 
 M1 Optimized: Async I/O, connection pooling, minimal memory
 """
-
-
-
 import asyncio
 import hashlib
 import ipaddress
@@ -36,48 +33,41 @@ import msgspec
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Literal
-
+from hledac.universal.utils.msgspec_json import loads as _msgspec_loads
 import httpx
 import dns.asyncresolver
-
 from hledac.universal.transport.session_pool import session_pool
 import dns.name
 import dns.rdatatype
 import dns.resolver
-
 from hledac.universal.utils.async_helpers import safe_gather_ok
-
 from hledac.universal.utils.async_helpers import safe_gather
 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, ConcurrencyBudgetRegistry
-
 logger = logging.getLogger(__name__)
-
 
 class RecordType(Enum):
     """DNS record types."""
-    A = "A"
-    AAAA = "AAAA"
-    MX = "MX"
-    NS = "NS"
-    TXT = "TXT"
-    SOA = "SOA"
-    CNAME = "CNAME"
-    PTR = "PTR"
-    SRV = "SRV"
-    CAA = "CAA"
+    A = 'A'
+    AAAA = 'AAAA'
+    MX = 'MX'
+    NS = 'NS'
+    TXT = 'TXT'
+    SOA = 'SOA'
+    CNAME = 'CNAME'
+    PTR = 'PTR'
+    SRV = 'SRV'
+    CAA = 'CAA'
 
-
-@dataclass
+@dataclass(True)
 class DNSRecord:
     """DNS record information."""
     record_type: RecordType
     name: str
     value: str
     ttl: int
-    priority: int | None = None  # For MX, SRV
+    priority: int | None = None
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class WHOISData:
     """WHOIS lookup results."""
     domain: str
@@ -97,8 +87,7 @@ class WHOISData:
     tech_email: str | None
     raw_whois: str
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class SSLCertificate:
     """SSL/TLS certificate information."""
     subject: dict[str, str]
@@ -113,8 +102,7 @@ class SSLCertificate:
     is_valid: bool
     days_until_expiry: int
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ServiceBanner:
     """Service banner information."""
     port: int
@@ -124,8 +112,7 @@ class ServiceBanner:
     version: str | None
     timestamp: float
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class HostInfo:
     """Complete host information."""
     hostname: str
@@ -140,39 +127,23 @@ class HostInfo:
     asn_info: dict[str, Any] | None
     technology_stack: list[str]
 
-
 class DNSEnumerator:
     """
     Advanced DNS enumeration.
 
     Comprehensive DNS reconnaissance with multiple techniques.
     """
+    COMMON_SUBDOMAINS = ['www', 'mail', 'ftp', 'admin', 'api', 'blog', 'shop', 'dev', 'staging', 'test', 'demo', 'portal', 'vpn', 'remote', 'mx', 'ns1', 'ns2', 'smtp', 'pop', 'imap', 'webmail', 'secure', 'support', 'help', 'docs', 'wiki', 'cdn', 'static', 'media', 'app', 'mobile', 'm', 'beta', 'alpha', 'new', 'old', 'git', 'gitlab', 'github', 'jenkins', 'ci', 'build', 'db', 'database', 'sql', 'mysql', 'postgres', 'redis', 'monitor', 'grafana', 'prometheus', 'kibana', 'elastic', 'kube', 'kubernetes', 'k8s', 'docker', 'registry', ' intra', 'internal', 'corp', 'private']
+    __slots__ = tuple(('resolver',))
 
-    COMMON_SUBDOMAINS = [
-        "www", "mail", "ftp", "admin", "api", "blog", "shop", "dev",
-        "staging", "test", "demo", "portal", "vpn", "remote", "mx",
-        "ns1", "ns2", "smtp", "pop", "imap", "webmail", "secure",
-        "support", "help", "docs", "wiki", "cdn", "static", "media",
-        "app", "mobile", "m", "beta", "alpha", "new", "old",
-        "git", "gitlab", "github", "jenkins", "ci", "build",
-        "db", "database", "sql", "mysql", "postgres", "redis",
-        "monitor", "grafana", "prometheus", "kibana", "elastic",
-        "kube", "kubernetes", "k8s", "docker", "registry",
-        " intra", "internal", "corp", "private"
-    ]
-
-    def __init__(self, nameservers: list[str] | None = None):
+    def __init__(self, nameservers: list[str] | None=None):
         self.resolver = dns.asyncresolver.Resolver()
         if nameservers:
             self.resolver.nameservers = nameservers
         self.resolver.timeout = 5
         self.resolver.lifetime = 10
 
-    async def enumerate_all(
-        self,
-        domain: str,
-        include_subdomains: bool = True
-    ) -> dict[str, Any]:
+    async def enumerate_all(self, domain: str, include_subdomains: bool=True) -> dict[str, Any]:
         """
         Comprehensive DNS enumeration.
 
@@ -183,90 +154,40 @@ class DNSEnumerator:
         Returns:
             Dictionary with all DNS findings
         """
-        results = {
-            "domain": domain,
-            "records": {},
-            "subdomains": [],
-            "zone_transfer_attempted": False,
-            "zone_transfer_successful": False
-        }
-
-        # Query standard records
-        for record_type in [RecordType.A, RecordType.AAAA, RecordType.MX,
-                           RecordType.NS, RecordType.TXT, RecordType.SOA,
-                           RecordType.CNAME]:
+        results = {'domain': domain, 'records': {}, 'subdomains': [], 'zone_transfer_attempted': False, 'zone_transfer_successful': False}
+        for record_type in [RecordType.A, RecordType.AAAA, RecordType.MX, RecordType.NS, RecordType.TXT, RecordType.SOA, RecordType.CNAME]:
             records = await self.query_records(domain, record_type)
             if records:
-                results["records"][record_type.value] = [
-                    {"name": r.name, "value": r.value, "ttl": r.ttl,
-                     "priority": r.priority} for r in records
-                ]
-
-        # Attempt zone transfer
+                results['records'][record_type.value] = [{'name': r.name, 'value': r.value, 'ttl': r.ttl, 'priority': r.priority} for r in records]
         zone_transfer = await self.attempt_zone_transfer(domain)
-        results["zone_transfer_attempted"] = True
-        results["zone_transfer_successful"] = zone_transfer is not None
+        results['zone_transfer_attempted'] = True
+        results['zone_transfer_successful'] = zone_transfer is not None
         if zone_transfer:
-            results["zone_transfer_data"] = zone_transfer
-
-        # Brute force subdomains
+            results['zone_transfer_data'] = zone_transfer
         if include_subdomains:
             subdomains = await self.brute_force_subdomains(domain)
-            results["subdomains"] = [
-                {"name": s[0], "ip": s[1], "record_type": s[2]}
-                for s in subdomains
-            ]
-
-            # Permutation scan for less common subdomains
+            results['subdomains'] = [{'name': s[0], 'ip': s[1], 'record_type': s[2]} for s in subdomains]
             permutations = await self.permutation_scan(domain)
-            results["permutations"] = [
-                {"name": p[0], "ip": p[1]} for p in permutations
-            ]
-
+            results['permutations'] = [{'name': p[0], 'ip': p[1]} for p in permutations]
         return results
 
-    async def query_records(
-        self,
-        domain: str,
-        record_type: RecordType
-    ) -> list[DNSRecord]:
+    async def query_records(self, domain: str, record_type: RecordType) -> list[DNSRecord]:
         """Query specific DNS record type."""
         records = []
-
         try:
-            answers = await self.resolver.resolve(
-                domain,
-                record_type.value,
-                raise_on_no_answer=False
-            )
-
+            answers = await self.resolver.resolve(domain, record_type.value, raise_on_no_answer=False)
             for rdata in answers:
                 value = str(rdata)
                 priority = None
-
-                # Handle MX priority
                 if record_type == RecordType.MX:
                     priority = rdata.preference
                     value = str(rdata.exchange)
-
-                records.append(DNSRecord(
-                    record_type=record_type,
-                    name=domain,
-                    value=value.rstrip("."),
-                    ttl=answers.rrset.ttl if hasattr(answers, 'rrset') else 3600,
-                    priority=priority
-                ))
-
+                records.append(DNSRecord(record_type=record_type, name=domain, value=value.rstrip('.'), ttl=answers.rrset.ttl if hasattr(answers, 'rrset') else 3600, priority=priority))
         except Exception as e:
-            logger.debug(f"DNS query failed for {domain} {record_type}: {e}")
-
+            logger.debug(f'DNS query failed for {domain} {record_type}: {e}')
         return records
 
-    async def brute_force_subdomains(
-        self,
-        domain: str,
-        wordlist: list[str] | None = None
-    ) -> list[tuple[str, str, str]]:
+    async def brute_force_subdomains(self, domain: str, wordlist: list[str] | None=None) -> list[tuple[str, str, str]]:
         """
         Brute force subdomains.
 
@@ -275,79 +196,54 @@ class DNSEnumerator:
         """
         wordlist = wordlist or self.COMMON_SUBDOMAINS
         found = []
-
-        # Rate limiting semaphore
         registry = await ConcurrencyBudgetRegistry.get_instance_async()
         semaphore = registry.get(ConcurrencyCategory.DNS_BRUTE)
 
         async def check_subdomain(subdomain: str):
             async with semaphore:
-                full_domain = f"{subdomain}.{domain}"
+                full_domain = f'{subdomain}.{domain}'
                 try:
-                    # Try A record
-                    answers = await self.resolver.resolve(full_domain, "A")
+                    answers = await self.resolver.resolve(full_domain, 'A')
                     for rdata in answers:
-                        found.append((full_domain, str(rdata), "A"))
-                        logger.info(f"Found subdomain: {full_domain} -> {rdata}")
+                        found.append((full_domain, str(rdata), 'A'))
+                        logger.info(f'Found subdomain: {full_domain} -> {rdata}')
                 except Exception as e:
-                    logger.debug(f"[DNS] A lookup failed for {full_domain}: {e}")
-
+                    logger.debug(f'[DNS] A lookup failed for {full_domain}: {e}')
                 try:
-                    # Try CNAME
-                    answers = await self.resolver.resolve(full_domain, "CNAME")
+                    answers = await self.resolver.resolve(full_domain, 'CNAME')
                     for rdata in answers:
-                        found.append((full_domain, str(rdata), "CNAME"))
+                        found.append((full_domain, str(rdata), 'CNAME'))
                 except Exception as e:
-                    logger.debug(f"[DNS] CNAME lookup failed for {full_domain}: {e}")
-
-        # Run checks concurrently
-        # F261: safe_gather centralizes [I6][I7][I8] invariants at the gather boundary.
-        await safe_gather(
-            *[check_subdomain(s) for s in wordlist],
-            label="brute_force_subdomains",
-            logger_instance=logger,
-        )
-
+                    logger.debug(f'[DNS] CNAME lookup failed for {full_domain}: {e}')
+        await safe_gather(*[check_subdomain(s) for s in wordlist], label='brute_force_subdomains', logger_instance=logger)
         return found
 
-    async def permutation_scan(
-        self,
-        domain: str,
-        words: list[str] | None = None
-    ) -> list[tuple[str, str]]:
+    async def permutation_scan(self, domain: str, words: list[str] | None=None) -> list[tuple[str, str]]:
         """
         Scan for subdomains using permutations.
 
         Combines words with separators to find non-standard subdomains.
         """
-        words = words or ["dev", "stg", "prod", "api", "v1", "v2", "app"]
-        separators = ["-", "_", ".", ""]
+        words = words or ['dev', 'stg', 'prod', 'api', 'v1', 'v2', 'app']
+        separators = ['-', '_', '.', '']
         permutations = set()
-
         for w1, w2 in itertools.product(words, repeat=2):
             for sep in separators:
-                permutations.add(f"{w1}{sep}{w2}")
-
+                permutations.add(f'{w1}{sep}{w2}')
         found = []
         from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
         semaphore = get_semaphore_for_testing(ConcurrencyCategory.DNS_BRUTE)
 
         async def check_perm(perm: str):
             async with semaphore:
-                full_domain = f"{perm}.{domain}"
+                full_domain = f'{perm}.{domain}'
                 try:
-                    answers = await self.resolver.resolve(full_domain, "A")
+                    answers = await self.resolver.resolve(full_domain, 'A')
                     for rdata in answers:
                         found.append((full_domain, str(rdata)))
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
-
-        # F261: safe_gather centralizes [I6][I7][I8] invariants at the gather boundary.
-        await safe_gather(
-            *[check_perm(p) for p in list(permutations)[:100]],
-            label="permutation_scan",
-            logger_instance=logger,
-        )
+        await safe_gather(*[check_perm(p) for p in list(permutations)[:100]], label='permutation_scan', logger_instance=logger)
         return found
 
     async def attempt_zone_transfer(self, domain: str) -> list[str] | None:
@@ -358,9 +254,7 @@ class DNSEnumerator:
             List of zone records if successful, None otherwise
         """
         try:
-            # Get NS records
             ns_records = await self.query_records(domain, RecordType.NS)
-
             for ns in ns_records:
                 try:
                     z = dns.zone.from_xfr(dns.query.xfr(ns.value, domain))
@@ -368,22 +262,19 @@ class DNSEnumerator:
                     return [str(n) for n in names]
                 except Exception:
                     continue
-
         except Exception as e:
-            logger.debug(f"Zone transfer failed: {e}")
-
+            logger.debug(f'Zone transfer failed: {e}')
         return None
 
     async def reverse_lookup(self, ip: str) -> list[str]:
         """Perform reverse DNS lookup."""
         try:
             reversed_dns = dns.reversename.from_address(ip)
-            answers = await self.resolver.resolve(reversed_dns, "PTR")
-            return [str(rdata).rstrip(".") for rdata in answers]
+            answers = await self.resolver.resolve(reversed_dns, 'PTR')
+            return [str(rdata).rstrip('.') for rdata in answers]
         except Exception as e:
-            logger.debug(f"Reverse lookup failed for {ip}: {e}")
+            logger.debug(f'Reverse lookup failed for {ip}: {e}')
             return []
-
 
 class WHOISLookup:
     """
@@ -391,25 +282,7 @@ class WHOISLookup:
 
     Fetches domain registration information from WHOIS servers.
     """
-
-    WHOIS_SERVERS = {
-        "com": "whois.verisign-grs.com",
-        "net": "whois.verisign-grs.com",
-        "org": "whois.pir.org",
-        "io": "whois.nic.io",
-        "co": "whois.nic.co",
-        "info": "whois.afilias.net",
-        "biz": "whois.biz",
-        "us": "whois.nic.us",
-        "uk": "whois.nic.uk",
-        "de": "whois.denic.de",
-        "fr": "whois.nic.fr",
-        "eu": "whois.eu",
-        "nl": "whois.sidn.nl",
-        "ru": "whois.tcinet.ru",
-        "jp": "whois.jprs.jp",
-        "cn": "whois.cnnic.cn"
-    }
+    WHOIS_SERVERS = {'com': 'whois.verisign-grs.com', 'net': 'whois.verisign-grs.com', 'org': 'whois.pir.org', 'io': 'whois.nic.io', 'co': 'whois.nic.co', 'info': 'whois.afilias.net', 'biz': 'whois.biz', 'us': 'whois.nic.us', 'uk': 'whois.nic.uk', 'de': 'whois.denic.de', 'fr': 'whois.nic.fr', 'eu': 'whois.eu', 'nl': 'whois.sidn.nl', 'ru': 'whois.tcinet.ru', 'jp': 'whois.jprs.jp', 'cn': 'whois.cnnic.cn'}
 
     async def lookup(self, domain: str) -> WHOISData | None:
         """
@@ -422,21 +295,14 @@ class WHOISLookup:
             WHOISData or None if lookup fails
         """
         try:
-            # Get TLD
-            tld = domain.split(".")[-1].lower()
-            whois_server = self.WHOIS_SERVERS.get(tld, f"whois.nic.{tld}")
-
-            # Query WHOIS server
+            tld = domain.split('.')[-1].lower()
+            whois_server = self.WHOIS_SERVERS.get(tld, f'whois.nic.{tld}')
             raw_whois = await self._query_whois_server(domain, whois_server)
-
             if not raw_whois:
                 return None
-
-            # Parse WHOIS data
             return self._parse_whois(domain, raw_whois)
-
         except Exception as e:
-            logger.error(f"WHOIS lookup failed for {domain}: {e}")
+            logger.error(f'WHOIS lookup failed for {domain}: {e}')
             return None
 
     async def _query_whois_server(self, domain: str, server: str) -> str:
@@ -444,59 +310,37 @@ class WHOISLookup:
         try:
             async with asyncio.timeout(10):
                 reader, writer = await asyncio.open_connection(server, 43)
-
-            query = f"{domain}\r\n"
+            query = f'{domain}\r\n'
             writer.write(query.encode())
             await writer.drain()
-
             async with asyncio.timeout(10):
                 response = await reader.read()
             writer.close()
             await writer.wait_closed()
-
-            return response.decode("utf-8", errors="ignore")
-
+            return response.decode('utf-8', errors='ignore')
         except Exception as e:
-            logger.debug(f"WHOIS server query failed: {e}")
-            return ""
+            logger.debug(f'WHOIS server query failed: {e}')
+            return ''
 
     def _parse_whois(self, domain: str, raw_whois: str) -> WHOISData:
         """Parse raw WHOIS data into structured format."""
-        data = {
-            "domain": domain,
-            "registrar": self._extract_field(raw_whois, "Registrar:"),
-            "creation_date": self._parse_date(self._extract_field(raw_whois, "Creation Date:")),
-            "expiration_date": self._parse_date(self._extract_field(raw_whois, "Registry Expiry Date:")),
-            "updated_date": self._parse_date(self._extract_field(raw_whois, "Updated Date:")),
-            "name_servers": self._extract_list(raw_whois, "Name Server:"),
-            "status": self._extract_list(raw_whois, "Domain Status:"),
-            "dnssec": "DNSSEC: signed" in raw_whois.lower(),
-            "registrant_name": self._extract_field(raw_whois, "Registrant Name:") or self._extract_field(raw_whois, "Registrant Organization:"),  # noqa: E501
-            "registrant_org": self._extract_field(raw_whois, "Registrant Organization:"),
-            "registrant_email": self._extract_email(raw_whois, "Registrant Email:"),
-            "admin_name": self._extract_field(raw_whois, "Admin Name:"),
-            "admin_email": self._extract_email(raw_whois, "Admin Email:"),
-            "tech_name": self._extract_field(raw_whois, "Tech Name:"),
-            "tech_email": self._extract_email(raw_whois, "Tech Email:"),
-            "raw_whois": raw_whois
-        }
-
+        data = {'domain': domain, 'registrar': self._extract_field(raw_whois, 'Registrar:'), 'creation_date': self._parse_date(self._extract_field(raw_whois, 'Creation Date:')), 'expiration_date': self._parse_date(self._extract_field(raw_whois, 'Registry Expiry Date:')), 'updated_date': self._parse_date(self._extract_field(raw_whois, 'Updated Date:')), 'name_servers': self._extract_list(raw_whois, 'Name Server:'), 'status': self._extract_list(raw_whois, 'Domain Status:'), 'dnssec': 'DNSSEC: signed' in raw_whois.lower(), 'registrant_name': self._extract_field(raw_whois, 'Registrant Name:') or self._extract_field(raw_whois, 'Registrant Organization:'), 'registrant_org': self._extract_field(raw_whois, 'Registrant Organization:'), 'registrant_email': self._extract_email(raw_whois, 'Registrant Email:'), 'admin_name': self._extract_field(raw_whois, 'Admin Name:'), 'admin_email': self._extract_email(raw_whois, 'Admin Email:'), 'tech_name': self._extract_field(raw_whois, 'Tech Name:'), 'tech_email': self._extract_email(raw_whois, 'Tech Email:'), 'raw_whois': raw_whois}
         return WHOISData(**data)
 
     def _extract_field(self, whois: str, field: str) -> str | None:
         """Extract single field from WHOIS."""
-        for line in whois.split("\n"):
+        for line in whois.split('\n'):
             if line.startswith(field):
-                value = line.split(":", 1)[1].strip()
-                return value if value and value != "REDACTED FOR PRIVACY" else None
+                value = line.split(':', 1)[1].strip()
+                return value if value and value != 'REDACTED FOR PRIVACY' else None
         return None
 
     def _extract_list(self, whois: str, field: str) -> list[str]:
         """Extract list field from WHOIS."""
         values = []
-        for line in whois.split("\n"):
+        for line in whois.split('\n'):
             if line.startswith(field):
-                value = line.split(":", 1)[1].strip()
+                value = line.split(':', 1)[1].strip()
                 if value:
                     values.append(value)
         return values
@@ -504,7 +348,7 @@ class WHOISLookup:
     def _extract_email(self, whois: str, field: str) -> str | None:
         """Extract email field, handling privacy protection."""
         email = self._extract_field(whois, field)
-        if email and "priv" not in email.lower() and "redacted" not in email.lower():
+        if email and 'priv' not in email.lower() and ('redacted' not in email.lower()):
             return email
         return None
 
@@ -512,30 +356,20 @@ class WHOISLookup:
         """Parse WHOIS date string."""
         if not date_str:
             return None
-
-        formats = [
-            "%Y-%m-%dT%H:%M:%SZ",
-            "%Y-%m-%dT%H:%M:%S%z",
-            "%Y-%m-%d",
-            "%d-%b-%Y",
-            "%d-%B-%Y"
-        ]
-
+        formats = ['%Y-%m-%dT%H:%M:%SZ', '%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%d', '%d-%b-%Y', '%d-%B-%Y']
         for fmt in formats:
             try:
-                return datetime.strptime(date_str, fmt)  # noqa: DTZ007
+                return datetime.strptime(date_str, fmt)
             except ValueError:
                 continue
-
         return None
-
 
 class SSLAnalyzer:
     """
     SSL/TLS certificate analysis.
     """
 
-    async def analyze_certificate(self, hostname: str, port: int = 443) -> SSLCertificate | None:
+    async def analyze_certificate(self, hostname: str, port: int=443) -> SSLCertificate | None:
         """
         Analyze SSL certificate of remote host.
 
@@ -550,97 +384,50 @@ class SSLAnalyzer:
             context = ssl.create_default_context()
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
-
             async with asyncio.timeout(10):
                 reader, writer = await asyncio.open_connection(hostname, port, ssl=context)
-
-            # Get SSL socket
-            ssl_socket = writer.get_extra_info("ssl_object")
+            ssl_socket = writer.get_extra_info('ssl_object')
             if not ssl_socket:
                 writer.close()
                 await writer.wait_closed()
                 return None
-
             cert = ssl_socket.getpeercert(binary_form=True)
             writer.close()
             await writer.wait_closed()
-
             if not cert:
                 return None
-
-            # Parse certificate
             return self._parse_certificate(cert)
-
         except Exception as e:
-            logger.debug(f"SSL analysis failed for {hostname}:{port}: {e}")
+            logger.debug(f'SSL analysis failed for {hostname}:{port}: {e}')
             return None
 
     def _parse_certificate(self, cert_der: bytes) -> SSLCertificate:
         """Parse DER certificate."""
         try:
             import OpenSSL.crypto
-
             x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_ASN1, cert_der)
-
-            # Get subject
             subject = {}
             for key, value in x509.get_subject().get_components():
                 subject[key.decode()] = value.decode()
-
-            # Get issuer
             issuer = {}
             for key, value in x509.get_issuer().get_components():
                 issuer[key.decode()] = value.decode()
-
-            # Get SANs
             san_domains = []
             for i in range(x509.get_extension_count()):
                 ext = x509.get_extension(i)
-                if ext.get_short_name() == b"subjectAltName":
+                if ext.get_short_name() == b'subjectAltName':
                     san_data = str(ext)
-                    for item in san_data.split(", "):
-                        if "DNS:" in item:
-                            san_domains.append(item.replace("DNS:", ""))
-
-            # Calculate fingerprints
+                    for item in san_data.split(', '):
+                        if 'DNS:' in item:
+                            san_domains.append(item.replace('DNS:', ''))
             sha256_fp = hashlib.sha256(cert_der).hexdigest()
-            sha1_fp = hashlib.sha256(cert_der).hexdigest()  # sha256
-
-            # Parse dates (naive UTC from DER timestamp strings)
-            not_before = datetime.strptime(x509.get_notBefore().decode(), "%Y%m%d%H%M%SZ").replace(tzinfo=UTC)
-            not_after = datetime.strptime(x509.get_notAfter().decode(), "%Y%m%d%H%M%SZ").replace(tzinfo=UTC)
+            sha1_fp = hashlib.sha256(cert_der).hexdigest()
+            not_before = datetime.strptime(x509.get_notBefore().decode(), '%Y%m%d%H%M%SZ').replace(tzinfo=UTC)
+            not_after = datetime.strptime(x509.get_notAfter().decode(), '%Y%m%d%H%M%SZ').replace(tzinfo=UTC)
             days_until_expiry = (not_after - datetime.now(UTC)).days
-
-            return SSLCertificate(
-                subject=subject,
-                issuer=issuer,
-                serial_number=hex(x509.get_serial_number()),
-                not_before=not_before,
-                not_after=not_after,
-                fingerprint_sha256=sha256_fp,
-                fingerprint_sha1=sha1_fp,
-                version=x509.get_version(),
-                san_domains=san_domains,
-                is_valid=days_until_expiry > 0,
-                days_until_expiry=days_until_expiry
-            )
-
+            return SSLCertificate(subject=subject, issuer=issuer, serial_number=hex(x509.get_serial_number()), not_before=not_before, not_after=not_after, fingerprint_sha256=sha256_fp, fingerprint_sha1=sha1_fp, version=x509.get_version(), san_domains=san_domains, is_valid=days_until_expiry > 0, days_until_expiry=days_until_expiry)
         except ImportError:
-            # Fallback without pyOpenSSL
-            return SSLCertificate(
-                subject={},
-                issuer={},
-                serial_number="unknown",
-                not_before=datetime.now(UTC),
-                not_after=datetime.now(UTC),
-                fingerprint_sha256=hashlib.sha256(cert_der).hexdigest(),
-                fingerprint_sha1=hashlib.sha256(cert_der).hexdigest(),  # sha256
-                version=3,
-                san_domains=[],
-                is_valid=True,
-                days_until_expiry=365
-            )
-
+            return SSLCertificate(subject={}, issuer={}, serial_number='unknown', not_before=datetime.now(UTC), not_after=datetime.now(UTC), fingerprint_sha256=hashlib.sha256(cert_der).hexdigest(), fingerprint_sha1=hashlib.sha256(cert_der).hexdigest(), version=3, san_domains=[], is_valid=True, days_until_expiry=365)
 
 class NetworkReconnaissance:
     """
@@ -648,36 +435,19 @@ class NetworkReconnaissance:
 
     Combines all network intelligence gathering capabilities.
     """
-
-    # Sprint 83C: Bounded wildcard detection constants
     _WILDCARD_PROBE_COUNT = 3
     _WILDCARD_PROBE_TIMEOUT_S = 1.5
     _WILDCARD_PROBE_TOTAL_S = 4.0
-
-    # Sprint 85: Security - Private network definitions (M1-safe, no heavy deps)
-    _PRIVATE_NETS = (
-        ipaddress.ip_network("10.0.0.0/8"),
-        ipaddress.ip_network("172.16.0.0/12"),
-        ipaddress.ip_network("192.168.0.0/16"),
-        ipaddress.ip_network("127.0.0.0/8"),
-        ipaddress.ip_network("169.254.0.0/16"),
-        ipaddress.ip_network("0.0.0.0/8"),
-        ipaddress.ip_network("::1/128"),
-        ipaddress.ip_network("fe80::/10"),
-        ipaddress.ip_network("fc00::/7"),
-    )
-
-    # Rust batch IP classification (lazy, fail-soft)
+    _PRIVATE_NETS = (ipaddress.ip_network('10.0.0.0/8'), ipaddress.ip_network('172.16.0.0/12'), ipaddress.ip_network('192.168.0.0/16'), ipaddress.ip_network('127.0.0.0/8'), ipaddress.ip_network('169.254.0.0/16'), ipaddress.ip_network('0.0.0.0/8'), ipaddress.ip_network('::1/128'), ipaddress.ip_network('fe80::/10'), ipaddress.ip_network('fc00::/7'))
     _rust_batch_classify: Callable[[list[str]], bytes] | None | Literal[False] = None
+    __slots__ = tuple(('_confirmed_non_wildcard', '_wildcard_domains', 'dns', 'ssl', 'whois'))
 
     @classmethod
     def _get_rust_batch_classify(cls) -> Callable[[list[str]], bytes] | None:
         """Lazy load Rust batch_ip_classify, fail-soft if unavailable."""
-        # F265C: Use centralized rust backend
         if cls._rust_batch_classify is None:
             try:
                 from core.rust_backend import rust as _rust_backend
-
                 if _rust_backend.is_available and _rust_backend.ip is not None:
                     cls._rust_batch_classify = _rust_backend.ip.batch_ip_classify
                 else:
@@ -694,7 +464,6 @@ class NetworkReconnaissance:
             for net in NetworkReconnaissance._PRIVATE_NETS:
                 if ip in net:
                     return True
-            # Additional checks
             if ip.is_multicast or ip.is_unspecified:
                 return True
             if hasattr(ip, 'is_loopback') and ip.is_loopback:
@@ -721,15 +490,13 @@ class NetworkReconnaissance:
                 public_ips = []
                 private_ips = []
                 for ip_val, class_byte in zip(ip_values, result_bytes):
-                    if class_byte in (1, 3, 4):  # private, loopback, link-local
+                    if class_byte in (1, 3, 4):
                         private_ips.append(ip_val)
                     else:
                         public_ips.append(ip_val)
-                return public_ips, private_ips
-            except Exception:  # noqa: BLE001
-                pass  # Fall through to Python
-
-        # Python fallback
+                return (public_ips, private_ips)
+            except Exception:
+                pass
         public_ips = []
         private_ips = []
         for ip_val in ip_values:
@@ -737,13 +504,12 @@ class NetworkReconnaissance:
                 private_ips.append(ip_val)
             else:
                 public_ips.append(ip_val)
-        return public_ips, private_ips
+        return (public_ips, private_ips)
 
     def __init__(self):
         self.dns = DNSEnumerator()
         self.whois = WHOISLookup()
         self.ssl = SSLAnalyzer()
-        # Sprint 83C: Per-domain wildcard cache (bounded)
         self._wildcard_domains: set[str] = set()
         self._confirmed_non_wildcard: set[str] = set()
 
@@ -764,37 +530,20 @@ class NetworkReconnaissance:
                 - responses: list of probe results
                 - probe_method: str
         """
-        # Check cache first
         if domain in self._wildcard_domains:
-            return {
-                'wildcard_suspected': True,
-                'probe_count': 0,
-                'responses': [],
-                'probe_method': 'cache'
-            }
+            return {'wildcard_suspected': True, 'probe_count': 0, 'responses': [], 'probe_method': 'cache'}
         if domain in self._confirmed_non_wildcard:
-            return {
-                'wildcard_suspected': False,
-                'probe_count': 0,
-                'responses': [],
-                'probe_method': 'cache'
-            }
-
-        # Generate high-entropy random hostnames (NOT test/dev/admin/stage)
+            return {'wildcard_suspected': False, 'probe_count': 0, 'responses': [], 'probe_method': 'cache'}
         probes = []
         for _ in range(self._WILDCARD_PROBE_COUNT):
-            random_token = secrets.token_hex(6)  # 12 hex chars = high entropy
-            probe = f"{random_token}.{domain}"
+            random_token = secrets.token_hex(6)
+            probe = f'{random_token}.{domain}'
             probes.append(probe)
 
-        # Probe each random hostname with timeout
         async def probe_hostname(hostname: str) -> str | None:
             try:
-                # Use asyncio.to_thread for async-safe DNS resolution
-                # since dns.asyncresolver.resolve is already async, we can use it directly
                 async with asyncio.timeout(self._WILDCARD_PROBE_TIMEOUT_S):
-                    answers = await self.dns.resolver.resolve(hostname, "A")
-                # Return first IP if found
+                    answers = await self.dns.resolver.resolve(hostname, 'A')
                 for rdata in answers:
                     return str(rdata)
                 return None
@@ -802,58 +551,24 @@ class NetworkReconnaissance:
                 return None
             except Exception:
                 return None
-
-        # Execute probes concurrently
         try:
             async with asyncio.timeout(self._WILDCARD_PROBE_TOTAL_S):
-                results = await safe_gather_ok(*[probe_hostname(p) for p in probes], label="network_reconnaissance:745")  # noqa: E501
+                results = await safe_gather_ok(*[probe_hostname(p) for p in probes], label='network_reconnaissance:745')
         except TimeoutError:
-            # Conservative: if overall timeout, assume not wildcard
             self._confirmed_non_wildcard.add(domain)
-            return {
-                'wildcard_suspected': False,
-                'probe_count': self._WILDCARD_PROBE_COUNT,
-                'responses': [],
-                'probe_method': 'timeout_conservative'
-            }
-
-        # Analyze results
+            return {'wildcard_suspected': False, 'probe_count': self._WILDCARD_PROBE_COUNT, 'responses': [], 'probe_method': 'timeout_conservative'}
         non_none_responses = [r for r in results if r is not None]
-
-        # Decision logic:
-        # - All NXDOMAIN/no-answer → wildcard_suspected=False
-        # - At least 2/3 consistent → wildcard_suspected=True
-        # - Error/timeout/ambiguous → wildcard_suspected=False (conservative)
-
         if not non_none_responses:
-            # All probes returned nothing → likely not wildcard (real subdomains would resolve)
             self._confirmed_non_wildcard.add(domain)
-            return {
-                'wildcard_suspected': False,
-                'probe_count': self._WILDCARD_PROBE_COUNT,
-                'responses': results,
-                'probe_method': 'all_nxdomain'
-            }
+            return {'wildcard_suspected': False, 'probe_count': self._WILDCARD_PROBE_COUNT, 'responses': results, 'probe_method': 'all_nxdomain'}
         elif len(non_none_responses) >= 2:
-            # At least 2 probes returned same IP → wildcard
             self._wildcard_domains.add(domain)
-            return {
-                'wildcard_suspected': True,
-                'probe_count': self._WILDCARD_PROBE_COUNT,
-                'responses': results,
-                'probe_method': 'consistent_responses'
-            }
+            return {'wildcard_suspected': True, 'probe_count': self._WILDCARD_PROBE_COUNT, 'responses': results, 'probe_method': 'consistent_responses'}
         else:
-            # Only 1 response (ambiguous) → conservative: assume not wildcard
             self._confirmed_non_wildcard.add(domain)
-            return {
-                'wildcard_suspected': False,
-                'probe_count': self._WILDCARD_PROBE_COUNT,
-                'responses': results,
-                'probe_method': 'ambiguous_conservative'
-            }
+            return {'wildcard_suspected': False, 'probe_count': self._WILDCARD_PROBE_COUNT, 'responses': results, 'probe_method': 'ambiguous_conservative'}
 
-    async def recon_target(self, target: str, include_subdomains: bool = False) -> HostInfo:
+    async def recon_target(self, target: str, include_subdomains: bool=False) -> HostInfo:
         """
         Perform complete reconnaissance on target.
 
@@ -864,15 +579,13 @@ class NetworkReconnaissance:
         Returns:
             HostInfo with all gathered intelligence
         """
-        # Determine if target is IP or domain
         is_ip = self._is_ip_address(target)
-
         if is_ip:
             return await self._recon_ip(target)
         else:
             return await self._recon_domain(target, include_subdomains=include_subdomains)
 
-    async def _recon_domain(self, domain: str, include_subdomains: bool = False) -> HostInfo:
+    async def _recon_domain(self, domain: str, include_subdomains: bool=False) -> HostInfo:
         """
         Reconnaissance for domain name.
 
@@ -880,105 +593,43 @@ class NetworkReconnaissance:
             domain: Domain to recon
             include_subdomains: Whether to brute force subdomains (default False for passive)
         """
-        # Parallel reconnaissance - brute force DISABLED by default for passive enumeration
         dns_task = self.dns.enumerate_all(domain, include_subdomains=include_subdomains)
         whois_task = self.whois.lookup(domain)
         ssl_task = self.ssl.analyze_certificate(domain)
-
-        # F262D: migrated asyncio.gather → safe_gather_ok (fail-soft invariant preserved)
-        dns_results, whois_data, ssl_cert = await safe_gather_ok(
-            dns_task, whois_task, ssl_task,
-            label="network_reconnaissance:825"
-        )
-
-        # Extract IP addresses from DNS (with private IP filtering - Sprint 85)
-        # F265B: Use Rust batch_ip_classify for bulk private IP filtering
+        dns_results, whois_data, ssl_cert = await safe_gather_ok(dns_task, whois_task, ssl_task, label='network_reconnaissance:825')
         ip_addresses: list[str] = []
-        dns_records: list[DNSRecord] = []  # Sprint 83B FIX: populate dns_records for subdomain extraction
-        if isinstance(dns_results, dict) and "records" in dns_results:
-            # Collect all A/AAAA IP values for batch classification
-            ip_values_by_record: list[tuple[str, str, int]] = []  # (ip_value, record_type, ttl)
-            for record_type in ["A", "AAAA"]:
-                if record_type in dns_results["records"]:
-                    for record in dns_results["records"][record_type]:
-                        ip_values_by_record.append((record["value"], record_type, record.get("ttl", 3600)))
-
-            # Batch filter: Rust batch_ip_classify if available, else Python fallback
+        dns_records: list[DNSRecord] = []
+        if isinstance(dns_results, dict) and 'records' in dns_results:
+            ip_values_by_record: list[tuple[str, str, int]] = []
+            for record_type in ['A', 'AAAA']:
+                if record_type in dns_results['records']:
+                    for record in dns_results['records'][record_type]:
+                        ip_values_by_record.append((record['value'], record_type, record.get('ttl', 3600)))
             if ip_values_by_record:
                 ip_values = [r[0] for r in ip_values_by_record]
                 public_ips, _ = self._filter_private_ips_batch(ip_values)
                 public_ip_set = set(public_ips)
-
-                # Build outputs only for public IPs (preserve original order)
                 for ip_val, record_type, ttl in ip_values_by_record:
                     if ip_val in public_ip_set:
                         ip_addresses.append(ip_val)
-                        dns_records.append(DNSRecord(
-                            record_type=RecordType.A if record_type == "A" else RecordType.AAAA,
-                            name=domain,
-                            value=ip_val,
-                            ttl=ttl
-                        ))
-            # Extract NS records - these contain nameserver hostnames (useful for candidates)
-            if "NS" in dns_results["records"]:
-                for record in dns_results["records"]["NS"]:
-                    dns_records.append(DNSRecord(
-                        record_type=RecordType.NS,
-                        name=domain,
-                        value=record["value"],
-                        ttl=record.get("ttl", 3600)
-                    ))
-            # Extract MX records - these contain mail server hostnames (useful for candidates)
-            if "MX" in dns_results["records"]:
-                for record in dns_results["records"]["MX"]:
-                    dns_records.append(DNSRecord(
-                        record_type=RecordType.MX,
-                        name=domain,
-                        value=record["value"],
-                        ttl=record.get("ttl", 3600),
-                        priority=record.get("priority")
-                    ))
-
-        # Reverse DNS for each IP
+                        dns_records.append(DNSRecord(record_type=RecordType.A if record_type == 'A' else RecordType.AAAA, name=domain, value=ip_val, ttl=ttl))
+            if 'NS' in dns_results['records']:
+                for record in dns_results['records']['NS']:
+                    dns_records.append(DNSRecord(record_type=RecordType.NS, name=domain, value=record['value'], ttl=record.get('ttl', 3600)))
+            if 'MX' in dns_results['records']:
+                for record in dns_results['records']['MX']:
+                    dns_records.append(DNSRecord(record_type=RecordType.MX, name=domain, value=record['value'], ttl=record.get('ttl', 3600), priority=record.get('priority')))
         reverse_dns = []
         for ip in ip_addresses:
             rdns = await self.dns.reverse_lookup(ip)
             reverse_dns.extend(rdns)
-
-        return HostInfo(
-            hostname=domain,
-            ip_addresses=ip_addresses,
-            reverse_dns=list(set(reverse_dns)),
-            whois_data=whois_data if isinstance(whois_data, WHOISData) else None,
-            dns_records=dns_records,
-            ssl_cert=ssl_cert if isinstance(ssl_cert, SSLCertificate) else None,
-            open_ports=[],
-            service_banners=[],
-            geolocation=None,
-            asn_info=None,
-            technology_stack=[]
-        )
+        return HostInfo(hostname=domain, ip_addresses=ip_addresses, reverse_dns=list(set(reverse_dns)), whois_data=whois_data if isinstance(whois_data, WHOISData) else None, dns_records=dns_records, ssl_cert=ssl_cert if isinstance(ssl_cert, SSLCertificate) else None, open_ports=[], service_banners=[], geolocation=None, asn_info=None, technology_stack=[])
 
     async def _recon_ip(self, ip: str) -> HostInfo:
         """Reconnaissance for IP address."""
-        # Reverse DNS
         reverse_dns = await self.dns.reverse_lookup(ip)
-
         hostname = reverse_dns[0] if reverse_dns else ip
-
-        return HostInfo(
-            hostname=hostname,
-            ip_addresses=[ip],
-            reverse_dns=reverse_dns,
-            whois_data=None,
-            dns_records=[],
-            ssl_cert=None,
-            open_ports=[],
-            service_banners=[],
-            geolocation=None,
-            asn_info=None,
-            technology_stack=[]
-        )
+        return HostInfo(hostname=hostname, ip_addresses=[ip], reverse_dns=reverse_dns, whois_data=None, dns_records=[], ssl_cert=None, open_ports=[], service_banners=[], geolocation=None, asn_info=None, technology_stack=[])
 
     def _is_ip_address(self, target: str) -> bool:
         """Check if target is IP address."""
@@ -992,21 +643,15 @@ class NetworkReconnaissance:
             except OSError:
                 return False
 
-
-# =============================================================================
-# Sprint 8TB: PassiveDNS Client
-# =============================================================================
-
-
 class PassiveDNSClient:
     """
     Async passive DNS client using dnspython asyncresolver.
 
     M1: pure async, no blocking socket calls.
     """
-
-    _RESOLVERS = ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    _RESOLVERS = ['1.1.1.1', '8.8.8.8', '9.9.9.9']
     _TIMEOUT_S = 5.0
+    __slots__ = tuple(('_resolver',))
 
     def __init__(self) -> None:
         self._resolver = dns.asyncresolver.Resolver()
@@ -1018,17 +663,17 @@ class PassiveDNSClient:
         """A-record lookup — returns list of IPv4 addresses."""
         try:
             async with asyncio.timeout(self._TIMEOUT_S):
-                ans = await self._resolver.resolve(domain, "A")
+                ans = await self._resolver.resolve(domain, 'A')
             return [str(a) for a in ans]
         except Exception as e:
-            logger.debug(f"PassiveDNS A {domain}: {e}")
+            logger.debug(f'PassiveDNS A {domain}: {e}')
             return []
 
     async def resolve_aaaa(self, domain: str) -> list[str]:
         """AAAA-record lookup — returns list of IPv6 addresses."""
         try:
             async with asyncio.timeout(self._TIMEOUT_S):
-                ans = await self._resolver.resolve(domain, "AAAA")
+                ans = await self._resolver.resolve(domain, 'AAAA')
             return [str(a) for a in ans]
         except Exception:
             return []
@@ -1038,16 +683,12 @@ class PassiveDNSClient:
         try:
             rev = dns.reversename.from_address(ip)
             async with asyncio.timeout(self._TIMEOUT_S):
-                ans = await self._resolver.resolve(rev, "PTR")
-            return [str(a).rstrip(".") for a in ans]
+                ans = await self._resolver.resolve(rev, 'PTR')
+            return [str(a).rstrip('.') for a in ans]
         except Exception:
             return []
 
-    async def pivot_domain(
-        self,
-        domain: str,
-        ioc_graph: Any,
-    ) -> int:
+    async def pivot_domain(self, domain: str, ioc_graph: Any) -> int:
         """
         Domain → IPs → buffer to IOC graph.
 
@@ -1056,11 +697,11 @@ class PassiveDNSClient:
         count = 0
         ips = await self.resolve_domain(domain)
         for ip in ips[:5]:
-            await ioc_graph.buffer_ioc("ipv4", ip, confidence=0.70)
+            await ioc_graph.buffer_ioc('ipv4', ip, confidence=0.7)
             count += 1
             for hostname in (await self.reverse_lookup(ip))[:3]:
                 if hostname and hostname != domain:
-                    await ioc_graph.buffer_ioc("domain", hostname, confidence=0.60)
+                    await ioc_graph.buffer_ioc('domain', hostname, confidence=0.6)
                     count += 1
         return count
 
@@ -1068,17 +709,7 @@ class PassiveDNSClient:
         """No-op — kept for API consistency."""
         pass
 
-
-# =============================================================================
-# FÁZE P9: GraphManager integration helpers
-# =============================================================================
-
-
-async def graph_add_domain_ip_relations(
-    domain: str,
-    ip_addresses: list[str],
-    graph: Any,
-) -> None:
+async def graph_add_domain_ip_relations(domain: str, ip_addresses: list[str], graph: Any) -> None:
     """
     FÁZE P9: Add domain→IP relations to GraphManager.
 
@@ -1086,18 +717,13 @@ async def graph_add_domain_ip_relations(
     """
     if graph is None:
         return
-    for ip in ip_addresses[:10]:  # Max 10 IPs per domain
+    for ip in ip_addresses[:10]:
         try:
-            graph.add_relation(domain, ip, "resolves_to")
-        except Exception:  # noqa: BLE001
+            graph.add_relation(domain, ip, 'resolves_to')
+        except Exception:
             pass
 
-
-async def graph_add_ip_asn_relations(
-    ip: str,
-    asn_info: ASNInfo | list[ASNInfo],
-    graph: Any,
-) -> None:
+async def graph_add_ip_asn_relations(ip: str, asn_info: ASNInfo | list[ASNInfo], graph: Any) -> None:
     """
     FÁZE P9: Add IP→ASN relations to GraphManager.
 
@@ -1106,33 +732,23 @@ async def graph_add_ip_asn_relations(
     if graph is None:
         return
     if isinstance(asn_info, list):
-        for a in asn_info[:3]:  # Max 3 ASN entries per IP
+        for a in asn_info[:3]:
             try:
-                graph.add_relation(ip, f"AS{a.asn}", "belongs_to_asn")
-            except Exception:  # noqa: BLE001
+                graph.add_relation(ip, f'AS{a.asn}', 'belongs_to_asn')
+            except Exception:
                 pass
     elif asn_info is not None:
         try:
-            graph.add_relation(ip, f"AS{asn_info.asn}", "belongs_to_asn")
-        except Exception:  # noqa: BLE001
+            graph.add_relation(ip, f'AS{asn_info.asn}', 'belongs_to_asn')
+        except Exception:
             pass
-
-
-# =============================================================================
-# DHTProbe — Sprint 8UB: BitTorrent DHT discovery
-# =============================================================================
 
 class DHTProbe:
     """BitTorrent DHT — discovery metadata z P2P sítě.
     UDP asyncio, bootstrap přes router.bittorrent.com.
     info_hash jména → PatternMatcher → malware infrastructure.
     Zdroj neindexovaný žádným komerčním nástrojem."""
-
-    _BOOTSTRAP = [
-        ("router.bittorrent.com", 6881),
-        ("dht.transmissionbt.com", 6881),
-        ("router.utorrent.com", 6881),
-    ]
+    _BOOTSTRAP = [('router.bittorrent.com', 6881), ('dht.transmissionbt.com', 6881), ('router.utorrent.com', 6881)]
     _TIMEOUT_S = 5.0
     _MAX_NODES = 50
 
@@ -1144,17 +760,14 @@ class DHTProbe:
                 import dns.asyncresolver
                 r = dns.asyncresolver.Resolver()
                 async with asyncio.timeout(3.0):
-                    ans = await r.resolve(host, "A")
+                    ans = await r.resolve(host, 'A')
                 ips = [str(a) for a in ans]
                 nodes.extend([(ip, port) for ip in ips[:2]])
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
         return nodes
 
-    async def find_nodes_for_hash(
-        self,
-        info_hash_hex: str,
-    ) -> list[str]:
+    async def find_nodes_for_hash(self, info_hash_hex: str) -> list[str]:
         """FIND_NODE query pro konkrétní info_hash.
         Vrátí list hostnames/IPs z DHT odpovědí.
         M1: asyncio.DatagramEndpoint — čistě async UDP."""
@@ -1164,74 +777,53 @@ class DHTProbe:
             info_hash_bytes = bytes.fromhex(info_hash_hex)
 
             def bencode_dict(d: dict) -> bytes:
-                parts = [b"d"]
+                parts = [b'd']
                 for k in sorted(d.keys()):
                     v = d[k]
-                    parts.append(f"{len(k)}:{k}".encode())
+                    parts.append(f'{len(k)}:{k}'.encode())
                     if isinstance(v, bytes):
-                        parts.append(f"{len(v)}:".encode() + v)
+                        parts.append(f'{len(v)}:'.encode() + v)
                     elif isinstance(v, dict):
                         parts.append(bencode_dict(v))
-                parts.append(b"e")
-                return b"".join(parts)
-
+                parts.append(b'e')
+                return b''.join(parts)
             tid = secrets.token_bytes(2)
-            msg = bencode_dict({
-                "t": tid, "y": b"q", "q": b"find_node",
-                "a": {"id": node_id, "target": info_hash_bytes}
-            })
-
+            msg = bencode_dict({'t': tid, 'y': b'q', 'q': b'find_node', 'a': {'id': node_id, 'target': info_hash_bytes}})
             bootstrap = await self.bootstrap_nodes()
             for host, port in bootstrap[:3]:
                 try:
                     loop = asyncio.get_running_loop()
                     async with asyncio.timeout(self._TIMEOUT_S):
-                        transport, _ = await loop.create_datagram_endpoint(
-                            asyncio.DatagramProtocol,
-                            remote_addr=(host, port),
-                        )
+                        transport, _ = await loop.create_datagram_endpoint(asyncio.DatagramProtocol, remote_addr=(host, port))
                     transport.sendto(msg)
                     await asyncio.sleep(1.0)
                     transport.close()
-                    results.append(f"{host}:{port}")
+                    results.append(f'{host}:{port}')
                 except Exception as e:
-                    logger.debug(f"DHT FIND_NODE {host}:{port}: {e}")
+                    logger.debug(f'DHT FIND_NODE {host}:{port}: {e}')
         except Exception as e:
-            logger.debug(f"DHTProbe: {e}")
+            logger.debug(f'DHTProbe: {e}')
         return results
 
-    async def probe_known_hashes(
-        self,
-        session: httpx.AsyncClient,
-    ) -> list[tuple[str, str]]:
+    async def probe_known_hashes(self, session: httpx.AsyncClient) -> list[tuple[str, str]]:
         """Dotazovat DHT pro known malware info_hashes z MalwareBazaar.
         Vrátí [(info_hash, status)]."""
-        # Known malware-associated info_hashes (public threat intel)
-        KNOWN_HASHES = [  # noqa: N806
-            "a" * 40,  # placeholder — nahradit reálnými z ti_feed_adapter
-        ]
+        KNOWN_HASHES = ['a' * 40]
         results: list[tuple[str, str]] = []
         for h in KNOWN_HASHES[:5]:
             nodes = await self.find_nodes_for_hash(h)
             if nodes:
-                results.append((h, f"found_at:{nodes[0]}"))
+                results.append((h, f'found_at:{nodes[0]}'))
         return results
 
-
-# =============================================================================
-# FÁZE P5: CNAME Chain Resolution
-# =============================================================================
-
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CNAMERecord:
     """CNAME chain record."""
     source: str
     target: str
     ttl: int
 
-
-async def resolve_cname_chain(domain: str, max_depth: int = 10) -> list[CNAMERecord]:
+async def resolve_cname_chain(domain: str, max_depth: int=10) -> list[CNAMERecord]:
     """
     Resolve full CNAME chain for a domain.
 
@@ -1245,38 +837,28 @@ async def resolve_cname_chain(domain: str, max_depth: int = 10) -> list[CNAMERec
     chain: list[CNAMERecord] = []
     current = domain
     seen: set[str] = set()
-
     try:
         resolver = dns.asyncresolver.Resolver()
-        resolver.nameservers = ["1.1.1.1", "8.8.8.8"]
+        resolver.nameservers = ['1.1.1.1', '8.8.8.8']
         resolver.timeout = 3.0
         resolver.lifetime = 10.0
-
         for _ in range(max_depth):
             if current in seen:
                 break
             seen.add(current)
-
             try:
                 async with asyncio.timeout(5.0):
-                    answers = await resolver.resolve(current, "CNAME")
-                cname_value = str(answers[0]).rstrip(".")
+                    answers = await resolver.resolve(current, 'CNAME')
+                cname_value = str(answers[0]).rstrip('.')
                 chain.append(CNAMERecord(source=current, target=cname_value, ttl=answers.ttl))
                 current = cname_value
             except (TimeoutError, dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
                 break
     except Exception as e:
-        logger.debug(f"resolve_cname_chain({domain}): {e}")
-
+        logger.debug(f'resolve_cname_chain({domain}): {e}')
     return chain
 
-
-# =============================================================================
-# FÁZE P5: ASN Lookup
-# =============================================================================
-
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ASNInfo:
     """Autonomous System Number information."""
     asn: int
@@ -1284,7 +866,6 @@ class ASNInfo:
     name: str
     country: str | None
     source: str
-
 
 async def lookup_asn(ip_or_prefix: str) -> list[ASNInfo]:
     """
@@ -1297,37 +878,23 @@ async def lookup_asn(ip_or_prefix: str) -> list[ASNInfo]:
         List of ASNInfo objects
     """
     results: list[ASNInfo] = []
-
     try:
         async with httpx.AsyncClient() as session:
-            url = f"https://ipinfo.io/{ip_or_prefix}/json"
+            url = f'https://ipinfo.io/{ip_or_prefix}/json'
             async with session.get(url, timeout=httpx.Timeout(total=10)) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    if "org" in data:
-                        org = data["org"]
+                    if 'org' in data:
+                        org = data['org']
                         parts = org.split()
-                        asn_num = int(parts[0].replace("AS", "")) if parts else 0
-                        prefix = " ".join(parts[1:]) if len(parts) > 1 else ""
-                        results.append(ASNInfo(
-                            asn=asn_num,
-                            prefix=prefix,
-                            name=data.get("name", data.get("org", "")),
-                            country=data.get("country"),
-                            source="ipinfo.io",
-                        ))
+                        asn_num = int(parts[0].replace('AS', '')) if parts else 0
+                        prefix = ' '.join(parts[1:]) if len(parts) > 1 else ''
+                        results.append(ASNInfo(asn=asn_num, prefix=prefix, name=data.get('name', data.get('org', '')), country=data.get('country'), source='ipinfo.io'))
     except Exception as e:
-        logger.debug(f"lookup_asn({ip_or_prefix}): {e}")
-
+        logger.debug(f'lookup_asn({ip_or_prefix}): {e}')
     return results
 
-
-# =============================================================================
-# FÁZE P5: Certificate Transparency (crt.sh) Lookup
-# =============================================================================
-
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CTRawCertificate:
     """Certificate Transparency log entry."""
     common_name: str
@@ -1336,8 +903,7 @@ class CTRawCertificate:
     expiry_date: str
     issuer_name: str | None
 
-
-async def lookup_crtsh(domain: str, limit: int = 50) -> list[CTRawCertificate]:
+async def lookup_crtsh(domain: str, limit: int=50) -> list[CTRawCertificate]:
     """
     Query crt.sh Certificate Transparency log for domain certificates.
 
@@ -1349,45 +915,27 @@ async def lookup_crtsh(domain: str, limit: int = 50) -> list[CTRawCertificate]:
         List of CTRawCertificate objects
     """
     results: list[CTRawCertificate] = []
-
     try:
         async with httpx.AsyncClient() as session:
-            url = f"https://crt.sh/?q=%.{domain}&output=json"
-            async with session.get(
-                url,
-                timeout=httpx.Timeout(total=30),
-                headers={"User-Agent": "Hledac-OSINT/1.0"},
-            ) as resp:
+            url = f'https://crt.sh/?q=%.{domain}&output=json'
+            async with session.get(url, timeout=httpx.Timeout(total=30), headers={'User-Agent': 'Hledac-OSINT/1.0'}) as resp:
                 if resp.status == 200:
                     try:
                         data = await resp.json()
                     except Exception:
                         text = await resp.text()
-                        if "json" in (resp.headers.get("Content-Type", "") or ""):
+                        if 'json' in (resp.headers.get('Content-Type', '') or ''):
                             import json as _json
-                            data = _json.loads(text) if text.strip().startswith("[") else []
+                            data = _msgspec_loads(text) if text.strip().startswith('[') else []
                         else:
                             data = []
                     for entry in data[:limit]:
-                        results.append(CTRawCertificate(
-                            common_name=entry.get("common_name", ""),
-                            name_value=entry.get("name_value", ""),
-                            issue_date=entry.get("not_before", ""),
-                            expiry_date=entry.get("not_after", ""),
-                            issuer_name=entry.get("issuer_name"),
-                        ))
+                        results.append(CTRawCertificate(common_name=entry.get('common_name', ''), name_value=entry.get('name_value', ''), issue_date=entry.get('not_before', ''), expiry_date=entry.get('not_after', ''), issuer_name=entry.get('issuer_name')))
     except Exception as e:
-        logger.debug(f"lookup_crtsh({domain}): {e}")
-
+        logger.debug(f'lookup_crtsh({domain}): {e}')
     return results
 
-
-# =============================================================================
-# FÁZE P5: Passive DNS Lookup (dnslookupapi.com)
-# =============================================================================
-
-
-async def passive_dns_lookup(domain: str, api_key: str | None = None) -> dict[str, Any]:
+async def passive_dns_lookup(domain: str, api_key: str | None=None) -> dict[str, Any]:
     """
     Query Passive DNS service for domain resolution history.
 
@@ -1398,52 +946,19 @@ async def passive_dns_lookup(domain: str, api_key: str | None = None) -> dict[st
     Returns:
         Dict with resolution records
     """
-    result: dict[str, Any] = {"domain": domain, "resolutions": [], "subdomains": []}
-
+    result: dict[str, Any] = {'domain': domain, 'resolutions': [], 'subdomains': []}
     if not api_key:
-        logger.debug("passive_dns_lookup: no API key provided")
+        logger.debug('passive_dns_lookup: no API key provided')
         return result
-
     try:
         async with httpx.AsyncClient() as session:
-            url = f"https://api.dnslookupapi.com/v1/dns/{domain}/history"
-            async with session.get(
-                url,
-                params={"api_key": api_key},
-                timeout=httpx.Timeout(total=15),
-            ) as resp:
+            url = f'https://api.dnslookupapi.com/v1/dns/{domain}/history'
+            async with session.get(url, params={'api_key': api_key}, timeout=httpx.Timeout(total=15)) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    result["resolutions"] = data.get("records", [])
-                    result["subdomains"] = data.get("subdomains", [])
+                    result['resolutions'] = data.get('records', [])
+                    result['subdomains'] = data.get('subdomains', [])
     except Exception as e:
-        logger.debug(f"passive_dns_lookup({domain}): {e}")
-
+        logger.debug(f'passive_dns_lookup({domain}): {e}')
     return result
-
-
-# Export
-__all__ = [
-    "NetworkReconnaissance",
-    "DNSEnumerator",
-    "WHOISLookup",
-    "SSLAnalyzer",
-    "PassiveDNSClient",
-    "HostInfo",
-    "WHOISData",
-    "SSLCertificate",
-    "DNSRecord",
-    "RecordType",
-    "DHTProbe",
-    "resolve_cname_chain",
-    "lookup_asn",
-    "lookup_crtsh",
-    "passive_dns_lookup",
-    "CNAMERecord",
-    "ASNInfo",
-    "CTRawCertificate",
-    # FÁZE P9
-    "graph_add_domain_ip_relations",
-    "graph_add_ip_asn_relations",
-]
-
+__all__ = ['NetworkReconnaissance', 'DNSEnumerator', 'WHOISLookup', 'SSLAnalyzer', 'PassiveDNSClient', 'HostInfo', 'WHOISData', 'SSLCertificate', 'DNSRecord', 'RecordType', 'DHTProbe', 'resolve_cname_chain', 'lookup_asn', 'lookup_crtsh', 'passive_dns_lookup', 'CNAMERecord', 'ASNInfo', 'CTRawCertificate', 'graph_add_domain_ip_relations', 'graph_add_ip_asn_relations']

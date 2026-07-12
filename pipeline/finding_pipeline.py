@@ -39,35 +39,21 @@ P4-1 changes vs original:
 - _flush_store_batch: DuckDB write + graph upsert parallelized via asyncio.gather
 - store_stats added to PipelineStats (per-worker tracking)
 """
-
 from __future__ import annotations
-
 import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
-
 import msgspec
-
 if TYPE_CHECKING:
     pass
-
-from hledac.universal.utils.async_helpers import (
-    safe_create_task,
-    safe_gather_ok,
-    safe_gather_return_exceptions,
-    safe_wait_for,
-)
-
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok, safe_gather_return_exceptions, safe_wait_for
 logger = logging.getLogger(__name__)
-
-# Pipeline configuration
-_PIPELINE_QUEUE_SIZE: int = 500  # bounded queue — backpressure on producers
-_PIPELINE_CHUNK_SIZE: int = 1024  # DuckDB chunk (matches canonical write path)
-_PIPELINE_WORKERS_ENRICH: int = 2  # CPU-bound: CT + multimodal
-_PIPELINE_WORKERS_STORE: int = 2  # I/O-bound: DuckDB + LMDB (P4-1: 1→2 for inter-batch parallelism)
-
+_PIPELINE_QUEUE_SIZE: int = 500
+_PIPELINE_CHUNK_SIZE: int = 1024
+_PIPELINE_WORKERS_ENRICH: int = 2
+_PIPELINE_WORKERS_STORE: int = 2
 
 class PipelineStats(msgspec.Struct):
     """Statistics for the finding pipeline.
@@ -77,7 +63,6 @@ class PipelineStats(msgspec.Struct):
     - Zero-GC overhead with
     - Python 3.14 ready
     """
-
     enqueued: int = 0
     enriched: int = 0
     stored: int = 0
@@ -85,7 +70,6 @@ class PipelineStats(msgspec.Struct):
     queue_size: int = 0
     enrich_time_ms: float = 0.0
     store_time_ms: float = 0.0
-
 
 class FindingPipeline:
     """
@@ -100,35 +84,20 @@ class FindingPipeline:
     - DuckDB writes are async (not blocking event loop)
     - All exceptions caught and logged (fail-safe)
     """
+    __slots__ = tuple(('_duckdb_store', '_enrich_fn', '_enrich_workers', '_graph_service', '_multimodal_fn', '_queue', '_running', '_shutdown', '_stats', '_stats_lock', '_store_workers'))
 
-    def __init__(
-        self,
-        duckdb_store: Any,  # DuckDBShadowStore — duckdb_store.py
-        graph_service: Any,  # DuckPGQGraph — graph_service.py
-        enrich_fn: Callable[[Any], Any] | None = None,  # sync fn(CanonicalFinding) -> CanonicalFinding
-        multimodal_fn: Callable[[Any], Any] | None = None,  # sync fn(CanonicalFinding) -> CanonicalFinding
-    ) -> None:
+    def __init__(self, duckdb_store: Any, graph_service: Any, enrich_fn: Callable[[Any], Any] | None=None, multimodal_fn: Callable[[Any], Any] | None=None) -> None:
         self._duckdb_store = duckdb_store
         self._graph_service = graph_service
         self._enrich_fn = enrich_fn
         self._multimodal_fn = multimodal_fn
-
-        # Queue: findings flow from producers to workers
         self._queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=_PIPELINE_QUEUE_SIZE)
-
-        # Worker tasks (daemon)
         self._enrich_workers: list[asyncio.Task[None]] = []
-        self._store_workers: list[asyncio.Task[None]] = []  # P4-1: 2 workers
+        self._store_workers: list[asyncio.Task[None]] = []
         self._running = False
-
-        # Statistics
         self._stats = PipelineStats()
         self._stats_lock = asyncio.Lock()
-
-        # Shutdown flag
         self._shutdown = asyncio.Event()
-
-    # ─── Producer API ────────────────────────────────────────────────────────────
 
     async def enqueue(self, finding: Any) -> bool:
         """
@@ -145,8 +114,8 @@ class FindingPipeline:
         except asyncio.QueueFull:
             async with self._stats_lock:
                 self._stats.dropped += 1
-            finding_id = getattr(finding, "finding_id", "?")
-            logger.warning(f"FindingPipeline: queue full, dropped finding {finding_id}")
+            finding_id = getattr(finding, 'finding_id', '?')
+            logger.warning(f'FindingPipeline: queue full, dropped finding {finding_id}')
             return False
 
     async def enqueue_batch(self, findings: list[Any]) -> int:
@@ -161,32 +130,21 @@ class FindingPipeline:
                 count += 1
         return count
 
-    # ─── Worker Lifecycle ────────────────────────────────────────────────────────
-
     async def start(self) -> None:
         """Start all pipeline workers."""
         if self._running:
             return
-
         self._running = True
         self._shutdown.clear()
-
-        # Start enrich workers (parallel CPU-bound tasks)
-        # F320: asyncio.create_task -> safe_create_task (eager_start, loop probe)
         for i in range(_PIPELINE_WORKERS_ENRICH):
-            task = safe_create_task(self._enrich_worker(worker_id=i), name=f"pipeline:enrich_worker_{i}")
+            task = safe_create_task(self._enrich_worker(worker_id=i), name=f'pipeline:enrich_worker_{i}')
             self._enrich_workers.append(task)
-
-        # Start store workers (P4-1: 2 workers drain same queue in parallel)
         for i in range(_PIPELINE_WORKERS_STORE):
-            task = safe_create_task(self._store_worker_main(worker_id=i), name=f"pipeline:store_worker_{i}")
+            task = safe_create_task(self._store_worker_main(worker_id=i), name=f'pipeline:store_worker_{i}')
             self._store_workers.append(task)
+        logger.info(f'FindingPipeline: started {_PIPELINE_WORKERS_ENRICH} enrich + {_PIPELINE_WORKERS_STORE} store workers')
 
-        logger.info(
-            f"FindingPipeline: started {_PIPELINE_WORKERS_ENRICH} enrich + {_PIPELINE_WORKERS_STORE} store workers"
-        )
-
-    async def stop(self, timeout: float = 30.0) -> None:
+    async def stop(self, timeout: float=30.0) -> None:
         """
         Stop all workers gracefully.
 
@@ -194,45 +152,30 @@ class FindingPipeline:
         """
         if not self._running:
             return
-
         self._running = False
         self._shutdown.set()
-
-        # Send poison pills to workers
         for _ in self._enrich_workers:
             try:
                 self._queue.put_nowait(None)
             except asyncio.QueueFull:
                 pass
-        # P4-1: 2 store workers each get a poison pill
         for _ in self._store_workers:
             try:
                 self._queue.put_nowait(None)
             except asyncio.QueueFull:
                 pass
-
-        # Wait for workers to drain
         all_tasks: list[Awaitable[Any]] = []
         for task in self._enrich_workers:
             all_tasks.append(task)
         for task in self._store_workers:
             all_tasks.append(task)
-
-        # ISSUE-044: asyncio.wait_for → safe_wait_for (PEP 654 asyncio.timeout)
         try:
-            await safe_wait_for(
-                safe_gather_ok(*all_tasks, label="finding_pipeline:shutdown"),
-                timeout=timeout,
-                label="finding_pipeline:shutdown",
-            )
+            await safe_wait_for(safe_gather_ok(*all_tasks, label='finding_pipeline:shutdown'), timeout=timeout, label='finding_pipeline:shutdown')
         except TimeoutError:
-            logger.warning("FindingPipeline: shutdown timeout, force-killing workers")
-
+            logger.warning('FindingPipeline: shutdown timeout, force-killing workers')
         self._enrich_workers.clear()
         self._store_workers.clear()
-        logger.info("FindingPipeline: stopped")
-
-    # ─── Enrich Worker ──────────────────────────────────────────────────────────
+        logger.info('FindingPipeline: stopped')
 
     async def _enrich_worker(self, worker_id: int) -> None:
         """
@@ -244,67 +187,47 @@ class FindingPipeline:
         OS-level futex/Condition — 0 wakeups/s when idle (no polling).
         The inner drain loop keeps 100ms timeout for micro-batching.
         """
-        logger.debug(f"FindingPipeline: enrich_worker-{worker_id} started")
-
+        logger.debug(f'FindingPipeline: enrich_worker-{worker_id} started')
         while not self._shutdown.is_set():
             try:
-                # ISSUE-005 fix: get FIRST item without timeout.
-                # Blocks efficiently on the queue's internal Condition — no polling.
-                # Shutdown check via outer loop condition (set by stop()).
-                # ISSUE-044: timeout=None → await directly (no asyncio.wait_for needed)
                 item = await self._queue.get()
-
-                if item is None:  # Poison pill
-                    logger.debug(f"FindingPipeline: enrich_worker-{worker_id} received poison")
+                if item is None:
+                    logger.debug(f'FindingPipeline: enrich_worker-{worker_id} received poison')
                     return
-
                 batch: list[Any] = [item]
-
-                # Drain remaining items with 100ms timeout for micro-batching.
-                # Items that arrive within 100ms of each other are batched together
-                # (reduces per-item overhead by ~40%).
-                # ISSUE-044: asyncio.wait_for → asyncio.timeout (PEP 654, Python 3.11+)
                 try:
                     async with asyncio.timeout(0.1):
-                        while len(batch) < 32:  # micro-batch size
+                        while len(batch) < 32:
                             item = await self._queue.get()
-                            if item is None:  # Poison pill
+                            if item is None:
                                 break
                             batch.append(item)
                 except TimeoutError:
-                    pass  # Batch window expired, process what we have
-
+                    pass
                 if batch:
                     await self._process_enrich_batch(batch)
-
             except asyncio.CancelledError:
-                logger.debug(f"FindingPipeline: enrich_worker-{worker_id} cancelled")
+                logger.debug(f'FindingPipeline: enrich_worker-{worker_id} cancelled')
                 break
             except Exception as e:
-                logger.exception(f"FindingPipeline: enrich_worker-{worker_id} error: {e}")
-
-        logger.debug(f"FindingPipeline: enrich_worker-{worker_id} stopped")
+                logger.exception(f'FindingPipeline: enrich_worker-{worker_id} error: {e}')
+        logger.debug(f'FindingPipeline: enrich_worker-{worker_id} stopped')
 
     async def _process_enrich_batch(self, batch: list[Any]) -> None:
         """Process a batch of findings through enrichment."""
         if not batch:
             return
-
         t0 = time.monotonic()
-
-        # Parallel CPU-bound enrichment in thread pool
         enrich_coros: list[Awaitable[Any]] = []
         for f in batch:
             if self._enrich_fn is not None:
                 coro = asyncio.to_thread(self._enrich_fn, f)
                 enrich_coros.append(coro)
             else:
-                # Passthrough coroutine
+
                 async def passthrough(x: Any) -> Any:
                     return x
-
                 enrich_coros.append(passthrough(f))
-
         multimodal_coros: list[Awaitable[Any]] = []
         for f in batch:
             if self._multimodal_fn is not None:
@@ -314,41 +237,28 @@ class FindingPipeline:
 
                 async def passthrough(x: Any) -> Any:
                     return x
-
                 multimodal_coros.append(passthrough(f))
-
-        # Gather all enrichment (all run in parallel)
         all_coros = enrich_coros + multimodal_coros
-        # F314: migrated asyncio.gather -> safe_gather_return_exceptions (indexed access to raw exceptions)
-        results = await safe_gather_return_exceptions(*all_coros, label="finding_pipeline:enrich")
-
-        # Note: BaseException catches CancelledError too (re-raises via safe_gather)
+        results = await safe_gather_return_exceptions(*all_coros, label='finding_pipeline:enrich')
         enriched: list[Any] = []
-        for i, r in enumerate(results[: len(batch)]):
+        for i, r in enumerate(results[:len(batch)]):
             if isinstance(r, BaseException):
-                logger.warning(f"Enrich error: {r}")
-                enriched.append(batch[i])  # passthrough on error
+                logger.warning(f'Enrich error: {r}')
+                enriched.append(batch[i])
             else:
                 enriched.append(r)
-
-        # Process multimodal results (in real impl these merge with enriched)
-        for r in results[len(batch) :]:
+        for r in results[len(batch):]:
             if isinstance(r, BaseException):
-                logger.warning(f"Multimodal enrich error: {r}")
-
-        # Pass enriched findings to store worker via internal queue
+                logger.warning(f'Multimodal enrich error: {r}')
         for f in enriched:
             if f is not None:
                 await self._pass_to_store(f)
-
         dt = (time.monotonic() - t0) * 1000
         async with self._stats_lock:
             self._stats.enrich_time_ms += dt
             self._stats.enriched += len(enriched)
 
-    # ─── Store Worker ───────────────────────────────────────────────────────────
-
-    async def _store_worker_main(self, worker_id: int = 0) -> None:
+    async def _store_worker_main(self, worker_id: int=0) -> None:
         """
         Store worker that batches findings and writes to DuckDB + LMDB.
 
@@ -362,58 +272,39 @@ class FindingPipeline:
         ISSUE-005 fix: queue.get() WITHOUT timeout blocks efficiently via
         OS-level futex/Condition — 0 wakeups/s when idle (no polling).
         """
-        logger.debug(f"FindingPipeline: store_worker-{worker_id} started")
-
+        logger.debug(f'FindingPipeline: store_worker-{worker_id} started')
         pending: list[Any] = []
         last_flush = time.monotonic()
-        flush_interval_s: float = 1.0  # Flush every 1s or when chunk full
-
+        flush_interval_s: float = 1.0
         while not self._shutdown.is_set():
             try:
-                # ISSUE-005 fix: get FIRST item without timeout.
-                # Blocks efficiently on the queue's internal Condition — no polling.
-                # ISSUE-044: timeout=None → await directly (no asyncio.wait_for needed)
-                # NOTE: task_done() is NOT called after get() — queue.join() is never
-                # used in this pipeline, and task_done() without join() drives the
-                # internal counter negative (ValueError on overflow).
                 item = await self._queue.get()
-
-                if item is None:  # Poison pill
+                if item is None:
                     if pending:
                         await self._flush_store_batch(pending)
                         pending.clear()
-                    logger.debug(f"FindingPipeline: store_worker-{worker_id} received poison")
+                    logger.debug(f'FindingPipeline: store_worker-{worker_id} received poison')
                     return
-
                 pending = [item]
-
-                # Accumulate up to chunk size with 100ms batching window
-                # ISSUE-044: asyncio.wait_for → asyncio.timeout (PEP 654, Python 3.11+)
                 try:
                     async with asyncio.timeout(0.1):
                         while len(pending) < _PIPELINE_CHUNK_SIZE:
                             item = await self._queue.get()
-                            if item is None:  # Poison pill
+                            if item is None:
                                 break
                             pending.append(item)
                 except TimeoutError:
                     pass
-
-                # Flush if interval elapsed or chunk full
-                if pending and (
-                    len(pending) >= _PIPELINE_CHUNK_SIZE or (time.monotonic() - last_flush) >= flush_interval_s
-                ):
+                if pending and (len(pending) >= _PIPELINE_CHUNK_SIZE or time.monotonic() - last_flush >= flush_interval_s):
                     await self._flush_store_batch(pending)
                     pending.clear()
                     last_flush = time.monotonic()
-
             except asyncio.CancelledError:
-                logger.debug(f"FindingPipeline: store_worker-{worker_id} cancelled")
+                logger.debug(f'FindingPipeline: store_worker-{worker_id} cancelled')
                 break
             except Exception as e:
-                logger.exception(f"FindingPipeline: store_worker-{worker_id} error: {e}")
-
-        logger.debug(f"FindingPipeline: store_worker-{worker_id} stopped")
+                logger.exception(f'FindingPipeline: store_worker-{worker_id} error: {e}')
+        logger.debug(f'FindingPipeline: store_worker-{worker_id} stopped')
 
     async def _flush_store_batch(self, batch: list[Any]) -> None:
         """Flush a batch to DuckDB + LMDB.
@@ -425,35 +316,18 @@ class FindingPipeline:
         """
         if not batch:
             return
-
         t0 = time.monotonic()
-
-        # DuckDB async_ingest — runs on duckdb_arrow_executor thread pool.
-        # asyncio.to_thread returns Awaitable — safe_gather_return_exceptions
-        # awaits both coroutines in parallel (DuckDB I/O ‖ graph upsert).
-        # Removed safe_wait_for wrapper: timeout is a nice-to-have for a single
-        # batch, and safe_wait_for(to_thread()) creates extra awaitable overhead.
-        # DuckDB already has internal timeout handling; M1 8GB bounded executor
-        # provides implicit backpressure.
         duckdb_coro = asyncio.to_thread(self._duckdb_store.async_ingest_findings_batch, batch)
-
-        # Graph upsert — runs on event loop (non-blocking per-IOC)
         graph_coro: Awaitable[None]
         if self._graph_service is not None:
             graph_coro = asyncio.to_thread(self._graph_upsert_batch, batch)
         else:
             graph_coro = asyncio.sleep(0)
-
-        # P4-1: intra-batch parallelism — DuckDB I/O ‖ graph upsert
-        duckdb_ok, graph_ok = await safe_gather_return_exceptions(
-            duckdb_coro, graph_coro, label="finding_pipeline:store"
-        )
-
+        duckdb_ok, graph_ok = await safe_gather_return_exceptions(duckdb_coro, graph_coro, label='finding_pipeline:store')
         if isinstance(duckdb_ok, BaseException):
-            logger.warning(f"FindingPipeline: store flush DuckDB error: {duckdb_ok}")
+            logger.warning(f'FindingPipeline: store flush DuckDB error: {duckdb_ok}')
         if isinstance(graph_ok, BaseException):
-            logger.warning(f"FindingPipeline: store flush graph error: {graph_ok}")
-
+            logger.warning(f'FindingPipeline: store flush graph error: {graph_ok}')
         dt = (time.monotonic() - t0) * 1000
         async with self._stats_lock:
             self._stats.store_time_ms += dt
@@ -467,7 +341,7 @@ class FindingPipeline:
             try:
                 self._graph_service.upsert_ioc(f)
             except Exception as e:
-                logger.warning(f"Graph upsert error: {e}")
+                logger.warning(f'Graph upsert error: {e}')
 
     async def _pass_to_store(self, finding: Any) -> None:
         """Pass an enriched finding to the store queue."""
@@ -476,10 +350,8 @@ class FindingPipeline:
         except asyncio.QueueFull:
             async with self._stats_lock:
                 self._stats.dropped += 1
-            finding_id = getattr(finding, "finding_id", "?")
-            logger.warning(f"FindingPipeline: store queue full, dropped {finding_id}")
-
-    # ─── Statistics ────────────────────────────────────────────────────────────
+            finding_id = getattr(finding, 'finding_id', '?')
+            logger.warning(f'FindingPipeline: store queue full, dropped {finding_id}')
 
     def get_stats(self) -> PipelineStats:
         """Return pipeline statistics."""
@@ -489,14 +361,7 @@ class FindingPipeline:
         """Return current queue size."""
         return self._queue.qsize()
 
-
-# ─── Simplified integration for sprint_scheduler ──────────────────────────────
-
-
-async def find_and_accumulate_pipeline(
-    findings: list[Any],
-    pipeline: FindingPipeline,
-) -> int:
+async def find_and_accumulate_pipeline(findings: list[Any], pipeline: FindingPipeline) -> int:
     """
     Replace the sequential enrich→ingest pattern with pipeline enqueue.
 

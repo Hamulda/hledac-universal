@@ -44,9 +44,6 @@ INVARIANTS
 - **Cooldown** — minimum ``DEFAULT_COOLDOWN_SECONDS=3600`` between tunes
   so we never thrash the index.
 """
-
-
-
 import asyncio
 import json
 import logging
@@ -55,76 +52,33 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
-
 if TYPE_CHECKING:
     import numpy as np
-
 logger = logging.getLogger(__name__)
-
-
-# ─────────────────────────────────────────────────────────────────────
-# Constants — bounded, M1 8GB friendly
-# ─────────────────────────────────────────────────────────────────────
-
-#: Default num_partitions (matches existing F264D default).
 DEFAULT_NUM_PARTITIONS: int = 64
-#: Hard floor for num_partitions. Lower than 8 → no meaningful IVF.
 MIN_NUM_PARTITIONS: int = 8
-#: Hard ceiling for num_partitions on M1 8GB (256 MB IVF centroids at 256d).
 MAX_NUM_PARTITIONS: int = 256
-
-#: Default num_sub_vectors (matches F264D default).
 DEFAULT_NUM_SUB_VECTORS: int = 12
-#: Hard floor for sub_vectors (4 bytes per codebook × 4 = 16B per vector).
 MIN_NUM_SUB_VECTORS: int = 4
-#: Hard ceiling for sub_vectors (256d / 4 = 64, 384d / 4 = 96).
 MAX_NUM_SUB_VECTORS: int = 64
-
-#: M1 max_iterations override (default LanceDB is 50, M1 saves ~60% time).
 M1_MAX_ITERATIONS: int = 20
-
-#: Opt-in env flag for the auto-tuner (independent of F264D's QUANTIZE gate).
-AUTO_TUNE_ENV: str = "HLEDAC_LANCEDB_AUTO_TUNE"
-
-#: Insert-count threshold since last tune before re-evaluation fires.
-#: Sprint P2-3: Lowered from 5000→500 — typical sprint ingests 500-2000 findings.
-#: At 5000 the autotuner would never fire within a single sprint (P4 fix).
-INSERT_THRESHOLD_ENV: str = "HLEDAC_LANCEDB_AUTO_TUNE_THRESHOLD"
+AUTO_TUNE_ENV: str = 'HLEDAC_LANCEDB_AUTO_TUNE'
+INSERT_THRESHOLD_ENV: str = 'HLEDAC_LANCEDB_AUTO_TUNE_THRESHOLD'
 DEFAULT_INSERT_THRESHOLD: int = 500
-
-#: Cooldown in seconds between consecutive auto-tune attempts.
-COOLDOWN_SECONDS_ENV: str = "HLEDAC_LANCEDB_AUTO_TUNE_COOLDOWN_S"
-DEFAULT_COOLDOWN_SECONDS: float = 3600.0  # 1 hour
-
-#: Sample size for recall@K measurement (bounded).
+COOLDOWN_SECONDS_ENV: str = 'HLEDAC_LANCEDB_AUTO_TUNE_COOLDOWN_S'
+DEFAULT_COOLDOWN_SECONDS: float = 3600.0
 DEFAULT_RECALL_SAMPLES: int = 50
 MAX_RECALL_SAMPLES: int = 100
-#: Top-K for recall measurement.
 RECALL_TOP_K: int = 10
-
-#: If recall below this → grow partitions by 50%.
 RECALL_TOO_LOW: float = 0.85
-#: If recall above this AND search fast → shrink partitions by 25%.
 RECALL_EXCELLENT: float = 0.97
-#: Search above this ms (with excellent recall) → safe to shrink.
 SEARCH_MS_EXCESSIVE: float = 50.0
+M1_RSS_GUARD_BYTES: int = int(5.5 * 1024 ** 3)
+MAX_BRUTE_FORCE_ROWS: int = 10000
 
-#: M1 RSS guard — skip tuning above 5.5 GiB to protect sprint memory budget.
-M1_RSS_GUARD_BYTES: int = int(5.5 * 1024**3)
-
-#: Hard cap on rows scanned for brute-force baseline (sampling for large tables).
-MAX_BRUTE_FORCE_ROWS: int = 10_000
-
-
-# ─────────────────────────────────────────────────────────────────────
-# DTOs — frozen, immutable
-# ─────────────────────────────────────────────────────────────────────
-
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class TuneResult:
     """Outcome of a single auto-tune attempt (immutable, log-friendly)."""
-
     success: bool
     triggered: bool
     old_partitions: int
@@ -134,38 +88,24 @@ class TuneResult:
     rows: int
     elapsed_ms: float = 0.0
     error: str | None = None
-    # P1-2: sub_vectors now also tunable (F264E Enhancement)
     old_num_sub_vectors: int = DEFAULT_NUM_SUB_VECTORS
     new_num_sub_vectors: int = DEFAULT_NUM_SUB_VECTORS
 
     def changed(self) -> bool:
         """True iff the partition count was actually modified."""
-        return self.triggered and self.success and (
-            self.new_partitions != self.old_partitions
-            or self.new_num_sub_vectors != self.old_num_sub_vectors
-        )
+        return self.triggered and self.success and (self.new_partitions != self.old_partitions or self.new_num_sub_vectors != self.old_num_sub_vectors)
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class TuneState:
     """Persistent state — JSON-serialized to ``state_path`` for cross-session."""
-
     last_tune_at: float = 0.0
     last_num_partitions: int = DEFAULT_NUM_PARTITIONS
     last_recall: float = 0.0
     inserts_since_tune: int = 0
     tune_count: int = 0
-    # P1-2: num_sub_vectors now tunable (F264E Enhancement)
     last_num_sub_vectors: int = DEFAULT_NUM_SUB_VECTORS
-    # P0-2: EMA-trend tracking for closed-loop PID (F264E Enhancement)
     recall_ema: float = 0.0
     recall_ema_alpha: float = 0.3
-
-
-# ─────────────────────────────────────────────────────────────────────
-# Table protocol — minimal contract both consumers satisfy
-# ─────────────────────────────────────────────────────────────────────
-
 
 class _QueryBuilder(Protocol):
     """Structural type for the LanceDB query builder returned by ``Table.search()``.
@@ -173,11 +113,17 @@ class _QueryBuilder(Protocol):
     Supports method chaining: ``table.search(q).metric("cosine").limit(K).to_list()``.
     """
 
-    def metric(self, name: str) -> _QueryBuilder: ...
-    def limit(self, n: int) -> _QueryBuilder: ...
-    def to_list(self) -> list[dict[str, Any]]: ...
-    def to_pandas(self) -> Any: ...
+    def metric(self, name: str) -> _QueryBuilder:
+        ...
 
+    def limit(self, n: int) -> _QueryBuilder:
+        ...
+
+    def to_list(self) -> list[dict[str, Any]]:
+        ...
+
+    def to_pandas(self) -> Any:
+        ...
 
 class _TableLike(Protocol):
     """Structural type for the LanceDB table interface used by the tuner.
@@ -186,29 +132,17 @@ class _TableLike(Protocol):
     duck-typing. Only the methods the tuner actually calls are listed.
     """
 
-    def count_rows(self) -> int: ...
+    def count_rows(self) -> int:
+        ...
 
-    def search(self, query: Any, *, vector_column_name: str = ...) -> _QueryBuilder: ...
+    def search(self, query: Any, *, vector_column_name: str=...) -> _QueryBuilder:
+        ...
 
-    def create_index(
-        self,
-        *,
-        metric: str = ...,
-        index_type: str = ...,
-        num_partitions: int = ...,
-        num_sub_vectors: int = ...,
-        replace: bool = ...,
-        max_iterations: int = ...,
-        **kwargs: Any,
-    ) -> Any: ...
+    def create_index(self, *, metric: str=..., index_type: str=..., num_partitions: int=..., num_sub_vectors: int=..., replace: bool=..., max_iterations: int=..., **kwargs: Any) -> Any:
+        ...
 
-    def to_polars(self) -> Any: ...
-
-
-# ─────────────────────────────────────────────────────────────────────
-# IVFPQAutoTuner
-# ─────────────────────────────────────────────────────────────────────
-
+    def to_polars(self) -> Any:
+        ...
 
 class IVFPQAutoTuner:
     """Adaptive IVF-PQ index tuner.
@@ -221,45 +155,19 @@ class IVFPQAutoTuner:
         if result.changed():
             consumer._ivfpq_num_partitions = result.new_partitions
     """
+    __slots__ = tuple(('_cooldown_seconds', '_embedding_dim', '_insert_threshold', '_key_column', '_num_sub_vectors', '_state', '_state_lock', '_state_path', '_table_name', '_vector_column'))
 
-    def __init__(
-        self,
-        *,
-        table_name: str,
-        state_path: Path | None = None,
-        num_sub_vectors: int = DEFAULT_NUM_SUB_VECTORS,
-        vector_column: str = "vector",
-        key_column: str = "id",
-        insert_threshold: int | None = None,
-        cooldown_seconds: float | None = None,
-        embedding_dim: int = 256,
-    ) -> None:
+    def __init__(self, *, table_name: str, state_path: Path | None=None, num_sub_vectors: int=DEFAULT_NUM_SUB_VECTORS, vector_column: str='vector', key_column: str='id', insert_threshold: int | None=None, cooldown_seconds: float | None=None, embedding_dim: int=256) -> None:
         self._table_name: str = table_name
         self._state_path: Path | None = state_path
-        self._num_sub_vectors: int = max(
-            MIN_NUM_SUB_VECTORS,
-            min(MAX_NUM_SUB_VECTORS, int(num_sub_vectors)),
-        )
+        self._num_sub_vectors: int = max(MIN_NUM_SUB_VECTORS, min(MAX_NUM_SUB_VECTORS, int(num_sub_vectors)))
         self._vector_column: str = vector_column
         self._key_column: str = key_column
-        self._insert_threshold: int = (
-            int(insert_threshold)
-            if insert_threshold is not None
-            else int(os.environ.get(INSERT_THRESHOLD_ENV, str(DEFAULT_INSERT_THRESHOLD)))
-        )
-        self._cooldown_seconds: float = (
-            float(cooldown_seconds)
-            if cooldown_seconds is not None
-            else float(os.environ.get(COOLDOWN_SECONDS_ENV, str(DEFAULT_COOLDOWN_SECONDS)))
-        )
-        # P1-2: embedding_dim for sub_vector adaptation (F264E Enhancement)
+        self._insert_threshold: int = int(insert_threshold) if insert_threshold is not None else int(os.environ.get(INSERT_THRESHOLD_ENV, str(DEFAULT_INSERT_THRESHOLD)))
+        self._cooldown_seconds: float = float(cooldown_seconds) if cooldown_seconds is not None else float(os.environ.get(COOLDOWN_SECONDS_ENV, str(DEFAULT_COOLDOWN_SECONDS)))
         self._embedding_dim: int = max(1, int(embedding_dim))
-        # In-process state cache — synchronized via state file on disk.
         self._state: TuneState = self._load_state()
-        # Lock guarding state file writes (single-writer per tuner instance).
-        self._state_lock: asyncio.Lock | None = None  # lazy for async safety
-
-    # ── Properties ────────────────────────────────────────────────
+        self._state_lock: asyncio.Lock | None = None
 
     @property
     def table_name(self) -> str:
@@ -279,7 +187,7 @@ class IVFPQAutoTuner:
     @property
     def enabled(self) -> bool:
         """Auto-tune gate. Independent of F264D ``HLEDAC_LANCEDB_QUANTIZE``."""
-        return os.environ.get(AUTO_TUNE_ENV, "0") == "1"
+        return os.environ.get(AUTO_TUNE_ENV, '0') == '1'
 
     @property
     def state(self) -> TuneState:
@@ -291,8 +199,6 @@ class IVFPQAutoTuner:
         """Configured sub-vector count (immutable for tuner lifetime)."""
         return self._num_sub_vectors
 
-    # ── State persistence (JSON, fail-soft) ───────────────────────
-
     def _load_state(self) -> TuneState:
         """Load state from JSON. Returns TuneState() on any error (fail-soft)."""
         if self._state_path is None:
@@ -300,26 +206,11 @@ class IVFPQAutoTuner:
         try:
             if not self._state_path.exists():
                 return TuneState()
-            with self._state_path.open("r", encoding="utf-8") as f:
+            with self._state_path.open('r', encoding='utf-8') as f:
                 data = json.load(f)
-            return TuneState(
-                last_tune_at=float(data.get("last_tune_at", 0.0)),
-                last_num_partitions=int(
-                    data.get("last_num_partitions", DEFAULT_NUM_PARTITIONS)
-                ),
-                last_recall=float(data.get("last_recall", 0.0)),
-                inserts_since_tune=int(data.get("inserts_since_tune", 0)),
-                tune_count=int(data.get("tune_count", 0)),
-                # P1-2: num_sub_vectors persisted (F264E Enhancement)
-                last_num_sub_vectors=int(
-                    data.get("last_num_sub_vectors", DEFAULT_NUM_SUB_VECTORS)
-                ),
-                # P0-2: EMA trend persisted (F264E Enhancement)
-                recall_ema=float(data.get("recall_ema", 0.0)),
-                recall_ema_alpha=float(data.get("recall_ema_alpha", 0.3)),
-            )
-        except Exception as e:  # noqa: BLE001 — fail-soft by contract
-            logger.debug(f"[LANCEDB-AUTOTUNE] state load failed (defaults): {e}")
+            return TuneState(last_tune_at=float(data.get('last_tune_at', 0.0)), last_num_partitions=int(data.get('last_num_partitions', DEFAULT_NUM_PARTITIONS)), last_recall=float(data.get('last_recall', 0.0)), inserts_since_tune=int(data.get('inserts_since_tune', 0)), tune_count=int(data.get('tune_count', 0)), last_num_sub_vectors=int(data.get('last_num_sub_vectors', DEFAULT_NUM_SUB_VECTORS)), recall_ema=float(data.get('recall_ema', 0.0)), recall_ema_alpha=float(data.get('recall_ema_alpha', 0.3)))
+        except Exception as e:
+            logger.debug(f'[LANCEDB-AUTOTUNE] state load failed (defaults): {e}')
             return TuneState()
 
     def _save_state(self, state: TuneState) -> None:
@@ -328,21 +219,14 @@ class IVFPQAutoTuner:
             return
         try:
             self._state_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self._state_path.with_suffix(self._state_path.suffix + ".tmp")
-            with tmp.open("w", encoding="utf-8") as f:
+            tmp = self._state_path.with_suffix(self._state_path.suffix + '.tmp')
+            with tmp.open('w', encoding='utf-8') as f:
                 json.dump(asdict(state), f, indent=2, sort_keys=True)
-            os.replace(tmp, self._state_path)  # atomic on POSIX
-        except Exception as e:  # noqa: BLE001 — fail-soft by contract
-            logger.debug(f"[LANCEDB-AUTOTUNE] state save failed: {e}")
+            os.replace(tmp, self._state_path)
+        except Exception as e:
+            logger.debug(f'[LANCEDB-AUTOTUNE] state save failed: {e}')
 
-    # ── Cooldown / threshold gate ─────────────────────────────────
-
-    def should_tune(
-        self,
-        state: TuneState,
-        inserts_since_tune: int,
-        now: float | None = None,
-    ) -> bool:
+    def should_tune(self, state: TuneState, inserts_since_tune: int, now: float | None=None) -> bool:
         """Decide whether the cooldown + insert-threshold gate is satisfied.
 
         Returns True only if both:
@@ -356,11 +240,9 @@ class IVFPQAutoTuner:
         if inserts_since_tune < self._insert_threshold:
             return False
         if state.last_tune_at <= 0.0:
-            return True  # first-ever tune
+            return True
         ts_now = now if now is not None else time.time()
-        return (ts_now - state.last_tune_at) >= self._cooldown_seconds
-
-    # ── Recall measurement (bounded, sample-based) ────────────────
+        return ts_now - state.last_tune_at >= self._cooldown_seconds
 
     def _extract_vectors_and_keys(self, table: _TableLike) -> tuple[np.ndarray, list[str]]:
         """Extract the vector column and a key column from the table as numpy.
@@ -372,47 +254,34 @@ class IVFPQAutoTuner:
         Fail-soft: any error returns empty arrays.
         """
         import numpy as _np
-
         try:
             df = table.to_polars()
-        except Exception as e:  # noqa: BLE001
-            logger.debug(f"[LANCEDB-AUTOTUNE] to_polars failed: {e}")
-            return _np.empty((0, 0), dtype=_np.float32), []
-
+        except Exception as e:
+            logger.debug(f'[LANCEDB-AUTOTUNE] to_polars failed: {e}')
+            return (_np.empty((0, 0), dtype=_np.float32), [])
         try:
             if self._vector_column not in df.columns:
-                return _np.empty((0, 0), dtype=_np.float32), []
+                return (_np.empty((0, 0), dtype=_np.float32), [])
             total = len(df)
             if total == 0:
-                return _np.empty((0, 0), dtype=_np.float32), []
-
-            # Bounded brute-force sample
+                return (_np.empty((0, 0), dtype=_np.float32), [])
             if total > MAX_BRUTE_FORCE_ROWS:
                 df = df.sample(n=MAX_BRUTE_FORCE_ROWS, seed=42)
             vectors = _np.array(df[self._vector_column].to_list(), dtype=_np.float32)
             if vectors.ndim != 2 or vectors.shape[0] == 0:
-                return _np.empty((0, 0), dtype=_np.float32), []
-
-            # L2 normalize for cosine
-            norms = _np.linalg.norm(vectors, axis=1, keepdims=True) + 1e-8
+                return (_np.empty((0, 0), dtype=_np.float32), [])
+            norms = _np.linalg.norm(vectors, axis=1, keepdims=True) + 1e-08
             vectors_norm = (vectors / norms).astype(_np.float32)
-
             if self._key_column in df.columns:
                 keys = [str(k) for k in df[self._key_column].to_list()]
             else:
                 keys = [str(i) for i in range(vectors_norm.shape[0])]
-            return vectors_norm, keys
-        except Exception as e:  # noqa: BLE001
-            logger.debug(f"[LANCEDB-AUTOTUNE] vector extraction failed: {e}")
-            return _np.empty((0, 0), dtype=_np.float32), []
+            return (vectors_norm, keys)
+        except Exception as e:
+            logger.debug(f'[LANCEDB-AUTOTUNE] vector extraction failed: {e}')
+            return (_np.empty((0, 0), dtype=_np.float32), [])
 
-    def measure_recall(
-        self,
-        table: _TableLike,
-        *,
-        sample_size: int = DEFAULT_RECALL_SAMPLES,
-        k: int = RECALL_TOP_K,
-    ) -> tuple[float, float]:
+    def measure_recall(self, table: _TableLike, *, sample_size: int=DEFAULT_RECALL_SAMPLES, k: int=RECALL_TOP_K) -> tuple[float, float]:
         """Measure recall@K on a bounded random sample.
 
         Returns ``(recall_at_k, avg_search_ms)``. ``recall_at_k`` is in
@@ -427,36 +296,29 @@ class IVFPQAutoTuner:
           4. ``recall = mean(|ANN ∩ brute| / K)``
         """
         import numpy as _np
-
         actual_sample = max(1, min(sample_size, MAX_RECALL_SAMPLES, MAX_BRUTE_FORCE_ROWS))
         vectors_norm, keys = self._extract_vectors_and_keys(table)
         n = vectors_norm.shape[0]
         if n < 2 or len(keys) != n:
-            return 0.0, 0.0
-
+            return (0.0, 0.0)
         k_eff = min(k, n - 1)
         if k_eff < 1:
-            return 1.0, 0.0  # trivially perfect when K=0
-
+            return (1.0, 0.0)
         rng = _np.random.default_rng(seed=42)
         actual_sample = min(actual_sample, n)
         sample_idx = rng.choice(n, size=actual_sample, replace=False)
         queries = vectors_norm[sample_idx]
-
-        # Brute-force similarity matrix: (sample, total) — bounded by 50 × 10k
         try:
-            sims = queries @ vectors_norm.T  # type: ignore[operator]
-        except Exception as e:  # noqa: BLE001
-            logger.debug(f"[LANCEDB-AUTOTUNE] sims matmul failed: {e}")
-            return 0.0, 0.0
-
+            sims = queries @ vectors_norm.T
+        except Exception as e:
+            logger.debug(f'[LANCEDB-AUTOTUNE] sims matmul failed: {e}')
+            return (0.0, 0.0)
         recall_sum = 0.0
         search_times_ms: list[float] = []
         counted = 0
         for s_idx, q_idx in enumerate(sample_idx):
-            # Brute top-(K+1) excluding self
             sims_row = sims[s_idx].copy()
-            sims_row[int(q_idx)] = -2.0  # exclude self
+            sims_row[int(q_idx)] = -2.0
             top_kp1 = _np.argpartition(-sims_row, k_eff)[:k_eff]
             brute_keys: set[str] = set()
             for bi in top_kp1:
@@ -466,46 +328,34 @@ class IVFPQAutoTuner:
                     break
             if not brute_keys:
                 continue
-
-            # ANN top-K via LanceDB
             q_list = queries[s_idx].tolist()
             t0 = time.perf_counter()
             try:
-                ann_rows = (
-                    table.search(q_list, vector_column_name=self._vector_column)
-                    .metric("cosine")
-                    .limit(k_eff)
-                    .to_list()
-                )
-            except Exception as e:  # noqa: BLE001
-                logger.debug(f"[LANCEDB-AUTOTUNE] ANN search failed: {e}")
+                ann_rows = table.search(q_list, vector_column_name=self._vector_column).metric('cosine').limit(k_eff).to_list()
+            except Exception as e:
+                logger.debug(f'[LANCEDB-AUTOTUNE] ANN search failed: {e}')
                 ann_rows = []
             dt_ms = (time.perf_counter() - t0) * 1000.0
             search_times_ms.append(dt_ms)
-
             ann_keys: set[str] = set()
             for r in ann_rows:
                 if self._key_column in r:
                     ann_keys.add(str(r[self._key_column]))
-                elif "id" in r:
-                    ann_keys.add(str(r["id"]))
-                elif "finding_key" in r:
-                    ann_keys.add(str(r["finding_key"]))
+                elif 'id' in r:
+                    ann_keys.add(str(r['id']))
+                elif 'finding_key' in r:
+                    ann_keys.add(str(r['finding_key']))
                 if len(ann_keys) >= k_eff:
                     break
-
             recall_sum += len(ann_keys & brute_keys) / max(1, len(brute_keys))
             counted += 1
-
         if counted == 0:
-            return 0.0, 0.0
+            return (0.0, 0.0)
         avg_recall = recall_sum / counted
         avg_ms = sum(search_times_ms) / len(search_times_ms) if search_times_ms else 0.0
-        return float(avg_recall), float(avg_ms)
+        return (float(avg_recall), float(avg_ms))
 
-    # ── Partition adjustment heuristic (trend-aware PID) ──────────
-
-    def _ema_recall(self, prev_ema: float, new_recall: float, alpha: float = 0.3) -> float:
+    def _ema_recall(self, prev_ema: float, new_recall: float, alpha: float=0.3) -> float:
         """Exponential moving average of recall for trend detection.
 
         P0-2: Closed-loop PID — smooths noise in recall measurements so the
@@ -513,15 +363,7 @@ class IVFPQAutoTuner:
         """
         return alpha * new_recall + (1.0 - alpha) * prev_ema
 
-    def compute_optimal_partitions(
-        self,
-        *,
-        current: int,
-        recall: float,
-        avg_search_ms: float,
-        row_count: int,
-        prev_recall_ema: float = 0.0,
-    ) -> int:
+    def compute_optimal_partitions(self, *, current: int, recall: float, avg_search_ms: float, row_count: int, prev_recall_ema: float=0.0) -> int:
         """Decide next ``num_partitions`` based on observed recall and search latency.
 
         P0-2 Enhancement: Trend-aware PID controller.
@@ -546,53 +388,24 @@ class IVFPQAutoTuner:
         current = max(MIN_NUM_PARTITIONS, min(MAX_NUM_PARTITIONS, int(current)))
         if row_count <= 0:
             return current
-
-        # P0-2: closed-loop EMA for trend detection.
-        # On cold start (prev_ema == 0.0): use raw recall, not EMA-smoothed value.
         is_cold_start = prev_recall_ema <= 0.0
         recall_ema = self._ema_recall(prev_recall_ema, recall)
-
-        # Detect falling recall trajectory — early warning before hard threshold.
-        # Skip on cold start (prev_ema == 0.0 means no prior measurement).
-        falling_trajectory = (
-            not is_cold_start
-            and recall < prev_recall_ema
-            and (prev_recall_ema - recall) > 0.05  # >5% drop between tunings
-        )
-
-        # On cold start, use raw recall for threshold decisions.
-        # After warm-up, use EMA for stability (damps single-sample noise).
+        falling_trajectory = not is_cold_start and recall < prev_recall_ema and (prev_recall_ema - recall > 0.05)
         decision_recall = recall if is_cold_start else recall_ema
-
         if decision_recall < RECALL_TOO_LOW or falling_trajectory:
-            # Growing: 50% increase, or 25% if just trajectory warning
             delta = 1.5 if decision_recall < RECALL_TOO_LOW else 1.25
             new = int(current * delta)
         elif decision_recall >= RECALL_EXCELLENT and avg_search_ms > SEARCH_MS_EXCESSIVE:
             new = int(current * 0.75)
         else:
             return current
-
-        # Heuristic ceiling from row count: never grow past ~1 partition per 16
-        # rows, but never shrink below current. Soft upper bound.
-        ceiling = min(MAX_NUM_PARTITIONS, max(current, (row_count // 16) + 1))
+        ceiling = min(MAX_NUM_PARTITIONS, max(current, row_count // 16 + 1))
         new = max(MIN_NUM_PARTITIONS, min(ceiling, new))
         return new
+    _SUB_VEC_TOO_FEW: float = 0.8
+    _SUB_VEC_EXCELLENT: float = 0.95
 
-    # ── P1-2: Sub-vector adjustment heuristic ─────────────────────
-
-    # Constants for sub-vector adaptation
-    _SUB_VEC_TOO_FEW: float = 0.80  #: Grow sub_vectors if recall below here
-    _SUB_VEC_EXCELLENT: float = 0.95  #: Shrink sub_vectors if recall above here
-
-    def compute_optimal_sub_vectors(
-        self,
-        *,
-        current: int,
-        recall: float,
-        avg_search_ms: float,
-        embedding_dim: int,
-    ) -> int:
+    def compute_optimal_sub_vectors(self, *, current: int, recall: float, avg_search_ms: float, embedding_dim: int) -> int:
         """Decide next ``num_sub_vectors`` based on recall and embedding dimension.
 
         P1-2 Enhancement: Adaptive compression ratio for IVF-PQ.
@@ -616,30 +429,16 @@ class IVFPQAutoTuner:
         current = max(MIN_NUM_SUB_VECTORS, min(MAX_NUM_SUB_VECTORS, int(current)))
         dim_limit = max(MIN_NUM_SUB_VECTORS, embedding_dim)
         upper_bound = min(MAX_NUM_SUB_VECTORS, dim_limit)
-
         if recall < self._SUB_VEC_TOO_FEW:
-            # Grow: reduce compression to improve recall
             new = int(current * 1.5)
-        elif (recall >= self._SUB_VEC_EXCELLENT
-              and avg_search_ms > SEARCH_MS_EXCESSIVE
-              and current > MIN_NUM_SUB_VECTORS):
-            # Shrink: recall excellent but search is slow — reduce compression overhead
+        elif recall >= self._SUB_VEC_EXCELLENT and avg_search_ms > SEARCH_MS_EXCESSIVE and (current > MIN_NUM_SUB_VECTORS):
             new = max(MIN_NUM_SUB_VECTORS, int(current * 0.75))
         else:
             return current
-
         new = max(MIN_NUM_SUB_VECTORS, min(upper_bound, new))
         return new
 
-    # ── Retrain (canonical LanceDB API) ───────────────────────────
-
-    def retrain(
-        self,
-        table: _TableLike,
-        *,
-        new_num_partitions: int,
-        num_sub_vectors: int | None = None,
-    ) -> bool:
+    def retrain(self, table: _TableLike, *, new_num_partitions: int, num_sub_vectors: int | None=None) -> bool:
         """Re-train IVF-PQ with new ``num_partitions`` and optionally ``num_sub_vectors``.
 
         P1-2 Enhancement: Both IVF-PQ knobs are now tuned together.
@@ -655,59 +454,26 @@ class IVFPQAutoTuner:
 
         Returns True on success, False on any error (fail-soft).
         """
-        n_part = max(
-            MIN_NUM_PARTITIONS,
-            min(MAX_NUM_PARTITIONS, int(new_num_partitions)),
-        )
-        n_sub = max(
-            MIN_NUM_SUB_VECTORS,
-            min(
-                MAX_NUM_SUB_VECTORS,
-                int(num_sub_vectors) if num_sub_vectors is not None else self._num_sub_vectors,
-            ),
-        )
+        n_part = max(MIN_NUM_PARTITIONS, min(MAX_NUM_PARTITIONS, int(new_num_partitions)))
+        n_sub = max(MIN_NUM_SUB_VECTORS, min(MAX_NUM_SUB_VECTORS, int(num_sub_vectors) if num_sub_vectors is not None else self._num_sub_vectors))
         try:
-            # P1-1: Detect LanceDB version and API compatibility
-            # LanceDB >= 0.4 supports create_index with IVF_PQ; older versions
-            # may not support max_iterations kwarg. Use try/except as version
-            # detection is unreliable across installations.
-            index_kwargs: dict[str, Any] = {
-                "metric": "cosine",
-                "index_type": "IVF_PQ",
-                "num_partitions": n_part,
-                "num_sub_vectors": n_sub,
-                "replace": True,
-            }
+            index_kwargs: dict[str, Any] = {'metric': 'cosine', 'index_type': 'IVF_PQ', 'num_partitions': n_part, 'num_sub_vectors': n_sub, 'replace': True}
             try:
-                # LanceDB 0.4+ with M1-optimized max_iterations
-                index_kwargs["max_iterations"] = M1_MAX_ITERATIONS
+                index_kwargs['max_iterations'] = M1_MAX_ITERATIONS
                 table.create_index(**index_kwargs)
             except TypeError:
-                # LanceDB < 0.4 — max_iterations not supported, retry without it
-                del index_kwargs["max_iterations"]
+                del index_kwargs['max_iterations']
                 table.create_index(**index_kwargs)
-
-            logger.info(
-                f"[LANCEDB-AUTOTUNE] retrained table={self._table_name} "
-                f"num_partitions={n_part} num_sub_vectors={n_sub} "
-                f"max_iterations={M1_MAX_ITERATIONS}"
-            )
-            # F265C: after create_index(..., replace=True) LanceDB has new fragments.
-            # Compact to merge them — reduces RSS on M1 8GB and improves search locality.
+            logger.info(f'[LANCEDB-AUTOTUNE] retrained table={self._table_name} num_partitions={n_part} num_sub_vectors={n_sub} max_iterations={M1_MAX_ITERATIONS}')
             try:
-                if hasattr(table, "optimize"):
+                if hasattr(table, 'optimize'):
                     table.optimize()
             except Exception as e_opt:
-                logger.debug(f"[LANCEDB-AUTOTUNE] post-retrain compact skipped: {e_opt}")
+                logger.debug(f'[LANCEDB-AUTOTUNE] post-retrain compact skipped: {e_opt}')
             return True
-        except Exception as e:  # noqa: BLE001
-            logger.warning(
-                f"[LANCEDB-AUTOTUNE] retrain failed table={self._table_name} "
-                f"num_partitions={n_part}: {e}"
-            )
+        except Exception as e:
+            logger.warning(f'[LANCEDB-AUTOTUNE] retrain failed table={self._table_name} num_partitions={n_part}: {e}')
             return False
-
-    # ── M1 RSS guard ──────────────────────────────────────────────
 
     def _rss_under_guard(self) -> bool:
         """True iff process RSS is below M1 8GB safety threshold.
@@ -717,22 +483,12 @@ class IVFPQAutoTuner:
         """
         try:
             import psutil
-
             rss = psutil.Process().memory_info().rss
             return rss < M1_RSS_GUARD_BYTES
-        except Exception:  # noqa: BLE001
+        except Exception:
             return True
 
-    # ── Main entry: synchronous ───────────────────────────────────
-
-    def tune_if_due(
-        self,
-        table: _TableLike,
-        *,
-        current_num_partitions: int,
-        current_num_sub_vectors: int | None = None,
-        inserts_delta: int = 1,
-    ) -> TuneResult:
+    def tune_if_due(self, table: _TableLike, *, current_num_partitions: int, current_num_sub_vectors: int | None=None, inserts_delta: int=1) -> TuneResult:
         """Decide-and-execute a tune cycle (synchronous core).
 
         P0-1 + P0-2 Enhancement: Tunes BOTH num_partitions AND num_sub_vectors.
@@ -749,181 +505,47 @@ class IVFPQAutoTuner:
         to its own state if ``result.changed()``.
         """
         ts0 = time.perf_counter()
-        # P1-2: Resolve current sub_vectors from state or parameter
-        cur_sub = (
-            int(current_num_sub_vectors)
-            if current_num_sub_vectors is not None
-            else self._state.last_num_sub_vectors
-        )
-
+        cur_sub = int(current_num_sub_vectors) if current_num_sub_vectors is not None else self._state.last_num_sub_vectors
         if not self.enabled or table is None:
-            return TuneResult(
-                success=False,
-                triggered=False,
-                old_partitions=current_num_partitions,
-                new_partitions=current_num_partitions,
-                recall=0.0,
-                avg_search_ms=0.0,
-                rows=0,
-                elapsed_ms=0.0,
-                old_num_sub_vectors=cur_sub,
-                new_num_sub_vectors=cur_sub,
-            )
-
+            return TuneResult(success=False, triggered=False, old_partitions=current_num_partitions, new_partitions=current_num_partitions, recall=0.0, avg_search_ms=0.0, rows=0, elapsed_ms=0.0, old_num_sub_vectors=cur_sub, new_num_sub_vectors=cur_sub)
         new_inserts = self._state.inserts_since_tune + max(0, int(inserts_delta))
         if not self.should_tune(self._state, new_inserts):
-            # Persist updated counter even when not tuning.
-            self._state = TuneState(
-                last_tune_at=self._state.last_tune_at,
-                last_num_partitions=self._state.last_num_partitions,
-                last_recall=self._state.last_recall,
-                inserts_since_tune=new_inserts,
-                tune_count=self._state.tune_count,
-                last_num_sub_vectors=self._state.last_num_sub_vectors,
-                recall_ema=self._state.recall_ema,
-                recall_ema_alpha=self._state.recall_ema_alpha,
-            )
+            self._state = TuneState(last_tune_at=self._state.last_tune_at, last_num_partitions=self._state.last_num_partitions, last_recall=self._state.last_recall, inserts_since_tune=new_inserts, tune_count=self._state.tune_count, last_num_sub_vectors=self._state.last_num_sub_vectors, recall_ema=self._state.recall_ema, recall_ema_alpha=self._state.recall_ema_alpha)
             self._save_state(self._state)
-            return TuneResult(
-                success=False,
-                triggered=False,
-                old_partitions=current_num_partitions,
-                new_partitions=current_num_partitions,
-                recall=self._state.last_recall,
-                avg_search_ms=0.0,
-                rows=0,
-                elapsed_ms=(time.perf_counter() - ts0) * 1000.0,
-                old_num_sub_vectors=cur_sub,
-                new_num_sub_vectors=cur_sub,
-            )
-
+            return TuneResult(success=False, triggered=False, old_partitions=current_num_partitions, new_partitions=current_num_partitions, recall=self._state.last_recall, avg_search_ms=0.0, rows=0, elapsed_ms=(time.perf_counter() - ts0) * 1000.0, old_num_sub_vectors=cur_sub, new_num_sub_vectors=cur_sub)
         if not self._rss_under_guard():
-            logger.debug(
-                f"[LANCEDB-AUTOTUNE] skipped: RSS guard table={self._table_name}"
-            )
-            return TuneResult(
-                success=False,
-                triggered=False,
-                old_partitions=current_num_partitions,
-                new_partitions=current_num_partitions,
-                recall=0.0,
-                avg_search_ms=0.0,
-                rows=0,
-                elapsed_ms=(time.perf_counter() - ts0) * 1000.0,
-                error="rss_guard",
-                old_num_sub_vectors=cur_sub,
-                new_num_sub_vectors=cur_sub,
-            )
-
-        # Measure row count (table.count_rows is fast)
+            logger.debug(f'[LANCEDB-AUTOTUNE] skipped: RSS guard table={self._table_name}')
+            return TuneResult(success=False, triggered=False, old_partitions=current_num_partitions, new_partitions=current_num_partitions, recall=0.0, avg_search_ms=0.0, rows=0, elapsed_ms=(time.perf_counter() - ts0) * 1000.0, error='rss_guard', old_num_sub_vectors=cur_sub, new_num_sub_vectors=cur_sub)
         try:
             row_count = int(table.count_rows())
-        except Exception as e:  # noqa: BLE001
-            logger.debug(f"[LANCEDB-AUTOTUNE] count_rows failed: {e}")
+        except Exception as e:
+            logger.debug(f'[LANCEDB-AUTOTUNE] count_rows failed: {e}')
             row_count = 0
-
         if row_count < 256:
-            return TuneResult(
-                success=False,
-                triggered=False,
-                old_partitions=current_num_partitions,
-                new_partitions=current_num_partitions,
-                recall=0.0,
-                avg_search_ms=0.0,
-                rows=row_count,
-                elapsed_ms=(time.perf_counter() - ts0) * 1000.0,
-                error="insufficient_rows",
-                old_num_sub_vectors=cur_sub,
-                new_num_sub_vectors=cur_sub,
-            )
-
-        # Measure recall
+            return TuneResult(success=False, triggered=False, old_partitions=current_num_partitions, new_partitions=current_num_partitions, recall=0.0, avg_search_ms=0.0, rows=row_count, elapsed_ms=(time.perf_counter() - ts0) * 1000.0, error='insufficient_rows', old_num_sub_vectors=cur_sub, new_num_sub_vectors=cur_sub)
         recall, avg_ms = self.measure_recall(table)
-
-        # P0-2: Closed-loop PID — use EMA of recall for decision
         prev_ema = self._state.recall_ema
         recall_ema = self._ema_recall(prev_ema, recall)
-
-        # P0-1: Compute optimal partitions (trend-aware PID)
-        new_partitions = self.compute_optimal_partitions(
-            current=current_num_partitions,
-            recall=recall,
-            avg_search_ms=avg_ms,
-            row_count=row_count,
-            prev_recall_ema=prev_ema,
-        )
-
-        # P1-2: Compute optimal sub_vectors (compression ratio adaptation)
-        new_sub_vec = self.compute_optimal_sub_vectors(
-            current=cur_sub,
-            recall=recall,
-            avg_search_ms=avg_ms,
-            embedding_dim=self._embedding_dim,
-        )
-
+        new_partitions = self.compute_optimal_partitions(current=current_num_partitions, recall=recall, avg_search_ms=avg_ms, row_count=row_count, prev_recall_ema=prev_ema)
+        new_sub_vec = self.compute_optimal_sub_vectors(current=cur_sub, recall=recall, avg_search_ms=avg_ms, embedding_dim=self._embedding_dim)
         success = True
         err: str | None = None
         partitions_changed = new_partitions != current_num_partitions
         sub_vec_changed = new_sub_vec != cur_sub
-
         if partitions_changed or sub_vec_changed:
-            success = self.retrain(
-                table,
-                new_num_partitions=new_partitions,
-                num_sub_vectors=new_sub_vec,
-            )
+            success = self.retrain(table, new_num_partitions=new_partitions, num_sub_vectors=new_sub_vec)
             if not success:
-                err = "retrain_failed"
-                # Rollback: don't apply changes on failure
+                err = 'retrain_failed'
                 new_partitions = current_num_partitions
                 new_sub_vec = cur_sub
         else:
-            # Even when nothing changed, log the measurement with EMA trend.
-            logger.info(
-                f"[LANCEDB-AUTOTUNE] measured table={self._table_name} "
-                f"recall={recall:.3f} recall_ema={recall_ema:.3f} "
-                f"avg_ms={avg_ms:.2f} partitions={current_num_partitions} "
-                f"sub_vec={cur_sub} rows={row_count} (no change)"
-            )
-
-        # P0-2: Persist EMA state + new sub_vectors
-        new_state = TuneState(
-            last_tune_at=time.time(),
-            last_num_partitions=new_partitions,
-            last_recall=recall,
-            inserts_since_tune=0,
-            tune_count=self._state.tune_count + 1,
-            last_num_sub_vectors=new_sub_vec,
-            recall_ema=recall_ema,
-            recall_ema_alpha=self._state.recall_ema_alpha,
-        )
+            logger.info(f'[LANCEDB-AUTOTUNE] measured table={self._table_name} recall={recall:.3f} recall_ema={recall_ema:.3f} avg_ms={avg_ms:.2f} partitions={current_num_partitions} sub_vec={cur_sub} rows={row_count} (no change)')
+        new_state = TuneState(last_tune_at=time.time(), last_num_partitions=new_partitions, last_recall=recall, inserts_since_tune=0, tune_count=self._state.tune_count + 1, last_num_sub_vectors=new_sub_vec, recall_ema=recall_ema, recall_ema_alpha=self._state.recall_ema_alpha)
         self._state = new_state
         self._save_state(new_state)
+        return TuneResult(success=success, triggered=True, old_partitions=current_num_partitions, new_partitions=new_partitions, recall=recall, avg_search_ms=avg_ms, rows=row_count, elapsed_ms=(time.perf_counter() - ts0) * 1000.0, error=err, old_num_sub_vectors=cur_sub, new_num_sub_vectors=new_sub_vec)
 
-        return TuneResult(
-            success=success,
-            triggered=True,
-            old_partitions=current_num_partitions,
-            new_partitions=new_partitions,
-            recall=recall,
-            avg_search_ms=avg_ms,
-            rows=row_count,
-            elapsed_ms=(time.perf_counter() - ts0) * 1000.0,
-            error=err,
-            old_num_sub_vectors=cur_sub,
-            new_num_sub_vectors=new_sub_vec,
-        )
-
-    # ── Main entry: async wrapper (off-thread) ────────────────────
-
-    async def tune_if_due_async(
-        self,
-        table: _TableLike,
-        *,
-        current_num_partitions: int,
-        current_num_sub_vectors: int | None = None,
-        inserts_delta: int = 1,
-    ) -> TuneResult:
+    async def tune_if_due_async(self, table: _TableLike, *, current_num_partitions: int, current_num_sub_vectors: int | None=None, inserts_delta: int=1) -> TuneResult:
         """Async-safe wrapper — runs the synchronous ``tune_if_due`` in executor.
 
         P1-2 Enhancement: Passes current_num_sub_vectors through to the
@@ -934,77 +556,20 @@ class IVFPQAutoTuner:
         to the default executor so the event loop stays responsive.
         """
         if not self.enabled:
-            cur_sub = (
-                int(current_num_sub_vectors)
-                if current_num_sub_vectors is not None
-                else self._state.last_num_sub_vectors
-            )
-            return TuneResult(
-                success=False,
-                triggered=False,
-                old_partitions=current_num_partitions,
-                new_partitions=current_num_partitions,
-                recall=0.0,
-                avg_search_ms=0.0,
-                rows=0,
-                old_num_sub_vectors=cur_sub,
-                new_num_sub_vectors=cur_sub,
-            )
+            cur_sub = int(current_num_sub_vectors) if current_num_sub_vectors is not None else self._state.last_num_sub_vectors
+            return TuneResult(success=False, triggered=False, old_partitions=current_num_partitions, new_partitions=current_num_partitions, recall=0.0, avg_search_ms=0.0, rows=0, old_num_sub_vectors=cur_sub, new_num_sub_vectors=cur_sub)
         try:
             loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(
-                None,
-                lambda: self.tune_if_due(
-                    table,
-                    current_num_partitions=current_num_partitions,
-                    current_num_sub_vectors=current_num_sub_vectors,
-                    inserts_delta=inserts_delta,
-                ),
-            )
+            result = await loop.run_in_executor(None, lambda: self.tune_if_due(table, current_num_partitions=current_num_partitions, current_num_sub_vectors=current_num_sub_vectors, inserts_delta=inserts_delta))
             return result
         except RuntimeError:
-            # No event loop — fall back to direct sync call.
-            return self.tune_if_due(
-                table,
-                current_num_partitions=current_num_partitions,
-                current_num_sub_vectors=current_num_sub_vectors,
-                inserts_delta=inserts_delta,
-            )
-        except Exception as e:  # noqa: BLE001
-            cur_sub = (
-                int(current_num_sub_vectors)
-                if current_num_sub_vectors is not None
-                else self._state.last_num_sub_vectors
-            )
-            logger.debug(f"[LANCEDB-AUTOTUNE] async wrapper failed: {e}")
-            return TuneResult(
-                success=False,
-                triggered=False,
-                old_partitions=current_num_partitions,
-                new_partitions=current_num_partitions,
-                recall=0.0,
-                avg_search_ms=0.0,
-                rows=0,
-                error=str(e),
-                old_num_sub_vectors=cur_sub,
-                new_num_sub_vectors=cur_sub,
-            )
+            return self.tune_if_due(table, current_num_partitions=current_num_partitions, current_num_sub_vectors=current_num_sub_vectors, inserts_delta=inserts_delta)
+        except Exception as e:
+            cur_sub = int(current_num_sub_vectors) if current_num_sub_vectors is not None else self._state.last_num_sub_vectors
+            logger.debug(f'[LANCEDB-AUTOTUNE] async wrapper failed: {e}')
+            return TuneResult(success=False, triggered=False, old_partitions=current_num_partitions, new_partitions=current_num_partitions, recall=0.0, avg_search_ms=0.0, rows=0, error=str(e), old_num_sub_vectors=cur_sub, new_num_sub_vectors=cur_sub)
 
-
-# ─────────────────────────────────────────────────────────────────────
-# Public helpers
-# ─────────────────────────────────────────────────────────────────────
-
-
-def make_default_tuner(
-    *,
-    table_name: str,
-    state_dir: Path | None,
-    num_sub_vectors: int = DEFAULT_NUM_SUB_VECTORS,
-    vector_column: str = "vector",
-    key_column: str = "id",
-    embedding_dim: int = 256,
-) -> IVFPQAutoTuner:
+def make_default_tuner(*, table_name: str, state_dir: Path | None, num_sub_vectors: int=DEFAULT_NUM_SUB_VECTORS, vector_column: str='vector', key_column: str='id', embedding_dim: int=256) -> IVFPQAutoTuner:
     """Construct an ``IVFPQAutoTuner`` with default settings.
 
     State path is ``<state_dir>/lancedb_autotune_<table_name>.json``. Pass
@@ -1013,40 +578,6 @@ def make_default_tuner(
     if state_dir is None:
         state_path: Path | None = None
     else:
-        state_path = state_dir / f"lancedb_autotune_{table_name}.json"
-    return IVFPQAutoTuner(
-        table_name=table_name,
-        state_path=state_path,
-        num_sub_vectors=num_sub_vectors,
-        vector_column=vector_column,
-        key_column=key_column,
-        embedding_dim=embedding_dim,
-    )
-
-
-__all__ = [
-    "DEFAULT_NUM_PARTITIONS",
-    "MIN_NUM_PARTITIONS",
-    "MAX_NUM_PARTITIONS",
-    "DEFAULT_NUM_SUB_VECTORS",
-    "MIN_NUM_SUB_VECTORS",
-    "MAX_NUM_SUB_VECTORS",
-    "M1_MAX_ITERATIONS",
-    "AUTO_TUNE_ENV",
-    "INSERT_THRESHOLD_ENV",
-    "DEFAULT_INSERT_THRESHOLD",
-    "COOLDOWN_SECONDS_ENV",
-    "DEFAULT_COOLDOWN_SECONDS",
-    "DEFAULT_RECALL_SAMPLES",
-    "MAX_RECALL_SAMPLES",
-    "RECALL_TOP_K",
-    "RECALL_TOO_LOW",
-    "RECALL_EXCELLENT",
-    "SEARCH_MS_EXCESSIVE",
-    "M1_RSS_GUARD_BYTES",
-    "MAX_BRUTE_FORCE_ROWS",
-    "TuneResult",
-    "TuneState",
-    "IVFPQAutoTuner",
-    "make_default_tuner",
-]
+        state_path = state_dir / f'lancedb_autotune_{table_name}.json'
+    return IVFPQAutoTuner(table_name=table_name, state_path=state_path, num_sub_vectors=num_sub_vectors, vector_column=vector_column, key_column=key_column, embedding_dim=embedding_dim)
+__all__ = ['DEFAULT_NUM_PARTITIONS', 'MIN_NUM_PARTITIONS', 'MAX_NUM_PARTITIONS', 'DEFAULT_NUM_SUB_VECTORS', 'MIN_NUM_SUB_VECTORS', 'MAX_NUM_SUB_VECTORS', 'M1_MAX_ITERATIONS', 'AUTO_TUNE_ENV', 'INSERT_THRESHOLD_ENV', 'DEFAULT_INSERT_THRESHOLD', 'COOLDOWN_SECONDS_ENV', 'DEFAULT_COOLDOWN_SECONDS', 'DEFAULT_RECALL_SAMPLES', 'MAX_RECALL_SAMPLES', 'RECALL_TOP_K', 'RECALL_TOO_LOW', 'RECALL_EXCELLENT', 'SEARCH_MS_EXCESSIVE', 'M1_RSS_GUARD_BYTES', 'MAX_BRUTE_FORCE_ROWS', 'TuneResult', 'TuneState', 'IVFPQAutoTuner', 'make_default_tuner']

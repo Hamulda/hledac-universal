@@ -27,37 +27,27 @@ ENV GATES (checked at init):
 FALLBACK: if transport process unavailable or env disabled,
 onion/i2p/nym URLs fall back to clearnet AIMD lane.
 """
-
-
-
 import asyncio
 import logging
 import os
 from dataclasses import dataclass, field
 import msgspec
-
 logger = logging.getLogger(__name__)
-
-# Constants
-PRIVACY_BUDGET_RATIO = 0.15  # 15% of fetch workers reserved for privacy lanes
+PRIVACY_BUDGET_RATIO = 0.15
 DEFAULT_TOR_WORKERS = 2
 DEFAULT_I2P_WORKERS = 1
 DEFAULT_NYM_WORKERS = 1
-MIN_CLEARNET_WORKERS = 3  # floor: never let clearnet go below this
+MIN_CLEARNET_WORKERS = 3
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class PrivacyLaneConfig:
     """Configuration for a single privacy transport lane."""
-
-    name: str  # "tor" | "i2p" | "nym"
-    workers: int  # max concurrent workers for this lane
-    env_gate: str  # env var name that enables this lane
-    # Ram estimate MB per active session (for telemetry/logging)
+    name: str
+    workers: int
+    env_gate: str
     ram_per_session_mb: int = 80
 
-
-@dataclass
+@dataclass(True)
 class PrivacyBudgetAllocator:
     """
     Allocates privacy lane semaphores from total fetch worker budget.
@@ -67,34 +57,10 @@ class PrivacyBudgetAllocator:
 
     Thread-safe: all state protected by _lock.
     """
-
     total_workers: int
-    tor_config: PrivacyLaneConfig = field(
-        default_factory=lambda: PrivacyLaneConfig(
-            name="tor",
-            workers=DEFAULT_TOR_WORKERS,
-            env_gate="HLEDAC_ENABLE_TOR",
-            ram_per_session_mb=80,
-        )
-    )
-    i2p_config: PrivacyLaneConfig = field(
-        default_factory=lambda: PrivacyLaneConfig(
-            name="i2p",
-            workers=DEFAULT_I2P_WORKERS,
-            env_gate="HLEDAC_ENABLE_I2P",
-            ram_per_session_mb=60,
-        )
-    )
-    nym_config: PrivacyLaneConfig = field(
-        default_factory=lambda: PrivacyLaneConfig(
-            name="nym",
-            workers=DEFAULT_NYM_WORKERS,
-            env_gate="HLEDAC_ENABLE_NYM",
-            ram_per_session_mb=120,
-        )
-    )
-
-    # Runtime state
+    tor_config: PrivacyLaneConfig = field(default_factory=lambda: PrivacyLaneConfig(name='tor', workers=DEFAULT_TOR_WORKERS, env_gate='HLEDAC_ENABLE_TOR', ram_per_session_mb=80))
+    i2p_config: PrivacyLaneConfig = field(default_factory=lambda: PrivacyLaneConfig(name='i2p', workers=DEFAULT_I2P_WORKERS, env_gate='HLEDAC_ENABLE_I2P', ram_per_session_mb=60))
+    nym_config: PrivacyLaneConfig = field(default_factory=lambda: PrivacyLaneConfig(name='nym', workers=DEFAULT_NYM_WORKERS, env_gate='HLEDAC_ENABLE_NYM', ram_per_session_mb=120))
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     _initialized: bool = field(default=False, repr=False)
     _tor_sem: asyncio.Semaphore | None = field(default=None, repr=False)
@@ -104,40 +70,30 @@ class PrivacyBudgetAllocator:
     _available_lanes: tuple[str, ...] = field(default=(), repr=False)
 
     def __post_init__(self) -> None:
-        # Compute privacy worker count from ratio (min 1)
         privacy_total = max(1, int(self.total_workers * PRIVACY_BUDGET_RATIO))
-        # Distribute: tor=2, i2p=1, nym=1 (fixed ratio for M1 8GB safety)
         tor_w = min(self.tor_config.workers, privacy_total // 2)
         i2p_w = min(self.i2p_config.workers, max(1, privacy_total // 4))
         nym_w = min(self.nym_config.workers, max(1, privacy_total // 4))
         clearnet_w = max(MIN_CLEARNET_WORKERS, self.total_workers - privacy_total)
-
-        # Check env gates — only create semaphores for enabled lanes
         available = []
         if tor_w > 0 and self._check_env_gate(self.tor_config.env_gate):
             self._tor_sem = asyncio.Semaphore(tor_w)
-            available.append("tor")
+            available.append('tor')
         if i2p_w > 0 and self._check_env_gate(self.i2p_config.env_gate):
             self._i2p_sem = asyncio.Semaphore(i2p_w)
-            available.append("i2p")
+            available.append('i2p')
         if nym_w > 0 and self._check_env_gate(self.nym_config.env_gate):
             self._nym_sem = asyncio.Semaphore(nym_w)
-            available.append("nym")
-
+            available.append('nym')
         self._clearnet_budget = clearnet_w
         self._available_lanes = tuple(available)
         self._initialized = True
-
-        logger.info(
-            f"[PrivacyBudget] total={self.total_workers}, "
-            f"privacy={privacy_total} ({PRIVACY_BUDGET_RATIO:.0%}), "
-            f"lanes={available}, clearnet={clearnet_w}"
-        )
+        logger.info(f'[PrivacyBudget] total={self.total_workers}, privacy={privacy_total} ({PRIVACY_BUDGET_RATIO:.0%}), lanes={available}, clearnet={clearnet_w}')
 
     @staticmethod
     def _check_env_gate(env_gate: str) -> bool:
         """Check if env gate is enabled. Defaults disabled (0)."""
-        return os.environ.get(env_gate, "0") in ("1", "true", "True")
+        return os.environ.get(env_gate, '0') in ('1', 'true', 'True')
 
     @property
     def clearnet_budget(self) -> int:
@@ -156,11 +112,11 @@ class PrivacyBudgetAllocator:
         Returns None if lane is unavailable (env disabled or workers=0).
         Caller should fall back to clearnet in that case.
         """
-        if lane == "tor":
+        if lane == 'tor':
             return self._tor_sem
-        elif lane == "i2p":
+        elif lane == 'i2p':
             return self._i2p_sem
-        elif lane == "nym":
+        elif lane == 'nym':
             return self._nym_sem
         return None
 
@@ -175,30 +131,18 @@ class PrivacyBudgetAllocator:
           default → "clearnet"
         """
         url_lower = url.lower().strip()
-        if url_lower.endswith(".onion"):
-            return "tor"
-        if url_lower.endswith(".i2p"):
-            return "i2p"
-        if url_lower.startswith("nym:"):
-            return "nym"
-        return "clearnet"
+        if url_lower.endswith('.onion'):
+            return 'tor'
+        if url_lower.endswith('.i2p'):
+            return 'i2p'
+        if url_lower.startswith('nym:'):
+            return 'nym'
+        return 'clearnet'
 
     def get_budget_summary(self) -> dict:
         """Return budget allocation summary for telemetry."""
-        return {
-            "total_workers": self.total_workers,
-            "privacy_ratio": PRIVACY_BUDGET_RATIO,
-            "clearnet_budget": self._clearnet_budget,
-            "available_lanes": self._available_lanes,
-            "lane_budgets": {
-                "tor": self._tor_sem._value if self._tor_sem else 0,  # noqa: SLF001
-                "i2p": self._i2p_sem._value if self._i2p_sem else 0,  # noqa: SLF001
-                "nym": self._nym_sem._value if self._nym_sem else 0,  # noqa: SLF001
-            },
-        }
+        return {'total_workers': self.total_workers, 'privacy_ratio': PRIVACY_BUDGET_RATIO, 'clearnet_budget': self._clearnet_budget, 'available_lanes': self._available_lanes, 'lane_budgets': {'tor': self._tor_sem._value if self._tor_sem else 0, 'i2p': self._i2p_sem._value if self._i2p_sem else 0, 'nym': self._nym_sem._value if self._nym_sem else 0}}
 
-
-# Module-level convenience
 def make_privacy_allocator(total_workers: int) -> PrivacyBudgetAllocator:
     """Factory: create a PrivacyBudgetAllocator with the given total worker count."""
     return PrivacyBudgetAllocator(total_workers=total_workers)

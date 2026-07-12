@@ -7,27 +7,19 @@ GHOST_INVARIANTS:
 - Fail-soft: any exception → return False (never crash on CAPTCHA detection)
 - Phase 1: PIL-only heuristics (no VisionEncoder, no coremltools model)
 """
-
-
-
 import re
 from concurrent.futures import ThreadPoolExecutor
-
 try:
     from PIL import Image
 except ImportError:
-    Image = None  # type: ignore
-
-# Shared executor for PIL ops — single thread is enough for phase 1
+    Image = None
 _PIL_EXECUTOR: ThreadPoolExecutor | None = None
-
 
 def _get_pil_executor() -> ThreadPoolExecutor:
     global _PIL_EXECUTOR
     if _PIL_EXECUTOR is None:
-        _PIL_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="captcha_pil")
+        _PIL_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix='captcha_pil')
     return _PIL_EXECUTOR
-
 
 def _analyze_pil_sync(image_bytes: bytes) -> float:
     """Analyze PIL image properties — runs in executor thread."""
@@ -36,17 +28,16 @@ def _analyze_pil_sync(image_bytes: bytes) -> float:
     try:
         img = Image.open(BytesIO(image_bytes))
         s = 0.0
-        if img.mode in ("L", "P", "1"):
+        if img.mode in ('L', 'P', '1'):
             s += 0.3
         w, h = img.size
-        if w > 0 and h > 0 and 0.2 <= (w / h) <= 5.0:
+        if w > 0 and h > 0 and (0.2 <= w / h <= 5.0):
             s += 0.1
-        if len(image_bytes) < 50_000:
+        if len(image_bytes) < 50000:
             s += 0.3
         return s
     except Exception:
         return 0.0
-
 
 class CaptchaDetector:
     """
@@ -59,48 +50,36 @@ class CaptchaDetector:
       - Aspect ratio in [0.2, 5.0] → +0.1
       - Score >= 0.5 → CAPTCHA detected
     """
-
-    CAPTCHA_URL_RE = re.compile(
-        r"(captcha|challenge|verify|human|botcheck|spam|security.?check|abc.?def)",
-        re.IGNORECASE,
-    )
+    CAPTCHA_URL_RE = re.compile('(captcha|challenge|verify|human|botcheck|spam|security.?check|abc.?def)', re.IGNORECASE)
     DETECTION_THRESHOLD = 0.5
+    __slots__ = tuple(('_captcha_detections',))
 
     def __init__(self) -> None:
         self._captcha_detections: int = 0
 
-    def is_captcha(self, image_bytes: bytes, url: str | None = None) -> bool:
+    def is_captcha(self, image_bytes: bytes, url: str | None=None) -> bool:
         """
         Returns True if image bytes score as a CAPTCHA signal.
         NEVER raises — exceptions always return False.
         Sync-safe: uses ThreadPoolExecutor with timeout, never blocks event loop.
         """
         try:
-            # Hard rule: URL check (fast path, no I/O)
             if url and self.CAPTCHA_URL_RE.search(url):
                 self._captcha_detections += 1
                 return True
-
-            # Skip large images (unlikely to be CAPTCHAs)
-            if len(image_bytes) > 50_000:
+            if len(image_bytes) > 50000:
                 return False
-
-            # PIL analysis via ThreadPoolExecutor — never blocks event loop
             executor = _get_pil_executor()
             future = executor.submit(_analyze_pil_sync, image_bytes)
             try:
                 score = future.result(timeout=2.0)
             except Exception:
                 score = 0.0
-
             if score >= self.DETECTION_THRESHOLD:
                 self._captcha_detections += 1
                 return True
-
             return False
-
         except Exception:
-            # Fail-soft mandatory: any exception → return False
             return False
 
     def get_detections_count(self) -> int:

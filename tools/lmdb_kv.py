@@ -13,24 +13,15 @@ Features:
 
 Sprint F264: Migrated to ``utils.msgspec_json`` facade.
 """
-
-
 import asyncio
 import logging
 from pathlib import Path
-
 from hledac.universal.utils.msgspec_json import decode, encode
-
-# Note: msgspec facade (utils.msgspec_json) handles its own orjson/json
-# fallback chain, so this module does not need to import orjson directly.
-
 try:
     import lmdb
     LMDB_AVAILABLE = True
 except ImportError:
     LMDB_AVAILABLE = False
-
-# Sprint 3D: Use paths helpers for sprint ephemeral store
 try:
     from hledac.universal.paths import SPRINT_LMDB_ROOT, open_lmdb
     _PATH_ROOT = SPRINT_LMDB_ROOT
@@ -39,21 +30,15 @@ except ImportError:
     _PATH_ROOT = None
     _USE_CANONICAL = False
     open_lmdb = None
-
-# Async LMDB support
 try:
     import aiolmdb
     AIOLMDB_AVAILABLE = True
 except ImportError:
     AIOLMDB_AVAILABLE = False
-
 logger = logging.getLogger(__name__)
-
-# Default bounds
-DEFAULT_MAP_SIZE = 256 * 1024 * 1024  # 256MB — prevent fragmentation on large datasets
+DEFAULT_MAP_SIZE = 256 * 1024 * 1024
 MAX_KEYS = 10000
-LMDB_WRITE_BATCH_SIZE = 2500  # P1: Increased from 500 — M1 8GB optimal batch size for throughput
-
+LMDB_WRITE_BATCH_SIZE = 2500
 
 class LMDBKVStore:
     """
@@ -61,13 +46,9 @@ class LMDBKVStore:
 
     Uses buffers=True for zero-copy reads and orjson for fast serialization.
     """
+    __slots__ = tuple(('_env', '_map_size', '_max_keys', '_path'))
 
-    def __init__(
-        self,
-        path: str | Path | None = None,
-        map_size: int = DEFAULT_MAP_SIZE,
-        max_keys: int = MAX_KEYS,
-    ):
+    def __init__(self, path: str | Path | None=None, map_size: int=DEFAULT_MAP_SIZE, max_keys: int=MAX_KEYS):
         """
         Initialize LMDB KV store.
 
@@ -78,45 +59,23 @@ class LMDBKVStore:
             max_keys: Maximum number of keys (for bounded storage)
         """
         if not LMDB_AVAILABLE:
-            raise ImportError("lmdb package not available")
-
-        # Sprint F179B: canonical path resolution — use DB_ROOT from paths.py
+            raise ImportError('lmdb package not available')
         if path is None:
             if _USE_CANONICAL and _PATH_ROOT is not None:
-                self._path = _PATH_ROOT / "kvstore.lmdb"
+                self._path = _PATH_ROOT / 'kvstore.lmdb'
             else:
-                # Fallback: RAMDISK-backed DB_ROOT, not home-relative
                 from hledac.universal.paths import DB_ROOT
-                self._path = DB_ROOT / "kvstore.lmdb"
+                self._path = DB_ROOT / 'kvstore.lmdb'
         else:
             self._path = Path(path)
         self._path.mkdir(parents=True, exist_ok=True)
         self._map_size = map_size
         self._max_keys = max_keys
-
-        # Sprint 3D: use open_lmdb() for env-driven discipline + lock recovery
-        # M218C: readahead=False reduces M1 UMA memory pollution from Metal page cache
         if _USE_CANONICAL and open_lmdb is not None:
-            self._env = open_lmdb(
-                self._path,
-                map_size=map_size,
-                max_dbs=1,
-                writemap=False,
-                metasync=True,
-                readahead=False,  # M218C: added
-            )
+            self._env = open_lmdb(self._path, map_size=map_size, max_dbs=1, writemap=False, metasync=True, readahead=False)
         else:
-            # Fallback: direct lmdb.open (backward compat, no lock recovery)
-            # M218C: readahead=False reduces M1 UMA memory pollution from Metal page cache
-            self._env = lmdb.open(
-                str(self._path),
-                map_size=map_size,
-                max_dbs=1,
-                writemap=False,
-                metasync=True,
-                readahead=False,
-            )
-        logger.info(f"LMDB KV store initialized at {self._path}")
+            self._env = lmdb.open(str(self._path), map_size=map_size, max_dbs=1, writemap=False, metasync=True, readahead=False)
+        logger.info(f'LMDB KV store initialized at {self._path}')
 
     def get(self, key: str) -> dict | None:
         """
@@ -129,15 +88,13 @@ class LMDBKVStore:
             Dict value if found, None otherwise
         """
         try:
-            # Zero-copy: buffers=True returns memoryview without copying
             with self._env.begin(write=False, buffers=True) as txn:
-                value = txn.get(key.encode("utf-8"))
+                value = txn.get(key.encode('utf-8'))
                 if value is None:
                     return None
-                # orjson.loads accepts bytes/memoryview directly - no decode() needed
                 return decode(value)
         except Exception as e:
-            logger.error(f"LMDB get failed for key {key}: {e}")
+            logger.error(f'LMDB get failed for key {key}: {e}')
             return None
 
     def put(self, key: str, value: dict) -> bool:
@@ -153,16 +110,14 @@ class LMDBKVStore:
         """
         try:
             with self._env.begin(write=True) as txn:
-                # Check key count limit
-                if txn.stat()["entries"] >= self._max_keys:
-                    logger.warning(f"Max keys ({self._max_keys}) reached")
+                if txn.stat()['entries'] >= self._max_keys:
+                    logger.warning(f'Max keys ({self._max_keys}) reached')
                     return False
-
                 serialized = encode(value)
-                txn.put(key.encode("utf-8"), serialized)
+                txn.put(key.encode('utf-8'), serialized)
             return True
         except Exception as e:
-            logger.error(f"LMDB put failed for key {key}: {e}")
+            logger.error(f'LMDB put failed for key {key}: {e}')
             return False
 
     def put_many(self, items: list[tuple[str, dict]]) -> list[bool]:
@@ -180,51 +135,43 @@ class LMDBKVStore:
         """
         if not items:
             return []
-
         results: list[bool] = [False] * len(items)
 
         def _encode_pair(key: str, value: dict) -> tuple[bytes, bytes]:
-            return (key.encode("utf-8"), encode(value))
-
+            return (key.encode('utf-8'), encode(value))
         try:
             for i in range(0, len(items), LMDB_WRITE_BATCH_SIZE):
                 batch = items[i:i + LMDB_WRITE_BATCH_SIZE]
                 batch_indices = list(range(i, min(i + LMDB_WRITE_BATCH_SIZE, len(items))))
                 try:
                     with self._env.begin(write=True) as txn:
-                        current_entries = txn.stat()["entries"]
+                        current_entries = txn.stat()['entries']
                         if current_entries + len(batch) > self._max_keys:
-                            logger.warning(f"Max keys ({self._max_keys}) would be exceeded")
+                            logger.warning(f'Max keys ({self._max_keys}) would be exceeded')
                             for bi in batch_indices:
                                 results[bi] = False
                             continue
-
-                        encoded: list[tuple[bytes, bytes]] = [
-                            _encode_pair(key, value) for key, value in batch
-                        ]
+                        encoded: list[tuple[bytes, bytes]] = [_encode_pair(key, value) for key, value in batch]
                         cursor = txn.cursor()
                         cursor.putmulti(encoded)
                         for bi in batch_indices:
                             results[bi] = True
                 except Exception as batch_err:
-                    logger.warning(f"putmulti batch failed, falling back to single-txn: {batch_err}")
+                    logger.warning(f'putmulti batch failed, falling back to single-txn: {batch_err}')
                     try:
                         with self._env.begin(write=True) as txn:
-                            encoded_batch = [
-                                (key.encode("utf-8"), encode(value))
-                                for key, value in batch
-                            ]
+                            encoded_batch = [(key.encode('utf-8'), encode(value)) for key, value in batch]
                             cursor = txn.cursor()
                             cursor.putmulti(encoded_batch)
                             for bi in batch_indices:
                                 results[bi] = True
                     except Exception as fallback_err:
-                        logger.error(f"Fallback transaction failed: {fallback_err}")
+                        logger.error(f'Fallback transaction failed: {fallback_err}')
                         for bi in batch_indices:
                             results[bi] = False
             return results
         except Exception as e:
-            logger.error(f"LMDB put_many failed: {e}")
+            logger.error(f'LMDB put_many failed: {e}')
             return [False] * len(items)
 
     def delete(self, key: str) -> bool:
@@ -239,9 +186,9 @@ class LMDBKVStore:
         """
         try:
             with self._env.begin(write=True) as txn:
-                return txn.delete(key.encode("utf-8"))
+                return txn.delete(key.encode('utf-8'))
         except Exception as e:
-            logger.error(f"LMDB delete failed for key {key}: {e}")
+            logger.error(f'LMDB delete failed for key {key}: {e}')
             return False
 
     def sync_hint(self) -> None:
@@ -253,7 +200,7 @@ class LMDBKVStore:
         """
         try:
             self._env.sync(False)
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
 
     def compact(self) -> dict[str, int] | None:
@@ -269,16 +216,15 @@ class LMDBKVStore:
         """
         try:
             from hledac.universal.knowledge.lmdb_boot_guard import compact_lmdb
-
             return compact_lmdb(self._env)
-        except Exception:  # noqa: BLE001
+        except Exception:
             return None
 
     def close(self) -> None:
         """Close the database."""
-        if hasattr(self, "_env") and self._env:
+        if hasattr(self, '_env') and self._env:
             self._env.close()
-            logger.info("LMDB KV store closed")
+            logger.info('LMDB KV store closed')
 
     def __enter__(self) -> LMDBKVStore:
         return self
@@ -289,17 +235,17 @@ class LMDBKVStore:
     def __del__(self) -> None:
         try:
             self.close()
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
-
 
 class AsyncLMDBKVStore:
     """
     Async LMDB KV store with aiolmdb support.
     Falls back to ThreadPoolExecutor if aiolmdb is not available.
     """
+    __slots__ = tuple(('_env', '_use_async', 'map_size', 'path'))
 
-    def __init__(self, path: str | Path, map_size: int = DEFAULT_MAP_SIZE):
+    def __init__(self, path: str | Path, map_size: int=DEFAULT_MAP_SIZE):
         self.path = Path(path)
         self.path.mkdir(parents=True, exist_ok=True)
         self.map_size = map_size
@@ -311,24 +257,20 @@ class AsyncLMDBKVStore:
         if self._use_async:
             try:
                 self._env = await aiolmdb.open(str(self.path), map_size=self.map_size)
-                logger.info(f"AsyncLMDBKVStore opened (aiolmdb) at {self.path}")
+                logger.info(f'AsyncLMDBKVStore opened (aiolmdb) at {self.path}')
                 return
             except Exception as e:
-                logger.warning(f"aiolmdb not available, using ThreadPoolExecutor: {e}")
+                logger.warning(f'aiolmdb not available, using ThreadPoolExecutor: {e}')
                 self._use_async = False
-
-        # Fallback to ThreadPoolExecutor
-        # M218C: readahead=False reduces M1 UMA memory pollution from Metal page cache
         if LMDB_AVAILABLE:
             self._env = lmdb.open(str(self.path), map_size=self.map_size, readahead=False, writemap=False, sync=False)
-            logger.info(f"AsyncLMDBKVStore opened (ThreadPoolExecutor) at {self.path}")
+            logger.info(f'AsyncLMDBKVStore opened (ThreadPoolExecutor) at {self.path}')
         else:
-            raise ImportError("Neither aiolmdb nor lmdb available")
+            raise ImportError('Neither aiolmdb nor lmdb available')
 
     async def get(self, key: str) -> dict | None:
         """Async get operation."""
         key_bytes = key.encode()
-
         if self._use_async and self._env:
             try:
                 val = await self._env.get(key_bytes)
@@ -336,46 +278,43 @@ class AsyncLMDBKVStore:
                     return None
                 return decode(val)
             except Exception as e:
-                logger.error(f"AsyncLMDB get failed: {e}")
+                logger.error(f'AsyncLMDB get failed: {e}')
                 return None
         else:
-            # Fallback: use ThreadPoolExecutor
             try:
+
                 def _get():
                     with self._env.begin(buffers=True) as txn:
                         return txn.get(key_bytes)
-
                 val = await asyncio.to_thread(_get)
                 if val is None:
                     return None
                 return decode(val)
             except Exception as e:
-                logger.error(f"AsyncLMDB get (executor) failed: {e}")
+                logger.error(f'AsyncLMDB get (executor) failed: {e}')
                 return None
 
     async def put(self, key: str, value: dict) -> bool:
         """Async put operation."""
         key_bytes = key.encode()
         data = encode(value)
-
         if self._use_async and self._env:
             try:
                 await self._env.put(key_bytes, data)
                 return True
             except Exception as e:
-                logger.error(f"AsyncLMDB put failed: {e}")
+                logger.error(f'AsyncLMDB put failed: {e}')
                 return False
         else:
-            # Fallback: use ThreadPoolExecutor
             try:
+
                 def _put():
                     with self._env.begin(write=True) as txn:
                         txn.put(key_bytes, data)
-
                 await asyncio.to_thread(_put)
                 return True
             except Exception as e:
-                logger.error(f"AsyncLMDB put (executor) failed: {e}")
+                logger.error(f'AsyncLMDB put (executor) failed: {e}')
                 return False
 
     async def close(self):
@@ -384,12 +323,12 @@ class AsyncLMDBKVStore:
             if self._use_async:
                 try:
                     self._env.close()
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
             else:
                 try:
                     self._env.close()
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
             self._env = None
-            logger.info("AsyncLMDBKVStore closed")
+            logger.info('AsyncLMDBKVStore closed')

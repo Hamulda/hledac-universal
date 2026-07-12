@@ -23,66 +23,35 @@ Each pivot output:
 - source_hint: which finding/envelope triggered this pivot
 - evidence_pointers: list of source finding_ids
 """
-
-
-
 import logging
-
 import msgspec.json as _json
 import math
 import re
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
-
-from hledac.universal.runtime.hermes_pivot_contract import (
-    MAX_INFERENCE_ITEMS,
-    HermesInferenceOutput,
-)
+from hledac.universal.runtime.hermes_pivot_contract import MAX_INFERENCE_ITEMS, HermesInferenceOutput
 from hledac.universal.utils.confidence import normalize_source_quality
-
-__all__ = [
-    "Pivot",
-    "PivotStats",
-    "PivotType",
-    "PivotPlanner",
-    "MAX_PIVOTS",
-    "MAX_PIVOT_CANDIDATES",
-    "generate_pivot_candidates_from_query",
-    "score_pivot_for_mission",
-    "estimate_pivot_cost",
-    "explain_pivot_score",
-    "apply_scoring_metadata",
-    "HermesInferenceOutput",
-    "MAX_INFERENCE_ITEMS",
-]
-
-# Optional import for F203G feedback — no hard dependency
+__all__ = ['Pivot', 'PivotStats', 'PivotType', 'PivotPlanner', 'MAX_PIVOTS', 'MAX_PIVOT_CANDIDATES', 'generate_pivot_candidates_from_query', 'score_pivot_for_mission', 'estimate_pivot_cost', 'explain_pivot_score', 'apply_scoring_metadata', 'HermesInferenceOutput', 'MAX_INFERENCE_ITEMS']
 try:
     from hledac.universal.runtime.hypothesis_feedback import HypothesisFeedbackSummary
     _HAS_HYPOTHESIS_FEEDBACK = True
 except ImportError:
     HypothesisFeedbackSummary = None
     _HAS_HYPOTHESIS_FEEDBACK = False
-
 logger = logging.getLogger(__name__)
-
-# Bounded: max 20 pivots per sprint
 MAX_PIVOTS: int = 20
-# F216F: Max pivot candidates generated from query (not from findings)
 MAX_PIVOT_CANDIDATES: int = 25
-
 
 class PivotType:
     """Pivot type constants."""
-    DOMAIN = "domain"
-    IDENTITY = "identity"
-    LEAK = "leak"
-    ARCHIVE = "archive"
-    GRAPH = "graph"
+    DOMAIN = 'domain'
+    IDENTITY = 'identity'
+    LEAK = 'leak'
+    ARCHIVE = 'archive'
+    GRAPH = 'graph'
 
-
-@dataclass(frozen=True, order=True)
+@dataclass(frozen=True, order=True, slots=True)
 class Pivot:
     """
     A single investigation pivot derived from findings.
@@ -100,21 +69,19 @@ class Pivot:
         evidence_pointers: List of source finding_ids
     """
     priority: float = field(compare=True)
-    pivot_id: str = field(compare=False, default="")
-    pivot_type: str = field(compare=False, default="domain")
-    ioc_value: str = field(compare=False, default="")
-    ioc_type: str = field(compare=False, default="unknown")
-    reason: str = field(compare=False, default="")
+    pivot_id: str = field(compare=False, default='')
+    pivot_type: str = field(compare=False, default='domain')
+    ioc_value: str = field(compare=False, default='')
+    ioc_type: str = field(compare=False, default='unknown')
+    reason: str = field(compare=False, default='')
     expected_value: float = field(compare=False, default=0.5)
-    source_hint: str = field(compare=False, default="")
+    source_hint: str = field(compare=False, default='')
     evidence_pointers: tuple[str, ...] = field(compare=False, default_factory=tuple)
-    # F225D: Optional scoring metadata (backward-compatible — all have defaults)
-    score_reason: str = field(compare=False, default="")
+    score_reason: str = field(compare=False, default='')
     estimated_cost: float = field(compare=False, default=0.5)
     mission_boost: float = field(compare=False, default=1.0)
 
-
-@dataclass
+@dataclass(True)
 class PivotStats:
     """
     Tracks pivot usage history for exponential decay scoring.
@@ -123,10 +90,9 @@ class PivotStats:
     pivot_id: str
     success_count: int = 0
     failure_count: int = 0
-    last_used: float = 0.0  # timestamp from time.time()
-    # Decay parameters
-    decay_rate: float = 0.95  # per-use exponential decay
-    staleness_threshold: float = 3600.0  # seconds before staleness penalty kicks in
+    last_used: float = 0.0
+    decay_rate: float = 0.95
+    staleness_threshold: float = 3600.0
 
     def record_success(self, timestamp: float) -> None:
         """Record a successful pivot use."""
@@ -144,45 +110,24 @@ class PivotStats:
         Older pivots and failed pivots lose priority.
         """
         if self.last_used == 0.0:
-            return base_score  # Never used — no decay
-
-        # Time-based decay (older = lower priority)
+            return base_score
         age = current_time - self.last_used
         time_decay = math.pow(self.decay_rate, age / self.staleness_threshold)
-
-        # Failure penalty (failures reduce score multiplicatively)
         failure_penalty = 1.0 / (1.0 + self.failure_count * 0.5)
-
-        # Success bonus (small multiplicative boost for past successes)
-        success_bonus = 1.0 + (self.success_count * 0.1)
-
+        success_bonus = 1.0 + self.success_count * 0.1
         return base_score * time_decay * failure_penalty * success_bonus
-
-
-# ---------------------------------------------------------------------------
-# Finding envelope helpers
-# ---------------------------------------------------------------------------
 
 def _extract_domain_from_finding(finding: Any) -> str | None:
     """Extract domain IOC from a finding. DEPRECATED: Use _extract_ioc_from_finding."""
-    # Check payload_text for domain-like content
-    payload = getattr(finding, "payload_text", None) or ""
+    payload = getattr(finding, 'payload_text', None) or ''
     if isinstance(payload, str) and payload:
-        # Try to find domain in payload
-        domain_match = re.search(
-            r"(?:https?://)?([a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)+)",
-            payload,
-        )
+        domain_match = re.search('(?:https?://)?([a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?)+)', payload)
         if domain_match:
             return domain_match.group(1).lower()
-
-    # Try source_type/ip for IP addresses
-    src = getattr(finding, "source_type", "") or ""
-    if src in ("ip", "ipv4", "ipv6"):
-        return None  # Not a domain
-
+    src = getattr(finding, 'source_type', '') or ''
+    if src in ('ip', 'ipv4', 'ipv6'):
+        return None
     return None
-
 
 def _extract_ioc_from_finding(finding: Any) -> tuple[str | None, str | None]:
     """
@@ -197,78 +142,49 @@ def _extract_ioc_from_finding(finding: Any) -> tuple[str | None, str | None]:
     4. Hash (specific length)
     5. Domain (generic fallback)
     """
-    # Try payload_text first
-    payload = getattr(finding, "payload_text", None) or ""
+    payload = getattr(finding, 'payload_text', None) or ''
     if isinstance(payload, str) and payload:
-        # URL pattern - most specific (has :// prefix)
-        url_match = re.search(r"https?://[^\s\"'<>]+", payload)
+        url_match = re.search('https?://[^\\s\\"\'<>]+', payload)
         if url_match:
-            return url_match.group(0), "url"
-
-        # Email pattern - has @ delimiter
-        email_match = re.search(r"\b([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b", payload)
+            return (url_match.group(0), 'url')
+        email_match = re.search('\\b([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})\\b', payload)
         if email_match:
-            return email_match.group(1).lower(), "email"
-
-        # IP address pattern
-        ip_match = re.search(
-            r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b",
-            payload,
-        )
+            return (email_match.group(1).lower(), 'email')
+        ip_match = re.search('\\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\b', payload)
         if ip_match:
-            return ip_match.group(0), "ip"
-
-        # Hash patterns
-        hash_match = re.search(r"\b([a-fA-F0-9]{32,64})\b", payload)
+            return (ip_match.group(0), 'ip')
+        hash_match = re.search('\\b([a-fA-F0-9]{32,64})\\b', payload)
         if hash_match:
             h = hash_match.group(1).lower()
             if len(h) == 32:
-                return h, "md5"
+                return (h, 'md5')
             elif len(h) == 40:
-                return h, "sha1"
+                return (h, 'sha1')
             elif len(h) == 64:
-                return h, "sha256"
-
-        # Domain pattern - generic fallback (checked last)
-        domain_match = re.search(
-            r"(?:https?://)?([a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)+)",
-            payload,
-        )
+                return (h, 'sha256')
+        domain_match = re.search('(?:https?://)?([a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?)+)', payload)
         if domain_match:
-            return domain_match.group(1).lower(), "domain"
-
-    # Fallback to source_type as hint
-    src = getattr(finding, "source_type", "") or ""
-    if src in ("ct_log", "certificate"):
-        # Check for domain in query field
-        query = getattr(finding, "query", "") or ""
-        domain_match = re.search(
-            r"([a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)+)",
-            query,
-        )
+            return (domain_match.group(1).lower(), 'domain')
+    src = getattr(finding, 'source_type', '') or ''
+    if src in ('ct_log', 'certificate'):
+        query = getattr(finding, 'query', '') or ''
+        domain_match = re.search('([a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?)+)', query)
         if domain_match:
-            return domain_match.group(1).lower(), "domain"
-
-    return None, None
-
+            return (domain_match.group(1).lower(), 'domain')
+    return (None, None)
 
 def _deserialize_envelope(finding: Any) -> dict | None:
     """Deserialize evidence envelope from finding payload_text."""
-    payload = getattr(finding, "payload_text", None)
+    payload = getattr(finding, 'payload_text', None)
     if not payload or not isinstance(payload, str):
         return None
     try:
         env = _json.loads(payload)
-        if isinstance(env, dict) and env.get("audit_reason"):
+        if isinstance(env, dict) and env.get('audit_reason'):
             return env
     except Exception:
         pass
     return None
-
-
-# ---------------------------------------------------------------------------
-# Pivot scoring adapters
-# ---------------------------------------------------------------------------
 
 def _cheap_score_finding(finding: Any, envelope: dict | None) -> float:
     """
@@ -279,27 +195,18 @@ def _cheap_score_finding(finding: Any, envelope: dict | None) -> float:
     - signal_facets: if available, average of facet values
     - source_type: some source types are higher quality
     """
-    score = getattr(finding, "confidence", 0.5) or 0.5
-
-    # Boost from signal_facets if available
+    score = getattr(finding, 'confidence', 0.5) or 0.5
     if envelope and isinstance(envelope, dict):
-        facets = envelope.get("signal_facets", {})
+        facets = envelope.get('signal_facets', {})
         if facets and isinstance(facets, dict):
             facet_values = [v for v in facets.values() if isinstance(v, (int, float))]
             if facet_values:
                 score = (score + sum(facet_values) / len(facet_values)) / 2.0
-
-    # Source type quality boost
-    src = getattr(finding, "source_type", "") or ""
-    high_quality_sources = {
-        "ct_log", "certificate", "cisa_kev", "threatfox_ioc",
-        "public", "deep_probe", "forensics", "multimodal",
-    }
+    src = getattr(finding, 'source_type', '') or ''
+    high_quality_sources = {'ct_log', 'certificate', 'cisa_kev', 'threatfox_ioc', 'public', 'deep_probe', 'forensics', 'multimodal'}
     if src in high_quality_sources:
         score = min(1.0, score + 0.1)
-
     return max(0.0, min(1.0, score))
-
 
 def _graph_stats_available(graph_stats: dict | None) -> bool:
     """
@@ -317,21 +224,9 @@ def _graph_stats_available(graph_stats: dict | None) -> bool:
     """
     if not graph_stats:
         return False
-    return bool(
-        "domains" in graph_stats
-        or "node_degrees" in graph_stats
-        or "connected_iocs" in graph_stats
-        or "existing_domains" in graph_stats
-    )
+    return bool('domains' in graph_stats or 'node_degrees' in graph_stats or 'connected_iocs' in graph_stats or ('existing_domains' in graph_stats))
 
-
-def _score_pivot_domain(
-    domain: str,
-    confidence: float,
-    envelope: dict | None,
-    graph_stats: dict,
-    source_quality_score: float | None = None,
-) -> float:
+def _score_pivot_domain(domain: str, confidence: float, envelope: dict | None, graph_stats: dict, source_quality_score: float | None=None) -> float:
     """
     Score a domain pivot based on multiple signals.
 
@@ -344,92 +239,49 @@ def _score_pivot_domain(
     no seen-before penalty, no degree penalty.
     """
     norm = normalize_source_quality(source_quality_score)
-    score = norm * 0.6 + confidence * 0.4  # Weighted blend of source quality + finding confidence
-
-    # F238F: Only apply graph-aware scoring when graph is explicitly available
+    score = norm * 0.6 + confidence * 0.4
     if _graph_stats_available(graph_stats):
-        # Graph signal: nodes with this domain already in graph reduce novelty
-        existing_domains = graph_stats.get("domains", [])
+        existing_domains = graph_stats.get('domains', [])
         if domain not in existing_domains:
-            score += 0.2  # Novelty bonus — domain not in known graph
+            score += 0.2
         else:
-            score -= 0.05  # Already-pivoted domain — slight deprioritization
-
-        # Degree penalty: high-degree domains (CDNs, registrars) are noisy
-        node_degree = graph_stats.get("node_degrees", {}).get(domain, 0)
+            score -= 0.05
+        node_degree = graph_stats.get('node_degrees', {}).get(domain, 0)
         score -= min(0.15, node_degree * 0.01)
-
-        # F239B: Confidence-aware refinement — distinguish high-confidence repeated IOC
-        # from generic high-degree noise. Boost high-confidence moderate-degree,
-        # penalize low-confidence high-degree. Do NOT over-penalize suspicious/ransomware.
-        conf_by_node = graph_stats.get("confidence_by_node", {})
+        conf_by_node = graph_stats.get('confidence_by_node', {})
         domain_conf = conf_by_node.get(domain, 0.5)
-
-        # Suspicious/ransomware-looking domains: skip confidence penalty (intelligence-rich)
-        suspicious_patterns = ("lockbit", "ransomware", "apt", "emotet", "icedid", "qakbot")
-        is_suspicious = any(p in domain.lower() for p in suspicious_patterns)
-
+        suspicious_patterns = ('lockbit', 'ransomware', 'apt', 'emotet', 'icedid', 'qakbot')
+        is_suspicious = any((p in domain.lower() for p in suspicious_patterns))
         if not is_suspicious:
             if domain_conf >= 0.75 and node_degree < 50:
-                # High-confidence repeated IOC — small boost, not noise
                 score += 0.07
             elif domain_conf <= 0.35 and node_degree > 10:
-                # Low-confidence high-degree — generic noise, small penalty
                 score -= 0.07
-        # High-degree generic domains (CDN/parking) still penalized by degree above;
-        # confidence signal only modulates that penalty, never cancels it entirely.
-    # else: graph unavailable → no novelty bonus, no seen penalty, no degree penalty
-
-    # Envelope signal_facets boost
     if envelope and isinstance(envelope, dict):
-        facets = envelope.get("signal_facets", {})
+        facets = envelope.get('signal_facets', {})
         if isinstance(facets, dict):
-            if facets.get("novelty_score", 0) > 0.5:
+            if facets.get('novelty_score', 0) > 0.5:
                 score += 0.1
-
     return min(1.0, max(0.0, score))
 
-
-def _score_pivot_identity(
-    ioc_value: str,
-    ioc_type: str,
-    confidence: float,
-) -> float:
+def _score_pivot_identity(ioc_value: str, ioc_type: str, confidence: float) -> float:
     """Score an identity pivot based on IOC type and confidence."""
     score = confidence * 0.5
-
-    # Identity-relevant IOC types get boost
-    identity_types = {"email", "username", "name", "handle", "profile"}
+    identity_types = {'email', 'username', 'name', 'handle', 'profile'}
     if ioc_type.lower() in identity_types:
         score += 0.2
-
-    # URL with potential identity info
-    if ioc_type == "url" and any(x in ioc_value for x in ["github.com", "twitter.com", "linkedin.com"]):
+    if ioc_type == 'url' and any((x in ioc_value for x in ['github.com', 'twitter.com', 'linkedin.com'])):
         score += 0.25
-
     return min(1.0, max(0.0, score))
 
-
-def _score_pivot_leak(
-    ioc_value: str,
-    confidence: float,
-) -> float:
+def _score_pivot_leak(ioc_value: str, confidence: float) -> float:
     """Score a leak pivot."""
-    # Leaks are generally medium-high value
     score = confidence * 0.7
-
-    # Email in breach is high value
-    if "@" in ioc_value:
+    if '@' in ioc_value:
         score += 0.15
-
     return min(1.0, max(0.0, score))
 
-
-def _score_pivot_archive(
-    domain: str,
-    confidence: float,
-    graph_stats: dict | None = None,
-) -> float:
+def _score_pivot_archive(domain: str, confidence: float, graph_stats: dict | None=None) -> float:
     """
     Score an archive pivot.
 
@@ -441,41 +293,17 @@ def _score_pivot_archive(
     None and {} both mean "graph unavailable" → no degree penalty.
     """
     score = confidence * 0.4
-
-    # F238F: Only apply degree penalty when graph is explicitly available
     if graph_stats is not None and _graph_stats_available(graph_stats):
-        # Degree penalty: popular/generic domains have noisy archives
-        node_degree = graph_stats.get("node_degrees", {}).get(domain, 0)
+        node_degree = graph_stats.get('node_degrees', {}).get(domain, 0)
         score -= min(0.15, node_degree * 0.01)
-
-        # Generic / high-degree domain pattern — additional noise penalty
-        # These domains add noise to archive pivots without intelligence value
-        generic_patterns = (
-            "dyndns.", "no-ip.", "freedns.", "duckdns.",
-            "changeip.", "hopto.", "servegame.", "mydns.",
-            "afraid.org",
-        )
-        if any(domain.endswith(f".{g}") or g in domain for g in generic_patterns):
-            score -= 0.10
-        # CDN / parking / registrar domains — very high degree means very noisy
-        if node_degree > 20 and any(x in domain for x in [
-            "cloudfront", "akamai", "fastly", "cloudflare", "azureedge",
-            "googleusercontent", "googlehosted", "appspot",
-            "parking", "sedo", "namecheap", "godaddy",
-            "registrar", "forwarded", "redirect",
-        ]):
-            score -= 0.10
-    # else: graph unavailable → no degree penalty, no pattern penalty
-
+        generic_patterns = ('dyndns.', 'no-ip.', 'freedns.', 'duckdns.', 'changeip.', 'hopto.', 'servegame.', 'mydns.', 'afraid.org')
+        if any((domain.endswith(f'.{g}') or g in domain for g in generic_patterns)):
+            score -= 0.1
+        if node_degree > 20 and any((x in domain for x in ['cloudfront', 'akamai', 'fastly', 'cloudflare', 'azureedge', 'googleusercontent', 'googlehosted', 'appspot', 'parking', 'sedo', 'namecheap', 'godaddy', 'registrar', 'forwarded', 'redirect'])):
+            score -= 0.1
     return min(1.0, max(0.0, score))
 
-
-def _score_pivot_graph(
-    ioc_value: str,
-    _ioc_type: str,
-    confidence: float,
-    graph_stats: dict,
-) -> float:
+def _score_pivot_graph(ioc_value: str, _ioc_type: str, confidence: float, graph_stats: dict) -> float:
     """
     Score a graph traversal pivot.
 
@@ -483,46 +311,23 @@ def _score_pivot_graph(
     None and {} both mean "graph unavailable" → no novelty bonus, no degree bonus.
     """
     score = confidence * 0.5
-
-    # F238F: Only apply graph-aware scoring when graph is explicitly available
     if _graph_stats_available(graph_stats):
-        # Check if IOC is already well-connected in graph
-        connected_iocs = graph_stats.get("connected_iocs", set())
+        connected_iocs = graph_stats.get('connected_iocs', set())
         if ioc_value not in connected_iocs:
-            score += 0.2  # Novel node
-
-        # High-degree nodes are more valuable for graph traversal
-        node_degree = graph_stats.get("node_degrees", {}).get(ioc_value, 0)
+            score += 0.2
+        node_degree = graph_stats.get('node_degrees', {}).get(ioc_value, 0)
         if node_degree > 5:
             score += 0.15
-    # else: graph unavailable → no bonus
-
     return min(1.0, max(0.0, score))
-
-
-# ---------------------------------------------------------------------------
-# F225D: Mission-aware & evidence-aware scoring helpers
-# ---------------------------------------------------------------------------
-
-_MISSION_BOOST_RULES: list[tuple[tuple[str, ...], str, float]] = [
-    # (pivot_types), mission_prefix, boost multiplier
-    (("domain", "archive", "graph"), "domain_recon", 1.25),
-    (("domain", "archive", "graph"), "infra_recon", 1.20),
-    (("graph",), "wallet_recon", 1.30),
-    (("graph",), "cve_recon", 1.15),
-    (("archive", "domain", "graph"), "cve_recon", 1.10),
-    (("leak", "identity"), "person_recon", 1.25),
-]
-
+_MISSION_BOOST_RULES: list[tuple[tuple[str, ...], str, float]] = [(('domain', 'archive', 'graph'), 'domain_recon', 1.25), (('domain', 'archive', 'graph'), 'infra_recon', 1.2), (('graph',), 'wallet_recon', 1.3), (('graph',), 'cve_recon', 1.15), (('archive', 'domain', 'graph'), 'cve_recon', 1.1), (('leak', 'identity'), 'person_recon', 1.25)]
 
 def _pivot_type_for_ioc(ioc_type: str) -> str:
     """Map IOC type to primary pivot type."""
-    if ioc_type in ("md5", "sha1", "sha256", "hash"):
-        return "graph"
-    if ioc_type == "email":
-        return "leak"
-    return "domain"
-
+    if ioc_type in ('md5', 'sha1', 'sha256', 'hash'):
+        return 'graph'
+    if ioc_type == 'email':
+        return 'leak'
+    return 'domain'
 
 def score_pivot_for_mission(pivot: Pivot, mission_intent: str | None) -> float:
     """
@@ -539,16 +344,12 @@ def score_pivot_for_mission(pivot: Pivot, mission_intent: str | None) -> float:
     """
     if not mission_intent:
         return 1.0
-
     boost = 1.0
     for pivot_types, mission_prefix, multiplier in _MISSION_BOOST_RULES:
         if mission_intent.startswith(mission_prefix) and pivot.pivot_type in pivot_types:
             boost = max(boost, multiplier)
             break
-
-    # Fallback: unknown mission gets no boost
     return max(0.5, min(1.5, boost))
-
 
 def estimate_pivot_cost(pivot: Pivot) -> float:
     """
@@ -560,21 +361,19 @@ def estimate_pivot_cost(pivot: Pivot) -> float:
       0.7 = expensive (live crawl, active scan)
       1.0 = very expensive (model-backed inference)
     """
-    if pivot.pivot_type == "archive":
+    if pivot.pivot_type == 'archive':
         return 0.3
-    if pivot.pivot_type == "leak":
+    if pivot.pivot_type == 'leak':
         return 0.4
-    if pivot.pivot_type == "identity":
+    if pivot.pivot_type == 'identity':
         return 0.5
-    if pivot.pivot_type == "domain":
+    if pivot.pivot_type == 'domain':
         return 0.5
-    if pivot.pivot_type == "graph":
-        # Hash pivots are cheap, IP domain is moderate
-        if pivot.ioc_type in ("md5", "sha1", "sha256", "hash"):
+    if pivot.pivot_type == 'graph':
+        if pivot.ioc_type in ('md5', 'sha1', 'sha256', 'hash'):
             return 0.4
         return 0.6
     return 0.5
-
 
 def explain_pivot_score(pivot: Pivot, mission_intent: str | None) -> str:
     """
@@ -583,26 +382,21 @@ def explain_pivot_score(pivot: Pivot, mission_intent: str | None) -> str:
     Returns a one-line string describing the score components.
     """
     parts = []
-    parts.append(f"base={pivot.expected_value:.2f}")
+    parts.append(f'base={pivot.expected_value:.2f}')
     if pivot.score_reason:
-        parts.append(f"reason={pivot.score_reason}")
-    if mission_intent and mission_intent != "unknown":
-        parts.append(f"mission={mission_intent}")
-        parts.append(f"boost={pivot.mission_boost:.2f}")
+        parts.append(f'reason={pivot.score_reason}')
+    if mission_intent and mission_intent != 'unknown':
+        parts.append(f'mission={mission_intent}')
+        parts.append(f'boost={pivot.mission_boost:.2f}')
     if pivot.estimated_cost:
-        parts.append(f"cost={pivot.estimated_cost:.1f}")
+        parts.append(f'cost={pivot.estimated_cost:.1f}')
     if pivot.evidence_pointers:
-        parts.append(f"evidence={len(pivot.evidence_pointers)}")
+        parts.append(f'evidence={len(pivot.evidence_pointers)}')
     if not pivot.source_hint:
-        parts.append("no_source=-0.1")
-    return " | ".join(parts)
+        parts.append('no_source=-0.1')
+    return ' | '.join(parts)
 
-
-def apply_scoring_metadata(
-    pivot: Pivot,
-    mission_intent: str | None = None,
-    base_score: float | None = None,
-) -> Pivot:
+def apply_scoring_metadata(pivot: Pivot, mission_intent: str | None=None, base_score: float | None=None) -> Pivot:
     """
     F225D: Apply full scoring metadata to a pivot.
 
@@ -612,55 +406,25 @@ def apply_scoring_metadata(
     Caps final expected_value to [0.0, 1.0].
     """
     score = base_score if base_score is not None else pivot.expected_value
-
-    # Evidence boost: having evidence_pointers is a positive signal
     evidence_boost = 0.0
     if pivot.evidence_pointers:
-        evidence_boost = 0.05 * min(len(pivot.evidence_pointers), 3)  # max +0.15
-
-    # No source_hint penalty
+        evidence_boost = 0.05 * min(len(pivot.evidence_pointers), 3)
     source_penalty = -0.1 if not pivot.source_hint else 0.0
-
-    # Mission boost
     mission_mult = score_pivot_for_mission(pivot, mission_intent)
-
-    # Cost factor (cheaper pivots get slight bump)
     cost_factor = 1.0 + (0.5 - estimate_pivot_cost(pivot)) * 0.2
-
-    # Final score
     final_score = (score + evidence_boost + source_penalty) * mission_mult * cost_factor
     final_score = max(0.0, min(1.0, final_score))
-
     reason_parts = []
     if evidence_boost > 0:
-        reason_parts.append(f"+evidence({evidence_boost:.2f})")
+        reason_parts.append(f'+evidence({evidence_boost:.2f})')
     if source_penalty < 0:
-        reason_parts.append(f"no_source({source_penalty:.2f})")
+        reason_parts.append(f'no_source({source_penalty:.2f})')
     if mission_mult != 1.0:
-        reason_parts.append(f"mission({mission_mult:.2f})")
+        reason_parts.append(f'mission({mission_mult:.2f})')
     if cost_factor != 1.0:
-        reason_parts.append(f"cost_factor({cost_factor:.2f})")
-    score_reason_str = "; ".join(reason_parts) if reason_parts else "base"
-
-    return Pivot(
-        priority=pivot.priority,
-        pivot_id=pivot.pivot_id,
-        pivot_type=pivot.pivot_type,
-        ioc_value=pivot.ioc_value,
-        ioc_type=pivot.ioc_type,
-        reason=pivot.reason,
-        expected_value=round(final_score, 3),
-        source_hint=pivot.source_hint,
-        evidence_pointers=pivot.evidence_pointers,
-        score_reason=score_reason_str,
-        estimated_cost=estimate_pivot_cost(pivot),
-        mission_boost=round(mission_mult, 3),
-    )
-
-
-# ---------------------------------------------------------------------------
-# Pivot Planner
-# ---------------------------------------------------------------------------
+        reason_parts.append(f'cost_factor({cost_factor:.2f})')
+    score_reason_str = '; '.join(reason_parts) if reason_parts else 'base'
+    return Pivot(priority=pivot.priority, pivot_id=pivot.pivot_id, pivot_type=pivot.pivot_type, ioc_value=pivot.ioc_value, ioc_type=pivot.ioc_type, reason=pivot.reason, expected_value=round(final_score, 3), source_hint=pivot.source_hint, evidence_pointers=pivot.evidence_pointers, score_reason=score_reason_str, estimated_cost=estimate_pivot_cost(pivot), mission_boost=round(mission_mult, 3))
 
 class PivotPlanner:
     """
@@ -680,12 +444,9 @@ class PivotPlanner:
         for pivot in pivots:
             print(pivot.ioc_value, pivot.pivot_type, pivot.reason)
     """
+    __slots__ = tuple(('_last_error', '_model_lifecycle', '_tot_adapter', '_use_model'))
 
-    def __init__(
-        self,
-        use_model_scoring: bool = False,
-        model_lifecycle_manager: Any | None = None,
-    ) -> None:
+    def __init__(self, use_model_scoring: bool=False, model_lifecycle_manager: Any | None=None) -> None:
         """
         Initialize pivot planner.
 
@@ -697,19 +458,10 @@ class PivotPlanner:
         """
         self._use_model = use_model_scoring
         self._model_lifecycle = model_lifecycle_manager
-        self._tot_adapter = None  # Lazy-loaded tot_integration
+        self._tot_adapter = None
         self._last_error: str | None = None
 
-    # ── Public API ─────────────────────────────────────────────────────────
-
-    def _generate_pivots_from_findings(
-        self,
-        findings: list,
-        graph_stats: dict | None = None,
-        feedback_summary: dict | None = None,
-        hermes_boost_map: dict[tuple[str, str, str], float] | None = None,
-        hermes_pivot_info: dict[tuple[str, str, str], dict] | None = None,
-    ) -> list[Pivot]:
+    def _generate_pivots_from_findings(self, findings: list, graph_stats: dict | None=None, feedback_summary: dict | None=None, hermes_boost_map: dict[tuple[str, str, str], float] | None=None, hermes_pivot_info: dict[tuple[str, str, str], dict] | None=None) -> list[Pivot]:
         """
         Issue #17: Single-pass pivot generation from findings.
 
@@ -730,42 +482,27 @@ class PivotPlanner:
         hermes_pivot_info = hermes_pivot_info or {}
         pivots: list[Pivot] = []
         for finding in findings:
-            # Extract IOC
             ioc_value, ioc_type_raw = _extract_ioc_from_finding(finding)
             if not ioc_value:
                 continue
-            ioc_type = ioc_type_raw or "unknown"
+            ioc_type = ioc_type_raw or 'unknown'
             envelope = _deserialize_envelope(finding)
             base_score = _cheap_score_finding(finding, envelope)
-            new_pivots = self._generate_pivots_for_ioc(
-                ioc_value, ioc_type, base_score, finding, envelope, graph_stats,
-                feedback_summary=feedback_summary,
-            )
-
-            # Issue #17: Apply Hermes boost if this pivot matches a Hermes key
+            new_pivots = self._generate_pivots_for_ioc(ioc_value, ioc_type, base_score, finding, envelope, graph_stats, feedback_summary=feedback_summary)
             for pivot in new_pivots:
                 key = (pivot.pivot_type, pivot.ioc_type, pivot.ioc_value)
                 if key in hermes_boost_map:
                     boost = hermes_boost_map[key]
-                    # Boost the pivot's expected_value with Hermes confidence
-                    boosted_value = pivot.expected_value + (boost * 0.5)
-                    # Update pivot with boosted score and Hermes metadata
-                    object.__setattr__(pivot, "expected_value", min(1.0, boosted_value))
+                    boosted_value = pivot.expected_value + boost * 0.5
+                    object.__setattr__(pivot, 'expected_value', min(1.0, boosted_value))
                     info = hermes_pivot_info.get(key, {})
                     if info:
-                        object.__setattr__(pivot, "source_hint", info.get("source_hint", pivot.source_hint))
-                        object.__setattr__(pivot, "score_reason", info.get("score_reason", pivot.score_reason))
-
+                        object.__setattr__(pivot, 'source_hint', info.get('source_hint', pivot.source_hint))
+                        object.__setattr__(pivot, 'score_reason', info.get('score_reason', pivot.score_reason))
             pivots.extend(new_pivots)
         return pivots
 
-    def plan_pivots(
-        self,
-        findings: list,
-        graph_stats: dict | None = None,
-        max_pivots: int = MAX_PIVOTS,
-        feedback_summary: dict | None = None,
-    ) -> list[Pivot]:
+    def plan_pivots(self, findings: list, graph_stats: dict | None=None, max_pivots: int=MAX_PIVOTS, feedback_summary: dict | None=None) -> list[Pivot]:
         """
         Generate bounded pivots from accepted findings.
 
@@ -783,41 +520,21 @@ class PivotPlanner:
         """
         if not findings:
             return []
-
         try:
-            # Single-pass: generate pivots from findings, then dedup/sort/trim
-            pivots = self._generate_pivots_from_findings(
-                findings,
-                graph_stats=graph_stats,
-                feedback_summary=feedback_summary,
-            )
-            # Deduplicate by (ioc_type, ioc_value)
+            pivots = self._generate_pivots_from_findings(findings, graph_stats=graph_stats, feedback_summary=feedback_summary)
             pivots = self._deduplicate_pivots(pivots)
-            # Sort by expected_value descending (higher score = higher priority)
             pivots.sort(key=lambda p: p.expected_value, reverse=True)
-            # Trim to max_pivots
             return pivots[:max_pivots]
-
         except Exception as e:
-            logger.debug(f"[F202G] plan_pivots failed: {e}")
+            logger.debug(f'[F202G] plan_pivots failed: {e}')
             self._last_error = str(e)
-            return []  # Fail-soft: empty list on error
+            return []
 
     def get_last_error(self) -> str | None:
         """Return last error message, or None if no error."""
         return self._last_error
 
-    # ── Hermes3Engine Integration (Sprint F256) ──────────────────────────────
-
-    def score_with_hermes_output(
-        self,
-        findings: list,
-        hermes_outputs: list[HermesInferenceOutput],
-        max_pivots: int = MAX_PIVOTS,
-        graph_stats: dict | None = None,
-        mission_intent: str | None = None,
-        feedback_summary: dict | None = None,
-    ) -> list[Pivot]:
+    def score_with_hermes_output(self, findings: list, hermes_outputs: list[HermesInferenceOutput], max_pivots: int=MAX_PIVOTS, graph_stats: dict | None=None, mission_intent: str | None=None, feedback_summary: dict | None=None) -> list[Pivot]:
         """
         Sprint F256 + Issue #17: Single-pass Hermes+heuristic pivot scoring.
 
@@ -852,337 +569,145 @@ class PivotPlanner:
             Always returns at least [] (fail-safe)
         """
         try:
-            # Bounds enforcement
             outputs = list(hermes_outputs)[:MAX_INFERENCE_ITEMS]
-
             if not outputs:
-                # Fall back to existing heuristic path
                 return self.plan_pivots(findings, max_pivots=max_pivots, graph_stats=graph_stats, feedback_summary=feedback_summary)
-
-            # ── Issue #17: Single-pass optimization ───────────────────────────
-            # Build Hermes pivot map first: (pivot_type, ioc_type, ioc_value) → boost
             hermes_boost_map: dict[tuple[str, str, str], float] = {}
             hermes_pivot_info: dict[tuple[str, str, str], dict] = {}
-
             for output in outputs:
                 base_priority = output.confidence
-                # IOC-based pivots from Hermes
                 for ioc_value in output.key_iocs[:20]:
                     ioc_type = self._ioc_type_from_value(ioc_value)
                     pivot_type = self._pivot_type_for_ioc(ioc_type)
                     key = (pivot_type, ioc_type, ioc_value)
                     hermes_boost_map[key] = max(hermes_boost_map.get(key, 0.0), base_priority)
                     if key not in hermes_pivot_info:
-                        hermes_pivot_info[key] = {
-                            "source_hint": f"hermes:{output.inference_type}",
-                            "score_reason": f"hermes_{output.inference_type}_confidence:{output.confidence:.2f}",
-                        }
-                # Entity-based pivots from Hermes
+                        hermes_pivot_info[key] = {'source_hint': f'hermes:{output.inference_type}', 'score_reason': f'hermes_{output.inference_type}_confidence:{output.confidence:.2f}'}
                 for entity in output.key_entities[:20]:
-                    key = (PivotType.IDENTITY, "entity", entity)
+                    key = (PivotType.IDENTITY, 'entity', entity)
                     hermes_boost_map[key] = max(hermes_boost_map.get(key, 0.0), base_priority * 0.9)
                     if key not in hermes_pivot_info:
-                        hermes_pivot_info[key] = {
-                            "source_hint": f"hermes:{output.inference_type}",
-                            "score_reason": f"hermes_entity_{output.inference_type}",
-                        }
-                # Direct suggestion pivots from Hermes
+                        hermes_pivot_info[key] = {'source_hint': f'hermes:{output.inference_type}', 'score_reason': f'hermes_entity_{output.inference_type}'}
                 for suggestion in output.pivot_suggestions[:10]:
-                    key = (PivotType.DOMAIN, "query", suggestion)
+                    key = (PivotType.DOMAIN, 'query', suggestion)
                     hermes_boost_map[key] = max(hermes_boost_map.get(key, 0.0), base_priority * 0.85)
                     if key not in hermes_pivot_info:
-                        hermes_pivot_info[key] = {
-                            "source_hint": f"hermes:{output.inference_type}",
-                            "score_reason": f"hermes_suggestion_{output.inference_type}",
-                        }
-
-            # Single pass: generate heuristic pivots, boost with Hermes scores
+                        hermes_pivot_info[key] = {'source_hint': f'hermes:{output.inference_type}', 'score_reason': f'hermes_suggestion_{output.inference_type}'}
             try:
-                pivots = self._generate_pivots_from_findings(
-                    findings,
-                    graph_stats=graph_stats,
-                    feedback_summary=feedback_summary,
-                    hermes_boost_map=hermes_boost_map,
-                    hermes_pivot_info=hermes_pivot_info,
-                )
+                pivots = self._generate_pivots_from_findings(findings, graph_stats=graph_stats, feedback_summary=feedback_summary, hermes_boost_map=hermes_boost_map, hermes_pivot_info=hermes_pivot_info)
                 pivots = self._deduplicate_pivots(pivots)
             except Exception as e:
-                logger.debug(f"[F256] Single-pass pivot generation failed: {e}")
-                # Fall back to Hermes-only pivots on heuristic failure
+                logger.debug(f'[F256] Single-pass pivot generation failed: {e}')
                 pivots = []
                 for key, boost in hermes_boost_map.items():
                     pivot_type, ioc_type, ioc_value = key
                     info = hermes_pivot_info.get(key, {})
-                    pivots.append(Pivot(
-                        priority=-boost,
-                        pivot_id=str(uuid.uuid4()),
-                        pivot_type=pivot_type,
-                        ioc_value=ioc_value,
-                        ioc_type=ioc_type,
-                        reason=f"LLM-extracted {ioc_type} from Hermes",
-                        expected_value=boost,
-                        source_hint=info.get("source_hint", "hermes:fallback"),
-                        evidence_pointers=(),
-                        score_reason=info.get("score_reason", "hermes_fallback"),
-                        estimated_cost=0.5,
-                        mission_boost=1.0,
-                    ))
-
-            # Apply mission scoring if provided
+                    pivots.append(Pivot(priority=-boost, pivot_id=str(uuid.uuid4()), pivot_type=pivot_type, ioc_value=ioc_value, ioc_type=ioc_type, reason=f'LLM-extracted {ioc_type} from Hermes', expected_value=boost, source_hint=info.get('source_hint', 'hermes:fallback'), evidence_pointers=(), score_reason=info.get('score_reason', 'hermes_fallback'), estimated_cost=0.5, mission_boost=1.0))
             if mission_intent:
                 for p in pivots:
                     boost = score_pivot_for_mission(p, mission_intent)
-                    object.__setattr__(p, "expected_value", p.expected_value * boost)
-
-            # Sort by expected_value descending
+                    object.__setattr__(p, 'expected_value', p.expected_value * boost)
             pivots.sort(key=lambda p: p.expected_value, reverse=True)
-
-            # Trim to max_pivots
             return pivots[:max_pivots]
-
         except Exception as e:
-            logger.debug(f"[F256] score_with_hermes_output failed: {e}")
+            logger.debug(f'[F256] score_with_hermes_output failed: {e}')
             self._last_error = str(e)
-            return []  # Fail-safe
+            return []
 
     def _ioc_type_from_value(self, value: str) -> str:
         """Infer IOC type from value string."""
         if self._looks_like_ip(value):
-            return "ip"
+            return 'ip'
         if self._looks_like_domain(value):
-            return "domain"
+            return 'domain'
         if len(value) == 32:
-            return "md5"
+            return 'md5'
         if len(value) == 40:
-            return "sha1"
+            return 'sha1'
         if len(value) == 64:
-            return "sha256"
-        if "@" in value:
-            return "email"
-        if value.startswith("http://") or value.startswith("https://"):
-            return "url"
-        return "unknown"
+            return 'sha256'
+        if '@' in value:
+            return 'email'
+        if value.startswith('http://') or value.startswith('https://'):
+            return 'url'
+        return 'unknown'
 
     def _looks_like_domain(self, value: str) -> bool:
         """Check if value looks like a domain name."""
         if not value or len(value) > 253:
             return False
-        if "/" in value or "@" in value:
+        if '/' in value or '@' in value:
             return False
-        parts = value.split(".")
-        return all(
-            len(p) <= 63 and p and not p.startswith("-") and not p.endswith("-")
-            for p in parts
-            if p
-        )
+        parts = value.split('.')
+        return all((len(p) <= 63 and p and (not p.startswith('-')) and (not p.endswith('-')) for p in parts if p))
 
     def _looks_like_ip(self, value: str) -> bool:
         """Check if value looks like an IP address."""
-        parts = value.split(".")
+        parts = value.split('.')
         if len(parts) != 4:
             return False
         try:
-            return all(0 <= int(p) <= 255 for p in parts)
+            return all((0 <= int(p) <= 255 for p in parts))
         except (ValueError, TypeError):
             return False
 
     def _pivot_type_for_ioc(self, ioc_type: str) -> str:
         """Map IOC type to pivot type."""
-        mapping = {
-            "domain": PivotType.DOMAIN,
-            "ip": PivotType.DOMAIN,  # IP pivots use DOMAIN type for DNS resolution
-            "md5": PivotType.GRAPH,
-            "sha1": PivotType.GRAPH,
-            "sha256": PivotType.GRAPH,
-            "hash": PivotType.GRAPH,
-            "email": PivotType.IDENTITY,
-            "url": PivotType.ARCHIVE,
-            "entity": PivotType.IDENTITY,
-            "unknown": PivotType.GRAPH,
-        }
+        mapping = {'domain': PivotType.DOMAIN, 'ip': PivotType.DOMAIN, 'md5': PivotType.GRAPH, 'sha1': PivotType.GRAPH, 'sha256': PivotType.GRAPH, 'hash': PivotType.GRAPH, 'email': PivotType.IDENTITY, 'url': PivotType.ARCHIVE, 'entity': PivotType.IDENTITY, 'unknown': PivotType.GRAPH}
         return mapping.get(ioc_type, PivotType.GRAPH)
 
-    # ── Internal ───────────────────────────────────────────────────────────
-
-    def _generate_pivots_for_ioc(
-        self,
-        ioc_value: str,
-        ioc_type: str,
-        base_score: float,
-        finding: Any,
-        envelope: dict | None,
-        graph_stats: dict,
-        feedback_summary: dict | None = None,
-    ) -> list[Pivot]:
+    def _generate_pivots_for_ioc(self, ioc_value: str, ioc_type: str, base_score: float, finding: Any, envelope: dict | None, graph_stats: dict, feedback_summary: dict | None=None) -> list[Pivot]:
         """Generate pivots for a single IOC."""
         pivots = []
-        fid = getattr(finding, "finding_id", None) or ""
-
-        # Domain pivots
-        if ioc_type == "domain" or self._looks_like_domain(ioc_value):
-            domain = ioc_value if ioc_type == "domain" else ioc_value
-            sqs = getattr(finding, "source_quality_score", None)
+        fid = getattr(finding, 'finding_id', None) or ''
+        if ioc_type == 'domain' or self._looks_like_domain(ioc_value):
+            domain = ioc_value if ioc_type == 'domain' else ioc_value
+            sqs = getattr(finding, 'source_quality_score', None)
             score = _score_pivot_domain(domain, base_score, envelope, graph_stats, sqs)
-            penalty = self._get_feedback_penalty(PivotType.DOMAIN, "domain", feedback_summary)
+            penalty = self._get_feedback_penalty(PivotType.DOMAIN, 'domain', feedback_summary)
             score = score * penalty
-            pivots.append(Pivot(
-                priority=-score,
-                pivot_id=str(uuid.uuid4()),
-                pivot_type=PivotType.DOMAIN,
-                ioc_value=domain,
-                ioc_type="domain",
-                reason=f"Domain pivot from {getattr(finding, 'source_type', 'unknown')}",
-                expected_value=score,
-                source_hint=f"finding:{fid}" if fid else "unknown",
-                evidence_pointers=(fid,) if fid else (),
-            ))
-
-            # Archive pivot for domain
+            pivots.append(Pivot(priority=-score, pivot_id=str(uuid.uuid4()), pivot_type=PivotType.DOMAIN, ioc_value=domain, ioc_type='domain', reason=f"Domain pivot from {getattr(finding, 'source_type', 'unknown')}", expected_value=score, source_hint=f'finding:{fid}' if fid else 'unknown', evidence_pointers=(fid,) if fid else ()))
             archive_score = _score_pivot_archive(domain, base_score, graph_stats)
-            archive_penalty = self._get_feedback_penalty(PivotType.ARCHIVE, "domain", feedback_summary)
+            archive_penalty = self._get_feedback_penalty(PivotType.ARCHIVE, 'domain', feedback_summary)
             archive_score = archive_score * archive_penalty
-            pivots.append(Pivot(
-                priority=-archive_score,
-                pivot_id=str(uuid.uuid4()),
-                pivot_type=PivotType.ARCHIVE,
-                ioc_value=domain,
-                ioc_type="domain",
-                reason="Archive historical records for domain",
-                expected_value=archive_score,
-                source_hint=f"finding:{fid}" if fid else "unknown",
-                evidence_pointers=(fid,) if fid else (),
-            ))
-
-        # IP pivots
-        elif ioc_type in ("ip", "ipv4"):
-            # Domain resolution pivot
+            pivots.append(Pivot(priority=-archive_score, pivot_id=str(uuid.uuid4()), pivot_type=PivotType.ARCHIVE, ioc_value=domain, ioc_type='domain', reason='Archive historical records for domain', expected_value=archive_score, source_hint=f'finding:{fid}' if fid else 'unknown', evidence_pointers=(fid,) if fid else ()))
+        elif ioc_type in ('ip', 'ipv4'):
             score = base_score * 0.7
-            penalty = self._get_feedback_penalty(PivotType.DOMAIN, "ip", feedback_summary)
+            penalty = self._get_feedback_penalty(PivotType.DOMAIN, 'ip', feedback_summary)
             score = score * penalty
-            pivots.append(Pivot(
-                priority=-score,
-                pivot_id=str(uuid.uuid4()),
-                pivot_type=PivotType.DOMAIN,
-                ioc_value=ioc_value,
-                ioc_type="ip",
-                reason="Reverse DNS / domain lookup for IP",
-                expected_value=score,
-                source_hint=f"finding:{fid}" if fid else "unknown",
-                evidence_pointers=(fid,) if fid else (),
-            ))
-
-            # Graph pivot for IP
+            pivots.append(Pivot(priority=-score, pivot_id=str(uuid.uuid4()), pivot_type=PivotType.DOMAIN, ioc_value=ioc_value, ioc_type='ip', reason='Reverse DNS / domain lookup for IP', expected_value=score, source_hint=f'finding:{fid}' if fid else 'unknown', evidence_pointers=(fid,) if fid else ()))
             graph_score = _score_pivot_graph(ioc_value, ioc_type, base_score, graph_stats)
-            graph_penalty = self._get_feedback_penalty(PivotType.GRAPH, "ip", feedback_summary)
+            graph_penalty = self._get_feedback_penalty(PivotType.GRAPH, 'ip', feedback_summary)
             graph_score = graph_score * graph_penalty
-            pivots.append(Pivot(
-                priority=-graph_score,
-                pivot_id=str(uuid.uuid4()),
-                pivot_type=PivotType.GRAPH,
-                ioc_value=ioc_value,
-                ioc_type="ip",
-                reason="Graph traversal from IP IOC",
-                expected_value=graph_score,
-                source_hint=f"finding:{fid}" if fid else "unknown",
-                evidence_pointers=(fid,) if fid else (),
-            ))
-
-        # Hash pivots
-        elif ioc_type in ("md5", "sha1", "sha256"):
-            # VirusTotal/MalwareBazaar pivot
+            pivots.append(Pivot(priority=-graph_score, pivot_id=str(uuid.uuid4()), pivot_type=PivotType.GRAPH, ioc_value=ioc_value, ioc_type='ip', reason='Graph traversal from IP IOC', expected_value=graph_score, source_hint=f'finding:{fid}' if fid else 'unknown', evidence_pointers=(fid,) if fid else ()))
+        elif ioc_type in ('md5', 'sha1', 'sha256'):
             score = base_score * 0.7
             penalty = self._get_feedback_penalty(PivotType.GRAPH, ioc_type, feedback_summary)
             score = score * penalty
-            pivots.append(Pivot(
-                priority=-score,
-                pivot_id=str(uuid.uuid4()),
-                pivot_type=PivotType.GRAPH,
-                ioc_value=ioc_value,
-                ioc_type=ioc_type,
-                reason=f"Threat intelligence lookup for {ioc_type.upper()} hash",
-                expected_value=score,
-                source_hint=f"finding:{fid}" if fid else "unknown",
-                evidence_pointers=(fid,) if fid else (),
-            ))
-
-        # Email pivots
-        elif ioc_type == "email":
-            # Breach/leak pivot
+            pivots.append(Pivot(priority=-score, pivot_id=str(uuid.uuid4()), pivot_type=PivotType.GRAPH, ioc_value=ioc_value, ioc_type=ioc_type, reason=f'Threat intelligence lookup for {ioc_type.upper()} hash', expected_value=score, source_hint=f'finding:{fid}' if fid else 'unknown', evidence_pointers=(fid,) if fid else ()))
+        elif ioc_type == 'email':
             leak_score = _score_pivot_leak(ioc_value, base_score)
-            leak_penalty = self._get_feedback_penalty(PivotType.LEAK, "email", feedback_summary)
+            leak_penalty = self._get_feedback_penalty(PivotType.LEAK, 'email', feedback_summary)
             leak_score = leak_score * leak_penalty
-            pivots.append(Pivot(
-                priority=-leak_score,
-                pivot_id=str(uuid.uuid4()),
-                pivot_type=PivotType.LEAK,
-                ioc_value=ioc_value,
-                ioc_type="email",
-                reason="Check email for breach/leak exposure",
-                expected_value=leak_score,
-                source_hint=f"finding:{fid}" if fid else "unknown",
-                evidence_pointers=(fid,) if fid else (),
-            ))
-
-            # Identity pivot for email
+            pivots.append(Pivot(priority=-leak_score, pivot_id=str(uuid.uuid4()), pivot_type=PivotType.LEAK, ioc_value=ioc_value, ioc_type='email', reason='Check email for breach/leak exposure', expected_value=leak_score, source_hint=f'finding:{fid}' if fid else 'unknown', evidence_pointers=(fid,) if fid else ()))
             identity_score = _score_pivot_identity(ioc_value, ioc_type, base_score)
-            identity_penalty = self._get_feedback_penalty(PivotType.IDENTITY, "email", feedback_summary)
+            identity_penalty = self._get_feedback_penalty(PivotType.IDENTITY, 'email', feedback_summary)
             identity_score = identity_score * identity_penalty
-            pivots.append(Pivot(
-                priority=-identity_score,
-                pivot_id=str(uuid.uuid4()),
-                pivot_type=PivotType.IDENTITY,
-                ioc_value=ioc_value,
-                ioc_type="email",
-                reason="Identity resolution for email address",
-                expected_value=identity_score,
-                source_hint=f"finding:{fid}" if fid else "unknown",
-                evidence_pointers=(fid,) if fid else (),
-            ))
-
-        # URL pivots
-        elif ioc_type == "url":
-            # Domain pivot from URL
+            pivots.append(Pivot(priority=-identity_score, pivot_id=str(uuid.uuid4()), pivot_type=PivotType.IDENTITY, ioc_value=ioc_value, ioc_type='email', reason='Identity resolution for email address', expected_value=identity_score, source_hint=f'finding:{fid}' if fid else 'unknown', evidence_pointers=(fid,) if fid else ()))
+        elif ioc_type == 'url':
             domain = self._extract_domain_from_url(ioc_value)
             if domain:
                 score = base_score * 0.6
-                penalty = self._get_feedback_penalty(PivotType.DOMAIN, "domain", feedback_summary)
+                penalty = self._get_feedback_penalty(PivotType.DOMAIN, 'domain', feedback_summary)
                 score = score * penalty
-                pivots.append(Pivot(
-                    priority=-score,
-                    pivot_id=str(uuid.uuid4()),
-                    pivot_type=PivotType.DOMAIN,
-                    ioc_value=domain,
-                    ioc_type="domain",
-                    reason="Domain extracted from URL",
-                    expected_value=score,
-                    source_hint=f"finding:{fid}" if fid else "unknown",
-                    evidence_pointers=(fid,) if fid else (),
-                ))
-
-            # Archive pivot for URL
+                pivots.append(Pivot(priority=-score, pivot_id=str(uuid.uuid4()), pivot_type=PivotType.DOMAIN, ioc_value=domain, ioc_type='domain', reason='Domain extracted from URL', expected_value=score, source_hint=f'finding:{fid}' if fid else 'unknown', evidence_pointers=(fid,) if fid else ()))
             archive_score = _score_pivot_archive(ioc_value, base_score * 0.5, graph_stats)
-            archive_penalty = self._get_feedback_penalty(PivotType.ARCHIVE, "url", feedback_summary)
+            archive_penalty = self._get_feedback_penalty(PivotType.ARCHIVE, 'url', feedback_summary)
             archive_score = archive_score * archive_penalty
-            pivots.append(Pivot(
-                priority=-archive_score,
-                pivot_id=str(uuid.uuid4()),
-                pivot_type=PivotType.ARCHIVE,
-                ioc_value=ioc_value,
-                ioc_type="url",
-                reason="Archive historical snapshot of URL",
-                expected_value=archive_score,
-                source_hint=f"finding:{fid}" if fid else "unknown",
-                evidence_pointers=(fid,) if fid else (),
-            ))
-
+            pivots.append(Pivot(priority=-archive_score, pivot_id=str(uuid.uuid4()), pivot_type=PivotType.ARCHIVE, ioc_value=ioc_value, ioc_type='url', reason='Archive historical snapshot of URL', expected_value=archive_score, source_hint=f'finding:{fid}' if fid else 'unknown', evidence_pointers=(fid,) if fid else ()))
         return pivots
 
-    def _get_feedback_penalty(
-        self,
-        pivot_type: str,
-        ioc_type: str,
-        feedback_summary: dict | None,
-    ) -> float:
+    def _get_feedback_penalty(self, pivot_type: str, ioc_type: str, feedback_summary: dict | None) -> float:
         """
         F203G: Get penalty multiplier for a pivot type + ioc type combination.
 
@@ -1194,7 +719,7 @@ class PivotPlanner:
         if key not in feedback_summary:
             return 1.0
         summary = feedback_summary[key]
-        if hasattr(summary, "penalty_multiplier"):
+        if hasattr(summary, 'penalty_multiplier'):
             return float(summary.penalty_multiplier)
         return 1.0
 
@@ -1211,31 +736,20 @@ class PivotPlanner:
         """Check if value looks like a domain name."""
         if not value or len(value) < 4:
             return False
-        # Has at least one dot
-        if "." not in value:
+        if '.' not in value:
             return False
-        # Doesn't look like IP
-        if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", value):
+        if re.match('^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$', value):
             return False
-        # Basic domain charset
-        if not re.match(r"^[a-zA-Z0-9.\-]+$", value):
+        if not re.match('^[a-zA-Z0-9.\\-]+$', value):
             return False
         return True
 
     def _extract_domain_from_url(self, url: str) -> str | None:
         """Extract domain from URL."""
-        match = re.search(
-            r"https?://([a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)+)",
-            url,
-        )
+        match = re.search('https?://([a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?)+)', url)
         if match:
             return match.group(1).lower()
         return None
-
-
-# ---------------------------------------------------------------------------
-# F216F: Pivot candidate generation from query string (no findings needed)
-# ---------------------------------------------------------------------------
 
 def _looks_like_ip(s: str) -> bool:
     """Check if string looks like an IP address."""
@@ -1245,23 +759,21 @@ def _looks_like_ip(s: str) -> bool:
     if len(parts) != 4:
         return False
     try:
-        return all(0 <= int(p) <= 255 for p in parts)
+        return all((0 <= int(p) <= 255 for p in parts))
     except (ValueError, TypeError):
         return False
-
 
 def _looks_like_domain(s: str) -> bool:
     """Check if string looks like a domain name (module-level, no self)."""
     if not s or len(s) < 4:
         return False
-    if "." not in s:
+    if '.' not in s:
         return False
-    if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", s):
+    if re.match('^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$', s):
         return False
-    if not re.match(r"^[a-zA-Z0-9.\-]+$", s):
+    if not re.match('^[a-zA-Z0-9.\\-]+$', s):
         return False
     return True
-
 
 def _looks_like_hash(s: str) -> bool:
     """Check if string looks like a hash."""
@@ -1269,27 +781,22 @@ def _looks_like_hash(s: str) -> bool:
         return False
     if len(s) not in (32, 40, 64):
         return False
-    return bool(re.match(r'^[a-fA-F0-9]+$', s))
-
+    return bool(re.match('^[a-fA-F0-9]+$', s))
 
 def _looks_like_url(s: str) -> bool:
     """Check if string looks like a URL."""
-    return bool(re.match(r'^https?://', s)) or bool(re.match(r'^ftp://', s))
-
+    return bool(re.match('^https?://', s)) or bool(re.match('^ftp://', s))
 
 def _looks_like_email(s: str) -> bool:
     """Check if string looks like an email address."""
     return '@' in s and '.' in s.split('@')[-1]
-
 
 def _extract_root_domain(domain: str) -> str:
     """Extract root domain from subdomain."""
     parts = domain.split('.')
     if len(parts) <= 2:
         return domain
-    # Strip leading subdomains, keep last 2 parts
     return '.'.join(parts[-2:])
-
 
 def _query_domain_score(domain: str, base_score: float, graph_stats: dict | None) -> float:
     """
@@ -1301,52 +808,24 @@ def _query_domain_score(domain: str, base_score: float, graph_stats: dict | None
     F238F: All penalties/bonuses only apply when graph_stats is explicitly
     available. None and {} both mean "graph unavailable" → return base_score.
     """
-    # F238F: Graph unavailable → no graph-aware scoring
     if not _graph_stats_available(graph_stats):
         return base_score
-
     gs = graph_stats
-    node_degree = gs.get("node_degrees", {}).get(domain, 0)
-    existing_domains = gs.get("domains", [])
-
+    node_degree = gs.get('node_degrees', {}).get(domain, 0)
+    existing_domains = gs.get('domains', [])
     score = base_score
-
-    # Degree penalty: per audit spec, -0.01 * incident_count, cap -0.15
     score -= min(0.15, node_degree * 0.01)
-
-    # If already in graph, slightly deprioritize
     if domain in existing_domains:
         score -= 0.05
-
-    # Generic / high-degree domain patterns: CDN, parking, registrar, dynamic DNS
-    # These add noise to pivots without intelligence value
-    generic_patterns = (
-        "dyndns.", "no-ip.", "freedns.", "duckdns.",
-        "changeip.", "hopto.", "servegame.", "mydns.", "afraid.org",
-        "cloudfront", "akamai", "fastly", "cloudflare", "azureedge",
-        "googleusercontent", "googlehosted", "appspot",
-        "parking", "sedo", "namecheap", "godaddy",
-        "forwarded", "redirect",
-    )
-    if any(p in domain for p in generic_patterns) and node_degree > 5:
-        score -= 0.10
-
-    # Ransomware / malware-looking keywords: do NOT over-penalize
-    # These domains from APT/ransomware campaigns are intelligence-rich
-    suspicious_patterns = ("lockbit", "ransomware", "APT", "emotet", "icedid", "qakbot")
-    if any(p.lower() in domain.lower() for p in suspicious_patterns):
-        # Threat-linked domains warrant scrutiny, not penalization
+    generic_patterns = ('dyndns.', 'no-ip.', 'freedns.', 'duckdns.', 'changeip.', 'hopto.', 'servegame.', 'mydns.', 'afraid.org', 'cloudfront', 'akamai', 'fastly', 'cloudflare', 'azureedge', 'googleusercontent', 'googlehosted', 'appspot', 'parking', 'sedo', 'namecheap', 'godaddy', 'forwarded', 'redirect')
+    if any((p in domain for p in generic_patterns)) and node_degree > 5:
+        score -= 0.1
+    suspicious_patterns = ('lockbit', 'ransomware', 'APT', 'emotet', 'icedid', 'qakbot')
+    if any((p.lower() in domain.lower() for p in suspicious_patterns)):
         score += 0.05
-
     return min(1.0, max(0.0, score))
 
-
-def generate_pivot_candidates_from_query(
-    query: str,
-    max_candidates: int = MAX_PIVOT_CANDIDATES,
-    mission_intent: str | None = None,
-    graph_stats: dict | None = None,
-) -> list[Pivot]:
+def generate_pivot_candidates_from_query(query: str, max_candidates: int=MAX_PIVOT_CANDIDATES, mission_intent: str | None=None, graph_stats: dict | None=None) -> list[Pivot]:
     """
     [F216F] Generate bounded pivot candidates from a query string.
 
@@ -1377,235 +856,75 @@ def generate_pivot_candidates_from_query(
     """
     if not query or not isinstance(query, str):
         return []
-
     query = query.strip()
     if not query:
         return []
-
     candidates: list[Pivot] = []
     pivot_id_base = str(uuid.uuid4())[:8]
-
-    # Determine IOC type from query
-    ioc_type: str = "unknown"
+    ioc_type: str = 'unknown'
     ioc_value: str = query
-
     if _looks_like_ip(query):
-        ioc_type = "ip"
+        ioc_type = 'ip'
         ioc_value = query
     elif _looks_like_hash(query):
-        # Determine hash type by length
         h = query.lower()
         if len(h) == 32:
-            ioc_type = "md5"
+            ioc_type = 'md5'
         elif len(h) == 40:
-            ioc_type = "sha1"
+            ioc_type = 'sha1'
         elif len(h) == 64:
-            ioc_type = "sha256"
+            ioc_type = 'sha256'
         else:
-            ioc_type = "hash"
+            ioc_type = 'hash'
     elif _looks_like_url(query):
-        ioc_type = "url"
-        # Extract domain from URL
-        url_match = re.search(
-            r'https?://([a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)+)',
-            query,
-        )
+        ioc_type = 'url'
+        url_match = re.search('https?://([a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?)+)', query)
         if url_match:
             ioc_value = url_match.group(1).lower()
         else:
-            ioc_type = "unknown"
+            ioc_type = 'unknown'
     elif _looks_like_email(query):
-        ioc_type = "email"
+        ioc_type = 'email'
     elif _looks_like_domain(query):
-        ioc_type = "domain"
+        ioc_type = 'domain'
         ioc_value = query
     else:
-        # Unknown type - try to extract something
-        # Check for domain-like pattern
-        domain_match = re.search(
-            r'([a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)+)',
-            query,
-        )
+        domain_match = re.search('([a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?)+)', query)
         if domain_match:
-            ioc_type = "domain"
+            ioc_type = 'domain'
             ioc_value = domain_match.group(1).lower()
-
-    if ioc_type == "unknown":
+    if ioc_type == 'unknown':
         return []
-
-    # Generate pivots based on IOC type
-    source_hint = "query:direct"
-
-    # Domain pivots
-    if ioc_type == "domain":
-        # Root domain pivot
+    source_hint = 'query:direct'
+    if ioc_type == 'domain':
         root_domain = _extract_root_domain(ioc_value)
         root_score = _query_domain_score(root_domain, 0.9, graph_stats)
-        candidates.append(Pivot(
-            priority=-root_score,
-            pivot_id=f"{pivot_id_base}-root",
-            pivot_type=PivotType.DOMAIN,
-            ioc_value=root_domain,
-            ioc_type="domain",
-            reason="Root domain extracted from query",
-            expected_value=root_score,
-            source_hint=source_hint,
-            evidence_pointers=(),
-        ))
-
-        # If original was subdomain, also add www variant
+        candidates.append(Pivot(priority=-root_score, pivot_id=f'{pivot_id_base}-root', pivot_type=PivotType.DOMAIN, ioc_value=root_domain, ioc_type='domain', reason='Root domain extracted from query', expected_value=root_score, source_hint=source_hint, evidence_pointers=()))
         if ioc_value != root_domain:
-            # Try www.{root_domain}
-            www_domain = f"www.{root_domain}"
+            www_domain = f'www.{root_domain}'
             www_score = _query_domain_score(www_domain, 0.7, graph_stats)
-            candidates.append(Pivot(
-                priority=-www_score,
-                pivot_id=f"{pivot_id_base}-www",
-                pivot_type=PivotType.DOMAIN,
-                ioc_value=www_domain,
-                ioc_type="domain",
-                reason="Common www prefix variant",
-                expected_value=www_score,
-                source_hint=source_hint,
-                evidence_pointers=(),
-            ))
-
-        # Archive pivot for domain
-        candidates.append(Pivot(
-            priority=-0.5,
-            pivot_id=f"{pivot_id_base}-archive",
-            pivot_type=PivotType.ARCHIVE,
-            ioc_value=ioc_value,
-            ioc_type="domain",
-            reason="Archive historical records for domain",
-            expected_value=0.5,
-            source_hint=source_hint,
-            evidence_pointers=(),
-        ))
-
-    # IP pivots
-    elif ioc_type in ("ip", "ipv4"):
-        # Domain pivot for IP (reverse DNS hint)
-        candidates.append(Pivot(
-            priority=-0.7,
-            pivot_id=f"{pivot_id_base}-rdns",
-            pivot_type=PivotType.DOMAIN,
-            ioc_value=ioc_value,
-            ioc_type="ip",
-            reason="Reverse DNS / domain lookup for IP",
-            expected_value=0.7,
-            source_hint=source_hint,
-            evidence_pointers=(),
-        ))
-
-        # Graph pivot for IP
-        candidates.append(Pivot(
-            priority=-0.5,
-            pivot_id=f"{pivot_id_base}-graph",
-            pivot_type=PivotType.GRAPH,
-            ioc_value=ioc_value,
-            ioc_type="ip",
-            reason="Graph traversal from IP IOC",
-            expected_value=0.5,
-            source_hint=source_hint,
-            evidence_pointers=(),
-        ))
-
-    # URL pivots
-    elif ioc_type == "url" and ioc_value != query:
-        # Domain pivot from URL
-        candidates.append(Pivot(
-            priority=-0.8,
-            pivot_id=f"{pivot_id_base}-url-domain",
-            pivot_type=PivotType.DOMAIN,
-            ioc_value=ioc_value,
-            ioc_type="domain",
-            reason="Domain extracted from URL",
-            expected_value=0.8,
-            source_hint=source_hint,
-            evidence_pointers=(),
-        ))
-
-        # Archive pivot for URL
-        candidates.append(Pivot(
-            priority=-0.4,
-            pivot_id=f"{pivot_id_base}-url-archive",
-            pivot_type=PivotType.ARCHIVE,
-            ioc_value=query,
-            ioc_type="url",
-            reason="Archive historical snapshot of URL",
-            expected_value=0.4,
-            source_hint=source_hint,
-            evidence_pointers=(),
-        ))
-
-    # Hash pivots
-    elif ioc_type in ("md5", "sha1", "sha256", "hash"):
-        candidates.append(Pivot(
-            priority=-0.6,
-            pivot_id=f"{pivot_id_base}-threat",
-            pivot_type=PivotType.GRAPH,
-            ioc_value=ioc_value,
-            ioc_type=ioc_type,
-            reason=f"Threat intelligence lookup for {ioc_type.upper() if ioc_type != 'hash' else 'hash'} hash",
-            expected_value=0.6,
-            source_hint=source_hint,
-            evidence_pointers=(),
-        ))
-
-    # Email pivots
-    elif ioc_type == "email":
-        # Leak pivot
-        candidates.append(Pivot(
-            priority=-0.7,
-            pivot_id=f"{pivot_id_base}-leak",
-            pivot_type=PivotType.LEAK,
-            ioc_value=ioc_value,
-            ioc_type="email",
-            reason="Check email for breach/leak exposure",
-            expected_value=0.7,
-            source_hint=source_hint,
-            evidence_pointers=(),
-        ))
-
-        # Identity pivot
-        candidates.append(Pivot(
-            priority=-0.5,
-            pivot_id=f"{pivot_id_base}-identity",
-            pivot_type=PivotType.IDENTITY,
-            ioc_value=ioc_value,
-            ioc_type="email",
-            reason="Identity resolution for email address",
-            expected_value=0.5,
-            source_hint=source_hint,
-            evidence_pointers=(),
-        ))
-
-    # Sort by priority (highest first, since priority is negative)
+            candidates.append(Pivot(priority=-www_score, pivot_id=f'{pivot_id_base}-www', pivot_type=PivotType.DOMAIN, ioc_value=www_domain, ioc_type='domain', reason='Common www prefix variant', expected_value=www_score, source_hint=source_hint, evidence_pointers=()))
+        candidates.append(Pivot(priority=-0.5, pivot_id=f'{pivot_id_base}-archive', pivot_type=PivotType.ARCHIVE, ioc_value=ioc_value, ioc_type='domain', reason='Archive historical records for domain', expected_value=0.5, source_hint=source_hint, evidence_pointers=()))
+    elif ioc_type in ('ip', 'ipv4'):
+        candidates.append(Pivot(priority=-0.7, pivot_id=f'{pivot_id_base}-rdns', pivot_type=PivotType.DOMAIN, ioc_value=ioc_value, ioc_type='ip', reason='Reverse DNS / domain lookup for IP', expected_value=0.7, source_hint=source_hint, evidence_pointers=()))
+        candidates.append(Pivot(priority=-0.5, pivot_id=f'{pivot_id_base}-graph', pivot_type=PivotType.GRAPH, ioc_value=ioc_value, ioc_type='ip', reason='Graph traversal from IP IOC', expected_value=0.5, source_hint=source_hint, evidence_pointers=()))
+    elif ioc_type == 'url' and ioc_value != query:
+        candidates.append(Pivot(priority=-0.8, pivot_id=f'{pivot_id_base}-url-domain', pivot_type=PivotType.DOMAIN, ioc_value=ioc_value, ioc_type='domain', reason='Domain extracted from URL', expected_value=0.8, source_hint=source_hint, evidence_pointers=()))
+        candidates.append(Pivot(priority=-0.4, pivot_id=f'{pivot_id_base}-url-archive', pivot_type=PivotType.ARCHIVE, ioc_value=query, ioc_type='url', reason='Archive historical snapshot of URL', expected_value=0.4, source_hint=source_hint, evidence_pointers=()))
+    elif ioc_type in ('md5', 'sha1', 'sha256', 'hash'):
+        candidates.append(Pivot(priority=-0.6, pivot_id=f'{pivot_id_base}-threat', pivot_type=PivotType.GRAPH, ioc_value=ioc_value, ioc_type=ioc_type, reason=f"Threat intelligence lookup for {(ioc_type.upper() if ioc_type != 'hash' else 'hash')} hash", expected_value=0.6, source_hint=source_hint, evidence_pointers=()))
+    elif ioc_type == 'email':
+        candidates.append(Pivot(priority=-0.7, pivot_id=f'{pivot_id_base}-leak', pivot_type=PivotType.LEAK, ioc_value=ioc_value, ioc_type='email', reason='Check email for breach/leak exposure', expected_value=0.7, source_hint=source_hint, evidence_pointers=()))
+        candidates.append(Pivot(priority=-0.5, pivot_id=f'{pivot_id_base}-identity', pivot_type=PivotType.IDENTITY, ioc_value=ioc_value, ioc_type='email', reason='Identity resolution for email address', expected_value=0.5, source_hint=source_hint, evidence_pointers=()))
     candidates.sort(key=lambda p: p.priority)
-
-    # Enforce bound
     if len(candidates) > max_candidates:
         candidates = candidates[:max_candidates]
-
-    # F225D: Apply mission-aware scoring metadata if mission_intent provided
     if mission_intent and candidates:
         candidates = [apply_scoring_metadata(p, mission_intent) for p in candidates]
-        # Re-sort after scoring (mission boost may reorder)
         candidates.sort(key=lambda p: p.expected_value, reverse=True)
-
     return candidates
 
-
-# ---------------------------------------------------------------------------
-# Model-backed scoring (optional, via tot_integration)
-# ---------------------------------------------------------------------------
-
-async def _score_with_model(
-    pivot: Pivot,
-    context: dict,
-    tot_adapter: Any,
-) -> float:
+async def _score_with_model(pivot: Pivot, context: dict, tot_adapter: Any) -> float:
     """
     Optional model-backed scoring via tot_integration.
 
@@ -1623,15 +942,11 @@ async def _score_with_model(
     """
     if tot_adapter is None:
         return pivot.expected_value
-
     try:
-        query = f"Evaluate pivot: {pivot.ioc_type}:{pivot.ioc_value} for {pivot.pivot_type} investigation"
+        query = f'Evaluate pivot: {pivot.ioc_type}:{pivot.ioc_value} for {pivot.pivot_type} investigation'
         should_use, confidence = tot_adapter.should_activate_tot(query, context)
-
         if should_use:
-            # Model suggests this is complex, use its confidence
             return min(1.0, (pivot.expected_value + confidence) / 2.0)
-    except Exception:  # noqa: BLE001
-        pass  # noqa: BLE001  # Fail-soft: return original score
-
+    except Exception:
+        pass
     return pivot.expected_value

@@ -19,11 +19,8 @@ CRITICAL INVARIANTS (Issue 8.3):
 - Never call blocking I/O in hot path (tool execution context)
 """
 from __future__ import annotations
-
-
 import asyncio
 import hashlib
-
 from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
 import logging
 import os
@@ -33,51 +30,12 @@ import msgspec
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-
 import orjson
-
 logger = logging.getLogger(__name__)
-
-
-# Bounded error class names
-BOUNDED_ERROR_CLASSES = frozenset([
-    "TimeoutError", "ConnectionError", "HTTPError", "ValueError",
-    "TypeError", "AttributeError", "KeyError", "IOError",
-    "RuntimeError", "CancelledError", "AuthenticationError",
-    "PermissionError", "NotFoundError", "ValidationError",
-    "RateLimitError", "CircuitBreakerError", "Unknown"
-])
-
-# Bounded status values
-BOUNDED_STATUSES = frozenset(["success", "error", "cancelled"])
-
-
-# =============================================================================
-# CORRELATION GRAMMAR — SHARED BOUNDARY (Sprint F2B)
-# =============================================================================
-# All planes (ToolExecLog, MetricsRegistry, EvidenceLog) share the same
-# correlation key names: run_id, branch_id, provider_id, action_id.
-# Key names are the grammar contract. Scope semantics (per-event vs per-registry)
-# are plane-specific by design — see docstrings below.
-# =============================================================================
-
-SHARED_CORRELATION_KEYS = frozenset(["run_id", "branch_id", "provider_id", "action_id"])
-"""
-Shared correlation key grammar.
-
-All ledger planes MUST use these key names for cross-component correlation.
-Deviation = silent correlation loss in cross-plane queries.
-
-SCOPE SEMANTICS (intentional, NOT drift):
-- ToolExecLog:        per-event  — each log() call carries its own correlation dict
-- MetricsRegistry:    per-registry — set at __init__, batched on flush
-- EvidenceLog:        per-event  — each create_event carries correlation
-
-These are efficiency trade-offs, not inconsistency. Tool audit events are
-discrete; metrics are aggregated. Unifying scope would sacrifice one plane's
-design for the other's convenience.
-"""
-
+BOUNDED_ERROR_CLASSES = frozenset(['TimeoutError', 'ConnectionError', 'HTTPError', 'ValueError', 'TypeError', 'AttributeError', 'KeyError', 'IOError', 'RuntimeError', 'CancelledError', 'AuthenticationError', 'PermissionError', 'NotFoundError', 'ValidationError', 'RateLimitError', 'CircuitBreakerError', 'Unknown'])
+BOUNDED_STATUSES = frozenset(['success', 'error', 'cancelled'])
+SHARED_CORRELATION_KEYS = frozenset(['run_id', 'branch_id', 'provider_id', 'action_id'])
+"\nShared correlation key grammar.\n\nAll ledger planes MUST use these key names for cross-component correlation.\nDeviation = silent correlation loss in cross-plane queries.\n\nSCOPE SEMANTICS (intentional, NOT drift):\n- ToolExecLog:        per-event  — each log() call carries its own correlation dict\n- MetricsRegistry:    per-registry — set at __init__, batched on flush\n- EvidenceLog:        per-event  — each create_event carries correlation\n\nThese are efficiency trade-offs, not inconsistency. Tool audit events are\ndiscrete; metrics are aggregated. Unifying scope would sacrifice one plane's\ndesign for the other's convenience.\n"
 
 def normalize_correlation(corr: dict[str, str | None] | None) -> dict[str, str | None] | None:
     """
@@ -95,7 +53,6 @@ def normalize_correlation(corr: dict[str, str | None] | None) -> dict[str, str |
         return None
     return {k: corr.get(k) for k in SHARED_CORRELATION_KEYS if k in corr}
 
-
 class ToolExecEvent(msgspec.Struct, frozen=True):
     """
     Tool execution event - bounded metadata only.
@@ -111,63 +68,36 @@ class ToolExecEvent(msgspec.Struct, frozen=True):
     - Zero memory overhead vs dict-based storage
     """
     event_id: str
-    ts: float  # epoch seconds (float for msgspec compat, UTC)
+    ts: float
     tool_name: str
-    input_hash: str  # SHA256 of input (not stored)
-    output_hash: str  # SHA256 of output (not stored)
-    output_len: int  # Bounded: actual output length
-    status: str  # "success" | "error" | "cancelled"
-    error_class: str | None = None  # Bounded error type
+    input_hash: str
+    output_hash: str
+    output_len: int
+    status: str
+    error_class: str | None = None
     seq_no: int = 0
     prev_chain_hash: str | None = None
     chain_hash: str | None = None
-    correlation: dict[str, str | None] | None = None  # run_id, branch_id, provider_id, action_id
+    correlation: dict[str, str | None] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dict for JSON (backward compatibility)."""
-        result: dict[str, Any] = {
-            "event_id": self.event_id,
-            "ts": datetime.fromtimestamp(self.ts, UTC).isoformat(),
-            "tool_name": self.tool_name,
-            "input_hash": self.input_hash,
-            "output_hash": self.output_hash,
-            "output_len": self.output_len,
-            "status": self.status,
-            "error_class": self.error_class,
-            "seq_no": self.seq_no,
-            "prev_chain_hash": self.prev_chain_hash,
-            "chain_hash": self.chain_hash,
-        }
+        result: dict[str, Any] = {'event_id': self.event_id, 'ts': datetime.fromtimestamp(self.ts, UTC).isoformat(), 'tool_name': self.tool_name, 'input_hash': self.input_hash, 'output_hash': self.output_hash, 'output_len': self.output_len, 'status': self.status, 'error_class': self.error_class, 'seq_no': self.seq_no, 'prev_chain_hash': self.prev_chain_hash, 'chain_hash': self.chain_hash}
         if self.correlation:
-            result["correlation"] = self.correlation
+            result['correlation'] = self.correlation
         return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ToolExecEvent:
         """Deserialize from dict (backward compatibility)."""
-        ts_val = data.get("ts")
+        ts_val = data.get('ts')
         if isinstance(ts_val, str):
             ts_val = datetime.fromisoformat(ts_val).timestamp()
         elif isinstance(ts_val, datetime):
             ts_val = ts_val.timestamp()
         elif ts_val is None:
             ts_val = datetime.now(UTC).timestamp()
-        # Build with float ts, not datetime
-        return cls(
-            event_id=data["event_id"],
-            ts=ts_val,
-            tool_name=data["tool_name"],
-            input_hash=data["input_hash"],
-            output_hash=data["output_hash"],
-            output_len=data["output_len"],
-            status=data["status"],
-            error_class=data.get("error_class"),
-            seq_no=data.get("seq_no", 0),
-            prev_chain_hash=data.get("prev_chain_hash"),
-            chain_hash=data.get("chain_hash"),
-            correlation=data.get("correlation"),
-        )
-
+        return cls(event_id=data['event_id'], ts=ts_val, tool_name=data['tool_name'], input_hash=data['input_hash'], output_hash=data['output_hash'], output_len=data['output_len'], status=data['status'], error_class=data.get('error_class'), seq_no=data.get('seq_no', 0), prev_chain_hash=data.get('prev_chain_hash'), chain_hash=data.get('chain_hash'), correlation=data.get('correlation'))
 
 class ToolExecLog:
     """
@@ -213,19 +143,13 @@ class ToolExecLog:
     - Bounded metadata (sizes, error types)
     - Disk-first with RAM ring buffer
     """
-
     MAX_RAM_EVENTS = 100
-    MAX_OUTPUT_LEN = 1024 * 1024  # 1MB max output tracked
-    _SQLITE_BATCH_SIZE = 100  # Batch size for SQLite writes
-    _SQLITE_FLUSH_INTERVAL = 1.0  # Flush interval in seconds
+    MAX_OUTPUT_LEN = 1024 * 1024
+    _SQLITE_BATCH_SIZE = 100
+    _SQLITE_FLUSH_INTERVAL = 1.0
+    __slots__ = tuple(('_chain_head', '_closed', '_db', '_db_path', '_initialized', '_log', '_loop', '_persist_enabled', '_run_dir', '_run_id', '_seq', '_silent_failure', '_write_queue', '_write_shutdown', '_write_task'))
 
-    def __init__(
-        self,
-        run_dir: Path,
-        enable_persist: bool = True,
-        run_id: str = "default",
-        silent_failure: bool = False,
-    ):
+    def __init__(self, run_dir: Path, enable_persist: bool=True, run_id: str='default', silent_failure: bool=False):
         """
         Initialize ToolExecLog.
 
@@ -240,38 +164,26 @@ class ToolExecLog:
         self._persist_enabled = enable_persist
         self._run_id = run_id
         self._silent_failure = silent_failure
-
-        # Chain state
         self._seq = 0
-        self._chain_head = "genesis"
-
-        # RAM ring buffer
+        self._chain_head = 'genesis'
         self._log: deque = deque(maxlen=self.MAX_RAM_EVENTS)
-
-        # SQLite state
         self._db_path: Path | None = None
         self._db: Any | None = None
         self._initialized = False
-
-        # Async write worker
         self._write_queue: asyncio.Queue = asyncio.Queue(maxsize=500)
         self._write_task: asyncio.Task | None = None
         self._write_shutdown: asyncio.Event = asyncio.Event()
         self._loop: asyncio.AbstractEventLoop | None = None
-
-        # Explicit closed state
         self._closed = False
-
-        if enable_persist and not silent_failure:
+        if enable_persist and (not silent_failure):
             self._init_persist()
-
-        logger.info(f"ToolExecLog initialized: run_id={run_id}, persist={enable_persist}, silent_failure={silent_failure}")
+        logger.info(f'ToolExecLog initialized: run_id={run_id}, persist={enable_persist}, silent_failure={silent_failure}')
 
     def _init_persist(self) -> None:
         """Initialize SQLite WAL persistence."""
-        log_dir = self._run_dir / "logs"
+        log_dir = self._run_dir / 'logs'
         log_dir.mkdir(parents=True, exist_ok=True)
-        self._db_path = log_dir / "tool_exec.db"
+        self._db_path = log_dir / 'tool_exec.db'
 
     def _hash_bytes(self, data: bytes) -> str:
         """Compute SHA256 hash of bytes"""
@@ -282,7 +194,7 @@ class ToolExecLog:
         if error is None:
             return None
         error_name = type(error).__name__
-        return error_name if error_name in BOUNDED_ERROR_CLASSES else "Unknown"
+        return error_name if error_name in BOUNDED_ERROR_CLASSES else 'Unknown'
 
     async def initialize(self) -> None:
         """
@@ -293,61 +205,41 @@ class ToolExecLog:
         if self._silent_failure or not self._persist_enabled:
             return
         if self._initialized:
-            # Restart worker if dead
             if self._write_task is None or self._write_task.done():
                 self._write_task = safe_create_task(self._write_worker())
             return
-
         try:
             self._loop = asyncio.get_running_loop()
         except RuntimeError:
             self._loop = None
-
-        # Initialize SQLite
         import aiosqlite
         self._db = await aiosqlite.connect(str(self._db_path), check_same_thread=False)
-        await self._db.execute("PRAGMA busy_timeout=30000")
-        await self._db.execute("PRAGMA journal_mode=WAL")
-        await self._db.execute("PRAGMA synchronous=NORMAL")
-        await self._db.execute("PRAGMA wal_autocheckpoint=1000")
-        await self._db.execute("PRAGMA cache_size=-8192")
-
-        await self._db.execute("""
-            CREATE TABLE IF NOT EXISTS events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                seq_no INTEGER NOT NULL,
-                tool_name TEXT NOT NULL,
-                data TEXT NOT NULL,
-                hash TEXT NOT NULL,
-                ts REAL NOT NULL
-            )
-        """)
-        await self._db.execute("""
-            CREATE INDEX IF NOT EXISTS idx_events_seq ON events(seq_no)
-        """)
+        await self._db.execute('PRAGMA busy_timeout=30000')
+        await self._db.execute('PRAGMA journal_mode=WAL')
+        await self._db.execute('PRAGMA synchronous=NORMAL')
+        await self._db.execute('PRAGMA wal_autocheckpoint=1000')
+        await self._db.execute('PRAGMA cache_size=-8192')
+        await self._db.execute('\n            CREATE TABLE IF NOT EXISTS events (\n                id INTEGER PRIMARY KEY AUTOINCREMENT,\n                seq_no INTEGER NOT NULL,\n                tool_name TEXT NOT NULL,\n                data TEXT NOT NULL,\n                hash TEXT NOT NULL,\n                ts REAL NOT NULL\n            )\n        ')
+        await self._db.execute('\n            CREATE INDEX IF NOT EXISTS idx_events_seq ON events(seq_no)\n        ')
         await self._db.commit()
-
         self._write_task = safe_create_task(self._write_worker())
         self._initialized = True
 
     async def _write_worker(self) -> None:
         """Background worker that writes events to SQLite in batches."""
         import aiosqlite
-
         db: aiosqlite.Connection | None = None
         if self._db_path:
             try:
                 db = await aiosqlite.connect(str(self._db_path), check_same_thread=False)
-                await db.execute("PRAGMA busy_timeout=30000")
-                await db.execute("PRAGMA journal_mode=WAL")
-                await db.execute("PRAGMA synchronous=NORMAL")
+                await db.execute('PRAGMA busy_timeout=30000')
+                await db.execute('PRAGMA journal_mode=WAL')
+                await db.execute('PRAGMA synchronous=NORMAL')
             except Exception as e:
-                logger.warning(f"[ToolExecLog] SQLite connect failed: {e}")
+                logger.warning(f'[ToolExecLog] SQLite connect failed: {e}')
                 db = None
-
         batch: list[tuple] = []
         last_flush = datetime.now(UTC)
-
         while True:
             try:
                 try:
@@ -356,7 +248,6 @@ class ToolExecLog:
                     batch.append(item)
                 except TimeoutError:
                     pass
-
                 if self._write_shutdown.is_set():
                     while True:
                         try:
@@ -365,51 +256,29 @@ class ToolExecLog:
                         except asyncio.QueueEmpty:
                             break
                     break
-
-                # Flush if batch full or interval elapsed
-                if len(batch) >= self._SQLITE_BATCH_SIZE or (
-                    batch and (datetime.now(UTC) - last_flush).total_seconds() >= self._SQLITE_FLUSH_INTERVAL
-                ):
+                if len(batch) >= self._SQLITE_BATCH_SIZE or (batch and (datetime.now(UTC) - last_flush).total_seconds() >= self._SQLITE_FLUSH_INTERVAL):
                     if db is not None:
                         try:
-                            await db.executemany(
-                                "INSERT INTO events (seq_no, event_type, data, hash, ts) VALUES (?, ?, ?, ?, ?)",
-                                batch,
-                            )
+                            await db.executemany('INSERT INTO events (seq_no, event_type, data, hash, ts) VALUES (?, ?, ?, ?, ?)', batch)
                             await db.commit()
                         except Exception as e:
-                            logger.warning(f"[ToolExecLog] Batch insert failed: {e}")
+                            logger.warning(f'[ToolExecLog] Batch insert failed: {e}')
                     batch = []
                     last_flush = datetime.now(UTC)
-
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.warning(f"[ToolExecLog] Write worker error: {e}")
-
-        # Final flush
+                logger.warning(f'[ToolExecLog] Write worker error: {e}')
         if batch and db is not None:
             try:
-                await db.executemany(
-                    "INSERT INTO events (seq_no, event_type, data, hash, ts) VALUES (?, ?, ?, ?, ?)",
-                    batch,
-                )
+                await db.executemany('INSERT INTO events (seq_no, event_type, data, hash, ts) VALUES (?, ?, ?, ?, ?)', batch)
                 await db.commit()
             except Exception as e:
-                logger.warning(f"[ToolExecLog] Final batch flush failed: {e}")
-
+                logger.warning(f'[ToolExecLog] Final batch flush failed: {e}')
         if db:
             await db.close()
 
-    def log(
-        self,
-        tool_name: str,
-        input_data: bytes,
-        output_data: bytes,
-        status: str,
-        error: Exception | None = None,
-        correlation: dict[str, str | None] | None = None,
-    ) -> ToolExecEvent | None:
+    def log(self, tool_name: str, input_data: bytes, output_data: bytes, status: str, error: Exception | None=None, correlation: dict[str, str | None] | None=None) -> ToolExecEvent | None:
         """
         Log a tool execution event.
 
@@ -430,80 +299,32 @@ class ToolExecLog:
                 truthfully persist events.
         """
         import uuid
-
         if self._closed:
-            raise RuntimeError(
-                "ToolExecLog.log() called after finalize()/close(): "
-                "audit trail is closed, refusing to log event"
-            )
-
-        # Issue 8.3: silent_failure bypass — no I/O, no RAM allocation
+            raise RuntimeError('ToolExecLog.log() called after finalize()/close(): audit trail is closed, refusing to log event')
         if self._silent_failure:
             return None
-
-        # Compute hashes (never store raw data)
-        input_hash = self._hash_bytes(input_data) if input_data else ""
+        input_hash = self._hash_bytes(input_data) if input_data else ''
         output_len = min(len(output_data), self.MAX_OUTPUT_LEN)
-        output_hash = self._hash_bytes(output_data[:self.MAX_OUTPUT_LEN]) if output_data else ""
-
-        # Bound error class
+        output_hash = self._hash_bytes(output_data[:self.MAX_OUTPUT_LEN]) if output_data else ''
         error_class = self._bound_error_class(error)
-
-        # Bound status
         if status not in BOUNDED_STATUSES:
-            status = "error"
-
-        # Normalize correlation
+            status = 'error'
         correlation = normalize_correlation(correlation)
-
-        # Create event with chain
         self._seq += 1
-
-        event_id = f"tool_{self._seq}_{uuid.uuid4().hex[:8]}"
-        chain_input = (
-            f"{self._chain_head}:{event_id}:{input_hash}:{output_hash}"
-            f":{status}:{error_class}"
-        )
+        event_id = f'tool_{self._seq}_{uuid.uuid4().hex[:8]}'
+        chain_input = f'{self._chain_head}:{event_id}:{input_hash}:{output_hash}:{status}:{error_class}'
         chain_hash = hashlib.sha256(chain_input.encode()).hexdigest()
-
-        event = ToolExecEvent(
-            event_id=event_id,
-            ts=datetime.now(UTC).timestamp(),
-            tool_name=tool_name,
-            input_hash=input_hash,
-            output_hash=output_hash,
-            output_len=output_len,
-            status=status,
-            error_class=error_class,
-            seq_no=self._seq,
-            prev_chain_hash=self._chain_head,
-            chain_hash=chain_hash,
-            correlation=correlation,
-        )
-
-        # Update chain head
+        event = ToolExecEvent(event_id=event_id, ts=datetime.now(UTC).timestamp(), tool_name=tool_name, input_hash=input_hash, output_hash=output_hash, output_len=output_len, status=status, error_class=error_class, seq_no=self._seq, prev_chain_hash=self._chain_head, chain_hash=chain_hash, correlation=correlation)
         self._chain_head = chain_hash
-
-        # Queue for async SQLite write
-        if self._persist_enabled and self._write_task is not None and not self._write_task.done():
+        if self._persist_enabled and self._write_task is not None and (not self._write_task.done()):
             try:
-                record: tuple[int, str, str, str, float] = (
-                    event.seq_no,
-                    tool_name,
-                    orjson.dumps(event.to_dict()).decode(),
-                    chain_hash,
-                    event.ts,
-                )
+                record: tuple[int, str, str, str, float] = (event.seq_no, tool_name, orjson.dumps(event.to_dict()).decode(), chain_hash, event.ts)
                 self._write_queue.put_nowait(record)
             except asyncio.QueueFull:
-                logger.debug("[ToolExecLog] Write queue full, dropping event")
+                logger.debug('[ToolExecLog] Write queue full, dropping event')
             except RuntimeError:
-                # No event loop
                 pass
-
-        # Add to ring buffer
         self._log.append(event)
-
         return event
 
     def verify_all(self) -> dict[str, Any]:
@@ -519,67 +340,39 @@ class ToolExecLog:
                 - errors: list of issues
         """
         import sqlite3
-
         events: list[ToolExecEvent] = []
-
-        # Read from SQLite
         if self._db_path and self._db_path.exists():
             try:
                 conn = sqlite3.connect(str(self._db_path))
-                conn.execute("PRAGMA busy_timeout=30000")
-                conn.execute("PRAGMA journal_mode=WAL")
-                cursor = conn.execute(
-                    "SELECT seq_no, tool_name, data, hash, ts FROM events ORDER BY seq_no"
-                )
+                conn.execute('PRAGMA busy_timeout=30000')
+                conn.execute('PRAGMA journal_mode=WAL')
+                cursor = conn.execute('SELECT seq_no, tool_name, data, hash, ts FROM events ORDER BY seq_no')
                 for row in cursor:
                     seq_no, _tool_name, data, hash_val, ts = row
                     event_data = orjson.loads(data)
-                    event_data["seq_no"] = seq_no
-                    event_data["chain_hash"] = hash_val
-                    event_data["timestamp"] = ts
+                    event_data['seq_no'] = seq_no
+                    event_data['chain_hash'] = hash_val
+                    event_data['timestamp'] = ts
                     events.append(ToolExecEvent.from_dict(event_data))
                 conn.close()
             except Exception as e:
-                logger.warning(f"[ToolExecLog] verify_all failed to read DB: {e}")
-
-        # Also include RAM events not yet flushed
+                logger.warning(f'[ToolExecLog] verify_all failed to read DB: {e}')
         ram_seqs = {e.seq_no for e in self._log}
         for event in self._log:
             if event.seq_no not in ram_seqs:
                 events.append(event)
-
         events.sort(key=lambda e: e.seq_no)
-
         errors = []
-        expected_head = "genesis"
-
+        expected_head = 'genesis'
         for event in events:
             if event.prev_chain_hash != expected_head:
-                errors.append(
-                    f"Chain break at seq {event.seq_no}: "
-                    f"expected prev={expected_head}, got {event.prev_chain_hash}"
-                )
-
-            chain_input = (
-                f"{expected_head}:{event.event_id}:{event.input_hash}:{event.output_hash}"
-                f":{event.status}:{event.error_class}"
-            )
+                errors.append(f'Chain break at seq {event.seq_no}: expected prev={expected_head}, got {event.prev_chain_hash}')
+            chain_input = f'{expected_head}:{event.event_id}:{event.input_hash}:{event.output_hash}:{event.status}:{event.error_class}'
             expected_chain = hashlib.sha256(chain_input.encode()).hexdigest()
             if event.chain_hash != expected_chain:
-                errors.append(
-                    f"Hash mismatch at seq {event.seq_no}: "
-                    f"expected {expected_chain[:16]}..., got {(event.chain_hash or '')[:16]}..."
-                )
-
+                errors.append(f"Hash mismatch at seq {event.seq_no}: expected {expected_chain[:16]}..., got {(event.chain_hash or '')[:16]}...")
             expected_head = event.chain_hash
-
-        return {
-            "chain_valid": not errors,
-            "head_hash": self._chain_head,
-            "event_count": len(events),
-            "first_seq": events[0].seq_no if events else 0,
-            "errors": errors,
-        }
+        return {'chain_valid': not errors, 'head_hash': self._chain_head, 'event_count': len(events), 'first_seq': events[0].seq_no if events else 0, 'errors': errors}
 
     def get_head_hash(self) -> str:
         """Get current chain head hash"""
@@ -587,15 +380,7 @@ class ToolExecLog:
 
     def get_stats(self) -> dict[str, Any]:
         """Get log statistics"""
-        return {
-            "seq": self._seq,
-            "ram_events": len(self._log),
-            "head_hash": self._chain_head,
-            "run_id": self._run_id,
-            "persist_enabled": self._persist_enabled,
-            "silent_failure": self._silent_failure,
-            "closed": self._closed,
-        }
+        return {'seq': self._seq, 'ram_events': len(self._log), 'head_hash': self._chain_head, 'run_id': self._run_id, 'persist_enabled': self._persist_enabled, 'silent_failure': self._silent_failure, 'closed': self._closed}
 
     async def aclose(self) -> None:
         """Async close — signals shutdown, waits for worker, closes DB."""
@@ -603,17 +388,15 @@ class ToolExecLog:
             return
         self._closed = True
         self._write_shutdown.set()
-
-        if self._write_task and not self._write_task.done():
+        if self._write_task and (not self._write_task.done()):
             try:
-                await safe_wait_for(self._write_task, timeout=5.0, label="_write_task")
+                await safe_wait_for(self._write_task, timeout=5.0, label='_write_task')
             except (TimeoutError, asyncio.CancelledError):
                 self._write_task.cancel()
                 try:
                     await self._write_task
                 except asyncio.CancelledError:
                     pass
-
         if self._db:
             try:
                 await self._db.close()
@@ -627,7 +410,6 @@ class ToolExecLog:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             loop = None
-
         if loop and loop.is_running():
             safe_create_task(self.aclose())
         else:
@@ -648,12 +430,6 @@ class ToolExecLog:
     def __exit__(self, *_: Any) -> None:
         self.close()
 
-
-# Convenience function
-def create_tool_exec_log(
-    run_dir: Path,
-    run_id: str = "default",
-    silent_failure: bool = False,
-) -> ToolExecLog:
+def create_tool_exec_log(run_dir: Path, run_id: str='default', silent_failure: bool=False) -> ToolExecLog:
     """Create a ToolExecLog instance"""
     return ToolExecLog(run_dir=run_dir, run_id=run_id, silent_failure=silent_failure)

@@ -9,22 +9,13 @@ Provides async-safe TokenBucket with:
 
 Sprint 7A scope: SSOT layer only, no sweeping integration.
 """
-
 import asyncio
 import random
 import time
-
-# QoS class constants (Darwin / macOS)
-QOS_CLASS_USER_INTERACTIVE = 0x21
-QOS_CLASS_USER_INITIATED = 0x19
-QOS_CLASS_UTILITY = 0x11
-QOS_CLASS_BACKGROUND = 0x09
-
-
-# =============================================================================
-# TokenBucket — async-safe, SSOT
-# =============================================================================
-
+QOS_CLASS_USER_INTERACTIVE = 33
+QOS_CLASS_USER_INITIATED = 25
+QOS_CLASS_UTILITY = 17
+QOS_CLASS_BACKGROUND = 9
 
 class TokenBucket:
     """
@@ -40,18 +31,10 @@ class TokenBucket:
         await bucket.acquire()        # blocks until token available
         await bucket.acquire(domain="shodan")  # domain-aware (capacity shared)
     """
+    _DEFAULT_JITTER_SIGMA: float = 0.15
+    __slots__ = ('_rate', '_capacity', '_tokens', '_last_refill', '_lock', '_jitter_sigma')
 
-    _DEFAULT_JITTER_SIGMA: float = 0.15  # ±15 % sigma for Gaussian jitter
-
-    __slots__ = ("_rate", "_capacity", "_tokens", "_last_refill", "_lock", "_jitter_sigma")
-
-    def __init__(
-        self,
-        rate: float,
-        capacity: float,
-        *,
-        jitter_sigma: float = _DEFAULT_JITTER_SIGMA,
-    ) -> None:
+    def __init__(self, rate: float, capacity: float, *, jitter_sigma: float=_DEFAULT_JITTER_SIGMA) -> None:
         """
         Args:
             rate:       tokens per second (refill rate)
@@ -69,7 +52,7 @@ class TokenBucket:
         """Dynamically change the refill rate. Thread-safe."""
         self._rate = max(0.0, rate)
 
-    async def acquire(self, timeout: float | None = None) -> bool:
+    async def acquire(self, timeout: float | None=None) -> bool:
         """
         Acquire one token, waiting if necessary.
 
@@ -80,14 +63,12 @@ class TokenBucket:
             True if token acquired, False if timed out.
         """
         deadline = None if timeout is None else time.monotonic() + timeout
-
         async with self._lock:
             while True:
                 self._refill()
                 if self._tokens >= 1.0:
                     self._tokens -= 1.0
                     return True
-
                 if deadline is not None:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
@@ -95,7 +76,6 @@ class TokenBucket:
                     wait = min(remaining, self._compute_wait())
                 else:
                     wait = self._compute_wait()
-
                 await asyncio.sleep(wait)
 
     def _refill(self) -> None:
@@ -111,54 +91,25 @@ class TokenBucket:
             base_wait = 1.0
         else:
             base_wait = (1.0 - self._tokens) / self._rate
-
-        # Gaussian jitter: sample from Normal(0, sigma) and clamp to ±1 sigma range
         if self._jitter_sigma > 0.0:
             jitter = random.gauss(0.0, self._jitter_sigma)
-            # clamp to [-0.15, +0.15] range (≈ ±1 sigma for 0.15)
             jitter = max(-self._jitter_sigma, min(self._jitter_sigma, jitter))
             wait = base_wait * (1.0 + jitter)
         else:
             wait = base_wait
-
         return max(0.0, wait)
 
     @property
     def available_tokens(self) -> float:
         """Return approximate token count (no lock — for monitoring only)."""
         return self._tokens
-
-
-# =============================================================================
-# RATE_LIMITERS — SSOT map
-# =============================================================================
-
-RATE_LIMITERS: dict[str, TokenBucket] = {
-    "shodan_api":    TokenBucket(rate=1.0,  capacity=5),
-    "hibp":          TokenBucket(rate=0.5,  capacity=3),
-    "ripe_stat":     TokenBucket(rate=2.0,  capacity=10),
-    "crt_sh":        TokenBucket(rate=5.0,  capacity=20),
-    "wayback_cdx":   TokenBucket(rate=4.0,  capacity=15),
-    "netlas":        TokenBucket(rate=1.5,  capacity=8),
-    "fofa":          TokenBucket(rate=1.0,  capacity=6),
-    "default":       TokenBucket(rate=10.0, capacity=30),
-}
-
+RATE_LIMITERS: dict[str, TokenBucket] = {'shodan_api': TokenBucket(rate=1.0, capacity=5), 'hibp': TokenBucket(rate=0.5, capacity=3), 'ripe_stat': TokenBucket(rate=2.0, capacity=10), 'crt_sh': TokenBucket(rate=5.0, capacity=20), 'wayback_cdx': TokenBucket(rate=4.0, capacity=15), 'netlas': TokenBucket(rate=1.5, capacity=8), 'fofa': TokenBucket(rate=1.0, capacity=6), 'default': TokenBucket(rate=10.0, capacity=30)}
 
 def get_limiter(name: str) -> TokenBucket:
     """Return a named limiter, falling back to ``default``."""
-    return RATE_LIMITERS.get(name, RATE_LIMITERS["default"])
-
-
-# =============================================================================
-# Backward-compat aliases (Sprint 7C — shim layer)
-# These allow old code importing from rate_limiter.py to keep working
-# =============================================================================
-
-#: Alias for backward compat
+    return RATE_LIMITERS.get(name, RATE_LIMITERS['default'])
 RateLimiter = TokenBucket
 
-#: Backward-compat placeholder (old domain-specific RateLimitConfig)
 class AIMDRateLimiter:
     """
     Additive-Increase Multiplicative-Decrease rate controller.
@@ -181,16 +132,9 @@ class AIMDRateLimiter:
 
     M1 8GB: stateless, <1 KB RAM, no external allocations.
     """
+    __slots__ = ('_bucket', '_additive_step', '_congestion_count', '_rps')
 
-    __slots__ = ("_bucket", "_additive_step", "_congestion_count", "_rps")
-
-    def __init__(
-        self,
-        initial_rps: float = 10.0,
-        domain: str = "default",
-        *,
-        additive_step: float = 1.0,
-    ) -> None:
+    def __init__(self, initial_rps: float=10.0, domain: str='default', *, additive_step: float=1.0) -> None:
         """
         Args:
             initial_rps:  starting requests-per-second for this domain
@@ -203,7 +147,7 @@ class AIMDRateLimiter:
         self._rps: float = initial_rps
         self._bucket.set_rate(initial_rps)
 
-    async def acquire(self, timeout: float | None = None) -> bool:
+    async def acquire(self, timeout: float | None=None) -> bool:
         """Acquire one token from the underlying bucket."""
         return await self._bucket.acquire(timeout=timeout)
 
@@ -217,7 +161,6 @@ class AIMDRateLimiter:
         new_rps = self._rps + self._additive_step
         self._rps = new_rps
         self._bucket.set_rate(new_rps)
-        # reset congestion window on success
         self._congestion_count = 0
 
     def on_congestion(self) -> None:
@@ -231,7 +174,7 @@ class AIMDRateLimiter:
         self._congestion_count += 1
         if self._congestion_count >= 3:
             new_rps = self._rps * 0.5
-            self._rps = max(0.5, new_rps)  # floor: never go below 0.5 rps
+            self._rps = max(0.5, new_rps)
             self._bucket.set_rate(self._rps)
             self._congestion_count = 0
 
@@ -245,8 +188,6 @@ class AIMDRateLimiter:
         """Consecutive congestion signals since last successful request."""
         return self._congestion_count
 
-
-#: Backward-compat placeholder (old domain-specific RateLimitConfig)
 class RateLimitConfig:
     """
     Backward-compat stub — replaced by AIMDRateLimiter.
@@ -254,37 +195,19 @@ class RateLimitConfig:
     Domain-specific rate limits are now handled by AIMDRateLimiter
     which wraps TokenBucket and adapts rates dynamically.
     """
+    __slots__ = tuple(('base_rate', 'burst_size'))
 
-    def __init__(self, base_rate: float = 1.0, burst_size: int = 5):
+    def __init__(self, base_rate: float=1.0, burst_size: int=5):
         self.base_rate = base_rate
         self.burst_size = burst_size
 
-#: Backward-compat placeholder
-class RateLimitExceeded(Exception):  # noqa: N818
+class RateLimitExceeded(Exception):
     """Backward-compat stub. Rate limiting is now implicit in TokenBucket.acquire()."""
     pass
 
-#: Backward-compat coroutine helper
-async def with_rate_limit(coro, _domain: str = 'default', base_rate: float = 1.0):
+async def with_rate_limit(coro, _domain: str='default', base_rate: float=1.0):
     """Backward-compat. Execute coroutine with rate limiting."""
     bucket = TokenBucket(rate=base_rate, capacity=int(base_rate * 5))
     await bucket.acquire()
     return await coro
-
-
-__all__ = [
-    "TokenBucket",
-    "RATE_LIMITERS",
-    "get_limiter",
-    "QOS_CLASS_USER_INTERACTIVE",
-    "QOS_CLASS_USER_INITIATED",
-    "QOS_CLASS_UTILITY",
-    "QOS_CLASS_BACKGROUND",
-    # backward compat
-    "RateLimiter",
-    "RateLimitConfig",
-    "RateLimitExceeded",
-    "with_rate_limit",
-    # AIMD adaptive rate limiter
-    "AIMDRateLimiter",
-]
+__all__ = ['TokenBucket', 'RATE_LIMITERS', 'get_limiter', 'QOS_CLASS_USER_INTERACTIVE', 'QOS_CLASS_USER_INITIATED', 'QOS_CLASS_UTILITY', 'QOS_CLASS_BACKGROUND', 'RateLimiter', 'RateLimitConfig', 'RateLimitExceeded', 'with_rate_limit', 'AIMDRateLimiter']

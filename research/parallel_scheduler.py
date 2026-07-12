@@ -10,7 +10,6 @@ PEP 654 redesign: asyncio.PriorityQueue + TaskGroup místo asyncio.Lock + heapq.
 - Safe task cancellation přes TaskGroup shield
 """
 from __future__ import annotations
-
 import asyncio
 import concurrent.futures
 import logging
@@ -18,22 +17,15 @@ import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
-
 if TYPE_CHECKING:
     import msgspec as _msgspec_module
-
 try:
     import msgspec
-
     _MSGSpec = True
-except Exception:  # noqa: BLE001 — msgspec not installed
-    msgspec: Any = None  # type: ignore[assignment]
+except Exception:
+    msgspec: Any = None
     _MSGSpec = False
-
 logger = logging.getLogger(__name__)
-
-
-# ─── msgspec.Struct for PrioritizedTask (Py 3.14 ready, ~40% less allocation) ───
 if _MSGSpec:
 
     class PrioritizedTask(msgspec.Struct, frozen=True):
@@ -41,10 +33,9 @@ if _MSGSpec:
 
         priority: higher = sooner (inverted for min-heap internally).
         """
-
         priority: float
         task_id: str
-        coro_or_fn: Any  # async callable or sync callable
+        coro_or_fn: Any
         args: tuple = ()
         kwargs: dict = {}
         created_at: float = 0.0
@@ -54,10 +45,8 @@ if _MSGSpec:
 
         def __post_init__(self) -> None:
             if self.created_at == 0.0:
-                object.__setattr__(self, "created_at", time.time())
-
+                object.__setattr__(self, 'created_at', time.time())
 else:
-    # Fallback pokud msgspec není dostupný
     from dataclasses import dataclass, field
 
     @dataclass(order=True, slots=True)
@@ -71,13 +60,9 @@ else:
         metadata: dict = field(default_factory=dict, compare=False)
         is_coro: bool = True
         timeout: float = 30.0
-
-
-# ─── Priority constants ────────────────────────────────────────────────────────
 PRIORITY_RESEARCH = 5
 PRIORITY_PREFETCH = 9
 PRIORITY_BACKGROUND = 10
-
 
 class ParallelResearchScheduler:
     """Modern async parallel scheduler — asyncio.PriorityQueue + TaskGroup (PEP 654).
@@ -90,110 +75,42 @@ class ParallelResearchScheduler:
     - CPU executor callbacks use run_coroutine_threadsafe() (atomic in Py 3.10+)
     - All shared state guarded by asyncio.Semaphore, not Lock
     """
+    __slots__ = tuple(('_all_done', '_completed', '_cpu_executor', '_cpu_queue', '_cpu_sem', '_io_queue', '_io_sem', '_max_cpu', '_max_io', '_pending', '_pending_lock', '_resource_allocator', '_running_cpu', '_running_io', '_seq', '_shutdown'))
 
-    def __init__(
-        self,
-        resource_allocator=None,
-        max_concurrent_io: int = 10,
-        max_concurrent_cpu: int = 4,
-    ):
+    def __init__(self, resource_allocator=None, max_concurrent_io: int=10, max_concurrent_cpu: int=4):
         self._resource_allocator = resource_allocator
         self._max_io = max_concurrent_io
         self._max_cpu = max_concurrent_cpu
-
-        # Thread-safe priority queues (asyncio.PriorityQueue internally uses deque + lock)
-        # Invert priority: higher input priority → smaller negated value for min-heap
-        self._io_queue: asyncio.PriorityQueue[tuple[float, int, PrioritizedTask]] = (
-            asyncio.PriorityQueue()
-        )
-        self._cpu_queue: asyncio.PriorityQueue[tuple[float, int, PrioritizedTask]] = (
-            asyncio.PriorityQueue()
-        )
-
-        # Bounded concurrency
+        self._io_queue: asyncio.PriorityQueue[tuple[float, int, PrioritizedTask]] = asyncio.PriorityQueue()
+        self._cpu_queue: asyncio.PriorityQueue[tuple[float, int, PrioritizedTask]] = asyncio.PriorityQueue()
         self._io_sem = asyncio.Semaphore(max_concurrent_io)
         self._cpu_sem = asyncio.Semaphore(max_concurrent_cpu)
-
-        # Active tasks tracked by TaskGroup — no separate dict needed
         self._running_io: set[asyncio.Task] = set()
         self._running_cpu: set[asyncio.Task] = set()
-
-        # Completed results
         self._completed: dict[str, Any] = {}
-
-        # Sequence counter for heap tie-break (heapq requires total ordering)
         self._seq = 0
-
-        # Wait counter — atomic pending count instead of Event (fixes lost-wakeup race)
         self._pending: int = 0
         self._pending_lock = asyncio.Lock()
         self._all_done = asyncio.Event()
-
-        # CPU executor
-        self._cpu_executor = ThreadPoolExecutor(
-            max_workers=max_concurrent_cpu,
-            thread_name_prefix="parallel_cpu",
-        )
-
-        # A3-11: Shutdown flag — signals workers to exit cleanly
+        self._cpu_executor = ThreadPoolExecutor(max_workers=max_concurrent_cpu, thread_name_prefix='parallel_cpu')
         self._shutdown = False
 
-    # ─── Public API ────────────────────────────────────────────────────────────
-
-    async def submit(
-        self,
-        task_id: str,
-        coro_or_fn: Callable,
-        *args: Any,
-        priority: float = 1.0,
-        metadata: dict | None = None,
-        is_coro: bool = True,
-        timeout: float | None = None,
-        **kwargs: Any,
-    ) -> None:
+    async def submit(self, task_id: str, coro_or_fn: Callable, *args: Any, priority: float=1.0, metadata: dict | None=None, is_coro: bool=True, timeout: float | None=None, **kwargs: Any) -> None:
         """Submit a task to the scheduler. Returns immediately."""
         async with self._pending_lock:
             self._pending += 1
             self._all_done.clear()
-
-        task = PrioritizedTask(
-            priority=-priority,  # negate for min-heap (higher priority = smaller value)
-            task_id=task_id,
-            coro_or_fn=coro_or_fn,
-            args=args,
-            kwargs=kwargs,
-            metadata=metadata or {},
-            is_coro=is_coro,
-            timeout=timeout or (30.0 if is_coro else 10.0),
-        )
-
+        task = PrioritizedTask(priority=-priority, task_id=task_id, coro_or_fn=coro_or_fn, args=args, kwargs=kwargs, metadata=metadata or {}, is_coro=is_coro, timeout=timeout or (30.0 if is_coro else 10.0))
         if is_coro:
             await self._io_queue.put((task.priority, self._next_seq(), task))
         else:
             await self._cpu_queue.put((task.priority, self._next_seq(), task))
 
-    async def schedule_prefetch(
-        self,
-        task_id: str,
-        coro_or_fn: Callable,
-        priority: float,
-        is_coro: bool,
-        url: str,
-        deadline: float,
-        estimated_bytes: int,
-        metadata: dict,
-    ) -> None:
+    async def schedule_prefetch(self, task_id: str, coro_or_fn: Callable, priority: float, is_coro: bool, url: str, deadline: float, estimated_bytes: int, metadata: dict) -> None:
         """Schedule a prefetch task — forwards to submit() with prefetch metadata."""
-        await self.submit(
-            task_id=task_id,
-            coro_or_fn=coro_or_fn,
-            priority=priority,
-            is_coro=is_coro,
-            metadata={**metadata, "url": url, "deadline": deadline, "estimated_bytes": estimated_bytes},
-            timeout=deadline - time.time() if deadline > time.time() else 1.0,
-        )
+        await self.submit(task_id=task_id, coro_or_fn=coro_or_fn, priority=priority, is_coro=is_coro, metadata={**metadata, 'url': url, 'deadline': deadline, 'estimated_bytes': estimated_bytes}, timeout=deadline - time.time() if deadline > time.time() else 1.0)
 
-    async def wait_all(self, timeout: float | None = None) -> None:
+    async def wait_all(self, timeout: float | None=None) -> None:
         """Wait for all submitted tasks to complete.
 
         Uses bounded counter instead of Event to fix lost-wakeup race.
@@ -202,7 +119,6 @@ class ParallelResearchScheduler:
         """
         poll_interval = 0.1
         elapsed = 0.0
-
         while True:
             try:
                 async with asyncio.timeout(poll_interval):
@@ -212,7 +128,6 @@ class ParallelResearchScheduler:
                 elapsed += poll_interval
                 if timeout is not None and elapsed >= timeout:
                     return
-                # Check if we're genuinely done (pending == 0) even if event not set
                 async with self._pending_lock:
                     if self._pending == 0:
                         self._all_done.set()
@@ -222,16 +137,9 @@ class ParallelResearchScheduler:
         """Return current scheduler status."""
         async with self._pending_lock:
             pending = self._pending
-        return {
-            "running_io": len(self._running_io),
-            "running_cpu": len(self._running_cpu),
-            "queued_io": self._io_queue.qsize(),
-            "queued_cpu": self._cpu_queue.qsize(),
-            "completed": len(self._completed),
-            "pending": pending,
-        }
+        return {'running_io': len(self._running_io), 'running_cpu': len(self._running_cpu), 'queued_io': self._io_queue.qsize(), 'queued_cpu': self._cpu_queue.qsize(), 'completed': len(self._completed), 'pending': pending}
 
-    def shutdown(self, wait: bool = True) -> None:
+    def shutdown(self, wait: bool=True) -> None:
         """Shutdown the scheduler and signal workers to exit."""
         self._shutdown = True
         self._cpu_executor.shutdown(wait=wait)
@@ -239,11 +147,9 @@ class ParallelResearchScheduler:
     def __enter__(self):
         return self
 
-    def __exit__(self, _exc_type, _exc_val, _exc_tb):  # noqa: ARG002
+    def __exit__(self, _exc_type, _exc_val, _exc_tb):
         self.shutdown()
         return False
-
-    # ─── Internal ─────────────────────────────────────────────────────────────
 
     def _next_seq(self) -> int:
         """Tie-break counter for heap ordering."""
@@ -252,11 +158,9 @@ class ParallelResearchScheduler:
 
     async def get_recommended_concurrency(self, task_type: str) -> int:
         """Return recommended concurrency for task type and current resources."""
-        if self._resource_allocator and hasattr(
-            self._resource_allocator, "get_recommended_concurrency"
-        ):
+        if self._resource_allocator and hasattr(self._resource_allocator, 'get_recommended_concurrency'):
             return await self._resource_allocator.get_recommended_concurrency(task_type)
-        if task_type == "io":
+        if task_type == 'io':
             return self._max_io
         return self._max_cpu
 
@@ -272,36 +176,21 @@ class ParallelResearchScheduler:
         Call after submit() to process queued tasks.
         """
         async with asyncio.TaskGroup() as tg:
-            # Launch fixed IO worker pool
             for i in range(self._max_io):
-                tg.create_task(
-                    self._io_worker_loop(),
-                    name=f"prs:io:{i}",
-                )
-            # Launch fixed CPU worker pool
+                tg.create_task(self._io_worker_loop(), name=f'prs:io:{i}')
             for i in range(self._max_cpu):
-                tg.create_task(
-                    self._cpu_worker_loop(),
-                    name=f"prs:cpu:{i}",
-                )
-            # TaskGroup waits for all workers to exit (queues drained + pending == 0)
+                tg.create_task(self._cpu_worker_loop(), name=f'prs:cpu:{i}')
 
     async def _io_worker_loop(self) -> None:
         """IO worker — processes _io_queue until drained and pending == 0."""
         while not self._shutdown:
             try:
-                # Wait up to 0.5s for a task — no QueueEmpty exception needed
-                _, _, task = await asyncio.wait_for(
-                    self._io_queue.get(),
-                    timeout=0.5,
-                )
+                _, _, task = await asyncio.wait_for(self._io_queue.get(), timeout=0.5)
             except asyncio.TimeoutError:
-                # No task available — check if we're truly done
                 async with self._pending_lock:
                     if self._pending == 0 and self._io_queue.empty():
                         break
                 continue
-
             async with self._io_sem:
                 await self._run_io_task(task)
             self._io_queue.task_done()
@@ -310,16 +199,12 @@ class ParallelResearchScheduler:
         """CPU worker — processes _cpu_queue until drained and pending == 0."""
         while not self._shutdown:
             try:
-                _, _, task = await asyncio.wait_for(
-                    self._cpu_queue.get(),
-                    timeout=0.5,
-                )
+                _, _, task = await asyncio.wait_for(self._cpu_queue.get(), timeout=0.5)
             except asyncio.TimeoutError:
                 async with self._pending_lock:
                     if self._pending == 0 and self._cpu_queue.empty():
                         break
                 continue
-
             async with self._cpu_sem:
                 await self._run_cpu_task(task)
             self._cpu_queue.task_done()
@@ -331,20 +216,14 @@ class ParallelResearchScheduler:
                 result = await task.coro_or_fn(*task.args, **task.kwargs)
             self._completed[task.task_id] = result
         except asyncio.CancelledError:
-            self._completed[task.task_id] = asyncio.CancelledError(
-                f"Task {task.task_id} cancelled"
-            )
-            raise  # re-raise for TaskGroup cancellation propagation
+            self._completed[task.task_id] = asyncio.CancelledError(f'Task {task.task_id} cancelled')
+            raise
         except asyncio.TimeoutError:
-            self._completed[task.task_id] = TimeoutError(
-                f"Task {task.task_id} timed out after {task.timeout}s"
-            )
-            logger.warning("Task %s timed out after %ss", task.task_id, task.timeout)
-        except BaseException as e:  # noqa: BLE001 — catches SystemExit, KeyboardInterrupt
+            self._completed[task.task_id] = TimeoutError(f'Task {task.task_id} timed out after {task.timeout}s')
+            logger.warning('Task %s timed out after %ss', task.task_id, task.timeout)
+        except BaseException as e:
             self._completed[task.task_id] = e
-            logger.error(
-                "Task %s failed with %s: %s", task.task_id, type(e).__name__, e
-            )
+            logger.error('Task %s failed with %s: %s', task.task_id, type(e).__name__, e)
         finally:
             await self._task_done(task.task_id)
 
@@ -359,40 +238,28 @@ class ParallelResearchScheduler:
         def _sync_wrapper() -> Any:
             try:
                 return task.coro_or_fn(*task.args, **task.kwargs)
-            except BaseException as e:  # noqa: BLE001
+            except BaseException as e:
                 return e
-
         try:
-            # Issue #17 fix: asyncio.wrap_future() instead of double-wrapped run_in_executor
-            # asyncio.wrap_future() creates an asyncio.Future from concurrent.futures.Future
-            # allowing non-blocking await without the double-thread-pool overhead.
-            # Previous pattern: run_in_executor(None, future.result) spawned a 2nd thread
-            # just to call .result() on an already-completed future — pure waste.
             future = self._cpu_executor.submit(_sync_wrapper)
             asyncio_future = asyncio.wrap_future(future)
             result = await asyncio.wait_for(asyncio_future, timeout=task.timeout)
             self._completed[task.task_id] = result
         except asyncio.CancelledError:
-            self._completed[task.task_id] = asyncio.CancelledError(
-                f"Task {task.task_id} cancelled"
-            )
+            self._completed[task.task_id] = asyncio.CancelledError(f'Task {task.task_id} cancelled')
             future.cancel()
             raise
         except asyncio.TimeoutError:
-            self._completed[task.task_id] = TimeoutError(
-                f"Task {task.task_id} timed out after {task.timeout}s"
-            )
-            logger.warning("CPU task %s timed out after %ss", task.task_id, task.timeout)
+            self._completed[task.task_id] = TimeoutError(f'Task {task.task_id} timed out after {task.timeout}s')
+            logger.warning('CPU task %s timed out after %ss', task.task_id, task.timeout)
             future.cancel()
-        except BaseException as e:  # noqa: BLE001
+        except BaseException as e:
             self._completed[task.task_id] = e
-            logger.error(
-                "CPU task %s failed with %s: %s", task.task_id, type(e).__name__, e
-            )
+            logger.error('CPU task %s failed with %s: %s', task.task_id, type(e).__name__, e)
         finally:
             await self._task_done(task.task_id)
 
-    async def _task_done(self, _task_id: str) -> None:  # noqa: ARG002
+    async def _task_done(self, _task_id: str) -> None:
         """Decrement pending counter and signal wait_all when done.
 
         Bounded counter pattern: no lost-wakeup because we use atomic increment
@@ -403,17 +270,9 @@ class ParallelResearchScheduler:
             if self._pending == 0:
                 self._all_done.set()
 
-    # ─── Work stealing (experimental, preserved interface) ─────────────────────
-
     async def steal_work(self, worker_type: str) -> None:
         """Work stealing – experimental placeholder."""
         pass
-
-    # ─── Backward-compat properties for BranchManager ─────────────────────────
-    # BranchManager._boost_queue() accesses .io_queue and .cpu_queue directly.
-    # The new design uses asyncio.PriorityQueue internally, which doesn't support
-    # heappush/pop from outside. These are read-only property stubs — BranchManager
-    # needs separate update to use the new API.
 
     @property
     def io_queue(self) -> list:

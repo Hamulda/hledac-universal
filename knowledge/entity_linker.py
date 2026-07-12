@@ -28,8 +28,6 @@ Example:
     for entity in entities:
         print(f"{entity.original_text} -> {entity.canonical_label} ({entity.canonical_id})")
 """
-
-
 import asyncio
 import hashlib
 import importlib.util
@@ -39,9 +37,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
-
 from hledac.universal.utils.async_helpers import safe_gather_ok
-
 logger = logging.getLogger(__name__)
 
 def _ensure_utc_aware(value: datetime) -> datetime:
@@ -49,43 +45,34 @@ def _ensure_utc_aware(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
-
-# F4XX: httpx replaces aiohttp
 from hledac.universal.network.session_runtime import async_get_httpx_session
-
 rapidfuzz = None
 try:
-    from rapidfuzz import fuzz, process  # noqa: F401  # rapidfuzz.process
+    from rapidfuzz import fuzz, process
     RAPIDFUZZ_AVAILABLE = True
 except ImportError:
     RAPIDFUZZ_AVAILABLE = False
     try:
         from hledac.universal.utils._warnings import warn_once_log
     except (ImportError, ModuleNotFoundError) as exc:
-        if exc.name == "hledac":
+        if exc.name == 'hledac':
             from hledac.universal.utils._warnings import warn_once_log
         else:
             raise
-
-    warn_once_log("rapidfuzz-missing", "rapidfuzz not available. Install with: pip install rapidfuzz")
-
-# GLiNER optional import - lazy to avoid circular imports
+    warn_once_log('rapidfuzz-missing', 'rapidfuzz not available. Install with: pip install rapidfuzz')
 GLINER_AVAILABLE = False
 GLiNER = None
 try:
-    # Test if gliner can be imported without triggering circular imports
     import importlib
-    spec = importlib.util.find_spec("gliner")
+    spec = importlib.util.find_spec('gliner')
     if spec is not None:
-        # Mark as potentially available, actual import happens lazily
         GLINER_AVAILABLE = True
     else:
         GLINER_AVAILABLE = False
-        logger.debug("GLiNER not found")
+        logger.debug('GLiNER not found')
 except Exception:
     GLINER_AVAILABLE = False
-    logger.debug("GLiNER check failed, using fallback NER")
-
+    logger.debug('GLiNER check failed, using fallback NER')
 
 @dataclass(slots=True)
 class EntityCandidate:
@@ -113,31 +100,12 @@ class EntityCandidate:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
-        return {
-            'entity_text': self.entity_text,
-            'wikidata_id': self.wikidata_id,
-            'label': self.label,
-            'description': self.description,
-            'types': self.types,
-            'context_score': self.context_score,
-            'popularity_score': self.popularity_score,
-            'final_score': self.final_score
-        }
+        return {'entity_text': self.entity_text, 'wikidata_id': self.wikidata_id, 'label': self.label, 'description': self.description, 'types': self.types, 'context_score': self.context_score, 'popularity_score': self.popularity_score, 'final_score': self.final_score}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EntityCandidate:
         """Create from dictionary."""
-        return cls(
-            entity_text=data['entity_text'],
-            wikidata_id=data['wikidata_id'],
-            label=data['label'],
-            description=data['description'],
-            types=data.get('types', []),
-            context_score=data.get('context_score', 0.0),
-            popularity_score=data.get('popularity_score', 0.0),
-            final_score=data.get('final_score', 0.0)
-        )
-
+        return cls(entity_text=data['entity_text'], wikidata_id=data['wikidata_id'], label=data['label'], description=data['description'], types=data.get('types', []), context_score=data.get('context_score', 0.0), popularity_score=data.get('popularity_score', 0.0), final_score=data.get('final_score', 0.0))
 
 @dataclass(slots=True)
 class LinkedEntity:
@@ -165,41 +133,21 @@ class LinkedEntity:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
-        return {
-            'original_text': self.original_text,
-            'start_pos': self.start_pos,
-            'end_pos': self.end_pos,
-            'canonical_id': self.canonical_id,
-            'canonical_label': self.canonical_label,
-            'entity_type': self.entity_type,
-            'confidence': self.confidence,
-            'candidates_considered': self.candidates_considered
-        }
+        return {'original_text': self.original_text, 'start_pos': self.start_pos, 'end_pos': self.end_pos, 'canonical_id': self.canonical_id, 'canonical_label': self.canonical_label, 'entity_type': self.entity_type, 'confidence': self.confidence, 'candidates_considered': self.candidates_considered}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> LinkedEntity:
         """Create from dictionary."""
-        return cls(
-            original_text=data['original_text'],
-            start_pos=data['start_pos'],
-            end_pos=data['end_pos'],
-            canonical_id=data['canonical_id'],
-            canonical_label=data['canonical_label'],
-            entity_type=data['entity_type'],
-            confidence=data['confidence'],
-            candidates_considered=data['candidates_considered']
-        )
-
+        return cls(original_text=data['original_text'], start_pos=data['start_pos'], end_pos=data['end_pos'], canonical_id=data['canonical_id'], canonical_label=data['canonical_label'], entity_type=data['entity_type'], confidence=data['confidence'], candidates_considered=data['candidates_considered'])
 
 class SimpleCache:
     """
     Simple in-memory cache with TTL for Wikidata responses.
     M1 8GB optimized - limited size with LRU eviction.
     """
-
     __slots__ = ('max_size', 'ttl', '_cache', '_access_order')
 
-    def __init__(self, max_size: int = 1000, ttl_seconds: int = 3600):
+    def __init__(self, max_size: int=1000, ttl_seconds: int=3600):
         """
         Initialize cache.
 
@@ -219,39 +167,27 @@ class SimpleCache:
     def get(self, query: str) -> Any | None:
         """Get cached value if not expired."""
         key = self._generate_key(query)
-
         if key not in self._cache:
             return None
-
         value, timestamp = self._cache[key]
-
-        # Check expiration
         if datetime.now(UTC) - _ensure_utc_aware(timestamp) > self.ttl:
             del self._cache[key]
             if key in self._access_order:
                 self._access_order.remove(key)
             return None
-
-        # Update access order (LRU)
         if key in self._access_order:
             self._access_order.remove(key)
         self._access_order.append(key)
-
         return value
 
     def set(self, query: str, value: Any):
         """Cache value with timestamp."""
         key = self._generate_key(query)
-
-        # Evict oldest if at capacity
         if len(self._cache) >= self.max_size and key not in self._cache:
             oldest_key = self._access_order.popleft()
             if oldest_key in self._cache:
                 del self._cache[oldest_key]
-
         self._cache[key] = (value, datetime.now(UTC))
-
-        # Update access order
         if key in self._access_order:
             self._access_order.remove(key)
         self._access_order.append(key)
@@ -263,12 +199,7 @@ class SimpleCache:
 
     def get_stats(self) -> dict[str, Any]:
         """Get cache statistics."""
-        return {
-            'size': len(self._cache),
-            'max_size': self.max_size,
-            'ttl_seconds': self.ttl.total_seconds()
-        }
-
+        return {'size': len(self._cache), 'max_size': self.max_size, 'ttl_seconds': self.ttl.total_seconds()}
 
 class EntityLinker:
     """
@@ -284,41 +215,12 @@ class EntityLinker:
         linker = EntityLinker()
         entities = await linker.link_entities("Apple was founded by Steve Jobs")
     """
+    DEFAULT_WIKIDATA_ENDPOINT = 'https://query.wikidata.org/sparql'
+    DEFAULT_USER_AGENT = 'HledacEntityLinker/1.0 (M1-Optimized; research tool)'
+    TYPE_MAPPING = {'Q5': 'PERSON', 'Q43229': 'ORGANIZATION', 'Q4830453': 'BUSINESS', 'Q515': 'CITY', 'Q6256': 'COUNTRY', 'Q1656682': 'EVENT', 'Q571': 'BOOK', 'Q11424': 'FILM', 'Q7397': 'SOFTWARE', 'Q811165': 'PRODUCT', 'Q95074': 'CHARACTER', 'Q488383': 'LOCATION', 'Q618123': 'LOCATION', 'Q15401930': 'PRODUCT', 'Q12737077': 'OCCUPATION', 'Q4164871': 'POSITION', 'Q18616576': 'AWARD'}
+    __slots__ = tuple(('_cache', '_gliner_model', '_session', 'confidence_threshold', 'max_candidates', 'request_timeout', 'use_gliner', 'wikidata_endpoint'))
 
-    DEFAULT_WIKIDATA_ENDPOINT = "https://query.wikidata.org/sparql"
-    DEFAULT_USER_AGENT = "HledacEntityLinker/1.0 (M1-Optimized; research tool)"
-
-    # Entity type mapping from Wikidata P31
-    TYPE_MAPPING = {
-        'Q5': 'PERSON',           # human
-        'Q43229': 'ORGANIZATION', # organization
-        'Q4830453': 'BUSINESS',   # business
-        'Q515': 'CITY',           # city
-        'Q6256': 'COUNTRY',       # country
-        'Q1656682': 'EVENT',      # event
-        'Q571': 'BOOK',           # book
-        'Q11424': 'FILM',         # film
-        'Q7397': 'SOFTWARE',      # software
-        'Q811165': 'PRODUCT',
-        'Q95074': 'CHARACTER',    # fictional character
-        'Q488383': 'LOCATION',    # location
-        'Q618123': 'LOCATION',    # geographical feature
-        'Q15401930': 'PRODUCT',   # product
-        'Q12737077': 'OCCUPATION', # occupation
-        'Q4164871': 'POSITION',   # position
-        'Q18616576': 'AWARD',
-    }
-
-    def __init__(
-        self,
-        wikidata_endpoint: str = DEFAULT_WIKIDATA_ENDPOINT,
-        cache_size: int = 1000,
-        cache_ttl: int = 3600,
-        max_candidates: int = 10,
-        confidence_threshold: float = 0.5,
-        request_timeout: int = 30,
-        use_gliner: bool = True
-    ):
+    def __init__(self, wikidata_endpoint: str=DEFAULT_WIKIDATA_ENDPOINT, cache_size: int=1000, cache_ttl: int=3600, max_candidates: int=10, confidence_threshold: float=0.5, request_timeout: int=30, use_gliner: bool=True):
         """
         Initialize EntityLinker.
 
@@ -336,36 +238,15 @@ class EntityLinker:
         self.confidence_threshold = confidence_threshold
         self.request_timeout = request_timeout
         self.use_gliner = use_gliner and GLINER_AVAILABLE
-
-        # Initialize cache
         self._cache = SimpleCache(max_size=cache_size, ttl_seconds=cache_ttl)
-
-        # Initialize HTTP session (lazy)
         self._session: Any | None = None
-
-        # Initialize GLiNER (lazy, if available)
         self._gliner_model: Any | None = None
-
-        # Fallback NER patterns
         self._init_ner_patterns()
-
-        logger.info(f"EntityLinker initialized (GLiNER: {self.use_gliner})")
+        logger.info(f'EntityLinker initialized (GLiNER: {self.use_gliner})')
 
     def _init_ner_patterns(self):
         """Initialize regex patterns for fallback NER."""
-        self._ner_patterns = {
-            'PERSON': [
-                re.compile(r'\b[A-Z][a-z]+\s+[A-Z][a-z]+\b'),  # First Last
-                re.compile(r'\b(?:Mr\.?|Mrs\.?|Ms\.?|Dr\.?)\s+[A-Z][a-z]+\b', re.IGNORECASE),
-            ],
-            'ORGANIZATION': [
-                re.compile(r'\b[A-Z][a-z]*\s+(?:Inc\.?|Corp\.?|Ltd\.?|LLC|Company|Co\.)\b'),
-                re.compile(r'\b(?:Apple|Google|Microsoft|Amazon|Facebook|Meta|Twitter|X)\b'),
-            ],
-            'LOCATION': [
-                re.compile(r'\b(?:in|at|from)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b'),
-            ],
-        }
+        self._ner_patterns = {'PERSON': [re.compile('\\b[A-Z][a-z]+\\s+[A-Z][a-z]+\\b'), re.compile('\\b(?:Mr\\.?|Mrs\\.?|Ms\\.?|Dr\\.?)\\s+[A-Z][a-z]+\\b', re.IGNORECASE)], 'ORGANIZATION': [re.compile('\\b[A-Z][a-z]*\\s+(?:Inc\\.?|Corp\\.?|Ltd\\.?|LLC|Company|Co\\.)\\b'), re.compile('\\b(?:Apple|Google|Microsoft|Amazon|Facebook|Meta|Twitter|X)\\b')], 'LOCATION': [re.compile('\\b(?:in|at|from)\\s+([A-Z][a-z]+(?:\\s+[A-Z][a-z]+)?)\\b')]}
 
     async def _get_session(self) -> Any | None:
         """Get or create httpx.AsyncClient session (F4XX)."""
@@ -377,12 +258,11 @@ class EntityLinker:
         """Lazy load GLiNER model."""
         if self.use_gliner and self._gliner_model is None:
             try:
-                # Lazy import to avoid circular imports
                 from gliner import GLiNER as GLiNERClass
-                self._gliner_model = GLiNERClass.from_pretrained("urchade/gliner_medium-v2.1")
-                logger.info("GLiNER model loaded")
+                self._gliner_model = GLiNERClass.from_pretrained('urchade/gliner_medium-v2.1')
+                logger.info('GLiNER model loaded')
             except Exception as e:
-                logger.warning(f"Failed to load GLiNER: {e}")
+                logger.warning(f'Failed to load GLiNER: {e}')
                 self.use_gliner = False
 
     def _extract_entities_fallback(self, text: str) -> list[tuple[str, int, int, str]]:
@@ -394,21 +274,15 @@ class EntityLinker:
         """
         entities = []
         seen_spans: set[tuple[int, int]] = set()
-
         for entity_type, patterns in self._ner_patterns.items():
             for pattern in patterns:
                 for match in pattern.finditer(text):
                     start, end = match.span()
-
-                    # Skip if overlapping with existing entity
-                    if any(start < e and end > s for s, e in seen_spans):
+                    if any((start < e and end > s for s, e in seen_spans)):
                         continue
-
                     entity_text = match.group(1) if match.groups() else match.group()
                     entities.append((entity_text, start, end, entity_type))
                     seen_spans.add((start, end))
-
-        # Sort by position
         entities.sort(key=lambda x: x[1])
         return entities
 
@@ -420,23 +294,17 @@ class EntityLinker:
             List of (entity_text, start, end, entity_type) tuples
         """
         self._load_gliner()
-
         if self._gliner_model is None:
             return self._extract_entities_fallback(text)
-
         try:
-            labels = ["PERSON", "ORGANIZATION", "LOCATION", "EVENT", "PRODUCT"]
+            labels = ['PERSON', 'ORGANIZATION', 'LOCATION', 'EVENT', 'PRODUCT']
             entities = self._gliner_model.predict_entities(text, labels, threshold=0.5)
-
-            return [
-                (e['text'], e['start'], e['end'], e['label'])
-                for e in entities
-            ]
+            return [(e['text'], e['start'], e['end'], e['label']) for e in entities]
         except Exception as e:
-            logger.warning(f"GLiNER extraction failed: {e}")
+            logger.warning(f'GLiNER extraction failed: {e}')
             return self._extract_entities_fallback(text)
 
-    def _build_sparql_query(self, entity_text: str, limit: int = 10) -> str:
+    def _build_sparql_query(self, entity_text: str, limit: int=10) -> str:
         """
         Build SPARQL query for entity search.
 
@@ -447,26 +315,8 @@ class EntityLinker:
         Returns:
             SPARQL query string
         """
-        # Escape special characters
         escaped = entity_text.replace('"', '\\"')
-
-        query = f"""
-        SELECT DISTINCT ?item ?itemLabel ?itemDescription ?sitelinks
-               (GROUP_CONCAT(DISTINCT ?typeLabel; separator=", ") AS ?types)
-        WHERE {{
-          ?item rdfs:label ?label .
-          FILTER(LANG(?label) = "en")
-          FILTER(CONTAINS(LCASE(STR(?label)), LCASE("{escaped}")))
-
-          OPTIONAL {{ ?item wdt:P31 ?type . ?type rdfs:label ?typeLabel . FILTER(LANG(?typeLabel) = "en") }}
-          OPTIONAL {{ ?item wikibase:sitelinks ?sitelinks }}
-
-          SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en" }}
-        }}
-        GROUP BY ?item ?itemLabel ?itemDescription ?sitelinks
-        ORDER BY DESC(?sitelinks) DESC(STRLEN(?itemLabel))
-        LIMIT {limit}
-        """
+        query = f'\n        SELECT DISTINCT ?item ?itemLabel ?itemDescription ?sitelinks\n               (GROUP_CONCAT(DISTINCT ?typeLabel; separator=", ") AS ?types)\n        WHERE {{\n          ?item rdfs:label ?label .\n          FILTER(LANG(?label) = "en")\n          FILTER(CONTAINS(LCASE(STR(?label)), LCASE("{escaped}")))\n\n          OPTIONAL {{ ?item wdt:P31 ?type . ?type rdfs:label ?typeLabel . FILTER(LANG(?typeLabel) = "en") }}\n          OPTIONAL {{ ?item wikibase:sitelinks ?sitelinks }}\n\n          SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en" }}\n        }}\n        GROUP BY ?item ?itemLabel ?itemDescription ?sitelinks\n        ORDER BY DESC(?sitelinks) DESC(STRLEN(?itemLabel))\n        LIMIT {limit}\n        '
         return query
 
     async def query_wikidata(self, entity_text: str) -> list[EntityCandidate]:
@@ -479,45 +329,33 @@ class EntityLinker:
         Returns:
             List of EntityCandidate objects
         """
-        # Check cache first
         cached = self._cache.get(entity_text)
         if cached is not None:
-            logger.debug(f"Cache hit for: {entity_text}")
+            logger.debug(f'Cache hit for: {entity_text}')
             return [EntityCandidate.from_dict(c) for c in cached]
-
         session = await self._get_session()
         if session is None:
             return []
-
         query = self._build_sparql_query(entity_text, self.max_candidates)
-
         try:
             async with asyncio.timeout(self.request_timeout):
                 params = {'query': query, 'format': 'json'}
                 resp = await session.get(self.wikidata_endpoint, params=params)
                 if resp.status_code != 200:
-                    logger.warning(f"Wikidata query failed: {resp.status_code}")
+                    logger.warning(f'Wikidata query failed: {resp.status_code}')
                     return []
                 data = resp.json()
                 candidates = self._parse_sparql_results(entity_text, data)
-
-                # Cache results
                 self._cache.set(entity_text, [c.to_dict() for c in candidates])
-
                 return candidates
-
         except TimeoutError:
-            logger.warning(f"Timeout querying Wikidata for: {entity_text}")
+            logger.warning(f'Timeout querying Wikidata for: {entity_text}')
             return []
         except Exception as e:
-            logger.warning(f"Error querying Wikidata: {e}")
+            logger.warning(f'Error querying Wikidata: {e}')
             return []
 
-    def _parse_sparql_results(
-        self,
-        entity_text: str,
-        data: dict[str, Any]
-    ) -> list[EntityCandidate]:
+    def _parse_sparql_results(self, entity_text: str, data: dict[str, Any]) -> list[EntityCandidate]:
         """
         Parse SPARQL results into EntityCandidate objects.
 
@@ -530,8 +368,6 @@ class EntityLinker:
         """
         candidates = []
         bindings = data.get('results', {}).get('bindings', [])
-
-        # Calculate max sitelinks for normalization
         max_sitelinks = 1
         for binding in bindings:
             sitelinks_str = binding.get('sitelinks', {}).get('value', '0')
@@ -539,46 +375,26 @@ class EntityLinker:
                 sitelinks = int(sitelinks_str) if sitelinks_str else 0
                 max_sitelinks = max(max_sitelinks, sitelinks)
             except ValueError as _e:
-                logger.debug(
-                    "fail-soft suppression: _parse_sparql_results (sitelinks): %s",
-                    _e,
-                    exc_info=True,
-                )
-
+                logger.debug('fail-soft suppression: _parse_sparql_results (sitelinks): %s', _e, exc_info=True)
         for binding in bindings:
             try:
                 item_uri = binding.get('item', {}).get('value', '')
                 wikidata_id = item_uri.split('/')[-1] if item_uri else ''
-
                 label = binding.get('itemLabel', {}).get('value', '')
                 description = binding.get('itemDescription', {}).get('value', '')
-
                 types_str = binding.get('types', {}).get('value', '')
                 types = [t.strip() for t in types_str.split(',') if t.strip()]
-
                 sitelinks_str = binding.get('sitelinks', {}).get('value', '0')
                 try:
                     sitelinks = int(sitelinks_str) if sitelinks_str else 0
                 except ValueError:
                     sitelinks = 0
-
-                # Calculate popularity score (normalized sitelinks)
                 popularity_score = min(1.0, sitelinks / max_sitelinks) if max_sitelinks > 0 else 0.0
-
-                candidate = EntityCandidate(
-                    entity_text=entity_text,
-                    wikidata_id=wikidata_id,
-                    label=label,
-                    description=description,
-                    types=types,
-                    popularity_score=popularity_score
-                )
+                candidate = EntityCandidate(entity_text=entity_text, wikidata_id=wikidata_id, label=label, description=description, types=types, popularity_score=popularity_score)
                 candidates.append(candidate)
-
             except Exception as e:
-                logger.debug(f"Error parsing candidate: {e}")
+                logger.debug(f'Error parsing candidate: {e}')
                 continue
-
         return candidates
 
     def compute_context_similarity(self, entity_desc: str, context: str) -> float:
@@ -596,28 +412,18 @@ class EntityLinker:
         """
         if not entity_desc or not context:
             return 0.0
-
         if RAPIDFUZZ_AVAILABLE:
-            # Use token_set_ratio for partial matching
             score = fuzz.token_set_ratio(entity_desc.lower(), context.lower())
             return score / 100.0
         else:
-            # Simple word overlap fallback
             desc_words = set(entity_desc.lower().split())
             context_words = set(context.lower().split())
-
             if not desc_words:
                 return 0.0
-
             overlap = len(desc_words & context_words)
             return overlap / len(desc_words)
 
-    async def disambiguate(
-        self,
-        entity_text: str,
-        candidates: list[EntityCandidate],
-        context: str
-    ) -> EntityCandidate | None:
+    async def disambiguate(self, entity_text: str, candidates: list[EntityCandidate], context: str) -> EntityCandidate | None:
         """
         Disambiguate entity candidates using context.
 
@@ -631,47 +437,26 @@ class EntityLinker:
         """
         if not candidates:
             return None
-
         if len(candidates) == 1:
             candidate = candidates[0]
-            candidate.context_score = self.compute_context_similarity(
-                candidate.description, context
-            )
-            candidate.final_score = 0.5 + (candidate.popularity_score * 0.5)
+            candidate.context_score = self.compute_context_similarity(candidate.description, context)
+            candidate.final_score = 0.5 + candidate.popularity_score * 0.5
             return candidate
-
-        # Score all candidates
         scored_candidates = []
         for candidate in candidates:
-            # Context similarity
-            context_score = self.compute_context_similarity(
-                candidate.description, context
-            )
-
-            # Combine scores (context 60%, popularity 40%)
-            final_score = (context_score * 0.6) + (candidate.popularity_score * 0.4)
-
+            context_score = self.compute_context_similarity(candidate.description, context)
+            final_score = context_score * 0.6 + candidate.popularity_score * 0.4
             candidate.context_score = context_score
             candidate.final_score = final_score
             scored_candidates.append(candidate)
-
-        # Sort by final score
         scored_candidates.sort(key=lambda x: x.final_score, reverse=True)
-
-        # Return best candidate if above threshold
         best = scored_candidates[0]
         if best.final_score >= self.confidence_threshold:
             return best
-
-        # Return most popular as fallback
         scored_candidates.sort(key=lambda x: x.popularity_score, reverse=True)
         return scored_candidates[0]
 
-    async def link_entities(
-        self,
-        text: str,
-        context: str = ""
-    ) -> list[LinkedEntity]:
+    async def link_entities(self, text: str, context: str='') -> list[LinkedEntity]:
         """
         Link entities in text to Wikidata.
 
@@ -682,59 +467,33 @@ class EntityLinker:
         Returns:
             List of LinkedEntity objects
         """
-        # Extract entities
         if self.use_gliner:
             extracted = self._extract_entities_gliner(text)
         else:
             extracted = self._extract_entities_fallback(text)
-
         if not extracted:
             return []
-
-        # Query Wikidata for each entity (with concurrency limit)
         linked_entities = []
-        semaphore = asyncio.Semaphore(5)  # Limit concurrent requests
+        semaphore = asyncio.Semaphore(5)
 
         async def process_entity(entity_data: tuple[str, int, int, str]) -> LinkedEntity | None:
             async with semaphore:
                 entity_text, start, end, entity_type = entity_data
-
-                # Query Wikidata
                 candidates = await self.query_wikidata(entity_text)
-
                 if not candidates:
                     return None
-
-                # Disambiguate
-                use_context = context or text[max(0, start-100):min(len(text), end+100)]
-                best_candidate = await self.disambiguate(
-                    entity_text, candidates, use_context
-                )
-
+                use_context = context or text[max(0, start - 100):min(len(text), end + 100)]
+                best_candidate = await self.disambiguate(entity_text, candidates, use_context)
                 if best_candidate is None:
                     return None
-
-                return LinkedEntity(
-                    original_text=entity_text,
-                    start_pos=start,
-                    end_pos=end,
-                    canonical_id=best_candidate.wikidata_id,
-                    canonical_label=best_candidate.label,
-                    entity_type=entity_type,
-                    confidence=best_candidate.final_score,
-                    candidates_considered=len(candidates)
-                )
-
-        # Process all entities concurrently
+                return LinkedEntity(original_text=entity_text, start_pos=start, end_pos=end, canonical_id=best_candidate.wikidata_id, canonical_label=best_candidate.label, entity_type=entity_type, confidence=best_candidate.final_score, candidates_considered=len(candidates))
         tasks = [process_entity(e) for e in extracted]
-        results = await safe_gather_ok(*tasks, label="entity_linker:743")
-
+        results = await safe_gather_ok(*tasks, label='entity_linker:743')
         for result in results:
             if isinstance(result, LinkedEntity):
                 linked_entities.append(result)
             elif isinstance(result, Exception):
-                logger.debug(f"Entity linking failed: {result}")
-
+                logger.debug(f'Entity linking failed: {result}')
         return linked_entities
 
     async def resolve_aliases(self, entities: list[str]) -> dict[str, str]:
@@ -754,20 +513,16 @@ class EntityLinker:
             async with semaphore:
                 candidates = await self.query_wikidata(entity)
                 if candidates:
-                    # Return most popular
                     best = max(candidates, key=lambda x: x.popularity_score)
-                    return entity, best.label
-                return entity, None
-
+                    return (entity, best.label)
+                return (entity, None)
         tasks = [resolve_one(e) for e in entities]
-        results = await safe_gather_ok(*tasks, label="entity_linker:776")
-
+        results = await safe_gather_ok(*tasks, label='entity_linker:776')
         for result in results:
             if isinstance(result, tuple):
                 entity, canonical = result
                 if canonical:
                     resolved[entity] = canonical
-
         return resolved
 
     def canonicalize_entity(self, entity_text: str, entity_type: str) -> str:
@@ -781,30 +536,20 @@ class EntityLinker:
         Returns:
             Canonicalized entity text
         """
-        # Remove common prefixes/suffixes
         canonical = entity_text.strip()
-
-        # Type-specific canonicalization
         if entity_type == 'PERSON':
-            # "John Smith" -> "Smith, John" for sorting
             parts = canonical.split()
             if len(parts) == 2:
-                canonical = f"{parts[1]}, {parts[0]}"
+                canonical = f'{parts[1]}, {parts[0]}'
         elif entity_type in ('ORGANIZATION', 'BUSINESS'):
-            # Remove common suffixes
             suffixes = [' Inc.', ' Corp.', ' Ltd.', ' LLC', ' Company', ' Co.']
             for suffix in suffixes:
                 if canonical.endswith(suffix):
                     canonical = canonical[:-len(suffix)].strip()
                     break
-
         return canonical.lower()
 
-    async def batch_link(
-        self,
-        texts: list[str],
-        contexts: list[str] | None = None
-    ) -> list[list[LinkedEntity]]:
+    async def batch_link(self, texts: list[str], contexts: list[str] | None=None) -> list[list[LinkedEntity]]:
         """
         Link entities in multiple texts (batch processing).
 
@@ -816,17 +561,11 @@ class EntityLinker:
             List of LinkedEntity lists (one per input text)
         """
         if contexts is None:
-            contexts = [""] * len(texts)
-
+            contexts = [''] * len(texts)
         if len(texts) != len(contexts):
-            raise ValueError("texts and contexts must have same length")
-
-        tasks = [
-            self.link_entities(text, context)
-            for text, context in zip(texts, contexts, strict=False)
-        ]
-
-        return await safe_gather_ok(*tasks, label="entity_linker:842")
+            raise ValueError('texts and contexts must have same length')
+        tasks = [self.link_entities(text, context) for text, context in zip(texts, contexts, strict=False)]
+        return await safe_gather_ok(*tasks, label='entity_linker:842')
 
     def get_cache_stats(self) -> dict[str, Any]:
         """Get cache statistics."""
@@ -835,21 +574,18 @@ class EntityLinker:
     def clear_cache(self):
         """Clear the query cache."""
         self._cache.clear()
-        logger.info("EntityLinker cache cleared")
+        logger.info('EntityLinker cache cleared')
 
     async def close(self):
         """Close HTTP session and cleanup resources."""
-        if self._session and not self._session.closed:
+        if self._session and (not self._session.closed):
             await self._session.close()
             self._session = None
-
-        # Unload GLiNER
         if self._gliner_model is not None:
             self._gliner_model = None
             import gc
             gc.collect()
-
-        logger.info("EntityLinker closed")
+        logger.info('EntityLinker closed')
 
     async def __aenter__(self):
         """Async context manager entry."""
@@ -858,11 +594,7 @@ class EntityLinker:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit."""
         await self.close()
-
-
-# Convenience functions for simple usage
 _linker: EntityLinker | None = None
-
 
 def get_linker() -> EntityLinker:
     """Get singleton EntityLinker instance."""
@@ -871,8 +603,7 @@ def get_linker() -> EntityLinker:
         _linker = EntityLinker()
     return _linker
 
-
-async def link_entities(text: str, context: str = "") -> list[LinkedEntity]:
+async def link_entities(text: str, context: str='') -> list[LinkedEntity]:
     """
     Link entities in text (convenience function).
 
@@ -886,7 +617,6 @@ async def link_entities(text: str, context: str = "") -> list[LinkedEntity]:
     linker = get_linker()
     return await linker.link_entities(text, context)
 
-
 async def resolve_entity(entity_text: str) -> EntityCandidate | None:
     """
     Resolve single entity to Wikidata (convenience function).
@@ -899,35 +629,20 @@ async def resolve_entity(entity_text: str) -> EntityCandidate | None:
     """
     linker = get_linker()
     candidates = await linker.query_wikidata(entity_text)
-
     if not candidates:
         return None
-
-    return await linker.disambiguate(entity_text, candidates, "")
-
-
-if __name__ == "__main__":
-    # Test the entity linker
+    return await linker.disambiguate(entity_text, candidates, '')
+if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
 
     async def test():
         linker = EntityLinker()
-
-        test_texts = [
-            "Apple was founded by Steve Jobs in California.",
-            "The Eiffel Tower is located in Paris, France.",
-            "Python is a programming language created by Guido van Rossum.",
-        ]
-
+        test_texts = ['Apple was founded by Steve Jobs in California.', 'The Eiffel Tower is located in Paris, France.', 'Python is a programming language created by Guido van Rossum.']
         for text in test_texts:
-            print(f"\nText: {text}")
+            print(f'\nText: {text}')
             entities = await linker.link_entities(text)
-
             for entity in entities:
-                print(f"  '{entity.original_text}' -> {entity.canonical_label} "
-                      f"({entity.canonical_id}, confidence: {entity.confidence:.2f})")
-
-        print(f"\nCache stats: {linker.get_cache_stats()}")
+                print(f"  '{entity.original_text}' -> {entity.canonical_label} ({entity.canonical_id}, confidence: {entity.confidence:.2f})")
+        print(f'\nCache stats: {linker.get_cache_stats()}')
         await linker.close()
-
     asyncio.run(test())

@@ -19,6 +19,12 @@ from typing import Any
 # F266-U1: threat_intel added to enable ACADEMIC lane for threat intelligence queries
 _ACADEMIC_PROFILES = frozenset({"research", "academic", "geopolitical", "threat_intel"})
 
+# Valid deep_osint_m1 profiles
+_DEEP_OSINT_M1_PROFILES = frozenset({"deep_osint_m1", "research", "academic", "geopolitical", "threat_intel"})
+
+# Valid mission (nonfeed_diagnostic) profiles
+_MISSION_PROFILES = frozenset({"nonfeed_diagnostic", "nonfeed_diagnostic180"})
+
 
 class AcquisitionProfile:
     """Acquisition profile constants — mirrors original StrEnum-style class."""
@@ -113,4 +119,17 @@ def is_deep_osint_m1_profile(profile: str) -> bool:
     GHOST_INVARIANTS:
       - No network I/O, no model/MLX load
     """
-    return profile == AcquisitionProfile.DEEP_OSINT_M1
+    return profile in _DEEP_OSINT_M1_PROFILES
+
+
+def is_mission_profile(profile: str | None) -> bool:
+    """
+    Return True when the profile is any nonfeed_diagnostic variant.
+
+    GHOST_INVARIANTS:
+      - No network I/O, no model/MLX load
+      - Fail-safe: returns False for None
+    """
+    if profile is None:
+        return False
+    return profile.startswith("nonfeed_diagnostic")

@@ -15,9 +15,6 @@ Unique Features Integrated:
 5. Research context preservation
 """
 from __future__ import annotations
-
-
-
 import asyncio
 import collections.abc
 import hashlib
@@ -30,36 +27,25 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
-
 import msgspec
-
 from hledac.universal.utils.async_helpers import safe_gather_ok, safe_wait_for
-
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
-
-# F272: Pre-computed defaultdict factory — avoid lambda overhead per key access
 _level_stats_factory: defaultdict[str, dict[str, int]] = defaultdict(lambda: {'explored': 0, 'relevant': 0})
-
 logger = logging.getLogger(__name__)
-
-# Memory bounds
 MAX_PAPERS = 1000
 MAX_CITATION_LINKS = 5000
 
-
 class ResearchDepth(Enum):
     """Research depth modes for different investigation levels."""
-    STANDARD = "standard"  # Basic multi-source research
-    DEEP = "deep"          # Advanced excavation with meta-synthesis
-
+    STANDARD = 'standard'
+    DEEP = 'deep'
 
 class ExcavationStrategy(Enum):
     """Research excavation strategies."""
-    BREADTH_FIRST = "breadth_first"  # Explore all branches equally
-    DEPTH_FIRST = "depth_first"      # Go deep on one branch
-    RELEVANCE = "relevance"          # Prioritize by relevance score
-    HYBRID = "hybrid"                # Adaptive strategy
-
+    BREADTH_FIRST = 'breadth_first'
+    DEPTH_FIRST = 'depth_first'
+    RELEVANCE = 'relevance'
+    HYBRID = 'hybrid'
 
 class ResearchContext(msgspec.Struct, frozen=True):
     """Context for research operations."""
@@ -69,16 +55,14 @@ class ResearchContext(msgspec.Struct, frozen=True):
     confidence_scores: dict[str, float] = {}
     metadata: dict[str, Any] = {}
 
-
 class ResearchResult(msgspec.Struct, frozen=True):
     """Structured research result."""
-    source: str  # 'unified_ai', 'evidence', 'rag'
+    source: str
     summary: str
     full_result: dict[str, Any]
     confidence: float
     execution_time: float
     sources_found: int = 0
-
 
 class ExcavationConfig(msgspec.Struct, frozen=True):
     """Configuration for deep excavation."""
@@ -94,7 +78,6 @@ class ExcavationConfig(msgspec.Struct, frozen=True):
     auto_summarize: bool = True
     progress_callback: collections.abc.Callable | None = None
 
-
 @dataclass(slots=True)
 class ResearchPaper:
     """Research paper node with citation tracking."""
@@ -109,7 +92,7 @@ class ResearchPaper:
     cited_by: list[str] = field(default_factory=list)
     depth: int = 0
     relevance_score: float = 0.0
-    source: str = "unknown"
+    source: str = 'unknown'
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __hash__(self):
@@ -119,7 +102,6 @@ class ResearchPaper:
         if isinstance(other, ResearchPaper):
             return self.id == other.id
         return False
-
 
 class ResearchThread(msgspec.Struct, frozen=True):
     """Research thread tracking context."""
@@ -131,7 +113,6 @@ class ResearchThread(msgspec.Struct, frozen=True):
     path: list[str] = ()
     created_at: datetime = datetime.now(UTC)
 
-
 class MetaPattern(msgspec.Struct, frozen=True):
     """Meta-pattern detected across research."""
     pattern_id: str
@@ -141,7 +122,6 @@ class MetaPattern(msgspec.Struct, frozen=True):
     supporting_evidence: list[str]
     confidence: float
     cross_domain: bool = False
-
 
 class ResearchTheory(msgspec.Struct, frozen=True):
     """Theory generated from research patterns."""
@@ -155,7 +135,6 @@ class ResearchTheory(msgspec.Struct, frozen=True):
     novelty_score: float
     confidence: float
 
-
 class HierarchicalPlan(msgspec.Struct, frozen=True):
     """Hierarchical research plan."""
     plan_id: str
@@ -165,7 +144,6 @@ class HierarchicalPlan(msgspec.Struct, frozen=True):
     dependencies: dict[str, list[str]]
     estimated_duration: float
     context_requirements: list[str]
-
 
 class UniversalResearchCoordinator(UniversalCoordinator):
     """
@@ -182,32 +160,19 @@ class UniversalResearchCoordinator(UniversalCoordinator):
     - 'rag'/'retrieval' → RAG
     - Default → Unified AI (with fallback chain)
     """
+    __slots__ = tuple(('_active_plans', '_citation_links', '_citation_links_order', '_deep_stats', '_evidence_analyzer', '_evidence_available', '_fallback_chain', '_max_contexts', '_meta_patterns', '_min_confidence_threshold', '_papers', '_rag_available', '_rag_orchestrator', '_research_contexts', '_research_depth', '_theories', '_threads', '_unified_ai_available', '_unified_orchestrator'))
 
-    def __init__(self, max_concurrent: int = 5, research_depth: ResearchDepth = ResearchDepth.STANDARD):
-        super().__init__(
-            name="universal_research_coordinator",
-            max_concurrent=max_concurrent,
-            memory_aware=True
-        )
-
-        # Research depth mode
+    def __init__(self, max_concurrent: int=5, research_depth: ResearchDepth=ResearchDepth.STANDARD):
+        super().__init__(name='universal_research_coordinator', max_concurrent=max_concurrent, memory_aware=True)
         self._research_depth = research_depth
-
-        # Research subsystems (lazy initialization)
         self._unified_orchestrator: Any | None = None
         self._evidence_analyzer: Any | None = None
         self._rag_orchestrator: Any | None = None
-
-        # Availability flags
         self._unified_ai_available = False
         self._evidence_available = False
         self._rag_available = False
-
-        # Research context preservation
         self._research_contexts: dict[str, ResearchContext] = {}
         self._max_contexts = 50
-
-        # Deep research state (from AdvancedResearchCoordinator)
         self._threads: dict[str, ResearchThread] = {}
         self._papers: dict[str, ResearchPaper] = {}
         self._citation_links: set[tuple[str, str]] = set()
@@ -215,35 +180,19 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         self._meta_patterns: list[MetaPattern] = []
         self._theories: list[ResearchTheory] = []
         self._active_plans: dict[str, HierarchicalPlan] = {}
-
-        # Deep research statistics
-        self._deep_stats = {
-            'excavations_completed': 0,
-            'total_papers_found': 0,
-            'max_depth_reached': 0,
-            'meta_patterns_detected': 0,
-            'theories_generated': 0,
-            'plans_executed': 0
-        }
-
-        # Fallback configuration
+        self._deep_stats = {'excavations_completed': 0, 'total_papers_found': 0, 'max_depth_reached': 0, 'meta_patterns_detected': 0, 'theories_generated': 0, 'plans_executed': 0}
         self._fallback_chain = ['unified_ai', 'evidence', 'rag']
         self._min_confidence_threshold = 0.3
-
-    # ========================================================================
-    # Bounded storage helpers
-    # ========================================================================
 
     def _add_paper(self, paper: ResearchPaper) -> None:
         """Add paper with FIFO eviction when limit exceeded."""
         self._papers[paper.id] = paper
-        # FIFO eviction
         if len(self._papers) > MAX_PAPERS:
             try:
                 oldest = next(iter(self._papers))
                 del self._papers[oldest]
-            except Exception:  # noqa: BLE001
-                pass  # noqa: BLE001  # fail-safe
+            except Exception:
+                pass
 
     def _add_citation_link(self, a: str, b: str) -> None:
         """Add citation link with FIFO eviction when limit exceeded."""
@@ -253,20 +202,14 @@ class UniversalResearchCoordinator(UniversalCoordinator):
                 try:
                     oldest = self._citation_links_order.popleft()
                     self._citation_links.discard(oldest)
-                except Exception:  # noqa: BLE001
-                    pass  # noqa: BLE001  # fail-safe
+                except Exception:
+                    pass
             self._citation_links.add(link)
             self._citation_links_order.append(link)
-
-    # ========================================================================
-    # Initialization
-    # ========================================================================
 
     async def _do_initialize(self) -> bool:
         """Initialize research subsystems with graceful degradation."""
         initialized_any = False
-
-        # Try UnifiedAIOrchestrator
         try:
             from compat.core_unified_ai_orchestrator import UnifiedAIOrchestrator
             self._unified_orchestrator = UnifiedAIOrchestrator()
@@ -274,39 +217,33 @@ class UniversalResearchCoordinator(UniversalCoordinator):
                 await self._unified_orchestrator.initialize()
             self._unified_ai_available = True
             initialized_any = True
-            logger.info("ResearchCoordinator: UnifiedAIOrchestrator initialized")
+            logger.info('ResearchCoordinator: UnifiedAIOrchestrator initialized')
         except ImportError:
-            logger.warning("ResearchCoordinator: UnifiedAIOrchestrator not available")
+            logger.warning('ResearchCoordinator: UnifiedAIOrchestrator not available')
         except Exception as e:
-            logger.warning(f"ResearchCoordinator: UnifiedAI init failed: {e}")
-
-        # Try EvidenceNetworkAnalyzer (FIX: wrap hard error → graceful degradation)
+            logger.warning(f'ResearchCoordinator: UnifiedAI init failed: {e}')
         try:
             from advanced_web.evidence_network_analyzer import EvidenceNetworkAnalyzer
             self._evidence_analyzer = EvidenceNetworkAnalyzer()
             self._evidence_available = True
             initialized_any = True
-            logger.info("ResearchCoordinator: EvidenceNetworkAnalyzer initialized")
+            logger.info('ResearchCoordinator: EvidenceNetworkAnalyzer initialized')
         except ImportError:
-            logger.warning("ResearchCoordinator: EvidenceNetworkAnalyzer not available")
+            logger.warning('ResearchCoordinator: EvidenceNetworkAnalyzer not available')
         except Exception as e:
-            logger.warning(f"ResearchCoordinator: EvidenceAnalyzer init failed: {e}")
-            # Graceful degradation: return empty evidence instead of raising
+            logger.warning(f'ResearchCoordinator: EvidenceAnalyzer init failed: {e}')
             self._evidence_analyzer = None
             self._evidence_available = False
-
-        # Try RAGOrchestrator (FIX: correct import path within universal/)
         try:
             from advanced_rag.rag_orchestrator import RAGOrchestrator
             self._rag_orchestrator = RAGOrchestrator()
             self._rag_available = True
             initialized_any = True
-            logger.info("ResearchCoordinator: RAGOrchestrator initialized")
+            logger.info('ResearchCoordinator: RAGOrchestrator initialized')
         except ImportError:
-            logger.warning("ResearchCoordinator: RAGOrchestrator not available")
+            logger.warning('ResearchCoordinator: RAGOrchestrator not available')
         except Exception as e:
-            logger.warning(f"ResearchCoordinator: RAG init failed: {e}")
-
+            logger.warning(f'ResearchCoordinator: RAG init failed: {e}')
         return initialized_any
 
     async def _do_cleanup(self) -> None:
@@ -315,35 +252,24 @@ class UniversalResearchCoordinator(UniversalCoordinator):
             try:
                 await self._unified_orchestrator.cleanup()
             except Exception as e:
-                logger.error(f"Error cleaning up UnifiedAI: {e}")
-
+                logger.error(f'Error cleaning up UnifiedAI: {e}')
         if self._evidence_analyzer and hasattr(self._evidence_analyzer, 'cleanup'):
             try:
                 await self._evidence_analyzer.cleanup()
             except Exception as e:
-                logger.error(f"Error cleaning up EvidenceAnalyzer: {e}")
-
+                logger.error(f'Error cleaning up EvidenceAnalyzer: {e}')
         if self._rag_orchestrator and hasattr(self._rag_orchestrator, 'cleanup'):
             try:
                 await self._rag_orchestrator.cleanup()
             except Exception as e:
-                logger.error(f"Error cleaning up RAG: {e}")
-
+                logger.error(f'Error cleaning up RAG: {e}')
         self._research_contexts.clear()
-
-    # ========================================================================
-    # Core Operations
-    # ========================================================================
 
     def get_supported_operations(self) -> list[OperationType]:
         """Return supported operation types."""
         return [OperationType.RESEARCH]
 
-    async def handle_request(
-        self,
-        operation_ref: str,
-        decision: DecisionResponse
-    ) -> OperationResult:
+    async def handle_request(self, operation_ref: str, decision: DecisionResponse) -> OperationResult:
         """
         Handle research request with intelligent routing.
 
@@ -356,56 +282,18 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         """
         start_time = time.time()
         operation_id = self.generate_operation_id()
-
         try:
-            # Track operation
-            self.track_operation(operation_id, {
-                'operation_ref': operation_ref,
-                'decision': decision,
-                'type': 'research'
-            })
-
-            # Route to appropriate research method
+            self.track_operation(operation_id, {'operation_ref': operation_ref, 'decision': decision, 'type': 'research'})
             result = await self._execute_research_decision(decision)
-
-            # Create operation result
-            operation_result = OperationResult(
-                operation_id=operation_id,
-                status="completed" if result.confidence > 0 else "failed",
-                result_summary=result.summary,
-                execution_time=time.time() - start_time,
-                success=result.confidence > 0,
-                metadata={
-                    'source': result.source,
-                    'sources_found': result.sources_found,
-                    'research_confidence': result.confidence,
-                }
-            )
-
+            operation_result = OperationResult(operation_id=operation_id, status='completed' if result.confidence > 0 else 'failed', result_summary=result.summary, execution_time=time.time() - start_time, success=result.confidence > 0, metadata={'source': result.source, 'sources_found': result.sources_found, 'research_confidence': result.confidence})
         except Exception as e:
-            operation_result = OperationResult(
-                operation_id=operation_id,
-                status="failed",
-                result_summary=f"Research failed: {str(e)}",
-                execution_time=time.time() - start_time,
-                success=False,
-                error_message=str(e)
-            )
+            operation_result = OperationResult(operation_id=operation_id, status='failed', result_summary=f'Research failed: {str(e)}', execution_time=time.time() - start_time, success=False, error_message=str(e))
         finally:
             self.untrack_operation(operation_id)
-
-        # Record metrics
         self.record_operation_result(operation_result)
         return operation_result
 
-    # ========================================================================
-    # Research Routing and Execution
-    # ========================================================================
-
-    async def _execute_research_decision(
-        self,
-        decision: DecisionResponse
-    ) -> ResearchResult:
+    async def _execute_research_decision(self, decision: DecisionResponse) -> ResearchResult:
         """
         Route research decision to appropriate backend.
 
@@ -416,8 +304,6 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         """
         chosen = decision.chosen_option.lower()
         query = decision.reasoning or decision.metadata.get('query', '')
-
-        # Determine primary backend
         if 'unified_ai' in chosen or 'orchestrator' in chosen:
             primary = 'unified_ai'
         elif 'evidence' in chosen or 'network' in chosen:
@@ -425,12 +311,8 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         elif 'rag' in chosen or 'retrieval' in chosen:
             primary = 'rag'
         else:
-            primary = 'unified_ai'  # Default
-
-        # Build fallback chain (primary first, then others)
+            primary = 'unified_ai'
         fallback_chain = [primary] + [b for b in self._fallback_chain if b != primary]
-
-        # Try each backend in order
         last_error = None
         for backend in fallback_chain:
             try:
@@ -444,116 +326,39 @@ class UniversalResearchCoordinator(UniversalCoordinator):
                 last_error = e
                 logger.warning(f"Research backend '{backend}' failed: {e}")
                 continue
+        return ResearchResult(source='none', summary=f'All research backends failed. Last error: {last_error}', full_result={'error': str(last_error)}, confidence=0.0, execution_time=0.0, sources_found=0)
 
-        # All backends failed
-        return ResearchResult(
-            source='none',
-            summary=f'All research backends failed. Last error: {last_error}',
-            full_result={'error': str(last_error)},
-            confidence=0.0,
-            execution_time=0.0,
-            sources_found=0
-        )
-
-    async def _execute_unified_ai_research(
-        self,
-        decision: DecisionResponse,
-        query: str
-    ) -> ResearchResult:
+    async def _execute_unified_ai_research(self, decision: DecisionResponse, query: str) -> ResearchResult:
         """Execute research using UnifiedAIOrchestrator."""
         start_time = time.time()
-
         if not self._unified_orchestrator:
-            raise RuntimeError("UnifiedAIOrchestrator not available")
-
-        research_request = {
-            'query': query,
-            'operation_type': 'research',
-            'confidence_threshold': decision.confidence,
-            'priority': decision.priority,
-            'metadata': decision.metadata
-        }
-
+            raise RuntimeError('UnifiedAIOrchestrator not available')
+        research_request = {'query': query, 'operation_type': 'research', 'confidence_threshold': decision.confidence, 'priority': decision.priority, 'metadata': decision.metadata}
         result = await self._unified_orchestrator.process_request(research_request)
-
         execution_time = time.time() - start_time
+        return ResearchResult(source='unified_ai', summary=result.get('summary', 'Research completed via UnifiedAI'), full_result=result, confidence=result.get('confidence', decision.confidence), execution_time=execution_time, sources_found=result.get('sources_used', 0))
 
-        return ResearchResult(
-            source='unified_ai',
-            summary=result.get('summary', 'Research completed via UnifiedAI'),
-            full_result=result,
-            confidence=result.get('confidence', decision.confidence),
-            execution_time=execution_time,
-            sources_found=result.get('sources_used', 0)
-        )
-
-    async def _execute_evidence_analysis(
-        self,
-        decision: DecisionResponse,
-        query: str
-    ) -> ResearchResult:
+    async def _execute_evidence_analysis(self, decision: DecisionResponse, query: str) -> ResearchResult:
         """Execute evidence network analysis."""
         start_time = time.time()
-
         if not self._evidence_analyzer:
-            raise RuntimeError("EvidenceNetworkAnalyzer not available")
-
-        analysis_result = await self._evidence_analyzer.analyze_evidence_network(
-            query=query,
-            confidence_threshold=decision.confidence,
-            priority=decision.priority
-        )
-
+            raise RuntimeError('EvidenceNetworkAnalyzer not available')
+        analysis_result = await self._evidence_analyzer.analyze_evidence_network(query=query, confidence_threshold=decision.confidence, priority=decision.priority)
         execution_time = time.time() - start_time
         networks = analysis_result.get('networks', [])
+        return ResearchResult(source='evidence', summary=f"Evidence analysis: {len(networks)} networks, {analysis_result.get('connections', 0)} connections", full_result=analysis_result, confidence=analysis_result.get('confidence', decision.confidence), execution_time=execution_time, sources_found=len(networks))
 
-        return ResearchResult(
-            source='evidence',
-            summary=f'Evidence analysis: {len(networks)} networks, {analysis_result.get("connections", 0)} connections',
-            full_result=analysis_result,
-            confidence=analysis_result.get('confidence', decision.confidence),
-            execution_time=execution_time,
-            sources_found=len(networks)
-        )
-
-    async def _execute_rag_research(
-        self,
-        decision: DecisionResponse,
-        query: str
-    ) -> ResearchResult:
+    async def _execute_rag_research(self, decision: DecisionResponse, query: str) -> ResearchResult:
         """Execute RAG-based research."""
         start_time = time.time()
-
         if not self._rag_orchestrator:
-            raise RuntimeError("RAGOrchestrator not available")
-
-        rag_result = await self._rag_orchestrator.research_and_answer(
-            query=query,
-            confidence_threshold=decision.confidence,
-            priority=decision.priority
-        )
-
+            raise RuntimeError('RAGOrchestrator not available')
+        rag_result = await self._rag_orchestrator.research_and_answer(query=query, confidence_threshold=decision.confidence, priority=decision.priority)
         execution_time = time.time() - start_time
         sources = rag_result.get('sources', [])
+        return ResearchResult(source='rag', summary=f"RAG research: {len(sources)} sources, {rag_result.get('tokens_used', 0)} tokens", full_result=rag_result, confidence=rag_result.get('confidence', decision.confidence), execution_time=execution_time, sources_found=len(sources))
 
-        return ResearchResult(
-            source='rag',
-            summary=f'RAG research: {len(sources)} sources, {rag_result.get("tokens_used", 0)} tokens',
-            full_result=rag_result,
-            confidence=rag_result.get('confidence', decision.confidence),
-            execution_time=execution_time,
-            sources_found=len(sources)
-        )
-
-    # ========================================================================
-    # Advanced Features
-    # ========================================================================
-
-    async def execute_multi_source_research(
-        self,
-        query: str,
-        confidence_threshold: float = 0.7
-    ) -> dict[str, Any]:
+    async def execute_multi_source_research(self, query: str, confidence_threshold: float=0.7) -> dict[str, Any]:
         """
         Execute research using all available sources and synthesize results.
 
@@ -568,74 +373,28 @@ class UniversalResearchCoordinator(UniversalCoordinator):
             Synthesized research results
         """
         results: list[ResearchResult] = []
-
-        # Execute on all available backends in parallel
         tasks = []
-
         if self._unified_ai_available:
-            tasks.append(self._safe_execute(
-                self._execute_unified_ai_research,
-                DecisionResponse(
-                    decision_id='multi_unified',
-                    chosen_option='unified_ai',
-                    confidence=confidence_threshold,
-                    reasoning=query
-                ),
-                query
-            ))
-
+            tasks.append(self._safe_execute(self._execute_unified_ai_research, DecisionResponse(decision_id='multi_unified', chosen_option='unified_ai', confidence=confidence_threshold, reasoning=query), query))
         if self._evidence_available:
-            tasks.append(self._safe_execute(
-                self._execute_evidence_analysis,
-                DecisionResponse(
-                    decision_id='multi_evidence',
-                    chosen_option='evidence',
-                    confidence=confidence_threshold,
-                    reasoning=query
-                ),
-                query
-            ))
-
+            tasks.append(self._safe_execute(self._execute_evidence_analysis, DecisionResponse(decision_id='multi_evidence', chosen_option='evidence', confidence=confidence_threshold, reasoning=query), query))
         if self._rag_available:
-            tasks.append(self._safe_execute(
-                self._execute_rag_research,
-                DecisionResponse(
-                    decision_id='multi_rag',
-                    chosen_option='rag',
-                    confidence=confidence_threshold,
-                    reasoning=query
-                ),
-                query
-            ))
-
-        # Gather all results
-        raw_results = await safe_gather_ok(*tasks, label="research_coordinator:609")
-
+            tasks.append(self._safe_execute(self._execute_rag_research, DecisionResponse(decision_id='multi_rag', chosen_option='rag', confidence=confidence_threshold, reasoning=query), query))
+        raw_results = await safe_gather_ok(*tasks, label='research_coordinator:609')
         for result in raw_results:
             if isinstance(result, ResearchResult):
                 results.append(result)
-
-        # Synthesize results
         return self._synthesize_results(results, query)
 
-    async def _safe_execute(
-        self,
-        func,
-        decision: DecisionResponse,
-        query: str
-    ) -> ResearchResult | None:
+    async def _safe_execute(self, func, decision: DecisionResponse, query: str) -> ResearchResult | None:
         """Safely execute research function with error handling."""
         try:
             return await func(decision, query)
         except Exception as e:
-            logger.warning(f"Multi-source research failed for {func.__name__}: {e}")
+            logger.warning(f'Multi-source research failed for {func.__name__}: {e}')
             return None
 
-    def _synthesize_results(
-        self,
-        results: list[ResearchResult],
-        query: str
-    ) -> dict[str, Any]:
+    def _synthesize_results(self, results: list[ResearchResult], query: str) -> dict[str, Any]:
         """
         Synthesize results from multiple sources.
 
@@ -645,62 +404,22 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         3. Generate unified summary
         """
         if not results:
-            return {
-                'success': False,
-                'summary': 'No research results available',
-                'sources': []
-            }
-
-        # Calculate weighted confidence
-        total_confidence = sum(r.confidence for r in results)
+            return {'success': False, 'summary': 'No research results available', 'sources': []}
+        total_confidence = sum((r.confidence for r in results))
         avg_confidence = total_confidence / len(results) if results else 0
-
-        # Collect all sources
         all_sources = []
         for r in results:
-            all_sources.append({
-                'source': r.source,
-                'summary': r.summary,
-                'confidence': r.confidence,
-                'execution_time': r.execution_time
-            })
-
-        # Sort by confidence
+            all_sources.append({'source': r.source, 'summary': r.summary, 'confidence': r.confidence, 'execution_time': r.execution_time})
         all_sources.sort(key=lambda x: x['confidence'], reverse=True)
-
-        # Generate synthesized summary
         best_source = all_sources[0] if all_sources else None
-
-        summary_parts = [
-            f"Multi-source research completed using {len(results)} backends",
-            f"Average confidence: {avg_confidence:.2f}",
-        ]
-
+        summary_parts = [f'Multi-source research completed using {len(results)} backends', f'Average confidence: {avg_confidence:.2f}']
         if best_source:
             summary_parts.append(f"Best result from {best_source['source']}: {best_source['summary'][:100]}...")
+        return {'success': True, 'summary': ' | '.join(summary_parts), 'average_confidence': avg_confidence, 'sources': all_sources, 'total_execution_time': sum((r.execution_time for r in results)), 'backends_used': [r.source for r in results]}
 
-        return {
-            'success': True,
-            'summary': ' | '.join(summary_parts),
-            'average_confidence': avg_confidence,
-            'sources': all_sources,
-            'total_execution_time': sum(r.execution_time for r in results),
-            'backends_used': [r.source for r in results]
-        }
-
-    # ========================================================================
-    # Context Management
-    # ========================================================================
-
-    def preserve_research_context(
-        self,
-        operation_id: str,
-        context: ResearchContext
-    ) -> None:
+    def preserve_research_context(self, operation_id: str, context: ResearchContext) -> None:
         """Preserve research context for future reference."""
         self._research_contexts[operation_id] = context
-
-        # Trim if needed
         while len(self._research_contexts) > self._max_contexts:
             oldest = next(iter(self._research_contexts))
             del self._research_contexts[oldest]
@@ -709,64 +428,30 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         """Retrieve preserved research context."""
         return self._research_contexts.get(operation_id)
 
-    def get_recent_contexts(self, limit: int = 10) -> list[dict[str, Any]]:
+    def get_recent_contexts(self, limit: int=10) -> list[dict[str, Any]]:
         """Get recent research contexts."""
         contexts = []
         for op_id, ctx in list(self._research_contexts.items())[-limit:]:
-            contexts.append({
-                'operation_id': op_id,
-                'query': ctx.query[:100] + '...' if len(ctx.query) > 100 else ctx.query,
-                'sources_count': len(ctx.sources_used)
-            })
+            contexts.append({'operation_id': op_id, 'query': ctx.query[:100] + '...' if len(ctx.query) > 100 else ctx.query, 'sources_count': len(ctx.sources_used)})
         return contexts
-
-    # ========================================================================
-    # Reporting
-    # ========================================================================
 
     def _get_feature_list(self) -> list[str]:
         """Report available features."""
-        features = ["Multi-source research routing"]
-
+        features = ['Multi-source research routing']
         if self._unified_ai_available:
-            features.append("Unified AI Orchestration")
+            features.append('Unified AI Orchestration')
         if self._evidence_available:
-            features.append("Evidence Network Analysis")
+            features.append('Evidence Network Analysis')
         if self._rag_available:
-            features.append("RAG-based Research")
-
-        features.extend([
-            "Automatic fallback chain",
-            "Multi-source synthesis",
-            "Research context preservation",
-            "Confidence-based routing",
-            "Deep excavation (10+ levels)",
-            "Citation graph building",
-            "Meta-pattern detection",
-            "Theory generation",
-            "Hierarchical planning",
-            f"Research depth mode: {self._research_depth.value}"
-        ])
-
+            features.append('RAG-based Research')
+        features.extend(['Automatic fallback chain', 'Multi-source synthesis', 'Research context preservation', 'Confidence-based routing', 'Deep excavation (10+ levels)', 'Citation graph building', 'Meta-pattern detection', 'Theory generation', 'Hierarchical planning', f'Research depth mode: {self._research_depth.value}'])
         return features
 
     def get_available_backends(self) -> dict[str, bool]:
         """Get availability status of all backends."""
-        return {
-            'unified_ai': self._unified_ai_available,
-            'evidence': self._evidence_available,
-            'rag': self._rag_available
-        }
+        return {'unified_ai': self._unified_ai_available, 'evidence': self._evidence_available, 'rag': self._rag_available}
 
-    # ========================================================================
-    # Hermes3 Integration - MSQES, Archive Discovery, Web Crawling
-    # ========================================================================
-
-    async def search_academic(
-        self,
-        query: str,
-        sources: list[str] | None = None
-    ) -> dict[str, Any]:
+    async def search_academic(self, query: str, sources: list[str] | None=None) -> dict[str, Any]:
         """
         Search academic sources using MSQES (from Hermes3).
 
@@ -778,33 +463,15 @@ class UniversalResearchCoordinator(UniversalCoordinator):
             Academic search results
         """
         try:
-            from hledac.msqes import (  # noqa: F401  # hledac.msqes.MultiSourceQueryExpansionEngine
-                MultiSourceQueryExpansionEngine,
-                search_academic,
-            )
-
+            from hledac.msqes import MultiSourceQueryExpansionEngine, search_academic
             results = await search_academic(query, sources)
-            return {
-                'success': True,
-                'source': 'msqes',
-                'query': query,
-                'results': results,
-                'count': len(results)
-            }
+            return {'success': True, 'source': 'msqes', 'query': query, 'results': results, 'count': len(results)}
         except ImportError:
-            logger.warning("MSQES not available for academic search")
-            return {
-                'success': False,
-                'error': 'MSQES not available',
-                'results': []
-            }
+            logger.warning('MSQES not available for academic search')
+            return {'success': False, 'error': 'MSQES not available', 'results': []}
         except Exception as e:
-            logger.error(f"Academic search failed: {e}")
-            return {
-                'success': False,
-                'error': str(e),
-                'results': []
-            }
+            logger.error(f'Academic search failed: {e}')
+            return {'success': False, 'error': str(e), 'results': []}
 
     async def search_archives(self, url: str) -> dict[str, Any]:
         """
@@ -817,35 +484,17 @@ class UniversalResearchCoordinator(UniversalCoordinator):
             Archive search results
         """
         try:
-            from hledac.universal.intelligence.archive_discovery import (  # noqa: F401  # hledac.universal.intelligence.archive_discovery.ArchiveDiscovery
-                ArchiveDiscovery,
-                search_archives,
-            )
-
+            from hledac.universal.intelligence.archive_discovery import ArchiveDiscovery, search_archives
             results = await search_archives(url)
-            return {
-                'success': True,
-                'source': 'archive_discovery',
-                'url': url,
-                'results': results,
-                'count': len(results)
-            }
+            return {'success': True, 'source': 'archive_discovery', 'url': url, 'results': results, 'count': len(results)}
         except ImportError:
-            logger.warning("Archive Discovery not available")
-            return {
-                'success': False,
-                'error': 'Archive Discovery not available',
-                'results': []
-            }
+            logger.warning('Archive Discovery not available')
+            return {'success': False, 'error': 'Archive Discovery not available', 'results': []}
         except Exception as e:
-            logger.error(f"Archive search failed: {e}")
-            return {
-                'success': False,
-                'error': str(e),
-                'results': []
-            }
+            logger.error(f'Archive search failed: {e}')
+            return {'success': False, 'error': str(e), 'results': []}
 
-    async def crawl_url(self, url: str, depth: int = 1) -> dict[str, Any]:
+    async def crawl_url(self, url: str, depth: int=1) -> dict[str, Any]:
         """
         Crawl URL using StealthBrowser (from Hermes3).
 
@@ -857,39 +506,18 @@ class UniversalResearchCoordinator(UniversalCoordinator):
             Crawled content
         """
         try:
-            from advanced_web.stealth_browser import StealthBrowser  # noqa: N813
-
+            from advanced_web.stealth_browser import StealthBrowser
             browser = StealthBrowser()
             content = await browser.fetch(url, depth=depth)
-
-            return {
-                'success': True,
-                'source': 'stealth_browser',
-                'url': url,
-                'content': content,
-                'depth': depth
-            }
+            return {'success': True, 'source': 'stealth_browser', 'url': url, 'content': content, 'depth': depth}
         except ImportError:
-            logger.warning("Stealth Browser not available")
-            return {
-                'success': False,
-                'error': 'Stealth Browser not available',
-                'content': None
-            }
+            logger.warning('Stealth Browser not available')
+            return {'success': False, 'error': 'Stealth Browser not available', 'content': None}
         except Exception as e:
-            logger.error(f"Crawling failed: {e}")
-            return {
-                'success': False,
-                'error': str(e),
-                'content': None
-            }
+            logger.error(f'Crawling failed: {e}')
+            return {'success': False, 'error': str(e), 'content': None}
 
-    async def _run_graph_path_analysis(
-        self,
-        entities: list[dict[str, Any]],
-        query: str,
-        sprint_id: str = "",
-    ) -> list[dict[str, Any]]:
+    async def _run_graph_path_analysis(self, entities: list[dict[str, Any]], query: str, sprint_id: str='') -> list[dict[str, Any]]:
         """
         F264: Bounded quantum-inspired path analysis post evidence network.
 
@@ -908,38 +536,28 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         targets. Fail-soft: any exception → return []. Gate:
         HLEDAC_ENABLE_GRAPH_PATHS=1.
         """
-        if _os.environ.get("HLEDAC_ENABLE_GRAPH_PATHS", "0") != "1":
+        if _os.environ.get('HLEDAC_ENABLE_GRAPH_PATHS', '0') != '1':
             return []
         if not entities or not self._evidence_analyzer:
             return []
-
         pathfinder: Any = None
         try:
-            # 1) Get centrality + edges from evidence network
             net_result = await self._evidence_analyzer.analyze_network(entities)
             if not isinstance(net_result, dict):
                 return []
-            centrality: dict[str, float] = net_result.get("centrality") or {}
-            edges: list[dict[str, Any]] = net_result.get("edges") or []
+            centrality: dict[str, float] = net_result.get('centrality') or {}
+            edges: list[dict[str, Any]] = net_result.get('edges') or []
             if not centrality or not edges or len(centrality) < 2:
                 return []
-
-            # 2) Top-10 by centrality
-            ranked = sorted(
-                centrality.items(),
-                key=lambda kv: float(kv[1] or 0.0),
-                reverse=True,
-            )[:10]
+            ranked = sorted(centrality.items(), key=lambda kv: float(kv[1] or 0.0), reverse=True)[:10]
             if len(ranked) < 2:
                 return []
             top_nodes: list[str] = [str(n) for n, _ in ranked]
-
-            # 3) Build undirected adjacency list, bounded to top_nodes
             adj: dict[str, list[str]] = {n: [] for n in top_nodes}
             for e in edges:
                 try:
-                    src = str(e.get("src", ""))
-                    dst = str(e.get("dst", ""))
+                    src = str(e.get('src', ''))
+                    dst = str(e.get('dst', ''))
                     if not src or not dst or src == dst:
                         continue
                     if src in adj and dst not in adj[src]:
@@ -948,142 +566,59 @@ class UniversalResearchCoordinator(UniversalCoordinator):
                         adj[dst].append(src)
                 except Exception:
                     continue
-
-            # 4) Lazy import of quantum_pathfinder (avoids module-level tax)
             from graph.quantum_pathfinder import create_quantum_pathfinder
             pathfinder = create_quantum_pathfinder()
             if pathfinder is None:
                 return []
             await pathfinder.initialize(adj)
-
-            # 5) Bounded path search: top-1 vs each of the rest
             ts_now = time.time()
             start = top_nodes[0]
             targets = top_nodes[1:]
             per_target_timeout = max(1.0, 60.0 / max(1, len(targets)))
             findings: list[Any] = []
-
-            # Lazy import for CanonicalFinding — keep research_coordinator
-            # importable even if duckdb_store is unavailable
             try:
                 from knowledge.duckdb_store import CanonicalFinding
             except Exception as e:
-                logger.warning(
-                    f"ResearchCoordinator: CanonicalFinding unavailable, "
-                    f"graph path ingest skipped: {e}"
-                )
+                logger.warning(f'ResearchCoordinator: CanonicalFinding unavailable, graph path ingest skipped: {e}')
                 return []
-
             for tgt in targets:
                 try:
-                    paths = await safe_wait_for(
-                        pathfinder.find_paths(
-                            start_nodes=[start],
-                            target_nodes=[tgt],
-                            max_steps=50,
-                        ),
-                        timeout=per_target_timeout, label="research_coord_paths",
-                    )
+                    paths = await safe_wait_for(pathfinder.find_paths(start_nodes=[start], target_nodes=[tgt], max_steps=50), timeout=per_target_timeout, label='research_coord_paths')
                 except (TimeoutError, Exception) as e:
-                    logger.debug(
-                        f"ResearchCoordinator: path find {start}→{tgt} "
-                        f"failed: {e}"
-                    )
+                    logger.debug(f'ResearchCoordinator: path find {start}→{tgt} failed: {e}')
                     continue
                 if not paths:
                     continue
-                # Shortest path wins
                 paths.sort(key=len)
                 path = paths[0]
                 if not path:
                     continue
-                fid_seed = f"{start}|{tgt}|{ts_now}"
-                fid = "graph_path_" + hashlib.sha256(
-                    fid_seed.encode("utf-8")
-                ).hexdigest()[:16]
+                fid_seed = f'{start}|{tgt}|{ts_now}'
+                fid = 'graph_path_' + hashlib.sha256(fid_seed.encode('utf-8')).hexdigest()[:16]
                 try:
-                    findings.append(
-                        CanonicalFinding(
-                            finding_id=fid,
-                            query=query or "",
-                            source_type="graph_path_analysis",
-                            confidence=0.5,
-                            ts=ts_now,
-                            provenance=(
-                                "graph_path_analysis",
-                                "research_coordinator",
-                                start,
-                                tgt,
-                            ),
-                            payload_text=json.dumps(
-                                {
-                                    "start": start,
-                                    "target": tgt,
-                                    "path": path,
-                                    "length": len(path),
-                                    "centrality": {
-                                        "start": centrality.get(start, 0.0),
-                                        "target": centrality.get(tgt, 0.0),
-                                    },
-                                    "sprint_id": sprint_id,
-                                },
-                                default=str,
-                            ),
-                        )
-                    )
+                    findings.append(CanonicalFinding(finding_id=fid, query=query or '', source_type='graph_path_analysis', confidence=0.5, ts=ts_now, provenance=('graph_path_analysis', 'research_coordinator', start, tgt), payload_text=json.dumps({'start': start, 'target': tgt, 'path': path, 'length': len(path), 'centrality': {'start': centrality.get(start, 0.0), 'target': centrality.get(tgt, 0.0)}, 'sprint_id': sprint_id}, default=str)))
                 except Exception as e:
-                    logger.debug(
-                        f"ResearchCoordinator: CanonicalFinding build failed: {e}"
-                    )
+                    logger.debug(f'ResearchCoordinator: CanonicalFinding build failed: {e}')
                     continue
-
-            # 6) Canonical write path
             if findings:
                 try:
                     from knowledge.duckdb_store import DuckDBShadowStore
                     store = DuckDBShadowStore()
                     await store.async_ingest_findings_batch(findings)
                 except Exception as e:
-                    logger.warning(
-                        f"ResearchCoordinator: graph path ingest failed: {e}"
-                    )
-
-            # 7) Return compact view to caller
-            return [
-                {
-                    "agent": "graph_path_analysis",
-                    "start": f.provenance[2] if len(f.provenance) > 2 else "",
-                    "target": f.provenance[3] if len(f.provenance) > 3 else "",
-                    "path": _payload_data.get("path", []),
-                    "length": _payload_data.get("length", 0),
-                    "finding_id": f.finding_id,
-                }
-                for f in findings
-                for _payload_data in [msgspec.json.decode(f.payload_text.encode()) if f.payload_text else {}]
-            ]
-
+                    logger.warning(f'ResearchCoordinator: graph path ingest failed: {e}')
+            return [{'agent': 'graph_path_analysis', 'start': f.provenance[2] if len(f.provenance) > 2 else '', 'target': f.provenance[3] if len(f.provenance) > 3 else '', 'path': _payload_data.get('path', []), 'length': _payload_data.get('length', 0), 'finding_id': f.finding_id} for f in findings for _payload_data in [msgspec.json.decode(f.payload_text.encode()) if f.payload_text else {}]]
         except Exception as e:
-            logger.warning(
-                f"ResearchCoordinator: graph path analysis failed: {e}"
-            )
+            logger.warning(f'ResearchCoordinator: graph path analysis failed: {e}')
             return []
         finally:
-            # Always release pathfinder resources (mx.eval+clear_cache guarded
-            # inside cleanup() itself; here we just ensure the call)
             try:
-                if pathfinder is not None and getattr(
-                    pathfinder, "initialized", False
-                ):
+                if pathfinder is not None and getattr(pathfinder, 'initialized', False):
                     await pathfinder.cleanup()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
 
-    async def execute_research_plan(
-        self,
-        plan: dict[str, Any],
-        context: dict[str, Any] | None = None,
-        graph_analysis: bool = False,
-    ) -> list[dict[str, Any]]:
+    async def execute_research_plan(self, plan: dict[str, Any], context: dict[str, Any] | None=None, graph_analysis: bool=False) -> list[dict[str, Any]]:
         """
         Execute a research plan with multiple steps (from Hermes3).
 
@@ -1100,13 +635,10 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         """
         results = []
         agents = plan.get('agents', [])
-
-        logger.info(f"Executing research plan with {len(agents)} agents")
-
+        logger.info(f'Executing research plan with {len(agents)} agents')
         for agent_config in agents:
             agent_type = agent_config.get('type', 'research')
             task = agent_config.get('task', '')
-
             try:
                 if agent_type == 'academic':
                     result = await self.search_academic(task)
@@ -1117,70 +649,25 @@ class UniversalResearchCoordinator(UniversalCoordinator):
                     depth = agent_config.get('depth', 1)
                     result = await self.crawl_url(url, depth)
                 else:
-                    # Default to unified AI
-                    decision = DecisionResponse(
-                        decision_id=f'plan_{agent_type}',
-                        chosen_option='unified_ai',
-                        confidence=0.7,
-                        reasoning=task
-                    )
-                    research_result = await self._execute_unified_ai_research(
-                        decision, task
-                    )
-                    result = {
-                        'success': getattr(research_result, 'success', None),
-                        'source': 'unified_ai',
-                        'result': research_result.full_result
-                    }
-
+                    decision = DecisionResponse(decision_id=f'plan_{agent_type}', chosen_option='unified_ai', confidence=0.7, reasoning=task)
+                    research_result = await self._execute_unified_ai_research(decision, task)
+                    result = {'success': getattr(research_result, 'success', None), 'source': 'unified_ai', 'result': research_result.full_result}
                 results.append(result)
-
             except Exception as e:
-                logger.error(f"Plan step failed: {e}")
-                results.append({
-                    'success': False,
-                    'error': str(e),
-                    'agent_type': agent_type
-                })
-
-        # F264: optional post-execution graph path analysis step
+                logger.error(f'Plan step failed: {e}')
+                results.append({'success': False, 'error': str(e), 'agent_type': agent_type})
         if graph_analysis:
             try:
-                entities = (
-                    plan.get('entities')
-                    or (context or {}).get('entities')
-                    or []
-                )
+                entities = plan.get('entities') or (context or {}).get('entities') or []
                 if entities:
-                    graph_results = await self._run_graph_path_analysis(
-                        entities=list(entities),
-                        query=str(plan.get('query', '') or ''),
-                        sprint_id=str(plan.get('sprint_id', '') or ''),
-                    )
+                    graph_results = await self._run_graph_path_analysis(entities=list(entities), query=str(plan.get('query', '') or ''), sprint_id=str(plan.get('sprint_id', '') or ''))
                     if graph_results:
-                        results.append({
-                            'agent': 'graph_path_analysis',
-                            'type': 'graph_path_analysis',
-                            'count': len(graph_results),
-                            'results': graph_results,
-                        })
+                        results.append({'agent': 'graph_path_analysis', 'type': 'graph_path_analysis', 'count': len(graph_results), 'results': graph_results})
             except Exception as e:
-                logger.warning(
-                    f"execute_research_plan: graph_analysis step failed: {e}"
-                )
-
+                logger.warning(f'execute_research_plan: graph_analysis step failed: {e}')
         return results
 
-    # ========================================================================
-    # Deep Research Methods (from AdvancedResearchCoordinator)
-    # ========================================================================
-
-    async def excavate(
-        self,
-        seed_paper: ResearchPaper,
-        query: str,
-        config: ExcavationConfig | None = None
-    ) -> dict[str, Any]:
+    async def excavate(self, seed_paper: ResearchPaper, query: str, config: ExcavationConfig | None=None) -> dict[str, Any]:
         """
         Perform deep research excavation to 10+ levels.
 
@@ -1194,150 +681,75 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         """
         config = config or ExcavationConfig()
         max_depth = config.max_depth
-
         logger.info(f"Starting excavation from '{seed_paper.title[:50]}...' to depth {max_depth}")
-
-        # Create thread
-        thread_id = hashlib.sha256(
-            f"{seed_paper.id}:{datetime.now(UTC).isoformat()}".encode()
-        ).hexdigest()[:16]
-
-        thread = ResearchThread(
-            id=thread_id,
-            root_topic=query,
-        )
+        thread_id = hashlib.sha256(f'{seed_paper.id}:{datetime.now(UTC).isoformat()}'.encode()).hexdigest()[:16]
+        thread = ResearchThread(id=thread_id, root_topic=query)
         self._threads[thread_id] = thread
-
-        # Add seed paper
         seed_paper.depth = 0
         seed_paper.relevance_score = 1.0
         thread.papers[seed_paper.id] = seed_paper
         self._add_paper(seed_paper)
         thread.path.append(seed_paper.id)
-
-        # BFS/DFS queue
         queue = deque([(seed_paper, 0)])
         explored = {seed_paper.id}
         level_stats = _level_stats_factory.copy()
-
         while queue and len(thread.papers) < config.max_total_papers:
             current_paper, depth = queue.popleft()
-
             if depth >= max_depth:
                 continue
-
             level_stats[depth]['explored'] += 1
-
-            # Progress callback
             if config.progress_callback:
-                await config.progress_callback({
-                    'depth': depth,
-                    'papers_found': len(thread.papers),
-                    'current_paper': current_paper.title[:50],
-                })
-
-            # Fetch citations (both directions)
+                await config.progress_callback({'depth': depth, 'papers_found': len(thread.papers), 'current_paper': current_paper.title[:50]})
             citations = await self._fetch_citations(current_paper, 'backward')
             references = await self._fetch_citations(current_paper, 'forward')
             all_related = citations + references
-
-            # Score and filter
             scored_papers = []
             for paper in all_related:
                 if paper.id in explored:
                     continue
-
-                relevance = self._calculate_relevance(
-                    paper, query, current_paper.relevance_score, depth + 1, config
-                )
-
+                relevance = self._calculate_relevance(paper, query, current_paper.relevance_score, depth + 1, config)
                 if relevance >= config.min_relevance_score:
                     paper.depth = depth + 1
                     paper.relevance_score = relevance
                     scored_papers.append((paper, relevance))
-
-            # Sort by relevance and take top N
             scored_papers.sort(key=lambda x: x[1], reverse=True)
             top_papers = scored_papers[:config.max_breadth]
-
-            # Add to thread and queue
             for paper, _score in top_papers:
                 thread.papers[paper.id] = paper
                 self._add_paper(paper)
                 explored.add(paper.id)
                 level_stats[depth + 1]['relevant'] += 1
-
-                # Track citation links
                 self._add_citation_link(current_paper.id, paper.id)
-
-                # Add to queue based on strategy
                 if config.strategy == ExcavationStrategy.DEPTH_FIRST:
                     queue.appendleft((paper, depth + 1))
                 else:
                     queue.append((paper, depth + 1))
-
-        # Update statistics
         thread.total_papers = len(thread.papers)
         max_reached = max((p.depth for p in thread.papers.values()), default=0)
         self._deep_stats['max_depth_reached'] = max(self._deep_stats['max_depth_reached'], max_reached)
         self._deep_stats['total_papers_found'] += len(thread.papers)
         self._deep_stats['excavations_completed'] += 1
+        logger.info(f'Excavation complete: {len(thread.papers)} papers, depth {max_reached}')
+        return {'thread_id': thread_id, 'papers_found': len(thread.papers), 'max_depth_reached': max_reached, 'levels': dict(level_stats), 'top_papers': [{'id': p.id, 'title': p.title[:100], 'depth': p.depth, 'relevance': p.relevance_score} for p in sorted(thread.papers.values(), key=lambda x: x.relevance_score, reverse=True)[:20]], 'citation_graph': self.get_citation_graph(thread_id) if config.build_citation_graph else None}
 
-        logger.info(f"Excavation complete: {len(thread.papers)} papers, depth {max_reached}")
-
-        return {
-            'thread_id': thread_id,
-            'papers_found': len(thread.papers),
-            'max_depth_reached': max_reached,
-            'levels': dict(level_stats),
-            'top_papers': [
-                {'id': p.id, 'title': p.title[:100], 'depth': p.depth, 'relevance': p.relevance_score}
-                for p in sorted(thread.papers.values(), key=lambda x: x.relevance_score, reverse=True)[:20]
-            ],
-            'citation_graph': self.get_citation_graph(thread_id) if config.build_citation_graph else None
-        }
-
-    async def _fetch_citations(
-        self,
-        paper: ResearchPaper,
-        direction: str = 'forward'
-    ) -> list[ResearchPaper]:
+    async def _fetch_citations(self, paper: ResearchPaper, direction: str='forward') -> list[ResearchPaper]:
         """Fetch citations for a paper (placeholder for academic APIs)."""
-        logger.debug(f"Fetching {direction} citations for {paper.title[:50]}...")
-        await asyncio.sleep(0.05)  # Simulate API
-
-        # Mock citations
+        logger.debug(f'Fetching {direction} citations for {paper.title[:50]}...')
+        await asyncio.sleep(0.05)
         import random
         citations = []
         for i in range(min(5, 10)):
-            citations.append(ResearchPaper(
-                id=f"cite_{paper.id}_{i}_{direction}",
-                title=f"Related Paper {i+1} to {paper.title[:30]}",
-                authors=[f"Author {j+1}" for j in range(random.randint(1, 4))],
-                abstract=f"This paper {'cites' if direction == 'backward' else 'is cited by'} {paper.title[:30]}...",
-                year=random.randint(2018, 2024),
-            ))
+            citations.append(ResearchPaper(id=f'cite_{paper.id}_{i}_{direction}', title=f'Related Paper {i + 1} to {paper.title[:30]}', authors=[f'Author {j + 1}' for j in range(random.randint(1, 4))], abstract=f"This paper {('cites' if direction == 'backward' else 'is cited by')} {paper.title[:30]}...", year=random.randint(2018, 2024)))
         return citations
 
-    def _calculate_relevance(
-        self,
-        paper: ResearchPaper,
-        query: str,
-        parent_relevance: float,
-        depth: int,
-        config: ExcavationConfig
-    ) -> float:
+    def _calculate_relevance(self, paper: ResearchPaper, query: str, parent_relevance: float, depth: int, config: ExcavationConfig) -> float:
         """Calculate relevance score with decay."""
-        base_score = parent_relevance * (config.relevance_decay ** depth)
-
-        # Simple text matching
+        base_score = parent_relevance * config.relevance_decay ** depth
         query_words = set(query.lower().split())
         title_words = set(paper.title.lower().split())
         abstract_words = set(paper.abstract.lower().split())
-
         title_overlap = len(query_words & title_words) / len(query_words) if query_words else 0
         abstract_overlap = len(query_words & abstract_words) / len(query_words) if query_words else 0
-
         relevance = base_score * (0.4 * title_overlap + 0.2 * abstract_overlap + 0.4)
         return min(1.0, relevance)
 
@@ -1346,24 +758,9 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         thread = self._threads.get(thread_id)
         if not thread:
             return {'enabled': False}
+        return {'nodes': [{'id': p.id, 'title': p.title[:50], 'depth': p.depth, 'relevance': p.relevance_score} for p in thread.papers.values()], 'edges': [{'source': src, 'target': dst} for src, dst in self._citation_links if src in thread.papers and dst in thread.papers]}
 
-        return {
-            'nodes': [
-                {'id': p.id, 'title': p.title[:50], 'depth': p.depth, 'relevance': p.relevance_score}
-                for p in thread.papers.values()
-            ],
-            'edges': [
-                {'source': src, 'target': dst}
-                for src, dst in self._citation_links
-                if src in thread.papers and dst in thread.papers
-            ]
-        }
-
-    async def meta_synthesize(
-        self,
-        research_data: dict[str, Any],
-        query: str
-    ) -> dict[str, Any]:
+    async def meta_synthesize(self, research_data: dict[str, Any], query: str) -> dict[str, Any]:
         """
         Perform meta-synthesis on research data.
 
@@ -1374,150 +771,56 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         Returns:
             Meta-synthesis with patterns, theories, insights
         """
-        logger.info("Starting meta-synthesis...")
-
-        # Step 1: Detect meta-patterns
+        logger.info('Starting meta-synthesis...')
         patterns = await self._detect_meta_patterns(research_data, query)
-
-        # Step 2: Generate theories from patterns
         theories = await self._generate_theories(patterns, query)
-
-        # Step 3: Generate hypotheses
         hypotheses = await self._generate_hypotheses(patterns, theories, query)
-
-        # Step 4: Quality assessment
         quality = self._assess_quality(patterns, theories)
-
         self._deep_stats['meta_patterns_detected'] += len(patterns)
         self._deep_stats['theories_generated'] += len(theories)
+        return {'success': True, 'patterns': [self._pattern_to_dict(p) for p in patterns], 'theories': [self._theory_to_dict(t) for t in theories], 'hypotheses': hypotheses, 'quality': quality, 'summary': f'Meta-synthesis: {len(patterns)} patterns, {len(theories)} theories, {len(hypotheses)} hypotheses'}
 
-        return {
-            'success': True,
-            'patterns': [self._pattern_to_dict(p) for p in patterns],
-            'theories': [self._theory_to_dict(t) for t in theories],
-            'hypotheses': hypotheses,
-            'quality': quality,
-            'summary': f"Meta-synthesis: {len(patterns)} patterns, {len(theories)} theories, {len(hypotheses)} hypotheses"  # noqa: E501
-        }
-
-    async def _detect_meta_patterns(
-        self,
-        research_data: dict[str, Any],
-        query: str
-    ) -> list[MetaPattern]:
+    async def _detect_meta_patterns(self, research_data: dict[str, Any], query: str) -> list[MetaPattern]:
         """Detect meta-patterns across research data."""
         patterns = []
-
-        # Extract patterns from different sources
         sources = research_data.get('sources', [])
-
         for i, source in enumerate(sources):
-            # Detect pattern
-            pattern = MetaPattern(
-                pattern_id=f"pattern_{i}",
-                name=f"Pattern {i+1}",
-                description=f"Meta-pattern detected in {source}",
-                abstraction_level=2,
-                supporting_evidence=[source],
-                confidence=0.7 + (i * 0.05),
-                cross_domain=i % 2 == 0
-            )
+            pattern = MetaPattern(pattern_id=f'pattern_{i}', name=f'Pattern {i + 1}', description=f'Meta-pattern detected in {source}', abstraction_level=2, supporting_evidence=[source], confidence=0.7 + i * 0.05, cross_domain=i % 2 == 0)
             patterns.append(pattern)
-
         return patterns
 
-    async def _generate_theories(
-        self,
-        patterns: list[MetaPattern],
-        query: str
-    ) -> list[ResearchTheory]:
+    async def _generate_theories(self, patterns: list[MetaPattern], query: str) -> list[ResearchTheory]:
         """Generate theories from detected patterns."""
         theories = []
-
-        for i, pattern in enumerate(patterns[:3]):  # Top 3 patterns
-            theory = ResearchTheory(
-                theory_id=f"theory_{i}",
-                name=f"Theory of {pattern.name}",
-                core_principles=[f"Principle {j+1} derived from {pattern.name}" for j in range(3)],
-                scope=f"Applies to {query}",
-                limitations=["Limited to observed patterns", "Needs empirical validation"],
-                testable_predictions=[f"Prediction {j+1}" for j in range(2)],
-                supporting_patterns=[pattern.pattern_id],
-                novelty_score=0.6 + (i * 0.1),
-                confidence=pattern.confidence * 0.9
-            )
+        for i, pattern in enumerate(patterns[:3]):
+            theory = ResearchTheory(theory_id=f'theory_{i}', name=f'Theory of {pattern.name}', core_principles=[f'Principle {j + 1} derived from {pattern.name}' for j in range(3)], scope=f'Applies to {query}', limitations=['Limited to observed patterns', 'Needs empirical validation'], testable_predictions=[f'Prediction {j + 1}' for j in range(2)], supporting_patterns=[pattern.pattern_id], novelty_score=0.6 + i * 0.1, confidence=pattern.confidence * 0.9)
             theories.append(theory)
-
         return theories
 
-    async def _generate_hypotheses(
-        self,
-        patterns: list[MetaPattern],
-        theories: list[ResearchTheory],
-        query: str
-    ) -> list[dict[str, Any]]:
+    async def _generate_hypotheses(self, patterns: list[MetaPattern], theories: list[ResearchTheory], query: str) -> list[dict[str, Any]]:
         """Generate testable hypotheses."""
         hypotheses = []
-
         for i, theory in enumerate(theories):
             for j, prediction in enumerate(theory.testable_predictions):
-                hypothesis = {
-                    'id': f"hypothesis_{i}_{j}",
-                    'statement': f"If {theory.name} holds, then {prediction}",
-                    'variables': ['independent_var', 'dependent_var'],
-                    'test_method': 'empirical_observation',
-                    'expected_outcome': prediction,
-                    'importance': theory.confidence * (0.8 - j * 0.1)
-                }
+                hypothesis = {'id': f'hypothesis_{i}_{j}', 'statement': f'If {theory.name} holds, then {prediction}', 'variables': ['independent_var', 'dependent_var'], 'test_method': 'empirical_observation', 'expected_outcome': prediction, 'importance': theory.confidence * (0.8 - j * 0.1)}
                 hypotheses.append(hypothesis)
-
         return hypotheses
 
-    def _assess_quality(
-        self,
-        patterns: list[MetaPattern],
-        theories: list[ResearchTheory]
-    ) -> dict[str, Any]:
+    def _assess_quality(self, patterns: list[MetaPattern], theories: list[ResearchTheory]) -> dict[str, Any]:
         """Assess quality of meta-synthesis."""
-        avg_pattern_confidence = sum(p.confidence for p in patterns) / len(patterns) if patterns else 0
-        avg_theory_confidence = sum(t.confidence for t in theories) / len(theories) if theories else 0
-
-        return {
-            'overall_score': (avg_pattern_confidence + avg_theory_confidence) / 2,
-            'pattern_coverage': len(patterns),
-            'theory_coverage': len(theories),
-            'strengths': ['Multiple patterns detected', 'Theory generation successful'],
-            'weaknesses': ['Limited empirical validation', 'Pattern overlap unclear'],
-            'improvements': ['Add more data sources', 'Validate with experiments']
-        }
+        avg_pattern_confidence = sum((p.confidence for p in patterns)) / len(patterns) if patterns else 0
+        avg_theory_confidence = sum((t.confidence for t in theories)) / len(theories) if theories else 0
+        return {'overall_score': (avg_pattern_confidence + avg_theory_confidence) / 2, 'pattern_coverage': len(patterns), 'theory_coverage': len(theories), 'strengths': ['Multiple patterns detected', 'Theory generation successful'], 'weaknesses': ['Limited empirical validation', 'Pattern overlap unclear'], 'improvements': ['Add more data sources', 'Validate with experiments']}
 
     def _pattern_to_dict(self, pattern: MetaPattern) -> dict[str, Any]:
         """Convert MetaPattern to dict."""
-        return {
-            'id': pattern.pattern_id,
-            'name': pattern.name,
-            'description': pattern.description,
-            'abstraction_level': pattern.abstraction_level,
-            'confidence': pattern.confidence,
-            'cross_domain': pattern.cross_domain
-        }
+        return {'id': pattern.pattern_id, 'name': pattern.name, 'description': pattern.description, 'abstraction_level': pattern.abstraction_level, 'confidence': pattern.confidence, 'cross_domain': pattern.cross_domain}
 
     def _theory_to_dict(self, theory: ResearchTheory) -> dict[str, Any]:
         """Convert ResearchTheory to dict."""
-        return {
-            'id': theory.theory_id,
-            'name': theory.name,
-            'core_principles': theory.core_principles,
-            'scope': theory.scope,
-            'novelty_score': theory.novelty_score,
-            'confidence': theory.confidence
-        }
+        return {'id': theory.theory_id, 'name': theory.name, 'core_principles': theory.core_principles, 'scope': theory.scope, 'novelty_score': theory.novelty_score, 'confidence': theory.confidence}
 
-    async def create_hierarchical_plan(
-        self,
-        objective: str,
-        context: dict[str, Any] | None = None
-    ) -> HierarchicalPlan:
+    async def create_hierarchical_plan(self, objective: str, context: dict[str, Any] | None=None) -> HierarchicalPlan:
         """
         Create hierarchical research plan.
 
@@ -1528,43 +831,13 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         Returns:
             Hierarchical plan with chief and worker tasks
         """
-        plan_id = hashlib.sha256(f"{objective}:{time.time()}".encode()).hexdigest()[:16]
-
-        # Create chief tasks (high-level planning)
-        chief_tasks = [
-            {'task_id': 'chief_1', 'type': 'planning', 'description': f'Plan research for: {objective[:50]}'},
-            {'task_id': 'chief_2', 'type': 'coordination', 'description': 'Coordinate worker agents'},
-            {'task_id': 'chief_3', 'type': 'synthesis', 'description': 'Synthesize findings'}
-        ]
-
-        # Create worker tasks (execution)
-        worker_tasks = [
-            {'task_id': 'worker_1', 'type': 'search', 'description': 'Search academic sources'},
-            {'task_id': 'worker_2', 'type': 'crawl', 'description': 'Crawl web sources'},
-            {'task_id': 'worker_3', 'type': 'analyze', 'description': 'Analyze data'},
-            {'task_id': 'worker_4', 'type': 'extract', 'description': 'Extract key findings'}
-        ]
-
-        # Define dependencies
-        dependencies = {
-            'worker_3': ['worker_1', 'worker_2'],
-            'worker_4': ['worker_3'],
-            'chief_3': ['worker_4']
-        }
-
-        plan = HierarchicalPlan(
-            plan_id=plan_id,
-            objective=objective,
-            chief_tasks=chief_tasks,
-            worker_tasks=worker_tasks,
-            dependencies=dependencies,
-            estimated_duration=300.0,  # 5 minutes
-            context_requirements=list(context.keys()) if context else []
-        )
-
+        plan_id = hashlib.sha256(f'{objective}:{time.time()}'.encode()).hexdigest()[:16]
+        chief_tasks = [{'task_id': 'chief_1', 'type': 'planning', 'description': f'Plan research for: {objective[:50]}'}, {'task_id': 'chief_2', 'type': 'coordination', 'description': 'Coordinate worker agents'}, {'task_id': 'chief_3', 'type': 'synthesis', 'description': 'Synthesize findings'}]
+        worker_tasks = [{'task_id': 'worker_1', 'type': 'search', 'description': 'Search academic sources'}, {'task_id': 'worker_2', 'type': 'crawl', 'description': 'Crawl web sources'}, {'task_id': 'worker_3', 'type': 'analyze', 'description': 'Analyze data'}, {'task_id': 'worker_4', 'type': 'extract', 'description': 'Extract key findings'}]
+        dependencies = {'worker_3': ['worker_1', 'worker_2'], 'worker_4': ['worker_3'], 'chief_3': ['worker_4']}
+        plan = HierarchicalPlan(plan_id=plan_id, objective=objective, chief_tasks=chief_tasks, worker_tasks=worker_tasks, dependencies=dependencies, estimated_duration=300.0, context_requirements=list(context.keys()) if context else [])
         self._active_plans[plan_id] = plan
         self._deep_stats['plans_executed'] += 1
-
         return plan
 
     def get_thread_summary(self, thread_id: str) -> dict[str, Any] | None:
@@ -1572,31 +845,16 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         thread = self._threads.get(thread_id)
         if not thread:
             return None
-
-        return {
-            'id': thread.id,
-            'root_topic': thread.root_topic,
-            'papers_count': len(thread.papers),
-            'max_depth': max((p.depth for p in thread.papers.values()), default=0),
-            'created_at': thread.created_at.isoformat()
-        }
+        return {'id': thread.id, 'root_topic': thread.root_topic, 'papers_count': len(thread.papers), 'max_depth': max((p.depth for p in thread.papers.values()), default=0), 'created_at': thread.created_at.isoformat()}
 
     def get_deep_statistics(self) -> dict[str, Any]:
         """Get deep research statistics."""
-        return {
-            **self._deep_stats,
-            'active_threads': len(self._threads),
-            'total_papers_tracked': len(self._papers),
-            'citation_links': len(self._citation_links),
-            'meta_patterns': len(self._meta_patterns),
-            'theories': len(self._theories),
-            'active_plans': len(self._active_plans)
-        }
+        return {**self._deep_stats, 'active_threads': len(self._threads), 'total_papers_tracked': len(self._papers), 'citation_links': len(self._citation_links), 'meta_patterns': len(self._meta_patterns), 'theories': len(self._theories), 'active_plans': len(self._active_plans)}
 
     def set_research_depth(self, depth: ResearchDepth) -> None:
         """Set research depth mode."""
         self._research_depth = depth
-        logger.info(f"Research depth set to: {depth.value}")
+        logger.info(f'Research depth set to: {depth.value}')
 
     def get_research_depth(self) -> ResearchDepth:
         """Get current research depth mode."""

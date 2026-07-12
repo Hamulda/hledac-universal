@@ -13,27 +13,14 @@ Usage:
     detector.add_document("doc1", "text content...")
     matches = detector.find_similar("query text...")
 """
-
-
 import logging
 import threading
 from dataclasses import dataclass, field
 from typing import Any
-
-from hledac_rust_extensions import (
-    LSHIndex,
-    lsh_index_new,
-    lsh_estimate_recall,
-    batch_compute_simhash,
-    hamming_dist,
-)
-
+from hledac_rust_extensions import LSHIndex, lsh_index_new, lsh_estimate_recall, batch_compute_simhash, hamming_dist
 logger = logging.getLogger(__name__)
-
-# Default LSH parameters - optimal for 64-bit SimHash
 DEFAULT_NUM_TABLES = 16
 DEFAULT_NUM_ROWS = 4
-
 
 @dataclass(slots=True)
 class LSHStats:
@@ -44,7 +31,6 @@ class LSHStats:
     queriesPerformed: int = 0
     candidatesFound: int = 0
     matchesFound: int = 0
-
 
 class LSHNearDuplicateDetector:
     """Near-duplicate detector using multi-table LSH + SimHash.
@@ -66,36 +52,18 @@ class LSHNearDuplicateDetector:
         threshold: Hamming distance threshold for near-duplicate (default 3)
         max_results: Maximum similar documents to return (default 100)
     """
+    __slots__ = tuple(('_documents', '_index', '_lock', '_stats', 'max_results', 'num_rows', 'num_tables', 'threshold'))
 
-    def __init__(
-        self,
-        num_tables: int = DEFAULT_NUM_TABLES,
-        num_rows: int = DEFAULT_NUM_ROWS,
-        threshold: int = 3,
-        max_results: int = 100,
-    ):
+    def __init__(self, num_tables: int=DEFAULT_NUM_TABLES, num_rows: int=DEFAULT_NUM_ROWS, threshold: int=3, max_results: int=100):
         self.num_tables = num_tables
         self.num_rows = num_rows
         self.threshold = threshold
         self.max_results = max_results
-
-        # Rust LSH index
         self._index: LSHIndex = lsh_index_new(num_tables=num_tables, num_rows=num_rows)
-
-        # Document storage for verification
-        self._documents: dict[str, tuple[str, int]] = {}  # doc_id -> (text, fingerprint)
+        self._documents: dict[str, tuple[str, int]] = {}
         self._lock = threading.RLock()
-
-        # Statistics
-        self._stats = LSHStats(
-            num_tables=num_tables,
-            num_rows=num_rows,
-        )
-
-        logger.debug(
-            f"LSHNearDuplicateDetector initialized: "
-            f"tables={num_tables}, rows={num_rows}, threshold={threshold}"
-        )
+        self._stats = LSHStats(num_tables=num_tables, num_rows=num_rows)
+        logger.debug(f'LSHNearDuplicateDetector initialized: tables={num_tables}, rows={num_rows}, threshold={threshold}')
 
     @property
     def stats(self) -> LSHStats:
@@ -114,22 +82,17 @@ class LSHNearDuplicateDetector:
             False if near-duplicate already exists
         """
         with self._lock:
-            # Compute fingerprint
             fps = batch_compute_simhash([text])
             fingerprint = fps[0] if fps else 0
-
-            # Check if near-duplicate exists
             candidates = self._index.query(fingerprint, max_results=self.max_results)
             for cand_id, similarity in candidates:
                 if cand_id in self._documents:
                     cand_text, cand_fp = self._documents[cand_id]
                     dist = hamming_dist(fingerprint, cand_fp)
                     if dist <= self.threshold:
-                        logger.debug(f"Near-duplicate found: {doc_id} ~ {cand_id} (dist={dist})")
+                        logger.debug(f'Near-duplicate found: {doc_id} ~ {cand_id} (dist={dist})')
                         self._stats.matchesFound += 1
                         return False
-
-            # Insert into index
             self._index.insert(doc_id, fingerprint)
             self._documents[doc_id] = (text, fingerprint)
             self._stats.num_documents += 1
@@ -149,7 +112,7 @@ class LSHNearDuplicateDetector:
             results.append(self.add_document(doc_id, text))
         return results
 
-    def find_similar(self, text: str, max_results: int | None = None) -> list[tuple[str, float, int]]:
+    def find_similar(self, text: str, max_results: int | None=None) -> list[tuple[str, float, int]]:
         """Find documents similar to the given text.
 
         Args:
@@ -162,31 +125,21 @@ class LSHNearDuplicateDetector:
         """
         if max_results is None:
             max_results = self.max_results
-
         with self._lock:
             self._stats.queriesPerformed += 1
-
-            # Compute fingerprint
             fps = batch_compute_simhash([text])
             fingerprint = fps[0] if fps else 0
-
-            # Query LSH index
             candidates = self._index.query(fingerprint, max_results=max_results)
             self._stats.candidatesFound += len(candidates)
-
-            # Verify candidates and compute exact similarity
             results = []
             for cand_id, _ in candidates:
                 if cand_id in self._documents:
                     cand_text, cand_fp = self._documents[cand_id]
                     dist = hamming_dist(fingerprint, cand_fp)
                     if dist <= self.threshold:
-                        similarity = 1.0 - (dist / 64.0)
+                        similarity = 1.0 - dist / 64.0
                         results.append((cand_id, similarity, dist))
-
-            # Sort by similarity descending
             results.sort(key=lambda x: -x[1])
-
             return results[:max_results]
 
     def compute_fingerprint(self, text: str) -> int:
@@ -252,31 +205,16 @@ class LSHNearDuplicateDetector:
 
     def get_stats(self) -> dict[str, Any]:
         """Get statistics as dictionary."""
-        return {
-            "num_documents": self._stats.num_documents,
-            "num_tables": self._stats.num_tables,
-            "num_rows": self._stats.num_rows,
-            "threshold": self.threshold,
-            "queries_performed": self._stats.queriesPerformed,
-            "candidates_found": self._stats.candidatesFound,
-            "matches_found": self._stats.matchesFound,
-            "estimated_recall_0.9": self.estimate_recall(0.9),
-            "estimated_recall_0.95": self.estimate_recall(0.95),
-        }
-
-
-# Standalone helper functions
+        return {'num_documents': self._stats.num_documents, 'num_tables': self._stats.num_tables, 'num_rows': self._stats.num_rows, 'threshold': self.threshold, 'queries_performed': self._stats.queriesPerformed, 'candidates_found': self._stats.candidatesFound, 'matches_found': self._stats.matchesFound, 'estimated_recall_0.9': self.estimate_recall(0.9), 'estimated_recall_0.95': self.estimate_recall(0.95)}
 
 def lsh_fingerprint(text: str) -> int:
     """Compute LSH-friendly fingerprint (wrapper around batch_compute_simhash)."""
     fps = batch_compute_simhash([text])
     return fps[0] if fps else 0
 
-
 def lsh_batch_fingerprints(texts: list[str]) -> list[int]:
     """Batch compute fingerprints using Rust SIMD."""
     return batch_compute_simhash(texts)
-
 
 def lsh_collision_probability(num_tables: int, num_rows: int, threshold: float) -> float:
     """Calculate probability of LSH collision for given parameters.

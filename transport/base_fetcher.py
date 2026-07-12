@@ -1,4 +1,3 @@
-# hledac/universal/transport/base_fetcher.py
 """
 Base fetcher abstraction for HTTP fetching.
 Provides retry policy, timeout normalization, circuit breaker per fetcher.
@@ -13,8 +12,6 @@ Architecture:
 
 No circular deps: this module is independent of fetching/public_fetcher.py.
 """
-
-
 import asyncio
 import logging
 import random
@@ -24,30 +21,19 @@ from dataclasses import dataclass, field
 import msgspec
 from typing import Any, Self
 from urllib.parse import urlparse
-
 logger = logging.getLogger(__name__)
-
-# F270: Canonical constants for HTTP retry/circuit breaker
-from hledac.universal.core.constants import HTTP  # noqa: E402
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-_RETRYABLE_STATUS_CODES: frozenset[int] = HTTP().retryable  # canonical SSOT
+from hledac.universal.core.constants import HTTP
+_RETRYABLE_STATUS_CODES: frozenset[int] = HTTP().retryable
 _DEFAULT_TIMEOUT: float = 35.0
 _TOR_TIMEOUT_SCALE: float = 2.0
 _RETRY_BACKOFF_BASE: float = 1.5
 _RETRY_BACKOFF_MAX: float = 8.0
 _RETRY_MAX_ATTEMPTS: int = 3
-_CIRCUIT_BREAKER_MAX_DOMAINS: int = 512  # canonical via M1_BOUNDS().circuit_breaker_max_domains
+_CIRCUIT_BREAKER_MAX_DOMAINS: int = 512
 _CIRCUIT_BREAKER_FAILURE_THRESHOLD: int = 5
 _CIRCUIT_BREAKER_RECOVERY_SECONDS: float = 30.0
 
-
-# ---------------------------------------------------------------------------
-# Retry Policy
-# ---------------------------------------------------------------------------
-@dataclass
+@dataclass(True)
 class RetryPolicy:
     """Bounded retry policy for fetch operations.
 
@@ -62,7 +48,7 @@ class RetryPolicy:
     def is_retryable_status(self, status_code: int) -> bool:
         return status_code in self.retryable_statuses
 
-    def compute_backoff(self, attempt: int, retry_after: float | None = None) -> float:
+    def compute_backoff(self, attempt: int, retry_after: float | None=None) -> float:
         """Compute bounded backoff in seconds.
 
         Uses Retry-After if available, otherwise exponential backoff capped at 8s.
@@ -70,7 +56,6 @@ class RetryPolicy:
         """
         if retry_after is not None and retry_after > 0:
             return min(retry_after, 60.0)
-
         backoff = min(self.backoff_base ** attempt, self.backoff_max)
         return backoff + random.uniform(0, 0.5)
 
@@ -78,7 +63,7 @@ class RetryPolicy:
         """Parse Retry-After header, return seconds or None."""
         if not headers:
             return None
-        ra = headers.get("Retry-After") or headers.get("retry-after")
+        ra = headers.get('Retry-After') or headers.get('retry-after')
         if not ra:
             return None
         try:
@@ -86,11 +71,7 @@ class RetryPolicy:
         except (ValueError, TypeError):
             return None
 
-
-# ---------------------------------------------------------------------------
-# Circuit Breaker
-# ---------------------------------------------------------------------------
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CircuitBreakerState:
     """Per-domain circuit breaker state."""
     failure_count: int = 0
@@ -116,7 +97,6 @@ class CircuitBreakerState:
             return True
         return False
 
-
 class CircuitBreakerRegistry:
     """Global registry of circuit breakers per domain.
 
@@ -133,11 +113,7 @@ class CircuitBreakerRegistry:
             cls._breakers[domain] = CircuitBreakerState()
         return cls._breakers[domain]
 
-
-# ---------------------------------------------------------------------------
-# Fetcher Result (internal, independent of FetchResult)
-# ---------------------------------------------------------------------------
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class FetcherResult:
     """Internal fetch result for base_fetcher.py abstraction.
 
@@ -159,10 +135,6 @@ class FetcherResult:
             return self.status in _RETRYABLE_STATUS_CODES
         return False
 
-
-# ---------------------------------------------------------------------------
-# Base Fetcher
-# ---------------------------------------------------------------------------
 class BaseFetcher(ABC):
     """Abstract base class for HTTP fetchers.
 
@@ -174,25 +146,15 @@ class BaseFetcher(ABC):
 
     M1 8GB: all operations are bounded, no unbounded growth.
     """
-
     DEFAULT_TIMEOUT: float = _DEFAULT_TIMEOUT
     TOR_TIMEOUT_SCALE: float = _TOR_TIMEOUT_SCALE
 
-    def __init__(
-        self,
-        retry_policy: RetryPolicy | None = None,
-        default_timeout: float = _DEFAULT_TIMEOUT,
-    ):
+    def __init__(self, retry_policy: RetryPolicy | None=None, default_timeout: float=_DEFAULT_TIMEOUT):
         self.retry_policy = retry_policy or RetryPolicy()
         self.default_timeout = default_timeout
-        self._stats: dict[str, int] = {
-            "attempts": 0,
-            "successes": 0,
-            "failures": 0,
-            "retries": 0,
-        }
+        self._stats: dict[str, int] = {'attempts': 0, 'successes': 0, 'failures': 0, 'retries': 0}
 
-    def normalize_timeout(self, timeout_s: float | None, network: str = "clearnet") -> float:
+    def normalize_timeout(self, timeout_s: float | None, network: str='clearnet') -> float:
         """Normalize timeout based on network type.
 
         Args:
@@ -203,7 +165,7 @@ class BaseFetcher(ABC):
             Normalized timeout in seconds
         """
         base = timeout_s if timeout_s is not None else self.default_timeout
-        if network in ("tor", "i2p", "freenet"):
+        if network in ('tor', 'i2p', 'freenet'):
             return base * self.TOR_TIMEOUT_SCALE
         return base
 
@@ -227,13 +189,7 @@ class BaseFetcher(ABC):
         """
         ...
 
-    async def fetch_with_retry(
-        self,
-        url: str,
-        timeout_s: float | None = None,
-        network: str = "clearnet",
-        **kwargs,
-    ) -> FetcherResult:
+    async def fetch_with_retry(self, url: str, timeout_s: float | None=None, network: str='clearnet', **kwargs) -> FetcherResult:
         """Execute fetch with retry policy.
 
         M1 8GB: max 3 attempts, bounded backoff.
@@ -249,66 +205,38 @@ class BaseFetcher(ABC):
         """
         effective_timeout = self.normalize_timeout(timeout_s, network)
         last_result: FetcherResult | None = None
-
         for attempt in range(self.retry_policy.max_attempts):
-            self._stats["attempts"] += 1
+            self._stats['attempts'] += 1
             breaker = self.get_circuit_breaker(url)
-
             if not breaker.is_available():
-                logger.debug(f"Circuit open for {url}, skipping")
-                return FetcherResult(
-                    url=url,
-                    success=False,
-                    error="circuit_breaker_blocked",
-                    network_error_kind="circuit_breaker",
-                    failure_stage="circuit_breaker",
-                )
-
+                logger.debug(f'Circuit open for {url}, skipping')
+                return FetcherResult(url=url, success=False, error='circuit_breaker_blocked', network_error_kind='circuit_breaker', failure_stage='circuit_breaker')
             try:
-                result = await self.fetch_once(
-                    url,
-                    timeout_s=effective_timeout,
-                    **kwargs,
-                )
+                result = await self.fetch_once(url, timeout_s=effective_timeout, **kwargs)
                 last_result = result
-
                 if result.success:
                     breaker.record_success()
-                    self._stats["successes"] += 1
+                    self._stats['successes'] += 1
                     return result
-
                 if not result.is_retryable:
                     breaker.record_failure()
-                    self._stats["failures"] += 1
+                    self._stats['failures'] += 1
                     return result
-
                 if attempt < self.retry_policy.max_attempts - 1:
-                    self._stats["retries"] += 1
+                    self._stats['retries'] += 1
                     retry_after = self.retry_policy.extract_retry_after(result.headers)
                     backoff = self.retry_policy.compute_backoff(attempt, retry_after)
-                    logger.debug(f"Retryable failure for {url}, backing off {backoff:.2f}s")
+                    logger.debug(f'Retryable failure for {url}, backing off {backoff:.2f}s')
                     await asyncio.sleep(backoff)
-
             except Exception as e:
-                logger.warning(f"Fetch exception for {url}: {e}")
-                last_result = FetcherResult(
-                    url=url,
-                    success=False,
-                    error=str(e),
-                    failure_stage="exception",
-                )
+                logger.warning(f'Fetch exception for {url}: {e}')
+                last_result = FetcherResult(url=url, success=False, error=str(e), failure_stage='exception')
                 if attempt < self.retry_policy.max_attempts - 1:
-                    self._stats["retries"] += 1
+                    self._stats['retries'] += 1
                     backoff = self.retry_policy.compute_backoff(attempt)
                     await asyncio.sleep(backoff)
-
-        self._stats["failures"] += 1
-        return last_result or FetcherResult(
-            url=url,
-            success=False,
-            error="retry_exhausted",
-            failure_stage="retry",
-        )
+        self._stats['failures'] += 1
+        return last_result or FetcherResult(url=url, success=False, error='retry_exhausted', failure_stage='retry')
 
     def get_stats(self) -> dict[str, int]:
         """Return fetcher statistics."""
@@ -316,12 +244,8 @@ class BaseFetcher(ABC):
 
     def reset_stats(self) -> None:
         """Reset fetcher statistics."""
-        self._stats = {"attempts": 0, "successes": 0, "failures": 0, "retries": 0}
+        self._stats = {'attempts': 0, 'successes': 0, 'failures': 0, 'retries': 0}
 
-
-# ---------------------------------------------------------------------------
-# Concrete Fetchers
-# ---------------------------------------------------------------------------
 class CurlCFFIFetcher(BaseFetcher):
     """Curl-CFFI based fetcher with conditional cache.
 
@@ -334,36 +258,19 @@ class CurlCFFIFetcher(BaseFetcher):
         return self._convert_result(result)
 
     def _convert_result(self, result: dict[str, Any]) -> FetcherResult:
-        return FetcherResult(
-            url=result.get("url", ""),
-            success=result.get("success", False),
-            error=result.get("error"),
-            status=result.get("status"),
-            headers=result.get("headers"),
-            body=result.get("body"),
-            network_error_kind=result.get("network_error_kind"),
-            failure_stage=result.get("failure_stage"),
-        )
-
+        return FetcherResult(url=result.get('url', ''), success=result.get('success', False), error=result.get('error'), status=result.get('status'), headers=result.get('headers'), body=result.get('body'), network_error_kind=result.get('network_error_kind'), failure_stage=result.get('failure_stage'))
 
 class AiohttpFetcher(BaseFetcher):
     """Aiohttp/H2 based fetcher."""
 
     async def fetch_once(self, url: str, **kwargs) -> FetcherResult:
         from transport.httpx_transport import fetch_via_httpx_h2
-        timeout_s = kwargs.pop("timeout_s", self.default_timeout)
+        timeout_s = kwargs.pop('timeout_s', self.default_timeout)
         response = await fetch_via_httpx_h2(url, timeout_s=timeout_s)
         return self._convert_response(response)
 
     def _convert_response(self, response) -> FetcherResult:
-        return FetcherResult(
-            url=str(response.url),
-            success=True,
-            status=response.status_code,
-            headers=dict(response.headers),
-            body=response.text(),
-        )
-
+        return FetcherResult(url=str(response.url), success=True, status=response.status_code, headers=dict(response.headers), body=response.text())
 
 class HybridFetcher(BaseFetcher):
     """Hybrid fetcher: tries aiohttp first, escalates to curl_cffi on 403/429.
@@ -372,106 +279,59 @@ class HybridFetcher(BaseFetcher):
     """
 
     async def fetch_once(self, url: str, **kwargs) -> FetcherResult:
-        timeout_s = kwargs.pop("timeout_s", self.default_timeout)
-
-        # Try aiohttp first
+        timeout_s = kwargs.pop('timeout_s', self.default_timeout)
         try:
             from transport.httpx_transport import fetch_via_httpx_h2
             response = await fetch_via_httpx_h2(url, timeout_s=timeout_s)
-
             if response.status_code in (403, 429):
                 from transport.curl_cffi_fetch import fetch_via_curl_cffi_cached
-                result = await fetch_via_curl_cffi_cached(
-                    url, timeout_s=timeout_s, **kwargs
-                )
+                result = await fetch_via_curl_cffi_cached(url, timeout_s=timeout_s, **kwargs)
                 return self._convert_curl_result(result)
-
             return self._convert_response(response)
-
         except Exception:
             from transport.curl_cffi_fetch import fetch_via_curl_cffi_cached
-            result = await fetch_via_curl_cffi_cached(
-                url, timeout_s=timeout_s, **kwargs
-            )
+            result = await fetch_via_curl_cffi_cached(url, timeout_s=timeout_s, **kwargs)
             return self._convert_curl_result(result)
 
     def _convert_response(self, response) -> FetcherResult:
-        return FetcherResult(
-            url=str(response.url),
-            success=True,
-            status=response.status_code,
-            headers=dict(response.headers),
-            body=response.text(),
-        )
+        return FetcherResult(url=str(response.url), success=True, status=response.status_code, headers=dict(response.headers), body=response.text())
 
     def _convert_curl_result(self, result: dict[str, Any]) -> FetcherResult:
-        return FetcherResult(
-            url=result.get("url", ""),
-            success=result.get("success", False),
-            error=result.get("error"),
-            status=result.get("status"),
-            headers=result.get("headers"),
-            body=result.get("body"),
-            network_error_kind=result.get("network_error_kind"),
-            failure_stage=result.get("failure_stage"),
-        )
-
+        return FetcherResult(url=result.get('url', ''), success=result.get('success', False), error=result.get('error'), status=result.get('status'), headers=result.get('headers'), body=result.get('body'), network_error_kind=result.get('network_error_kind'), failure_stage=result.get('failure_stage'))
 
 class TorCurlCFFIFetcher(BaseFetcher):
     """Tor-anonymized curl_cffi fetcher."""
-
     TOR_TIMEOUT_SCALE: float = 2.0
 
     async def fetch_once(self, url: str, **kwargs) -> FetcherResult:
         from transport.curl_cffi_fetch import fetch_via_tor_curl_cffi
-        timeout_s = kwargs.pop("timeout_s", self.default_timeout)
+        timeout_s = kwargs.pop('timeout_s', self.default_timeout)
         result = await fetch_via_tor_curl_cffi(url, timeout_s=timeout_s, **kwargs)
         return self._convert_result(result)
 
     def _convert_result(self, result: dict[str, Any]) -> FetcherResult:
-        return FetcherResult(
-            url=result.get("url", ""),
-            success=result.get("success", False),
-            error=result.get("error"),
-            status=result.get("status"),
-            headers=result.get("headers"),
-            body=result.get("body"),
-            network_error_kind=result.get("network_error_kind"),
-            failure_stage=result.get("failure_stage"),
-        )
-
+        return FetcherResult(url=result.get('url', ''), success=result.get('success', False), error=result.get('error'), status=result.get('status'), headers=result.get('headers'), body=result.get('body'), network_error_kind=result.get('network_error_kind'), failure_stage=result.get('failure_stage'))
 
 class I2PCurlCFFIFetcher(BaseFetcher):
     """I2P-anonymized curl_cffi fetcher."""
-
     TOR_TIMEOUT_SCALE: float = 2.0
 
     async def fetch_once(self, url: str, **kwargs) -> FetcherResult:
         from transport.curl_cffi_fetch import fetch_via_i2p_curl_cffi
-        timeout_s = kwargs.pop("timeout_s", self.default_timeout)
+        timeout_s = kwargs.pop('timeout_s', self.default_timeout)
         result = await fetch_via_i2p_curl_cffi(url, timeout_s=timeout_s, **kwargs)
         return self._convert_result(result)
 
     def _convert_result(self, result: dict[str, Any]) -> FetcherResult:
-        return FetcherResult(
-            url=result.get("url", ""),
-            success=result.get("success", False),
-            error=result.get("error"),
-            status=result.get("status"),
-            headers=result.get("headers"),
-            body=result.get("body"),
-            network_error_kind=result.get("network_error_kind"),
-            failure_stage=result.get("failure_stage"),
-        )
-
+        return FetcherResult(url=result.get('url', ''), success=result.get('success', False), error=result.get('error'), status=result.get('status'), headers=result.get('headers'), body=result.get('body'), network_error_kind=result.get('network_error_kind'), failure_stage=result.get('failure_stage'))
 
 class JsFetcher(BaseFetcher):
     """JavaScript-rendering fetcher (Camoufox/Playwright/nodriver/macOS WebKit).
 
     M1 8GB: bounded semaphore for browser pool, cooldown after use.
     """
-
     BROWSER_TIMEOUT: float = 15.0
+    __slots__ = tuple(('_semaphore',))
 
     def __init__(self) -> None:
         super().__init__()
@@ -484,23 +344,21 @@ class JsFetcher(BaseFetcher):
         return self._semaphore
 
     async def fetch_once(self, url: str, **kwargs) -> FetcherResult:
-        timeout_s = kwargs.pop("timeout_s", self.BROWSER_TIMEOUT)
-        renderer = kwargs.pop("renderer", "camoufox")
-
+        timeout_s = kwargs.pop('timeout_s', self.BROWSER_TIMEOUT)
+        renderer = kwargs.pop('renderer', 'camoufox')
         semaphore = self._get_semaphore()
         async with semaphore:
             try:
-                if renderer == "camoufox":
-                    # Import from public_fetcher for JS renderers
+                if renderer == 'camoufox':
                     from fetching.public_fetcher import _fetch_with_camoufox
                     html = await _fetch_with_camoufox(url, timeout=timeout_s)
-                elif renderer == "playwright":
+                elif renderer == 'playwright':
                     from fetching.public_fetcher import _fetch_with_playwright
                     html = await _fetch_with_playwright(url, timeout=timeout_s)
-                elif renderer == "nodriver":
+                elif renderer == 'nodriver':
                     from fetching.public_fetcher import _fetch_with_nodriver
                     html = await _fetch_with_nodriver(url)
-                elif renderer == "macos_webkit":
+                elif renderer == 'macos_webkit':
                     from rendering.macos_webkit_renderer import fetch_with_macos_webkit, WebKitRenderResult
                     result = await fetch_with_macos_webkit(url, timeout_s=timeout_s)
                     if isinstance(result, WebKitRenderResult):
@@ -508,33 +366,17 @@ class JsFetcher(BaseFetcher):
                     else:
                         html = result
                 else:
-                    raise ValueError(f"Unknown JS renderer: {renderer}")
-
-                return FetcherResult(
-                    url=url,
-                    success=True,
-                    body=html if isinstance(html, str) else str(html) if html else None,
-                )
+                    raise ValueError(f'Unknown JS renderer: {renderer}')
+                return FetcherResult(url=url, success=True, body=html if isinstance(html, str) else str(html) if html else None)
             except Exception as e:
-                return FetcherResult(
-                    url=url,
-                    success=False,
-                    error=str(e),
-                    network_error_kind="js_renderer_error",
-                    failure_stage="browser",
-                )
+                return FetcherResult(url=url, success=False, error=str(e), network_error_kind='js_renderer_error', failure_stage='browser')
 
-
-# ---------------------------------------------------------------------------
-# Fetch Router
-# ---------------------------------------------------------------------------
 class FetchRouter:
     """Routes fetch requests to appropriate fetcher based on URL type and options.
 
     Centralizes the if/elif chain from the monolithic fetch function.
     Converts FetcherResult -> FetchResult at the boundary.
     """
-
     __slots__ = ('_curl_cffi', '_aiohttp', '_hybrid', '_tor', '_i2p', '_js')
 
     def __init__(self):
@@ -549,23 +391,15 @@ class FetchRouter:
         """Classify URL by network type."""
         parsed = urlparse(url)
         netloc = parsed.netloc.lower()
+        if netloc.endswith(('.onion', '.onion.ws', '.onion.ly')):
+            return 'tor'
+        elif netloc.endswith('.i2p'):
+            return 'i2p'
+        elif netloc.endswith('.freenet'):
+            return 'freenet'
+        return 'clearnet'
 
-        if netloc.endswith((".onion", ".onion.ws", ".onion.ly")):
-            return "tor"
-        elif netloc.endswith(".i2p"):
-            return "i2p"
-        elif netloc.endswith(".freenet"):
-            return "freenet"
-        return "clearnet"
-
-    async def fetch(
-        self,
-        url: str,
-        timeout_s: float = 35.0,
-        use_stealth: bool = False,
-        use_js: bool = False,
-        **kwargs,
-    ) -> FetcherResult:
+    async def fetch(self, url: str, timeout_s: float=35.0, use_stealth: bool=False, use_js: bool=False, **kwargs) -> FetcherResult:
         """Route and execute fetch request.
 
         Args:
@@ -579,58 +413,25 @@ class FetchRouter:
             FetcherResult from appropriate fetcher
         """
         network = self._classify_url(url)
-
         if use_js:
-            renderer = kwargs.pop("renderer", "camoufox")
-            return await self._js.fetch_with_retry(
-                url,
-                timeout_s=timeout_s,
-                network=network,
-                renderer=renderer,
-                **kwargs,
-            )
-
+            renderer = kwargs.pop('renderer', 'camoufox')
+            return await self._js.fetch_with_retry(url, timeout_s=timeout_s, network=network, renderer=renderer, **kwargs)
         if use_stealth:
-            if network == "tor":
-                return await self._tor.fetch_with_retry(
-                    url, timeout_s=timeout_s, network=network, **kwargs
-                )
-            elif network == "i2p":
-                return await self._i2p.fetch_with_retry(
-                    url, timeout_s=timeout_s, network=network, **kwargs
-                )
+            if network == 'tor':
+                return await self._tor.fetch_with_retry(url, timeout_s=timeout_s, network=network, **kwargs)
+            elif network == 'i2p':
+                return await self._i2p.fetch_with_retry(url, timeout_s=timeout_s, network=network, **kwargs)
             else:
-                return await self._curl_cffi.fetch_with_retry(
-                    url, timeout_s=timeout_s, network=network, **kwargs
-                )
-
-        if network in ("tor", "i2p"):
-            fetcher = self._tor if network == "tor" else self._i2p
-            return await fetcher.fetch_with_retry(
-                url, timeout_s=timeout_s, network=network, **kwargs
-            )
-
-        return await self._hybrid.fetch_with_retry(
-            url, timeout_s=timeout_s, network=network, **kwargs
-        )
+                return await self._curl_cffi.fetch_with_retry(url, timeout_s=timeout_s, network=network, **kwargs)
+        if network in ('tor', 'i2p'):
+            fetcher = self._tor if network == 'tor' else self._i2p
+            return await fetcher.fetch_with_retry(url, timeout_s=timeout_s, network=network, **kwargs)
+        return await self._hybrid.fetch_with_retry(url, timeout_s=timeout_s, network=network, **kwargs)
 
     def get_stats(self) -> dict[str, dict[str, int]]:
         """Return stats from all fetchers."""
-        return {
-            "curl_cffi": self._curl_cffi.get_stats(),
-            "aiohttp": self._aiohttp.get_stats(),
-            "hybrid": self._hybrid.get_stats(),
-            "tor": self._tor.get_stats(),
-            "i2p": self._i2p.get_stats(),
-            "js": self._js.get_stats(),
-        }
-
-
-# ---------------------------------------------------------------------------
-# Global router instance (lazy)
-# ---------------------------------------------------------------------------
+        return {'curl_cffi': self._curl_cffi.get_stats(), 'aiohttp': self._aiohttp.get_stats(), 'hybrid': self._hybrid.get_stats(), 'tor': self._tor.get_stats(), 'i2p': self._i2p.get_stats(), 'js': self._js.get_stats()}
 _router: FetchRouter | None = None
-
 
 def get_fetch_router() -> FetchRouter:
     """Get global FetchRouter instance."""
@@ -639,23 +440,10 @@ def get_fetch_router() -> FetchRouter:
         _router = FetchRouter()
     return _router
 
-
-async def fetch_via_router(
-    url: str,
-    timeout_s: float = 35.0,
-    use_stealth: bool = False,
-    use_js: bool = False,
-    **kwargs,
-) -> FetcherResult:
+async def fetch_via_router(url: str, timeout_s: float=35.0, use_stealth: bool=False, use_js: bool=False, **kwargs) -> FetcherResult:
     """Convenience function for fetching via router.
 
     Replaces inline fetch logic from public_fetcher.py.
     """
     router = get_fetch_router()
-    return await router.fetch(
-        url,
-        timeout_s=timeout_s,
-        use_stealth=use_stealth,
-        use_js=use_js,
-        **kwargs,
-    )
+    return await router.fetch(url, timeout_s=timeout_s, use_stealth=use_stealth, use_js=use_js, **kwargs)

@@ -81,64 +81,30 @@ USAGE
     # ...later in the sprint lifecycle...
     await bridge.persist_if_due()  # debounced LMDB write
 """
-
-
-
 import asyncio
 import logging
 import os
 import time
 from typing import Any, Protocol, runtime_checkable
-
 from .qtable import MAX_QTABLE_ENTRIES, FederatedQTable
-
 logger = logging.getLogger(__name__)
-
-__all__ = [
-    "FederatedBridge",
-    "QTableProtocol",
-    "BRIDGE_LIGHTWEIGHT_ONLY",
-    "BRIDGE_LAZY_HYBRID",
-    "BRIDGE_CROSS_SPRINT_PERSIST",
-    "LMDB_MAX_ENTRIES",
-    "LMDB_PERSIST_DEBOUNCE_S",
-    "LMDB_PERSIST_KEY",
-    "LMDB_MAP_SIZE_BYTES",
-    "HYBRID_MAX_INSTANCES",
-]
-
-
-# --- BOUNDS (module-level, immutable) -----------------------------------
-
+__all__ = ['FederatedBridge', 'QTableProtocol', 'BRIDGE_LIGHTWEIGHT_ONLY', 'BRIDGE_LAZY_HYBRID', 'BRIDGE_CROSS_SPRINT_PERSIST', 'LMDB_MAX_ENTRIES', 'LMDB_PERSIST_DEBOUNCE_S', 'LMDB_PERSIST_KEY', 'LMDB_MAP_SIZE_BYTES', 'HYBRID_MAX_INSTANCES']
 LMDB_MAX_ENTRIES: int = MAX_QTABLE_ENTRIES
-"""Hard cap on Q-table entries persisted to LMDB. Matches MAX_QTABLE_ENTRIES."""
-
+'Hard cap on Q-table entries persisted to LMDB. Matches MAX_QTABLE_ENTRIES.'
 LMDB_PERSIST_DEBOUNCE_S: float = 5.0
-"""Minimum seconds between successive LMDB writes. Prevents write amplification."""
-
-LMDB_PERSIST_KEY: str = "federated_qtable"
-"""Singleton key used for the bounded Q-table blob in LMDB."""
-
+'Minimum seconds between successive LMDB writes. Prevents write amplification.'
+LMDB_PERSIST_KEY: str = 'federated_qtable'
+'Singleton key used for the bounded Q-table blob in LMDB.'
 LMDB_MAP_SIZE_BYTES: int = 2 * 1024 * 1024
-"""2 MiB LMDB map — small enough to never pressure the M1 8GB UMA."""
-
+'2 MiB LMDB map — small enough to never pressure the M1 8GB UMA.'
 HYBRID_MAX_INSTANCES: int = 1
-"""Maximum number of cached ResearchLoop instances per bridge (singleton)."""
-
-# --- BRIDGE MODES (string constants) ------------------------------------
-
-BRIDGE_LIGHTWEIGHT_ONLY: str = "LIGHTWEIGHT_ONLY"
-"""Default mode: pure FederatedQTable, no heavy import. M1-safe at all pressures."""
-
-BRIDGE_LAZY_HYBRID: str = "LAZY_HYBRID"
-"""Opt-in mode: import loops.ResearchLoop on first call; fail-soft back to LIGHTWEIGHT."""
-
-BRIDGE_CROSS_SPRINT_PERSIST: str = "CROSS_SPRINT_PERSIST"
-"""Opt-in mode: bounded LMDB debounced persistence + load on init."""
-
-
-# --- PROTOCOL CONTRACT --------------------------------------------------
-
+'Maximum number of cached ResearchLoop instances per bridge (singleton).'
+BRIDGE_LIGHTWEIGHT_ONLY: str = 'LIGHTWEIGHT_ONLY'
+'Default mode: pure FederatedQTable, no heavy import. M1-safe at all pressures.'
+BRIDGE_LAZY_HYBRID: str = 'LAZY_HYBRID'
+'Opt-in mode: import loops.ResearchLoop on first call; fail-soft back to LIGHTWEIGHT.'
+BRIDGE_CROSS_SPRINT_PERSIST: str = 'CROSS_SPRINT_PERSIST'
+'Opt-in mode: bounded LMDB debounced persistence + load on init.'
 
 @runtime_checkable
 class QTableProtocol(Protocol):
@@ -155,20 +121,17 @@ class QTableProtocol(Protocol):
         to_dict() -> dict
     """
 
-    def get_q(self, state: tuple, action: str) -> float: ...
-    def update(
-        self,
-        state: tuple,
-        action: str,
-        reward: float,
-        next_state: tuple,
-    ) -> None: ...
-    def get_best_action(self, state: tuple, actions: list[str]) -> str: ...
-    def to_dict(self) -> dict[str, Any]: ...
+    def get_q(self, state: tuple, action: str) -> float:
+        ...
 
+    def update(self, state: tuple, action: str, reward: float, next_state: tuple) -> None:
+        ...
 
-# --- BRIDGE ------------------------------------------------------------
+    def get_best_action(self, state: tuple, actions: list[str]) -> str:
+        ...
 
+    def to_dict(self) -> dict[str, Any]:
+        ...
 
 class FederatedBridge:
     """
@@ -184,14 +147,9 @@ class FederatedBridge:
     Update/get are lock-free (the underlying FederatedQTable is
     single-writer / multi-reader safe in CPython 3.14+).
     """
+    __slots__ = tuple(('_allow_hybrid', '_hybrid_class', '_hybrid_loaded', '_last_persist_ts', '_lmdb_path', '_mode', '_persist_count', '_persist_lock', '_persist_pending', '_qtable', '_update_count'))
 
-    def __init__(
-        self,
-        lmdb_path: str | None = None,
-        allow_hybrid: bool = False,
-        alpha: float = 0.1,
-        gamma: float = 0.9,
-    ) -> None:
+    def __init__(self, lmdb_path: str | None=None, allow_hybrid: bool=False, alpha: float=0.1, gamma: float=0.9) -> None:
         """
         Initialize the bridge.
 
@@ -204,34 +162,19 @@ class FederatedBridge:
             alpha: Q-learning rate. Default 0.1 (matches both Q-tables).
             gamma: Q-learning discount. Default 0.9 (matches both Q-tables).
         """
-        self._qtable: FederatedQTable = FederatedQTable(
-            alpha=alpha,
-            gamma=gamma,
-        )
-        # Configuration
+        self._qtable: FederatedQTable = FederatedQTable(alpha=alpha, gamma=gamma)
         self._allow_hybrid: bool = allow_hybrid
-        self._lmdb_path: str | None = (
-            lmdb_path
-            or os.environ.get("HLEDAC_FEDERATED_LMDB_PATH", "").strip()
-            or None
-        )
-        # Mode resolution
+        self._lmdb_path: str | None = lmdb_path or os.environ.get('HLEDAC_FEDERATED_LMDB_PATH', '').strip() or None
         self._mode: str = self._resolve_mode()
-        # Hybrid state (lazy)
         self._hybrid_class: type | None = None
         self._hybrid_loaded: bool = False
-        # LMDB persist state
         self._persist_lock: asyncio.Lock = asyncio.Lock()
         self._last_persist_ts: float = 0.0
         self._persist_pending: bool = False
-        # Stats
         self._update_count: int = 0
         self._persist_count: int = 0
-        # Try initial LMDB load (fail-soft, non-blocking semantics)
         if self._lmdb_path and self._mode == BRIDGE_CROSS_SPRINT_PERSIST:
             self._try_initial_load_sync()
-
-    # --- MODE RESOLUTION ------------------------------------------------
 
     def _resolve_mode(self) -> str:
         """
@@ -248,8 +191,6 @@ class FederatedBridge:
             return BRIDGE_LAZY_HYBRID
         return BRIDGE_LIGHTWEIGHT_ONLY
 
-    # --- HYBRID LAZY LOAD -----------------------------------------------
-
     def _try_load_hybrid(self) -> type | None:
         """
         Lazy import of loops.ResearchLoop — NEVER at module load.
@@ -260,33 +201,18 @@ class FederatedBridge:
         """
         if self._hybrid_loaded:
             return self._hybrid_class
-        self._hybrid_loaded = True  # even on failure: don't keep retrying
+        self._hybrid_loaded = True
         try:
-            from loops.research_loop import ResearchLoop  # type: ignore[import-not-found]
+            from loops.research_loop import ResearchLoop
             self._hybrid_class = ResearchLoop
-            logger.info(
-                "[FED-BRIDGE] lazy import OK: %s",
-                ResearchLoop.__module__,
-            )
+            logger.info('[FED-BRIDGE] lazy import OK: %s', ResearchLoop.__module__)
             return ResearchLoop
         except Exception as e:
-            logger.debug(
-                "[FED-BRIDGE] lazy import failed (fail-soft): %s: %s",
-                type(e).__name__, e,
-            )
+            logger.debug('[FED-BRIDGE] lazy import failed (fail-soft): %s: %s', type(e).__name__, e)
             self._hybrid_class = None
             return None
 
-    # --- PROTOCOL INTERFACE (lane-prefixed) -----------------------------
-
-    def update(
-        self,
-        lane: str,
-        state: tuple,
-        action: str,
-        reward: float,
-        next_state: tuple,
-    ) -> None:
+    def update(self, lane: str, state: tuple, action: str, reward: float, next_state: tuple) -> None:
         """
         Lane-aware Q-learning update.
 
@@ -303,44 +229,30 @@ class FederatedBridge:
         try:
             lane_state = self._lane_state(lane, state)
             lane_next_state = self._lane_state(lane, next_state)
-            # Always use the lightweight Q-table for updates — it's
-            # compatible with the Q-learning contract and bounded.
-            # The hybrid mode only changes which class is consulted
-            # for get_best_action (Q-value source).
             self._qtable.update(lane_state, action, reward, lane_next_state)
             self._update_count += 1
             if self._lmdb_path:
                 self._persist_pending = True
-        except Exception as e:  # fail-soft
-            logger.debug(
-                "[FED-BRIDGE] update lane=%s failed: %s: %s",
-                lane, type(e).__name__, e,
-            )
+        except Exception as e:
+            logger.debug('[FED-BRIDGE] update lane=%s failed: %s: %s', lane, type(e).__name__, e)
 
     def get_q(self, lane: str, state: tuple, action: str) -> float:
         """Return Q-value for (lane, state, action). Never raises."""
         try:
             lane_state = self._lane_state(lane, state)
             return self._qtable.get_q(lane_state, action)
-        except Exception:  # fail-soft
+        except Exception:
             return 0.0
 
-    def get_best_action(
-        self,
-        lane: str,
-        state: tuple,
-        actions: list[str],
-    ) -> str:
+    def get_best_action(self, lane: str, state: tuple, actions: list[str]) -> str:
         """Return the action with the highest Q-value, or first on tie."""
         try:
             if not actions:
-                return ""
+                return ''
             lane_state = self._lane_state(lane, state)
             return self._qtable.get_best_action(lane_state, actions)
-        except Exception:  # fail-soft
-            return actions[0] if actions else ""
-
-    # --- LMDB PERSIST (debounced) --------------------------------------
+        except Exception:
+            return actions[0] if actions else ''
 
     async def persist_if_due(self) -> bool:
         """
@@ -355,14 +267,12 @@ class FederatedBridge:
         if self._mode != BRIDGE_CROSS_SPRINT_PERSIST:
             return False
         now = time.monotonic()
-        if (now - self._last_persist_ts) < LMDB_PERSIST_DEBOUNCE_S:
+        if now - self._last_persist_ts < LMDB_PERSIST_DEBOUNCE_S:
             return False
-        # Per-bridge async lock to serialize persists
         async with self._persist_lock:
-            # Re-check under lock
             if not self._persist_pending:
                 return False
-            if (time.monotonic() - self._last_persist_ts) < LMDB_PERSIST_DEBOUNCE_S:
+            if time.monotonic() - self._last_persist_ts < LMDB_PERSIST_DEBOUNCE_S:
                 return False
             try:
                 await asyncio.to_thread(self._persist_sync)
@@ -370,11 +280,8 @@ class FederatedBridge:
                 self._persist_pending = False
                 self._persist_count += 1
                 return True
-            except Exception as e:  # fail-soft
-                logger.debug(
-                    "[FED-BRIDGE] persist failed: %s: %s",
-                    type(e).__name__, e,
-                )
+            except Exception as e:
+                logger.debug('[FED-BRIDGE] persist failed: %s: %s', type(e).__name__, e)
                 return False
 
     def _persist_sync(self) -> None:
@@ -386,51 +293,42 @@ class FederatedBridge:
         try/except so a partial LMDB state is never worse than no persist.
         """
         try:
-            from hledac.universal.paths import open_lmdb  # canonical seam
+            from hledac.universal.paths import open_lmdb
         except Exception as e:
-            logger.debug("[FED-BRIDGE] open_lmdb not importable: %s", e)
+            logger.debug('[FED-BRIDGE] open_lmdb not importable: %s', e)
             return
         try:
-            import orjson  # type: ignore[import-not-found]
+            import orjson
         except Exception:
-            orjson = None  # type: ignore[assignment]
-
-        # Bound the payload
+            orjson = None
         try:
             data = self._qtable.to_dict()
             items = list(data.items())[:LMDB_MAX_ENTRIES]
             bounded = dict(items)
         except Exception as e:
-            logger.debug("[FED-BRIDGE] to_dict failed: %s", e)
+            logger.debug('[FED-BRIDGE] to_dict failed: %s', e)
             return
-
-        # Serialize
         try:
             if orjson is not None:
                 payload = orjson.dumps(bounded)
             else:
                 import json as _json
-                payload = _json.dumps(bounded).encode("utf-8")
+                payload = _json.dumps(bounded).encode('utf-8')
         except Exception as e:
-            logger.debug("[FED-BRIDGE] serialize failed: %s", e)
+            logger.debug('[FED-BRIDGE] serialize failed: %s', e)
             return
-
-        # Open env + write (open_lmdb is the canonical seam from paths.py)
         env = None
         try:
-            env = open_lmdb(
-                _pathlib_path(self._lmdb_path),
-                map_size=LMDB_MAP_SIZE_BYTES,
-            )
+            env = open_lmdb(_pathlib_path(self._lmdb_path), map_size=LMDB_MAP_SIZE_BYTES)
             with env.begin(write=True) as txn:
-                txn.put(LMDB_PERSIST_KEY.encode("utf-8"), payload)
+                txn.put(LMDB_PERSIST_KEY.encode('utf-8'), payload)
         except Exception as e:
-            logger.debug("[FED-BRIDGE] LMDB write failed: %s", e)
+            logger.debug('[FED-BRIDGE] LMDB write failed: %s', e)
         finally:
             if env is not None:
                 try:
                     env.close()
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
 
     def _try_initial_load_sync(self) -> bool:
@@ -440,10 +338,7 @@ class FederatedBridge:
         try:
             return self._load_from_lmdb_sync()
         except Exception as e:
-            logger.debug(
-                "[FED-BRIDGE] initial load failed: %s: %s",
-                type(e).__name__, e,
-            )
+            logger.debug('[FED-BRIDGE] initial load failed: %s: %s', type(e).__name__, e)
             return False
 
     def _load_from_lmdb_sync(self) -> bool:
@@ -455,19 +350,14 @@ class FederatedBridge:
         except Exception:
             return False
         try:
-            import orjson  # type: ignore[import-not-found]
+            import orjson
         except Exception:
-            orjson = None  # type: ignore[assignment]
-
+            orjson = None
         env = None
         try:
-            env = open_lmdb(
-                _pathlib_path(self._lmdb_path),
-                map_size=LMDB_MAP_SIZE_BYTES,
-                readonly=True,
-            )
+            env = open_lmdb(_pathlib_path(self._lmdb_path), map_size=LMDB_MAP_SIZE_BYTES, readonly=True)
             with env.begin() as txn:
-                raw = txn.get(LMDB_PERSIST_KEY.encode("utf-8"))
+                raw = txn.get(LMDB_PERSIST_KEY.encode('utf-8'))
             if raw is None:
                 return False
             if orjson is not None:
@@ -478,30 +368,27 @@ class FederatedBridge:
             if not isinstance(data, dict):
                 return False
             restored = FederatedQTable.from_dict(data)
-            # Merge bounded — never exceed MAX_QTABLE_ENTRIES
             try:
-                entries = list(getattr(restored, "_q", {}).items())
+                entries = list(getattr(restored, '_q', {}).items())
             except Exception:
                 entries = []
             for (st, ac), q in entries:
                 if len(self._qtable._q) >= LMDB_MAX_ENTRIES:
                     break
                 try:
-                    self._qtable._q[(st, ac)] = float(q)
+                    self._qtable._q[st, ac] = float(q)
                 except Exception:
                     continue
             return True
         except Exception as e:
-            logger.debug("[FED-BRIDGE] LMDB read failed: %s", e)
+            logger.debug('[FED-BRIDGE] LMDB read failed: %s', e)
             return False
         finally:
             if env is not None:
                 try:
                     env.close()
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
-
-    # --- LANE PREFIXING -------------------------------------------------
 
     @staticmethod
     def _lane_state(lane: str, state: Any) -> tuple:
@@ -517,8 +404,6 @@ class FederatedBridge:
         if isinstance(state, tuple):
             return (str(lane), *state)
         return (str(lane), state)
-
-    # --- STATS / INTROSPECTION -----------------------------------------
 
     @property
     def mode(self) -> str:
@@ -552,21 +437,7 @@ class FederatedBridge:
 
     def stats(self) -> dict[str, Any]:
         """Return a snapshot dict of bridge state for diagnostics."""
-        return {
-            "mode": self._mode,
-            "lmdb_path": self._lmdb_path,
-            "is_hybrid_loaded": self.is_hybrid_loaded,
-            "update_count": self._update_count,
-            "persist_count": self._persist_count,
-            "persist_pending": self._persist_pending,
-            "qtable_size": len(self._qtable._q),
-            "alpha": self._qtable._alpha,
-            "gamma": self._qtable._gamma,
-        }
-
-
-# --- HELPERS ------------------------------------------------------------
-
+        return {'mode': self._mode, 'lmdb_path': self._lmdb_path, 'is_hybrid_loaded': self.is_hybrid_loaded, 'update_count': self._update_count, 'persist_count': self._persist_count, 'persist_pending': self._persist_pending, 'qtable_size': len(self._qtable._q), 'alpha': self._qtable._alpha, 'gamma': self._qtable._gamma}
 
 def _is_hybrid_env_enabled() -> bool:
     """
@@ -575,9 +446,8 @@ def _is_hybrid_env_enabled() -> bool:
     Token set: "1", "true", "yes", "on" (case-insensitive). Matches
     the conventions used elsewhere in the federated module.
     """
-    raw = os.environ.get("HLEDAC_ENABLE_FEDERATED_HYBRID", "").strip().lower()
-    return raw in ("1", "true", "yes", "on")
-
+    raw = os.environ.get('HLEDAC_ENABLE_FEDERATED_HYBRID', '').strip().lower()
+    return raw in ('1', 'true', 'yes', 'on')
 
 def _pathlib_path(p: str | None) -> Any:
     """

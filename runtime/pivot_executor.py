@@ -21,44 +21,23 @@ GHOST_INVARIANTS:
 - Bounds on every collection
 - Fail-soft: one pivot failure does not block others or sprint
 """
-
-
-
 import asyncio
 from utils.async_helpers import safe_gather_ok
 import logging
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Awaitable
-
 from hledac.universal.utils.uuid7 import new_runtime_id
-
-__all__ = [
-    "PivotExecutionRequest",
-    "PivotExecutionResult",
-    "AutonomousPivotExecutor",
-    "MAX_ACTIVE_PIVOTS",
-    "MAX_PIVOTS_PER_SPRINT",
-    "PIVOT_TIMEOUT_S",
-    "MAX_PIVOT_FINDINGS",
-]
-
+__all__ = ['PivotExecutionRequest', 'PivotExecutionResult', 'AutonomousPivotExecutor', 'MAX_ACTIVE_PIVOTS', 'MAX_PIVOTS_PER_SPRINT', 'PIVOT_TIMEOUT_S', 'MAX_PIVOT_FINDINGS']
 logger = logging.getLogger(__name__)
-
-# ── Bounds ────────────────────────────────────────────────────────────────────
-
 MAX_ACTIVE_PIVOTS: int = 3
 MAX_PIVOTS_PER_SPRINT: int = 10
 PIVOT_TIMEOUT_S: float = 25.0
 MAX_PIVOT_FINDINGS: int = 50
 
-
-# ── Dataclasses ───────────────────────────────────────────────────────────────
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class PivotExecutionRequest:
     """Request to execute a single pivot."""
-
     pivot_id: str
     pivot_type: str
     ioc_type: str
@@ -66,11 +45,9 @@ class PivotExecutionRequest:
     confidence: float
     reason: str
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class PivotExecutionResult:
     """Result of executing a single pivot."""
-
     pivot_id: str
     attempted: bool
     produced_count: int
@@ -78,9 +55,6 @@ class PivotExecutionResult:
     signal_value: float
     error: str
     elapsed_ms: float
-
-
-# ── Executor ─────────────────────────────────────────────────────────────────
 
 class AutonomousPivotExecutor:
     """
@@ -91,18 +65,9 @@ class AutonomousPivotExecutor:
 
     Fail-soft: individual pivot failures are captured and do not block other pivots.
     """
+    __slots__ = tuple(('_executed_count', '_feedback', '_governor', '_max_active', '_max_findings', '_max_per_sprint', '_pivot_search_fn', '_pivot_timeout', '_store'))
 
-    def __init__(
-        self,
-        duckdb_store: Any,
-        resource_governor: Any = None,
-        feedback_adapter: Any = None,
-        max_active: int = MAX_ACTIVE_PIVOTS,
-        max_per_sprint: int = MAX_PIVOTS_PER_SPRINT,
-        pivot_timeout: float = PIVOT_TIMEOUT_S,
-        max_findings: int = MAX_PIVOT_FINDINGS,
-        pivot_search_fn: Any = None,
-    ) -> None:
+    def __init__(self, duckdb_store: Any, resource_governor: Any=None, feedback_adapter: Any=None, max_active: int=MAX_ACTIVE_PIVOTS, max_per_sprint: int=MAX_PIVOTS_PER_SPRINT, pivot_timeout: float=PIVOT_TIMEOUT_S, max_findings: int=MAX_PIVOT_FINDINGS, pivot_search_fn: Any=None) -> None:
         """
         Initialize executor.
 
@@ -126,16 +91,9 @@ class AutonomousPivotExecutor:
         self._pivot_timeout = pivot_timeout
         self._max_findings = max_findings
         self._executed_count: int = 0
-        # F314-3: allow injection of pivot_search_fn for testability and sidecar overrides
         self._pivot_search_fn = pivot_search_fn
 
-    # ── Public API ─────────────────────────────────────────────────────────
-
-    async def execute_top(
-        self,
-        pivots: list[Any],
-        findings: list[Any],  # noqa: ARG002 -- public API, reserved for future context use
-    ) -> list[PivotExecutionResult]:
+    async def execute_top(self, pivots: list[Any], findings: list[Any]) -> list[PivotExecutionResult]:
         """
         Execute top pivots from PivotPlanner.
 
@@ -146,129 +104,69 @@ class AutonomousPivotExecutor:
         Returns:
             List of PivotExecutionResult, one per pivot.
         """
-        # RAM guard: skip entirely if governor is critical/emergency
         if self._governor is not None:
             try:
                 snapshot = await self._governor.sample_uma_status()
-                if snapshot is not None and (
-                    getattr(snapshot, "is_critical", False)
-                    or getattr(snapshot, "is_emergency", False)
-                ):
-                    logger.debug("[F204C] Skipping pivot executor — RAM critical/emergency")
+                if snapshot is not None and (getattr(snapshot, 'is_critical', False) or getattr(snapshot, 'is_emergency', False)):
+                    logger.debug('[F204C] Skipping pivot executor — RAM critical/emergency')
                     return []
             except Exception as e:
-                logger.debug(f"[F206AC] governor check failed: {e}")
-
-        # Select top N by priority (lowest priority value = highest priority)
-        sorted_pivots = sorted(pivots, key=lambda p: getattr(p, "priority", 0))
-        to_execute = sorted_pivots[: self._max_per_sprint]
-
+                logger.debug(f'[F206AC] governor check failed: {e}')
+        sorted_pivots = sorted(pivots, key=lambda p: getattr(p, 'priority', 0))
+        to_execute = sorted_pivots[:self._max_per_sprint]
         if not to_execute:
             return []
-
         results: list[PivotExecutionResult] = []
         semaphore = asyncio.Semaphore(self._max_active)
 
         async def _execute_one(pivot: Any) -> PivotExecutionResult:
             return await self._execute_pivot_with_semaphore(pivot, semaphore)
-
         try:
-            # F314: migrated asyncio.gather + _check_gathered -> safe_gather_ok
-            # safe_gather_ok filters exceptions silently (logged at DEBUG), returns only ok results
-            gathered = await safe_gather_ok(
-                *[_execute_one(p) for p in to_execute],
-                label="pivot_executor:execute_top",
-            )
+            gathered = await safe_gather_ok(*[_execute_one(p) for p in to_execute], label='pivot_executor:execute_top')
             for item in gathered:
                 if isinstance(item, PivotExecutionResult):
                     results.append(item)
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.warning(f"[F206AC] execute_top failed: {e}")
-
+            logger.warning(f'[F206AC] execute_top failed: {e}')
         return results
 
-    # ── Internals ────────────────────────────────────────────────────────────
-
-    async def _execute_pivot_with_semaphore(
-        self, pivot: Any, semaphore: asyncio.Semaphore
-    ) -> PivotExecutionResult:
+    async def _execute_pivot_with_semaphore(self, pivot: Any, semaphore: asyncio.Semaphore) -> PivotExecutionResult:
         async with semaphore:
             return await self._execute_pivot(pivot)
 
     async def _execute_pivot(self, pivot: Any) -> PivotExecutionResult:
         """Execute a single pivot with timeout."""
-        pivot_id = getattr(pivot, "pivot_id", None) or new_runtime_id()
+        pivot_id = getattr(pivot, 'pivot_id', None) or new_runtime_id()
         start = time.monotonic()
-
         try:
             async with asyncio.timeout(self._pivot_timeout):
                 findings_out = await self._run_pivot_search(pivot)
                 produced = len(findings_out)
-                accepted = sum(
-                    1 for r in findings_out
-                    if isinstance(r, dict) and r.get("accepted", False)
-                )
+                accepted = sum((1 for r in findings_out if isinstance(r, dict) and r.get('accepted', False)))
                 elapsed_ms = (time.monotonic() - start) * 1000
-
-                # Canonical ingest
                 if findings_out and self._store is not None:
                     try:
                         await self._store.async_ingest_findings_batch(findings_out)
                     except Exception as e:
-                        logger.debug(f"[F206AC] feedback ingest failed: {e}")
-
-                # Record feedback
+                        logger.debug(f'[F206AC] feedback ingest failed: {e}')
                 if self._feedback is not None and self._executed_count < self._max_per_sprint:
                     signal = accepted / max(produced, 1)
                     try:
-                        await self._feedback.async_record(
-                            pivot_type=getattr(pivot, "pivot_type", "unknown"),
-                            ioc_type=getattr(pivot, "ioc_type", "unknown"),
-                            produced_count=produced,
-                            accepted_count=accepted,
-                            signal_value=signal,
-                        )
+                        await self._feedback.async_record(pivot_type=getattr(pivot, 'pivot_type', 'unknown'), ioc_type=getattr(pivot, 'ioc_type', 'unknown'), produced_count=produced, accepted_count=accepted, signal_value=signal)
                     except Exception as e:
-                        logger.debug(f"[F206AC] feedback record failed: {e}")
-
+                        logger.debug(f'[F206AC] feedback record failed: {e}')
                 self._executed_count += 1
-
-                return PivotExecutionResult(
-                    pivot_id=pivot_id,
-                    attempted=True,
-                    produced_count=produced,
-                    accepted_count=accepted,
-                    signal_value=accepted / max(produced, 1),
-                    error="",
-                    elapsed_ms=elapsed_ms,
-                )
-
+                return PivotExecutionResult(pivot_id=pivot_id, attempted=True, produced_count=produced, accepted_count=accepted, signal_value=accepted / max(produced, 1), error='', elapsed_ms=elapsed_ms)
         except TimeoutError:
             elapsed_ms = (time.monotonic() - start) * 1000
-            return PivotExecutionResult(
-                pivot_id=pivot_id,
-                attempted=True,
-                produced_count=0,
-                accepted_count=0,
-                signal_value=0.0,
-                error=f"timeout after {self._pivot_timeout}s",
-                elapsed_ms=elapsed_ms,
-            )
+            return PivotExecutionResult(pivot_id=pivot_id, attempted=True, produced_count=0, accepted_count=0, signal_value=0.0, error=f'timeout after {self._pivot_timeout}s', elapsed_ms=elapsed_ms)
         except asyncio.CancelledError:
             raise
         except Exception as e:
             elapsed_ms = (time.monotonic() - start) * 1000
-            return PivotExecutionResult(
-                pivot_id=pivot_id,
-                attempted=True,
-                produced_count=0,
-                accepted_count=0,
-                signal_value=0.0,
-                error=str(e),
-                elapsed_ms=elapsed_ms,
-            )
+            return PivotExecutionResult(pivot_id=pivot_id, attempted=True, produced_count=0, accepted_count=0, signal_value=0.0, error=str(e), elapsed_ms=elapsed_ms)
 
     async def _run_pivot_search(self, pivot: Any) -> list[dict]:
         """
@@ -308,62 +206,33 @@ class AutonomousPivotExecutor:
             List of finding dicts with 'accepted' key.
         """
         import re
-
-        pivot_type = getattr(pivot, "pivot_type", None)
-        ioc_value = getattr(pivot, "ioc_value", None)
-
+        pivot_type = getattr(pivot, 'pivot_type', None)
+        ioc_value = getattr(pivot, 'ioc_value', None)
         if not ioc_value or not self._store:
             return []
-
         try:
-            # Query recent findings from DuckDB (thread-safe, non-blocking)
-            recent = await self._store.async_query_recent_findings(
-                limit=min(self._max_findings * 4, 200)
-            )
-
-            # Sort by confidence DESC first (higher-confidence findings are
-            # more reliable pivot sources; ts DESC is tiebreaker within same confidence)
-            sorted_findings = sorted(
-                recent,
-                key=lambda f: (float(f.get("confidence", 0.0) or 0.0), f.get("ts", "")),
-                reverse=True,
-            )
-
-            # Filter findings that correlate with the pivot IOC using word-boundary
-            # match to avoid substring false positives (e.g., "evil" in "notevil")
+            recent = await self._store.async_query_recent_findings(limit=min(self._max_findings * 4, 200))
+            sorted_findings = sorted(recent, key=lambda f: (float(f.get('confidence', 0.0) or 0.0), f.get('ts', '')), reverse=True)
             related: list[dict] = []
             ioc_lower = ioc_value.lower()
-            # Escape special regex characters in IOC value for safe token matching
             ioc_escaped = re.escape(ioc_lower)
-            # Match IOC as a whole token: word boundary before and after
-            token_pattern = re.compile(r"(?<!\w)" + ioc_escaped + r"(?!\w)", re.IGNORECASE)
-
+            token_pattern = re.compile('(?<!\\w)' + ioc_escaped + '(?!\\w)', re.IGNORECASE)
             for finding in sorted_findings:
                 if len(related) >= self._max_findings:
                     break
-                query = finding.get("query", "") or ""
-                provenance = finding.get("provenance_json") or ""
-                combined = f"{query} {provenance}"
+                query = finding.get('query', '') or ''
+                provenance = finding.get('provenance_json') or ''
+                combined = f'{query} {provenance}'
                 if token_pattern.search(combined):
                     related.append(finding)
-
-            # Mark findings as accepted (pivot-derived evidence)
             for f in related:
-                f["accepted"] = True
-                f["pivot_derived"] = True
-                f["pivot_type"] = pivot_type
-                f["pivot_ioc_value"] = ioc_value
-
+                f['accepted'] = True
+                f['pivot_derived'] = True
+                f['pivot_type'] = pivot_type
+                f['pivot_ioc_value'] = ioc_value
             return related
-
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.debug(f"[F314-3] _default_pivot_search failed for {ioc_value}: {e}")
+            logger.debug(f'[F314-3] _default_pivot_search failed for {ioc_value}: {e}')
             return []
-
-    # ── Helpers ─────────────────────────────────────────────────────────────
-
-    # NOTE: _check_gathered was removed — pivot_executor uses safe_gather_ok
-    # (async_helpers), which internally calls _classify_gathered and filters
-    # exceptions. The old staticmethod was dead code after F314 migration.

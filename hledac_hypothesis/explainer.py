@@ -26,14 +26,10 @@ GHOST_INVARIANTS:
   ``asyncio.wait_for`` with a 10s timeout, and returns fail-soft tuples
   on any error. The helper never raises.
 """
-
-
 import asyncio
 import hashlib
 import logging
-
 logger = logging.getLogger(__name__)
-
 
 class SimpleNodeAblationExplainer:
     """
@@ -42,6 +38,7 @@ class SimpleNodeAblationExplainer:
     Computes importance scores by removing each node and measuring
     the change in path score from graph_rag.
     """
+    __slots__ = tuple(('graph_rag',))
 
     def __init__(self, graph_rag):
         """
@@ -52,12 +49,7 @@ class SimpleNodeAblationExplainer:
         """
         self.graph_rag = graph_rag
 
-    async def explain_path(
-        self,
-        path: list[str],
-        hypothesis: str,
-        max_nodes: int = 5
-    ) -> dict[str, float]:
+    async def explain_path(self, path: list[str], hypothesis: str, max_nodes: int=5) -> dict[str, float]:
         """
         Explain path importance using node ablation.
 
@@ -71,61 +63,36 @@ class SimpleNodeAblationExplainer:
         """
         if len(path) < 2:
             return {}
-
-        # Pre-compute hypothesis embedding once
         embedder = await self.graph_rag._get_embedder()
         if embedder is None:
             return {}
-
         try:
             hypothesis_emb = await embedder._embed_text(hypothesis)
             if hypothesis_emb is None:
                 hypothesis_emb = [0.0] * 384
         except Exception:
             hypothesis_emb = [0.0] * 384
-
-        # Get original score
         n_nodes = min(len(path), max_nodes)
         try:
-            original_score = await self.graph_rag.score_path(
-                path, hypothesis, hypothesis_emb=hypothesis_emb
-            )
+            original_score = await self.graph_rag.score_path(path, hypothesis, hypothesis_emb=hypothesis_emb)
         except Exception:
             return {}
-
-        # Build all ablation paths for parallel execution
         ablation_paths = []
         ablation_indices = []
         for i in range(n_nodes):
             if i == 0 or i >= len(path) - 1:
-                continue  # Skip start/end nodes
-            # Create path with node removed
-            new_path = path[:i] + path[i+1:]
+                continue
+            new_path = path[:i] + path[i + 1:]
             ablation_paths.append(new_path)
             ablation_indices.append(i)
-
         if not ablation_paths:
             return {}
-
-        # P3-4: Use score_paths_parallel for batch parallel scoring
-        # This is more efficient than individual score_path calls as it:
-        # 1. Pre-computes hypothesis embedding once (shared across all paths)
-        # 2. Uses Semaphore(4) for M1 8GB safety on concurrent MLX embedding fetches
-        # 3. Batches all ablation scorings in single gather call
         try:
-            ablation_scores = await self.graph_rag.score_paths_parallel(
-                ablation_paths, hypothesis, max_nodes=max_nodes
-            )
+            ablation_scores = await self.graph_rag.score_paths_parallel(ablation_paths, hypothesis, max_nodes=max_nodes)
         except Exception:
-            # Fail-safe: run sequentially if parallel method fails
             from utils.async_helpers import safe_gather_ok
-            ablation_tasks = [
-                self.graph_rag.score_path(p, hypothesis, hypothesis_emb=hypothesis_emb)
-                for p in ablation_paths
-            ]
-            ablation_scores = await safe_gather_ok(*ablation_tasks, label="explain_path:fallback")
-
-        # Map results back to importance scores
+            ablation_tasks = [self.graph_rag.score_path(p, hypothesis, hypothesis_emb=hypothesis_emb) for p in ablation_paths]
+            ablation_scores = await safe_gather_ok(*ablation_tasks, label='explain_path:fallback')
         importances = {}
         for idx, score_result in zip(ablation_indices, ablation_scores, strict=False):
             if isinstance(score_result, Exception):
@@ -134,19 +101,11 @@ class SimpleNodeAblationExplainer:
                 importances[str(idx)] = original_score - float(score_result)
             except (TypeError, ValueError):
                 continue
-
-        # Filter out non-positive importances
-        if all(v <= 0.0 for v in importances.values()):
+        if all((v <= 0.0 for v in importances.values())):
             return {}
-
         return importances
 
-
-async def explain_with_mlx(
-    hypothesis: str,
-    path: list[str],
-    model_name: str = "mlx-community/Qwen2.5-0.5B-Instruct-4bit"
-) -> tuple[str, str]:
+async def explain_with_mlx(hypothesis: str, path: list[str], model_name: str='mlx-community/Qwen2.5-0.5B-Instruct-4bit') -> tuple[str, str]:
     """
     Generate textual explanation using MLX-LM.
 
@@ -160,36 +119,23 @@ async def explain_with_mlx(
     """
     try:
         from hledac.universal.utils.mlx_cache import get_mlx_model, get_mlx_semaphore
-
         model, tokenizer = await get_mlx_model(model_name)
         if model is None or tokenizer is None:
-            return "MLX model unavailable", ""
-
-        prompt = f"Explain why this path in a knowledge graph is important for the hypothesis: '{hypothesis}'. Path: {' -> '.join(path)}"  # noqa: E501
-
+            return ('MLX model unavailable', '')
+        prompt = f"Explain why this path in a knowledge graph is important for the hypothesis: '{hypothesis}'. Path: {' -> '.join(path)}"
         from mlx_lm import generate
         loop = asyncio.get_running_loop()
-
         async with get_mlx_semaphore():
             try:
                 async with asyncio.timeout(10.0):
-                    explanation = await loop.run_in_executor(
-                        None,
-                        lambda: generate(model, tokenizer, prompt, max_tokens=80, temp=0.0)
-                    )
+                    explanation = await loop.run_in_executor(None, lambda: generate(model, tokenizer, prompt, max_tokens=80, temp=0.0))
             except TypeError:
-                # Fallback if temp not supported
                 async with asyncio.timeout(10.0):
-                    explanation = await loop.run_in_executor(
-                        None,
-                        lambda: generate(model, tokenizer, prompt, max_tokens=80)
-                    )
-
+                    explanation = await loop.run_in_executor(None, lambda: generate(model, tokenizer, prompt, max_tokens=80))
         prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()[:8]
-        return explanation.strip(), prompt_hash
-
+        return (explanation.strip(), prompt_hash)
     except TimeoutError:
-        return "Explanation generation timed out", ""
+        return ('Explanation generation timed out', '')
     except Exception as e:
-        logger.debug(f"MLX explanation failed: {e}")
-        return f"Generation failed: {e}", ""
+        logger.debug(f'MLX explanation failed: {e}')
+        return (f'Generation failed: {e}', '')

@@ -16,26 +16,19 @@ Monitoruje:
 - Thermal status (M1)
 - System health
 """
-
-
-
 import logging
 from collections.abc import Callable
 from enum import Enum
-
 from core.psutil_shim import psutil
-
 logger = logging.getLogger(__name__)
-
 
 class SystemState(Enum):
     """Stavy systému"""
-    HEALTHY = "healthy"
-    MEMORY_PRESSURE = "memory_pressure"
-    THERMAL_THROTTLING = "thermal_throttling"
-    DEGRADED = "degraded"
-    RECOVERY = "recovery"
-
+    HEALTHY = 'healthy'
+    MEMORY_PRESSURE = 'memory_pressure'
+    THERMAL_THROTTLING = 'thermal_throttling'
+    DEGRADED = 'degraded'
+    RECOVERY = 'recovery'
 
 class SystemMonitor:
     """
@@ -47,15 +40,11 @@ class SystemMonitor:
     - State transitions
     - Callback system
     """
+    __slots__ = tuple(('_callbacks', '_state', 'memory_threshold', 'thermal_threshold'))
 
-    def __init__(
-        self,
-        memory_threshold: float = 5500,  # MB
-        thermal_threshold: float = 85,    # °C
-    ):
+    def __init__(self, memory_threshold: float=5500, thermal_threshold: float=85):
         self.memory_threshold = memory_threshold
         self.thermal_threshold = thermal_threshold
-
         self._state = SystemState.HEALTHY
         self._callbacks: list[Callable] = []
 
@@ -71,19 +60,14 @@ class SystemMonitor:
             Aktuální stav
         """
         try:
-            # Memory check
             if psutil is not None:
                 memory = psutil.virtual_memory()
                 used_mb = memory.used / (1024 * 1024)
-
                 if used_mb > self.memory_threshold:
                     new_state = SystemState.MEMORY_PRESSURE
                 else:
                     new_state = SystemState.HEALTHY
-
-                # Thermal check (na M1)
                 try:
-                    # pouze pokud je dostupné
                     temps = psutil.sensors_temperatures()
                     if temps:
                         for _name, entries in temps.items():
@@ -91,34 +75,27 @@ class SystemMonitor:
                                 if entry.current > self.thermal_threshold:
                                     new_state = SystemState.THERMAL_THROTTLING
                                     break
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
             else:
                 new_state = SystemState.HEALTHY
-
-            # State transition
             if new_state != self._state:
                 self._transition_state(new_state)
-
             return self._state
-
         except Exception as e:
-            logger.error(f"Health check failed: {e}")
+            logger.error(f'Health check failed: {e}')
             return SystemState.DEGRADED
 
     def _transition_state(self, new_state: SystemState):
         """Přejít do nového stavu"""
         old_state = self._state
         self._state = new_state
-
-        logger.warning(f"System state transition: {old_state.value} → {new_state.value}")
-
-        # Notify callbacks
+        logger.warning(f'System state transition: {old_state.value} → {new_state.value}')
         for callback in self._callbacks:
             try:
                 callback(old_state, new_state)
             except Exception as e:
-                logger.error(f"Callback error: {e}")
+                logger.error(f'Callback error: {e}')
 
     def on_state_change(self, callback: Callable):
         """Registrovat callback na změnu stavu"""
@@ -128,31 +105,16 @@ class SystemMonitor:
         """Získat statistiky systému"""
         try:
             if psutil is None:
-                return {"state": self._state.value}
-
+                return {'state': self._state.value}
             cpu_percent = psutil.cpu_percent(interval=0.1)
             memory = psutil.virtual_memory()
-
-            stats = {
-                "state": self._state.value,
-                "cpu_percent": cpu_percent,
-                "memory_percent": memory.percent,
-                "memory_used_mb": memory.used / (1024 * 1024),
-                "memory_available_mb": memory.available / (1024 * 1024),
-            }
-
-            # Thermal
+            stats = {'state': self._state.value, 'cpu_percent': cpu_percent, 'memory_percent': memory.percent, 'memory_used_mb': memory.used / (1024 * 1024), 'memory_available_mb': memory.available / (1024 * 1024)}
             try:
                 temps = psutil.sensors_temperatures()
                 if temps:
-                    stats["temperatures"] = {
-                        name: [e.current for e in entries]
-                        for name, entries in temps.items()
-                    }
-            except Exception:  # noqa: BLE001
+                    stats['temperatures'] = {name: [e.current for e in entries] for name, entries in temps.items()}
+            except Exception:
                 pass
-
             return stats
-
         except Exception as e:
-            return {"error": str(e)}
+            return {'error': str(e)}

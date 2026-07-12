@@ -28,33 +28,15 @@ Integration:
 - pivot_planner: receives HypothesisFeedbackSummary and penalizes low-yield types
 """
 from __future__ import annotations
-
-
-
 import logging
 import time
 import msgspec
-
-__all__ = [
-    "HypothesisFeedbackRecord",
-    "HypothesisFeedbackSummary",
-    "HypothesisFeedbackAdapter",
-    "MAX_FEEDBACK_RECORDS",
-    "MAX_PRUNED_TYPES",
-]
-
+__all__ = ['HypothesisFeedbackRecord', 'HypothesisFeedbackSummary', 'HypothesisFeedbackAdapter', 'MAX_FEEDBACK_RECORDS', 'MAX_PRUNED_TYPES']
 logger = logging.getLogger(__name__)
-
-# Bounds
 MAX_FEEDBACK_RECORDS: int = 10000
 MAX_PRUNED_TYPES: int = 20
-
-# Zero-yield penalty threshold: penalize after >= 3 consecutive zero-yield
 _ZERO_YIELD_PENALTY_THRESHOLD: int = 3
-
-# Penalty factor applied to expected_value for low-yield types
 _PENALTY_FACTOR: float = 0.5
-
 
 class HypothesisFeedbackRecord(msgspec.Struct, frozen=True):
     """
@@ -79,7 +61,6 @@ class HypothesisFeedbackRecord(msgspec.Struct, frozen=True):
     signal_value: float
     ts: float
 
-
 class HypothesisFeedbackSummary(msgspec.Struct, frozen=True):
     """
     Aggregated feedback summary per (target_id, pivot_type, ioc_type).
@@ -103,7 +84,6 @@ class HypothesisFeedbackSummary(msgspec.Struct, frozen=True):
     consecutive_zero_yield: int
     penalty_multiplier: float
 
-
 class HypothesisFeedbackAdapter:
     """
     F203G: Converts raw HypothesisFeedbackRecords into scoring multipliers
@@ -114,12 +94,9 @@ class HypothesisFeedbackAdapter:
         summary = await adapter.get_summary()  # fetches from duckdb
         # Pass summary to PivotPlanner.plan_pivots(..., feedback_summary=summary)
     """
+    __slots__ = tuple(('_cache', '_cache_ts', '_cache_ttl', '_store', '_target_id'))
 
-    def __init__(
-        self,
-        duckdb_store: object | None = None,
-        target_id: str = "default",
-    ) -> None:
+    def __init__(self, duckdb_store: object | None=None, target_id: str='default') -> None:
         """
         Initialize adapter.
 
@@ -132,16 +109,9 @@ class HypothesisFeedbackAdapter:
         self._target_id = target_id
         self._cache: dict[tuple[str, str], HypothesisFeedbackSummary] | None = None
         self._cache_ts: float = 0.0
-        self._cache_ttl: float = 300.0  # 5-minute cache
+        self._cache_ttl: float = 300.0
 
-    async def async_record(
-        self,
-        pivot_type: str,
-        ioc_type: str,
-        produced_count: int,
-        accepted_count: int,
-        signal_value: float,
-    ) -> bool:
+    async def async_record(self, pivot_type: str, ioc_type: str, produced_count: int, accepted_count: int, signal_value: float) -> bool:
         """
         Record a single pivot outcome to DuckDB.
 
@@ -158,29 +128,16 @@ class HypothesisFeedbackAdapter:
         import uuid
         if self._store is None:
             return False
-
         try:
-            record = HypothesisFeedbackRecord(
-                id=str(uuid.uuid4()),
-                target_id=self._target_id,
-                pivot_type=pivot_type,
-                ioc_type=ioc_type,
-                produced_count=produced_count,
-                accepted_count=accepted_count,
-                signal_value=signal_value,
-                ts=time.time(),
-            )
+            record = HypothesisFeedbackRecord(id=str(uuid.uuid4()), target_id=self._target_id, pivot_type=pivot_type, ioc_type=ioc_type, produced_count=produced_count, accepted_count=accepted_count, signal_value=signal_value, ts=time.time())
             await self._store.async_record_hypothesis_feedback(record)
-            self._cache = None  # Invalidate cache
+            self._cache = None
             return True
         except Exception as e:
-            logger.debug(f"[F203G] async_record_hypothesis_feedback failed: {e}")
+            logger.debug(f'[F203G] async_record_hypothesis_feedback failed: {e}')
             return False
 
-    async def async_get_summary(
-        self,
-        pivot_types: list[str] | None = None,
-    ) -> dict[tuple[str, str], HypothesisFeedbackSummary]:
+    async def async_get_summary(self, pivot_types: list[str] | None=None) -> dict[tuple[str, str], HypothesisFeedbackSummary]:
         """
         Fetch aggregated feedback summary from DuckDB.
 
@@ -191,79 +148,43 @@ class HypothesisFeedbackAdapter:
             Dict mapping (pivot_type, ioc_type) → HypothesisFeedbackSummary.
             Empty dict if store unavailable or query fails.
         """
-        # Return cached if still valid
         now = time.time()
-        if self._cache is not None and (now - self._cache_ts) < self._cache_ttl:
+        if self._cache is not None and now - self._cache_ts < self._cache_ttl:
             return self._get_filtered_summary(self._cache, pivot_types)
-
         if self._store is None:
             return {}
-
         try:
-            raw_records: list[HypothesisFeedbackRecord] = (
-                await self._store.async_get_hypothesis_feedback(
-                    target_id=self._target_id,
-                    limit=MAX_FEEDBACK_RECORDS,
-                )
-            )
+            raw_records: list[HypothesisFeedbackRecord] = await self._store.async_get_hypothesis_feedback(target_id=self._target_id, limit=MAX_FEEDBACK_RECORDS)
             summary = self._aggregate(raw_records)
             self._cache = summary
             self._cache_ts = now
             return self._get_filtered_summary(summary, pivot_types)
         except Exception as e:
-            logger.debug(f"[F203G] async_get_hypothesis_feedback failed: {e}")
+            logger.debug(f'[F203G] async_get_hypothesis_feedback failed: {e}')
             return {}
 
-    def _aggregate(
-        self,
-        records: list[HypothesisFeedbackRecord],
-    ) -> dict[tuple[str, str], HypothesisFeedbackSummary]:
+    def _aggregate(self, records: list[HypothesisFeedbackRecord]) -> dict[tuple[str, str], HypothesisFeedbackSummary]:
         """Aggregate raw records into per-(pivot_type, ioc_type) summaries."""
         buckets: dict[tuple[str, str], list[HypothesisFeedbackRecord]] = {}
         for rec in records:
             key = (rec.pivot_type, rec.ioc_type)
             buckets.setdefault(key, []).append(rec)
-
         result: dict[tuple[str, str], HypothesisFeedbackSummary] = {}
         for (pivot_type, ioc_type), recs in buckets.items():
-            total_produced = sum(r.produced_count for r in recs)
-            total_accepted = sum(r.accepted_count for r in recs)
-            avg_signal = sum(r.signal_value for r in recs) / len(recs)
-
-            # Count consecutive zero-yield from most recent records
+            total_produced = sum((r.produced_count for r in recs))
+            total_accepted = sum((r.accepted_count for r in recs))
+            avg_signal = sum((r.signal_value for r in recs)) / len(recs)
             consecutive_zero = 0
             for r in reversed(recs):
                 if r.produced_count == 0:
                     consecutive_zero += 1
                 else:
                     break
-
-            # Compute penalty multiplier
-            penalty = self._compute_penalty(
-                avg_signal=avg_signal,
-                consecutive_zero_yield=consecutive_zero,
-                _total_records=len(recs),
-            )
-
-            result[(pivot_type, ioc_type)] = HypothesisFeedbackSummary(
-                pivot_type=pivot_type,
-                ioc_type=ioc_type,
-                total_records=len(recs),
-                total_produced=total_produced,
-                total_accepted=total_accepted,
-                avg_signal=avg_signal,
-                consecutive_zero_yield=consecutive_zero,
-                penalty_multiplier=penalty,
-            )
-
+            penalty = self._compute_penalty(avg_signal=avg_signal, consecutive_zero_yield=consecutive_zero, _total_records=len(recs))
+            result[pivot_type, ioc_type] = HypothesisFeedbackSummary(pivot_type=pivot_type, ioc_type=ioc_type, total_records=len(recs), total_produced=total_produced, total_accepted=total_accepted, avg_signal=avg_signal, consecutive_zero_yield=consecutive_zero, penalty_multiplier=penalty)
         return result
 
-    def _compute_penalty(
-        self,
-        avg_signal: float,
-        consecutive_zero_yield: int,
-        _total_records: int,
-    ) -> float:
+    def _compute_penalty(self, avg_signal: float, consecutive_zero_yield: int, _total_records: int) -> float:
         """
         Compute penalty multiplier [0.0, 1.0] for this pivot type.
 
@@ -275,38 +196,20 @@ class HypothesisFeedbackAdapter:
         """
         if avg_signal >= 0.3:
             return 1.0
-
-        # Penalize based on consecutive zero-yield
         if consecutive_zero_yield >= _ZERO_YIELD_PENALTY_THRESHOLD:
-            # Scale penalty: 3 zeros → 0.5, 4 zeros → 0.4, etc.
             penalty = max(0.1, _PENALTY_FACTOR - (consecutive_zero_yield - _ZERO_YIELD_PENALTY_THRESHOLD) * 0.1)
             return penalty
-
-        # Low signal but no consecutive zeros: mild penalty
         if avg_signal < 0.1:
             return 0.7
-
         return 1.0
 
-    def _get_filtered_summary(
-        self,
-        summary: dict[tuple[str, str], HypothesisFeedbackSummary],
-        pivot_types: list[str] | None,
-    ) -> dict[tuple[str, str], HypothesisFeedbackSummary]:
+    def _get_filtered_summary(self, summary: dict[tuple[str, str], HypothesisFeedbackSummary], pivot_types: list[str] | None) -> dict[tuple[str, str], HypothesisFeedbackSummary]:
         """Filter summary by pivot_types if provided."""
         if pivot_types is None:
             return summary
-        return {
-            k: v for k, v in summary.items()
-            if k[0] in pivot_types
-        }
+        return {k: v for k, v in summary.items() if k[0] in pivot_types}
 
-    def get_penalty_multiplier(
-        self,
-        pivot_type: str,
-        ioc_type: str,
-        summaries: dict[tuple[str, str], HypothesisFeedbackSummary],
-    ) -> float:
+    def get_penalty_multiplier(self, pivot_type: str, ioc_type: str, summaries: dict[tuple[str, str], HypothesisFeedbackSummary]) -> float:
         """
         Get penalty multiplier for a specific pivot_type + ioc_type.
 

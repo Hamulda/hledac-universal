@@ -9,28 +9,24 @@ Usage:
     dp = DPNoise(epsilon=1.0, delta=1e-5)
     noisy_counts = dp.add_noise({'entity_count': 42, 'finding_count': 17})
 """
-
-
 import logging
 import math
 import random
 from typing import Any
-
 logger = logging.getLogger(__name__)
-
 
 class DPNoise:
     """Differential noise for aggregate statistics in OSINT reports."""
+    __slots__ = tuple(('delta', 'epsilon', 'noise_scale', 'sensitivity'))
 
-    def __init__(self, epsilon: float = 1.0, delta: float = 1e-5, sensitivity: float = 1.0):
+    def __init__(self, epsilon: float=1.0, delta: float=1e-05, sensitivity: float=1.0):
         self.epsilon = epsilon
         self.delta = delta
         self.sensitivity = sensitivity
-        # Gaussian noise scale: sigma >= sensitivity * sqrt(2*ln(1.25/delta)) / epsilon
         self.noise_scale = sensitivity * math.sqrt(2 * math.log(1.25 / delta)) / epsilon
-        logger.info(f"DPNoise: epsilon={epsilon}, delta={delta}, noise_scale={self.noise_scale:.4f}")
+        logger.info(f'DPNoise: epsilon={epsilon}, delta={delta}, noise_scale={self.noise_scale:.4f}')
 
-    def clip_update(self, weights: dict[str, Any], max_norm: float = 1.0) -> dict[str, Any]:
+    def clip_update(self, weights: dict[str, Any], max_norm: float=1.0) -> dict[str, Any]:
         """Clip gradient/model update to max L2 norm."""
         clipped = {}
         for k, v in weights.items():
@@ -41,8 +37,7 @@ class DPNoise:
                 else:
                     clipped[k] = v
             elif isinstance(v, (list, tuple)):
-                # Array-like: compute L2 norm
-                norm = math.sqrt(sum(x * x for x in v))
+                norm = math.sqrt(sum((x * x for x in v)))
                 if norm > max_norm:
                     scale = max_norm / norm
                     clipped[k] = [x * scale for x in v]
@@ -66,15 +61,15 @@ class DPNoise:
                 noisy[k] = v
         return noisy
 
-
 class RDPCalculator:
     """Rényi Differential Privacy calculator for composition."""
+    __slots__ = tuple(('delta', 'noise_scale'))
 
-    def __init__(self, noise_scale: float, delta: float = 1e-5):
+    def __init__(self, noise_scale: float, delta: float=1e-05):
         self.noise_scale = noise_scale
         self.delta = delta
 
-    def get_epsilon(self, q: float, steps: int, alpha: float = 10.0) -> float:
+    def get_epsilon(self, q: float, steps: int, alpha: float=10.0) -> float:
         """
         Compute epsilon from Rényi DP.
 
@@ -83,7 +78,6 @@ class RDPCalculator:
             steps: number of composition steps
             alpha: Rényi parameter (order)
         """
-        # Simplified RDP -> DP conversion for Gaussian mechanism
-        rdp = (alpha * q * q) / (2 * self.noise_scale * self.noise_scale)
+        rdp = alpha * q * q / (2 * self.noise_scale * self.noise_scale)
         epsilon = rdp + math.log(1 / self.delta) / (alpha - 1)
-        return epsilon * steps  # Multi-step composition
+        return epsilon * steps

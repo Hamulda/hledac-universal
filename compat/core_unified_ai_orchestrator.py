@@ -2,16 +2,10 @@
 Bridge shim: UnifiedAIOrchestrator → UnifiedResearchEngine.
 Provides real implementation by bridging to enhanced_research.py.
 """
-
-
 import logging
 from typing import Any
-
 logger = logging.getLogger(__name__)
-
-# Lazy import to avoid early failure
 _UNIFIED_ENGINE: Any | None = None
-
 
 def _get_unified_engine() -> Any:
     """Lazy-load UnifiedResearchEngine."""
@@ -21,10 +15,9 @@ def _get_unified_engine() -> Any:
             from hledac.universal.enhanced_research import UnifiedResearchEngine
             _UNIFIED_ENGINE = UnifiedResearchEngine
         except ImportError as e:
-            logger.error(f"Failed to import UnifiedResearchEngine: {e}")
+            logger.error(f'Failed to import UnifiedResearchEngine: {e}')
             raise
     return _UNIFIED_ENGINE
-
 
 class UnifiedAIOrchestrator:
     """
@@ -36,12 +29,13 @@ class UnifiedAIOrchestrator:
     - async process_request(dict) -> dict  — returns {'summary': str, 'confidence': float, ...}
     - async cleanup()            — optional
     """
+    __slots__ = tuple(('_engine', '_engine_cls', '_initialized'))
 
     def __init__(self, *args, **kwargs) -> None:
         self._engine: Any | None = None
         self._initialized: bool = False
         self._engine_cls = _get_unified_engine()
-        logger.debug("UnifiedAIOrchestrator: bridge initialized")
+        logger.debug('UnifiedAIOrchestrator: bridge initialized')
 
     async def initialize(self) -> None:
         """Initialize the underlying UnifiedResearchEngine."""
@@ -50,9 +44,9 @@ class UnifiedAIOrchestrator:
         try:
             self._engine = self._engine_cls()
             self._initialized = True
-            logger.info("UnifiedAIOrchestrator: UnifiedResearchEngine initialized")
+            logger.info('UnifiedAIOrchestrator: UnifiedResearchEngine initialized')
         except Exception as e:
-            logger.warning(f"UnifiedAIOrchestrator: init failed: {e}")
+            logger.warning(f'UnifiedAIOrchestrator: init failed: {e}')
             self._initialized = False
 
     async def process_request(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -68,48 +62,28 @@ class UnifiedAIOrchestrator:
         """
         if not self._initialized or self._engine is None:
             await self.initialize()
-
         if self._engine is None:
-            return {"summary": "", "confidence": 0.0, "sources_used": 0, "findings": []}
-
-        # Extract research params from request
-        query = request.get("query", "")
-        depth_arg = request.get("depth") or request.get("research_depth")
-        max_results = request.get("max_results", 50)
-
-        # Map to UnifiedResearchEngine API
+            return {'summary': '', 'confidence': 0.0, 'sources_used': 0, 'findings': []}
+        query = request.get('query', '')
+        depth_arg = request.get('depth') or request.get('research_depth')
+        max_results = request.get('max_results', 50)
         depth = _map_depth(depth_arg)
-
         try:
-            result = await self._engine.deep_research(
-                query=query,
-                depth=depth,
-                query_type=None,  # auto-detect
-                max_results=max_results
-            )
-
-            # Extract return fields
-            return {
-                "summary": getattr(result, "summary", "") or _extract_summary(result),
-                "confidence": getattr(result, "confidence_score", 0.5),
-                "sources_used": getattr(result, "total_sources_found", 0),
-                "findings": getattr(result, "findings", []) or _extract_findings(result),
-                "coverage_score": getattr(result, "coverage_score", 0.0),
-            }
+            result = await self._engine.deep_research(query=query, depth=depth, query_type=None, max_results=max_results)
+            return {'summary': getattr(result, 'summary', '') or _extract_summary(result), 'confidence': getattr(result, 'confidence_score', 0.5), 'sources_used': getattr(result, 'total_sources_found', 0), 'findings': getattr(result, 'findings', []) or _extract_findings(result), 'coverage_score': getattr(result, 'coverage_score', 0.0)}
         except Exception as e:
-            logger.error(f"UnifiedAIOrchestrator.process_request failed: {e}")
-            return {"summary": "", "confidence": 0.0, "sources_used": 0, "findings": [], "error": str(e)}
+            logger.error(f'UnifiedAIOrchestrator.process_request failed: {e}')
+            return {'summary': '', 'confidence': 0.0, 'sources_used': 0, 'findings': [], 'error': str(e)}
 
     async def cleanup(self) -> None:
         """Cleanup engine resources."""
-        if self._engine and hasattr(self._engine, "cleanup"):
+        if self._engine and hasattr(self._engine, 'cleanup'):
             try:
                 await self._engine.cleanup()
             except Exception as e:
-                logger.warning(f"UnifiedAIOrchestrator cleanup error: {e}")
+                logger.warning(f'UnifiedAIOrchestrator cleanup error: {e}')
         self._engine = None
         self._initialized = False
-
 
 def _map_depth(depth: Any) -> Any:
     """Map depth value to ResearchDepth enum."""
@@ -129,25 +103,20 @@ def _map_depth(depth: Any) -> Any:
         return ResearchDepth.ADVANCED
     return ResearchDepth.ADVANCED
 
-
 def _extract_summary(result: Any) -> str:
     """Extract summary from UnifiedResearchResult."""
-    if hasattr(result, "query"):
-        findings_count = len(getattr(result, "findings", []) or [])
+    if hasattr(result, 'query'):
+        findings_count = len(getattr(result, 'findings', []) or [])
         return f"Research on '{result.query}' — {findings_count} findings"
     return str(result)
 
-
 def _extract_findings(result: Any) -> list:
     """Extract findings list from result."""
-    findings = getattr(result, "findings", None)
+    findings = getattr(result, 'findings', None)
     if findings is not None:
         return findings
-    # Fallback: return fused_results if available
-    fused = getattr(result, "fused_results", None)
+    fused = getattr(result, 'fused_results', None)
     if fused:
         return fused
     return []
-
-
-__all__ = ["UnifiedAIOrchestrator"]
+__all__ = ['UnifiedAIOrchestrator']

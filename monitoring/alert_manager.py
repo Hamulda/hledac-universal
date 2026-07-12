@@ -10,8 +10,6 @@ Monitors 4 critical anti-patterns:
 
 Always-on, bounded, fail-safe. M1 8GB UMA safe.
 """
-
-
 import asyncio
 import logging
 import time
@@ -19,21 +17,16 @@ from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 from collections.abc import Callable
-
 import psutil
-
 from metrics_registry import get_metrics_registry
-
 logger = logging.getLogger(__name__)
 
-
 class AlertSeverity(Enum):
-    WARNING = "warning"
-    CRITICAL = "critical"
-    INFO = "info"
+    WARNING = 'warning'
+    CRITICAL = 'critical'
+    INFO = 'info'
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Alert:
     """Structured alert — immutable, hashable."""
     alert_id: str
@@ -46,14 +39,10 @@ class Alert:
 
     def __hash__(self) -> int:
         return hash(self.alert_id)
-
-
-# Alert registry for deduplication
 _ALERT_REGISTRY: dict[str, float] = {}
-_ALERT_REGISTRY_MAX_AGE_S = 300.0  # 5 min dedup window
+_ALERT_REGISTRY_MAX_AGE_S = 300.0
 
-
-def _should_fire_alert(alert_id: str, cooldown_s: float = 60.0) -> bool:
+def _should_fire_alert(alert_id: str, cooldown_s: float=60.0) -> bool:
     """Deduplication: fire only if no similar alert in cooldown window."""
     now = time.time()
     last_fired = _ALERT_REGISTRY.get(alert_id, 0.0)
@@ -62,7 +51,6 @@ def _should_fire_alert(alert_id: str, cooldown_s: float = 60.0) -> bool:
     _ALERT_REGISTRY[alert_id] = now
     return True
 
-
 class AlertManager:
     """
     Centralized alerting for sprint anti-patterns.
@@ -70,15 +58,13 @@ class AlertManager:
     Bounded: max 1000 alerts in memory, oldest evicted.
     Fail-safe: all operations wrapped in try/except.
     """
-
     MAX_ALERTS = 1000
+    __slots__ = tuple(('_alerts', '_handlers', '_lock', '_metrics'))
 
     def __init__(self) -> None:
         self._alerts: deque[Alert] = deque(maxlen=self.MAX_ALERTS)
         self._handlers: list[Callable[[Alert], None]] = []
         self._lock = asyncio.Lock()
-
-        # Metrics registry
         try:
             self._metrics = get_metrics_registry()
         except Exception:
@@ -88,40 +74,18 @@ class AlertManager:
         """Register an alert handler (e.g., dashboard, webhook)."""
         self._handlers.append(handler)
 
-    async def emit(
-        self,
-        alert_id: str,
-        severity: AlertSeverity,
-        message: str,
-        metric_value: float,
-        threshold: float,
-        cooldown_s: float = 60.0,
-        tags: tuple[str, ...] = (),
-    ) -> None:
+    async def emit(self, alert_id: str, severity: AlertSeverity, message: str, metric_value: float, threshold: float, cooldown_s: float=60.0, tags: tuple[str, ...]=()) -> None:
         """Emit an alert if not deduplicated."""
         if not _should_fire_alert(alert_id, cooldown_s):
             return
-
-        alert = Alert(
-            alert_id=alert_id,
-            severity=severity,
-            message=message,
-            metric_value=metric_value,
-            threshold=threshold,
-            tags=tags,
-        )
-
+        alert = Alert(alert_id=alert_id, severity=severity, message=message, metric_value=metric_value, threshold=threshold, tags=tags)
         async with self._lock:
             self._alerts.append(alert)
-
-        # Fire metric
         if self._metrics:
             try:
-                self._metrics.inc(f"alert_{severity.value}_{alert_id}")
-            except Exception:  # noqa: BLE001
+                self._metrics.inc(f'alert_{severity.value}_{alert_id}')
+            except Exception:
                 pass
-
-        # Call handlers — fire-and-forget async to avoid blocking
         for handler in self._handlers:
             try:
                 if asyncio.iscoroutinefunction(handler):
@@ -129,19 +93,10 @@ class AlertManager:
                 else:
                     handler(alert)
             except Exception as e:
-                logger.debug("Alert handler error: %s", e)
+                logger.debug('Alert handler error: %s', e)
+        logger.log(logging.WARNING if severity == AlertSeverity.CRITICAL else logging.INFO, '[ALERT] %s | %s | value=%.2f threshold=%.2f | %s', alert_id, severity.value.upper(), metric_value, threshold, message)
 
-        logger.log(
-            logging.WARNING if severity == AlertSeverity.CRITICAL else logging.INFO,
-            "[ALERT] %s | %s | value=%.2f threshold=%.2f | %s",
-            alert_id,
-            severity.value.upper(),
-            metric_value,
-            threshold,
-            message,
-        )
-
-    def get_recent_alerts(self, limit: int = 50) -> list[Alert]:
+    def get_recent_alerts(self, limit: int=50) -> list[Alert]:
         """Get recent alerts (newest last)."""
         alerts = list(self._alerts)
         return alerts[-limit:]
@@ -149,11 +104,7 @@ class AlertManager:
     def clear(self) -> None:
         """Clear all alerts."""
         self._alerts.clear()
-
-
-# Global instance
 _alert_manager: AlertManager | None = None
-
 
 def get_alert_manager() -> AlertManager:
     """Get or create global AlertManager."""
@@ -161,20 +112,9 @@ def get_alert_manager() -> AlertManager:
     if _alert_manager is None:
         _alert_manager = AlertManager()
     return _alert_manager
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Anti-Pattern 1: Sprint with 0 findings after 60s
-# ─────────────────────────────────────────────────────────────────────────────
-
 _ZERO_FINDINGS_ALERT_COOLDOWN_S = 120.0
 
-
-async def check_zero_findings_alert(
-    elapsed_s: float,
-    consecutive_empty_cycles: int,
-    total_findings: int,
-) -> None:
+async def check_zero_findings_alert(elapsed_s: float, consecutive_empty_cycles: int, total_findings: int) -> None:
     """
     Alert if sprint has 0 findings after 60s wall-clock.
 
@@ -182,33 +122,10 @@ async def check_zero_findings_alert(
     Cooldown: 120s (to avoid spam during investigation)
     """
     am = get_alert_manager()
-
-    if (
-        elapsed_s >= 60.0
-        and total_findings == 0
-        and consecutive_empty_cycles >= 2
-    ):
-        await am.emit(
-            alert_id="zero_findings_after_60s",
-            severity=AlertSeverity.WARNING,
-            message=(
-                f"Sprint running {elapsed_s:.0f}s with 0 findings "
-                f"({consecutive_empty_cycles} empty cycles)"
-            ),
-            metric_value=float(consecutive_empty_cycles),
-            threshold=2.0,
-            cooldown_s=_ZERO_FINDINGS_ALERT_COOLDOWN_S,
-            tags=("sprint", "empty", "investigation_required"),
-        )
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Anti-Pattern 2: DuckDB lock contention > 5/sec
-# ─────────────────────────────────────────────────────────────────────────────
-
+    if elapsed_s >= 60.0 and total_findings == 0 and (consecutive_empty_cycles >= 2):
+        await am.emit(alert_id='zero_findings_after_60s', severity=AlertSeverity.WARNING, message=f'Sprint running {elapsed_s:.0f}s with 0 findings ({consecutive_empty_cycles} empty cycles)', metric_value=float(consecutive_empty_cycles), threshold=2.0, cooldown_s=_ZERO_FINDINGS_ALERT_COOLDOWN_S, tags=('sprint', 'empty', 'investigation_required'))
 _LOCK_CONTENTION_WINDOW_S = 1.0
 _LOCK_CONTENTION_ALERT_COOLDOWN_S = 60.0
-
 
 class LockContentionTracker:
     """
@@ -217,6 +134,7 @@ class LockContentionTracker:
     Bounded: uses sliding window, max 100 samples.
     Thread-safe for async use.
     """
+    __slots__ = tuple(('_samples', '_total_attempts', '_total_failures'))
 
     def __init__(self) -> None:
         self._samples: deque[tuple[float, int]] = deque(maxlen=100)
@@ -239,18 +157,12 @@ class LockContentionTracker:
         """
         now = time.monotonic()
         cutoff = now - _LOCK_CONTENTION_WINDOW_S
-
-        # Evict old samples
         while self._samples and self._samples[0][0] < cutoff:
             self._samples.popleft()
-
         if not self._samples:
             return 0.0
-
-        # Count failures in window
-        failures = sum(1 for _, acquired in self._samples if not acquired)
+        failures = sum((1 for _, acquired in self._samples if not acquired))
         window_duration = now - self._samples[0][0] if self._samples else 1.0
-
         return failures / max(window_duration, 0.1)
 
     def reset(self) -> None:
@@ -259,10 +171,7 @@ class LockContentionTracker:
         self._total_attempts = 0
         self._total_failures = 0
 
-
-async def check_lock_contention_alert(
-    tracker: LockContentionTracker,
-) -> None:
+async def check_lock_contention_alert(tracker: LockContentionTracker) -> None:
     """
     Alert if DuckDB lock contention > 5 failures/sec.
 
@@ -272,38 +181,13 @@ async def check_lock_contention_alert(
     rate = tracker.get_contention_rate()
     if rate <= 5.0:
         return
-
     am = get_alert_manager()
-    await am.emit(
-        alert_id="duckdb_lock_contention_high",
-        severity=AlertSeverity.CRITICAL,
-        message=(
-            f"DuckDB lock contention at {rate:.1f} failures/sec "
-            f"(>{5.0}/sec threshold) — consider scaling to subprocess"
-        ),
-        metric_value=rate,
-        threshold=5.0,
-        cooldown_s=_LOCK_CONTENTION_ALERT_COOLDOWN_S,
-        tags=("duckdb", "lock", "contention", "subprocess"),
-    )
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Anti-Pattern 3: Circuit breaker open > 30s
-# ─────────────────────────────────────────────────────────────────────────────
-
+    await am.emit(alert_id='duckdb_lock_contention_high', severity=AlertSeverity.CRITICAL, message=f'DuckDB lock contention at {rate:.1f} failures/sec (>{5.0}/sec threshold) — consider scaling to subprocess', metric_value=rate, threshold=5.0, cooldown_s=_LOCK_CONTENTION_ALERT_COOLDOWN_S, tags=('duckdb', 'lock', 'contention', 'subprocess'))
 _CB_OPEN_ALERT_COOLDOWN_S = 60.0
-
-# Track open-duration per domain to detect > 30s opens
 _cb_open_since: dict[str, float] = {}
 _cb_open_since_lock = asyncio.Lock()
 
-
-async def check_circuit_breaker_alert(
-    domain: str,
-    is_open: bool,
-    recovery_timeout: float,
-) -> None:
+async def check_circuit_breaker_alert(domain: str, is_open: bool, recovery_timeout: float) -> None:
     """
     Alert if circuit breaker has been open > 30% of recovery_timeout.
 
@@ -315,74 +199,46 @@ async def check_circuit_breaker_alert(
     Cooldown: 60s per domain.
     """
     global _cb_open_since
-
-    # F290-FIX: Dynamic threshold = 30% of recovery_timeout, min 10s
     _alert_threshold = max(10.0, recovery_timeout * 0.3)
-
     now = time.monotonic()
-
     async with _cb_open_since_lock:
         if is_open:
             if domain not in _cb_open_since:
                 _cb_open_since[domain] = now
-
             open_duration = now - _cb_open_since[domain]
-
             if open_duration >= _alert_threshold:
-                _alert_id = "circuit_breaker_open_over_30s"
+                _alert_id = 'circuit_breaker_open_over_30s'
                 _alert_severity = AlertSeverity.WARNING
-                _alert_message = (
-                    f"Circuit breaker for '{domain}' open for {open_duration:.0f}s "
-                    f"(recovery_timeout={recovery_timeout:.0f}s, threshold={_alert_threshold:.0f}s) — provider issues"
-                )
+                _alert_message = f"Circuit breaker for '{domain}' open for {open_duration:.0f}s (recovery_timeout={recovery_timeout:.0f}s, threshold={_alert_threshold:.0f}s) — provider issues"
                 _alert_metric = open_duration
                 _alert_cooldown = _CB_OPEN_ALERT_COOLDOWN_S
-                _alert_tags: tuple[str, ...] = ("circuit_breaker", "provider", domain)
+                _alert_tags: tuple[str, ...] = ('circuit_breaker', 'provider', domain)
             else:
-                _alert_id = ""
+                _alert_id = ''
                 _alert_severity = AlertSeverity.INFO
-                _alert_message = ""
+                _alert_message = ''
                 _alert_metric = 0.0
                 _alert_threshold = 0.0
                 _alert_cooldown = 0.0
                 _alert_tags = ()
         else:
-            # Circuit closed — reset tracking
             _cb_open_since.pop(domain, None)
-            _alert_id = ""
+            _alert_id = ''
             _alert_severity = AlertSeverity.INFO
-            _alert_message = ""
+            _alert_message = ''
             _alert_metric = 0.0
             _alert_threshold = 0.0
             _alert_cooldown = 0.0
             _alert_tags = ()
-
-    # Emit outside lock — await without holding the lock
     if _alert_id:
         am = get_alert_manager()
-        await am.emit(
-            alert_id=_alert_id,
-            severity=_alert_severity,
-            message=_alert_message,
-            metric_value=_alert_metric,
-            threshold=_alert_threshold,
-            cooldown_s=_alert_cooldown,
-            tags=_alert_tags,
-        )
-
+        await am.emit(alert_id=_alert_id, severity=_alert_severity, message=_alert_message, metric_value=_alert_metric, threshold=_alert_threshold, cooldown_s=_alert_cooldown, tags=_alert_tags)
 
 def reset_circuit_breaker_tracking() -> None:
     """Reset all circuit breaker open tracking (called at sprint start)."""
     global _cb_open_since
     _cb_open_since.clear()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Anti-Pattern 4: Memory delta > 1GB/sprint
-# ─────────────────────────────────────────────────────────────────────────────
-
 _MEMORY_DELTA_ALERT_COOLDOWN_S = 180.0
-
 
 class MemoryDeltaTracker:
     """
@@ -391,6 +247,7 @@ class MemoryDeltaTracker:
     Records RSS at sprint start and computes delta at sprint end.
     Uses psutil for RSS measurement.
     """
+    __slots__ = tuple(('_peak_rss_during_sprint', '_sprint_start_rss_mb', '_sprint_start_time'))
 
     def __init__(self) -> None:
         self._sprint_start_rss_mb: float = 0.0
@@ -422,11 +279,7 @@ class MemoryDeltaTracker:
         """Get peak RSS in GB during sprint."""
         return self._peak_rss_during_sprint / 1024.0
 
-
-async def check_memory_delta_alert(
-    tracker: MemoryDeltaTracker,
-    current_rss_mb: float,
-) -> None:
+async def check_memory_delta_alert(tracker: MemoryDeltaTracker, current_rss_mb: float) -> None:
     """
     Alert if memory delta > 1GB during sprint.
 
@@ -435,32 +288,11 @@ async def check_memory_delta_alert(
     """
     tracker.record_rss(current_rss_mb)
     delta_gb = tracker.get_delta_gb()
-
     if delta_gb <= 1.0:
         return
-
     am = get_alert_manager()
-    await am.emit(
-        alert_id="memory_delta_over_1gb",
-        severity=AlertSeverity.CRITICAL,
-        message=(
-            f"Memory delta {delta_gb:.2f} GB > 1 GB threshold "
-            f"(possible memory leak) — investigate during winddown"
-        ),
-        metric_value=delta_gb,
-        threshold=1.0,
-        cooldown_s=_MEMORY_DELTA_ALERT_COOLDOWN_S,
-        tags=("memory", "leak", "sprint"),
-    )
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Integration helpers
-# ─────────────────────────────────────────────────────────────────────────────
-
-# Global lock contention tracker instance
+    await am.emit(alert_id='memory_delta_over_1gb', severity=AlertSeverity.CRITICAL, message=f'Memory delta {delta_gb:.2f} GB > 1 GB threshold (possible memory leak) — investigate during winddown', metric_value=delta_gb, threshold=1.0, cooldown_s=_MEMORY_DELTA_ALERT_COOLDOWN_S, tags=('memory', 'leak', 'sprint'))
 _lock_tracker: LockContentionTracker | None = None
-
 
 def get_lock_contention_tracker() -> LockContentionTracker:
     """Get or create global lock contention tracker."""
@@ -468,11 +300,7 @@ def get_lock_contention_tracker() -> LockContentionTracker:
     if _lock_tracker is None:
         _lock_tracker = LockContentionTracker()
     return _lock_tracker
-
-
-# Global memory delta tracker
 _memory_tracker: MemoryDeltaTracker | None = None
-
 
 def get_memory_delta_tracker() -> MemoryDeltaTracker:
     """Get or create global memory delta tracker."""

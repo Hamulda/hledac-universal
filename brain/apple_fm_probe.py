@@ -19,22 +19,15 @@ Použití:
     if is_afm_available():
         # Použij AFM / ANE akceleraci
 """
-
-
-
 import platform
 import subprocess
 import sys
 from dataclasses import dataclass, field
 import msgspec
-
-__all__ = ["apple_fm_probe", "is_afm_available", "AFMProbeResult"]
-
-# Sprint 7B: AFM minimum macOS version (Apple Intelligence requires 26.0+)
+__all__ = ['apple_fm_probe', 'is_afm_available', 'AFMProbeResult']
 _AFM_MIN_MACOS_VERSION = (26, 0)
 
-
-@dataclass
+@dataclass(True)
 class AFMProbeResult:
     """Výsledek AFM probe."""
     available: bool
@@ -45,28 +38,25 @@ class AFMProbeResult:
     error: str | None = None
     details: dict = field(default_factory=dict)
 
-
 def _get_macos_version() -> tuple[int, int]:
     """Získat macOS verzi jako (major, minor) tuple."""
     try:
-        if platform.system() != "Darwin":
+        if platform.system() != 'Darwin':
             return (0, 0)
-        version_str = platform.mac_ver()[0]  # e.g., "26.3.1"
+        version_str = platform.mac_ver()[0]
         if not version_str:
             return (0, 0)
-        parts = version_str.split(".")
+        parts = version_str.split('.')
         major = int(parts[0])
         minor = int(parts[1]) if len(parts) > 1 else 0
         return (major, minor)
     except Exception:
         return (0, 0)
 
-
 def _check_macos_version() -> bool:
     """Kontrola macOS version gate (explicit >= 26.0)."""
     major, minor = _get_macos_version()
     return (major, minor) >= _AFM_MIN_MACOS_VERSION
-
 
 def _check_apple_intelligence_enabled() -> tuple[bool, str | None]:
     """
@@ -76,24 +66,17 @@ def _check_apple_intelligence_enabled() -> tuple[bool, str | None]:
         Tuple of (is_enabled, error_message_if_any)
     """
     try:
-        result = subprocess.run(
-            ["system_profiler", "SPApplicationsFeedbackAssistantDataType"],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
+        result = subprocess.run(['system_profiler', 'SPApplicationsFeedbackAssistantDataType'], capture_output=True, text=True, timeout=5)
         output = result.stdout.lower()
-        # Apple Intelligence je enabled pokud není explicitně disabled
-        if "apple intelligence" in output:
+        if 'apple intelligence' in output:
             return (True, None)
-        return (False, "Apple Intelligence not detected in system profile")
+        return (False, 'Apple Intelligence not detected in system profile')
     except FileNotFoundError:
-        return (False, "system_profiler not available")
+        return (False, 'system_profiler not available')
     except subprocess.TimeoutExpired:
-        return (False, "system_profiler timeout")
+        return (False, 'system_profiler timeout')
     except Exception as e:
-        return (False, f"system_profiler error: {e}")
-
+        return (False, f'system_profiler error: {e}')
 
 def _structured_correctness_probe() -> tuple[bool, str | None]:
     """
@@ -111,68 +94,30 @@ def _structured_correctness_probe() -> tuple[bool, str | None]:
     """
     import subprocess
     import tempfile
-
-    # Probe script that generates JSON via mlx_lm
-    probe_script = '''
-import sys
-import json
-try:
-    from mlx_lm import generate
-    # Minimal model for speed
-    response = generate(
-        "mlx-community/Qwen2-0.5B-Instruct-4bit",
-        "Output valid JSON: {\"name\": \"test\", \"value\": 42}",
-        max_tokens=32,
-        temperature=0.0
-    )
-    # Extract JSON from response
-    import re
-    match = re.search(r'\\{.*\\}', response, re.DOTALL)
-    if match:
-        obj = json.loads(match.group())
-        if "name" in obj and "value" in obj and isinstance(obj["name"], str) and isinstance(obj["value"], (int, float)):
-            print("OK")
-            sys.exit(0)
-    print("PARSE_ERROR")
-    sys.exit(1)
-except Exception as e:
-    print(f"ERROR:{e}")
-    sys.exit(1)
-'''
-
+    probe_script = '\nimport sys\nimport json\ntry:\n    from mlx_lm import generate\n    # Minimal model for speed\n    response = generate(\n        "mlx-community/Qwen2-0.5B-Instruct-4bit",\n        "Output valid JSON: {"name": "test", "value": 42}",\n        max_tokens=32,\n        temperature=0.0\n    )\n    # Extract JSON from response\n    import re\n    match = re.search(r\'\\{.*\\}\', response, re.DOTALL)\n    if match:\n        obj = json.loads(match.group())\n        if "name" in obj and "value" in obj and isinstance(obj["name"], str) and isinstance(obj["value"], (int, float)):\n            print("OK")\n            sys.exit(0)\n    print("PARSE_ERROR")\n    sys.exit(1)\nexcept Exception as e:\n    print(f"ERROR:{e}")\n    sys.exit(1)\n'
     try:
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
             f.write(probe_script)
             script_path = f.name
-
         try:
-            result = subprocess.run(
-                [sys.executable, script_path],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
+            result = subprocess.run([sys.executable, script_path], capture_output=True, text=True, timeout=30)
             output = (result.stdout + result.stderr).strip()
-
-            if output == "OK" or result.returncode == 0:
+            if output == 'OK' or result.returncode == 0:
                 return (True, None)
-            elif "ERROR:" in output:
-                return (False, f"JSON generation failed: {output}")
+            elif 'ERROR:' in output:
+                return (False, f'JSON generation failed: {output}')
             else:
-                # Fail-open: if we can't confirm, assume it works
                 return (True, None)
         finally:
             try:
                 import os
                 os.unlink(script_path)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
-
     except subprocess.TimeoutExpired:
-        return (True, None)  # Fail-open on timeout
+        return (True, None)
     except Exception:
-        return (True, None)  # Fail-open on any error
-
+        return (True, None)
 
 def _afm_capability_probe() -> bool:
     """
@@ -188,30 +133,19 @@ def _afm_capability_probe() -> bool:
         True pokud AFM potenciálně dostupná, False jinak
     """
     try:
-        # 1. macOS version gate (explicit 26.0+)
         if not _check_macos_version():
             return False
-
-        # 2. Musí běžet na macOS
-        if platform.system() != "Darwin":
+        if platform.system() != 'Darwin':
             return False
-
-        # 3. Kontrola Apple Silicon
         machine = platform.machine()
-        if machine != "arm64":
+        if machine != 'arm64':
             return False
-
-        # 4. Structured correctness probe
         correctness_valid, _ = _structured_correctness_probe()
         if not correctness_valid:
             return False
-
         return True
-
     except Exception:
-        # Fail-open: jakákoli chyba = AFM není potvrzena
         return False
-
 
 def apple_fm_probe() -> AFMProbeResult:
     """
@@ -223,87 +157,29 @@ def apple_fm_probe() -> AFMProbeResult:
         AFMProbeResult s detaily probe
     """
     macos_version = _get_macos_version()
-    is_apple_silicon = platform.machine() == "arm64"
+    is_apple_silicon = platform.machine() == 'arm64'
     apple_intelligence_enabled = False
     correctness_valid = False
     error = None
     details = {}
-
     try:
-        # Krok 1: macOS version (explicit >= 26.0)
         if macos_version < _AFM_MIN_MACOS_VERSION:
-            error = f"macOS {macos_version[0]}.{macos_version[1]} < 26.0 required (Apple Intelligence)"
-            return AFMProbeResult(
-                available=False,
-                macos_version=macos_version,
-                is_apple_silicon=is_apple_silicon,
-                apple_intelligence_enabled=False,
-                correctness_valid=False,
-                error=error,
-                details={"min_version": "26.0"}
-            )
-
-        # Krok 2: Apple Silicon
+            error = f'macOS {macos_version[0]}.{macos_version[1]} < 26.0 required (Apple Intelligence)'
+            return AFMProbeResult(available=False, macos_version=macos_version, is_apple_silicon=is_apple_silicon, apple_intelligence_enabled=False, correctness_valid=False, error=error, details={'min_version': '26.0'})
         if not is_apple_silicon:
-            error = "Not Apple Silicon (arm64)"
-            return AFMProbeResult(
-                available=False,
-                macos_version=macos_version,
-                is_apple_silicon=False,
-                apple_intelligence_enabled=False,
-                correctness_valid=False,
-                error=error
-            )
-
-        # Krok 3: Apple Intelligence check
+            error = 'Not Apple Silicon (arm64)'
+            return AFMProbeResult(available=False, macos_version=macos_version, is_apple_silicon=False, apple_intelligence_enabled=False, correctness_valid=False, error=error)
         apple_intelligence_enabled, ai_error = _check_apple_intelligence_enabled()
-        details["apple_intelligence_check"] = {
-            "enabled": apple_intelligence_enabled,
-            "error": ai_error
-        }
-
-        # Krok 4: Structured correctness probe
+        details['apple_intelligence_check'] = {'enabled': apple_intelligence_enabled, 'error': ai_error}
         correctness_valid, probe_error = _structured_correctness_probe()
-        details["correctness_probe"] = {
-            "valid": correctness_valid,
-            "error": probe_error
-        }
-
+        details['correctness_probe'] = {'valid': correctness_valid, 'error': probe_error}
         if not correctness_valid:
-            error = probe_error or "Structured correctness probe failed"
-            return AFMProbeResult(
-                available=False,
-                macos_version=macos_version,
-                is_apple_silicon=True,
-                apple_intelligence_enabled=apple_intelligence_enabled,
-                correctness_valid=False,
-                error=error,
-                details=details
-            )
-
-        # Všechny kontroly prošly
-        return AFMProbeResult(
-            available=True,
-            macos_version=macos_version,
-            is_apple_silicon=True,
-            apple_intelligence_enabled=apple_intelligence_enabled,
-            correctness_valid=True,
-            error=None,
-            details=details
-        )
-
+            error = probe_error or 'Structured correctness probe failed'
+            return AFMProbeResult(available=False, macos_version=macos_version, is_apple_silicon=True, apple_intelligence_enabled=apple_intelligence_enabled, correctness_valid=False, error=error, details=details)
+        return AFMProbeResult(available=True, macos_version=macos_version, is_apple_silicon=True, apple_intelligence_enabled=apple_intelligence_enabled, correctness_valid=True, error=None, details=details)
     except Exception as e:
         error = str(e)
-        return AFMProbeResult(
-            available=False,
-            macos_version=macos_version,
-            is_apple_silicon=is_apple_silicon,
-            apple_intelligence_enabled=False,
-            correctness_valid=False,
-            error=error,
-            details=details
-        )
-
+        return AFMProbeResult(available=False, macos_version=macos_version, is_apple_silicon=is_apple_silicon, apple_intelligence_enabled=False, correctness_valid=False, error=error, details=details)
 
 def is_afm_available() -> bool:
     """
@@ -317,11 +193,6 @@ def is_afm_available() -> bool:
     """
     return _afm_capability_probe()
 
-
-# =============================================================================
-# Optional: AFM lazy import pro NaturalLanguage framework
-# =============================================================================
-
 def get_nl_framework_available() -> bool:
     """
     Kontrola dostupnosti NaturalLanguage framework přes PyObjC.
@@ -330,11 +201,10 @@ def get_nl_framework_available() -> bool:
         True pokud NaturalLanguage framework dostupný, False jinak
     """
     try:
-        import NaturalLanguage  # noqa: F401  # NaturalLanguage
+        import NaturalLanguage
         return True
     except ImportError:
         return False
-
 
 def get_nl_entities(text: str) -> list:
     """
@@ -351,26 +221,14 @@ def get_nl_entities(text: str) -> list:
     """
     import NaturalLanguage
     from Foundation import NSString
-
     ns_string = NSString.stringWithString_(text)
-    tagger = NaturalLanguage.NLTagger.alloc().initWithTagSchemes_(
-        [NaturalLanguage.NLTagScheme.nameType]
-    )
+    tagger = NaturalLanguage.NLTagger.alloc().initWithTagSchemes_([NaturalLanguage.NLTagScheme.nameType])
     tagger.setString_(ns_string)
-
     entities = []
 
     def _block(tag, token_range, _stop):
         if tag:
             entities.append(text[token_range.location:token_range.location + token_range.length])
         return True
-
-    tagger.enumerateTagsInRange_unit_scheme_options_usingBlock_(
-        (0, len(text)),
-        NaturalLanguage.NLTokenUnit.word,
-        NaturalLanguage.NLTagScheme.nameType,
-        0,
-        _block
-    )
-
+    tagger.enumerateTagsInRange_unit_scheme_options_usingBlock_((0, len(text)), NaturalLanguage.NLTokenUnit.word, NaturalLanguage.NLTagScheme.nameType, 0, _block)
     return entities

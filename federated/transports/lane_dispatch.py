@@ -59,7 +59,7 @@ import logging
 import time
 from typing import Any
 
-from .protocol import NodeTransport, NodeTransportFactory
+from .protocol import NodeTransport, NodeTransportFactory, set_sprint_id_attr
 
 logger = logging.getLogger(__name__)
 
@@ -381,7 +381,7 @@ class LaneDispatchTransport:
         Set the sprint id used for finding traceability. Idempotent.
         Optional — if not set, sprint_id tags are omitted from findings.
         """
-        self._sprint_id = str(sprint_id or "")[:64]
+        set_sprint_id_attr(self, sprint_id)
 
     async def run(self, lane: str, query: str) -> list[dict[str, Any]]:
         """

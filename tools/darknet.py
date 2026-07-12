@@ -3,43 +3,35 @@ Darknet přístup – Tor, I2P, experimentální post‑quantum crypto.
 Sprint 46: Access to Unreachable Data (Sessions + Paywall + OSINT + Darknet)
 Socks5 proxy support via httpx-socks.
 """
-
 import asyncio
 import logging
 from typing import Any
 from urllib.parse import urlparse
-
 logger = logging.getLogger(__name__)
-
 try:
     from httpx_socks import AsyncProxyTransport
-
     HTTPX_SOCKS_AVAILABLE = True
 except ImportError:
     HTTPX_SOCKS_AVAILABLE = False
     AsyncProxyTransport = None
-
 try:
     from stem import Signal
     from stem.control import Controller
-
     STEM_AVAILABLE = True
 except ImportError:
     STEM_AVAILABLE = False
     Signal = None
     Controller = None
-
 try:
     import oqs
-
     LIBOQS_AVAILABLE = True
 except ImportError:
     LIBOQS_AVAILABLE = False
     oqs = None
 
-
 class DarknetConnector:
     """Connector pro darknet (Tor, I2P) a post-quantum crypto."""
+    __slots__ = tuple(('_i2p_port', '_tor_control_port', '_tor_port', 'tor_controller'))
 
     def __init__(self) -> None:
         self.tor_controller = None
@@ -58,39 +50,37 @@ class DarknetConnector:
             self.tor_controller.authenticate()
             return True
         except Exception as e:
-            logger.warning(f"[TOR] Controller failed: {e}")
+            logger.warning(f'[TOR] Controller failed: {e}')
             return False
 
     async def fetch_via_tor(self, url: str) -> bytes | None:
         """Fetch URL přes Tor SOCKS proxy."""
         if not HTTPX_SOCKS_AVAILABLE:
-            logger.warning("[TOR] httpx-socks not available")
+            logger.warning('[TOR] httpx-socks not available')
             return None
         try:
             import httpx
-
-            transport = AsyncProxyTransport.from_url("socks5://127.0.0.1:9050")
+            transport = AsyncProxyTransport.from_url('socks5://127.0.0.1:9050')
             async with httpx.AsyncClient(transport=transport, timeout=httpx.Timeout(30.0)) as session:
                 resp = await session.get(url)
                 return resp.read()
         except Exception as e:
-            logger.warning(f"[TOR] Fetch failed {url}: {e}")
+            logger.warning(f'[TOR] Fetch failed {url}: {e}')
             return None
 
     async def fetch_via_i2p(self, url: str) -> bytes | None:
         """Fetch URL přes I2P SOCKS proxy."""
         if not HTTPX_SOCKS_AVAILABLE:
-            logger.warning("[I2P] httpx-socks not available")
+            logger.warning('[I2P] httpx-socks not available')
             return None
         try:
             import httpx
-
-            transport = AsyncProxyTransport.from_url(f"socks5://127.0.0.1:{self._i2p_port}")
+            transport = AsyncProxyTransport.from_url(f'socks5://127.0.0.1:{self._i2p_port}')
             async with httpx.AsyncClient(transport=transport, timeout=httpx.Timeout(30.0)) as session:
                 resp = await session.get(url)
                 return resp.read()
         except Exception as e:
-            logger.warning(f"[I2P] Fetch failed {url}: {e}")
+            logger.warning(f'[I2P] Fetch failed {url}: {e}')
             return None
 
     async def new_tor_circuit(self) -> bool:
@@ -102,24 +92,24 @@ class DarknetConnector:
             await asyncio.sleep(2)
             return True
         except Exception as e:
-            logger.warning(f"[TOR] NEWNYM failed: {e}")
+            logger.warning(f'[TOR] NEWNYM failed: {e}')
             return False
 
     async def try_liboqs_handshake(self, host: str) -> bool:
         """Experimentální post‑quantum handshake – graceful fallback."""
         if not LIBOQS_AVAILABLE:
-            logger.debug("[LIBOQS] Not installed, skipping post-quantum")
+            logger.debug('[LIBOQS] Not installed, skipping post-quantum')
             return False
         try:
-            kem = oqs.KeyEncapsulation("Kyber512")
+            kem = oqs.KeyEncapsulation('Kyber512')
             kem.generate_keypair()
-            logger.info(f"[LIBOQS] Kyber512 available for {host}")
+            logger.info(f'[LIBOQS] Kyber512 available for {host}')
             return True
         except ImportError:
-            logger.debug("[LIBOQS] Not installed")
+            logger.debug('[LIBOQS] Not installed')
             return False
         except Exception as e:
-            logger.warning(f"[LIBOQS] Handshake failed: {e}")
+            logger.warning(f'[LIBOQS] Handshake failed: {e}')
             return False
 
     async def fetch_onion(self, url: str) -> dict[str, Any] | None:
@@ -128,14 +118,14 @@ class DarknetConnector:
         Validates that the hostname (not full URL) ends with .onion.
         """
         try:
-            host = urlparse(url).hostname or ""
-            if not host.lower().endswith(".onion"):
+            host = urlparse(url).hostname or ''
+            if not host.lower().endswith('.onion'):
                 return None
         except Exception:
             return None
         content = await self.fetch_via_tor(url)
         if content:
-            return {"url": url, "content": content, "via": "tor"}
+            return {'url': url, 'content': content, 'via': 'tor'}
         return None
 
     async def fetch_i2p(self, url: str) -> dict[str, Any] | None:
@@ -144,12 +134,12 @@ class DarknetConnector:
         Validates that the hostname (not full URL) ends with .i2p.
         """
         try:
-            host = urlparse(url).hostname or ""
-            if not host.lower().endswith(".i2p"):
+            host = urlparse(url).hostname or ''
+            if not host.lower().endswith('.i2p'):
                 return None
         except Exception:
             return None
         content = await self.fetch_via_i2p(url)
         if content:
-            return {"url": url, "content": content, "via": "i2p"}
+            return {'url': url, 'content': content, 'via': 'i2p'}
         return None

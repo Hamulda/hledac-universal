@@ -13,37 +13,31 @@ References:
 
 M1-Optimized: O(n) complexity, minimal memory footprint
 """
-
-
-
 import hashlib
 import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
 import msgspec
 from typing import Any
-
 logger = logging.getLogger(__name__)
 
-
-@dataclass
+@dataclass(True)
 class RRFConfig:
     """Configuration for Reciprocal Rank Fusion"""
-    k: int = 60  # RRF constant (60 is empirically optimal)
+    k: int = 60
     max_results: int = 100
     min_score_threshold: float = 0.01
     deduplication: bool = True
-    dedup_threshold: float = 0.70
+    dedup_threshold: float = 0.7
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RankedResult:
     """Individual ranked result"""
     id: str
     title: str
     content: str
     url: str | None = None
-    source: str = "unknown"
+    source: str = 'unknown'
     score: float = 0.0
     rank: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -55,7 +49,6 @@ class RankedResult:
         if isinstance(other, RankedResult):
             return self.id == other.id
         return False
-
 
 class ReciprocalRankFusion:
     """
@@ -72,8 +65,9 @@ class ReciprocalRankFusion:
         ...     "web": web_results
         ... })
     """
+    __slots__ = tuple(('_source_stats', 'config'))
 
-    def __init__(self, config: RRFConfig | None = None):
+    def __init__(self, config: RRFConfig | None=None):
         self.config = config or RRFConfig()
         self._source_stats: dict[str, dict[str, Any]] = defaultdict(dict)
 
@@ -81,40 +75,31 @@ class ReciprocalRankFusion:
         """Generate unique ID for deduplication"""
         if result.url:
             return hashlib.md5(result.url.encode()).hexdigest()[:16]
-        content_hash = hashlib.md5(
-            f"{result.title}:{result.content[:200]}".encode()
-        ).hexdigest()[:16]
+        content_hash = hashlib.md5(f'{result.title}:{result.content[:200]}'.encode()).hexdigest()[:16]
         return content_hash
 
     def _normalize_text(self, text: str) -> str:
         """Normalize text for similarity comparison"""
         return ' '.join(text.lower().split())
 
-    def _calculate_similarity(
-        self, r1: RankedResult, r2: RankedResult, cache1: set[str] | None = None, cache2: set[str] | None = None
-    ) -> float:
+    def _calculate_similarity(self, r1: RankedResult, r2: RankedResult, cache1: set[str] | None=None, cache2: set[str] | None=None) -> float:
         """Calculate simple text similarity for deduplication.
 
         Uses pre-computed normalized token sets from cache when available.
         """
-        if r1.url and r2.url and r1.url == r2.url:
+        if r1.url and r2.url and (r1.url == r2.url):
             return 1.0
-
-        # Use cached normalized token sets if provided, otherwise compute
-        words1 = cache1 if cache1 is not None else set(self._normalize_text(r1.title + " " + r1.content[:300]).split())
-        words2 = cache2 if cache2 is not None else set(self._normalize_text(r2.title + " " + r2.content[:300]).split())
-
+        words1 = cache1 if cache1 is not None else set(self._normalize_text(r1.title + ' ' + r1.content[:300]).split())
+        words2 = cache2 if cache2 is not None else set(self._normalize_text(r2.title + ' ' + r2.content[:300]).split())
         if not words1 or not words2:
             return 0.0
-
         intersection = words1 & words2
         union = words1 | words2
-
         return len(intersection) / len(union) if union else 0.0
 
     def _normalize_and_tokenize(self, result: RankedResult) -> set[str]:
         """Pre-compute normalized token set for a result (used for dedup cache)."""
-        return set(self._normalize_text(result.title + " " + result.content[:300]).split())
+        return set(self._normalize_text(result.title + ' ' + result.content[:300]).split())
 
     def _remove_duplicates(self, results: list[RankedResult]) -> list[RankedResult]:
         """Remove near-duplicate results.
@@ -123,57 +108,40 @@ class ReciprocalRankFusion:
         """
         if not self.config.deduplication:
             return results
-
         unique_results: list[RankedResult] = []
-        unique_indices: list[int] = []  # Track original indices for cache lookup
-        # Pre-compute normalized token sets for all results upfront
+        unique_indices: list[int] = []
         token_cache: list[set[str] | None] = [None] * len(results)
         url_cache: list[str | None] = [None] * len(results)
         for i, result in enumerate(results):
             if result.url:
                 url_cache[i] = result.url
             token_cache[i] = self._normalize_and_tokenize(result)
-
         for i, result in enumerate(results):
             is_duplicate = False
             result_tokens = token_cache[i]
             result_url = url_cache[i]
-
             for uidx, existing in enumerate(unique_results):
                 existing_idx = unique_indices[uidx]
                 existing_url = url_cache[existing_idx]
-
-                # Early exit: exact URL match avoids the set ops entirely
-                if result_url and existing_url and result_url == existing_url:
+                if result_url and existing_url and (result_url == existing_url):
                     is_duplicate = True
                     existing.metadata.update(result.metadata)
                     if result.score > existing.score:
                         existing.score = result.score
                     break
-
-                similarity = self._calculate_similarity(
-                    result, existing,
-                    cache1=result_tokens,
-                    cache2=token_cache[existing_idx]
-                )
+                similarity = self._calculate_similarity(result, existing, cache1=result_tokens, cache2=token_cache[existing_idx])
                 if similarity >= self.config.dedup_threshold:
                     is_duplicate = True
                     existing.metadata.update(result.metadata)
                     if result.score > existing.score:
                         existing.score = result.score
                     break
-
             if not is_duplicate:
                 unique_results.append(result)
                 unique_indices.append(i)
-
         return unique_results
 
-    def fuse(
-        self,
-        source_results: dict[str, list[RankedResult]],
-        source_weights: dict[str, float] | None = None
-    ) -> list[RankedResult]:
+    def fuse(self, source_results: dict[str, list[RankedResult]], source_weights: dict[str, float] | None=None) -> list[RankedResult]:
         """
         Fuse results from multiple sources using RRF.
 
@@ -186,21 +154,15 @@ class ReciprocalRankFusion:
         """
         if not source_results:
             return []
-
         if source_weights is None:
             source_weights = dict.fromkeys(source_results, 1.0)
-
         result_scores: dict[str, tuple[RankedResult, float]] = {}
-
         for source, results in source_results.items():
             weight = source_weights.get(source, 1.0)
-
             for rank, result in enumerate(results, start=1):
                 result_id = self._generate_id(result)
                 result.id = result_id
-
                 rrf_score = weight * (1.0 / (self.config.k + rank))
-
                 if result_id in result_scores:
                     existing_result, existing_score = result_scores[result_id]
                     new_score = existing_score + rrf_score
@@ -209,38 +171,21 @@ class ReciprocalRankFusion:
                 else:
                     result.metadata['sources'] = [source]
                     result_scores[result_id] = (result, rrf_score)
-
-        sorted_results = sorted(
-            result_scores.values(),
-            key=lambda x: x[1],
-            reverse=True
-        )
-
+        sorted_results = sorted(result_scores.values(), key=lambda x: x[1], reverse=True)
         final_results: list[RankedResult] = []
         for rank, (result, score) in enumerate(sorted_results[:self.config.max_results], start=1):
             result.score = score
             result.rank = rank
             final_results.append(result)
-
         final_results = self._remove_duplicates(final_results)
-
-        logger.info(
-            f"RRF fusion complete: {len(source_results)} sources, "
-            f"{sum(len(r) for r in source_results.values())} input results, "
-            f"{len(final_results)} output results"
-        )
-
+        logger.info(f'RRF fusion complete: {len(source_results)} sources, {sum((len(r) for r in source_results.values()))} input results, {len(final_results)} output results')
         return final_results
 
     def get_source_statistics(self) -> dict[str, Any]:
         """Get statistics about recent fusion operations"""
         return dict(self._source_stats)
 
-
-def rrf_fuse(
-    ranked_lists: list[list[tuple[str, float]]],
-    k: int = 60
-) -> list[str]:
+def rrf_fuse(ranked_lists: list[list[tuple[str, float]]], k: int=60) -> list[str]:
     """
     Fuse multiple ranked lists using Reciprocal Rank Fusion.
 
@@ -265,31 +210,21 @@ def rrf_fuse(
     """
     if not ranked_lists:
         return []
-
-    # Accumulate RRF scores for each ID
     id_scores: dict[str, float] = defaultdict(float)
-
     for ranked_list in ranked_lists:
         if not ranked_lists:
             continue
         for rank, (doc_id, _) in enumerate(ranked_list, start=1):
             rrf_score = 1.0 / (k + rank)
             id_scores[doc_id] += rrf_score
-
-    # Sort by RRF score descending
     sorted_ids = sorted(id_scores.keys(), key=lambda x: id_scores[x], reverse=True)
-
     return sorted_ids
-
 
 class ScoreAggregator:
     """Aggregate scores from multiple sources with configurable weights."""
 
     @staticmethod
-    def weighted_average(
-        scores: dict[str, float],
-        weights: dict[str, float]
-    ) -> float:
+    def weighted_average(scores: dict[str, float], weights: dict[str, float]) -> float:
         """
         Calculate weighted average of scores.
 
@@ -302,12 +237,10 @@ class ScoreAggregator:
         """
         total_score = 0.0
         total_weight = 0.0
-
         for source, score in scores.items():
             weight = weights.get(source, 1.0)
             total_score += score * weight
             total_weight += weight
-
         return total_score / total_weight if total_weight > 0 else 0.0
 
     @staticmethod
@@ -320,13 +253,7 @@ class ScoreAggregator:
         """Get minimum score from all sources."""
         return min(scores.values()) if scores else 0.0
 
-
-# Convenience function
-def fuse_results(
-    source_results: dict[str, list[RankedResult]],
-    k: int = 60,
-    max_results: int = 100
-) -> list[RankedResult]:
+def fuse_results(source_results: dict[str, list[RankedResult]], k: int=60, max_results: int=100) -> list[RankedResult]:
     """
     Quick fusion of results from multiple sources.
 

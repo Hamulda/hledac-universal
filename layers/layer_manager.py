@@ -19,9 +19,6 @@ Usage:
     # Graceful shutdown
     await manager.shutdown_all()
 """
-
-
-
 import asyncio
 import gc
 import inspect
@@ -30,11 +27,8 @@ from dataclasses import dataclass
 import msgspec
 from enum import Enum
 from typing import Any
-
 logger = logging.getLogger(__name__)
 
-
-# M1 8GB Optimization: Context swap and memory management
 class M1MemoryOptimizer:
     """
     M1 MacBook Air 8GB RAM optimization utilities.
@@ -48,8 +42,9 @@ class M1MemoryOptimizer:
     - Memory pressure monitoring
     - Context swap between layers
     """
+    __slots__ = tuple(('_cache_clears', '_context_swaps', '_gc_count', 'memory_limit_mb'))
 
-    def __init__(self, memory_limit_mb: float = 5500):
+    def __init__(self, memory_limit_mb: float=5500):
         self.memory_limit_mb = memory_limit_mb
         self._gc_count = 0
         self._cache_clears = 0
@@ -58,34 +53,21 @@ class M1MemoryOptimizer:
     async def force_cleanup(self) -> dict[str, Any]:
         """Force aggressive memory cleanup."""
         import psutil
-
         before = psutil.virtual_memory().used / (1024 * 1024)
-
-        # 1. Clear MLX cache
         try:
             import mlx.core as mx
             mx.eval([])
             mx.clear_cache()
             self._cache_clears += 1
-            logger.debug("🧹 MLX cache cleared")
-        except Exception:  # noqa: BLE001
+            logger.debug('🧹 MLX cache cleared')
+        except Exception:
             pass
-
-        # 2. Force garbage collection
         gc.collect()
         self._gc_count += 1
-        logger.debug(f"🗑️ GC #{self._gc_count}")
-
-        # 3. Small delay for cleanup to take effect
+        logger.debug(f'🗑️ GC #{self._gc_count}')
         await asyncio.sleep(0.1)
-
         after = psutil.virtual_memory().used / (1024 * 1024)
-
-        return {
-            "memory_freed_mb": before - after,
-            "gc_count": self._gc_count,
-            "cache_clears": self._cache_clears,
-        }
+        return {'memory_freed_mb': before - after, 'gc_count': self._gc_count, 'cache_clears': self._cache_clears}
 
     def check_memory_pressure(self) -> bool:
         """Check if system is under memory pressure."""
@@ -105,53 +87,38 @@ class M1MemoryOptimizer:
             unload_layers: Layer names to unload
             load_layers: Layer names to load
         """
-        logger.info(f"🔄 Context swap: {unload_layers} → {load_layers}")
-
-        # Unload layers
+        logger.info(f'🔄 Context swap: {unload_layers} → {load_layers}')
         for layer_name in unload_layers:
             await self._unload_layer(layer_name)
-
-        # Aggressive cleanup
         await self.force_cleanup()
-
-        # Load new layers
         for layer_name in load_layers:
             await self._load_layer(layer_name)
-
         self._context_swaps += 1
-        logger.info(f"✅ Context swap complete (#{self._context_swaps})")
+        logger.info(f'✅ Context swap complete (#{self._context_swaps})')
 
     async def _unload_layer(self, layer_name: str) -> None:
         """Unload a layer to free memory."""
-        logger.debug(f"📤 Unloading layer: {layer_name}")
-        # Layer unloading is handled by the layer itself
-        await asyncio.sleep(0.05)  # Small delay for cleanup
+        logger.debug(f'📤 Unloading layer: {layer_name}')
+        await asyncio.sleep(0.05)
 
     async def _load_layer(self, layer_name: str) -> None:
         """Load a layer."""
-        logger.debug(f"📥 Loading layer: {layer_name}")
-        await asyncio.sleep(0.05)  # Small delay for initialization
+        logger.debug(f'📥 Loading layer: {layer_name}')
+        await asyncio.sleep(0.05)
 
     def get_stats(self) -> dict[str, Any]:
         """Get optimizer statistics."""
-        return {
-            "gc_count": self._gc_count,
-            "cache_clears": self._cache_clears,
-            "context_swaps": self._context_swaps,
-            "memory_limit_mb": self.memory_limit_mb,
-        }
-
+        return {'gc_count': self._gc_count, 'cache_clears': self._cache_clears, 'context_swaps': self._context_swaps, 'memory_limit_mb': self.memory_limit_mb}
 
 class LayerStatus(Enum):
     """Layer initialization status"""
-    UNINITIALIZED = "uninitialized"
-    INITIALIZING = "initializing"
-    READY = "ready"
-    ERROR = "error"
-    SHUTDOWN = "shutdown"
+    UNINITIALIZED = 'uninitialized'
+    INITIALIZING = 'initializing'
+    READY = 'ready'
+    ERROR = 'error'
+    SHUTDOWN = 'shutdown'
 
-
-@dataclass
+@dataclass(True)
 class LayerHealth:
     """Layer health status"""
     name: str
@@ -159,7 +126,6 @@ class LayerHealth:
     initialized: bool
     error_message: str | None = None
     metadata: dict[str, Any] | None = None
-
 
 class LayerManager:
     """
@@ -181,8 +147,9 @@ class LayerManager:
 
     Preserved For: legacy/autonomous_orchestrator.py, tests/scripts/docs only.
     """
+    __slots__ = tuple(('_async_method_cache', '_communication', '_content', '_ghost', '_ghost_director', '_ghost_director_initialized', '_layers', '_memory', '_memory_optimizer', '_privacy', '_research', '_security', '_status', '_stealth', 'config'))
 
-    def __init__(self, config: dict[str, Any] | None = None):
+    def __init__(self, config: dict[str, Any] | None=None):
         """
         Initialize LayerManager.
 
@@ -192,12 +159,7 @@ class LayerManager:
         self.config = config or {}
         self._layers: dict[str, Any] = {}
         self._status: dict[str, LayerStatus] = {}
-
-        # F272B: Cache inspect.iscoroutinefunction() results at registration time.
-        # Avoids O(n) type-check on every health_check() / cleanup() / context_swap() call.
         self._async_method_cache: dict[str, dict[str, bool]] = {}
-
-        # Lazy imports to avoid circular dependencies
         self._ghost = None
         self._memory = None
         self._security = None
@@ -213,18 +175,10 @@ class LayerManager:
         self._privacy = None
         self._communication = None
         self._content = None
-
-        # Shared GhostDirector singleton - prevents duplicate initialization
-        # between GhostLayer and ResearchLayer (M1 RAM optimization)
         self._ghost_director: Any | None = None
         self._ghost_director_initialized: bool = False
-
-        # M1 8GB Memory Optimizer
-        self._memory_optimizer = M1MemoryOptimizer(
-            memory_limit_mb=self.config.get('memory_limit_mb', 5500)
-        )
-
-        logger.info("LayerManager initialized (M1 8GB optimized)")
+        self._memory_optimizer = M1MemoryOptimizer(memory_limit_mb=self.config.get('memory_limit_mb', 5500))
+        logger.info('LayerManager initialized (M1 8GB optimized)')
 
     def _is_async(self, layer_name: str, method_name: str, obj: Any) -> bool:
         """
@@ -255,15 +209,11 @@ class LayerManager:
         if self._ghost_director is None:
             try:
                 from hledac.cortex.director import GhostDirector
-
-                self._ghost_director = GhostDirector(
-                    max_steps=20,
-                )
-                logger.info("✅ GhostDirector singleton created in LayerManager")
+                self._ghost_director = GhostDirector(max_steps=20)
+                logger.info('✅ GhostDirector singleton created in LayerManager')
             except ImportError as e:
-                logger.warning(f"⚠️ GhostDirector not available: {e}")
+                logger.warning(f'⚠️ GhostDirector not available: {e}')
                 return None
-
         return self._ghost_director
 
     async def initialize_ghost_director(self) -> bool:
@@ -275,18 +225,16 @@ class LayerManager:
         """
         if self._ghost_director_initialized:
             return True
-
         director = self.get_ghost_director()
         if director is None:
             return False
-
         try:
             await director.initialize_drivers()
             self._ghost_director_initialized = True
-            logger.info("✅ GhostDirector drivers initialized")
+            logger.info('✅ GhostDirector drivers initialized')
             return True
         except Exception as e:
-            logger.error(f"❌ GhostDirector initialization failed: {e}")
+            logger.error(f'❌ GhostDirector initialization failed: {e}')
             return False
 
     @property
@@ -294,7 +242,6 @@ class LayerManager:
         """Get or create ghost layer"""
         if self._ghost is None:
             from .ghost_layer import GhostLayer
-            # Pass shared GhostDirector reference to prevent duplicate initialization
             self._ghost = GhostLayer(ghost_director=self.get_ghost_director())
         return self._ghost
 
@@ -327,7 +274,6 @@ class LayerManager:
         """Get or create research layer"""
         if self._research is None:
             from .research_layer import ResearchLayer
-            # Pass shared GhostDirector reference to prevent duplicate initialization
             self._research = ResearchLayer(ghost_director=self.get_ghost_director())
         return self._research
 
@@ -337,7 +283,6 @@ class LayerManager:
         if self._privacy is None:
             from ..config import PrivacyConfig
             from .privacy_layer import PrivacyLayer
-            # Pass security layer for unified audit logging
             config = self.config.get('privacy', PrivacyConfig())
             self._privacy = PrivacyLayer(config=config, security_layer=self.security)
         return self._privacy
@@ -347,7 +292,6 @@ class LayerManager:
         """Get or create communication layer"""
         if self._communication is None:
             from .communication_layer import CommunicationConfig, CommunicationLayer
-            # Sprint 82M: Pass config to CommunicationLayer
             config = CommunicationConfig()
             self._communication = CommunicationLayer(config)
         return self._communication
@@ -378,59 +322,33 @@ class LayerManager:
         Returns:
             True if all layers initialized successfully
         """
-        initialization_order = [
-            ("ghost", self.ghost),
-            ("memory", self.memory),
-            ("security", self.security),
-            ("coordination", self.coordination),
-            ("stealth", self.stealth),
-            ("research", self.research),
-            ("privacy", self.privacy),
-            ("communication", self.communication),
-            ("content", self.content),
-        ]
-
+        initialization_order = [('ghost', self.ghost), ('memory', self.memory), ('security', self.security), ('coordination', self.coordination), ('stealth', self.stealth), ('research', self.research), ('privacy', self.privacy), ('communication', self.communication), ('content', self.content)]
         success = True
-
         for name, layer in initialization_order:
             try:
                 self._status[name] = LayerStatus.INITIALIZING
-                logger.info(f"Initializing layer: {name}")
-
-                # Check if layer has async initialize method (F272B: use cached check)
+                logger.info(f'Initializing layer: {name}')
                 if hasattr(layer, 'initialize') and self._is_async(name, 'initialize', layer):
                     await layer.initialize()
-                elif hasattr(layer, '_init_watchdog') and name == "coordination":
-                    # Special case for coordination layer
+                elif hasattr(layer, '_init_watchdog') and name == 'coordination':
                     layer._init_watchdog()
-
                 self._status[name] = LayerStatus.READY
                 self._layers[name] = layer
-
-                # F272B: Pre-populate async method cache for this layer.
-                # Caches initialize, get_stats, cleanup so hot paths avoid re-inspecting.
-                for method_name in ("initialize", "get_stats", "cleanup"):
+                for method_name in ('initialize', 'get_stats', 'cleanup'):
                     self._is_async(name, method_name, layer)
-
-                logger.info(f"Layer ready: {name}")
-
-                # M1 8GB: Force cleanup after heavy layers
-                if name in ["research", "ghost", "memory"]:
+                logger.info(f'Layer ready: {name}')
+                if name in ['research', 'ghost', 'memory']:
                     cleanup = await self._memory_optimizer.force_cleanup()
                     logger.debug(f"Post-{name} cleanup: {cleanup['memory_freed_mb']:.1f}MB freed")
-
             except Exception as e:
                 self._status[name] = LayerStatus.ERROR
-                logger.error(f"Layer initialization failed: {name} - {e}")
+                logger.error(f'Layer initialization failed: {name} - {e}')
                 success = False
-
-                # M1-specific: continue with degraded mode if non-critical layer fails
-                if name in ["research", "content"]:
-                    logger.warning(f"Non-critical layer {name} failed, continuing in degraded mode")
+                if name in ['research', 'content']:
+                    logger.warning(f'Non-critical layer {name} failed, continuing in degraded mode')
                     success = True
                 else:
                     break
-
         return success
 
     async def health_check(self) -> dict[str, LayerHealth]:
@@ -441,38 +359,21 @@ class LayerManager:
             Dictionary of layer health statuses
         """
         health = {}
-
         for name, layer in self._layers.items():
             try:
                 status = self._status.get(name, LayerStatus.UNINITIALIZED)
-
-                # Get layer-specific health info
                 metadata = {}
                 if hasattr(layer, 'get_stats'):
                     try:
-                        # F272B: Use cached async check instead of inspect on every call.
                         if self._is_async(name, 'get_stats', layer):
                             metadata = await layer.get_stats()
                         else:
                             metadata = layer.get_stats()
                     except Exception as e:
-                        metadata = {"error": str(e)}
-
-                health[name] = LayerHealth(
-                    name=name,
-                    status=status,
-                    initialized=status == LayerStatus.READY,
-                    metadata=metadata
-                )
-
+                        metadata = {'error': str(e)}
+                health[name] = LayerHealth(name=name, status=status, initialized=status == LayerStatus.READY, metadata=metadata)
             except Exception as e:
-                health[name] = LayerHealth(
-                    name=name,
-                    status=LayerStatus.ERROR,
-                    initialized=False,
-                    error_message=str(e)
-                )
-
+                health[name] = LayerHealth(name=name, status=LayerStatus.ERROR, initialized=False, error_message=str(e))
         return health
 
     def get_layer(self, name: str) -> Any | None:
@@ -500,44 +401,32 @@ class LayerManager:
         Returns:
             True if context swap successful
         """
-        logger.info(f"🔄 Context swap: active layers = {active_layers}")
-
-        # Determine layers to unload/load
-        current_active = [name for name, status in self._status.items()
-                         if status == LayerStatus.READY]
+        logger.info(f'🔄 Context swap: active layers = {active_layers}')
+        current_active = [name for name, status in self._status.items() if status == LayerStatus.READY]
         to_unload = [name for name in current_active if name not in active_layers]
         to_load = [name for name in active_layers if name not in current_active]
-
-        # Perform context swap via optimizer
         await self._memory_optimizer.context_swap(to_unload, to_load)
-
-        # Update layer statuses
         for name in to_unload:
             if name in self._layers:
                 layer = self._layers[name]
-                # F272B: Use cached async check.
                 if hasattr(layer, 'cleanup') and self._is_async(name, 'cleanup', layer):
                     try:
                         await layer.cleanup()
                     except Exception as e:
-                        logger.warning(f"Layer cleanup failed: {name} - {e}")
+                        logger.warning(f'Layer cleanup failed: {name} - {e}')
                 self._status[name] = LayerStatus.SHUTDOWN
-
         for name in to_load:
             if name not in self._layers:
-                # Initialize layer
                 layer = getattr(self, name)
-                # F272B: Use cached async check.
                 if hasattr(layer, 'initialize') and self._is_async(name, 'initialize', layer):
                     try:
                         await layer.initialize()
                         self._status[name] = LayerStatus.READY
                         self._layers[name] = layer
                     except Exception as e:
-                        logger.error(f"Layer initialization failed: {name} - {e}")
+                        logger.error(f'Layer initialization failed: {name} - {e}')
                         self._status[name] = LayerStatus.ERROR
-
-        logger.info("✅ Context swap complete")
+        logger.info('✅ Context swap complete')
         return True
 
     async def force_memory_cleanup(self) -> dict[str, Any]:
@@ -565,42 +454,23 @@ class LayerManager:
         Returns:
             True if all layers shutdown successfully
         """
-        shutdown_order = [
-            "content",
-            "communication",
-            "privacy",
-            "research",
-            "stealth",
-            "coordination",
-            "security",
-            "memory",
-            "ghost",
-        ]
-
+        shutdown_order = ['content', 'communication', 'privacy', 'research', 'stealth', 'coordination', 'security', 'memory', 'ghost']
         success = True
-
         for name in shutdown_order:
             if name not in self._layers:
                 continue
-
             try:
                 layer = self._layers[name]
-                logger.info(f"Shutting down layer: {name}")
-
-                # Check if layer has cleanup method (F272B: use cached async check)
+                logger.info(f'Shutting down layer: {name}')
                 if hasattr(layer, 'cleanup') and self._is_async(name, 'cleanup', layer):
                     await layer.cleanup()
-                # MemoryLayer: call shutdown() which handles RAMDiskManager cleanup
-                if name == "memory" and hasattr(layer, 'shutdown'):
+                if name == 'memory' and hasattr(layer, 'shutdown'):
                     layer.shutdown()
-
                 self._status[name] = LayerStatus.SHUTDOWN
-                logger.info(f"Layer shutdown: {name}")
-
+                logger.info(f'Layer shutdown: {name}')
             except Exception as e:
-                logger.error(f"Layer shutdown failed: {name} - {e}")
+                logger.error(f'Layer shutdown failed: {name} - {e}')
                 success = False
-
         return success
 
     def get_summary(self) -> dict[str, Any]:
@@ -610,31 +480,12 @@ class LayerManager:
         Returns:
             Summary dictionary with layer statuses
         """
-        return {
-            "total_layers": len(self._layers),
-            "ready": sum(1 for s in self._status.values() if s == LayerStatus.READY),
-            "errors": sum(1 for s in self._status.values() if s == LayerStatus.ERROR),
-            "uninitialized": sum(1 for s in self._status.values() if s == LayerStatus.UNINITIALIZED),
-            "layers": {
-                name: {
-                    "status": status.value,
-                    "initialized": status == LayerStatus.READY
-                }
-                for name, status in self._status.items()
-            },
-            "m1_optimizer": self._memory_optimizer.get_stats(),
-        }
+        return {'total_layers': len(self._layers), 'ready': sum((1 for s in self._status.values() if s == LayerStatus.READY)), 'errors': sum((1 for s in self._status.values() if s == LayerStatus.ERROR)), 'uninitialized': sum((1 for s in self._status.values() if s == LayerStatus.UNINITIALIZED)), 'layers': {name: {'status': status.value, 'initialized': status == LayerStatus.READY} for name, status in self._status.items()}, 'm1_optimizer': self._memory_optimizer.get_stats()}
 
-
-# Convenience factory function
-def create_layer_manager(config: dict[str, Any] | None = None) -> LayerManager:
+def create_layer_manager(config: dict[str, Any] | None=None) -> LayerManager:
     """Factory function to create LayerManager"""
     return LayerManager(config)
-
-
-# Singleton instance for application-wide use
 _layer_manager_instance: LayerManager | None = None
-
 
 def get_layer_manager() -> LayerManager:
     """Get or create global LayerManager instance"""
@@ -642,11 +493,6 @@ def get_layer_manager() -> LayerManager:
     if _layer_manager_instance is None:
         _layer_manager_instance = LayerManager()
     return _layer_manager_instance
-
-
-# =============================================================================
-# UNIFIED CAPABILITIES MANAGER - All Tools & Coordinators in One Place
-# =============================================================================
 
 class UnifiedCapabilitiesManager:
     """
@@ -659,8 +505,9 @@ class UnifiedCapabilitiesManager:
 
     This is the single entry point for accessing any system capability.
     """
+    __slots__ = tuple(('_coordinators', '_initialized', '_utils', 'layers'))
 
-    def __init__(self, layer_manager: LayerManager | None = None):
+    def __init__(self, layer_manager: LayerManager | None=None):
         self.layers = layer_manager or get_layer_manager()
         self._coordinators: dict[str, Any] = {}
         self._utils: dict[str, Any] = {}
@@ -670,20 +517,12 @@ class UnifiedCapabilitiesManager:
         """Initialize all capabilities"""
         if self._initialized:
             return True
-
-        logger.info("🚀 Initializing Unified Capabilities Manager...")
-
-        # 1. Initialize all layers
+        logger.info('🚀 Initializing Unified Capabilities Manager...')
         await self.layers.initialize_all()
-
-        # 2. Initialize coordinators through coordination layer
         await self._init_coordinators()
-
-        # 3. Initialize utils
         await self._init_utils()
-
         self._initialized = True
-        logger.info("✅ Unified Capabilities Manager ready")
+        logger.info('✅ Unified Capabilities Manager ready')
         return True
 
     async def _init_coordinators(self) -> None:
@@ -692,9 +531,9 @@ class UnifiedCapabilitiesManager:
             coord_layer = self.layers.coordination
             if hasattr(coord_layer, 'initialize'):
                 await coord_layer.initialize()
-                logger.info("✅ Coordinators initialized via CoordinationLayer")
+                logger.info('✅ Coordinators initialized via CoordinationLayer')
         except Exception as e:
-            logger.warning(f"Coordinator initialization: {e}")
+            logger.warning(f'Coordinator initialization: {e}')
 
     async def _init_utils(self) -> None:
         """Initialize utility components"""
@@ -703,17 +542,13 @@ class UnifiedCapabilitiesManager:
             from ..utils.language import LanguageDetector
             from ..utils.query_expansion import QueryExpander
             from ..utils.ranking import ReciprocalRankFusion
-
             self._utils['query_expander'] = QueryExpander()
             self._utils['ranking'] = ReciprocalRankFusion()
             self._utils['cache'] = IntelligentCache()
             self._utils['language_detector'] = LanguageDetector()
-
-            logger.info(f"✅ Utils initialized: {list(self._utils.keys())}")
+            logger.info(f'✅ Utils initialized: {list(self._utils.keys())}')
         except Exception as e:
-            logger.warning(f"Utils initialization: {e}")
-
-    # === LAYER ACCESS ===
+            logger.warning(f'Utils initialization: {e}')
 
     @property
     def ghost(self) -> Any:
@@ -760,8 +595,6 @@ class UnifiedCapabilitiesManager:
         """Content layer with HTML cleaning"""
         return self.layers.content
 
-    # === COORDINATOR ACCESS ===
-
     def get_coordinator(self, name: str) -> Any | None:
         """Get coordinator by name"""
         return self._coordinators.get(name)
@@ -774,7 +607,7 @@ class UnifiedCapabilitiesManager:
                 from ..coordinators.agent_coordination_engine import AgentCoordinationEngine
                 self._coordinators['agent'] = AgentCoordinationEngine()
             except Exception as e:
-                logger.debug(f"Agent coordination not available: {e}")
+                logger.debug(f'Agent coordination not available: {e}')
         return self._coordinators.get('agent')
 
     @property
@@ -785,7 +618,7 @@ class UnifiedCapabilitiesManager:
                 from ..coordinators.research_optimizer import ResearchOptimizer
                 self._coordinators['optimizer'] = ResearchOptimizer()
             except Exception as e:
-                logger.debug(f"Research optimizer not available: {e}")
+                logger.debug(f'Research optimizer not available: {e}')
         return self._coordinators.get('optimizer')
 
     @property
@@ -796,7 +629,7 @@ class UnifiedCapabilitiesManager:
                 from ..coordinators.privacy_enhanced_research import PrivacyEnhancedResearch
                 self._coordinators['privacy'] = PrivacyEnhancedResearch()
             except Exception as e:
-                logger.debug(f"Privacy enhanced not available: {e}")
+                logger.debug(f'Privacy enhanced not available: {e}')
         return self._coordinators.get('privacy')
 
     @property
@@ -807,7 +640,7 @@ class UnifiedCapabilitiesManager:
                 from ..coordinators.execution_coordinator import UniversalExecutionCoordinator
                 self._coordinators['execution'] = UniversalExecutionCoordinator()
             except Exception as e:
-                logger.debug(f"Execution coordinator not available: {e}")
+                logger.debug(f'Execution coordinator not available: {e}')
         return self._coordinators.get('execution')
 
     @property
@@ -818,7 +651,7 @@ class UnifiedCapabilitiesManager:
                 from ..coordinators.memory_coordinator import UniversalMemoryCoordinator
                 self._coordinators['memory_coord'] = UniversalMemoryCoordinator()
             except Exception as e:
-                logger.debug(f"Memory coordinator not available: {e}")
+                logger.debug(f'Memory coordinator not available: {e}')
         return self._coordinators.get('memory_coord')
 
     @property
@@ -829,7 +662,7 @@ class UnifiedCapabilitiesManager:
                 from ..coordinators.security_coordinator import UniversalSecurityCoordinator
                 self._coordinators['security_coord'] = UniversalSecurityCoordinator()
             except Exception as e:
-                logger.debug(f"Security coordinator not available: {e}")
+                logger.debug(f'Security coordinator not available: {e}')
         return self._coordinators.get('security_coord')
 
     @property
@@ -840,10 +673,8 @@ class UnifiedCapabilitiesManager:
                 from ..coordinators.monitoring_coordinator import UniversalMonitoringCoordinator
                 self._coordinators['monitoring'] = UniversalMonitoringCoordinator()
             except Exception as e:
-                logger.debug(f"Monitoring coordinator not available: {e}")
+                logger.debug(f'Monitoring coordinator not available: {e}')
         return self._coordinators.get('monitoring')
-
-    # === UTILS ACCESS ===
 
     @property
     def query_expander(self) -> Any | None:
@@ -865,8 +696,6 @@ class UnifiedCapabilitiesManager:
         """Language detection"""
         return self._utils.get('language_detector')
 
-    # === KNOWLEDGE ACCESS ===
-
     @property
     def rag(self) -> Any | None:
         """RAG engine"""
@@ -876,7 +705,7 @@ class UnifiedCapabilitiesManager:
                 self._coordinators['rag'] = RAGEngine()
             return self._coordinators['rag']
         except Exception as e:
-            logger.debug(f"RAG not available: {e}")
+            logger.debug(f'RAG not available: {e}')
             return None
 
     @property
@@ -888,51 +717,27 @@ class UnifiedCapabilitiesManager:
                 self._coordinators['kg'] = AtomicJSONKnowledgeGraph()
             return self._coordinators['kg']
         except Exception as e:
-            logger.debug(f"Knowledge graph not available: {e}")
+            logger.debug(f'Knowledge graph not available: {e}')
             return None
-
-    # === HEALTH & STATUS ===
 
     async def health_check(self) -> dict[str, Any]:
         """Comprehensive health check of all capabilities"""
         layer_health = await self.layers.health_check()
-
-        return {
-            "layers": layer_health,
-            "coordinators": {
-                name: "available" if coord is not None else "unavailable"
-                for name, coord in self._coordinators.items()
-            },
-            "utils": list(self._utils.keys()),
-            "overall_status": "healthy" if all(
-                h.status == LayerStatus.READY for h in layer_health.values()
-            ) else "degraded"
-        }
+        return {'layers': layer_health, 'coordinators': {name: 'available' if coord is not None else 'unavailable' for name, coord in self._coordinators.items()}, 'utils': list(self._utils.keys()), 'overall_status': 'healthy' if all((h.status == LayerStatus.READY for h in layer_health.values())) else 'degraded'}
 
     def get_capabilities_summary(self) -> dict[str, list[str]]:
         """Get summary of all available capabilities"""
-        return {
-            "layers": ["ghost", "memory", "security", "stealth", "research",
-                      "privacy", "coordination", "communication", "content"],
-            "coordinators": list(self._coordinators.keys()),
-            "utils": list(self._utils.keys()),
-        }
+        return {'layers': ['ghost', 'memory', 'security', 'stealth', 'research', 'privacy', 'coordination', 'communication', 'content'], 'coordinators': list(self._coordinators.keys()), 'utils': list(self._utils.keys())}
 
     async def cleanup(self) -> None:
         """Cleanup all capabilities"""
         await self.layers.shutdown_all()
         self._initialized = False
 
-
-# Factory function
-def create_capabilities_manager(layer_manager: LayerManager | None = None) -> UnifiedCapabilitiesManager:
+def create_capabilities_manager(layer_manager: LayerManager | None=None) -> UnifiedCapabilitiesManager:
     """Create unified capabilities manager"""
     return UnifiedCapabilitiesManager(layer_manager)
-
-
-# Singleton
 _capabilities_manager_instance: UnifiedCapabilitiesManager | None = None
-
 
 def get_capabilities_manager() -> UnifiedCapabilitiesManager:
     """Get or create global capabilities manager"""

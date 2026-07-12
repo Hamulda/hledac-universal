@@ -9,32 +9,15 @@ Sprint F195C — Stealth layer unification:
 This is the canonical stealth surface used by fetching/public_fetcher.py.
 Always-on, bounded, fail-safe.
 """
-
-
 import asyncio
 import random
 from dataclasses import dataclass, field
 import msgspec
-
-# ---------------------------------------------------------------------------
-# UA pool — rotatable, testable
-# ---------------------------------------------------------------------------
-_STEALTH_UA_POOL: tuple[str, ...] = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",  # noqa: E501
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",  # noqa: E501
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",  # noqa: E501
-)
-
+_STEALTH_UA_POOL: tuple[str, ...] = ('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36')
 _JITTER_MIN_S: float = 0.05
 _JITTER_MAX_S: float = 0.5
 
-
-# ---------------------------------------------------------------------------
-# StealthResponse DTO
-# ---------------------------------------------------------------------------
-@dataclass
+@dataclass(True)
 class StealthResponse:
     """Response from stealth HTTP request."""
     status: int
@@ -48,10 +31,6 @@ class StealthResponse:
     def success(self) -> bool:
         return 200 <= self.status < 300
 
-
-# ---------------------------------------------------------------------------
-# Canonical StealthSession
-# ---------------------------------------------------------------------------
 class StealthSession:
     """
     Lightweight stealth session for public fetching.
@@ -63,14 +42,9 @@ class StealthSession:
 
     Used by fetching/public_fetcher.py as the canonical stealth surface.
     """
+    __slots__ = tuple(('_closed', '_jitter_max', '_jitter_min', '_request_count', '_ua_index', '_ua_pool'))
 
-    def __init__(
-        self,
-        *,
-        ua_pool: tuple[str, ...] = _STEALTH_UA_POOL,
-        jitter_min: float = _JITTER_MIN_S,
-        jitter_max: float = _JITTER_MAX_S,
-    ) -> None:
+    def __init__(self, *, ua_pool: tuple[str, ...]=_STEALTH_UA_POOL, jitter_min: float=_JITTER_MIN_S, jitter_max: float=_JITTER_MAX_S) -> None:
         self._ua_pool = ua_pool
         self._ua_index: int = 0
         self._jitter_min = jitter_min
@@ -78,9 +52,6 @@ class StealthSession:
         self._closed: bool = False
         self._request_count: int = 0
 
-    # -------------------------------------------------------------------------
-    # UA rotation — testable
-    # -------------------------------------------------------------------------
     def get_random_ua(self) -> str:
         """Return a random UA from the pool (testable)."""
         return random.choice(self._ua_pool)
@@ -101,9 +72,6 @@ class StealthSession:
         """Number of UAs in the pool (for testing)."""
         return len(self._ua_pool)
 
-    # -------------------------------------------------------------------------
-    # Timing variance — jitter
-    # -------------------------------------------------------------------------
     async def apply_jitter(self) -> float:
         """
         Apply random jitter before request (anti-correlation).
@@ -119,9 +87,6 @@ class StealthSession:
         """Return (min, max) jitter range (for testing)."""
         return (self._jitter_min, self._jitter_max)
 
-    # -------------------------------------------------------------------------
-    # Session lifecycle
-    # -------------------------------------------------------------------------
     @property
     def is_closed(self) -> bool:
         return self._closed
@@ -136,17 +101,5 @@ class StealthSession:
         self._request_count = 0
 
     def __repr__(self) -> str:
-        return (
-            f"StealthSession(ua_pool_size={len(self._ua_pool)}, "
-            f"ua_index={self._ua_index}, jitter=({self._jitter_min}, {self._jitter_max}), "
-            f"closed={self._closed})"
-        )
-
-
-# ---------------------------------------------------------------------------
-# Canonical exports
-# ---------------------------------------------------------------------------
-__all__ = [
-    "StealthSession",
-    "StealthResponse",
-]
+        return f'StealthSession(ua_pool_size={len(self._ua_pool)}, ua_index={self._ua_index}, jitter=({self._jitter_min}, {self._jitter_max}), closed={self._closed})'
+__all__ = ['StealthSession', 'StealthResponse']

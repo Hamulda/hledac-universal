@@ -3,20 +3,14 @@ Async Generators Pipeline Utilities — F275
 
 Modern streaming pipeline pro M1 8GB: constant memory místo list accumulation.
 """
-
-
-
 import asyncio
 from utils.async_helpers import safe_create_task, safe_gather_ok
 import inspect
 import typing
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable
 from dataclasses import dataclass
-
-# type aliases pro clarity
-T = typing.TypeVar("T", default=object)
-R = typing.TypeVar("R", default=object)
-
+T = typing.TypeVar('T', default=object)
+R = typing.TypeVar('R', default=object)
 
 @dataclass(frozen=True, slots=True)
 class BatchStats:
@@ -25,11 +19,7 @@ class BatchStats:
     batches_yielded: int = 0
     items_filtered: int = 0
 
-
-async def async_batched[T](
-    source: AsyncIterator[T],
-    batch_size: int = 1024,
-) -> AsyncGenerator[list[T]]:
+async def async_batched[T](source: AsyncIterator[T], batch_size: int=1024) -> AsyncGenerator[list[T]]:
     """
     Yield items from async iterator as bounded batches.
 
@@ -43,23 +33,15 @@ async def async_batched[T](
         Batches of items (list[T])
     """
     batch: list[T] = []
-
     async for item in source:
         batch.append(item)
-
         if len(batch) >= batch_size:
             yield batch
             batch = []
-
     if batch:
         yield batch
 
-
-async def async_transform[T, R](
-    source: AsyncIterator[T],
-    transform: Callable[[T], R | Awaitable[R]],
-    concurrency: int = 1,
-) -> AsyncGenerator[R]:
+async def async_transform[T, R](source: AsyncIterator[T], transform: Callable[[T], R | Awaitable[R]], concurrency: int=1) -> AsyncGenerator[R]:
     """
     Transform items from async iterator through async function.
 
@@ -88,36 +70,25 @@ async def async_transform[T, R](
                 val = transform(item)
                 if isinstance(val, Awaitable):
                     return await val
-                return val  # type: ignore[return-value]
-
+                return val
         async for item in source:
             task = safe_create_task(transform_with_sem(item))
             pending.append(task)
-
             if len(pending) >= concurrency:
-                done, pending_set = await asyncio.wait(
-                    pending,
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
+                done, pending_set = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
                 pending = list(pending_set)
                 for d in done:
                     try:
                         yield d.result()
-                    except Exception:  # noqa: BLE001
+                    except Exception:
                         pass
-
         if pending:
-            # F314: migrated asyncio.gather -> safe_gather_ok
-            results = await safe_gather_ok(*pending, label="async_generators:pending")
+            results = await safe_gather_ok(*pending, label='async_generators:pending')
             for r in results:
                 if not isinstance(r, Exception):
                     yield r
 
-
-async def async_filter[T](
-    source: AsyncIterator[T],
-    predicate: Callable[[T], bool | Awaitable[bool]],
-) -> AsyncGenerator[T]:
+async def async_filter[T](source: AsyncIterator[T], predicate: Callable[[T], bool | Awaitable[bool]]) -> AsyncGenerator[T]:
     """
     Filter items from async iterator through async predicate.
 
@@ -133,14 +104,10 @@ async def async_filter[T](
             keep = await predicate(item)
         else:
             keep = predicate(item)
-
         if keep:
             yield item
 
-
-async def async_flatmap[T](
-    source: AsyncIterator[Iterable[T] | AsyncIterator[T]],
-) -> AsyncGenerator[T]:
+async def async_flatmap[T](source: AsyncIterator[Iterable[T] | AsyncIterator[T]]) -> AsyncGenerator[T]:
     """
     Flatten nested iterables/iterators into single async generator.
 
@@ -152,19 +119,13 @@ async def async_flatmap[T](
     """
     async for item in source:
         if inspect.isasyncgen(item):
-            async for subitem in item:  # type: ignore[arg-type]
+            async for subitem in item:
                 yield subitem
         elif isinstance(item, (list, tuple)):
             for subitem in item:
                 yield subitem
 
-
-async def async_chunked_pipeline[T, R](
-    source: AsyncIterator[T],
-    processor: Callable[[list[T]], Awaitable[list[R]]],
-    batch_size: int = 1024,
-    max_pending_batches: int = 2,
-) -> AsyncGenerator[list[R], BatchStats]:
+async def async_chunked_pipeline[T, R](source: AsyncIterator[T], processor: Callable[[list[T]], Awaitable[list[R]]], batch_size: int=1024, max_pending_batches: int=2) -> AsyncGenerator[list[R], BatchStats]:
     """
     Pipeline: batch source items, process with async function, yield results.
 
@@ -184,9 +145,6 @@ async def async_chunked_pipeline[T, R](
         Lists of processed results
     """
     stats = BatchStats()
-
-    # Simple approach: batch source, then process each batch sequentially
-    # For concurrent processing, use async_transform on the batch generator
     async for batch_items in async_batched(source, batch_size):
         try:
             results = await processor(batch_items)
@@ -195,17 +153,7 @@ async def async_chunked_pipeline[T, R](
         except Exception:
             yield []
 
-
-# ============================================================================
-# F275: Specific pipeline adapters for SprintScheduler -> DuckDB flow
-# ============================================================================
-
-async def findings_to_duckdb_pipeline(
-    findings_source: AsyncIterator[dict],
-    duckdb_store,
-    batch_size: int = 1024,
-    max_pending: int = 2,
-) -> AsyncGenerator[list[dict], BatchStats]:
+async def findings_to_duckdb_pipeline(findings_source: AsyncIterator[dict], duckdb_store, batch_size: int=1024, max_pending: int=2) -> AsyncGenerator[list[dict], BatchStats]:
     """
     F275 canonical pipeline: Stream findings to DuckDB with quality gate.
 
@@ -220,26 +168,17 @@ async def findings_to_duckdb_pipeline(
     Yields:
         Lists of ingest results
     """
+
     async def process_batch(findings: list[dict]) -> list[dict]:
         return await duckdb_store.async_ingest_findings_batch(findings)
-
-    async for batch_results in async_chunked_pipeline(
-        findings_source,
-        process_batch,
-        batch_size=batch_size,
-        max_pending_batches=max_pending,
-    ):
+    async for batch_results in async_chunked_pipeline(findings_source, process_batch, batch_size=batch_size, max_pending_batches=max_pending):
         yield batch_results
-
-
-# ============================================================================
-# Backpressure helpers
-# ============================================================================
 
 class BackpressureMonitor:
     """Monitor for async generator backpressure."""
+    __slots__ = tuple(('max_pending', 'name', 'pending_count', 'total_processed'))
 
-    def __init__(self, name: str = "unknown"):
+    def __init__(self, name: str='unknown'):
         self.name = name
         self.pending_count = 0
         self.max_pending = 0
@@ -261,4 +200,4 @@ class BackpressureMonitor:
         return self.pending_count / self.max_pending
 
     def __repr__(self) -> str:
-        return f"<BackpressureMonitor {self.name} pending={self.pending_count} max={self.max_pending}>"
+        return f'<BackpressureMonitor {self.name} pending={self.pending_count} max={self.max_pending}>'

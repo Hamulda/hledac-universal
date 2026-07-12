@@ -25,9 +25,6 @@ Integration:
 M1 8GB: All heavy dependencies are lazy-loaded inside enrichment methods.
 RAM guard via ResourceGovernor.reserve(). Heavy path blocked when UMA is tight.
 """
-
-
-
 import asyncio
 import hashlib
 import logging
@@ -35,20 +32,14 @@ import time as _time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-
 from hledac.universal.utils.async_helpers import safe_gather_ok
 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-
 if TYPE_CHECKING:
     from knowledge.duckdb_store import CanonicalFinding
-
 log = logging.getLogger(__name__)
-
-# Lazy-loaded modules
 _VisionEncoder: type | None = None
 _MambaFusion: type | None = None
 _MOBILECLIP_AVAILABLE = False
-
 
 def _lazy_load_modules() -> None:
     """Load multimodal modules lazily on first use."""
@@ -56,62 +47,39 @@ def _lazy_load_modules() -> None:
     global _PdfReader, _PYPDF2_AVAILABLE, _PIL_AVAILABLE
     if _VisionEncoder is not None:
         return
-
-
     try:
         from multimodal.vision_encoder import VisionEncoder
         _VisionEncoder = VisionEncoder
     except ImportError:
         _VisionEncoder = None
-
     try:
         from multimodal.fusion import MambaFusion
         _MambaFusion = MambaFusion
     except ImportError:
         _MambaFusion = None
-
-
     try:
-        import mobileclip  # noqa: F401
+        import mobileclip
         _MOBILECLIP_AVAILABLE = True
     except ImportError:
         _MOBILECLIP_AVAILABLE = False
-
-    # PDF extraction — lazy, M1-safe
     try:
-        import PyPDF2  # noqa: F401
+        import PyPDF2
         _PdfReader = PyPDF2.PdfReader
         _PYPDF2_AVAILABLE = True
     except ImportError:
         _PdfReader = None
         _PYPDF2_AVAILABLE = False
-
-    # Image extraction via PIL
     try:
-        from PIL import Image  # noqa: F401  # PIL.Image
+        from PIL import Image
         _PIL_AVAILABLE = True
     except ImportError:
         _PIL_AVAILABLE = False
-
-
-# Supported file extensions for multimodal enrichment
-_SUPPORTED_EXTENSIONS = {
-    ".jpg", ".jpeg", ".png", ".tiff", ".tif", ".bmp", ".gif", ".webp",
-    ".pdf",
-}
-
-# Document source type for CanonicalFindings produced by DocumentExtractor
-_DOCUMENT_SOURCE_TYPE = "document"
-
-# Max envelope size for triage envelope (same as F202A evidence envelope)
+_SUPPORTED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.tiff', '.tif', '.bmp', '.gif', '.webp', '.pdf'}
+_DOCUMENT_SOURCE_TYPE = 'document'
 _MAX_ENVELOPE_SIZE = 4098
-
-
-# Lazy-loaded document extraction modules
 _PdfReader: type | None = None
 _PYPDF2_AVAILABLE = False
 _PIL_AVAILABLE = False
-
 
 def _extract_file_path_from_payload(payload_text: str | None) -> str | None:
     """
@@ -124,39 +92,28 @@ def _extract_file_path_from_payload(payload_text: str | None) -> str | None:
     """
     if not payload_text:
         return None
-
-    if payload_text.startswith("file://"):
+    if payload_text.startswith('file://'):
         path_str = payload_text[7:]
-        path_str = path_str.split("?")[0].split("#")[0]
+        path_str = path_str.split('?')[0].split('#')[0]
         path = Path(path_str)
         if path.exists() and path.is_file():
             return str(path)
-
     path = Path(payload_text)
     if not path.is_absolute():
         path = Path.cwd() / path
     if path.exists() and path.is_file():
         return str(path)
-
-    clean = payload_text.split("?")[0].split("#")[0]
+    clean = payload_text.split('?')[0].split('#')[0]
     if clean != payload_text:
         return _extract_file_path_from_payload(clean)
-
     return None
-
 
 def _file_has_multimodal_support(file_path: str) -> bool:
     """Check if file extension is supported by multimodal enrichment."""
     ext = Path(file_path).suffix.lower()
     return ext in _SUPPORTED_EXTENSIONS
 
-
-def _build_document_envelope(
-    text_content: str | None,
-    triage_facets: dict[str, Any],
-    file_path: str,
-    file_type: str,
-) -> str:
+def _build_document_envelope(text_content: str | None, triage_facets: dict[str, Any], file_path: str, file_type: str) -> str:
     """
     Build an evidence envelope JSON for document findings with triage facets.
 
@@ -177,45 +134,15 @@ def _build_document_envelope(
     """
     try:
         import json
-        envelope = {
-            "audit_reason": f"document_triage:{file_type}",
-            "evidence_pointers": [file_path],
-            "signal_facets": {
-                "file_type": file_type,
-                "has_text": bool(text_content),
-                "text_len": len(text_content) if text_content else 0,
-                "triage_complete": triage_facets.get("triage_complete", False),
-            },
-            "suggested_pivots": [
-                {"type": "document_metadata", "query": "document author/title"},
-                {"type": "image_geolocation", "query": "GPS coordinates"},
-                {"type": "embedded_iocs", "query": "URLs/domains in document"},
-            ],
-            # F202I triage facets
-            "triage": {
-                "title": triage_facets.get("title"),
-                "author": triage_facets.get("author"),
-                "exif": triage_facets.get("exif", {}),
-                "gps": triage_facets.get("gps", {}),
-                "ocr_snippets": triage_facets.get("ocr_snippets", []),
-                "file_hashes": triage_facets.get("file_hashes", {}),
-                "embedded_urls": triage_facets.get("embedded_urls", []),
-                "embedded_domains": triage_facets.get("embedded_domains", []),
-            },
-            "content_preview": (text_content[:1000] + "...") if text_content and len(text_content) > 1000 else (text_content or ""),  # noqa: E501
-        }
-
-        json_text = json.dumps(envelope, separators=(",", ":"))
+        envelope = {'audit_reason': f'document_triage:{file_type}', 'evidence_pointers': [file_path], 'signal_facets': {'file_type': file_type, 'has_text': bool(text_content), 'text_len': len(text_content) if text_content else 0, 'triage_complete': triage_facets.get('triage_complete', False)}, 'suggested_pivots': [{'type': 'document_metadata', 'query': 'document author/title'}, {'type': 'image_geolocation', 'query': 'GPS coordinates'}, {'type': 'embedded_iocs', 'query': 'URLs/domains in document'}], 'triage': {'title': triage_facets.get('title'), 'author': triage_facets.get('author'), 'exif': triage_facets.get('exif', {}), 'gps': triage_facets.get('gps', {}), 'ocr_snippets': triage_facets.get('ocr_snippets', []), 'file_hashes': triage_facets.get('file_hashes', {}), 'embedded_urls': triage_facets.get('embedded_urls', []), 'embedded_domains': triage_facets.get('embedded_domains', [])}, 'content_preview': text_content[:1000] + '...' if text_content and len(text_content) > 1000 else text_content or ''}
+        json_text = json.dumps(envelope, separators=(',', ':'))
         if len(json_text) > _MAX_ENVELOPE_SIZE:
-            # Truncate OCR snippets and content_preview to fit
-            envelope["triage"]["ocr_snippets"] = envelope["triage"]["ocr_snippets"][:5]
-            envelope["content_preview"] = envelope["content_preview"][:500]
-            json_text = json.dumps(envelope, separators=(",", ":"))
+            envelope['triage']['ocr_snippets'] = envelope['triage']['ocr_snippets'][:5]
+            envelope['content_preview'] = envelope['content_preview'][:500]
+            json_text = json.dumps(envelope, separators=(',', ':'))
         return json_text
     except Exception:
-        # Fallback: return raw text content
-        return text_content or ""
-
+        return text_content or ''
 
 class MultimodalEnricher:
     """
@@ -232,13 +159,9 @@ class MultimodalEnricher:
     M1 8GB: RAM guard via governor.reserve(). Heavy path is a no-op
     when the governor denies reservation (e.g., near-OOM condition).
     """
+    __slots__ = tuple(('_batch_size', '_embedding_dim', '_fusion_model', '_governor', '_initialized', '_lock', '_vision_encoder'))
 
-    def __init__(
-        self,
-        governor: Any,
-        embedding_dim: int = 1024,
-        batch_size: int = 4,
-    ):
+    def __init__(self, governor: Any, embedding_dim: int=1024, batch_size: int=4):
         """
         Initialize enricher.
 
@@ -250,7 +173,6 @@ class MultimodalEnricher:
         self._governor = governor
         self._embedding_dim = embedding_dim
         self._batch_size = batch_size
-
         self._vision_encoder: Any | None = None
         self._fusion_model: Any | None = None
         self._initialized = False
@@ -264,32 +186,17 @@ class MultimodalEnricher:
             if self._initialized:
                 return
             _lazy_load_modules()
-
-            # VisionEncoder — CoreML or dummy fallback
             if _VisionEncoder is not None:
-                self._vision_encoder = _VisionEncoder(
-                    governor=self._governor,
-                    embedding_dim=self._embedding_dim,
-                    batch_size=self._batch_size,
-                )
+                self._vision_encoder = _VisionEncoder(governor=self._governor, embedding_dim=self._embedding_dim, batch_size=self._batch_size)
                 await self._vision_encoder.load()
-                log.info("MultimodalEnricher: VisionEncoder loaded")
-
-            # MambaFusion — MLX fusion model
+                log.info('MultimodalEnricher: VisionEncoder loaded')
             if _MambaFusion is not None:
                 try:
-                    self._fusion_model = _MambaFusion(
-                        vision_dim=self._embedding_dim,
-                        text_dim=768,
-                        graph_dim=64,
-                        hidden=256,
-                        output_dim=128,
-                    )
-                    log.info("MultimodalEnricher: MambaFusion loaded")
+                    self._fusion_model = _MambaFusion(vision_dim=self._embedding_dim, text_dim=768, graph_dim=64, hidden=256, output_dim=128)
+                    log.info('MultimodalEnricher: MambaFusion loaded')
                 except Exception as exc:
-                    log.warning("MultimodalEnricher: MambaFusion init failed: %s", exc)
+                    log.warning('MultimodalEnricher: MambaFusion init failed: %s', exc)
                     self._fusion_model = None
-
             self._initialized = True
 
     async def initialize(self) -> None:
@@ -329,34 +236,17 @@ class MultimodalEnricher:
         """
         if not self._initialized:
             await self._ensure_initialized()
-
-        # Extract file path from payload_text
-        payload_text = getattr(finding, "payload_text", None)
+        payload_text = getattr(finding, 'payload_text', None)
         file_path = _extract_file_path_from_payload(payload_text)
-
         if not file_path:
             return None
-
         if not _file_has_multimodal_support(file_path):
             return None
-
-        finding_id = getattr(finding, "finding_id", "unknown")
-        enrichment: dict[str, Any] = {
-            "finding_id": finding_id,
-            "file_path": file_path,
-            "vision_embedding": None,
-            "fused_embedding": None,
-            "clip_score": None,
-            "enrichment_available": False,
-        }
-
-        # Guard: heavy vision path requires RAM reservation
-        # If RAM is tight, skip gracefully (fail-soft)
+        finding_id = getattr(finding, 'finding_id', 'unknown')
+        enrichment: dict[str, Any] = {'finding_id': finding_id, 'file_path': file_path, 'vision_embedding': None, 'fused_embedding': None, 'clip_score': None, 'enrichment_available': False}
         if not self._can_run_heavy_vision():
-            log.debug("MultimodalEnricher: RAM guard denied for %s", finding_id)
+            log.debug('MultimodalEnricher: RAM guard denied for %s', finding_id)
             return None
-
-        # 1. VisionEncoder: load file bytes and encode
         if self._vision_encoder is not None:
             try:
                 image_bytes = await self._load_file_bytes(file_path)
@@ -364,53 +254,41 @@ class MultimodalEnricher:
                     embeddings = await self._vision_encoder.encode_batch([image_bytes])
                     if embeddings and len(embeddings) == 1:
                         emb = embeddings[0]
-                        # Convert mx.array to list for JSON serialization
                         try:
-                            enrichment["vision_embedding"] = emb.tolist()
+                            enrichment['vision_embedding'] = emb.tolist()
                         except AttributeError:
                             try:
-                                enrichment["vision_embedding"] = list(emb)
+                                enrichment['vision_embedding'] = list(emb)
                             except Exception:
-                                enrichment["vision_embedding"] = None
+                                enrichment['vision_embedding'] = None
             except Exception as exc:
-                log.debug("Multimodal vision encode failed for %s: %s", finding_id, exc)
-
-        # 2. MambaFusion: fuse (vision, text, graph)
-        if self._fusion_model is not None and enrichment["vision_embedding"] is not None:
+                log.debug('Multimodal vision encode failed for %s: %s', finding_id, exc)
+        if self._fusion_model is not None and enrichment['vision_embedding'] is not None:
             try:
                 import mlx.core as mx
-                vision_emb = mx.array(enrichment["vision_embedding"])
-                # Text embedding: zeros (no text model in scope)
+                vision_emb = mx.array(enrichment['vision_embedding'])
                 text_emb = mx.zeros_like(vision_emb)
-                # Graph embedding: zeros (no graph model in scope)
                 graph_emb = mx.zeros_like(vision_emb)
-
                 fused = self._fusion_model(vision_emb, text_emb, graph_emb)
                 try:
-                    enrichment["fused_embedding"] = fused.tolist()
+                    enrichment['fused_embedding'] = fused.tolist()
                 except AttributeError:
                     try:
-                        enrichment["fused_embedding"] = list(fused)
+                        enrichment['fused_embedding'] = list(fused)
                     except Exception:
-                        enrichment["fused_embedding"] = None
+                        enrichment['fused_embedding'] = None
             except Exception as exc:
-                log.debug("Multimodal fusion failed for %s: %s", finding_id, exc)
-
-        # 3. mobileclip text↔image similarity (when available)
-        if _MOBILECLIP_AVAILABLE and enrichment["vision_embedding"] is not None:
+                log.debug('Multimodal fusion failed for %s: %s', finding_id, exc)
+        if _MOBILECLIP_AVAILABLE and enrichment['vision_embedding'] is not None:
             try:
-                score = await self._clip_similarity_score(file_path, enrichment["vision_embedding"])
-                enrichment["clip_score"] = score
+                score = await self._clip_similarity_score(file_path, enrichment['vision_embedding'])
+                enrichment['clip_score'] = score
             except Exception as exc:
-                log.debug("Multimodal clip similarity failed for %s: %s", finding_id, exc)
-
-        # Mark enrichment available if any module produced data
-        if enrichment["vision_embedding"] is not None or enrichment["fused_embedding"] is not None:
-            enrichment["enrichment_available"] = True
-
-        if not enrichment["enrichment_available"]:
+                log.debug('Multimodal clip similarity failed for %s: %s', finding_id, exc)
+        if enrichment['vision_embedding'] is not None or enrichment['fused_embedding'] is not None:
+            enrichment['enrichment_available'] = True
+        if not enrichment['enrichment_available']:
             return None
-
         return enrichment
 
     def _can_run_heavy_vision(self) -> bool:
@@ -424,8 +302,6 @@ class MultimodalEnricher:
             governor = self._governor
             if governor is None:
                 return True
-
-            # Check if governor reports memory pressure
             try:
                 if governor.is_critical():
                     return False
@@ -436,36 +312,30 @@ class MultimodalEnricher:
                     return False
             except AttributeError:
                 pass
-
-            # Try to reserve RAM for heavy vision path (200MB for vision + overhead)
-            # This is a probe — we don't actually hold it
             try:
-                _ = governor.reserve  # probe — existence check only
+                _ = governor.reserve
             except AttributeError:
                 return True
-
-            # Simple heuristic: if governor reports pressure, skip
             try:
                 usage = governor.get_current_usage()
-                if isinstance(usage, dict) and usage.get("ram_mb", 0) > governor.high_water * 0.85:
+                if isinstance(usage, dict) and usage.get('ram_mb', 0) > governor.high_water * 0.85:
                     return False
             except AttributeError:
                 pass
-
             return True
         except Exception:
-            # Fail-open: if governor check errors, allow the operation
             return True
 
     async def _load_file_bytes(self, file_path: str) -> bytes | None:
         """Load file bytes from path. Fail-safe — returns None on error."""
         try:
+
             def _read():
-                with open(file_path, "rb") as f:
+                with open(file_path, 'rb') as f:
                     return f.read()
             return await asyncio.to_thread(_read)
         except Exception as exc:
-            log.debug("Failed to read file %s: %s", file_path, exc)
+            log.debug('Failed to read file %s: %s', file_path, exc)
             return None
 
     async def _clip_similarity_score(self, file_path: str, vision_embedding: list[float]) -> float | None:
@@ -475,36 +345,28 @@ class MultimodalEnricher:
         """
         if not _MOBILECLIP_AVAILABLE:
             return None
-
         try:
             import mlx.core as mx
             from mobileclip import create_model_and_transforms, get_tokenizer
             from PIL import Image
 
             def _score():
-                model, _, preprocess = create_model_and_transforms("mobileclip_s0")
-                tokenizer = get_tokenizer("mobileclip_s0")
-
-                # Text embedding (use file path stem as simple text proxy)
-                text = Path(file_path).stem.replace("_", " ")
+                model, _, preprocess = create_model_and_transforms('mobileclip_s0')
+                tokenizer = get_tokenizer('mobileclip_s0')
+                text = Path(file_path).stem.replace('_', ' ')
                 text_tokens = tokenizer([text])
                 text_emb = model.encode_text(text_tokens)
-
-                # Image embedding
-                image = Image.open(file_path).convert("RGB")
+                image = Image.open(file_path).convert('RGB')
                 image_preprocessed = preprocess(image)
                 image_batch = mx.stack([image_preprocessed])
                 image_emb = model.encode_image(image_batch)
-
-                # Cosine similarity
                 text_norm = text_emb / mx.linalg.norm(text_emb)
                 image_norm = image_emb / mx.linalg.norm(image_emb)
                 score = float((text_norm * image_norm).sum())
                 return max(0.0, min(1.0, score))
-
             return await asyncio.to_thread(_score)
         except Exception as exc:
-            log.debug("CLIP similarity score failed for %s: %s", file_path, exc)
+            log.debug('CLIP similarity score failed for %s: %s', file_path, exc)
             return None
 
     async def enrich_batch(self, findings: list[Any]) -> dict[str, dict[str, Any]]:
@@ -520,22 +382,19 @@ class MultimodalEnricher:
         """
         if not findings:
             return {}
-
         semaphore = get_semaphore_for_testing(ConcurrencyCategory.GRAPH_RAG)
 
         async def enrich_one(finding: Any) -> tuple[str, dict[str, Any] | None]:
             async with semaphore:
-                finding_id = getattr(finding, "finding_id", "unknown")
+                finding_id = getattr(finding, 'finding_id', 'unknown')
                 try:
                     result = await self.enrich(finding)
                     return (finding_id, result)
                 except Exception as exc:
-                    log.debug("Batch multimodal enrichment failed for %s: %s", finding_id, exc)
+                    log.debug('Batch multimodal enrichment failed for %s: %s', finding_id, exc)
                     return (finding_id, None)
-
         tasks = [enrich_one(f) for f in findings]
-        results = await safe_gather_ok(*tasks, label="analyzer:522")
-
+        results = await safe_gather_ok(*tasks, label='analyzer:522')
         out = {}
         for item in results:
             if isinstance(item, Exception):
@@ -543,15 +402,7 @@ class MultimodalEnricher:
             fid, enrich_data = item
             if enrich_data is not None:
                 out[fid] = enrich_data
-
         return out
-
-
-# =============================================================================
-# DOCUMENT EXTRACTION — Sprint F198C
-# =============================================================================
-
-
 
 @dataclass(slots=True)
 class DocumentResult:
@@ -580,16 +431,7 @@ class DocumentResult:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dict for storage."""
-        return {
-            "finding_id": self.finding_id,
-            "file_path": self.file_path,
-            "file_type": self.file_type,
-            "text_content": self.text_content,
-            "page_count": self.page_count,
-            "metadata": self.metadata,
-            "extraction_ok": self.extraction_ok,
-        }
-
+        return {'finding_id': self.finding_id, 'file_path': self.file_path, 'file_type': self.file_type, 'text_content': self.text_content, 'page_count': self.page_count, 'metadata': self.metadata, 'extraction_ok': self.extraction_ok}
 
 class DocumentExtractor:
     """
@@ -615,15 +457,12 @@ class DocumentExtractor:
         result = await extractor.extract(file_path, query)
         await extractor.close()
     """
-
-    # Max file size: 50MB (M1 8GB safe)
     MAX_FILE_SIZE_BYTES: int = 50 * 1024 * 1024
-    # Max pages per PDF (prevents giant PDFs from blowing RAM)
     MAX_PDF_PAGES: int = 500
-    # Text length cap for payload_text
-    MAX_TEXT_CHARS: int = 200_000
+    MAX_TEXT_CHARS: int = 200000
+    __slots__ = tuple(('_governor', '_initialized', '_lock'))
 
-    def __init__(self, governor: Any | None = None):
+    def __init__(self, governor: Any | None=None):
         """
         Initialize extractor.
 
@@ -633,7 +472,6 @@ class DocumentExtractor:
         self._governor = governor
         self._initialized = False
         self._lock = asyncio.Lock()
-
 
     async def initialize(self) -> None:
         """"Lazily load modules on first use."""
@@ -669,14 +507,9 @@ class DocumentExtractor:
                 pass
             return True
         except Exception:
-            return True  # Fail-open
+            return True
 
-    async def extract(
-        self,
-        file_path: str,
-        query: str,
-        finding_id: str | None = None,
-    ) -> CanonicalFinding | None:
+    async def extract(self, file_path: str, query: str, finding_id: str | None=None) -> CanonicalFinding | None:
         """
         Extract text from a document and return as CanonicalFinding.
 
@@ -694,102 +527,64 @@ class DocumentExtractor:
         """
         if not self._initialized:
             await self.initialize()
-
         path = Path(file_path)
         if not path.exists() or not path.is_file():
             return None
-
         ext = path.suffix.lower()
         if ext not in _SUPPORTED_EXTENSIONS:
             return None
-
-        # Size guard
         try:
             file_size = path.stat().st_size
             if file_size > self.MAX_FILE_SIZE_BYTES:
-                log.debug("DocumentExtractor: file too large %s: %d bytes", file_path, file_size)
+                log.debug('DocumentExtractor: file too large %s: %d bytes', file_path, file_size)
                 return None
         except Exception as exc:
-            log.debug("DocumentExtractor: stat failed for %s: %s", file_path, exc)
+            log.debug('DocumentExtractor: stat failed for %s: %s', file_path, exc)
             return None
-
-        # RAM guard
         if not self._check_ram_guard():
-            log.debug("DocumentExtractor: RAM guard denied for %s", file_path)
+            log.debug('DocumentExtractor: RAM guard denied for %s', file_path)
             return None
-
-        # Generate finding_id
         if finding_id is None:
             file_bytes = str(path).encode()
             finding_id = hashlib.sha256(file_bytes).hexdigest()[:16]
-
-        # Extract text based on file type
         text_content: str | None = None
         page_count = 0
         metadata: dict[str, Any] = {}
-
         try:
-            if ext == ".pdf":
+            if ext == '.pdf':
                 text_content, page_count = await self._extract_pdf(file_path)
-                metadata["extracted_pages"] = page_count
+                metadata['extracted_pages'] = page_count
             else:
                 text_content = await self._extract_image_text(file_path)
-                metadata["extracted_chars"] = len(text_content) if text_content else 0
-
+                metadata['extracted_chars'] = len(text_content) if text_content else 0
             text_content is not None and text_content
         except Exception as exc:
-            log.debug("DocumentExtractor: extraction failed for %s: %s", file_path, exc)
-
-        # Cap text content
+            log.debug('DocumentExtractor: extraction failed for %s: %s', file_path, exc)
         if text_content and len(text_content) > self.MAX_TEXT_CHARS:
-            text_content = text_content[: self.MAX_TEXT_CHARS]
-
-        # F202I: Extract triage facets (metadata, OCR, URL/domain hits)
+            text_content = text_content[:self.MAX_TEXT_CHARS]
         triage_facets: dict[str, Any] = {}
         try:
-            from hledac.universal.multimodal.evidence_triage import (
-                EvidenceTriageCoordinator,
-            )
+            from hledac.universal.multimodal.evidence_triage import EvidenceTriageCoordinator
             triage_coord = EvidenceTriageCoordinator(governor=self._governor)
             try:
                 await triage_coord.initialize()
-                triage_result = await triage_coord.extract_triage_facets(
-                    file_path, _DOCUMENT_SOURCE_TYPE
-                )
+                triage_result = await triage_coord.extract_triage_facets(file_path, _DOCUMENT_SOURCE_TYPE)
                 triage_facets = triage_result.to_dict()
             finally:
                 await triage_coord.close()
         except Exception as e:
-            log.debug("DocumentExtractor: triage extraction failed: %s", e)
+            log.debug('DocumentExtractor: triage extraction failed: %s', e)
             triage_facets = {}
-
-        # F202I: Build evidence envelope with triage facets
-        payload_text = _build_document_envelope(
-            text_content, triage_facets, str(path), ext
-        )
-
-        # Build finding
-        provenance: tuple[str, ...] = ("document", str(path), ext)
+        payload_text = _build_document_envelope(text_content, triage_facets, str(path), ext)
+        provenance: tuple[str, ...] = ('document', str(path), ext)
         try:
-            canonical_finding = CanonicalFinding(
-                finding_id=finding_id,
-                query=query,
-                source_type=_DOCUMENT_SOURCE_TYPE,
-                confidence=0.85,
-                ts=_time.time(),
-                provenance=provenance,
-                payload_text=payload_text,
-            )
+            canonical_finding = CanonicalFinding(finding_id=finding_id, query=query, source_type=_DOCUMENT_SOURCE_TYPE, confidence=0.85, ts=_time.time(), provenance=provenance, payload_text=payload_text)
             return canonical_finding
         except Exception as exc:
-            log.debug("DocumentExtractor: CanonicalFinding creation failed: %s", exc)
+            log.debug('DocumentExtractor: CanonicalFinding creation failed: %s', exc)
             return None
 
-    async def extract_batch(
-        self,
-        file_paths: list[str],
-        query: str,
-    ) -> list[CanonicalFinding]:
+    async def extract_batch(self, file_paths: list[str], query: str) -> list[CanonicalFinding]:
         """
         Extract text from multiple documents concurrently.
 
@@ -804,7 +599,6 @@ class DocumentExtractor:
         """
         if not file_paths:
             return []
-
         semaphore = get_semaphore_for_testing(ConcurrencyCategory.GRAPH_RAG)
 
         async def extract_one(fp: str) -> CanonicalFinding | None:
@@ -812,19 +606,16 @@ class DocumentExtractor:
                 try:
                     return await self.extract(fp, query)
                 except Exception as exc:
-                    log.debug("DocumentExtractor batch extract failed for %s: %s", fp, exc)
+                    log.debug('DocumentExtractor batch extract failed for %s: %s', fp, exc)
                     return None
-
         tasks = [extract_one(fp) for fp in file_paths]
-        results = await safe_gather_ok(*tasks, label="analyzer:798")
-
+        results = await safe_gather_ok(*tasks, label='analyzer:798')
         findings = []
         for item in results:
             if isinstance(item, Exception):
                 continue
             if item is not None:
                 findings.append(item)
-
         return findings
 
     async def _extract_pdf(self, file_path: str) -> tuple[str | None, int]:
@@ -835,29 +626,28 @@ class DocumentExtractor:
         Returns (text_content, page_count). Fail-safe — returns (None, 0) on error.
         """
         if not _PYPDF2_AVAILABLE or _PdfReader is None:
-            return None, 0
-
+            return (None, 0)
         try:
+
             def _read_pdf():
                 reader = _PdfReader(file_path)
                 page_count = len(reader.pages)
                 if page_count > self.MAX_PDF_PAGES:
-                    log.debug("DocumentExtractor: PDF too many pages %s: %d", file_path, page_count)
-                    return "", page_count
+                    log.debug('DocumentExtractor: PDF too many pages %s: %d', file_path, page_count)
+                    return ('', page_count)
                 texts = []
-                for page in reader.pages[: self.MAX_PDF_PAGES]:
+                for page in reader.pages[:self.MAX_PDF_PAGES]:
                     try:
                         text = page.extract_text()
                         if text:
                             texts.append(text)
-                    except Exception:  # noqa: BLE001
+                    except Exception:
                         pass
-                return "\n".join(texts), page_count
-
+                return ('\n'.join(texts), page_count)
             return await asyncio.to_thread(_read_pdf)
         except Exception as exc:
-            log.debug("DocumentExtractor: PDF extraction failed for %s: %s", file_path, exc)
-            return None, 0
+            log.debug('DocumentExtractor: PDF extraction failed for %s: %s', file_path, exc)
+            return (None, 0)
 
     async def _extract_image_text(self, file_path: str) -> str | None:
         """
@@ -869,21 +659,18 @@ class DocumentExtractor:
         """
         if not _PIL_AVAILABLE:
             return None
-
         try:
+
             def _read_image() -> str | None:
                 try:
                     from PIL import Image
-
                     img = Image.open(file_path)
-                    # Basic image metadata — OCR would go here
                     w, h = img.size
-                    return f"[image: {w}x{h}, mode={img.mode}]"
+                    return f'[image: {w}x{h}, mode={img.mode}]'
                 except Exception as exc:
-                    log.debug("DocumentExtractor: image open failed for %s: %s", file_path, exc)
+                    log.debug('DocumentExtractor: image open failed for %s: %s', file_path, exc)
                     return None
-
             return await asyncio.to_thread(_read_image)
         except Exception as exc:
-            log.debug("DocumentExtractor: image extraction failed for %s: %s", file_path, exc)
+            log.debug('DocumentExtractor: image extraction failed for %s: %s', file_path, exc)
             return None

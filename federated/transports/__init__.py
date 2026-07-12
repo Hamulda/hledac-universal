@@ -51,7 +51,7 @@ from . import lane_dispatch as _lane_dispatch_mod  # noqa: F401, E402  (registra
 from . import peer_node as _peer_node_mod  # noqa: F401, E402  (registration side effect)
 
 # Import the Protocol + factory first (no side effects beyond the class def).
-from .protocol import NodeTransport, NodeTransportFactory
+from .protocol import NodeTransport, NodeTransportFactory, set_sprint_id_attr
 
 # NOTE: The legacy `_LocalNodeTransport` is NOT registered through the
 # factory. It remains the direct default in `FederatedResearchCoordinator`
@@ -100,4 +100,6 @@ __all__ = [
     "INMEMORY_PEER_MAX_PEERS",
     # Env-gate helper:
     "is_peer_node_enabled",
+    # Shared helpers:
+    "set_sprint_id_attr",
 ]

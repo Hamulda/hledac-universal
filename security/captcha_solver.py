@@ -35,24 +35,17 @@ ARCHITECTURAL NOTE (F360):
     ``HLEDAC_ENABLE_STEALTH_LAYER=1``; this module is a specialised
     fallback for M1 hardware that benefits from ANE acceleration.
 """
-
 import asyncio
 import hashlib
 import logging
 import time
 from collections import OrderedDict
-
 logger = logging.getLogger(__name__)
-
-# Lazy imports for Apple Vision frameworks
 _COREML_AVAILABLE = False
 _VN_AVAILABLE = False
 _YOLO_AVAILABLE = False
-
-# CoreML tools version — lazy import, only attempts in py3.14 if coremltools is installed
 _COREMLTOOLS_VERSION: float = 0.0
-_ct = None  # type: ignore[assignment] — lazy loaded coremltools module
-
+_ct = None
 
 def has_apple_intelligence() -> bool:
     """
@@ -63,9 +56,7 @@ def has_apple_intelligence() -> bool:
     """
     if not _COREML_AVAILABLE:
         return False
-
     return _COREMLTOOLS_VERSION >= 6.0
-
 
 def _get_vn_core_ml_model():
     """Get VNCoreMLModel with lazy import."""
@@ -73,13 +64,11 @@ def _get_vn_core_ml_model():
     if _VN_AVAILABLE:
         try:
             from Vision import VNCoreMLModel
-
             return VNCoreMLModel
         except ImportError:
             _VN_AVAILABLE = False
             return None
     return None
-
 
 def _get_vn_request():
     """Get VNCoreMLRequest with lazy import."""
@@ -87,19 +76,14 @@ def _get_vn_request():
     if _VN_AVAILABLE:
         try:
             from Vision import VNCoreMLRequest
-
             return VNCoreMLRequest
         except ImportError:
             _VN_AVAILABLE = False
             return None
     return None
-
-
-# Vision framework — lazy import at first use (pyobjc may not be available in py3.14)
-_VNCoreMLModel = None  # type: ignore[assignment]
-_VNCoreMLRequest = None  # type: ignore[assignment]
-_VNImageRequestHandler = None  # type: ignore[assignment]
-
+_VNCoreMLModel = None
+_VNCoreMLRequest = None
+_VNImageRequestHandler = None
 
 def _ensure_vision():
     """Lazily import Vision framework. Call before using Vision classes."""
@@ -107,8 +91,7 @@ def _ensure_vision():
     if _VN_AVAILABLE:
         return True
     try:
-        from Vision import VNCoreMLModel, VNCoreMLRequest, VNImageRequestHandler  # noqa: F401
-
+        from Vision import VNCoreMLModel, VNCoreMLRequest, VNImageRequestHandler
         _VNCoreMLModel = VNCoreMLModel
         _VNCoreMLRequest = VNCoreMLRequest
         _VNImageRequestHandler = VNImageRequestHandler
@@ -117,7 +100,6 @@ def _ensure_vision():
     except ImportError:
         _VN_AVAILABLE = False
         return False
-
 
 class VisionCaptchaSolver:
     """
@@ -128,14 +110,13 @@ class VisionCaptchaSolver:
         - VNCoreMLModel for text recognition
         - Result caching with 1-hour expiration
     """
-
-    # Class-level cache
     _result_cache: OrderedDict = OrderedDict()
     _cache_timestamps: dict[str, float] = {}
-    CACHE_TTL = 3600  # 1 hour in seconds
+    CACHE_TTL = 3600
     MAX_CACHE_SIZE = 100
+    __slots__ = tuple(('_model', '_vn_model', 'model_path', 'use_ane'))
 
-    def __init__(self, model_path: str | None = None, use_ane: bool = True):
+    def __init__(self, model_path: str | None=None, use_ane: bool=True):
         """
         Initialize VisionCaptchaSolver.
 
@@ -147,50 +128,39 @@ class VisionCaptchaSolver:
         self.use_ane = use_ane and has_apple_intelligence()
         self._model = None
         self._vn_model = None
-
-        logger.info(f"VisionCaptchaSolver initialized: model={model_path}, ane={self.use_ane}")
+        logger.info(f'VisionCaptchaSolver initialized: model={model_path}, ane={self.use_ane}')
 
     def _load_model(self):
         """Load the CoreML model if not already loaded. Lazy import in py3.14."""
         global _ct, _COREML_AVAILABLE, _COREMLTOOLS_VERSION
-
         if self._model is not None:
             return
-
         if self.model_path is None:
-            logger.info("No model path provided, using text-only mode")
+            logger.info('No model path provided, using text-only mode')
             return
-
-        # Lazy import coremltools at runtime (py3.14 may not have it)
         if _ct is None:
             try:
                 import coremltools as _ct_module
-
                 _ct = _ct_module
                 _COREML_AVAILABLE = True
                 try:
                     _COREMLTOOLS_VERSION = float(_ct.__version__)
-                except ValueError, TypeError:
+                except (ValueError, TypeError):
                     _COREMLTOOLS_VERSION = 6.0
             except ImportError:
                 _COREML_AVAILABLE = False
-                logger.warning("CoreML tools not available in this Python environment")
+                logger.warning('CoreML tools not available in this Python environment')
                 return
-
         try:
-            # Load CoreML model
             self._model = _ct.models.MLModel(self.model_path)
-            logger.info(f"Loaded CoreML model from {self.model_path}")
-
-            # Try to create VNCoreMLModel for Vision framework
+            logger.info(f'Loaded CoreML model from {self.model_path}')
             if _ensure_vision() and _VNCoreMLModel is not None:
                 try:
                     self._vn_model = _VNCoreMLModel.modelForMLModel(self._model)
                 except Exception as e:
-                    logger.warning(f"Failed to create VNCoreMLModel: {e}")
-
+                    logger.warning(f'Failed to create VNCoreMLModel: {e}')
         except Exception as e:
-            logger.error(f"Failed to load model: {e}")
+            logger.error(f'Failed to load model: {e}')
             self._model = None
 
     def _get_cache_key(self, data: bytes) -> str:
@@ -201,27 +171,20 @@ class VisionCaptchaSolver:
         """Get cached result if not expired."""
         if cache_key not in self._result_cache:
             return None
-
-        # Check expiration
         timestamp = self._cache_timestamps.get(cache_key, 0)
         if time.time() - timestamp > self.CACHE_TTL:
-            # Expired - remove from cache
             del self._result_cache[cache_key]
             del self._cache_timestamps[cache_key]
             return None
-
-        # Move to end (most recently used)
         self._result_cache.move_to_end(cache_key)
         return self._result_cache[cache_key]
 
     def _set_cached_result(self, cache_key: str, result: object):
         """Cache result with timestamp."""
-        # Evict oldest if at capacity
         while len(self._result_cache) >= self.MAX_CACHE_SIZE:
             oldest_key = next(iter(self._result_cache))
             del self._result_cache[oldest_key]
             self._cache_timestamps.pop(oldest_key, None)
-
         self._result_cache[cache_key] = result
         self._cache_timestamps[cache_key] = time.time()
 
@@ -235,38 +198,22 @@ class VisionCaptchaSolver:
         Returns:
             List of selected grid indices
         """
-        # Check cache
         cache_key = self._get_cache_key(image_bytes)
         cached = self._get_cached_result(cache_key)
         if cached is not None:
             return cached
-
         result: list[int] = []
-
         if not _VN_AVAILABLE or self._model is None:
-            logger.warning("Vision framework or model not available")
+            logger.warning('Vision framework or model not available')
             return result
-
         try:
             self._load_model()
-
             if self._vn_model is None:
-                logger.warning("VNCoreMLModel not available")
+                logger.warning('VNCoreMLModel not available')
                 return result
-
-            # Create Vision request
-
-            # For now, return empty - full implementation would:
-            # 1. Convert image_bytes to CVPixelBuffer
-            # 2. Create VNImageRequestHandler
-            # 3. Perform request
-            # 4. Parse results to grid indices
-            logger.debug("Grid solving not fully implemented")
-
+            logger.debug('Grid solving not fully implemented')
         except Exception as e:
-            logger.error(f"Grid solving failed: {e}")
-
-        # Cache result
+            logger.error(f'Grid solving failed: {e}')
         self._set_cached_result(cache_key, result)
         return result
 
@@ -280,31 +227,19 @@ class VisionCaptchaSolver:
         Returns:
             Recognized text string
         """
-        # Check cache
         cache_key = self._get_cache_key(image_bytes)
         cached = self._get_cached_result(cache_key)
         if cached is not None:
             return cached
-
-        result = ""
-
+        result = ''
         if not _VN_AVAILABLE:
-            logger.warning("Vision framework not available")
+            logger.warning('Vision framework not available')
             return result
-
         try:
             self._load_model()
-
-            # For now, return empty - full implementation would:
-            # 1. Convert image_bytes to CVPixelBuffer
-            # 2. Use VNRecognizeTextRequest
-            # 3. Return recognized text
-            logger.debug("Text recognition not fully implemented")
-
+            logger.debug('Text recognition not fully implemented')
         except Exception as e:
-            logger.error(f"Text solving failed: {e}")
-
-        # Cache result
+            logger.error(f'Text solving failed: {e}')
         self._set_cached_result(cache_key, result)
         return result
 
@@ -312,16 +247,12 @@ class VisionCaptchaSolver:
         """Clear the result cache."""
         self._result_cache.clear()
         self._cache_timestamps.clear()
-        logger.info("CAPTCHA solver cache cleared")
+        logger.info('CAPTCHA solver cache cleared')
 
     @classmethod
     def get_cache_stats(cls) -> dict:
         """Get cache statistics."""
-        return {"size": len(cls._result_cache), "max_size": cls.MAX_CACHE_SIZE, "ttl_seconds": cls.CACHE_TTL}
-
-    # ========================================================================
-    # P7: OCR and 2Captcha integration
-    # ========================================================================
+        return {'size': len(cls._result_cache), 'max_size': cls.MAX_CACHE_SIZE, 'ttl_seconds': cls.CACHE_TTL}
 
     async def solve_image_captcha(self, image_bytes: bytes) -> str | None:
         """
@@ -333,24 +264,21 @@ class VisionCaptchaSolver:
         """
         try:
             import io
-
             import pytesseract
             from PIL import Image
         except ImportError:
-            logger.debug("pytesseract not available, trying 2captcha")
+            logger.debug('pytesseract not available, trying 2captcha')
             return None
-
         try:
             img = Image.open(io.BytesIO(image_bytes))
-            # Preprocessing for better OCR accuracy on M1
-            img = img.convert("L")  # grayscale
-            img = img.point(lambda x: 0 if x < 128 else 255)  # threshold
-            result = pytesseract.image_to_string(img, config="--psm 8").strip()
+            img = img.convert('L')
+            img = img.point(lambda x: 0 if x < 128 else 255)
+            result = pytesseract.image_to_string(img, config='--psm 8').strip()
             if result:
-                logger.debug(f"pytesseract OCR succeeded: {result[:50]}...")
+                logger.debug(f'pytesseract OCR succeeded: {result[:50]}...')
             return result if result else None
         except Exception as e:
-            logger.warning(f"pytesseract OCR failed: {e}")
+            logger.warning(f'pytesseract OCR failed: {e}')
             return None
 
     async def solve_via_2captcha(self, image_bytes: bytes) -> str | None:
@@ -358,50 +286,39 @@ class VisionCaptchaSolver:
         Cloud CAPTCHA solving via 2Captcha API. Only if API key configured.
         Polls with backoff (10 attempts, 3s interval).
         """
-        api_key = getattr(self, "_2captcha_api_key", None)
+        api_key = getattr(self, '_2captcha_api_key', None)
         if not api_key:
-            logger.debug("2Captcha API key not configured")
+            logger.debug('2Captcha API key not configured')
             return None
-
         try:
             import base64
-
             import httpx
         except ImportError:
-            logger.warning("httpx not available for 2captcha")
+            logger.warning('httpx not available for 2captcha')
             return None
-
         b64 = base64.b64encode(image_bytes).decode()
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as session:
-                # Submit CAPTCHA
-                async with session.post(
-                    "http://2captcha.com/in.php", data={"key": api_key, "method": "base64", "body": b64}
-                ) as r:
+                async with session.post('http://2captcha.com/in.php', data={'key': api_key, 'method': 'base64', 'body': b64}) as r:
                     result = r.text
-                if not result.startswith("OK|"):
-                    logger.warning(f"2Captcha submit failed: {result}")
+                if not result.startswith('OK|'):
+                    logger.warning(f'2Captcha submit failed: {result}')
                     return None
-                captcha_id = result.split("|")[1]
-
-                # Poll for result with backoff
+                captcha_id = result.split('|')[1]
                 for _ in range(10):
                     await asyncio.sleep(3)
-                    async with session.get(
-                        f"http://2captcha.com/res.php?key={api_key}&action=get&id={captcha_id}"
-                    ) as r:
+                    async with session.get(f'http://2captcha.com/res.php?key={api_key}&action=get&id={captcha_id}') as r:
                         res = r.text
-                    if res.startswith("OK|"):
-                        solution = res.split("|")[1]
-                        logger.debug(f"2Captcha solved: {solution[:50]}...")
+                    if res.startswith('OK|'):
+                        solution = res.split('|')[1]
+                        logger.debug(f'2Captcha solved: {solution[:50]}...')
                         return solution
-                    if res == "CAPCHA_NOT_READY":
+                    if res == 'CAPCHA_NOT_READY':
                         continue
-                    # Any other error
-                    logger.warning(f"2Captcha poll error: {res}")
+                    logger.warning(f'2Captcha poll error: {res}')
                     break
         except Exception as e:
-            logger.warning(f"2Captcha request failed: {e}")
+            logger.warning(f'2Captcha request failed: {e}')
         return None
 
     async def solve(self, image_bytes: bytes) -> str | None:
@@ -414,31 +331,20 @@ class VisionCaptchaSolver:
         Returns:
             Solved CAPTCHA text or None if unsolved
         """
-        # Check cache first
         cache_key = self._get_cache_key(image_bytes)
         cached = self._get_cached_result(cache_key)
         if cached is not None:
             return cached
-
-        # Try local OCR first (free, no API key needed)
         result = await self.solve_image_captcha(image_bytes)
         if result:
             self._set_cached_result(cache_key, result)
             return result
-
-        # Fallback to 2Captcha cloud service
         result = await self.solve_via_2captcha(image_bytes)
         if result:
             self._set_cached_result(cache_key, result)
         return result
 
-
-# ========================================================================
-# P7: Legacy function-based API for compatibility
-# ========================================================================
-
-
-async def solve_captcha(image_bytes: bytes, api_key: str | None = None) -> str | None:
+async def solve_captcha(image_bytes: bytes, api_key: str | None=None) -> str | None:
     """
     Standalone CAPTCHA solver function.
 

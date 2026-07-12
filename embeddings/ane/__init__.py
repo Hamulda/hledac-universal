@@ -24,24 +24,15 @@ Memory budget (M1 8GB):
 
 Canonical import: from hledac.universal.embeddings.ane import ane_embedder
 """
-
 import logging
 import threading
 from typing import Any
-
 logger = logging.getLogger(__name__)
-
-# ── Budget Constants ─────────────────────────────────────────────────────────────
-
-_UNIFIED_BUDGET_BYTES: int = int(3.5 * 1024 * 1024 * 1024)  # 3.5 GiB
+_UNIFIED_BUDGET_BYTES: int = int(3.5 * 1024 * 1024 * 1024)
 _LRU_MAX_ENTRIES: int = 4
-
-# ── Unified Embedder Factory ───────────────────────────────────────────────────
-
 _ANE_AVAILABLE: bool | None = None
 _ANE_CHECKED: bool = False
 _lock = threading.Lock()
-
 
 def _check_ane_available() -> bool:
     """Lazily check ANE availability."""
@@ -49,36 +40,28 @@ def _check_ane_available() -> bool:
     if _ANE_CHECKED:
         return _ANE_AVAILABLE
     _ANE_CHECKED = True
-
     import platform
-
-    if platform.system() != "Darwin" or platform.machine() != "arm64":
+    if platform.system() != 'Darwin' or platform.machine() != 'arm64':
         _ANE_AVAILABLE = False
         return False
-
     try:
         import coremltools as ct
-
-        if ct.__version__ < "6.0":
-            logger.debug(f"[ANE] coremltools {ct.__version__} < 6.0")
+        if ct.__version__ < '6.0':
+            logger.debug(f'[ANE] coremltools {ct.__version__} < 6.0')
             _ANE_AVAILABLE = False
             return False
     except ImportError:
-        logger.debug("[ANE] coremltools not installed")
+        logger.debug('[ANE] coremltools not installed')
         _ANE_AVAILABLE = False
         return False
-
     from pathlib import Path
-
-    model_path = Path.home() / ".hledac" / "models" / "modernbert_ane.mlpackage"
+    model_path = Path.home() / '.hledac' / 'models' / 'modernbert_ane.mlpackage'
     if not model_path.exists():
-        logger.debug(f"[ANE] Model not found at {model_path}")
+        logger.debug(f'[ANE] Model not found at {model_path}')
         _ANE_AVAILABLE = False
         return False
-
     _ANE_AVAILABLE = True
     return True
-
 
 class _UnifiedEmbedder:
     """
@@ -87,8 +70,9 @@ class _UnifiedEmbedder:
     Tries CoreML ANE first, falls back to MLX/Metal ModernBERT.
     Both paths share a unified memory budget and track usage for LRU eviction.
     """
+    __slots__ = tuple(('_ane_active', '_ane_embedder', '_batch_size', '_budget_used_bytes', '_lock', '_lru_order', '_mlx_embedder', '_normalize'))
 
-    def __init__(self, normalize: bool = True, batch_size: int = 16) -> None:
+    def __init__(self, normalize: bool=True, batch_size: int=16) -> None:
         self._ane_embedder: Any = None
         self._mlx_embedder: Any = None
         self._ane_active: bool = False
@@ -108,21 +92,15 @@ class _UnifiedEmbedder:
             if _check_ane_available():
                 try:
                     from ._encoder import CoreMLModernBERTEncoder
-
-                    self._ane_embedder = CoreMLModernBERTEncoder(
-                        lazy_load=True,
-                        normalize=self._normalize,
-                        batch_size=self._batch_size,
-                        fallback_to_mlx=True,
-                    )
+                    self._ane_embedder = CoreMLModernBERTEncoder(lazy_load=True, normalize=self._normalize, batch_size=self._batch_size, fallback_to_mlx=True)
                     self._ane_active = self._ane_embedder._ensure_ane()
                     if self._ane_active:
-                        self._budget_used_bytes += 300 * 1024 * 1024  # ~300MB ANE model
-                        self._lru_order.append("ane")
-                        logger.info("[ANE] CoreML ANE embedder loaded")
+                        self._budget_used_bytes += 300 * 1024 * 1024
+                        self._lru_order.append('ane')
+                        logger.info('[ANE] CoreML ANE embedder loaded')
                         return True
                 except Exception as e:
-                    logger.debug(f"[ANE] ANE load failed: {e}")
+                    logger.debug(f'[ANE] ANE load failed: {e}')
             self._ane_active = False
             return False
 
@@ -135,43 +113,37 @@ class _UnifiedEmbedder:
                 return self._mlx_embedder
             try:
                 from ..modernbert_embedder import ModernBERTEmbedder
-
-                self._mlx_embedder = ModernBERTEmbedder(
-                    lazy_load=True,
-                    normalize=self._normalize,
-                    batch_size=self._batch_size,
-                )
-                self._budget_used_bytes += 400 * 1024 * 1024  # ~400MB MLX model
-                self._lru_order.append("mlx")
-                logger.info("[ANE] MLX/Metal ModernBERT embedder loaded")
+                self._mlx_embedder = ModernBERTEmbedder(lazy_load=True, normalize=self._normalize, batch_size=self._batch_size)
+                self._budget_used_bytes += 400 * 1024 * 1024
+                self._lru_order.append('mlx')
+                logger.info('[ANE] MLX/Metal ModernBERT embedder loaded')
                 return self._mlx_embedder
             except Exception as e:
-                logger.error(f"[ANE] MLX fallback load failed: {e}")
+                logger.error(f'[ANE] MLX fallback load failed: {e}')
                 return None
 
     def _evict_lru(self) -> None:
         """Evict LRU embedder when budget exceeded."""
         if len(self._lru_order) > _LRU_MAX_ENTRIES:
             evicted = self._lru_order.pop(0)
-            if evicted == "ane" and self._ane_embedder is not None:
+            if evicted == 'ane' and self._ane_embedder is not None:
                 self._ane_embedder = None
                 self._ane_active = False
                 self._budget_used_bytes -= 300 * 1024 * 1024
-                logger.info("[ANE] LRU evicted ANE embedder")
-            elif evicted == "mlx" and self._mlx_embedder is not None:
+                logger.info('[ANE] LRU evicted ANE embedder')
+            elif evicted == 'mlx' and self._mlx_embedder is not None:
                 self._mlx_embedder = None
                 self._budget_used_bytes -= 400 * 1024 * 1024
-                logger.info("[ANE] LRU evicted MLX embedder")
+                logger.info('[ANE] LRU evicted MLX embedder')
 
     def _clear_metal_cache_hook(self) -> None:
         """Hook: mx.metal.clear_cache() after each batch."""
         try:
             import mlx.core as mx
-
             mx.eval([])
-            if hasattr(mx, "clear_cache"):
+            if hasattr(mx, 'clear_cache'):
                 mx.clear_cache()
-            elif hasattr(mx, "metal") and hasattr(mx.metal, "clear_cache"):
+            elif hasattr(mx, 'metal') and hasattr(mx.metal, 'clear_cache'):
                 mx.metal.clear_cache()
         except Exception:
             pass
@@ -186,20 +158,15 @@ class _UnifiedEmbedder:
 
         Returns embedding matrix or None on failure.
         """
-        # Budget check
         if self._budget_used_bytes >= _UNIFIED_BUDGET_BYTES:
             self._evict_lru()
-
-        # Try ANE first
         if self._ensure_ane():
             try:
                 result = self._ane_embedder.embed(texts)
                 self._clear_metal_cache_hook()
                 return result
             except Exception as e:
-                logger.debug(f"[ANE] ANE embed failed: {e}")
-
-        # Fall back to MLX
+                logger.debug(f'[ANE] ANE embed failed: {e}')
         mlx_eng = self._ensure_mlx()
         if mlx_eng is not None:
             try:
@@ -207,28 +174,16 @@ class _UnifiedEmbedder:
                 self._clear_metal_cache_hook()
                 return result
             except Exception as e:
-                logger.error(f"[ANE] MLX embed failed: {e}")
-
+                logger.error(f'[ANE] MLX embed failed: {e}')
         return None
 
     def get_stats(self) -> dict[str, Any]:
         """Return embedder statistics."""
-        return {
-            "budget_used_bytes": self._budget_used_bytes,
-            "budget_max_bytes": _UNIFIED_BUDGET_BYTES,
-            "ane_active": self._ane_active,
-            "mlx_loaded": self._mlx_embedder is not None,
-            "lru_order": list(self._lru_order),
-        }
-
-
-# ── Singleton factory ────────────────────────────────────────────────────────────
-
+        return {'budget_used_bytes': self._budget_used_bytes, 'budget_max_bytes': _UNIFIED_BUDGET_BYTES, 'ane_active': self._ane_active, 'mlx_loaded': self._mlx_embedder is not None, 'lru_order': list(self._lru_order)}
 _ane_embedder_instance: _UnifiedEmbedder | None = None
 _factory_lock = threading.Lock()
 
-
-def ane_embedder(normalize: bool = True, batch_size: int = 16) -> _UnifiedEmbedder:
+def ane_embedder(normalize: bool=True, batch_size: int=16) -> _UnifiedEmbedder:
     """
     Factory: get or create the shared _UnifiedEmbedder singleton.
 
@@ -245,11 +200,6 @@ def ane_embedder(normalize: bool = True, batch_size: int = 16) -> _UnifiedEmbedd
     if _ane_embedder_instance is None:
         with _factory_lock:
             if _ane_embedder_instance is None:
-                _ane_embedder_instance = _UnifiedEmbedder(
-                    normalize=normalize,
-                    batch_size=batch_size,
-                )
+                _ane_embedder_instance = _UnifiedEmbedder(normalize=normalize, batch_size=batch_size)
     return _ane_embedder_instance
-
-
-__all__ = ["ane_embedder", "_UnifiedEmbedder"]
+__all__ = ['ane_embedder', '_UnifiedEmbedder']

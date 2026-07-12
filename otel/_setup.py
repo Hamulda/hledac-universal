@@ -18,58 +18,43 @@ M1 8GB bounds:
   - max_attrs_per_span: 32
   - ring capacity: 4096
 """
-
-
 import os
 import sys
 import threading
 from dataclasses import dataclass
 from typing import Any, TextIO
-
-# ── Bounded constants (M1 8GB safe) ────────────────────────────────────────
 _MAX_QUEUE_SIZE: int = 2048
 _MAX_EXPORT_BATCH: int = 64
 _SCHEDULE_DELAY_MS: int = 2000
 _MAX_ATTRS_PER_SPAN: int = 32
 _RING_BUFFER_CAPACITY: int = 4096
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class TelemetryConfig:
     """Immutable telemetry configuration."""
-
-    exporter_kind: str = "stdout"  # stdout | otlp | duckdb | none | ring
-    service_name: str = "hledac-universal"
-    service_version: str = "18.0.0"
-    otlp_endpoint: str = "http://localhost:4318"
-    sample_ratio: float = 0.05  # 5% — ParentBased(TraceIdRatioBased) for M1 8GB
+    exporter_kind: str = 'stdout'
+    service_name: str = 'hledac-universal'
+    service_version: str = '18.0.0'
+    otlp_endpoint: str = 'http://localhost:4318'
+    sample_ratio: float = 0.05
     max_queue_size: int = _MAX_QUEUE_SIZE
     max_export_batch: int = _MAX_EXPORT_BATCH
     schedule_delay_ms: int = _SCHEDULE_DELAY_MS
     max_attrs_per_span: int = _MAX_ATTRS_PER_SPAN
-    stdout_stream: TextIO | None = None  # for tests
-    ring_sink: Any | None = None  # for tests
+    stdout_stream: TextIO | None = None
+    ring_sink: Any | None = None
 
     @classmethod
     def from_env(cls) -> TelemetryConfig:
-        kind = os.environ.get("HLEDAC_OTEL_EXPORTER", "stdout").strip().lower()
-        if kind not in ("stdout", "otlp", "duckdb", "none", "ring", "logfire"):
-            kind = "stdout"
+        kind = os.environ.get('HLEDAC_OTEL_EXPORTER', 'stdout').strip().lower()
+        if kind not in ('stdout', 'otlp', 'duckdb', 'none', 'ring', 'logfire'):
+            kind = 'stdout'
         try:
-            ratio = float(os.environ.get("HLEDAC_OTEL_SAMPLE_RATIO", "0.05"))
+            ratio = float(os.environ.get('HLEDAC_OTEL_SAMPLE_RATIO', '0.05'))
         except (TypeError, ValueError):
             ratio = 1.0
         ratio = max(0.0, min(1.0, ratio))
-        return cls(
-            exporter_kind=kind,
-            otlp_endpoint=os.environ.get(
-                "HLEDAC_OTEL_ENDPOINT", "http://localhost:4318"
-            ),
-            sample_ratio=ratio,
-        )
-
-
-# ── Module state ───────────────────────────────────────────────────────────
+        return cls(exporter_kind=kind, otlp_endpoint=os.environ.get('HLEDAC_OTEL_ENDPOINT', 'http://localhost:4318'), sample_ratio=ratio)
 _INITIALIZED: bool = False
 _PROVIDER: Any = None
 _PROCESSOR: Any = None
@@ -77,74 +62,54 @@ _EXPORTER: Any = None
 _CONFIG: TelemetryConfig | None = None
 _LOCK = threading.Lock()
 
-
 def is_initialized() -> bool:
     return _INITIALIZED
 
-
 def get_config() -> TelemetryConfig | None:
     return _CONFIG
-
 
 def get_exporter() -> Any:
     """Return current exporter (for tests/inspection)."""
     return _EXPORTER
 
-
 def _build_stdout_exporter(cfg: TelemetryConfig) -> Any:
     try:
         from otel._exporter_stdout import StdoutJSONExporter
-
         stream: TextIO = cfg.stdout_stream or sys.stdout
-        out_file = os.environ.get("HLEDAC_OTEL_STDOUT_FILE", "").strip()
+        out_file = os.environ.get('HLEDAC_OTEL_STDOUT_FILE', '').strip()
         if out_file and cfg.stdout_stream is None:
             try:
-                stream = open(out_file, "a", buffering=1, encoding="utf-8")  # noqa: SIM115
+                stream = open(out_file, 'a', buffering=1, encoding='utf-8')
             except OSError as e:
-                sys.stderr.write(
-                    f"[telemetry] cannot open HLEDAC_OTEL_STDOUT_FILE={out_file}: {e}\n"
-                )
-        return StdoutJSONExporter(
-            stream=stream,
-            max_attrs=cfg.max_attrs_per_span,
-        )
-    except Exception as e:  # pragma: no cover
-        sys.stderr.write(f"[telemetry] stdout exporter init failed: {e}\n")
+                sys.stderr.write(f'[telemetry] cannot open HLEDAC_OTEL_STDOUT_FILE={out_file}: {e}\n')
+        return StdoutJSONExporter(stream=stream, max_attrs=cfg.max_attrs_per_span)
+    except Exception as e:
+        sys.stderr.write(f'[telemetry] stdout exporter init failed: {e}\n')
         return None
-
 
 def _build_ring_exporter(cfg: TelemetryConfig) -> Any:
     try:
         from otel._buffer import BoundedRing
         from otel._exporter_ring import RingBufferExporter
-
         ring = cfg.ring_sink
         if ring is None:
             ring = BoundedRing(capacity=_RING_BUFFER_CAPACITY)
         return RingBufferExporter(ring=ring, max_attrs=cfg.max_attrs_per_span)
-    except Exception as e:  # pragma: no cover
-        sys.stderr.write(f"[telemetry] ring exporter init failed: {e}\n")
+    except Exception as e:
+        sys.stderr.write(f'[telemetry] ring exporter init failed: {e}\n')
         return None
-
 
 def _build_otlp_exporter(cfg: TelemetryConfig) -> Any:
     try:
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (  # type: ignore
-            OTLPSpanExporter,
-        )
-
-        endpoint = cfg.otlp_endpoint.rstrip("/")
-        return OTLPSpanExporter(endpoint=f"{endpoint}/v1/traces")
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        endpoint = cfg.otlp_endpoint.rstrip('/')
+        return OTLPSpanExporter(endpoint=f'{endpoint}/v1/traces')
     except ImportError:
-        sys.stderr.write(
-            "[telemetry] opentelemetry-exporter-otlp-proto-http not installed; "
-            "falling back to stdout\n"
-        )
+        sys.stderr.write('[telemetry] opentelemetry-exporter-otlp-proto-http not installed; falling back to stdout\n')
         return _build_stdout_exporter(cfg)
-    except Exception as e:  # pragma: no cover
-        sys.stderr.write(f"[telemetry] OTLP exporter init failed: {e}\n")
+    except Exception as e:
+        sys.stderr.write(f'[telemetry] OTLP exporter init failed: {e}\n')
         return None
-
 
 def _build_duckdb_exporter(cfg: TelemetryConfig) -> Any:
     """Issue #23: DuckDB span exporter for analytical queries.
@@ -154,29 +119,21 @@ def _build_duckdb_exporter(cfg: TelemetryConfig) -> Any:
     """
     try:
         import duckdb
-
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
-
         from hledac.universal.otel._duckdb_exporter import DuckDBSpanExporter
-
-        db_path = os.environ.get("HLEDAC_OTEL_DUCKDB_PATH", "").strip()
+        db_path = os.environ.get('HLEDAC_OTEL_DUCKDB_PATH', '').strip()
         if db_path:
             conn = duckdb.connect(db_path, read_only=False)
         else:
-            conn = duckdb.connect(database=":memory:", read_only=False)
-
-        # Ensure otel_spans table + indexes exist
+            conn = duckdb.connect(database=':memory:', read_only=False)
         from hledac.universal.otel._duckdb_exporter import create_otel_spans_table
-
         create_otel_spans_table(conn)
-
         exporter = DuckDBSpanExporter(conn=conn, max_batch_size=500)
         exporter.start()
         return exporter
     except Exception as e:
-        sys.stderr.write(f"[telemetry] duckdb exporter init failed: {e}\n")
+        sys.stderr.write(f'[telemetry] duckdb exporter init failed: {e}\n')
         return None
-
 
 def _build_logfire_exporter(cfg: TelemetryConfig) -> Any:
     """Build Logfire exporter (Pydantic Logfire).
@@ -186,50 +143,36 @@ def _build_logfire_exporter(cfg: TelemetryConfig) -> Any:
     """
     try:
         import logfire
-
-        token = os.environ.get("HLEDAC_LOGFIRE_TOKEN", "").strip()
-        service_name = os.environ.get(
-            "HLEDAC_LOGFIRE_SERVICE_NAME", cfg.service_name
-        ).strip()
-
+        token = os.environ.get('HLEDAC_LOGFIRE_TOKEN', '').strip()
+        service_name = os.environ.get('HLEDAC_LOGFIRE_SERVICE_NAME', cfg.service_name).strip()
         if token:
-            logfire.configure(
-                service_name=service_name,
-                token=token,
-                send_to_logfire=True,
-            )
+            logfire.configure(service_name=service_name, token=token, send_to_logfire=True)
         else:
-            logfire.configure(
-                service_name=service_name,
-                send_to_logfire="if-token-present",
-                console=False,  # type: ignore[arg-type]
-            )
-        return None  # Logfire auto-configures its own exporter
+            logfire.configure(service_name=service_name, send_to_logfire='if-token-present', console=False)
+        return None
     except ImportError:
-        sys.stderr.write("[telemetry] logfire not installed; falling back to stdout\n")
+        sys.stderr.write('[telemetry] logfire not installed; falling back to stdout\n')
         return _build_stdout_exporter(cfg)
     except Exception as e:
-        sys.stderr.write(f"[telemetry] logfire init failed: {e}\n")
+        sys.stderr.write(f'[telemetry] logfire init failed: {e}\n')
         return None
-
 
 def _build_exporter(cfg: TelemetryConfig) -> Any:
     match cfg.exporter_kind:
-        case "none":
+        case 'none':
             return None
-        case "stdout":
+        case 'stdout':
             return _build_stdout_exporter(cfg)
-        case "ring":
+        case 'ring':
             return _build_ring_exporter(cfg)
-        case "otlp":
+        case 'otlp':
             return _build_otlp_exporter(cfg)
-        case "duckdb":
+        case 'duckdb':
             return _build_duckdb_exporter(cfg)
-        case "logfire":
+        case 'logfire':
             return _build_logfire_exporter(cfg)
         case _:
             return _build_stdout_exporter(cfg)
-
 
 def _reset_otel_globals() -> None:
     """Reset OTel SDK's one-time set flag. Allows re-init after shutdown.
@@ -239,20 +182,17 @@ def _reset_otel_globals() -> None:
     in OTel's own test suite to re-initialize between tests.
     """
     try:
-        from opentelemetry.trace import _TRACER_PROVIDER_SET_ONCE  # type: ignore
-
-        _TRACER_PROVIDER_SET_ONCE._done = False  # type: ignore[attr-defined]
+        from opentelemetry.trace import _TRACER_PROVIDER_SET_ONCE
+        _TRACER_PROVIDER_SET_ONCE._done = False
     except (ImportError, AttributeError):
         pass
     try:
-        from opentelemetry import trace  # type: ignore
-
-        trace._TRACER_PROVIDER = None  # type: ignore[attr-defined]
+        from opentelemetry import trace
+        trace._TRACER_PROVIDER = None
     except (ImportError, AttributeError):
         pass
 
-
-def init_telemetry(cfg: TelemetryConfig | None = None) -> bool:
+def init_telemetry(cfg: TelemetryConfig | None=None) -> bool:
     """Initialize OpenTelemetry. Idempotent. Returns True on success.
 
     Always-on: called by core/__main__.py at sprint boot. On any error
@@ -260,132 +200,86 @@ def init_telemetry(cfg: TelemetryConfig | None = None) -> bool:
     falls back to NoOp tracer — sprint never crashes because of tracing.
     """
     global _INITIALIZED, _PROVIDER, _PROCESSOR, _EXPORTER, _CONFIG
-
     with _LOCK:
         if _INITIALIZED:
             return True
         cfg = cfg or TelemetryConfig.from_env()
         _CONFIG = cfg
-
-        if cfg.exporter_kind == "none":
+        if cfg.exporter_kind == 'none':
             _INITIALIZED = True
             return True
-
         try:
-            from opentelemetry import trace  # type: ignore
-            from opentelemetry.sdk.resources import Resource  # type: ignore
-            from opentelemetry.sdk.trace import TracerProvider  # type: ignore
-            from opentelemetry.sdk.trace.export import (  # type: ignore
-                BatchSpanProcessor,
-            )
-            from opentelemetry.sdk.trace.sampling import (  # type: ignore
-                ParentBased,
-                TraceIdRatioBased,
-            )
+            from opentelemetry import trace
+            from opentelemetry.sdk.resources import Resource
+            from opentelemetry.sdk.trace import TracerProvider
+            from opentelemetry.sdk.trace.export import BatchSpanProcessor
+            from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
         except Exception as e:
-            sys.stderr.write(f"[telemetry] OTel SDK import failed: {e}\n")
+            sys.stderr.write(f'[telemetry] OTel SDK import failed: {e}\n')
             return False
-
         try:
-            resource = Resource.create(
-                {
-                    "service.name": cfg.service_name,
-                    "service.version": cfg.service_version,
-                }
-            )
-
+            resource = Resource.create({'service.name': cfg.service_name, 'service.version': cfg.service_version})
             if cfg.sample_ratio >= 1.0:
-                from opentelemetry.sdk.trace.sampling import (  # type: ignore
-                    ALWAYS_ON as _ALWAYS_ON,
-                )
+                from opentelemetry.sdk.trace.sampling import ALWAYS_ON as _ALWAYS_ON
                 sampler = ParentBased(root=_ALWAYS_ON)
             elif cfg.sample_ratio <= 0.0:
-                from opentelemetry.sdk.trace.sampling import (  # type: ignore
-                    ALWAYS_OFF as _ALWAYS_OFF,
-                )
+                from opentelemetry.sdk.trace.sampling import ALWAYS_OFF as _ALWAYS_OFF
                 sampler = ParentBased(root=_ALWAYS_OFF)
             else:
-                sampler = ParentBased(
-                    root=TraceIdRatioBased(cfg.sample_ratio)
-                )
-
-            # Always create a fresh TracerProvider — reusing a shutdown (or
-            # ProxyTracerProvider) pollutes the global OTel state and causes
-            # span() to return NoOp even when a new ring exporter is configured.
-            # The slight overhead of recreating the provider is negligible
-            # (test-time only) and ensures complete isolation between sprints/tests.
+                sampler = ParentBased(root=TraceIdRatioBased(cfg.sample_ratio))
             _reset_otel_globals()
             provider = TracerProvider(resource=resource, sampler=sampler)
             trace.set_tracer_provider(provider)
-
             exporter = _build_exporter(cfg)
             if exporter is not None:
-                processor = BatchSpanProcessor(
-                    exporter,
-                    max_queue_size=cfg.max_queue_size,
-                    max_export_batch_size=cfg.max_export_batch,
-                    schedule_delay_millis=cfg.schedule_delay_ms,
-                )
-                # Clear stale processors from a prior test's ring exporter so they
-                # never intercept export() calls meant for the current ring.
-                # OTel allows multiple processors but the first one to call
-                # export() wins — stale ring exporters with exhausted capacity
-                # silently eat spans, causing test pollution (ring A gets 0
-                # spans while ring B gets all of them).
-                if hasattr(provider, "_span_processors") and provider._span_processors:  # type: ignore[attr-defined]
-                    provider._span_processors.clear()  # type: ignore[attr-defined]
+                processor = BatchSpanProcessor(exporter, max_queue_size=cfg.max_queue_size, max_export_batch_size=cfg.max_export_batch, schedule_delay_millis=cfg.schedule_delay_ms)
+                if hasattr(provider, '_span_processors') and provider._span_processors:
+                    provider._span_processors.clear()
                 provider.add_span_processor(processor)
                 _PROCESSOR = processor
                 _EXPORTER = exporter
-
             _PROVIDER = provider
             _INITIALIZED = True
-            # Warm the tracer cache so subsequent span() calls don't get NoOp.
-            # Without this, get_tracer() still returns _NOOP_TRACER on the next
-            # call because the _TRACER cache was never populated by init.
             try:
                 from otel._instrumentation import get_tracer
                 get_tracer()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
             return True
         except Exception as e:
-            sys.stderr.write(f"[telemetry] init failed: {e}\n")
+            sys.stderr.write(f'[telemetry] init failed: {e}\n')
             return False
 
-
-def shutdown_telemetry(timeout_ms: int = 5000) -> None:
+def shutdown_telemetry(timeout_ms: int=5000) -> None:
     """Flush + shutdown. Idempotent. Safe to call from finally/atexit."""
     global _INITIALIZED, _PROVIDER, _PROCESSOR, _EXPORTER
     with _LOCK:
         if not _INITIALIZED:
             return
-        # Reset cached tracer so next get_tracer() re-evaluates state.
         try:
             from otel._instrumentation import _reset_tracer_cache
-
             _reset_tracer_cache()
-        except (ImportError, Exception):  # pragma: no cover
+        except (ImportError, Exception):
             pass
         try:
             if _PROCESSOR is not None:
                 try:
                     _PROCESSOR.force_flush(timeout_millis=timeout_ms)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
                 try:
                     _PROCESSOR.shutdown()
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
-            if _EXPORTER is not None and hasattr(_EXPORTER, "shutdown"):
+            if _EXPORTER is not None and hasattr(_EXPORTER, 'shutdown'):
                 try:
                     _EXPORTER.shutdown()
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
-            if _PROVIDER is not None and hasattr(_PROVIDER, "shutdown"):
+            if _PROVIDER is not None and hasattr(_PROVIDER, 'shutdown'):
                 try:
                     _PROVIDER.shutdown()
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
         finally:
             _INITIALIZED = False

@@ -63,8 +63,6 @@ operators who specifically want to disable the conditional cache
 while keeping the rest of curl_cffi, the in-memory env var
 ``HLEDAC_CONDITIONAL_CACHE=0`` is honored (default ON).
 """
-
-
 import logging
 import os
 import time
@@ -72,32 +70,19 @@ import zlib
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any
-
-from hledac.universal.core.env_config import ENV  # noqa: E402
-
-logger = logging.getLogger("hledac.universal.transport.conditional_cache")
-
-# ---------------------------------------------------------------------------
-# Bounded constants (M1 8GB tuned; do NOT loosen without re-running
-# the M1 mission budget probe).
-# ---------------------------------------------------------------------------
+from hledac.universal.core.env_config import ENV
+logger = logging.getLogger('hledac.universal.transport.conditional_cache')
 _MAX_ENTRIES: int = 5000
-_DEFAULT_TTL_S: int = 3600  # 1h — Bing/DDG SERP freshness window; Alt-Svc h3 changes propagate via separate 24h LRU
-_MIN_BODY_CACHE_BYTES: int = 256  # skip < 256 byte responses
-_MAX_BODY_CACHE_BYTES: int = 2 * 1024 * 1024  # 2 MB hard cap per entry
-_DISKCACHE_DIR: Path = Path.home() / ".cache" / "hledac" / "conditional_cache"
-# zstd fallback to zlib if zstd isn't installed. The two give similar
-# ratios for HTML; zstd is ~3x faster, but the cache is cold-path so
-# latency is irrelevant. zlib's stdlib status is the reason we keep it
-# as the default. Lazily swapped at module import.
+_DEFAULT_TTL_S: int = 3600
+_MIN_BODY_CACHE_BYTES: int = 256
+_MAX_BODY_CACHE_BYTES: int = 2 * 1024 * 1024
+_DISKCACHE_DIR: Path = Path.home() / '.cache' / 'hledac' / 'conditional_cache'
 _zstd_module: Any = None
 _zstd_probe_done: bool = False
 
-
 def _resolve_enabled() -> bool:
     """Default ON. Opt-out: HLEDAC_CONDITIONAL_CACHE=0."""
-    return ENV.get_bool("HLEDAC_CONDITIONAL_CACHE")
-
+    return ENV.get_bool('HLEDAC_CONDITIONAL_CACHE')
 
 def _probe_zstd() -> Any:
     """Lazily probe for zstd. Falls back to zlib (stdlib) on absence.
@@ -111,14 +96,13 @@ def _probe_zstd() -> Any:
         return _zstd_module
     _zstd_probe_done = True
     try:
-        import zstandard as _zs  # type: ignore
+        import zstandard as _zs
         _zstd_module = _zs
-        logger.debug("conditional_cache: using zstd backend")
+        logger.debug('conditional_cache: using zstd backend')
     except Exception:
         _zstd_module = None
-        logger.debug("conditional_cache: zstd unavailable, using zlib fallback")
+        logger.debug('conditional_cache: zstd unavailable, using zlib fallback')
     return _zstd_module
-
 
 def _compress(body: bytes) -> bytes:
     """Compress body using zstd (preferred) or zlib (fallback).
@@ -129,92 +113,55 @@ def _compress(body: bytes) -> bytes:
       0x02 = zlib
     """
     if not body:
-        return b"\x00"
-    marker = b"\x00"  # default: no compression
+        return b'\x00'
+    marker = b'\x00'
     if _zstd_module is not None:
         try:
             compressed = _zstd_module.ZstdCompressor().compress(body)
             if len(compressed) < len(body):
-                marker = b"\x01"
+                marker = b'\x01'
                 return marker + compressed
             return marker + body
-        except Exception as e:  # noqa: BLE001
-            logger.debug("conditional_cache: zstd compress failed: %s", e)
-    # Fallback: zlib level 6 — good ratio, stdlib, no extra dep.
+        except Exception as e:
+            logger.debug('conditional_cache: zstd compress failed: %s', e)
     try:
         compressed = zlib.compress(body, 6)
         if len(compressed) < len(body):
-            marker = b"\x02"
+            marker = b'\x02'
             return marker + compressed
         return marker + body
-    except Exception as e:  # noqa: BLE001
-        logger.debug("conditional_cache: zlib compress failed: %s", e)
-    return b"\x00" + body
-
+    except Exception as e:
+        logger.debug('conditional_cache: zlib compress failed: %s', e)
+    return b'\x00' + body
 
 def _decompress(blob: bytes) -> bytes:
     """Reverse of ``_compress``. Returns the raw body. Never raises."""
     if not blob:
-        return b""
+        return b''
     if len(blob) < 1:
-        return b""
+        return b''
     marker = blob[:1]
     payload = blob[1:]
-    if marker == b"\x01" and _zstd_module is not None:
+    if marker == b'\x01' and _zstd_module is not None:
         try:
             return _zstd_module.ZstdDecompressor().decompress(payload)
-        except Exception as e:  # noqa: BLE001
-            logger.debug("conditional_cache: zstd decompress failed: %s", e)
-            return b""
-    if marker == b"\x02":
+        except Exception as e:
+            logger.debug('conditional_cache: zstd decompress failed: %s', e)
+            return b''
+    if marker == b'\x02':
         try:
             return zlib.decompress(payload)
-        except Exception as e:  # noqa: BLE001
-            logger.debug("conditional_cache: zlib decompress failed: %s", e)
-            return b""
-    return payload  # uncompressed
-
-
-# ---------------------------------------------------------------------------
-# Cache entry layout (stored as msgpack-ish dict under LMDB value).
-# Using a hand-rolled format keeps the cache hermetic and dependency-free.
-# ---------------------------------------------------------------------------
-_REQUIRED_KEYS: tuple[str, ...] = (
-    "etag",
-    "last_modified",
-    "body",
-    "sha256",
-    "fetched_at",
-    "status_code",
-    "content_type",
-)
-
+        except Exception as e:
+            logger.debug('conditional_cache: zlib decompress failed: %s', e)
+            return b''
+    return payload
+_REQUIRED_KEYS: tuple[str, ...] = ('etag', 'last_modified', 'body', 'sha256', 'fetched_at', 'status_code', 'content_type')
 
 class CacheEntry:
     """In-memory view of a cache row. Read-only contract — never mutated."""
+    __slots__ = ('url', 'etag', 'last_modified', 'body', 'sha256', 'fetched_at', 'status_code', 'content_type')
 
-    __slots__ = (
-        "url",
-        "etag",
-        "last_modified",
-        "body",
-        "sha256",
-        "fetched_at",
-        "status_code",
-        "content_type",
-    )
-
-    def __init__(
-        self,
-        url: str,
-        etag: str,
-        last_modified: str,
-        body: bytes,
-        sha256: str,
-        fetched_at: float,
-        status_code: int,
-        content_type: str,
-    ) -> None:
+    def __init__(self, url: str, etag: str, last_modified: str, body: bytes, sha256: str, fetched_at: float, status_code: int, content_type: str) -> None:
         self.url = url
         self.etag = etag
         self.last_modified = last_modified
@@ -233,7 +180,7 @@ class CacheEntry:
         """
         if self.fetched_at <= 0:
             return False
-        return (time.time() - self.fetched_at) <= ttl_s
+        return time.time() - self.fetched_at <= ttl_s
 
     def conditional_headers(self) -> dict[str, str]:
         """Return the headers to send for a conditional GET, or {} if
@@ -245,24 +192,19 @@ class CacheEntry:
         """
         out: dict[str, str] = {}
         if self.etag:
-            # Defensive quoting — some servers reject unquoted ETags
-            # that contain "/" (which is common in weak ETags).
-            if not (self.etag.startswith('"') or self.etag.startswith("W/")):
-                out["If-None-Match"] = f'"{self.etag}"'
+            if not (self.etag.startswith('"') or self.etag.startswith('W/')):
+                out['If-None-Match'] = f'"{self.etag}"'
             else:
-                out["If-None-Match"] = self.etag
+                out['If-None-Match'] = self.etag
         if self.last_modified:
-            out["If-Modified-Since"] = self.last_modified
+            out['If-Modified-Since'] = self.last_modified
         return out
 
-
-# ---------------------------------------------------------------------------
-# diskcache-backed storage. Falls back to in-memory OrderedDict on failure.
-# ---------------------------------------------------------------------------
 class _Backend:
     """diskcache (sqlite3) backend with in-memory fallback. The fallback is the
     default in tests; production uses diskcache if available.
     """
+    __slots__ = tuple(('_diskcache', '_memory', '_using_diskcache'))
 
     def __init__(self) -> None:
         self._diskcache: Any = None
@@ -272,53 +214,31 @@ class _Backend:
 
     def _init_diskcache(self) -> None:
         try:
-            import diskcache  # type: ignore
-
+            import diskcache
             try:
                 _DISKCACHE_DIR.mkdir(parents=True, exist_ok=True)
-            except Exception as e:  # noqa: BLE001
-                logger.debug("conditional_cache: mkdir %s failed: %s", _DISKCACHE_DIR, e)
+            except Exception as e:
+                logger.debug('conditional_cache: mkdir %s failed: %s', _DISKCACHE_DIR, e)
                 return
             try:
-                # diskcache uses SQLite under the hood with:
-                # - WAL mode for concurrent reads / exclusive writes
-                # - Automatic vacuum on close for space reclamation
-                # - journal_mode=WAL for crash safety
-                # - synchronous=NORMAL for M1 SSD perf (not FULL, not OFF)
-                # - store_gc_time=False to reduce write amplification
-                # - SQLite page size 4096 (M1 SSD optimal)
-                self._diskcache = diskcache.Cache(
-                    str(_DISKCACHE_DIR),
-                    eviction_policy="FIFO",
-                    sqlite_journal_mode="WAL",
-                    sqlite_synchronous="NORMAL",
-                    store_gc_time=False,
-                    quota=_MAX_ENTRIES,  # approximate row limit
-                )
+                self._diskcache = diskcache.Cache(str(_DISKCACHE_DIR), eviction_policy='FIFO', sqlite_journal_mode='WAL', sqlite_synchronous='NORMAL', store_gc_time=False, quota=_MAX_ENTRIES)
                 self._using_diskcache = True
-                logger.info(
-                    "conditional_cache: diskcache backend at %s (quota=%d entries)",
-                    _DISKCACHE_DIR, _MAX_ENTRIES,
-                )
-            except Exception as e:  # noqa: BLE001
-                logger.debug(
-                    "conditional_cache: diskcache open failed (in-memory fallback): %s", e
-                )
+                logger.info('conditional_cache: diskcache backend at %s (quota=%d entries)', _DISKCACHE_DIR, _MAX_ENTRIES)
+            except Exception as e:
+                logger.debug('conditional_cache: diskcache open failed (in-memory fallback): %s', e)
                 self._diskcache = None
         except ImportError:
-            logger.debug("conditional_cache: diskcache not installed, in-memory fallback")
+            logger.debug('conditional_cache: diskcache not installed, in-memory fallback')
 
     def get(self, key: bytes) -> bytes | None:
         if self._using_diskcache and self._diskcache is not None:
             try:
                 raw = self._diskcache.get(key)
                 return raw
-            except Exception as e:  # noqa: BLE001
-                logger.debug("conditional_cache: diskcache get failed: %s", e)
-                # Fall through to memory.
+            except Exception as e:
+                logger.debug('conditional_cache: diskcache get failed: %s', e)
         v = self._memory.get(key)
         if v is not None:
-            # LRU touch
             self._memory.move_to_end(key)
         return v
 
@@ -327,12 +247,10 @@ class _Backend:
             try:
                 self._diskcache.set(key, value)
                 return
-            except Exception as e:  # noqa: BLE001
-                logger.debug("conditional_cache: diskcache put failed: %s", e)
-                # Fall through to memory.
+            except Exception as e:
+                logger.debug('conditional_cache: diskcache put failed: %s', e)
         self._memory[key] = value
         self._memory.move_to_end(key)
-        # FIFO trim to keep the in-memory fallback bounded at _MAX_ENTRIES.
         while len(self._memory) > _MAX_ENTRIES:
             self._memory.popitem(last=False)
 
@@ -340,39 +258,26 @@ class _Backend:
         if self._diskcache is not None:
             try:
                 self._diskcache.close()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
             self._diskcache = None
             self._using_diskcache = False
 
-
-# ---------------------------------------------------------------------------
-# Serialisation (hand-rolled, hermetic, no msgpack dependency).
-# Format: |u32 key_len|key|u32 val_len|val|...| — a flat dict of (str, bytes).
-# ---------------------------------------------------------------------------
 def _encode_entry(entry: CacheEntry) -> bytes:
     """Serialise a CacheEntry to bytes. Never raises."""
     try:
         body = _compress(entry.body)
         parts: list[bytes] = []
-        # 9 fields: etag, last_modified, body, sha256, fetched_at,
-        # status_code, content_type. Order matches _REQUIRED_KEYS minus
-        # 'body' (stored separately as compressed blob).
-        for k in ("etag", "last_modified", "sha256", "content_type"):
-            v = getattr(entry, k).encode("utf-8", "ignore")
-            parts.append(len(v).to_bytes(4, "little") + v)
-        # Numeric fields. ``fetched_at`` is a float (time.time() result)
-        # so we coerce to int for the u64 slot — sub-second precision
-        # is irrelevant for the freshness check.
-        parts.append(int(entry.fetched_at).to_bytes(8, "little", signed=False))
-        parts.append(int(entry.status_code).to_bytes(4, "little", signed=True))
-        # Compressed body last (typically the largest chunk)
-        parts.append(len(body).to_bytes(4, "little") + body)
-        return b"".join(parts)
-    except Exception as e:  # noqa: BLE001
-        logger.debug("conditional_cache: encode failed: %s", e)
-        return b""
-
+        for k in ('etag', 'last_modified', 'sha256', 'content_type'):
+            v = getattr(entry, k).encode('utf-8', 'ignore')
+            parts.append(len(v).to_bytes(4, 'little') + v)
+        parts.append(int(entry.fetched_at).to_bytes(8, 'little', signed=False))
+        parts.append(int(entry.status_code).to_bytes(4, 'little', signed=True))
+        parts.append(len(body).to_bytes(4, 'little') + body)
+        return b''.join(parts)
+    except Exception as e:
+        logger.debug('conditional_cache: encode failed: %s', e)
+        return b''
 
 def _decode_entry(url: str, raw: bytes) -> CacheEntry | None:
     """Reverse of ``_encode_entry``. Returns None on any error."""
@@ -384,94 +289,59 @@ def _decode_entry(url: str, raw: bytes) -> CacheEntry | None:
         def _read_str() -> str:
             nonlocal pos
             if pos + 4 > len(raw):
-                raise ValueError("truncated length prefix")
-            ln = int.from_bytes(raw[pos : pos + 4], "little")
+                raise ValueError('truncated length prefix')
+            ln = int.from_bytes(raw[pos:pos + 4], 'little')
             pos += 4
             if pos + ln > len(raw):
-                raise ValueError("truncated string body")
-            s = raw[pos : pos + ln].decode("utf-8", "ignore")
+                raise ValueError('truncated string body')
+            s = raw[pos:pos + ln].decode('utf-8', 'ignore')
             pos += ln
             return s
-
         etag = _read_str()
         last_modified = _read_str()
         sha256 = _read_str()
         content_type = _read_str()
         if pos + 12 > len(raw):
             return None
-        fetched_at = int.from_bytes(raw[pos : pos + 8], "little", signed=False)
+        fetched_at = int.from_bytes(raw[pos:pos + 8], 'little', signed=False)
         pos += 8
-        status_code = int.from_bytes(raw[pos : pos + 4], "little", signed=True)
+        status_code = int.from_bytes(raw[pos:pos + 4], 'little', signed=True)
         pos += 4
         if pos + 4 > len(raw):
             return None
-        body_len = int.from_bytes(raw[pos : pos + 4], "little")
+        body_len = int.from_bytes(raw[pos:pos + 4], 'little')
         pos += 4
         if pos + body_len > len(raw):
             return None
-        body_compressed = raw[pos : pos + body_len]
+        body_compressed = raw[pos:pos + body_len]
         body = _decompress(body_compressed)
-        return CacheEntry(
-            url=url,
-            etag=etag,
-            last_modified=last_modified,
-            body=body,
-            sha256=sha256,
-            fetched_at=float(fetched_at),
-            status_code=status_code,
-            content_type=content_type,
-        )
-    except Exception as e:  # noqa: BLE001
-        logger.debug("conditional_cache: decode failed: %s", e)
+        return CacheEntry(url=url, etag=etag, last_modified=last_modified, body=body, sha256=sha256, fetched_at=float(fetched_at), status_code=status_code, content_type=content_type)
+    except Exception as e:
+        logger.debug('conditional_cache: decode failed: %s', e)
         return None
-
-
-# ---------------------------------------------------------------------------
-# Public API: ConditionalCache singleton with module-level state.
-# ---------------------------------------------------------------------------
 _backend: _Backend | None = None
-_stats: dict[str, int] = {
-    "enabled": 0,
-    "lmdb_backend": 0,
-    "memory_backend": 0,
-    "lookup_hits": 0,
-    "lookup_misses": 0,
-    "lookup_errors": 0,
-    "store_count": 0,
-    "store_skipped_too_small": 0,
-    "store_skipped_too_large": 0,
-    "store_skipped_no_validator": 0,
-    "evictions": 0,
-    "conditional_sends": 0,
-    "conditional_304s": 0,
-}
-
+_stats: dict[str, int] = {'enabled': 0, 'lmdb_backend': 0, 'memory_backend': 0, 'lookup_hits': 0, 'lookup_misses': 0, 'lookup_errors': 0, 'store_count': 0, 'store_skipped_too_small': 0, 'store_skipped_too_large': 0, 'store_skipped_no_validator': 0, 'evictions': 0, 'conditional_sends': 0, 'conditional_304s': 0}
 
 def _get_backend() -> _Backend:
     global _backend
     if _backend is None:
-        # Probe zstd eagerly at backend init; backend init may also
-        # trigger diskcache probe.
         _probe_zstd()
         _backend = _Backend()
-        _stats["lmdb_backend"] = 1 if _backend._using_diskcache else 0
-        _stats["memory_backend"] = 0 if _backend._using_diskcache else 1
+        _stats['lmdb_backend'] = 1 if _backend._using_diskcache else 0
+        _stats['memory_backend'] = 0 if _backend._using_diskcache else 1
     return _backend
-
 
 def get_stats() -> dict[str, int]:
     """Snapshot of conditional-cache telemetry. Cheap O(1)."""
     out = dict(_stats)
-    out["enabled"] = 1 if _resolve_enabled() else 0
+    out['enabled'] = 1 if _resolve_enabled() else 0
     return out
-
 
 def reset_stats() -> None:
     """Reset counters (tests only). Does NOT close the backend."""
     for k in list(_stats.keys()):
-        if k != "enabled":
+        if k != 'enabled':
             _stats[k] = 0
-
 
 def lookup(url: str) -> CacheEntry | None:
     """Return a CacheEntry for ``url`` if present, else None.
@@ -484,51 +354,33 @@ def lookup(url: str) -> CacheEntry | None:
         return None
     try:
         backend = _get_backend()
-        key = url.encode("utf-8", "ignore")
+        key = url.encode('utf-8', 'ignore')
         raw = backend.get(key)
         if raw is None:
-            _stats["lookup_misses"] += 1
+            _stats['lookup_misses'] += 1
             return None
         entry = _decode_entry(url, raw)
         if entry is None:
-            _stats["lookup_misses"] += 1
+            _stats['lookup_misses'] += 1
             return None
-        # Integrity check: verify sha256 if stored (cache corruption guard).
         if entry.sha256:
             try:
                 import hashlib
                 actual = hashlib.sha256(entry.body).hexdigest()
                 if actual != entry.sha256:
-                    logger.debug(
-                        "conditional_cache: sha256 mismatch for %s — cache corrupted, "
-                        "serving live",
-                        url,
-                    )
-                    _stats["lookup_misses"] += 1
-                    # Don't delete — next store() overwrites. Avoid adding
-                    # a delete() method just for this edge case.
+                    logger.debug('conditional_cache: sha256 mismatch for %s — cache corrupted, serving live', url)
+                    _stats['lookup_misses'] += 1
                     return None
-            except Exception:  # noqa: BLE001
-                # sha256 computation failed — serve the entry anyway
+            except Exception:
                 pass
-        _stats["lookup_hits"] += 1
+        _stats['lookup_hits'] += 1
         return entry
-    except Exception as e:  # noqa: BLE001
-        logger.debug("conditional_cache: lookup failed: %s", e)
-        _stats["lookup_errors"] += 1
+    except Exception as e:
+        logger.debug('conditional_cache: lookup failed: %s', e)
+        _stats['lookup_errors'] += 1
         return None
 
-
-def store(
-    url: str,
-    *,
-    etag: str = "",
-    last_modified: str = "",
-    body: bytes = b"",
-    sha256: str = "",
-    status_code: int = 200,
-    content_type: str = "",
-) -> bool:
+def store(url: str, *, etag: str='', last_modified: str='', body: bytes=b'', sha256: str='', status_code: int=200, content_type: str='') -> bool:
     """Persist a cache entry. Returns True on success, False on skip/error.
 
     Skip conditions (return False, do not raise):
@@ -546,37 +398,27 @@ def store(
             return False
         body_len = len(body)
         if body_len < _MIN_BODY_CACHE_BYTES:
-            _stats["store_skipped_too_small"] += 1
+            _stats['store_skipped_too_small'] += 1
             return False
         if body_len > _MAX_BODY_CACHE_BYTES:
-            _stats["store_skipped_too_large"] += 1
+            _stats['store_skipped_too_large'] += 1
             return False
-        if not etag and not last_modified:
-            _stats["store_skipped_no_validator"] += 1
+        if not etag and (not last_modified):
+            _stats['store_skipped_no_validator'] += 1
             return False
         backend = _get_backend()
-        entry = CacheEntry(
-            url=url,
-            etag=etag,
-            last_modified=last_modified,
-            body=body,
-            sha256=sha256,
-            fetched_at=time.time(),
-            status_code=status_code,
-            content_type=content_type,
-        )
+        entry = CacheEntry(url=url, etag=etag, last_modified=last_modified, body=body, sha256=sha256, fetched_at=time.time(), status_code=status_code, content_type=content_type)
         encoded = _encode_entry(entry)
         if not encoded:
             return False
-        backend.put(url.encode("utf-8", "ignore"), encoded)
-        _stats["store_count"] += 1
+        backend.put(url.encode('utf-8', 'ignore'), encoded)
+        _stats['store_count'] += 1
         return True
-    except Exception as e:  # noqa: BLE001
-        logger.debug("conditional_cache: store failed: %s", e)
+    except Exception as e:
+        logger.debug('conditional_cache: store failed: %s', e)
         return False
 
-
-def conditional_headers_for(url: str, *, ttl_s: int = _DEFAULT_TTL_S) -> dict[str, str]:
+def conditional_headers_for(url: str, *, ttl_s: int=_DEFAULT_TTL_S) -> dict[str, str]:
     """Return the headers to inject for a conditional GET, or {} if
     the entry is missing, stale, or carries no validator.
 
@@ -594,7 +436,6 @@ def conditional_headers_for(url: str, *, ttl_s: int = _DEFAULT_TTL_S) -> dict[st
         return {}
     return entry.conditional_headers()
 
-
 def record_conditional_result(_url: str, *, sent: bool, response_status: int) -> None:
     """Telemetry: was a conditional request sent, and was it a 304?
 
@@ -602,10 +443,9 @@ def record_conditional_result(_url: str, *, sent: bool, response_status: int) ->
     can measure the hit rate in production via the sprint dashboard.
     """
     if sent:
-        _stats["conditional_sends"] += 1
+        _stats['conditional_sends'] += 1
     if response_status == 304:
-        _stats["conditional_304s"] += 1
-
+        _stats['conditional_304s'] += 1
 
 def close_cache() -> None:
     """Close the backend. Idempotent. Safe to call multiple times."""
@@ -613,10 +453,9 @@ def close_cache() -> None:
     if _backend is not None:
         try:
             _backend.close()
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
         _backend = None
-
 
 def clear_cache_for_tests() -> None:
     """Wipe the in-memory fallback. Tests only. LMDB data persists
@@ -627,18 +466,6 @@ def clear_cache_for_tests() -> None:
     if _backend is not None:
         try:
             _backend._memory.clear()
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
-
-
-__all__ = [
-    "CacheEntry",
-    "close_cache",
-    "clear_cache_for_tests",
-    "conditional_headers_for",
-    "get_stats",
-    "lookup",
-    "record_conditional_result",
-    "reset_stats",
-    "store",
-]
+__all__ = ['CacheEntry', 'close_cache', 'clear_cache_for_tests', 'conditional_headers_for', 'get_stats', 'lookup', 'record_conditional_result', 'reset_stats', 'store']
