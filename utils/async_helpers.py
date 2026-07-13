@@ -30,7 +30,7 @@ import sys
 import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 import msgspec
 
@@ -43,10 +43,11 @@ __all__ = [
     "_check_gathered",
     "async_getaddrinfo",
     "bounded_parallel_map",  # ISSUE-005: parallel map with bounded concurrency
-    "bounded_gather",
+    "bounded_gather",  # → parallel(); DEPRECATED wrapper
     "chunked_taskgroup",
-    "gather_taskgroup",
+    "gather_taskgroup",  # → parallel(taskgroup=True); DEPRECATED wrapper
     "monotonic_ms",
+    "parallel",  # ISSUE-006: single canonical parallel runner
     "safe_gather",
     "safe_gather_ok",
     "safe_gather_fire_and_forget",
@@ -57,6 +58,7 @@ __all__ = [
     "safe_wait_for",
     "SafeGatherResult",
     "SafeGatherShieldedResult",
+    "ParallelResult",  # ISSUE-006: canonical result DTO for parallel()
     "_BoundedExceptionLog",
     "cancel_scope_drain",
     "BoundedPerHostGate",
@@ -64,6 +66,7 @@ __all__ = [
     "stop_task",  # F360: shared stop() lifecycle helper
     "race_first_success",  # F350M-R: parallel profile fallback race
     "RaceFirstSuccessResult",
+    "ExceptionPolicy",  # ISSUE-006: Literal["raise", "first", "collect", "log"]
 ]
 
 logger = logging.getLogger(__name__)
@@ -438,6 +441,335 @@ async def safe_wait_for[T](
 def monotonic_ms() -> float:
     """Return current monotonic time in milliseconds (float)."""
     return time.monotonic() * 1000.0
+
+
+# =============================================================================
+# ISSUE-006: unified parallel() — single canonical parallel runner
+#
+# Problem: 11 safe_gather_* variants with overlapping semantics create a
+# usability and maintenance burden. Callers must choose from a bewildering
+# array of options when one principle (policy-based dispatch) suffices.
+#
+# Solution: single `parallel()` function with named exception policies:
+#   "raise"  — re-raise first BaseException (all-complete or single failure)
+#   "first"  — raise first non-cancel BaseException (fail-fast)
+#   "collect"— return (ok, errors) tuple (all-complete, partial failure)
+#   "log"    — filter exceptions, return only successes (fail-soft)
+#
+# Concurrency: optional semaphore via `concurrency=N`. None=unbounded.
+# Backend: optional TaskGroup via `taskgroup=True` (Python 3.11+).
+#
+# Invariants enforced (I6/I7/I8):
+#   - [I6] CancelledError → always re-raised
+#   - [I7] non-Exception BaseException → always re-raised
+#   - [I8] regular Exception → routed per policy
+# =============================================================================
+
+ExceptionPolicy = Literal["raise", "first", "collect", "log"]
+
+
+class ParallelResult(msgspec.Struct, frozen=True):
+    """Canonical result of ``parallel()`` with policy-driven error routing.
+
+    Attributes:
+        ok:        Successful results, in original order.
+        errors:    Exception instances (only populated when policy="collect").
+        re_raised: BaseException re-raised per I6/I7 (CancelledError, etc.).
+    """
+
+    ok: list[Any] = msgspec.field(default_factory=list)
+    errors: list[BaseException] = msgspec.field(default_factory=list)
+    re_raised: BaseException | None = None
+
+
+async def _parallel_taskgroup[T](
+    coros: list[Awaitable[T]],
+    *,
+    concurrency: int | None,
+    policy: ExceptionPolicy,
+    ctx: str,
+    logger_instance: logging.Logger,
+) -> ParallelResult:
+    """TaskGroup path for parallel() — structured concurrency with sibling cancellation."""
+
+    results: list[Any] = [None] * len(coros)
+    errors: list[BaseException] = []
+
+    sem: asyncio.Semaphore | None = None
+    if concurrency is not None:
+        sem = asyncio.Semaphore(concurrency)
+
+    async def _run(idx: int, coro: Awaitable[T]) -> None:
+        if sem is not None:
+            async with sem:
+                results[idx] = await coro
+        else:
+            results[idx] = await coro
+
+    try:
+        async with asyncio.TaskGroup() as tg:
+            for idx, coro in enumerate(coros):
+                tg.create_task(_run(idx, coro), name=f"parallel[{idx}]")
+    except BaseExceptionGroup as eg:
+        for exc in eg.exceptions:
+            if isinstance(exc, asyncio.CancelledError):
+                logger_instance.debug(
+                    "[GHOST] parallel(taskgroup) CancelledError%s", (" " + ctx) if ctx else ""
+                )
+                raise exc from None
+            if isinstance(exc, BaseException) and not isinstance(exc, Exception):
+                logger_instance.debug(
+                    "[GHOST] parallel(taskgroup) BaseException%s: %s",
+                    (" " + ctx) if ctx else "",
+                    type(exc).__name__,
+                )
+                raise exc from None
+            errors.append(exc)
+        ok_results = [r for r in results if r is not None and not isinstance(r, BaseException)]
+        # [FIX] Apply policy INSIDE the exception handler — the match block
+        # at line 537 is never reached when BaseExceptionGroup is caught.
+        match policy:
+            case "raise":
+                if len(errors) == 1:
+                    raise errors[0]
+                raise BaseExceptionGroup(f"parallel(taskgroup){' ' + ctx if ctx else ''}", errors)
+            case "first":
+                raise errors[0]
+            case "collect":
+                return ParallelResult(ok=ok_results, errors=errors, re_raised=None)
+            case "log":
+                if errors:
+                    sample_preview = ", ".join(type(e).__name__ for e in errors[:_SAFE_GATHER_SAMPLE_CAP])
+                    suppressed = max(0, len(errors) - _SAFE_GATHER_SAMPLE_CAP)
+                    logger_instance.debug(
+                        f"[GHOST] parallel(taskgroup){' ' + ctx if ctx else ''} "
+                        f"dropped {len(errors)} exceptions "
+                        f"(sample: {sample_preview}"
+                        f"{' +' + str(suppressed) + ' more' if suppressed else ''})"
+                    )
+                return ParallelResult(ok=ok_results, errors=[], re_raised=None)
+    except asyncio.CancelledError:
+        logger_instance.debug("[GHOST] parallel(taskgroup) CancelledError%s", (" " + ctx) if ctx else "")
+        raise
+
+    ok_results = [r for r in results if r is not None and not isinstance(r, BaseException)]
+
+    # Apply policy dispatch
+    match policy:
+        case "raise":
+            if errors:
+                if len(errors) == 1:
+                    raise errors[0]
+                raise BaseExceptionGroup(f"parallel(taskgroup){' ' + ctx if ctx else ''}", errors)
+            return ParallelResult(ok=ok_results, errors=[], re_raised=None)
+        case "first":
+            if errors:
+                raise errors[0]
+            return ParallelResult(ok=ok_results, errors=[], re_raised=None)
+        case "collect":
+            return ParallelResult(ok=ok_results, errors=errors, re_raised=None)
+        case "log":
+            if errors:
+                sample_preview = ", ".join(type(e).__name__ for e in errors[:_SAFE_GATHER_SAMPLE_CAP])
+                suppressed = max(0, len(errors) - _SAFE_GATHER_SAMPLE_CAP)
+                logger_instance.debug(
+                    f"[GHOST] parallel(taskgroup){' ' + ctx if ctx else ''} "
+                    f"dropped {len(errors)} exceptions "
+                    f"(sample: {sample_preview}"
+                    f"{' +' + str(suppressed) + ' more' if suppressed else ''})"
+                )
+            return ParallelResult(ok=ok_results, errors=[], re_raised=None)
+
+
+async def parallel[T](
+    coros: list[Awaitable[T]],
+    *,
+    policy: ExceptionPolicy = "collect",
+    concurrency: int | None = None,
+    timeout: float | None = None,
+    taskgroup: bool = False,
+    ctx: str = "",
+    logger_instance: logging.Logger | None = None,
+) -> ParallelResult:
+    """ISSUE-006: Single canonical parallel runner with named exception policies.
+
+    Unified replacement for bounded_gather, gather_taskgroup, safe_gather_ok,
+    safe_gather_fire_and_forget, and safe_gather_strict.
+
+    Exception policies:
+        "raise"   — after all complete, raise BaseExceptionGroup if any errors.
+                    Single BaseException → bare raise. Same as safe_gather_strict.
+        "first"   — raise the first non-CancelledError BaseException immediately
+                    (fail-fast). Uses gather semantics, not TaskGroup.
+        "collect" — return (ok_results, errors) tuple. All run to completion.
+                    Same as bounded_gather / gather_taskgroup. DEFAULT.
+        "log"     — filter exceptions silently, return only successes.
+                    Same as safe_gather_ok / safe_gather_fire_and_forget.
+
+    Concurrency: pass ``concurrency=N`` to cap simultaneous tasks (semaphore).
+                 None (default) = unbounded.
+
+    Backend: pass ``taskgroup=True`` to use asyncio.TaskGroup (Python 3.11+).
+             Default (False) uses asyncio.gather with semaphore wrapper.
+
+    Timeout: optional total timeout in seconds. Uses asyncio.timeout (3.11+).
+             None = no timeout.
+
+    Args:
+        coros:       List of awaitables to run concurrently.
+        policy:      Exception handling policy: "raise" | "first" | "collect" | "log".
+        concurrency: Max simultaneous tasks. None = unbounded.
+        timeout:     Total timeout in seconds. None = no timeout.
+        taskgroup:   Use TaskGroup instead of gather (Python 3.11+).
+        ctx:         Context label for log messages.
+        logger_instance: Optional logger override.
+
+    Returns:
+        ParallelResult with .ok (successes), .errors (exceptions, policy="collect"),
+        and .re_raised (BaseException re-raised per I6/I7).
+
+    Raises (policy="raise" / "first"):
+        BaseExceptionGroup: aggregated exceptions when policy="raise" and errors exist.
+        asyncio.CancelledError: when the caller's scope is cancelled.
+        BaseException: for non-Exception BaseException (KeyboardInterrupt, SystemExit).
+
+    Example:
+        # bounded gather (concurrency=5, taskgroup=False, policy="collect"):
+        result = await parallel(
+            [fetch(url) for url in urls],
+            concurrency=5,
+            policy="collect",
+            ctx="fetch.urls",
+        )
+        for item in result.ok:
+            ...
+
+        # fail-fast race (concurrency=None, taskgroup=False, policy="first"):
+        result = await parallel(
+            [try_curl(), try_aiohttp()],
+            policy="first",
+            ctx="http.fallback",
+        )
+
+        # fire-and-forget (concurrency=10, taskgroup=True, policy="log"):
+        await parallel(
+            [log_event(e) for e in events],
+            concurrency=10,
+            taskgroup=True,
+            policy="log",
+            ctx="audit.events",
+        )
+    """
+    _log = logger_instance or logger
+    if not coros:
+        return ParallelResult(ok=[], errors=[], re_raised=None)
+
+    if concurrency is not None and concurrency < 1:
+        concurrency = 1
+
+    # TaskGroup path (Python 3.11+): structured concurrency with sibling cancellation
+    if taskgroup:
+        return await _parallel_taskgroup(
+            coros,
+            concurrency=concurrency,
+            policy=policy,
+            ctx=ctx,
+            logger_instance=_log,
+        )
+
+    # Gather path: all coroutines run to completion, results collected
+    # Wrap coros with semaphore if concurrency is bounded
+    if concurrency is not None:
+        sem = asyncio.Semaphore(concurrency)
+
+        async def _wrap(coro: Awaitable[T]) -> T:
+            async with sem:
+                return await coro
+
+        wrapped = [_wrap(c) for c in coros]
+    else:
+        wrapped = coros
+
+    # Optional timeout wrapper
+    if timeout is not None and timeout > 0:
+
+        async def _with_timeout() -> list[Any]:
+            async with asyncio.timeout(timeout):
+                return await asyncio.gather(*wrapped, return_exceptions=True)
+
+        raw: list[Any] = await _with_timeout()
+    else:
+        raw = await asyncio.gather(*wrapped, return_exceptions=True)
+
+    # Classify: ok / errors / re_raise (I6/I7/I8)
+    _CE = asyncio.CancelledError
+    _BaseE = BaseException
+    _Ex = Exception
+
+    ok: list[Any] = []
+    errors: list[BaseException] = []
+    re_raise: BaseException | None = None
+
+    for i, item in enumerate(raw):
+        t = type(item)
+        if t is _CE:  # CancelledError — identity check, no MRO
+            _log.debug("[GHOST] parallel CancelledError[%d]%s", i, (" " + ctx) if ctx else "")
+            if re_raise is None:
+                re_raise = cast(BaseException, item)
+        elif isinstance(item, _Ex):  # regular Exception
+            _log.debug(
+                "[GHOST] parallel exception[%d]%s: %s: %s",
+                i,
+                (" " + ctx) if ctx else "",
+                type(item).__name__,
+                item,
+            )
+            errors.append(item)
+        elif isinstance(item, _BaseE):  # BaseException but not Exception
+            _log.debug(
+                "[GHOST] parallel BaseException[%d]%s: %s",
+                i,
+                (" " + ctx) if ctx else "",
+                type(item).__name__,
+            )
+            if re_raise is None:
+                re_raise = cast(BaseException, item)
+        else:
+            ok.append(item)
+
+    # Re-raise CancelledError / non-Exception BaseException immediately (I6/I7)
+    if re_raise is not None:
+        raise re_raise
+
+    # Dispatch by policy
+    match policy:
+        case "raise":
+            if errors:
+                if len(errors) == 1:
+                    raise errors[0]
+                raise BaseExceptionGroup(f"parallel{' ' + ctx if ctx else ''}", errors)
+            return ParallelResult(ok=ok, errors=[], re_raised=None)
+
+        case "first":
+            if errors:
+                raise errors[0]
+            return ParallelResult(ok=ok, errors=[], re_raised=None)
+
+        case "collect":
+            return ParallelResult(ok=ok, errors=errors, re_raised=None)
+
+        case "log":
+            # Silently drop errors — already logged above
+            if errors:
+                sample_preview = ", ".join(type(e).__name__ for e in errors[:_SAFE_GATHER_SAMPLE_CAP])
+                suppressed = max(0, len(errors) - _SAFE_GATHER_SAMPLE_CAP)
+                _log.debug(
+                    f"[GHOST] parallel{' ' + ctx if ctx else ''} "
+                    f"dropped {len(errors)} exceptions "
+                    f"(sample: {sample_preview}"
+                    f"{' +' + str(suppressed) + ' more' if suppressed else ''})"
+                )
+            return ParallelResult(ok=ok, errors=[], re_raised=None)
 
 
 # =============================================================================
@@ -828,14 +1160,14 @@ async def bounded_gather[T](
 ) -> tuple[list[T], list[BaseException]]:
     """P1-09: Bounded concurrent gather with semaphore.
 
-    Semantically equivalent to ``safe_gather_ok`` but with explicit
-    concurrency cap. Use when the number of coroutines exceeds the safe
-    fan-out bound for the underlying I/O resource (TCP connections, DNS
-    resolver, HTTP/1.1 connection pool, etc.).
+    DEPRECATED: Use ``parallel(coros, concurrency=N, policy="collect")`` instead.
+    This function is a thin wrapper maintained for backward compatibility.
+
+    Semantically equivalent to ``parallel(coros, concurrency=concurrency, policy="collect")``.
 
     Args:
         coros: List of awaitables to gather concurrently.
-        concurrency: Maximum concurrent tasks (default 10). Must be ≥ 1.
+        concurrency: Maximum concurrent tasks (default 5). Must be ≥ 1.
         ctx: Context label for log messages (e.g. "discovery.sources").
         logger_instance: Optional logger override.
 
@@ -847,59 +1179,22 @@ async def bounded_gather[T](
     Raises:
         asyncio.CancelledError: if the caller's task is cancelled.
         BaseException (not Exception): KeyboardInterrupt, SystemExit, etc.
-
-    Invariants inherited from _classify_gathered:
-        - [I6] CancelledError → re-raised immediately
-        - [I7] non-Exception BaseException → re-raised immediately
-        - [I8] Exception → routed to error_exceptions (logged at DEBUG)
     """
-    _log = logger_instance or logger
-    if not coros:
-        return [], []
-    if concurrency < 1:
-        concurrency = 1
+    import warnings
 
-    sem = asyncio.Semaphore(concurrency)
-
-    async def _wrapped(coro: Awaitable[T]) -> T:
-        async with sem:
-            return await coro
-
-    wrapped = [_wrapped(c) for c in coros]
-    raw = await asyncio.gather(*wrapped, return_exceptions=True)
-    ok, errors, re_raise = _classify_gathered(raw, ctx, _log)
-
-    if errors:
-        sample_preview = ", ".join(type(e).__name__ for e in errors[:_SAFE_GATHER_SAMPLE_CAP])
-        suppressed = max(0, len(errors) - _SAFE_GATHER_SAMPLE_CAP)
-        _log.debug(
-            f"[GHOST] bounded_gather{' ' + ctx if ctx else ''} "
-            f"concurrency={concurrency} "
-            f"dropped {len(errors)} exceptions "
-            f"(sample: {sample_preview}"
-            f"{' +' + str(suppressed) + ' more' if suppressed else ''})"
-        )
-    else:
-        suppressed = 0
-
-    # Sprint F360: Record stats to MetricsRegistry for unified dashboard
-    try:
-        from hledac.universal.metrics_registry import get_metrics_registry
-
-        get_metrics_registry().record_bounded_gather(
-            ctx=ctx or "unknown",
-            total_tasks=len(coros),
-            ok_count=len(ok),
-            error_count=len(errors),
-            suppressed_count=suppressed,
-        )
-    except Exception:  # noqa: BLE001
-        pass  # fail-soft: metrics never crash the gather
-
-    if re_raise is not None:
-        raise re_raise
-
-    return ok, list(errors)  # type: ignore[return-value]
+    warnings.warn(
+        "bounded_gather is deprecated, use parallel(coros, concurrency=N, policy='collect')",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    result = await parallel(
+        coros,
+        policy="collect",
+        concurrency=concurrency,
+        ctx=ctx,
+        logger_instance=logger_instance,
+    )
+    return result.ok, list(result.errors)  # type: ignore[return-value]
 
 
 # ISSUE-005: bounded_parallel_map — parallel map with bounded concurrency
@@ -982,7 +1277,7 @@ async def bounded_parallel_map[T, R](
                 return idx, e  # noqa: RET504
 
     tasks = [asyncio.create_task(_run(i, item)) for i, item in enumerate(items)]
-    raw = await asyncio.gather(*tasks, return_exceptions=True)
+    raw = cast("list[tuple[int, R | BaseException]]", await asyncio.gather(*tasks, return_exceptions=True))
 
     # Check for CancelledError / BaseException — re-raise per GHOST I6/I7
     for item in raw:
@@ -996,7 +1291,13 @@ async def bounded_parallel_map[T, R](
     if ordered:
         raw.sort(key=lambda x: x[0])
 
-    return [result if not isinstance(result, Exception) else None for _, result in raw]
+    # Filter exceptions: _run returns (idx, result) where result may be Exception.
+    # The for-loop above already re-raised any BaseException (CancelledError, etc.).
+    # Here we filter regular Exception instances to None per BPM3 fail-soft contract.
+    filtered: list[R | None] = []
+    for _, result in raw:
+        filtered.append(None if isinstance(result, Exception) else cast(R, result))
+    return filtered
 
 
 async def safe_gather_return_exceptions(
@@ -1188,7 +1489,7 @@ class RaceFirstSuccessResult(msgspec.Struct, frozen=True):
 async def race_first_success(
     *coros: tuple[Awaitable[Any], str],
     timeout: float | None = None,
-    label: str = "",
+    label: str = "",  # reserved for future log context
     require_truthy: bool = True,
     logger_instance: logging.Logger | None = None,
 ) -> RaceFirstSuccessResult:
@@ -1216,6 +1517,8 @@ async def race_first_success(
         TimeoutError: if global timeout expires before any qualifying success.
     """
     _log = logger_instance or logger
+    if label:
+        _log.debug("[race_first_success] starting%s with %d candidates", f"({label})" if label else "", len(coros))
     if not coros:
         return RaceFirstSuccessResult(result=None, winner_index=-1, winner_label="", errors=[])
     result_holder: list[Any] = [None]
@@ -1378,62 +1681,27 @@ async def gather_taskgroup[T](
 ) -> tuple[list[T], list[BaseException]]:
     """ISSUE-006: TaskGroup + Semaphore parallel fetch.
 
+    DEPRECATED: Use ``parallel(coros, concurrency=N, taskgroup=True, policy="collect")`` instead.
+    This function is a thin wrapper maintained for backward compatibility.
+
     Drop-in replacement for bounded_gather with TaskGroup (PEP 654, 3.11+).
-    Processes all coros concurrently with explicit concurrency cap.
-
-    Args:
-        coros: List of awaitables to run concurrently.
-        concurrency: Max simultaneous tasks (default 10). M1 8GB: 10× ~50MB = 500MB.
-        ctx: Context label for log messages.
-        logger_instance: Optional logger override.
-
-    Returns:
-        Tuple of (ok_results, error_exceptions).
-
-    Invariants:
-        - [TG1] CancelledError → re-raised immediately
-        - [TG2] non-Exception BaseException → re-raised immediately
-        - [TG3] Exception → routed to error_exceptions (logged at DEBUG)
     """
-    _log = logger_instance or logger
-    if not coros:
-        return [], []
-    if concurrency < 1:
-        concurrency = 1
+    import warnings
 
-    results: list[Any] = [None] * len(coros)
-    errors: list[BaseException] = []
-
-    sem = asyncio.Semaphore(concurrency)
-
-    async def _run(idx: int, coro: Awaitable[T]) -> None:
-        async with sem:
-            results[idx] = await coro
-
-    try:
-        async with asyncio.TaskGroup() as tg:
-            for idx, coro in enumerate(coros):
-                tg.create_task(_run(idx, coro), name=f"tg[{idx}]")
-    except BaseExceptionGroup as eg:
-        for exc in eg.exceptions:
-            if isinstance(exc, asyncio.CancelledError):
-                _log.debug("[GHOST] gather_taskgroup CancelledError%s", ("_" + ctx) if ctx else "")
-                raise exc from None
-            if isinstance(exc, BaseException) and not isinstance(exc, Exception):
-                _log.debug(
-                    "[GHOST] gather_taskgroup BaseException%s: %s", ("_" + ctx) if ctx else "", type(exc).__name__
-                )
-                raise exc from None
-            errors.append(exc)
-        # Collect non-exception results
-        ok_results = [r for r in results if r is not None and not isinstance(r, BaseException)]
-        return ok_results, errors
-    except asyncio.CancelledError:
-        _log.debug("[GHOST] gather_taskgroup CancelledError%s", ("_" + ctx) if ctx else "")
-        raise
-
-    ok_results = [r for r in results if r is not None and not isinstance(r, BaseException)]
-    return ok_results, errors
+    warnings.warn(
+        "gather_taskgroup is deprecated, use parallel(coros, concurrency=N, taskgroup=True, policy='collect')",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    result = await parallel(
+        coros,
+        policy="collect",
+        concurrency=concurrency,
+        taskgroup=True,
+        ctx=ctx,
+        logger_instance=logger_instance,
+    )
+    return result.ok, list(result.errors)  # type: ignore[return-value]
 
 
 async def chunked_taskgroup[T, R](
@@ -1507,13 +1775,14 @@ async def chunked_taskgroup[T, R](
             for exc in eg.exceptions:
                 if isinstance(exc, asyncio.CancelledError):
                     _log.debug("[GHOST] chunked_taskgroup CancelledError%s", ("_" + ctx) if ctx else "")
-                raise exc from None
-            if isinstance(exc, BaseException) and not isinstance(exc, Exception):
-                _log.debug(
-                    "[GHOST] chunked_taskgroup BaseException%s: %s", ("_" + ctx) if ctx else "", type(exc).__name__
-                )
-                raise exc from None
-            # Collect None results (exceptions)
+                    raise exc from None
+                if isinstance(exc, BaseException) and not isinstance(exc, Exception):
+                    _log.debug(
+                        "[GHOST] chunked_taskgroup BaseException%s: %s", ("_" + ctx) if ctx else "", type(exc).__name__
+                    )
+                    raise exc from None
+                # Regular Exception from TaskGroup itself (should not happen since _run wraps in try/except)
+                # — log and continue to collect batch results below
         except asyncio.CancelledError:
             _log.debug("[GHOST] chunked_taskgroup CancelledError%s", ("_" + ctx) if ctx else "")
             raise

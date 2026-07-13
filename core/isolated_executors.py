@@ -23,6 +23,7 @@ M1 8GB notes:
 """
 import asyncio
 import concurrent.futures
+import gc
 import logging
 import os
 import sys
@@ -233,14 +234,12 @@ class IsolatedInterpreter:
                 return loop.run_until_complete(self.run_async(func, *args, **kwargs))
             finally:
                 loop.close()
-                            # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
-                            try:
-                                gc.collect()
-                            except Exception:
-                                pass
-        else:
-            import functools
-            return asyncio.run_coroutine_threadsafe(self.run_async(func, *args, **kwargs), loop).result()
+                # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
+                try:
+                    gc.collect()
+                except Exception:
+                    pass
+        return asyncio.run_coroutine_threadsafe(self.run_async(func, *args, **kwargs), loop).result()
 
     def __enter__(self) -> 'IsolatedInterpreter':
         self.start()
@@ -332,13 +331,12 @@ class IsolatedInterpreterPool:
                 return loop.run_until_complete(self.run_async(func, *args, **kwargs))
             finally:
                 loop.close()
-                            # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
-                            try:
-                                gc.collect()
-                            except Exception:
-                                pass
-        else:
-            return asyncio.run_coroutine_threadsafe(self.run_async(func, *args, **kwargs), loop).result()
+                # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
+                try:
+                    gc.collect()
+                except Exception:
+                    pass
+        return asyncio.run_coroutine_threadsafe(self.run_async(func, *args, **kwargs), loop).result()
 
     def close_all(self) -> None:
         """

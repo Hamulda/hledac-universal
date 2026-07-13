@@ -1,5 +1,5 @@
 # CLAUDE.md — Hledac Universal OSINT Orchestrator
-
+NEPOUŽÍVEJ ŽÁDNÝ GIT PŘÍKAZ, POKUD O TO NEJSI DOSLOVNĚ ŽÁDÁN!!!
 ## PROJECT OVERVIEW
 
 Hledac Universal je asynchronní autonomní OSINT orchestrátor běžící na MacBook Air M1 (8GB UMA).

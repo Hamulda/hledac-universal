@@ -48,10 +48,12 @@ import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
-import httpx
 import msgspec
+
+if TYPE_CHECKING:
+    import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -285,8 +287,7 @@ class CircuitBreaker:
             # Floor = 10% of timeout to avoid sub-millisecond jitter for very small timeouts
             floor = _JITTER_MIN_FRACTION * self.recovery_timeout
             return max(raw, floor)
-        except Exception:
-            # Fail-safe: M1 deterministic fallback — use base timeout
+        except Exception:  # noqa: BLE001 — fail-safe: M1 deterministic fallback
             return self.recovery_timeout
 
     def check_circuit(self) -> CircuitDecision:
@@ -695,7 +696,7 @@ async def resilient_fetch(url: str) -> None:
     try:
         parsed = urlparse(url)
         domain = parsed.netloc
-    except Exception:
+    except Exception:  # noqa: BLE001 — fail-safe: URL parse error → skip
         return None
 
     if domain.startswith("tor:"):
@@ -738,7 +739,7 @@ def _domain_from_url(url: str) -> str:
         if domain.startswith("tor:"):
             domain = domain[4:]
         return domain
-    except Exception:
+    except Exception:  # noqa: BLE001 — fail-safe: URL parse error → empty string
         return ""
 
 
@@ -783,15 +784,17 @@ def domain_breaker_record_failure(
 
 
 async def checked_httpx_get(
-    session: httpx.AsyncClient,
+    session: "httpx.AsyncClient",
     url: str,
     *,
     params: dict | None = None,
     headers: dict | None = None,
-    timeout: httpx.Timeout,
+    timeout: "httpx.Timeout",
     failure_kind: str = "fetch_error",
 ) -> tuple[dict | str | bytes | None, int, str | None]:
     """Perform an httpx GET with shared domain circuit breaker protection."""
+    import httpx  # noqa: E402 — lazy, saves ~1800ms at import time
+
     domain = _domain_from_url(url)
     decision = domain_breaker_check(domain)
     if not decision.allowed:
@@ -803,7 +806,7 @@ async def checked_httpx_get(
             try:
                 data = resp.json()
                 return data, resp.status_code, None
-            except Exception:
+            except Exception:  # noqa: BLE001 — JSON parse fail → use raw text
                 data = resp.text
                 return data, resp.status_code, None
         get_breaker(domain).record_failure(failure_kind=f"{failure_kind}:{resp.status_code}")
@@ -814,20 +817,22 @@ async def checked_httpx_get(
     except httpx.HTTPError:
         get_breaker(domain).record_failure(is_timeout=False, failure_kind=failure_kind)
         return None, 0, "client_error"
-    except Exception:
+    except Exception:  # noqa: BLE001 — fail-safe: unexpected error
         get_breaker(domain).record_failure(is_timeout=False, failure_kind=failure_kind)
         return None, 0, "unknown_error"
 
 
 async def checked_httpx_post(
-    session: httpx.AsyncClient,
+    session: "httpx.AsyncClient",
     url: str,
     *,
     json: dict | None = None,
-    timeout: httpx.Timeout,
+    timeout: "httpx.Timeout",
     failure_kind: str = "post_error",
 ) -> tuple[dict | str | bytes | None, int, str | None]:
     """Perform an httpx POST with shared domain circuit breaker protection."""
+    import httpx  # noqa: E402 — lazy, saves ~1800ms at import time
+
     domain = _domain_from_url(url)
     decision = domain_breaker_check(domain)
     if not decision.allowed:
@@ -839,7 +844,7 @@ async def checked_httpx_post(
             try:
                 data = resp.json()
                 return data, resp.status_code, None
-            except Exception:
+            except Exception:  # noqa: BLE001 — JSON parse fail → use raw text
                 data = resp.text
                 return data, resp.status_code, None
         get_breaker(domain).record_failure(failure_kind=f"{failure_kind}:{resp.status_code}")
@@ -850,7 +855,7 @@ async def checked_httpx_post(
     except httpx.HTTPError:
         get_breaker(domain).record_failure(is_timeout=False, failure_kind=failure_kind)
         return None, 0, "client_error"
-    except Exception:
+    except Exception:  # noqa: BLE001 — fail-safe: unexpected error
         get_breaker(domain).record_failure(is_timeout=False, failure_kind=failure_kind)
         return None, 0, "unknown_error"
 

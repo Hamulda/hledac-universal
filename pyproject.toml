@@ -22,7 +22,6 @@ classifiers = [
 
 dependencies = [
     # ── Core async ────────────────────────────────────────────────────────────
-    "aiosqlite>=0.19.0",
     # aiodns: c-ares backed async DNS — 2-5× faster parallel resolution vs loop.getaddrinfo.
     # Uses connection multiplexing for multiple queries to the same nameserver.
     # M1 8GB: ~5 MB resident (single c-ares channel), lazy import, always-on.
@@ -103,7 +102,6 @@ dependencies = [
     "datasketch>=1.10.0",
     "python-dotenv>=1.0.0",
     "cyclopts>=5.0.0a7,<6.0.0; python_full_version >= '3.14'",  # Python 3.14 max
-    "cyclopts>=6.0.0; python_full_version < '3.14'",
     "rank-bm25>=0.2.2",
     # UPGRADE 2026-07-05: Extended upper bound to <0.20.0 for rustworkx 0.18+ support.
     "rustworkx>=0.17.1,<0.20.0",
@@ -118,7 +116,7 @@ dependencies = [
     "markdownify",
     # ── Dokumenty / OCR ───────────────────────────────────────────────────────
     "pymupdf>=1.27.2.3",
-    "pypdf2",
+    "pypdf>=5.0.0",  # pypdf2 merged into pypdf (v5+); pypdf2 is deprecated
     "python-docx",
     "pillow>=12.2.0",
     "ocrmac>=1.0.1; sys_platform == 'darwin'",
@@ -150,7 +148,7 @@ dependencies = [
     "xxhash>=3.7.0,<4.0.0",
     "mmh3>=5.2.1",
     # ── Networking / OSINT ────────────────────────────────────────────────────
-    "dnspython>=2.4.0",
+    "dnspython>=2.4.0,<2.7.0",  # 2.x stable; 3.x is async-first redesign
     "ipwhois>=1.3.0",
     "yara-python>=4.5.4",
     "stix2>=3.0.1",
@@ -162,8 +160,7 @@ dependencies = [
     # ── IPC / shared memory (M1 zero-copy cross-process) ─────────────────────
     'posix-ipc>=1.1.1; sys_platform == "darwin"',
     # ── Komprese ──────────────────────────────────────────────────────────────
-    "zstandard>=0.25.0",
-    "zstd>=1.5.7.3",
+    "zstandard>=0.25.0",  # zstd bindings — zstd removed (duplicate, zstandard is primary)
     "lz4",
     # ── Modely / datové struktury ─────────────────────────────────────────────
     # Issue #49: upper bound prevents accidental upgrade to v3 (ABI break).
@@ -212,7 +209,7 @@ observability = [
     # asyncio instrumentation NOT included — 5-15% event-loop overhead on M1
     # httpx instrumentation ENABLED via HLEDAC_OTEL_PROFILE=1
     # aiohttp removed — aiohttp is now in [aiohttp-fallback] extra only
-    "opentelemetry-instrumentation-aio_pika>=0.47b0",
+    "opentelemetry-instrumentation-aio-pika>=0.47b0",
     "opentelemetry-exporter-otlp-proto-http>=1.27.0",
     # Memory profiling (dev)
     "memray>=1.14.0",
@@ -544,7 +541,6 @@ ignore = ["E501", "F821", "B027"]  # BLE001: P1-01 audit in progress — see Iss
 "discovery/deep_source_registry.py" = ["BLE001"]
 "discovery/arpa_eth_arpa_adapter.py" = ["BLE001"]
 "utils/lmdb_presssure.py" = ["BLE001"]
-"transport/circuit_breaker.py" = ["BLE001"]
 "transport/stealth_manager.py" = ["BLE001"]
 "transport/session_pool.py" = ["BLE001"]
 "transport/httpauth.py" = ["BLE001"]

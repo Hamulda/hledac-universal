@@ -52,12 +52,65 @@ import asyncio
 import logging
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as _dc_replace
 import msgspec
 from typing import Any
 from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok
 from .qtable import FederatedQTable
 logger = logging.getLogger(__name__)
+
+# --- Issue #11 fix: auto-singleton FederatedBridge for cross-sprint persistence ---
+# Module-level singleton for persistent Q-table bridge. Created lazily on first
+# access via _get_auto_bridge(). Uses FederatedBridge with CROSS_SPRINT_PERSIST
+# mode. Default path: ~/.hledac/federated_qtable.lmdb (can be overridden via
+# HLEDAC_FEDERATED_QTABLE_PATH env var). Survives across coordinator instances
+# within the same process, enabling reinforcement learning to persist.
+_AUTO_BRIDGE_SINGLETON: Any | None = None
+_AUTO_BRIDGE_LMDB_PATH: str | None = None
+# Default path for auto-persistence (used when env var is not set)
+_DEFAULT_FEDERATED_QTABLE_PATH: str = '~/.hledac/federated_qtable.lmdb'
+
+
+def _get_auto_bridge() -> Any | None:
+    """
+    Get or create the auto-singleton FederatedBridge with LMDB persistence.
+
+    Created lazily on first call. Uses HLEDAC_FEDERATED_QTABLE_PATH env var
+    if set, otherwise defaults to ~/.hledac/federated_qtable.lmdb.
+
+    The singleton is process-global and survives across FederatedResearchCoordinator
+    instances, enabling cross-sprint Q-table persistence.
+
+    Thread-safety: FederatedBridge uses asyncio.Lock internally; concurrent
+    coroutine access is safe.
+    """
+    global _AUTO_BRIDGE_SINGLETON, _AUTO_BRIDGE_LMDB_PATH
+    if _AUTO_BRIDGE_SINGLETON is not None:
+        return _AUTO_BRIDGE_SINGLETON
+    # Lazily resolve LMDB path: env var takes precedence, else default
+    # Empty string explicitly disables auto-bridge (for testing/backward compat)
+    if _AUTO_BRIDGE_LMDB_PATH is None:
+        env_raw = os.environ.get('HLEDAC_FEDERATED_QTABLE_PATH', None)
+        if env_raw is not None and env_raw.strip() == '':
+            # Empty string = disabled (backward compat for tests)
+            return None
+        env_path = os.environ.get('HLEDAC_FEDERATED_QTABLE_PATH', '').strip()
+        if env_path:
+            _AUTO_BRIDGE_LMDB_PATH = env_path
+        else:
+            # Default path: ~/.hledac/federated_qtable.lmdb
+            _AUTO_BRIDGE_LMDB_PATH = os.path.expanduser(_DEFAULT_FEDERATED_QTABLE_PATH)
+    try:
+        from .bridge import FederatedBridge
+        bridge = FederatedBridge(lmdb_path=_AUTO_BRIDGE_LMDB_PATH)
+        _AUTO_BRIDGE_SINGLETON = bridge
+        logger.info('[FED] auto-bridge singleton created: lmdb_path=%s', _AUTO_BRIDGE_LMDB_PATH)
+        return bridge
+    except Exception as e:
+        logger.debug('[FED] auto-bridge creation failed (fail-soft): %s: %s', type(e).__name__, e)
+        return None
+
+
 __all__ = ['FederatedResearchCoordinator', 'FederatedResult', 'NodeResult', 'NodeLane', 'MAX_VIRTUAL_NODES']
 MAX_VIRTUAL_NODES: int = 3
 'Hard cap on simultaneous virtual nodes per coordinator instance.'
@@ -173,11 +226,22 @@ class FederatedResearchCoordinator:
         else:
             self._transport: Any = _LocalNodeTransport()
         if use_bridge and bridge is not None:
+            # Explicit bridge injection (backward compat for callers that pass bridge= explicitly)
             self._bridge: Any | None = bridge
             self._qtables: dict[str, FederatedQTable] = {}
+        elif use_bridge:
+            # use_bridge=True but no explicit bridge → try auto-singleton
+            self._bridge = _get_auto_bridge()
+            self._qtables = {}
         else:
-            self._bridge = None
-            self._qtables: dict[str, FederatedQTable] = {lane: FederatedQTable() for lane in NodeLane.ALL[:self._max_nodes]}
+            # use_bridge=False (default): try auto-bridge singleton first (Issue #11 fix)
+            # If HLEDAC_FEDERATED_QTABLE_PATH is set, the singleton provides cross-sprint persistence.
+            # If not set, falls back to in-memory (backward-compatible).
+            self._bridge = _get_auto_bridge()
+            if self._bridge is not None:
+                self._qtables = {}
+            else:
+                self._qtables = {lane: FederatedQTable() for lane in NodeLane.ALL[:self._max_nodes]}
 
     @property
     def max_nodes(self) -> int:
@@ -198,40 +262,51 @@ class FederatedResearchCoordinator:
             dedup count, and timing. NEVER raises — returns a safe
             empty result on any internal error.
         """
+        # Accumulator pattern: local vars → immutable build at end
+        # (frozen=True dataclass cannot be mutated after construction)
         started = time.monotonic()
-        result = FederatedResult(query=query, total_nodes=0)
+        _total_nodes = 0
+        _failed_nodes = 0
+        _node_results: list[NodeResult] = []
+        _merged_findings: list[dict[str, Any]] = []
+        _dedup_count = 0
+        _has_error = False
+
         try:
             chosen_lanes = self._resolve_lanes(lanes)
-            result.total_nodes = len(chosen_lanes)
+            _total_nodes = len(chosen_lanes)
             if not chosen_lanes:
                 logger.warning('[FED] No lanes selected, returning empty result')
-                return result
-            node_coros: list[asyncio.Task[NodeResult]] = []
-            for lane in chosen_lanes:
-                node_coros.append(safe_create_task(self._run_node(lane, query)))
-            try:
-                async with asyncio.timeout(DISTRIBUTE_TOTAL_TIMEOUT_S):
-                    gathered = await safe_gather_ok(*node_coros, label='coordinator:311')
-            except TimeoutError:
-                logger.error(f'[FED] distribute_research total timeout {DISTRIBUTE_TOTAL_TIMEOUT_S}s exceeded')
-                result.duration_s = time.monotonic() - started
-                return result
-            for lane, outcome in zip(chosen_lanes, gathered, strict=False):
-                if isinstance(outcome, BaseException):
-                    result.failed_nodes += 1
-                    result.node_results.append(NodeResult(lane=lane, error=f'{type(outcome).__name__}: {outcome}'))
-                    logger.warning(f'[FED] node lane={lane} raised: {type(outcome).__name__}: {outcome}')
-                    continue
-                if isinstance(outcome, NodeResult):
-                    if not outcome.is_ok():
-                        result.failed_nodes += 1
-                    result.node_results.append(outcome)
-            merged, dedup_count = self._aggregate_and_dedup([n for n in result.node_results if n.is_ok()])
-            result.merged_findings = merged[:AGGREGATION_MAX_FINDINGS]
-            result.dedup_count = dedup_count
+                _merged_findings = []
+                _has_error = True
+            else:
+                node_coros: list[asyncio.Task[NodeResult]] = []
+                for lane in chosen_lanes:
+                    node_coros.append(safe_create_task(self._run_node(lane, query)))
+                try:
+                    async with asyncio.timeout(DISTRIBUTE_TOTAL_TIMEOUT_S):
+                        gathered = await safe_gather_ok(*node_coros, label='coordinator:311')
+                except TimeoutError:
+                    logger.error(f'[FED] distribute_research total timeout {DISTRIBUTE_TOTAL_TIMEOUT_S}s exceeded')
+                    _has_error = True
+                else:
+                    for lane, outcome in zip(chosen_lanes, gathered, strict=False):
+                        if isinstance(outcome, BaseException):
+                            _failed_nodes += 1
+                            _node_results.append(NodeResult(lane=lane, error=f'{type(outcome).__name__}: {outcome}'))
+                            logger.warning(f'[FED] node lane={lane} raised: {type(outcome).__name__}: {outcome}')
+                            continue
+                        if isinstance(outcome, NodeResult):
+                            if not outcome.is_ok():
+                                _failed_nodes += 1
+                            _node_results.append(outcome)
+                    merged, _dedup_count = self._aggregate_and_dedup([n for n in _node_results if n.is_ok()])
+                    _merged_findings = merged[:AGGREGATION_MAX_FINDINGS]
         except Exception as e:
             logger.error(f'[FED] distribute_research unexpected error: {type(e).__name__}: {e}')
-            object.__setattr__(result, 'failed_nodes', max(result.failed_nodes, 1))
+            _failed_nodes = max(_failed_nodes, 1)
+            _has_error = True
+
         if self._bridge is not None:
             try:
                 persisted = await self._bridge.persist_if_due()
@@ -239,7 +314,17 @@ class FederatedResearchCoordinator:
                     logger.debug(f'[FED] bridge persisted: updates={self._bridge.update_count} persists={self._bridge.persist_count}')
             except Exception as pe:
                 logger.debug(f'[FED] bridge persist skipped: {pe}')
-        result.duration_s = time.monotonic() - started
+
+        _duration_s = time.monotonic() - started
+        result = _dc_replace(
+            FederatedResult(query=query),
+            total_nodes=_total_nodes,
+            failed_nodes=_failed_nodes,
+            node_results=_node_results,
+            merged_findings=_merged_findings,
+            dedup_count=_dedup_count,
+            duration_s=_duration_s,
+        )
         logger.info(f'[FED] distribute_research done: nodes={result.total_nodes} failed={result.failed_nodes} merged={len(result.merged_findings)} dedup={result.dedup_count} dur={result.duration_s:.3f}s')
         return result
 

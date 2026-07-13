@@ -427,15 +427,13 @@ class QuantumInspiredPathFinder:
         n = self.n_nodes
         amplitude = 1.0 / math.sqrt(len(start_indices))
         if self._mlx_available and _get_mlx() is not None:
-            state = mx.zeros(n, dtype=mx.float32)
+            mx_mod = _get_mlx()
+            state = mx_mod.zeros(n, dtype=mx_mod.float32)
             for idx in start_indices:
-                pass
-            state_values = mx.zeros(n, dtype=mx.float32)
-            for idx in start_indices:
-                state_values = state_values.at[idx].add(amplitude)
-            state = state_values
+                state = state.at[idx].add(amplitude)
         else:
-            state = np.zeros(n, dtype=np.float32)
+            np_mod = _get_numpy()
+            state = np_mod.zeros(n, dtype=np_mod.float32)
             for idx in start_indices:
                 state[idx] = amplitude
         return state
@@ -505,12 +503,14 @@ class QuantumInspiredPathFinder:
             State after Hadamard coin operation.
         """
         if self._mlx_available and _get_mlx() is not None:
-            norm = mx.sqrt(mx.sum(state * state))
+            mx_mod = _get_mlx()
+            norm = mx_mod.sqrt(mx_mod.sum(state * state))
             if norm > 0:
                 return state / norm
             return state
         else:
-            norm = np.linalg.norm(state)
+            np_mod = _get_numpy()
+            norm = np_mod.linalg.norm(state)
             if norm > 0:
                 return state / norm
             return state
@@ -528,12 +528,14 @@ class QuantumInspiredPathFinder:
         """
         n = self.n_nodes
         if self._mlx_available and _get_mlx() is not None:
-            uniform = mx.ones(n, dtype=mx.float32) / math.sqrt(n)
-            overlap = mx.sum(uniform * state)
+            mx_mod = _get_mlx()
+            uniform = mx_mod.ones(n, dtype=mx_mod.float32) / math.sqrt(n)
+            overlap = mx_mod.sum(uniform * state)
             return 2 * overlap * uniform - state
         else:
-            uniform = np.ones(n, dtype=np.float32) / math.sqrt(n)
-            overlap = np.dot(uniform, state)
+            np_mod = _get_numpy()
+            uniform = np_mod.ones(n, dtype=np_mod.float32) / math.sqrt(n)
+            overlap = np_mod.dot(uniform, state)
             return 2 * overlap * uniform - state
 
     def _apply_shift_operator(self, state: Any) -> Any:
@@ -567,14 +569,14 @@ class QuantumInspiredPathFinder:
         cols = self.adjacency_matrix['cols']
         data = self.adjacency_matrix['data']
         n = self.n_nodes
-        degrees = mx.zeros(n, dtype=mx.float32)
-        for r in rows:
-            degrees = degrees.at[int(r.item())].add(1.0)
-        degrees = mx.where(degrees > 0, degrees, 1.0)
-        new_state = mx.zeros(n, dtype=mx.float32)
-        for r, c, v in zip(rows, cols, data):
-            contribution = v * state[r] / degrees[r]
-            new_state = new_state.at[c].add(contribution)
+        mx_mod = _get_mlx()
+        # Vectorized scatter: degrees[rows]++ v jednom GPU kernelu
+        degrees = mx_mod.zeros(n, dtype=mx_mod.float32).at[rows].add(1.0)
+        degrees = mx_mod.where(degrees > 0, degrees, 1.0)
+        # Normalized edge contributions: single GPU kernel
+        contributions = data * state[rows] / degrees[rows]
+        # Scatter accumulate: new_state[cols] += contributions — plně vectorized
+        new_state = mx_mod.zeros(n, dtype=mx_mod.float32).at[cols].add(contributions)
         return new_state
 
     def _apply_shift_scipy(self, state: Any) -> Any:
@@ -665,19 +667,22 @@ class QuantumInspiredPathFinder:
         n = self.n_nodes
         strength = self.config.amplification_strength
         if self._mlx_available and _get_mlx() is not None:
-            oracle = mx.ones(n, dtype=mx.float32)
-            for idx in target_indices:
-                oracle = oracle.at[idx].multiply(-1.0)
+            mx_mod = _get_mlx()
+            # Vectorized oracle: single scatter, žádný per-item loop
+            oracle = mx_mod.ones(n, dtype=mx_mod.float32)
+            if target_indices:
+                oracle = oracle.at[mx_mod.array(target_indices, dtype=mx_mod.int32)].add(-2.0)
             state = state * oracle
-            mean = mx.mean(state)
+            mean = mx_mod.mean(state)
             diffusion = 2 * mean - state
             return diffusion * strength
         else:
-            oracle = np.ones(n, dtype=np.float32)
+            np_mod = _get_numpy()
+            oracle = np_mod.ones(n, dtype=np_mod.float32)
             for idx in target_indices:
                 oracle[idx] = -1.0
             state = state * oracle
-            mean = np.mean(state)
+            mean = np_mod.mean(state)
             diffusion = 2 * mean - state
             return diffusion * strength
 
@@ -757,10 +762,12 @@ class QuantumInspiredPathFinder:
             List of reconstructed paths.
         """
         if self._mlx_available and _get_mlx() is not None:
-            prob_array = np.array(probabilities.tolist())
+            np_mod = _get_numpy()
+            prob_array = np_mod.array(probabilities)
         else:
-            prob_array = np.array(probabilities)
-        probs = np.abs(prob_array) ** 2
+            np_mod = _get_numpy()
+            prob_array = np_mod.array(probabilities)
+        probs = np_mod.abs(prob_array) ** 2
         target_indices = [self.node_to_idx[node] for node in target_nodes if node in self.node_to_idx]
         if not target_indices:
             return []
@@ -826,15 +833,20 @@ class QuantumInspiredPathFinder:
             if isinstance(self.adjacency_matrix, dict):
                 rows = self.adjacency_matrix['rows']
                 cols = self.adjacency_matrix['cols']
-                for i, col in enumerate(cols):
-                    if int(col.item()) == node_idx:
-                        predecessors.append(int(rows[i].item()))
+                # Small arrays: convert to list once, then plain Python loop
+                # (O(E) ale E je malý pro targeted predecessor lookup)
+                cols_list = cols.tolist()
+                rows_list = rows.tolist()
+                for i, col in enumerate(cols_list):
+                    if col == node_idx:
+                        predecessors.append(rows_list[i])
         elif _get_scipy_sparse() is not None:
             if self.adjacency_matrix is not None and sparse.isspmatrix(self.adjacency_matrix):
                 col = self.adjacency_matrix.tocsc()[:, node_idx]
                 predecessors = col.nonzero()[0].tolist()
         elif isinstance(self.adjacency_matrix, np.ndarray):
-            predecessors = np.where(self.adjacency_matrix[:, node_idx] != 0)[0].tolist()
+            np_mod = _get_numpy()
+            predecessors = np_mod.where(self.adjacency_matrix[:, node_idx] != 0)[0].tolist()
         return predecessors
 
     async def cleanup(self) -> None:
@@ -879,14 +891,16 @@ class QuantumInspiredPathFinder:
             Dictionary with state statistics.
         """
         if self._mlx_available and _get_mlx() is not None:
-            prob_sum = float(mx.sum(state * state).item())
-            max_prob = float(mx.max(state * state).item())
-            entropy = float(-mx.sum(state * state * mx.log(state * state + 1e-10)).item())
+            mx_mod = _get_mlx()
+            prob_sum = float(mx_mod.sum(state * state).item())
+            max_prob = float(mx_mod.max(state * state).item())
+            entropy = float(-mx_mod.sum(state * state * mx_mod.log(state * state + 1e-10)).item())
         else:
-            prob_sum = float(np.sum(state ** 2))
-            max_prob = float(np.max(state ** 2))
+            np_mod = _get_numpy()
+            prob_sum = float(np_mod.sum(state ** 2))
+            max_prob = float(np_mod.max(state ** 2))
             probs = state ** 2
-            entropy = float(-np.sum(probs * np.log(probs + 1e-10)))
+            entropy = float(-np_mod.sum(probs * np_mod.log(probs + 1e-10)))
         return {'total_probability': prob_sum, 'max_probability': max_prob, 'entropy': entropy, 'n_nodes': self.n_nodes}
 import hashlib as _hashlib
 _DUCKPGQ_AVAILABLE = False

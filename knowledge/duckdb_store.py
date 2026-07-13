@@ -186,6 +186,7 @@ from hledac.universal.tools.file_cache import apply_nocache_to_path, madv_free_r
 from hledac.universal.utils.async_helpers import safe_gather_return_exceptions
 
 from .dedup import DedupManager
+from .sprint_boundary import SprintBoundaryCoordinator
 from .quality_assessment import (
     _HIGH_CONF_IOC_RE,
     _QUALITY_ENTROPY_THRESHOLD,
@@ -774,20 +775,6 @@ class _DuckDBQueryCache:
             except Exception:
                 pass
             object.__setattr__(self, "_l2_env", None)
-
-    def advance_ioc_sprint(self, sprint_id: int) -> None:
-        """
-        Advance IOC dedup store to new sprint boundary.
-
-        P1-07: Propagates to DedupManager.advance_ioc_sprint which calls
-        Rust MmapIocDedupStore.advance_sprint() — updates first_seen/last_seen
-        metadata for all entries so IOC occurrence counts reset per-sprint.
-        """
-        if self._dedup_manager is not None:
-            try:
-                self._dedup_manager.advance_ioc_sprint(sprint_id)
-            except Exception:
-                pass
 
 
 _query_cache: _DuckDBQueryCache | None = None
@@ -7470,6 +7457,19 @@ class DuckDBShadowStore:
     def is_initialized(self) -> bool:
         """Return True if sidecar was successfully initialized."""
         return self._initialized
+
+    def advance_ioc_sprint(self, sprint_id: int) -> None:
+        """
+        Advance IOC dedup store to new sprint boundary.
+
+        Issue #14: Delegates to SprintBoundaryCoordinator to keep
+        _DuckDBQueryCache pure-cache (no dedup knowledge) and
+        DedupManager pure-dedup (no cache knowledge).
+        """
+        if self._query_cache is None:
+            return
+        coordinator = SprintBoundaryCoordinator(self._query_cache, self._dedup_manager)
+        coordinator.advance(sprint_id)
 
     @property
     def is_closed(self) -> bool:

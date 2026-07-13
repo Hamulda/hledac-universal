@@ -365,7 +365,7 @@ def _python_strip_tracking(url: str) -> str:
             return url  # no change → fast path
         new_query = urlencode(filtered)
         return urlunparse(parsed._replace(query=new_query))
-    except Exception:
+    except Exception:  # noqa: BLE001 — fail-safe: URL encode error → return original
         return url
 
 
@@ -386,7 +386,7 @@ def _python_is_valid_url(url: str) -> bool:
 
         result = urlparse(url)
         return result.scheme in ("http", "https") and bool(result.netloc)
-    except Exception:
+    except Exception:  # noqa: BLE001 — fail-safe: URL parse error → False
         return False
 
 
@@ -406,7 +406,7 @@ def _python_extract_domain(url: str) -> str:
         from urllib.parse import urlparse
 
         return urlparse(url).hostname or ""
-    except Exception:
+    except Exception:  # noqa: BLE001 — fail-safe: URL parse error → empty string
         return ""
 
 
@@ -480,7 +480,7 @@ def _python_extract_host(url: str) -> str:
         from urllib.parse import urlparse
 
         return urlparse(url).hostname or ""
-    except Exception:
+    except Exception:  # noqa: BLE001 — fail-safe: URL parse error → empty string
         return ""
 
 
