@@ -22,11 +22,8 @@ import re
 import time
 from urllib.parse import urlparse
 
-from hledac.universal.discovery.duckduckgo_adapter import (
-    DiscoveryBatchResult,
-    DiscoveryHit,
-    _normalize_url_for_dedup,
-)
+from hledac.universal.discovery.base import DiscoveryBatchResult, DiscoveryHit
+
 
 # ---------------------------------------------------------------------------
 # Constants

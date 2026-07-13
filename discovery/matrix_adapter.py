@@ -41,9 +41,9 @@ class MatrixPublicAdapter:
     Requires guest access token for reading room messages.
     """
     _homeserver: str = field(default=MATRIX_HOMESERVER)
+    _last_request_time: float = field(default=0.0)
     _access_token: str | None = field(default=None, repr=False)
     _token_acquired_at: float = field(default=0.0, repr=False)
-    _session: ClientSession | None = field(default=None, repr=False)
     _session: httpx.AsyncClient | None = field(default=None, repr=False)
 
     @property

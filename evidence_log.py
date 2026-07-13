@@ -611,12 +611,15 @@ class EvidenceLog:
             evidence_dir.mkdir(parents=True, exist_ok=True)
             self._db_path = evidence_dir / f'{self._run_id}.db'
         self._db = await aiosqlite.connect(str(self._db_path), check_same_thread=False)
-        await self._db.execute('PRAGMA busy_timeout=30000')
-        await self._db.execute('PRAGMA journal_mode=WAL')
-        await self._db.execute('PRAGMA synchronous=NORMAL')
-        await self._db.execute('PRAGMA wal_autocheckpoint=1000')
-        await self._db.execute('PRAGMA cache_size=-8192')
-        await self._db.execute('PRAGMA read_uncommitted=1')
+        # Batch PRAGMA: single round-trip instead of 6 sequential executes
+        await self._db.executescript('''
+            PRAGMA busy_timeout=30000;
+            PRAGMA journal_mode=WAL;
+            PRAGMA synchronous=NORMAL;
+            PRAGMA wal_autocheckpoint=1000;
+            PRAGMA cache_size=-8192;
+            PRAGMA read_uncommitted=1;
+        ''')
         try:
             await self._db.execute('PRAGMA integrity_check')
         except Exception:
@@ -764,24 +767,24 @@ class EvidenceLog:
             if not _write_buf:
                 return
             if _afile is not None:
-                for _data in _write_buf:
-                    try:
-                        await _afile.write(_data)
-                    except Exception:
-                        try:
-                            with open(cast(str, self._persist_path_str), 'ab') as _sf:
-                                _sf.write(_data)
-                        except Exception:
-                            pass
+                # Batch write: join all data and write in one syscall
+                _combined = b''.join(_write_buf)
                 try:
+                    await _afile.write(_combined)
                     await _afile.flush()
                 except Exception:
-                    pass
+                    # Fallback: sync write each item individually
+                    try:
+                        with open(cast(str, self._persist_path_str), 'ab') as _sf:
+                            for _data in _write_buf:
+                                _sf.write(_data)
+                    except Exception:
+                        pass
             else:
+                # Batch write: join all data and write in one syscall
                 try:
                     with open(cast(str, self._persist_path_str), 'ab') as _sf:
-                        for _data in _write_buf:
-                            _sf.write(_data)
+                        _sf.write(b''.join(_write_buf))
                 except Exception:
                     pass
             _write_buf.clear()
@@ -963,11 +966,13 @@ class EvidenceLog:
                     import sqlite3
                     db_path = str(self._db_path)
                     conn = sqlite3.connect(db_path, timeout=30.0)
-                    conn.execute('PRAGMA busy_timeout=30000')
-                    conn.execute('PRAGMA journal_mode=WAL')
-                    conn.execute('PRAGMA synchronous=NORMAL')
-                    conn.execute('PRAGMA wal_autocheckpoint=1000')
-                    conn.execute('PRAGMA cache_size=-8192')
+                    conn.executescript('''
+                        PRAGMA busy_timeout=30000;
+                        PRAGMA journal_mode=WAL;
+                        PRAGMA synchronous=NORMAL;
+                        PRAGMA wal_autocheckpoint=1000;
+                        PRAGMA cache_size=-8192;
+                    ''')
                     conn.execute('INSERT INTO events (timestamp, event_type, data, hash) VALUES (?, ?, ?, ?)', (_event_dict.get('timestamp', 0.0), _event_dict.get('event_type', 'unknown'), orjson.dumps(_event_dict).decode(), _event_dict.get('content_hash', '')))
                     conn.commit()
                     conn.close()
@@ -1392,9 +1397,9 @@ class EvidenceLog:
             import shutil
             shutil.copy2(self._persist_path, export_path)
             return
+        # Batch write: single syscall for all events
         with open(export_path, 'w', encoding='utf-8') as f:
-            for event in self._log:
-                f.write(event.to_jsonl_line() + '\n')
+            f.write('\n'.join(e.to_jsonl_line() for e in self._log) + '\n')
 
     @classmethod
     def from_jsonl(cls, path: Path, run_id: str | None=None, load_to_ram: bool=False, max_ram_events: int=100) -> EvidenceLog:

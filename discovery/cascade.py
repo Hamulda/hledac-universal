@@ -25,9 +25,7 @@ import os
 import time
 from typing import Any
 
-from hledac.universal.discovery.duckduckgo_adapter import (
-    DiscoveryBatchResult,
-)
+from hledac.universal.discovery.base import DiscoveryBatchResult
 from hledac.universal.utils.async_helpers import safe_gather_ok
 
 # ---------------------------------------------------------------------------

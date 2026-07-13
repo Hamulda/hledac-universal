@@ -23,10 +23,8 @@ import logging
 import time
 from typing import Any
 
-from hledac.universal.discovery.duckduckgo_adapter import (
-    DiscoveryBatchResult,
-    DiscoveryHit,
-)
+from hledac.universal.discovery.base import DiscoveryBatchResult, DiscoveryHit
+from hledac.universal.discovery.base import BaseDiscoveryMixin, DiscoveryResult
 
 logger = logging.getLogger(__name__)
 
@@ -364,3 +362,55 @@ async def search_tvnews_for_query(
             }
         )
     return findings
+
+class TVNewsAdapter(BaseDiscoveryMixin):
+    """
+    Internet Archive TV News adapter using BaseDiscoveryMixin infrastructure.
+
+    Wraps async_search_tvnews() as _do_discover().
+    """
+
+    name: str = "tvnews"
+    source_type: str = "archive"
+
+    @property
+    def rate_limit_rpm(self) -> int:
+        return 20  # Archive.org is respectful of rate limits
+
+    @property
+    def retry_attempts(self) -> int:
+        return 3
+
+    @property
+    def retry_base_delay_s(self) -> float:
+        return 2.0
+
+    @property
+    def timeout_s(self) -> float:
+        return 15.0
+
+    async def _do_discover(
+        self, query: str, limit: int
+    ):
+        """Wrap async_search_tvnews() as an async iterator."""
+        try:
+            result = await async_search_tvnews(query, max_results=limit)
+        except Exception:
+            return
+
+        for hit in result.hits:
+            metadata: dict[str, str] = {}
+
+            yield DiscoveryResult(
+                query=hit.query,
+                url=hit.url,
+                title=hit.title,
+                snippet=hit.snippet,
+                source=hit.source,
+                source_type=self.source_type,
+                rank=hit.rank,
+                retrieved_ts=hit.retrieved_ts,
+                score=hit.score,
+                reason=hit.reason,
+                metadata=metadata,
+            )

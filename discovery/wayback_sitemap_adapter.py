@@ -34,10 +34,7 @@ try:
 except ImportError:
     import xml.etree.ElementTree as _DET  # noqa: N814
 
-from hledac.universal.discovery.duckduckgo_adapter import (
-    DiscoveryBatchResult,
-    DiscoveryHit,
-)
+from hledac.universal.discovery.base import DiscoveryBatchResult, DiscoveryHit
 from hledac.universal.fetching.public_fetcher import async_fetch_public_text
 from hledac.universal.utils.async_helpers import safe_gather_ok, safe_wait_for
 

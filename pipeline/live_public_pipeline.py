@@ -19,6 +19,8 @@ import msgspec.json as _json
 import logging
 import os
 from pathlib import Path
+
+from hledac.universal.utils.bloom_filter import RotatingBloomFilter
 import re
 import sys
 import time
@@ -3200,7 +3202,9 @@ async def async_run_live_public_pipeline(
                     logger.debug(f"[F193A] Onion discovery failed: {e}")
                     return 0
 
-            # Phase 1: CT + CC in parallel
+            # Phase 1: CT + CC in parallel (2 coroutines, concurrency=2)
+            # M1 8GB: CT + CC are I/O-bound network calls; bounded_gather
+            # with concurrency=2 is optimal for 2 parallel I/O-bound tasks.
             ct_augmented, cc_augmented = await bounded_gather(
                 [_ct_wrapper(), _cc_wrapper()],
                 concurrency=2,
@@ -3212,8 +3216,9 @@ async def async_run_live_public_pipeline(
             # Merge: CC builds on CT result
             hits = cc_augmented
 
-            # Phase 2: Onion + Pastebin/GitHub in parallel
-            # bounded_gather returns tuple[list[T], list[BaseException]]
+            # Phase 2: Onion + Pastebin/GitHub in parallel (2 coroutines, concurrency=2)
+            # M1 8GB: Pastebin/GitHub + Onion are independent I/O-bound;
+            # concurrency=2 is optimal for 2 parallel I/O-bound tasks.
             p20_onion_results, _p20_onion_errors = await bounded_gather(
                 [_pastebin_github_wrapper(), _onion_wrapper(hits)],
                 concurrency=2,
@@ -3477,13 +3482,16 @@ async def async_run_live_public_pipeline(
         public_noise_reject_reasons[noise_reason] += 1
     public_discovery_raw_count = len(hits)  # raw URLs from discovery (includes CT/CC injection)
     public_discovery_attempted = discovery_attempted
-    seen_urls: set[str] = set()
+    bloom_filter = RotatingBloomFilter(capacity=50000, error_rate=0.01)
+    _seen_url_count = 0
     tasks: list[asyncio.Task] = []
-    for hit in hits:
+    MAX_FETCH_CANDIDATES = 500
+    for hit in hits[:MAX_FETCH_CANDIDATES]:
         hit_url = hit.url if hasattr(hit, "url") else str(hit[2])
-        if hit_url in seen_urls:
+        if hit_url in bloom_filter:
             continue
-        seen_urls.add(hit_url)
+        bloom_filter.add(hit_url)
+        _seen_url_count += 1
         # Sprint F150I: extract discovery score/reason if present (additive, fail-soft)
         hit_score: float | None = getattr(hit, "score", None)
         if hit_score is None and hasattr(hit, "__getitem__"):
@@ -3579,8 +3587,8 @@ async def async_run_live_public_pipeline(
 
     # F207I-A: new telemetry aggregation
     # F208G-A: len(seen_urls) = unique URLs after dedup (dedup skipped URLs excluded from all_page_results)
-    public_fetch_candidate_count = len(seen_urls)
-    public_skipped_duplicate = len(hits) - len(seen_urls)  # F208G-A: dedup gap
+    public_fetch_candidate_count = _seen_url_count
+    public_skipped_duplicate = len(hits) - _seen_url_count  # F208G-A: dedup gap
     fetched_urls_sample_list = [p.url for p in all_page_results if p.fetched][:5]
     public_fetch_attempted_urls_sample = tuple(fetched_urls_sample_list)
 
@@ -3640,7 +3648,7 @@ async def async_run_live_public_pipeline(
     public_fetch_failed = sum(1 for p in all_page_results if not p.fetched)
 
     # Sprint F213B: PUBLIC discovery stage counters
-    public_discovery_deduped_count = len(seen_urls)  # unique URLs after dedup
+    public_discovery_deduped_count = _seen_url_count  # unique URLs after dedup
 
     # Sprint F213B: PUBLIC page/finding acceptance counters
     public_pages_fetched = sum(1 for p in all_page_results if p.fetched)
@@ -4495,10 +4503,8 @@ async def async_run_live_public_pipeline(
                     hermes_engine=hermes_engine
                 )
 
-                # Evaluate each hypothesis via ToT if complex — bounded to 5
-                # Concurrent evaluation: fire up to 5 tasks, 15s timeout each,
-                # first 3 completed results immediately feed pivot enqueue (scheduler caps handle the rest)
-                hypotheses_to_eval = hypotheses[:5]
+                # ISSUE #19: Bump from 5 to 10 for better ToT parallelism
+                hypotheses_to_eval = hypotheses[:10]
                 if hypotheses_to_eval:
                     async def run_tot_with_timeout(hypo: str, timeout_s: float = 15.0) -> str:
                         """Run ToT solve with per-hypothesis timeout. Fail-soft: returns empty string on timeout/error."""  # noqa: E501
@@ -4516,16 +4522,17 @@ async def async_run_live_public_pipeline(
 
                     # Fire all 5 ToT tasks concurrently
                     # F320: asyncio.create_task -> safe_create_task (eager_start, loop probe)
-                    tasks = [safe_create_task(run_tot_with_timeout(hypo), name=f"tot:hypo_{i}") for i, hypo in enumerate(hypotheses_to_eval)]
+                    tasks_with_hypo = {safe_create_task(run_tot_with_timeout(hypo), name=f"tot:hypo_{i}"): hypo for i, hypo in enumerate(hypotheses_to_eval)}
+                    tasks = list(tasks_with_hypo.keys())
 
                     # Process results as they complete — first 3 successful results
                     # trigger immediate pivot enqueue (scheduler caps naturally limit to 3)
                     tot_finding_buffer: list[CanonicalFinding] = []  # F265B: buffer batch
-                    for idx, coro in enumerate(asyncio.as_completed(tasks)):
+                    for coro in asyncio.as_completed(tasks):
                         tot_result = await coro
+                        hypo = tasks_with_hypo[coro]
                         if tot_result:
                             tot_solution_count += 1
-                            _hypo = hypotheses_to_eval[idx]
                             try:
                                 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
                                 tot_finding_buffer.append(CanonicalFinding(
@@ -4534,7 +4541,7 @@ async def async_run_live_public_pipeline(
                                     source_type="tot_synthesis",
                                     confidence=0.7,
                                     ts=time.time(),
-                                    provenance=("tot", _hypo[:100]),
+                                    provenance=("tot", hypo[:100]),
                                     payload_text=tot_result[:1000],
                                 ))
                             except Exception:  # noqa: BLE001

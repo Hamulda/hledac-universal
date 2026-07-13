@@ -103,7 +103,7 @@ def generate_rescue_urls(query: str, max_urls: int=8) -> list:
 
 def _make_discovery_hit(query: str, title: str, url: str, snippet: str, score: float, reason: str, rank: int, source: str) -> Any:
     """Construct a DiscoveryHit (lazy import to avoid circular deps)."""
-    from hledac.universal.discovery.duckduckgo_adapter import DiscoveryHit
+    from hledac.universal.discovery.base import DiscoveryHit
     return DiscoveryHit(query=query, title=title, url=url, snippet=snippet, score=score, reason=reason, rank=rank, source=source, retrieved_ts=time.time())
 
 def generate_bootstrap_urls(query: str, max_urls: int=5) -> list[str]:

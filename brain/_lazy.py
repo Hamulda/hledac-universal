@@ -58,13 +58,20 @@ def _get_available_mb() -> float:
 
 
 def _mlx_clear() -> None:
-    """Best-effort MLX metal cache clear."""
+    """
+    Issue #20+31 FIX: Best-effort MLX Metal cache clear.
+    Canonical order (GHOST_INVARIANTS.md:80):
+      gc.collect() -> mx.eval([]) -> mx.clear_cache() -> gc.collect()
+    """
     try:
         import mlx.core as mx
+        import gc
+        gc.collect()
         mx.eval([])
         # Modern-first: mx.clear_cache() — mlx >= 0.20, no fallback needed
         if hasattr(mx, "clear_cache"):
             mx.clear_cache()
+        gc.collect()
     except Exception:  # noqa: BLE001
         pass
 

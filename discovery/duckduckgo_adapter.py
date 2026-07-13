@@ -39,6 +39,8 @@ from hledac.universal.transport.circuit_breaker import (
     checked_httpx_get as checked_aiohttp_get,
 )
 
+from hledac.universal.discovery.base import BaseDiscoveryMixin, DiscoveryResult
+
 _PUBLIC_REPLAY_ADAPTER = "public_duckduckgo"
 
 # Backend: ddgs v9+ (sync-only; async via asyncio.to_thread compatibility wrapper)
@@ -63,69 +65,12 @@ MAX_HOST_SHARE_RATIO: float = 0.25
 # ---------------------------------------------------------------------------
 
 
-class DiscoveryHit(msgspec.Struct, frozen=True):
-    """
-    Single web discovery result.
 
-    All string fields are never None — None is normalized to "".
-    score is a query-aware rank signal in [0.0, 1.0]; higher = more relevant.
-    reason is an optional short tag describing why this hit ranked well.
-    """
+# DiscoveryHit / DiscoveryBatchResult — re-exported from base.py (SSOT, F350M-R)
+from hledac.universal.discovery.base import DiscoveryBatchResult, DiscoveryHit
 
-    query: str
-    title: str
-    url: str
-    snippet: str
-    source: str  # always "duckduckgo"
-    rank: int
-    retrieved_ts: float
-    score: float = 0.0   # relevance signal, not guaranteed to be populated
-    reason: str | None = None  # short tag: "exact_domain", "quoted_match", etc.
-    # F213A: CT/crt.sh metadata — populated when DiscoveryHit originates from crtsh_adapter
-    ct_issuer_name: str | None = None
-    ct_serial_number: str | None = None
-    ct_not_before: str | None = None
-    ct_not_after: str | None = None
-    ct_entry_timestamp: str | None = None
-    ct_name_value: str | None = None
-    ct_common_name: str | None = None
-
-
-class DiscoveryBatchResult(msgspec.Struct, frozen=True):
-    """
-    Result surface for a single discovery call.
-
-    On any backend error the hits tuple is empty and error is set.
-    On cancel (asyncio.CancelledError) the error is NOT swallowed —
-    the exception is re-raised after the call unwinds.
-
-    fallback_triggered is set when a bounded fallback was attempted
-    after a primary-backend failure (backend_error / timeout).
-    Values:
-      - None                     : no fallback needed or used
-      - "primary_backend_failed_fallback_succeeded"  : fallback returned hits
-      - "primary_backend_failed_fallback_failed"    : fallback also returned empty
-
-    provider_name: canonical name of the provider that produced hits (F206AM).
-    provider_chain: ordered tuple of providers consulted (F206AM).
-    source_family: logical family — "search" | "archive" | "historical" | None (F206AM).
-    elapsed_s: wall-clock seconds for this call (F206AM).
-    error_type: F206AB taxonomy category (F206AM).
-    """
-
-    hits: tuple[DiscoveryHit, ...]
-    error: str | None = None
-    fallback_triggered: str | None = None
-    # F207I-A: per-run cache hit flag (True when result came from cache)
-    cache_hit: bool = False
-    # F206AM: additive fields for providerless mesh
-    provider_name: str | None = None
-    provider_chain: tuple[str, ...] = ()
-    source_family: str | None = None
-    elapsed_s: float | None = None
-    error_type: str | None = None
-    # F234-FIX / F253B: provider selection debug context
-    provider_status_debug: list[dict] | None = None
+# NOTE: The actual class definitions live in discovery/base.py (SSOT).
+# This module re-exports them for backward compatibility with existing call sites.
 
 
 # ---------------------------------------------------------------------------
@@ -1503,3 +1448,76 @@ async def search_multi_engine(
             seen.add(norm)
             deduped.append(r)
     return deduped[:max_results]
+
+class DuckDuckGoAdapter(BaseDiscoveryMixin):
+    """
+    DuckDuckGo discovery adapter using BaseDiscoveryMixin infrastructure.
+
+    Wraps async_search_public_web() as _do_discover().
+    """
+
+    name: str = "duckduckgo"
+    source_type: str = "search"
+
+    @property
+    def rate_limit_rpm(self) -> int:
+        return 60
+
+    @property
+    def retry_attempts(self) -> int:
+        return 3
+
+    @property
+    def retry_base_delay_s(self) -> float:
+        return 1.0
+
+    @property
+    def timeout_s(self) -> float:
+        return 35.0
+
+    async def _do_discover(
+        self, query: str, limit: int
+    ):
+        """
+        Wrap async_search_public_web() as an async iterator.
+
+        Converts DiscoveryHit items to DiscoveryResult.
+        """
+        try:
+            result = await async_search_public_web(
+                query, max_results=min(limit, HARD_MAX_RESULTS)
+            )
+        except Exception:
+            # fail-safe: yield nothing on error
+            return
+
+        for hit in result.hits:
+            metadata: dict[str, str] = {}
+            if hit.ct_issuer_name:
+                metadata["ct_issuer_name"] = hit.ct_issuer_name
+            if hit.ct_serial_number:
+                metadata["ct_serial_number"] = hit.ct_serial_number
+            if hit.ct_not_before:
+                metadata["ct_not_before"] = hit.ct_not_before
+            if hit.ct_not_after:
+                metadata["ct_not_after"] = hit.ct_not_after
+            if hit.ct_entry_timestamp:
+                metadata["ct_entry_timestamp"] = hit.ct_entry_timestamp
+            if hit.ct_name_value:
+                metadata["ct_name_value"] = hit.ct_name_value
+            if hit.ct_common_name:
+                metadata["ct_common_name"] = hit.ct_common_name
+
+            yield DiscoveryResult(
+                query=hit.query,
+                url=hit.url,
+                title=hit.title,
+                snippet=hit.snippet,
+                source=hit.source,
+                source_type=self.source_type,
+                rank=hit.rank,
+                retrieved_ts=hit.retrieved_ts,
+                score=hit.score,
+                reason=hit.reason,
+                metadata=metadata,
+            )

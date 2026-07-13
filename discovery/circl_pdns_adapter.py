@@ -24,7 +24,8 @@ from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.security.passive_dns import parse_circl_pdns_text
 from hledac.universal.tools.discovery_replay import read_cassette, replay_enabled, replay_strict_enabled, write_cassette
 from hledac.universal.transport.circuit_breaker import checked_aiohttp_get
-from .duckduckgo_adapter import DiscoveryBatchResult, DiscoveryHit
+from .base import DiscoveryBatchResult, DiscoveryHit
+from hledac.universal.discovery.base import BaseDiscoveryMixin, DiscoveryResult
 __all__ = ['async_search_circl_pdns', 'call_circl_pdns', 'PDNSOutcome', 'PDNSProviderStatus']
 logger = logging.getLogger(__name__)
 
@@ -320,3 +321,55 @@ async def call_circl_pdns(domain: str, timeout_s: float=5.0) -> tuple[DiscoveryB
         outcome = PDNSOutcome(attempted=True, query=domain_norm, result_count=0, error=str(e), duration_s=elapsed)
         result = DiscoveryBatchResult(hits=(), error=str(e), error_type='provider_exception', provider_name='circl_pdns', provider_chain=('circl_pdns',), source_family='pdns', elapsed_s=elapsed)
         return (result, outcome)
+
+class CirclPDNSAdapter(BaseDiscoveryMixin):
+    """
+    CIRCL PDNS adapter using BaseDiscoveryMixin infrastructure.
+
+    Wraps async_search_circl_pdns() as _do_discover().
+    """
+
+    name: str = "circl_pdns"
+    source_type: str = "pdns"
+
+    @property
+    def rate_limit_rpm(self) -> int:
+        return 30  # PDNS providers are rate-sensitive
+
+    @property
+    def retry_attempts(self) -> int:
+        return 3
+
+    @property
+    def retry_base_delay_s(self) -> float:
+        return 2.0
+
+    @property
+    def timeout_s(self) -> float:
+        return 8.0
+
+    async def _do_discover(
+        self, query: str, limit: int
+    ):
+        """Wrap async_search_circl_pdns() as an async iterator."""
+        try:
+            result = await async_search_circl_pdns(query, max_results=limit)
+        except Exception:
+            return
+
+        for hit in result.hits:
+            metadata: dict[str, str] = {}
+
+            yield DiscoveryResult(
+                query=hit.query,
+                url=hit.url,
+                title=hit.title,
+                snippet=hit.snippet,
+                source=hit.source,
+                source_type=self.source_type,
+                rank=hit.rank,
+                retrieved_ts=hit.retrieved_ts,
+                score=hit.score,
+                reason=hit.reason,
+                metadata=metadata,
+            )

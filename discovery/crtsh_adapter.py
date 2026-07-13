@@ -21,7 +21,8 @@ from pathlib import Path
 import httpx
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.transport.circuit_breaker import checked_aiohttp_get, domain_breaker_check
-from .duckduckgo_adapter import DiscoveryBatchResult, DiscoveryHit
+from .base import DiscoveryBatchResult, DiscoveryHit
+from hledac.universal.discovery.base import BaseDiscoveryMixin, DiscoveryResult
 __all__ = ['async_search_crtsh', 'call_crtsh', 'CTOutcome', 'CTProviderStatus']
 
 class CTProviderStatus(Enum):
@@ -779,3 +780,69 @@ async def async_search_crtsh(query: str, max_results: int=20, timeout_s: float=8
         elapsed = time.monotonic() - start
         logger.warning(f'[crtsh] unexpected error: {e}')
         return DiscoveryBatchResult(hits=(), error=str(e), error_type='provider_exception', provider_name='crtsh', provider_chain=('crtsh',), source_family='ct', elapsed_s=elapsed)
+
+class CRTshAdapter(BaseDiscoveryMixin):
+    """
+    crt.sh Certificate Transparency adapter using BaseDiscoveryMixin infrastructure.
+
+    Wraps async_search_crtsh() as _do_discover().
+    """
+
+    name: str = "crtsh"
+    source_type: str = "ct"
+
+    @property
+    def rate_limit_rpm(self) -> int:
+        return 30  # CT providers are rate-sensitive
+
+    @property
+    def retry_attempts(self) -> int:
+        return 3
+
+    @property
+    def retry_base_delay_s(self) -> float:
+        return 1.0
+
+    @property
+    def timeout_s(self) -> float:
+        return 8.0
+
+    async def _do_discover(
+        self, query: str, limit: int
+    ):
+        """Wrap async_search_crtsh() as an async iterator."""
+        try:
+            result = await async_search_crtsh(query, max_results=limit)
+        except Exception:
+            return
+
+        for hit in result.hits:
+            metadata: dict[str, str] = {}
+            if hit.ct_issuer_name:
+                metadata["ct_issuer_name"] = hit.ct_issuer_name
+            if hit.ct_serial_number:
+                metadata["ct_serial_number"] = hit.ct_serial_number
+            if hit.ct_not_before:
+                metadata["ct_not_before"] = hit.ct_not_before
+            if hit.ct_not_after:
+                metadata["ct_not_after"] = hit.ct_not_after
+            if hit.ct_entry_timestamp:
+                metadata["ct_entry_timestamp"] = hit.ct_entry_timestamp
+            if hit.ct_name_value:
+                metadata["ct_name_value"] = hit.ct_name_value
+            if hit.ct_common_name:
+                metadata["ct_common_name"] = hit.ct_common_name
+
+            yield DiscoveryResult(
+                query=hit.query,
+                url=hit.url,
+                title=hit.title,
+                snippet=hit.snippet,
+                source=hit.source,
+                source_type=self.source_type,
+                rank=hit.rank,
+                retrieved_ts=hit.retrieved_ts,
+                score=hit.score,
+                reason=hit.reason,
+                metadata=metadata,
+            )

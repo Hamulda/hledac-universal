@@ -410,38 +410,22 @@ _DEBOUNCE_SECONDS: float = 0.5
 
 def clear_mlx_cache() -> bool:
     """
-    Canonical Metal cache clear — fixes +1.02 GiB/sprint leak.
+    Canonical Metal cache clear — delegates to mlx_cleanup_sync().
 
-    Sequence: mx.eval([]) → gc.collect() → mx.clear_cache() → gc.collect()
-    All wrapped in try/except for fail-safe operation.
+    Sequence (per GHOST_INVARIANTS.md:80): gc.collect() → mx.eval([]) →
+    mx.clear_cache() → gc.collect()
 
-    Returns True if successful, False otherwise.
+    F330-DUP: this was the legacy duplicate implementation. Now delegates
+    to mlx_cleanup_sync() which is the single canonical source of truth.
     """
     if not MLX_AVAILABLE:
         return False
-    mx = get_mx()
-    if mx is None:
+    try:
+        mlx_cleanup_sync()
+        return True
+    except Exception as e:
+        logger.debug(f"clear_mlx_cache: mlx_cleanup_sync failed: {e}")
         return False
-    try:
-        mx.eval([])
-    except Exception as e:
-        logger.debug(f"clear_mlx_cache: mx.eval([]) failed: {e}")
-
-    gc.collect()
-
-    cleared = False
-    try:
-        if hasattr(mx, "clear_cache"):
-            mx.clear_cache()
-            cleared = True
-        elif hasattr(mx, "metal") and hasattr(mx.metal, "clear_cache"):
-            mx.metal.clear_cache()
-            cleared = True
-    except Exception as e:
-        logger.debug(f"clear_mlx_cache: clear_cache failed: {e}")
-
-    gc.collect()
-    return cleared
 
 
 def clear_mlx_cache_debounced(min_interval_seconds: float = _DEBOUNCE_SECONDS) -> bool:

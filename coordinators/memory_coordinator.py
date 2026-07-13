@@ -92,6 +92,7 @@ except ImportError:
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from knowledge.neuromorphic import NeuromorphicMemoryManager, NeuromorphicMemoryZone
+from hledac.universal.core.uma_governor import PressureState
 
 def _serialize_to_json(data: Any) -> bytes:
     """Serialize data to JSON bytes using msgspec, compressed with zstd.
@@ -114,12 +115,8 @@ def _get_np():
 MAX_SIMILARITIES = 1000
 MAX_PATTERNS = 2000
 
-class MemoryPressureLevel(Enum):
-    """Memory pressure levels for M1 8GB optimization."""
-    NORMAL = 'normal'
-    ELEVATED = 'elevated'
-    HIGH = 'high'
-    CRITICAL = 'critical'
+# Backward compat alias - MemoryPressureLevel now points to canonical PressureState
+MemoryPressureLevel = PressureState
 
 class ThermalState(IntEnum):
     """Thermal state levels for M1 optimization (Sprint 72/73)."""
@@ -296,6 +293,11 @@ class UniversalMemoryCoordinator:
         elif current == MemoryPressureLevel.ELEVATED:
             return 'elevated'
         return 'normal'
+
+    async def get_pressure(self) -> PressureState:
+        """Get canonical pressure state (UMAGovernor protocol)."""
+        current = self._calculate_pressure_level()
+        return current
 
     def get_power_state(self) -> dict:
         return {'on_battery': self._on_battery_power(), 'thermal_state': self._thermal_state.name.lower(), 'thermal_trend': self.get_thermal_trend(), 'memory_pressure_level': self.get_pressure_level(), 'should_throttle': self.should_throttle()}

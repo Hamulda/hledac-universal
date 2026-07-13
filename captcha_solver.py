@@ -261,10 +261,10 @@ class VisionCaptchaSolver:
             logger.debug('2Captcha API key not configured')
             return None
         try:
-            from fetching.public_fetcher import get_httpx_session
-            session = await get_httpx_session()
+            from network.session_runtime import async_get_httpx_session
+            session = await async_get_httpx_session()
             response = await session.post('http://2captcha.com/in.php', data={'key': api_key, 'method': 'base64', 'body': b64})
-            result = response.text()
+            result = response.text  # httpx.Response.text is a property, not a method
             if not result.startswith('OK|'):
                 logger.warning(f'2Captcha submit failed: {result}')
                 return None
@@ -272,7 +272,7 @@ class VisionCaptchaSolver:
             for _ in range(10):
                 await asyncio.sleep(3)
                 poll_response = await session.get(f'http://2captcha.com/res.php?key={api_key}&action=get&id={captcha_id}')
-                res = poll_response.text()
+                res = poll_response.text  # httpx.Response.text is a property
                 if res.startswith('OK|'):
                     solution = res.split('|')[1]
                     logger.debug(f'2Captcha solved: {solution[:50]}...')

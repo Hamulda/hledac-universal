@@ -27,7 +27,7 @@ import msgspec
 from enum import Enum
 from typing import Any
 logger = logging.getLogger(__name__)
-from hledac.universal.discovery.duckduckgo_adapter import DiscoveryBatchResult
+from hledac.universal.discovery.base import DiscoveryBatchResult
 from hledac.universal.discovery.provider_stats import PROVIDER_CAPABILITIES, PROVIDER_COST_ESTIMATE, PROVIDER_NAMES, ProviderStatsRegistry, get_provider_stats_registry
 from hledac.universal.utils.async_helpers import bounded_gather, safe_gather_ok
 _MIN_RELIABILITY = 0.05

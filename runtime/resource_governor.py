@@ -37,6 +37,7 @@ import threading
 from hledac.universal.utils.async_helpers import safe_create_task
 import msgspec
 from hledac.universal.core.resource_governor import UMA_STATE_CRITICAL, UMA_STATE_EMERGENCY, UMA_STATE_WARN, sample_uma_status
+from hledac.universal.core.uma_governor import PressureState, uma_state_to_pressure_state
 try:
     from hledac_rust_extensions import sync_adaptive_state
 except Exception:
@@ -637,6 +638,10 @@ class M1ResourceGovernor:
             except Exception:
                 pass
             return GovernorSnapshot(uma_state=self._uma_state, model_loaded=self._model_loaded, fetch_limit=self._fetch_limit, branch_concurrency=self._branch_concurrency, renderer_denied_count=self._renderer_denied_count, model_denied_count=self._model_denied_count, system_used_gib=system_used_gib, io_only=io_only, free_uma_gib=free_uma_gib, swap_detected=swap_detected, ema_branch_pressure=round(self._ema_branch_timeouts, 3))
+
+    async def get_pressure(self) -> PressureState:
+        """Get canonical pressure state (UMAGovernor protocol)."""
+        return uma_state_to_pressure_state(self._uma_state)
 
     async def apply_decision(self, decision: GovernorDecision) -> None:
         """

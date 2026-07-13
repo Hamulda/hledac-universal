@@ -85,27 +85,24 @@ def _get_memory_pressure_level() -> str:
 
 def _mlx_cache_clear(reason: str) -> None:
     """
-    Canonical MLX cache clear — F300-MLX invariant:
-      mx.eval([]) barrier → gc.collect() → mx.clear_cache()
+    Canonical MLX cache clear — delegates to mlx_cleanup_sync().
 
-    POZNÁMKA: mx.eval([]) PŘED gc.collect() — clear_cache je no-op bez barrier.
-    Toto opravuje F300 kde bylo pořadí reversed (gc.collect() → mx.eval[]).
+    F330-DUP: Issue #20 fix — _mlx_cache_clear had reversed order
+    (eval→gc→clear) vs GHOST_INVARIANTS: gc.collect() → mx.eval([]) →
+    mx.clear_cache(). Now delegates to the single canonical implementation
+    in utils/mlx_memory.
 
     Args:
         reason: Human-readable reason for telemetry/logging.
     """
     try:
-        import mlx.core as _mx
-
-        _mx.eval([])  # barrier: flush GPU queue BEFORE Python GC
-        gc.collect()  # then collect Python refs that held MLX objects
-        if hasattr(_mx, "clear_cache"):
-            _mx.clear_cache()
+        from hledac.universal.utils.mlx_memory import mlx_cleanup_sync
+        mlx_cleanup_sync()
     except ImportError:
         pass
     except Exception:
         pass
-    logger.debug(f"[HERMES cache] MLX clear ({reason})")
+    logger.debug("[HERMES cache] MLX clear (" + str(reason) + ")")
 
 
 # ─── Unified HermesModelCache ─────────────────────────────────────────────────

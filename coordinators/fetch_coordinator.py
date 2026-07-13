@@ -354,7 +354,7 @@ class FetchCoordinator(UniversalCoordinator):
     - Create evidence packets
     - Return bounded outputs (IDs, counts, stop signals)
     """
-    __slots__ = tuple(('_adaptive_priority_provider', '_aimd_slot', '_aimd_window', '_base_retry_delay', '_batch_cp_result', '_canonical_breaker', '_canonical_breaker_available', '_canonical_breaker_blocks', '_canonical_breaker_checked', '_canonical_breaker_fallback_used', '_canonical_breaker_lock', '_captcha_detections', '_captcha_detector', '_concurrency', '_concurrency_provider', '_config', '_cooldown_seconds', '_cover_count', '_ctx', '_current_geo_context', '_darknet_connector', '_dedup_lock', '_domain_blocked_until', '_domain_failure_timestamps', '_domain_failures', '_enqueue_pivot_provider', '_evidence_ids', '_failure_threshold', '_frontier', '_geo_proxies', '_gopher_transport', '_gopher_transport_enabled', '_hints_extractor', '_host_ips_cache', '_http_cache_enabled', '_http_cache_transport', '_hypothesis_depth_provider', '_hypothesis_depth_setter', '_hypothesis_query_count_provider', '_hypothesis_query_count_setter', '_lightpanda_lock', '_lightpanda_pool', '_lightpanda_pool_started', '_max_backoff_delay', '_max_retries', '_orchestrator', '_paywall_bypass', '_per_host_gate', '_per_host_limit', '_pivot_queue_provider', '_pivot_stats_provider', '_privacy_allocator', '_privacy_lock', '_processed_urls', '_running', '_session_checkpoint_task', '_session_lmdb_env', '_session_manager', '_sprint_config_provider', '_sprint_remaining_provider', '_stop_reason', '_telemetry', '_tor_transport', '_tor_transport_enabled', '_urls_fetched_count', '_zstd'))
+    __slots__ = tuple(('_adaptive_priority_provider', '_aimd_slot', '_aimd_window', '_base_retry_delay', '_batch_cp_result', '_captcha_detections', '_captcha_detector', '_concurrency', '_concurrency_provider', '_config', '_cooldown_seconds', '_cover_count', '_ctx', '_current_geo_context', '_darknet_connector', '_dedup_lock', '_enqueue_pivot_provider', '_evidence_ids', '_frontier', '_geo_proxies', '_gopher_transport', '_gopher_transport_enabled', '_hints_extractor', '_host_ips_cache', '_http_cache_enabled', '_http_cache_transport', '_hypothesis_depth_provider', '_hypothesis_depth_setter', '_hypothesis_query_count_provider', '_hypothesis_query_count_setter', '_lightpanda_lock', '_lightpanda_pool', '_lightpanda_pool_started', '_max_backoff_delay', '_max_retries', '_orchestrator', '_paywall_bypass', '_per_host_gate', '_per_host_limit', '_pivot_queue_provider', '_pivot_stats_provider', '_privacy_allocator', '_privacy_lock', '_processed_urls', '_running', '_session_checkpoint_task', '_session_lmdb_env', '_session_manager', '_sprint_config_provider', '_sprint_remaining_provider', '_stop_reason', '_telemetry', '_tor_transport', '_tor_transport_enabled', '_urls_fetched_count', '_zstd'))
 
     def __init__(self, config: FetchCoordinatorConfig | None=None, max_concurrent: int=3, pivot_queue_provider: Callable[[], Any]=lambda: None, pivot_stats_provider: Callable[[], dict] | None=None, hypothesis_query_count_provider: Callable[[], int]=lambda: 0, hypothesis_query_count_setter: Callable[[int], None]=lambda v: None, hypothesis_depth_provider: Callable[[], int]=lambda: 0, hypothesis_depth_setter: Callable[[int], None]=lambda v: None, sprint_config_provider: Callable[[], Any]=lambda: None, adaptive_priority_provider: Callable[[str, float], float]=lambda tt, base: base, enqueue_pivot_provider: Callable[..., Any]=lambda **kw: None, concurrency_provider: Callable[[], tuple[int, int, str, bool] | None] | None=None, sprint_remaining_provider: Callable[[], float | None]=lambda: None):
         super().__init__(name='FetchCoordinator', max_concurrent=max_concurrent)
@@ -377,10 +377,6 @@ class FetchCoordinator(UniversalCoordinator):
         self._urls_fetched_count: int = 0
         self._stop_reason: str | None = None
         self._host_ips_cache: dict[str, list[str]] = {}
-        self._domain_failures: dict[str, int] = {}
-        self._domain_failure_timestamps: dict[str, float] = {}
-        self._domain_blocked_until: dict[str, float] = {}
-        self._failure_threshold = 3
         self._cooldown_seconds = 60
         self._base_retry_delay = 1.0
         self._max_retries = 3
@@ -448,143 +444,127 @@ class FetchCoordinator(UniversalCoordinator):
         self._per_host_gate = BoundedPerHostGate(max_hosts=512, per_host_limit=self._per_host_limit)
         self._telemetry: dict[str, Any] = {'aimd_concurrency': self._aimd_window.window, 'active_fetches': 0, 'total_successes': 0, 'total_failures': 0, 'circuit_breaker_blocks': 0, 'circuit_breaker_active': 0, 'uma_state': 'ok', 'decrease_factor_used': 1.0, 'backpressure_clamp_events': 0}
         self._cover_count: int = 0
-        self._canonical_breaker: Any = None
-        self._canonical_breaker_available: bool = False
-        self._canonical_breaker_checked: int = 0
-        self._canonical_breaker_blocks: int = 0
-        self._canonical_breaker_fallback_used: int = 0
-        self._canonical_breaker_lock = __import__('threading').Lock()
         self.init_session_manager()
 
-    def _ensure_canonical_breaker(self) -> tuple[bool, Any, str]:
-        """
-        Lazily import canonical circuit breaker from transport/circuit_breaker.py.
-
-        Returns:
-            (available, breaker_module, fallback_reason)
-            - available: True if canonical breaker is importable and loaded
-            - breaker_module: the imported module (or None)
-            - fallback_reason: why canonical was not used (empty if available)
-        """
-        if self._canonical_breaker_checked:
-            return (self._canonical_breaker_available, self._canonical_breaker, getattr(self, '_canonical_breaker_fallback_reason', 'already_checked'))
-        with self._canonical_breaker_lock:
-            if self._canonical_breaker_checked:
-                return (self._canonical_breaker_available, self._canonical_breaker, getattr(self, '_canonical_breaker_fallback_reason', 'already_checked'))
-            self._canonical_breaker_checked = True
-            try:
-                from transport import circuit_breaker
-                if hasattr(circuit_breaker, 'domain_breaker_check') and hasattr(circuit_breaker, 'get_breaker'):
-                    self._canonical_breaker = circuit_breaker
-                    self._canonical_breaker_available = True
-                    return (True, circuit_breaker, '')
-                else:
-                    self._canonical_breaker_fallback_reason = 'missing_canonical_api'
-                    return (False, None, 'missing_canonical_api')
-            except ImportError:
-                self._canonical_breaker_fallback_reason = 'import_failed'
-                return (False, None, 'import_failed')
-            except Exception as e:
-                self._canonical_breaker_fallback_reason = f'unexpected_error:{e}'
-                return (False, None, f'unexpected_error:{e}')
-
-    def _check_canonical_breaker(self, domain: str) -> tuple[bool, str, float]:
+    def _check_circuit(self, domain: str) -> tuple[bool, str, float]:
         """
         Check canonical circuit breaker for a domain.
-
-        Returns:
-            (allowed, reason, retry_after_s)
-            - allowed: True if fetch is allowed (circuit closed or half-open)
-            - reason: human-readable reason for the decision
-            - retry_after_s: seconds to wait if circuit is open
+        Delegates directly to transport/circuit_breaker.py.
         """
-        available, cb_module, fallback_reason = self._ensure_canonical_breaker()
-        if not available:
-            return (True, f'canonical_unavailable:{fallback_reason}', 0.0)
         try:
-            decision = cb_module.domain_breaker_check(domain)
-            if not decision.allowed:
-                self._canonical_breaker_blocks += 1
+            from transport import circuit_breaker as cb
+            decision = cb.domain_breaker_check(domain)
             return (decision.allowed, decision.reason, decision.retry_after_s)
         except Exception as e:
-            self._canonical_breaker_fallback_used += 1
-            return (True, f'canonical_check_error:{e}', 0.0)
+            return (True, f'cb_check_error:{e}', 0.0)
 
-    def _record_canonical_success(self, domain: str) -> None:
-        """Record fetch success to canonical circuit breaker if available."""
-        available, cb_module, _ = self._ensure_canonical_breaker()
-        if not available:
-            return
+    def _record_success(self, domain: str) -> None:
+        """Record fetch success to canonical circuit breaker."""
         try:
-            cb_module.get_breaker(domain).record_success()
+            from transport import circuit_breaker as cb
+            cb.domain_breaker_record_success(domain)
         except Exception:
-            self._canonical_breaker_fallback_used += 1
+            pass
 
-    def _record_canonical_failure(self, domain: str, is_timeout: bool=False, failure_kind: str='') -> None:
-        """Record fetch failure to canonical circuit breaker if available."""
-        available, cb_module, _ = self._ensure_canonical_breaker()
-        if not available:
-            return
+    def _record_failure(self, domain: str, is_timeout: bool=False, failure_kind: str='') -> None:
+        """Record fetch failure to canonical circuit breaker."""
         try:
+            from transport import circuit_breaker as cb
             sprint_remaining = None
             if self._sprint_remaining_provider is not None:
                 try:
                     sprint_remaining = self._sprint_remaining_provider()
                 except Exception:
                     pass
-            cb_module.get_breaker(domain).record_failure(is_timeout=is_timeout, failure_kind=failure_kind or 'fetch_error', sprint_remaining_s=sprint_remaining)
+            cb.domain_breaker_record_failure(domain, is_timeout=is_timeout, failure_kind=failure_kind or 'fetch_error', sprint_remaining_s=sprint_remaining)
         except Exception:
-            self._canonical_breaker_fallback_used += 1
+            pass
 
-    async def _record_domain_failure(self, domain: str) -> None:
-        """Record a failure for a domain; block it after _failure_threshold failures."""
-        if len(self._domain_failures) > 1000:
-            cutoff = time.time() - 24 * 3600
-            stale_domains = [d for d, ts in self._domain_failure_timestamps.items() if ts < cutoff and d not in self._domain_blocked_until]
-            for d in stale_domains[:len(stale_domains) // 2]:
-                self._domain_failures.pop(d, None)
-                self._domain_failure_timestamps.pop(d, None)
-        failures = self._domain_failures.get(domain, 0) + 1
-        self._domain_failures[domain] = failures
-        self._domain_failure_timestamps[domain] = time.time()
-        if failures >= self._failure_threshold:
-            is_new_block = domain not in self._domain_blocked_until
-            backoff = min(60.0 * 2 ** (failures - self._failure_threshold), 3600.0)
-            self._domain_blocked_until[domain] = time.time() + backoff
-            if is_new_block:
-                self._telemetry['circuit_breaker_blocks'] = self._telemetry.get('circuit_breaker_blocks', 0) + 1
-            self._telemetry['circuit_breaker_active'] = len(self.get_blocked_domains())
-            try:
-                from hledac.universal.metrics_registry import get_metrics_registry
-                get_metrics_registry().record_fetch_telemetry(blocked_domains=self._telemetry['circuit_breaker_active'], circuit_open=len(self.get_blocked_domains()) > 0)
-            except Exception:
-                pass
-            logger.warning(f'[CIRCUIT] Domain {domain} blocked after {failures} failures for {backoff:.0f}s (until {self._domain_blocked_until[domain]:.0f})')
-
-    def get_blocked_domains(self) -> dict[str, float]:
-        """Returns {domain: unblock_timestamp} for currently blocked domains."""
-        now = time.time()
-        return {d: t for d, t in self._domain_blocked_until.items() if t > now}
 
     def get_captcha_stats(self) -> dict[str, Any]:
         """Sprint P3: Return CAPTCHA detection stats for RL telemetry."""
         return {'captcha_detections_total': self._captcha_detections, 'captcha_detector_enabled': self._captcha_detector is not None}
 
-    def get_canonical_breaker_stats(self) -> dict[str, Any]:
+    def get_circuit_stats(self) -> dict[str, Any]:
         """
-        F206AS: Return canonical circuit breaker integration stats.
+        Return canonical circuit breaker stats.
+        Delegates directly to transport/circuit_breaker.py.
+        """
+        try:
+            from transport import circuit_breaker as cb
+            states = cb.get_all_breaker_states()
+            return {
+                'circuit_breaker_states': states,
+                'open_count': sum(1 for s in states.values() if s == 'OPEN'),
+            }
+        except Exception as e:
+            return {'error': str(e)}
 
-        Returns telemetry about whether canonical breaker was consulted,
-        whether it blocked requests, and fallback usage.
+    def get_stats(self) -> dict[str, Any]:
         """
-        available, _, fallback_reason = self._ensure_canonical_breaker()
-        result = {'canonical_available': available, 'canonical_checked_count': self._canonical_breaker_checked, 'canonical_blocks': self._canonical_breaker_blocks, 'fallback_used_count': getattr(self, '_canonical_breaker_fallback_used', 0), 'fallback_reason': fallback_reason if not available else '', 'canonical_breaker_states': {}}
-        if available and self._canonical_breaker:
-            try:
-                result['canonical_breaker_states'] = self._canonical_breaker.get_all_breaker_states()
-            except Exception:
-                pass
-        return result
+        Sprint P3: Unified stats API aggregating all telemetry from
+        AIMDWindow, _AIMDSlotController, BoundedPerHostGate, circuit breaker,
+        and CAPTCHA detector.
+        """
+        aimd_window_stats = {}
+        aimd_slot_stats = {}
+        per_host_gate_stats = {}
+        circuit_stats = {}
+        captcha_stats = {}
+
+        # AIMDWindow
+        try:
+            if hasattr(self, '_aimd_window') and self._aimd_window is not None:
+                aimd_window_stats = {
+                    'window': self._aimd_window.window,
+                    'successes': self._aimd_window.successes,
+                    'failures': self._aimd_window.failures,
+                    **self._aimd_window.stats,
+                }
+        except Exception:
+            aimd_window_stats = {'error': 'unavailable'}
+
+        # _AIMDSlotController
+        try:
+            if hasattr(self, '_aimd_slot') and self._aimd_slot is not None:
+                aimd_slot_stats = {
+                    'window': self._aimd_slot.window,
+                    'available_approx': self._aimd_slot.available,
+                    **self._aimd_slot.stats,
+                }
+        except Exception:
+            aimd_slot_stats = {'error': 'unavailable'}
+
+        # BoundedPerHostGate
+        try:
+            if hasattr(self, '_per_host_gate') and self._per_host_gate is not None:
+                per_host_gate_stats = {
+                    'max_hosts': self._per_host_gate._max_hosts,
+                    'active_hosts': len(self._per_host_gate._gates),
+                    **self._per_host_gate._stats,
+                }
+        except Exception:
+            per_host_gate_stats = {'error': 'unavailable'}
+
+        # Circuit breaker
+        try:
+            circuit_stats = self.get_circuit_stats()
+        except Exception as e:
+            circuit_stats = {'error': str(e)}
+
+        # CAPTCHA
+        try:
+            captcha_stats = self.get_captcha_stats()
+        except Exception as e:
+            captcha_stats = {'error': str(e)}
+
+        return {
+            'aimd_window': aimd_window_stats,
+            'aimd_slot': aimd_slot_stats,
+            'per_host_gate': per_host_gate_stats,
+            'circuit_breaker': circuit_stats,
+            'captcha': captcha_stats,
+        }
 
     def init_session_manager(self, lmdb_path: str | None=None):
         """Initialize session manager with LMDB persistence (idempotent)."""
@@ -980,6 +960,8 @@ class FetchCoordinator(UniversalCoordinator):
                 from ..transport.http_cache import build_cache_transport
                 self._http_cache_transport = await build_cache_transport(None)
                 if self._http_cache_transport is not None:
+                    from ..network.session_runtime import set_httpx_cache_transport
+                    set_httpx_cache_transport(self._http_cache_transport)
                     logger.info('FetchCoordinator HTTP cache active (opt-out via HLEDAC_HTTP_CACHE=0)')
                 else:
                     logger.info('FetchCoordinator HTTP cache requested but unavailable (install: \'uv pip install ".[osint-cache]"\')')
@@ -1207,7 +1189,7 @@ class FetchCoordinator(UniversalCoordinator):
 
         async def _circuit_breaker_check() -> tuple[bool, str, float]:
             """Circuit breaker — sync in-memory, ~1-2ms."""
-            return self._check_canonical_breaker(domain)
+            return self._check_circuit(domain)
         try:
             async with asyncio.TaskGroup() as tg:
                 dns_task = tg.create_task(_dns_check(), name='dns_check')
@@ -1256,15 +1238,8 @@ class FetchCoordinator(UniversalCoordinator):
                     trace_fetch_end(url, 'dns_rebind_defense', 'blocked', 0.0, {'reason': dns_meta.get('blocked_reason')})
                     break
                 if not canonical_allowed:
-                    self._telemetry['circuit_breaker_active'] = len(self.get_blocked_domains())
-                    logger.debug('[F206AS] Canonical circuit breaker open for {domain}: {canonical_reason} (retry in {canonical_retry_after:.1f}s)', domain=domain, canonical_reason=canonical_reason, canonical_retry_after=canonical_retry_after)
-                    trace_fetch_end(url, 'circuit_breaker', 'circuit_open', 0.0)
-                    result = None
-                    break
-                now = time.time()
-                if domain in self._domain_blocked_until and now < self._domain_blocked_until[domain]:
-                    self._telemetry['circuit_breaker_active'] = len(self.get_blocked_domains())
-                    logger.debug('Circuit breaker open for domain: {domain}', domain=domain)
+                    self._telemetry['circuit_breaker_blocks'] = self._telemetry.get('circuit_breaker_blocks', 0) + 1
+                    logger.debug('[CircuitBreaker] Open for {domain}: {reason} (retry in {retry_after:.1f}s)', domain=domain, reason=canonical_reason, retry_after=canonical_retry_after)
                     trace_fetch_end(url, 'circuit_breaker', 'circuit_open', 0.0)
                     result = None
                     break
@@ -1407,11 +1382,11 @@ class FetchCoordinator(UniversalCoordinator):
             if result and (not result.get('error')):
                 result.setdefault('success', True)
                 await self._aimd_release_success()
-                self._record_canonical_success(domain)
+                self._record_success(domain)
                 self._maybe_fire_cover_traffic(transport=url_transport.name.lower())
             elif result is None or result.get('error'):
                 is_timeout = result.get('error') == 'timeout' if result else True
-                self._record_canonical_failure(domain, is_timeout=is_timeout, failure_kind='fetch_error')
+                self._record_failure(domain, is_timeout=is_timeout, failure_kind='fetch_error')
         except Exception as e:
             logger.warning('[_fetch_url] Unexpected error for {url}: {e}', url=url, e=e)
             await self._aimd_release_failure()
@@ -1576,9 +1551,7 @@ class FetchCoordinator(UniversalCoordinator):
             domain = httpx.URL(url).host
         except Exception:
             return
-        if hasattr(self, '_domain_blocked_until'):
-            if self._domain_blocked_until.get(domain, 0) > time.time():
-                return
+        # Circuit breaker check delegated to transport/circuit_breaker.py
         try:
             transport_lower = transport.lower()
             if transport_lower == 'tor':

@@ -18,7 +18,7 @@ import os
 import time
 from typing import TYPE_CHECKING
 
-from .duckduckgo_adapter import DiscoveryBatchResult, DiscoveryHit
+from .base import DiscoveryBatchResult, DiscoveryHit
 
 if TYPE_CHECKING:
     from dht.kademlia_node import KademliaNode

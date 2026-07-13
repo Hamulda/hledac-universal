@@ -198,6 +198,7 @@ class TestMlxMemoryPressureThresholds(unittest.TestCase):
             mm._mlx_core = orig_core
 
 
+@unittest.skip("legacy/autonomous_orchestrator.py deleted — F181A facade obsolete")
 class TestReplacedAoCallsitesSurgical(unittest.TestCase):
     """Verify AO replacements are exactly 1-line surgical substitutions.
 

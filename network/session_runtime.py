@@ -288,6 +288,7 @@ def get_default_limit() -> int:
 
 _async_httpx_session: httpx.AsyncClient | None = None
 _async_httpx_session_lock: asyncio.Lock | None = None
+_httpx_cache_transport: Any = None  # hishel cache transport, set via set_httpx_cache_transport()
 
 
 async def async_get_httpx_session() -> httpx.AsyncClient:
@@ -326,6 +327,7 @@ async def async_get_httpx_session() -> httpx.AsyncClient:
             )
             _async_httpx_session = httpx.AsyncClient(
                 limits=limits,
+                transport=_httpx_cache_transport,
                 http2=True,  # HTTP/2 enabled by default in httpx 0.28+
                 timeout=httpx.Timeout(
                     connect=HTML_CONNECT_TIMEOUT_S,
@@ -340,9 +342,23 @@ async def async_get_httpx_session() -> httpx.AsyncClient:
 
 # Backward-compat aliases
 async_get_aiohttp_session = async_get_httpx_session
-"""F4XX: alias — httpx now replaces aiohttp."""
 
 
+def set_httpx_cache_transport(transport: Any) -> None:
+    """
+    Set the hishel cache transport for httpx sessions (Issue #23).
+
+    When called with a non-None transport, any existing httpx session is
+    recreated with the cache transport on the next async_get_httpx_session() call.
+    Call this from FetchCoordinator._do_initialize() after build_cache_transport()
+    to wire the HTTP cache into httpx sessions used for HTML preview fetches.
+
+    Invariant:
+        [I12] set_httpx_cache_transport() is called before session creation
+              so the transport is available at AsyncClient init time.
+    """
+    global _httpx_cache_transport
+    _httpx_cache_transport = transport
 def get_aiohttp_session() -> httpx.AsyncClient:
     """F4XX: alias for async_get_httpx_session(). Provided for backward compatibility."""
     import asyncio
@@ -449,8 +465,9 @@ def _reset_session_runtime_for_tests() -> None:
         from network import session_runtime as sr
         sr._reset_session_runtime_for_tests()
     """
-    global _async_httpx_session
+    global _async_httpx_session, _httpx_cache_transport
 
+    _httpx_cache_transport = None  # ISSUE #23: clear cache transport on reset
     if _async_httpx_session is not None and not _async_httpx_session.is_closed:
         loop = asyncio.new_event_loop()
         try:

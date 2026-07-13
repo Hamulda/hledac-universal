@@ -3821,6 +3821,14 @@ class SprintScheduler:
                 log.info("[BACKPRESSURE] monitor initialized (clearnet_max=25, min=1)")
             except Exception as _exc:
                 log.warning("failed to initialize backpressure monitor: %s", _exc)
+
+        # ISSUE #23: wire HTTP cache before any httpx sessions are created
+        # FetchCoordinator._do_initialize() calls build_cache_transport() + set_httpx_cache_transport()
+        if getattr(self, "_fetch_coordinator", None) is not None:
+            try:
+                await self._fetch_coordinator.initialize()
+            except Exception as _exc:
+                log.warning("failed to initialize FetchCoordinator: %s", _exc)
         from hledac.universal.utils.async_helpers import safe_create_task
 
         def _prewarm_mlx_sync() -> None:

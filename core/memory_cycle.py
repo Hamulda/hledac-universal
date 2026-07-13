@@ -75,20 +75,28 @@ _GC_FREEZE_ENABLED: bool = sys.version_info >= (3, 14, 7)
 
 def _mlx_cache_clear_if_available() -> bool:
     """
-    Issue #31 FIX: Clear MLX Metal cache if MLX is available.
+    Issue #20+31 FIX: Clear MLX Metal cache if MLX is available.
 
-    mx.eval([]) must be called BEFORE mx.metal.clear_cache() — otherwise
-    clear_cache is a no-op (no memory barrier, GPU ops still in flight).
-    This is the canonical pattern per CLAUDE.md invariant #2.
+    Canonical order (per GHOST_INVARIANTS.md:80):
+      gc.collect() → mx.eval([]) → mx.clear_cache() → gc.collect()
+
+    mx.eval([]) must be called BEFORE clear_cache — otherwise clear_cache
+    is a no-op (no memory barrier, GPU ops still in flight).
+    gc.collect() before clears Python refs that hold MLX tensors.
+    gc.collect() after handles circular refs created during Metal free.
 
     Returns True if MLX was available and cleared, False otherwise.
     Fail-soft: never raises, returns False on any error.
     """
     try:
         import mlx.core as mx
-        mx.eval([])
-        if hasattr(mx, 'metal') and hasattr(mx.metal, 'clear_cache'):
+        gc.collect()       # Step 1: release Python refs to MLX objects
+        mx.eval([])       # Step 2: barrier — flush GPU queue before clear
+        if hasattr(mx, "clear_cache"):
+            mx.clear_cache()
+        elif hasattr(mx, "metal") and hasattr(mx.metal, "clear_cache"):
             mx.metal.clear_cache()
+        gc.collect()       # Step 3: reclaim circular refs created during Metal free
         return True
     except Exception:
         return False

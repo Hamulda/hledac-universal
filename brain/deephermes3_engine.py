@@ -243,11 +243,10 @@ _mlx_prewarm_active: bool = False
 
 def _safe_mlx_eval_and_clear_cache(reason: str) -> dict:
     """
-    Settle lazy MLX ops and clear Metal cache.
+    Issue #20+31 FIX: Settle lazy MLX ops and clear Metal cache.
 
-    Call mx.eval([]) to flush pending lazy computations before
-    mx.metal.clear_cache(), ensuring the cache clear actually reclaims
-    memory from pending GPU work.
+    Canonical order (GHOST_INVARIANTS.md:80):
+      gc.collect() -> mx.eval([]) -> mx.clear_cache() -> gc.collect()
 
     Args:
         reason: Telemetry label for this clear event.
@@ -258,6 +257,8 @@ def _safe_mlx_eval_and_clear_cache(reason: str) -> dict:
     result = {'cleared': False, 'reason': reason, 'error': None}
     try:
         import mlx.core as _mx
+        import gc
+        gc.collect()
         try:
             _mx.eval([])
         except Exception as _e:
@@ -266,9 +267,9 @@ def _safe_mlx_eval_and_clear_cache(reason: str) -> dict:
             if hasattr(_mx, 'clear_cache'):
                 _mx.clear_cache()
                 result['cleared'] = True
-                result['cleared'] = True
         except Exception as _e:
             result['error'] = f"{result['error']};clear_cache_failed:{_e}" if result['error'] else f'clear_cache_failed:{_e}'
+        gc.collect()
     except Exception as _e:
         result['error'] = f'import_failed:{_e}'
     return result
@@ -442,6 +443,16 @@ class DeepHermes3Engine:
         self._idle_unload_timeout_s: float = float(os.getenv('HLEDAC_IDLE_UNLOAD_TIMEOUT_S', '1800.0'))
         self._prefix_cache_stats = {'prefix_cache_maxsize': self._prefix_cache_maxsize, 'prefix_cache_size': 0, 'prefix_cache_evictions': 0, 'prefix_cache_hits': 0, 'prefix_cache_misses': 0}
         self._inference_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        # Issue #14: CPU prep || GPU exec pipeline — 3-stage overlap
+        # Stage 1 (prep): format_chatml + tokenization — CPU-bound, parallel across prompts
+        # Stage 2 (GPU): mlx_lm.generate() — single Metal command queue, serial
+        # Stage 3 (post): JSON parse + model_validate — CPU-bound, parallel across prompts
+        self._prep_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=3, thread_name_prefix='hermes_prep'
+        )
+        self._post_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix='hermes_post'
+        )
         from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
         self._inference_semaphore = get_semaphore_for_testing(ConcurrencyCategory.MLX_INFERENCE)
         self._mlx_batcher: Any = None
@@ -811,37 +822,57 @@ class DeepHermes3Engine:
         """
         Run a single structured output request (canonical path).
 
-        P2-2: Routes through _submit_inference (→ MLXWorkerThread when available)
-        instead of run_in_executor, enabling concurrent dispatch with other batch items.
-        This gives ~2-4× wall-clock improvement for batched inference by overlapping
-        I/O wait (async dispatch) with GPU computation.
+        Issue #14: CPU prep || GPU exec pipeline.
+        Stage 1 (prep): _format_chatml in prep thread pool (parallel across prompts).
+        Stage 2 (GPU): _submit_inference via MLXWorkerThread (serial).
+        Stage 3 (post): JSON parse + model_validate in post thread pool (parallel).
+
+        Each stage overlaps with GPU execution — when prompt N is being
+        generated, prompt N+1 is being prepped and prompt N-1 is being parsed.
         """
         prompt = payload.get('prompt')
         response_model = payload.get('response_model')
         temperature = payload.get('temperature', 0.1)
         max_tokens = payload.get('max_tokens', 1024)
         system_msg = payload.get('system_msg')
-        if system_msg:
-            formatted = self._format_chatml(system_msg, prompt)
-        else:
-            formatted = self._format_chatml('You are a helpful assistant.', prompt)
-        timeout_s = _get_hermes_timeout_s()
-        raw_text = await self._submit_inference(timeout_s, self._run_inference, formatted, temperature, max_tokens, None)
-        import re
-        schema_cls = response_model if isinstance(response_model, type) else type(response_model)
-        match = re.search('\\{.*\\}', raw_text, re.DOTALL)
-        if match:
-            try:
-                data = _msgspec_decode(match.group())
-                if hasattr(schema_cls, 'model_validate'):
-                    return schema_cls.model_validate(data)
-                return schema_cls.model_construct(**data)
-            except Exception:
-                pass
-        logger.debug(f'[STRUCTURED] Parse failed, using default for {schema_cls.__name__}')
-        fields = dict.fromkeys(getattr(schema_cls, 'model_fields', {}).keys())
-        return schema_cls.model_construct(**fields) if hasattr(schema_cls, 'model_construct') else schema_cls(**fields)
 
+        # Stage 1: CPU prep — parallel across prompts (prep pool, 3 workers)
+        loop = asyncio.get_running_loop()
+        system = system_msg or 'You are a helpful assistant.'
+
+        def _sync_prep() -> str:
+            # Issue #14: sanitize before formatting (full prep pipeline)
+            sanitized = self._sanitize_for_llm(prompt) if self._sanitize_for_llm else prompt
+            sanitized = sanitized[:MAX_LLM_PROMPT_CHARS]
+            return DeepHermes3Engine._format_chatml(system, sanitized)
+
+        formatted_prompt = await loop.run_in_executor(self._prep_executor, _sync_prep)
+
+        # Stage 2: GPU exec — serial (MLX single command queue)
+        timeout_s = _get_hermes_timeout_s()
+        raw_text = await self._submit_inference(
+            timeout_s, self._run_inference, formatted_prompt, temperature, max_tokens, None
+        )
+
+        # Stage 3: CPU post — parallel across prompts (post pool, 2 workers)
+        import re as _re
+        schema_cls = response_model if isinstance(response_model, type) else type(response_model)
+
+        def _parse_structured() -> Any:
+            match = _re.search(r'\{.*\}', raw_text, _re.DOTALL)
+            if match:
+                try:
+                    data = _msgspec_decode(match.group())
+                    if hasattr(schema_cls, 'model_validate'):
+                        return schema_cls.model_validate(data)
+                    return schema_cls.model_construct(**data)
+                except Exception:
+                    pass
+            logger.debug(f'[STRUCTURED] Parse failed, using default for {schema_cls.__name__}')
+            fields = dict.fromkeys(getattr(schema_cls, 'model_fields', {}).keys())
+            return schema_cls.model_construct(**fields) if hasattr(schema_cls, 'model_construct') else schema_cls(**fields)
+
+        return await loop.run_in_executor(self._post_executor, _parse_structured)
     async def flush_all(self, timeout: float=5.0) -> int:
         """
         Drain all pending items from the batch queue.
@@ -1423,6 +1454,55 @@ class DeepHermes3Engine:
         parts.append('<|im_start|>assistant\n')
         return '\n'.join(parts)
 
+    @staticmethod
+    def _prep_generate(
+        prompt: str,
+        system: str,
+        sanitize_fn: Callable[[str], str] | None,
+        tokenizer: Any,
+        prefix_cache: dict,
+        prefix_cache_maxsize: int,
+        prefix_cache_stats: dict,
+        max_prompt_chars: int,
+    ) -> tuple[str, Any, Any, list[int]]:
+        """
+        Issue #14: Stage 1 — CPU prep for generate() (runs in prep thread pool).
+
+        Combines sanitization, deep thinking prefix, prefix cache lookup,
+        ChatML formatting, and tokenization. All CPU-bound work for one
+        prompt, run in the same prep worker thread.
+
+        Returns (formatted_prompt, prefix_cache, tokenizer, prefix_tokens).
+
+        Thread-safe: reads from shared state (no writes except cache append
+        via move_to_end/popitem which are GIL-protected dict ops).
+        """
+        sanitized = (sanitize_fn(prompt) if sanitize_fn else None) or fallback_sanitize(prompt, max_length=max_prompt_chars)
+        sanitized = sanitized[:max_prompt_chars]
+        formatted = DeepHermes3Engine._format_chatml(system, sanitized)
+        formatted = formatted[:max_prompt_chars]
+        prefix_tokens = None
+        cache_key = hashlib.sha256((system or '').encode()).hexdigest()
+        if cache_key in prefix_cache:
+            prefix_cache.move_to_end(cache_key)
+            prefix_cache_stats['prefix_cache_hits'] = prefix_cache_stats.get('prefix_cache_hits', 0) + 1
+            prefix_cache_stats['prefix_cache_size'] = len(prefix_cache)
+            logger.debug(f'[CACHE] Prefix cache hit for key {cache_key[:8]}')
+        elif tokenizer:
+            try:
+                prefix_tokens = tokenizer.encode(system)
+                prefix_cache[cache_key] = prefix_tokens
+                prefix_cache.move_to_end(cache_key)
+                prefix_cache_stats['prefix_cache_misses'] = prefix_cache_stats.get('prefix_cache_misses', 0) + 1
+                prefix_cache_stats['prefix_cache_size'] = len(prefix_cache)
+                while len(prefix_cache) > prefix_cache_maxsize:
+                    evicted_key, _ = prefix_cache.popitem(last=False)
+                    prefix_cache_stats['prefix_cache_evictions'] = prefix_cache_stats.get('prefix_cache_evictions', 0) + 1
+                    logger.debug(f'[CACHE] Prefix cache evicted key {evicted_key[:8]}')
+            except Exception:
+                pass
+        return formatted, None, tokenizer, prefix_tokens
+
     def _measure_kv_cache_bytes(self, cache: Any, tokens: list[int]) -> int:
         """
         P1-1: Measure actual Metal memory delta for a KV cache entry.
@@ -1801,12 +1881,18 @@ class DeepHermes3Engine:
         return generate_kwargs
 
     def _mlx_clear_and_timestamp(self) -> None:
-        """Canonical MLX cleanup: eval → clear_cache → timestamp. Shared helper."""
+        """
+        Issue #20+31 FIX: Canonical MLX cleanup per GHOST_INVARIANTS.md:80.
+        Sequence: gc.collect() -> mx.eval([]) -> mx.clear_cache() -> gc.collect()
+        """
         try:
             import mlx.core as _mx
+            import gc
+            gc.collect()
             _mx.eval([])
             if hasattr(_mx, 'clear_cache'):
                 _mx.clear_cache()
+            gc.collect()
         except Exception:
             pass
         import time
@@ -2182,13 +2268,8 @@ class DeepHermes3Engine:
             if is_injection:
                 import logging as _log
                 _log.getLogger(__name__).warning(f'GAP-5: Prompt injection patterns detected: {patterns[:3]} — proceeding with sanitized input (fail-soft)')
-            if self._sanitize_for_llm is not None:
-                sanitized_prompt = self._sanitize_for_llm(prompt)[:MAX_LLM_PROMPT_CHARS]
-            else:
-                sanitized_prompt = fallback_sanitize(prompt, max_length=MAX_LLM_PROMPT_CHARS)[:MAX_LLM_PROMPT_CHARS]
-            system = system_msg or 'You are a helpful research assistant.'
-            if thinking:
-                system = f'{self._DEEP_THINKING_PREFIX}\n\n{system}'
+                        # Issue #14: Stage 1 — CPU prep in thread pool (parallel across prompts)
+            loop = asyncio.get_running_loop()
             bandit = self._get_prompt_bandit()
             arm_used = ''
             if bandit is not None:
@@ -2199,24 +2280,22 @@ class DeepHermes3Engine:
                     logger.debug(f'[GENERATE] Bandit arm: {arm_used}')
                 except Exception as e:
                     logger.debug(f'[GENERATE] Bandit select failed: {e}')
-            cache_key = hashlib.sha256((system or '').encode()).hexdigest()
-            if cache_key in self._prefix_cache:
-                self._prefix_cache.move_to_end(cache_key)
-                self._prefix_cache_stats['prefix_cache_hits'] += 1
-                self._prefix_cache_stats['prefix_cache_size'] = len(self._prefix_cache)
-                logger.debug(f'[CACHE] Prefix cache hit for key {cache_key[:8]}')
-            elif self._tokenizer:
-                prefix_tokens = self._tokenizer.encode(system)
-                self._prefix_cache[cache_key] = prefix_tokens
-                self._prefix_cache.move_to_end(cache_key)
-                self._prefix_cache_stats['prefix_cache_misses'] += 1
-                self._prefix_cache_stats['prefix_cache_size'] = len(self._prefix_cache)
-                while len(self._prefix_cache) > self._prefix_cache_maxsize:
-                    evicted_key, _ = self._prefix_cache.popitem(last=False)
-                    self._prefix_cache_stats['prefix_cache_evictions'] += 1
-                    logger.debug(f'[CACHE] Prefix cache evicted key {evicted_key[:8]}')
-            formatted_prompt = self._format_chatml(system, sanitized_prompt)
-            formatted_prompt = formatted_prompt[:MAX_LLM_PROMPT_CHARS]
+            sanitized_for_prep = prompt if isinstance(prompt, str) else str(prompt)
+            system_for_prep = system_msg or 'You are a helpful research assistant.'
+            if thinking:
+                system_for_prep = f'{self._DEEP_THINKING_PREFIX}\n\n{system_for_prep}'
+            formatted_prompt, _, tokenizer, prefix_tokens = await loop.run_in_executor(
+                self._prep_executor,
+                self._prep_generate,
+                sanitized_for_prep,
+                system_for_prep,
+                self._sanitize_for_llm,
+                self._tokenizer,
+                self._prefix_cache,
+                self._prefix_cache_maxsize,
+                self._prefix_cache_stats,
+                MAX_LLM_PROMPT_CHARS,
+            )
             if adapter_path is not None:
                 self.apply_lora_adapter(adapter_path)
             logger.debug(f'Generating with temp={temp}, max_tokens={max_tok}, lora={adapter_path}')
@@ -2326,7 +2405,12 @@ class DeepHermes3Engine:
             if thinking:
                 system = f'{self._DEEP_THINKING_PREFIX}\n\n{system}'
             sanitized_prompt = prompt[:MAX_LLM_PROMPT_CHARS]
-            formatted_prompt = self._format_chatml(system, sanitized_prompt)[:MAX_LLM_PROMPT_CHARS]
+            # Issue #14: Stage 1 — CPU prep in thread pool (parallel with GPU of prior prompt)
+            def _sync_stream_prep() -> str:
+                sanitized = self._sanitize_for_llm(sanitized_prompt) if self._sanitize_for_llm else sanitized_prompt
+                return self._format_chatml(system, sanitized)[:MAX_LLM_PROMPT_CHARS]
+            loop = asyncio.get_running_loop()
+            formatted_prompt = await loop.run_in_executor(self._prep_executor, _sync_stream_prep)
         except Exception as e:
             logger.warning('[STREAM] prompt formatting failed: %s', e)
             return
@@ -2465,8 +2549,12 @@ class DeepHermes3Engine:
                                 except Exception:
                                     _active = 0
                                 if _active > M3_METAL_PRESSURE_BYTES:
+                                    import gc
+                                    gc.collect()
+                                    _m3_mx.eval([])
                                     if hasattr(_m3_mx, 'clear_cache'):
                                         _m3_mx.clear_cache()
+                                    gc.collect()
                         except Exception:
                             pass
                     if len(_token_buffer) >= STREAM_BUFFER_SIZE:
@@ -2903,6 +2991,13 @@ class DeepHermes3Engine:
         self.invalidate_prefix_cache()
         logger.info('Unloading Hermes-3...')
         self._inference_executor.shutdown(wait=True)
+        # Issue #14: shutdown thread pools (prep + post)
+        if hasattr(self, '_prep_executor') and self._prep_executor is not None:
+            self._prep_executor.shutdown(wait=False)
+            self._prep_executor = None
+        if hasattr(self, '_post_executor') and self._post_executor is not None:
+            self._post_executor.shutdown(wait=False)
+            self._post_executor = None
         if self._compile_executor is not None:
             self._compile_executor.shutdown(wait=False)
             self._compile_executor = None
