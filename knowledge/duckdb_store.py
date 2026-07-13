@@ -1121,6 +1121,8 @@ class DuckDBShadowStore:
         "_ingest_breaker_cooldown",
         "_ingest_breaker_threshold",
         "_last_ingest_ts",
+        "_min_flush",
+        "_max_flush_interval",
         "_DuckDBShadowStore__graph_store",
         "_stmt_insert_finding",
         "_stmt_insert_finding_conn_id",

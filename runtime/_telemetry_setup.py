@@ -1,9 +1,9 @@
-"""runtime/_telemetry_setup.py — Unified telemetry configuration (<200 LOC).
+"""runtime/_telemetry_setup.py — Unified telemetry configuration.
 
-Merges setup from:
-  - runtime/tracing_setup.py       → _configure_structlog + _configure_otel + _configure_logfire
-  - runtime/instrumentation_setup.py → instrument_duckdb_connection + instrument_lmdb_env
-  - runtime/logfire_setup.py       → _configure_logfire (merged above)
+Unified setup merges:
+  - OTel tracing + auto-instrumentation
+  - Logfire (optional)
+  - structlog configuration (delegated to utils.logging_config)
 
 Public API: configure(), is_configured(), instrument_duckdb_connection(), instrument_lmdb_env()
 
@@ -22,104 +22,21 @@ M1 8GB constraints:
   - httpx instrumentation ENABLED via HLEDAC_OTEL_PROFILE=1 (or --profile CLI flag).
   - duckdb/lmdb: wrappers applied by callers via instrument_duckdb_connection() /
                  instrument_lmdb_env() (wired by duckdb_store.py + paths.py).
+
+Issue #16: structlog config moved to utils.logging_config — this module
+no longer duplicates structlog setup.
 """
 
+from hledac.universal.utils.logging_config import configure_logging
 
 import os
 import sys
 import threading
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    pass
+from typing import Any
 
 _OTEL_ENABLED = os.environ.get("HLEDAC_OTEL_ENABLED", "1").strip() == "1"
-_STRUCTLOG_FORMAT = os.environ.get("HLEDAC_LOG_FORMAT", "json").strip().lower()
-_STRUCTLOG_LEVEL = os.environ.get("HLEDAC_LOG_LEVEL", "INFO").strip().upper()
 _CONFIGURED = False
 _LOCK = threading.Lock()
-
-
-# ── structlog ───────────────────────────────────────────────────────────────
-
-
-def _configure_structlog() -> bool:
-    try:
-        import logging, structlog
-        from datetime import datetime, timezone
-    except ImportError:
-        return False
-    try:
-        import msgspec.json as _json
-
-        def _inject_trace_context() -> dict[str, Any]:
-            out: dict[str, Any] = {}
-            try:
-                from otel._instrumentation import current_span_id, current_trace_id
-                tid = current_trace_id()
-                sid = current_span_id()
-                if tid and tid != "0" * 32:
-                    out["trace_id"] = tid
-                if sid and sid != "0" * 16:
-                    out["span_id"] = sid
-            except Exception:
-                pass
-            return out
-
-        def _json_renderer(_logger: Any, method: str, event: dict[str, Any]) -> None:
-            try:
-                ctx = _inject_trace_context()
-                if ctx:
-                    event = {**ctx, **event}
-                rendered = {"timestamp": datetime.now(timezone.utc).isoformat(),
-                            "level": method.upper(), "event": event.pop("event", ""), **event}
-                line = _json.encode(rendered)[:8192].decode("utf-8", errors="replace")
-                out = sys.stderr if method.upper() in ("ERROR", "CRITICAL", "WARNING") else sys.stdout
-                out.write(line + "\n")
-            except Exception:
-                try:
-                    print(f"[{method.upper()}] {event}", file=sys.stderr)
-                except Exception:
-                    pass
-
-        def _plain_renderer(_logger: Any, method: str, event: dict[str, Any]) -> None:
-            try:
-                ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-                ctx = _inject_trace_context()
-                parts = [f"{ts} [{method.upper():8}]"]
-                if ctx.get("trace_id"):
-                    parts.append(f"trace_id={ctx['trace_id'][:8]}...")
-                parts.append(f"{event.get('logger', 'root')}: {event.get('event', '')}")
-                extra = {k: v for k, v in event.items() if k not in ("event", "logger")}
-                if extra:
-                    import reprlib
-                    parts.append(f"extra={reprlib.repr(extra)}")
-                line = " ".join(parts)[:8192]
-                out = sys.stderr if method.upper() in ("ERROR", "CRITICAL", "WARNING") else sys.stdout
-                print(line, file=out)
-            except Exception:
-                pass
-
-        structlog.configure(
-            processors=(structlog.contextvars.merge_contextvars,
-                       structlog.stdlib.filter_by_level,
-                       structlog.stdlib.add_log_level,
-                       structlog.stdlib.PositionalArgumentsFormatter(),
-                       _inject_trace_context,
-                       _json_renderer if _STRUCTLOG_FORMAT == "json" else _plain_renderer),
-            wrapper_class=structlog.make_filtering_bound_logger(getattr(logging, _STRUCTLOG_LEVEL, logging.INFO)),
-            context_class=dict,
-            logger_factory=structlog.stdlib.LoggerFactory(),
-            cache_logger_on_first_use=True,
-        )
-        for _n in ("urllib3", "httpx", "httpcore", "curl_cffi", "charset_normalizer", "aiosqlite"):
-            logging.getLogger(_n).setLevel(logging.WARNING)
-        return True
-    except Exception:
-        return False
-
-
-# ── OTel ───────────────────────────────────────────────────────────────────
 
 
 def _configure_otel() -> bool:
@@ -148,9 +65,8 @@ def _configure_auto_instrumentation() -> bool:
     if not _OTEL_ENABLED:
         return True
     if os.environ.get("HLEDAC_OTEL_PROFILE", "0").strip() != "1":
-        return True  # Not enabled
+        return True
 
-    # httpx auto-instrumentation — lightweight, ~1MB overhead
     try:
         from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
         HTTPXClientInstrumentor().instrument()
@@ -161,9 +77,6 @@ def _configure_auto_instrumentation() -> bool:
         sys.stderr.write(f"[telemetry] httpx instrumentation failed: {e}\n")
 
     return True
-
-
-# ── Logfire ───────────────────────────────────────────────────────────────
 
 
 def _configure_logfire() -> bool:
@@ -188,16 +101,14 @@ def _configure_logfire() -> bool:
         return False
 
 
-# ── Public API ─────────────────────────────────────────────────────────────
-
-
 def configure() -> None:
     """Unified telemetry config. Call once at startup. Idempotent. Thread-safe."""
     global _CONFIGURED
     with _LOCK:
         if _CONFIGURED:
             return
-        _configure_structlog()
+        # Configure structlog via unified config
+        configure_logging()
         _configure_otel()
         _configure_auto_instrumentation()
         _configure_logfire()
@@ -206,10 +117,6 @@ def configure() -> None:
 
 def is_configured() -> bool:
     return _CONFIGURED
-
-
-# ── DB / Env instrumentation helpers ──────────────────────────────────────
-# Wired by duckdb_store.py (lazy) + paths.py (lazy).
 
 
 def instrument_duckdb_connection(conn: Any, tracer_name: str = "duckdb") -> Any:

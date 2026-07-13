@@ -2150,22 +2150,16 @@ async def run_sprint(
 
     store = DuckDBSubprocessAdapter()
 
-    # P0-3: Pre-initialize DuckDB before sprint starts.
-    # Eliminates 5–8s first-ingest penalty during active cycle.
-    # Ensures connection + schema + WAL ready before first finding arrives.
-    try:
-        await store.async_initialize()
-    except Exception as _init_err:
-        logger.warning(f"[P0-3] DuckDB pre-init failed (fail-soft, store will init on first ingest): {_init_err}")
-
-    # P2-3: Boot phase parallel init — circuit breaker reset + MLX prewarm daemon.
-    # F320: prewarm_daemon.start_prewarm_if_needed() loads Hermes + MLX embeddings
-    # ONCE at application startup. Subsequent sprints skip re-loading via
-    # is_prewarm_done() check in SprintScheduler._prewarm_mlx_sync().
+    # Issue #21: Concurrent boot — DuckDB init + circuit breaker reset + MLX prewarm
+    # run in parallel. Sequential was: await DuckDB (~1-2s) THEN prewarm thread spawn.
+    # Now all three start together: total wall-clock = max(duckdb, prewarm) not sum.
     from hledac.universal.runtime.prewarm_daemon import start_prewarm_if_needed
 
+    # Start prewarm daemon FIRST (fire-and-forget, runs in background thread).
+    # Idempotent — skips if HLEDAC_PREENABLE_DONE=1 already set.
     start_prewarm_if_needed()
 
+    # Circuit breaker reset — sync work offloaded to thread pool
     _cb_reset_done = False
 
     def _reset_circuit_breakers() -> None:
@@ -2180,9 +2174,18 @@ async def run_sprint(
         except Exception:  # noqa: BLE001
             pass
 
-    # asyncio.to_thread offloads the sync _reset_circuit_breakers to the pool.
     _cb_reset_coro = asyncio.to_thread(_reset_circuit_breakers)
 
+    # DuckDB init — now concurrent with prewarm thread + circuit breaker reset.
+    # Total boot = max(await duckdb, prewarm thread) instead of sequential sum.
+    _duckdb_init_ok = False
+    try:
+        await store.async_initialize()
+        _duckdb_init_ok = True
+    except Exception as _init_err:
+        logger.warning(f"[P0-3] DuckDB pre-init failed (fail-soft, store will init on first ingest): {_init_err}")
+
+    # Await circuit breaker reset with timeout — prewarm already running in parallel
     try:
         async with asyncio.timeout(10.0):
             await _cb_reset_coro

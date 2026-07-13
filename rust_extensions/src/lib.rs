@@ -65,7 +65,7 @@ pub mod arrow_batch_builder;
 pub mod parquet_reader; // F320+: Lazy parquet reader — paginated Arrow, 100GB+ IOC history bez OOM
 pub mod spsc_queue;
 pub mod mpsc_pool; // Bounded MPSC pool — replaces asyncio.Queue in evidence_log
-pub mod pool_run;
+pub mod federated_qtable; // ISSUE-23: Rust Q-table with rayon parallel batch updates
 pub mod embedding_index; // ANN HNSW index v Rust (M1 8GB safe)
 pub mod lancedb_bridge; // F320+: Rust HNSW bridge → LanceDB Python API (ANN only, zero-copy)
 pub mod graph_cache;    // TinyLFU LRU cache pro graph operations
@@ -525,6 +525,9 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // R4.1: Rayon pool runners — Python-callable wrappers for CPU/IO pools.
     pool_run::register_functions(m)?;
+
+    // ISSUE-23: Rust-backed FederatedQTable with rayon parallel batch updates.
+    federated_qtable::register(m)?;
 
     // R4.2: Metal-accelerated batch pattern matching for IoC scanning.
     // Falls back to Rust NEON Aho-Corasick when Metal unavailable.

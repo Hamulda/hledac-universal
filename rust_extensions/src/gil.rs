@@ -125,25 +125,19 @@ fn probe_gil_state(py: Python<'_>) {
         }
     }
 
-    // ── Step 3: Try allow_threads (PyO3 0.27 only)
+    // ── Step 3: Try allow_threads (PyO3 0.28 only)
     //
-    // PyO3 0.27: allow_threads() is in scope via Python::with_gil().
-    //   → #[deprecated] lint fires, #[allow(deprecated)] suppresses it.
-    //   → Functionally identical to the non-deprecated path.
+    // PyO3 0.28: allow_threads() is a free function in pyo3::prelude.
+    //   → #[deprecated] lint fires on older versions, #[allow(deprecated)] suppresses it.
     //
     // PyO3 0.29+: allow_threads() not in public API — would be
-    //   a compile error. But we pin PyO3 0.27 in Cargo.toml, so
+    //   a compile error. But we pin PyO3 =0.28.2 in Cargo.toml, so
     //   this branch ALWAYS compiles with allow_threads available.
-    //
-    // PyO3 0.30+ gil="false": no GIL token needed, GIL_ENABLED stays true
-    //   only if probe fails. But 0.30+ doesn't ship with allow_threads
-    //   either, so we must NOT call it there. PyO3 0.27 is pinned in
-    //   Cargo.toml, preventing the 0.29+ scenario from occurring.
     #[allow(deprecated)]
-    let allow_threads_works = Python::attach(|py| {
-        // This block compiles ONLY with PyO3 0.27 where allow_threads exists.
-        // Cargo.toml pins pyo3 = "0.27" — 0.29+ never enters this build.
-        py.allow_threads(|| {});
+    let allow_threads_works = Python::attach(|_py| {
+        // allow_threads is a free function in pyo3::prelude, not a method on Python.
+        // It releases the GIL for the duration of the closure.
+        allow_threads(|| {});
         true
     });
 
@@ -174,7 +168,7 @@ where
 {
     if is_gil_enabled() {
         #[allow(deprecated)]
-        py.allow_threads(f)
+        allow_threads(f)
     } else {
         f()
     }

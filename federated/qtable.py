@@ -26,7 +26,7 @@ All methods return safe defaults on any error. They never raise.
 import logging
 from typing import Any
 logger = logging.getLogger(__name__)
-__all__ = ['FederatedQTable']
+__all__ = ['FederatedQTable', 'RustFederatedQTable', 'MAX_QTABLE_ENTRIES']
 MAX_QTABLE_ENTRIES: int = 1024
 'Hard cap on state-action pairs. Past this, lowest-Q entries are evicted.'
 
@@ -124,3 +124,211 @@ class FederatedQTable:
 
     def __len__(self) -> int:
         return len(self._q)
+
+
+# --- ISSUE-23: Rust-backed Q-table with rayon parallel batch updates ---
+_rust_qtable_class: Any = None
+
+
+def _get_rust_qtable() -> Any | None:
+    """
+    Lazy import of RustFederatedQTable from hledac_rust_extensions.
+
+    Returns None if:
+    - hledac_rust_extensions not installed
+    - RustFederatedQTable not available (PyO3 build failed)
+    - Any ImportError
+
+    This is the canonical opt-in path for Issue #23.
+    """
+    global _rust_qtable_class
+    if _rust_qtable_class is not None:
+        return _rust_qtable_class
+    try:
+        from hledac_rust_extensions import RustFederatedQTable as _cls  # type: ignore[attr-defined]
+        _rust_qtable_class = _cls
+        return _cls
+    except Exception:
+        return None
+
+
+class RustFederatedQTable:
+    """
+    Python shim for RustFederatedQTable — transparent fallback to pure-Python
+    FederatedQTable when the Rust extension is unavailable.
+
+    API is identical to FederatedQTable but routes all Q-learning updates
+    through Rust's rayon-parallel batch path when available. Lane isolation
+    is handled inside Rust.
+
+    Usage:
+        qtable = RustFederatedQTable(alpha=0.1, gamma=0.9)
+        qtable.update("surface", ("query-1", 0), "fetch", 0.5, ("query-1", 1))
+        best = qtable.get_best_action("surface", ("query-1", 0), ["fetch", "discovery"])
+
+    M1 8GB bounds:
+        - max_entries = 1024 per lane (hard cap)
+        - Rust batch update uses adaptive_scheduler::mixed_threshold()
+          for rayon thread count (1-4 threads)
+        - Persistence: bincode file (2 MiB cap), or JSON fallback
+    """
+
+    __slots__ = tuple(
+        ('_rust', '_python', '_alpha', '_gamma', '_max_entries')
+    )
+
+    def __init__(
+        self,
+        alpha: float = 0.1,
+        gamma: float = 0.9,
+        max_entries: int = MAX_QTABLE_ENTRIES,
+    ) -> None:
+        rust_cls = _get_rust_qtable()
+        if rust_cls is not None:
+            self._rust: Any = rust_cls(alpha=alpha, gamma=gamma, max_entries=max_entries)
+            self._python: Any = None
+        else:
+            # Transparent fallback to pure-Python
+            self._rust: Any = None
+            self._python: FederatedQTable = FederatedQTable(
+                alpha=alpha, gamma=gamma, max_entries=max_entries
+            )
+        self._alpha: float = float(alpha)
+        self._gamma: float = float(gamma)
+        self._max_entries: int = max_entries
+
+    @property
+    def is_rust(self) -> bool:
+        """True if Rust backend is active."""
+        return self._rust is not None
+
+    def get_q(self, state: tuple, action: str) -> float:
+        """Return Q(state, action), or 0.0 if unseen. Never raises."""
+        if self._rust is not None:
+            try:
+                # FederatedBridge.update pre-embeds lane in state tuple.
+                # We pass the full state_key (which contains lane) as-is.
+                state_key = str(state)
+                action_key = str(action)
+                return float(self._rust.get_q(state_key, action_key))
+            except Exception:
+                pass
+        return self._python.get_q(state, action)
+
+    def get_best_action(self, state: tuple, actions: list[str]) -> str:
+        """Return the action with the highest Q-value, or first on tie."""
+        if self._rust is not None:
+            try:
+                state_key = str(state)
+                return str(self._rust.get_best_action(state_key, actions))
+            except Exception:
+                pass
+        return self._python.get_best_action(state, actions)
+
+    def update(
+        self, state: tuple, action: str, reward: float, next_state: tuple
+    ) -> None:
+        """
+        Q-learning update. Routes to Rust batch path if available.
+
+        Note: FederatedBridge.update already embeds lane in the state tuple
+        via _lane_state(), so state here already contains lane isolation.
+        We pass state_key (str of full tuple) and action as-is to Rust.
+        """
+        if self._rust is not None:
+            try:
+                state_key = str(state)
+                next_key = str(next_state)
+                action_key = str(action)
+                self._rust.update(state_key, action_key, float(reward), next_key)
+                return
+            except Exception:
+                pass
+        self._python.update(state, action, reward, next_state)
+
+    def update_batch(
+        self,
+        items: list[tuple[str, tuple, str, float, tuple]],
+    ) -> int:
+        """
+        Batch Q-learning update via rayon parallel in Rust.
+
+        items: list of (lane, state, action, reward, next_state)
+        Returns number of items processed.
+        """
+        if self._rust is not None and items:
+            try:
+                # Convert to Rust format: (lane, state_key, action, reward, next_state_key)
+                rust_items = [
+                    (str(lane), str(state), str(action), float(reward), str(next_state))
+                    for lane, state, action, reward, next_state in items
+                ]
+                return int(self._rust.update_batch(rust_items))
+            except Exception:
+                pass
+        # Fallback: serial Python
+        for _lane, state, action, reward, next_state in items:
+            self.update(state, action, reward, next_state)
+        return len(items)
+
+    def to_dict(self) -> dict[str, float]:
+        """Serialize to JSON-safe dict."""
+        if self._rust is not None:
+            try:
+                return dict(self._rust.to_dict())
+            except Exception:
+                pass
+        return self._python.to_dict()
+
+    def persist_to_file(self, path: str) -> bool:
+        """Persist to bincode file. Returns True on success."""
+        if self._rust is not None:
+            try:
+                return bool(self._rust.persist_to_file(path))
+            except Exception:
+                pass
+        # Python fallback: serialize to dict then write JSON
+        try:
+            import os
+            os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+            import json
+            with open(path, 'w') as f:
+                json.dump(self.to_dict(), f)
+            return True
+        except Exception:
+            return False
+
+    def load_from_file(self, path: str) -> bool:
+        """Load from bincode or JSON file. Returns True on success."""
+        if self._rust is not None:
+            try:
+                return bool(self._rust.load_from_file(path))
+            except Exception:
+                pass
+        # Python fallback
+        try:
+            import json
+            with open(path) as f:
+                data = json.load(f)
+            restored = FederatedQTable.from_dict(data, alpha=self._alpha, gamma=self._gamma)
+            self._python = restored
+            return True
+        except Exception:
+            return False
+
+    def __len__(self) -> int:
+        if self._rust is not None:
+            try:
+                return int(self._rust.len())
+            except Exception:
+                pass
+        return len(self._python)
+
+    def is_empty(self) -> bool:
+        """Return True if the Q-table has no entries."""
+        if self._rust is not None:
+            try:
+                return bool(self._rust.is_empty())
+            except Exception:
+                pass
+        return len(self._python) == 0

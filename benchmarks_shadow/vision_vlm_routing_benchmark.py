@@ -50,8 +50,7 @@ class RoutingCase:
     def to_dict(self) -> dict:
         return {'name': self.name, 'ocr_sufficient': self.ocr_sufficient, 'needs_visual_reasoning': self.needs_visual_reasoning, 'is_complex_scene': self.is_complex_scene, 'memory_pressure': self.memory_pressure, 'oversized': self.oversized, 'ocr_failed': self.ocr_failed, 'vlm_manually_requested': self.vlm_manually_requested, 'expected_route': self.expected_route.value}
 
-@msgspec.Struct()
-class BenchmarkResult:
+class BenchmarkResult(msgspec.Struct):
     benchmark: str = 'vision_vlm_routing_benchmark'
     mode: str = 'hermetic'
     total_cases: int = 0

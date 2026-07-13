@@ -19,7 +19,7 @@ Wiring:
 
 import asyncio
 
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok
 import logging as _logging
 import time as _time
 from typing import Any
@@ -168,19 +168,24 @@ class SprintSchedulerV2:
         self._lifecycle = _lifecycle_mgr
         self._runner = _lifecycle_mgr
 
-        # DuckDB init (lazy — fail-soft)
-        self._duckdb_store = await self._init_duckdb_store(query)
+        # Issue #21: Concurrent init — all four services boot in parallel.
+        # Sequential was: duckdb → governor → hermes → evidence_log → sidecar (~3-5s sum).
+        # Now: max(all) — DuckDB (~1-2s), Governor (~50ms), Hermes (~100ms), EvidenceLog (~20ms)
+        # run concurrently. SidecarOrchestrator still sequential (needs duckdb reference).
+        (
+            self._duckdb_store,
+            self._governor,
+            self._hermes_engine,
+            self._evidence_log,
+        ) = await safe_gather_ok(
+            self._init_duckdb_store(query),
+            self._init_governor(),
+            self._init_hermes_engine(query),
+            self._init_evidence_log(),
+            label="scheduler_v2:_init_services",
+        )
 
-        # Governor init
-        self._governor = await self._init_governor()
-
-        # Hermes engine init (lazy)
-        self._hermes_engine = await self._init_hermes_engine(query)
-
-        # Evidence log
-        self._evidence_log = await self._init_evidence_log()
-
-        # Sidecar orchestrator
+        # Sidecar orchestrator — needs duckdb reference, runs after duckdb init
         self._sidecar_orchestrator = await self._init_sidecar_orchestrator(query)
 
         # Build per-cycle state and update SprintContext in one call

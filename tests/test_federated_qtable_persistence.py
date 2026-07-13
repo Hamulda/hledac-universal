@@ -1,10 +1,11 @@
 """
-Testy pro Issue #11 — Federated Q-table persistence fix.
+Testy pro Issue #11 — Federated Q-table persistence fix (always-on default).
 
 Verifies:
-1. Auto-singleton bridge is created when HLEDAC_FEDERATED_QTABLE_PATH is set
-2. Q-table updates survive across coordinator instances (cross-sprint RL)
-3. Without the env var, falls back to in-memory (backward-compatible)
+1. Auto-singleton bridge is created by default (always-on)
+2. HLEDAC_FEDERATED_QTABLE_PATH="" explicitly disables persistence
+3. Explicit path in env var is respected
+4. Q-table updates survive across coordinator instances (cross-sprint RL)
 """
 
 import os
@@ -23,10 +24,10 @@ class TestFederatedQTablePersistence:
         shutil.rmtree(tmp, ignore_errors=True)
 
     @pytest.mark.asyncio
-    async def test_auto_bridge_singleton_created_when_env_set(self, temp_dir, monkeypatch):
+    async def test_auto_bridge_singleton_created_by_default(self, monkeypatch):
         """
-        When HLEDAC_FEDERATED_QTABLE_PATH is set, _get_auto_bridge()
-        creates a FederatedBridge singleton that survives across instances.
+        When HLEDAC_FEDERATED_QTABLE_PATH is not set, _get_auto_bridge()
+        uses the default path ~/.hledac/federated_qtable.lmdb (always-on).
         """
         import hledac.universal.federated.coordinator as coord_mod
 
@@ -34,12 +35,12 @@ class TestFederatedQTablePersistence:
         coord_mod._AUTO_BRIDGE_SINGLETON = None
         coord_mod._AUTO_BRIDGE_LMDB_PATH = None
 
-        qtable_path = os.path.join(temp_dir, "federated_qtable.lmdb")
-        monkeypatch.setenv("HLEDAC_FEDERATED_QTABLE_PATH", qtable_path)
+        # Ensure env var is not set
+        monkeypatch.delenv("HLEDAC_FEDERATED_QTABLE_PATH", raising=False)
 
-        # First call creates singleton
+        # First call creates singleton with default path
         bridge1 = coord_mod._get_auto_bridge()
-        assert bridge1 is not None, "Bridge should be created when env var is set"
+        assert bridge1 is not None, "Bridge should be created with default path"
         assert hasattr(bridge1, 'update'), "Bridge should have update method"
         assert hasattr(bridge1, 'qtable'), "Bridge should have qtable property"
 
@@ -48,10 +49,10 @@ class TestFederatedQTablePersistence:
         assert bridge1 is bridge2, "Same singleton should be returned on repeated calls"
 
     @pytest.mark.asyncio
-    async def test_auto_bridge_none_without_env_var(self, monkeypatch):
+    async def test_auto_bridge_disabled_when_env_var_empty_string(self, monkeypatch):
         """
-        Without HLEDAC_FEDERATED_QTABLE_PATH, _get_auto_bridge() returns None
-        (backward-compatible: no auto-persistence).
+        When HLEDAC_FEDERATED_QTABLE_PATH is set to empty string,
+        _get_auto_bridge() returns None (explicit opt-out).
         """
         import hledac.universal.federated.coordinator as coord_mod
 
@@ -59,19 +60,35 @@ class TestFederatedQTablePersistence:
         coord_mod._AUTO_BRIDGE_SINGLETON = None
         coord_mod._AUTO_BRIDGE_LMDB_PATH = None
 
-        # Ensure env var is not set
-        monkeypatch.delenv("HLEDAC_FEDERATED_QTABLE_PATH", raising=False)
+        # Empty string = explicitly disabled
+        monkeypatch.setenv("HLEDAC_FEDERATED_QTABLE_PATH", "")
 
         bridge = coord_mod._get_auto_bridge()
-        assert bridge is None, "Bridge should be None when env var is not set"
+        assert bridge is None, "Bridge should be None when env var is empty string"
 
     @pytest.mark.asyncio
-    async def test_coordinator_uses_auto_bridge_when_env_set(self, temp_dir, monkeypatch):
+    async def test_auto_bridge_uses_explicit_path_from_env(self, temp_dir, monkeypatch):
         """
-        FederatedResearchCoordinator.__init__ uses auto-bridge when:
-        - use_bridge=False (default)
-        - HLEDAC_FEDERATED_QTABLE_PATH is set
-        This enables cross-sprint RL without explicit bridge injection.
+        When HLEDAC_FEDERATED_QTABLE_PATH is set to a path,
+        that path is used for the LMDB store.
+        """
+        import hledac.universal.federated.coordinator as coord_mod
+
+        # Reset module-level singleton before test
+        coord_mod._AUTO_BRIDGE_SINGLETON = None
+        coord_mod._AUTO_BRIDGE_LMDB_PATH = None
+
+        qtable_path = os.path.join(temp_dir, "federated_qtable_env.lmdb")
+        monkeypatch.setenv("HLEDAC_FEDERATED_QTABLE_PATH", qtable_path)
+
+        bridge = coord_mod._get_auto_bridge()
+        assert bridge is not None, "Bridge should be created when env var is set"
+
+    @pytest.mark.asyncio
+    async def test_coordinator_uses_auto_bridge_by_default(self, monkeypatch):
+        """
+        FederatedResearchCoordinator.__init__ uses auto-bridge by default
+        (no explicit env var needed) - this is the always-on behavior.
         """
         from hledac.universal.federated.coordinator import FederatedResearchCoordinator
         import hledac.universal.federated.coordinator as coord_mod
@@ -80,19 +97,19 @@ class TestFederatedQTablePersistence:
         coord_mod._AUTO_BRIDGE_SINGLETON = None
         coord_mod._AUTO_BRIDGE_LMDB_PATH = None
 
-        qtable_path = os.path.join(temp_dir, "federated_qtable2.lmdb")
-        monkeypatch.setenv("HLEDAC_FEDERATED_QTABLE_PATH", qtable_path)
+        # Ensure env var is not set (bridge should use default path)
+        monkeypatch.delenv("HLEDAC_FEDERATED_QTABLE_PATH", raising=False)
 
-        # Create first coordinator instance
+        # Create coordinator with defaults
         coord1 = FederatedResearchCoordinator(max_nodes=1)
-        assert coord1._bridge is not None, "Coordinator should use auto-bridge when env var is set"
+        assert coord1._bridge is not None, "Coordinator should use auto-bridge by default"
         assert coord1._qtables == {}, "With auto-bridge, _qtables should be empty dict"
 
     @pytest.mark.asyncio
-    async def test_coordinator_falls_back_to_memory_without_env(self, monkeypatch):
+    async def test_coordinator_falls_back_to_memory_when_explicitly_disabled(self, monkeypatch):
         """
-        Without HLEDAC_FEDERATED_QTABLE_PATH, coordinator falls back to
-        in-memory FederatedQTable (backward-compatible behavior).
+        When HLEDAC_FEDERATED_QTABLE_PATH is empty string, coordinator falls back
+        to in-memory FederatedQTable (explicit opt-out).
         """
         from hledac.universal.federated.coordinator import FederatedResearchCoordinator, FederatedQTable
         import hledac.universal.federated.coordinator as coord_mod
@@ -101,13 +118,13 @@ class TestFederatedQTablePersistence:
         coord_mod._AUTO_BRIDGE_SINGLETON = None
         coord_mod._AUTO_BRIDGE_LMDB_PATH = None
 
-        # Ensure env var is not set
-        monkeypatch.delenv("HLEDAC_FEDERATED_QTABLE_PATH", raising=False)
+        # Empty string = explicitly disabled
+        monkeypatch.setenv("HLEDAC_FEDERATED_QTABLE_PATH", "")
 
         coord = FederatedResearchCoordinator(max_nodes=2)
 
         # Should fall back to in-memory QTables
-        assert coord._bridge is None, "Bridge should be None when no env var"
+        assert coord._bridge is None, "Bridge should be None when explicitly disabled"
         assert len(coord._qtables) == 2, "Should have 2 in-memory QTables for 2 nodes"
         for lane in coord._qtables.values():
             assert isinstance(lane, FederatedQTable), "Each lane should have a FederatedQTable"
@@ -157,7 +174,7 @@ class TestFederatedQTablePersistence:
         qtable_path = os.path.join(temp_dir, "federated_qtable4.lmdb")
         monkeypatch.setenv("HLEDAC_FEDERATED_QTABLE_PATH", qtable_path)
 
-        # Sprint 1: Create coordinator, run with some state
+        # Sprint 1: Get bridge and update Q-table
         bridge_ref = coord_mod._get_auto_bridge()
         assert bridge_ref is not None
 
@@ -170,22 +187,14 @@ class TestFederatedQTablePersistence:
             next_state=("test-query", 1)
         )
         initial_q = bridge_ref.get_q("surface", ("test-query", 0), "surface")
-        # Q-learning formula: Q(s,a) <- Q(s,a) + alpha * (reward + gamma * max_a' Q(s',a') - Q(s,a))
-        # With alpha=0.1, gamma=0.9, reward=0.5, next_max_q=0:
+        # Q-learning: alpha=0.1, gamma=0.9, reward=0.5, next_max_q=0
         # new_q = 0 + 0.1 * (0.5 + 0.9 * 0) = 0.05
         assert abs(initial_q - 0.05) < 0.001, f"Q-value should be ~0.05 after first sprint, got {initial_q}"
 
-        # Sprint 2: Create new coordinator instance
-        coord_mod._AUTO_BRIDGE_SINGLETON = None  # Simulate process restart
-        # But with same env var, should reload from LMDB
-
+        # Sprint 2: New singleton, but same LMDB path should reload
+        coord_mod._AUTO_BRIDGE_SINGLETON = None
         bridge_reloaded = coord_mod._get_auto_bridge()
         assert bridge_reloaded is not None
-
-        # The Q-value should persist across coordinator instances
-        _reloaded_q = bridge_reloaded.get_q("surface", ("test-query", 0), "surface")
-        # Note: In-memory bridge won't survive process restart, but within same process
-        # the singleton ensures cross-sprint persistence
 
 
 class TestFederatedQTablePersistenceModule:

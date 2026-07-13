@@ -445,7 +445,7 @@ def _python_classify_url(url: str) -> tuple[str, str]:
         if ".freenet" in host or "freenet" in host or "hyphanet" in host:
             return ("freenet", host)
         return ("clearnet", host)
-    except Exception:
+    except Exception:  # noqa: BLE001 — fail-safe: URL parse error → malformed
         return ("malformed", "")
 
 
@@ -1100,7 +1100,7 @@ class _PythonJsonDomain:
 
         try:
             return msgspec.json.decode(json_str.encode())
-        except Exception:
+        except Exception:  # noqa: BLE001 — fail-safe: JSON parse error → None
             return None
 
 
@@ -1650,8 +1650,7 @@ class _RustIocDomain:
                     buckets[ioc_type].append(value)
                 result.append(buckets)
             return result
-        except Exception:
-            # Fail-soft: fall back to serial Python extraction
+        except Exception:  # noqa: BLE001 — fail-soft: SIMD batch error → serial fallback
             return [_python_extract_iocs(t) for t in texts]
 
     def nfc_normalize(self, text: str) -> str:
@@ -1665,7 +1664,7 @@ class _RustIocDomain:
         """
         try:
             return self._ext.extract_iocs_simd(text)
-        except Exception:
+        except Exception:  # noqa: BLE001 — fail-soft: SIMD error → fast fallback
             return self._ext.fast_ioc_extract(text)
 
     def batch_nfc_normalize_fast(self, texts: list[str]) -> list[str]:
@@ -1675,7 +1674,7 @@ class _RustIocDomain:
         """
         try:
             return self._ext.batch_nfc_normalize_fast(texts)
-        except Exception:
+        except Exception:  # noqa: BLE001 — fail-soft: rayon error → serial fallback
             return [_python_nfc_normalize(t) for t in texts]
 
     def batch_strip_diacritics_fast(self, texts: list[str]) -> list[str]:
@@ -1685,7 +1684,7 @@ class _RustIocDomain:
         """
         try:
             return self._ext.batch_strip_diacritics_fast(texts)
-        except Exception:
+        except Exception:  # noqa: BLE001 — fail-soft: rayon error → serial fallback
             return [_python_strip_diacritics(t) for t in texts]
 
     # --- R4.3: SIMD IOC extraction (regex-automata packed_simd / NEON on M1) ---
@@ -1697,7 +1696,7 @@ class _RustIocDomain:
         """
         try:
             return self._ext.extract_iocs_simd(text)
-        except Exception:
+        except Exception:  # noqa: BLE001 — fail-soft: SIMD error → fast fallback
             return self._ext.fast_ioc_extract(text)
 
     def batch_extract_iocs_simd(self, texts: list[str]) -> list[list[tuple[str, str]]]:
@@ -1718,8 +1717,7 @@ class _RustIocDomain:
                 if text_idx < len(result):
                     result[text_idx].append((value, ioc_type))
             return result
-        except Exception:
-            # SIMD batch not registered in Rust module — fall back to fast_ioc_extract per text
+        except Exception:  # noqa: BLE001 — fail-soft: SIMD batch error → per-text fallback
             return [self.extract_iocs_flat(t) for t in texts]
 
     def batch_extract_iocs_simd_indexed(self, texts: list[str]) -> list[tuple[int, str, str]]:
@@ -1733,7 +1731,7 @@ class _RustIocDomain:
         try:
             raw: list[tuple[int, str, str]] = self._ext.batch_extract_iocs_simd_indexed(texts)
             return raw
-        except Exception:
+        except Exception:  # noqa: BLE001 — fail-soft: SIMD indexed error → unified fallback
             # SIMD batch not registered — fall back to batch_ioc_extract_unified
             # Uses rayon parallel processing with single GIL acquire/release (not per-item)
             batch_results = self._ext.batch_ioc_extract_unified(texts)
@@ -2283,7 +2281,7 @@ class _RustSPSCDomain:
             buf = ctypes.create_string_buffer(data_len)
             ctypes.memmove(buf, data_ptr, data_len)
             return buf.raw
-        except Exception:
+        except Exception:  # noqa: BLE001 — fail-safe: ctypes error → empty bytes
             return b""
 
     def item_free(self, item_ptr: int) -> None:
@@ -2327,7 +2325,7 @@ class _PythonSPSCSender:
         try:
             self._queue.put_nowait(payload)
             return True
-        except Exception:
+        except Exception:  # noqa: BLE001 — fail-safe: queue full → False
             return False
 
 
@@ -2375,7 +2373,7 @@ class _PythonQueryDomain:
                 cols = [desc[0] for desc in conn.description] if conn.description else []
                 rows = [dict(zip(cols, row)) for row in result]
                 results.append({"columns": cols, "rows": rows})
-            except Exception:
+            except Exception:  # noqa: BLE001 — fail-safe: query error → empty result
                 results.append({"columns": [], "rows": []})
         conn.close()
         return results

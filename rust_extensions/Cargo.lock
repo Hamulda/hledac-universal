@@ -1091,6 +1091,7 @@ dependencies = [
  "lol_html",
  "lz4_flex",
  "memchr",
+ "memmap2",
  "metal",
  "objc",
  "parking_lot",
@@ -1559,6 +1560,15 @@ name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
+
+[[package]]
+name = "memmap2"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "de5d3112c080d58ce560081baeaab7e1e864ca21795ddbf533d5b1842bb1ecf8"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "metal"

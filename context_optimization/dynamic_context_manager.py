@@ -79,8 +79,7 @@ class ContextItem:
     confidence: float = 0.5
     phase_relevance: dict[str, float] = None
 
-@msgspec.Struct()
-class ContextStats:
+class ContextStats(msgspec.Struct):
     """Context management statistics."""
     hot_items: int
     warm_items: int

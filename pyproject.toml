@@ -344,7 +344,8 @@ ignore = ["E501", "F821", "B027"]  # BLE001: P1-01 audit in progress — see Iss
 # stubs/ – Apple/CoreML framework .pyi binding files; preserve original names
 "stubs/**" = []
 # core/rust_backend.py – FFI wrappers whose names MUST match Rust counterparts
-"core/rust_backend.py" = ["N801", "N802", "N803", "N806", "N815", "N816", "BLE001"]
+# BLE001 removed: all bare exceptions now have inline noqa comments
+"core/rust_backend.py" = ["N801", "N802", "N803", "N806", "N815", "N816"]
 # brain/experimental_neuro_crypto.py – neurophysiology equations (Hodgkin-Huxley model),
 # variable names like I_Na, g_K, V, m, h, n are domain-standard notation
 "brain/experimental_neuro_crypto.py" = ["N803", "N806"]
@@ -353,7 +354,7 @@ ignore = ["E501", "F821", "B027"]  # BLE001: P1-01 audit in progress — see Iss
 # ── P1-01: BLE001 cold-path init files ────────────────────────────────────────
 # Initialization / setup / lifecycle files where fail-safe is intentional:
 "runtime/__init__.py" = ["BLE001"]
-"runtime/sidecar_protocol.py" = ["BLE001"]
+"runtime/sidecar_protocol.py" = ["BLE001"]  # noqa removed: 4 inline noqa added
 "runtime/sidecar_protocol_adapters.py" = ["BLE001"]
 "runtime/sidecar_bus.py" = ["BLE001"]
 "runtime/acquisition_strategy.py" = ["BLE001"]

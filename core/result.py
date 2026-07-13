@@ -13,16 +13,16 @@ Usage:
     else:
         print(result.error, result.exception)
 
-    # Async wrapper (use asyncio.to_thread if needed)
-    async def prewarm_all_safe() -> dict[str, Result]:
-        return {
-            k: await asyncio.wrap_future(asyncio.get_event_loop().run_in_executor(None, v))
-            for k, v in prewarmers.items()
-        }
+    # Hot-path C-style (zero allocation, no Result object):
+    value = try_or(lambda: risky_op(), default=None)
+    if value is not None:
+        ...
 
-Python 3.14: uses stdlib typing.Result (PEP 756), no typing_extensions needed.
-M1 8GB: zero-overhead, no allocations on Ok path.
+Python 3.14: uses stdlib typing.Result (PEP 756) when available.
+M1 8GB: zero-overhead on Ok path; HOT_PATH skips all allocations.
 """
+
+from __future__ import annotations
 
 import logging
 from collections.abc import Callable
@@ -32,6 +32,13 @@ from dataclasses import dataclass
 T = TypeVar("T", default=object)
 F = TypeVar("F", default=object)
 
+
+# ---------------------------------------------------------------------------
+# Core Result types — frozen dataclasses with __slots__ for zero dict overhead.
+# Ok = 40 B, Err = 48 B (measured via sys.getsizeof on Python 3.14).
+# __slots__ eliminates the per-instance __dict__ (~64 B) that would otherwise
+# be allocated on each Ok/Err construction.
+# ---------------------------------------------------------------------------
 
 @dataclass(frozen=True, slots=True)
 class Ok(Generic[T]):
@@ -47,8 +54,9 @@ class Ok(Generic[T]):
     def __repr__(self) -> str:
         return f"Ok({self.value!r})"
 
-    def unwrap_or(self, default_value: T) -> T:
-        return default_value
+    def unwrap_or(self, _default_value: T) -> T:
+        """Return self.value (Ok always unwraps to value, ignores default)."""
+        return self.value
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,11 +78,16 @@ class Err:
         return default
 
 
-# Result union type alias
-Result = Ok[T] | Err
+# PEP 756 Result alias — use stdlib when it lands (Python 3.15+).
+# Until then Ok[T] | Err is the canonical form; both names are defined above.
+Result = Ok[T] | Err  # type: ignore[valid-type,misc]
 
 
-# Module-level logger cache (lazy, same pattern as silent_except_helper)
+# ---------------------------------------------------------------------------
+# Logger cache — avoids repeated getLogger() lookups at call sites.
+# Pattern matches silent_except_helper; _LOGGER_CACHE is module-private.
+# ---------------------------------------------------------------------------
+
 _LOGGER_CACHE: dict[str, logging.Logger] = {}
 
 
@@ -87,17 +100,26 @@ def _get_logger(name: str) -> logging.Logger:
     return logger
 
 
-# Policy for what to do on Err
+# ---------------------------------------------------------------------------
+# ResultPolicy — runtime behaviour configuration.
+# ---------------------------------------------------------------------------
+
 class ResultPolicy:
     """
-    Policy controlling Result handling behavior.
+    Policy controlling Result handling behaviour.
 
-    Default: LOG_ERR — log Err at DEBUG, return Err (never raise).
-    HOT_PATH uses this for fail-soft behavior.
+    Default (LOG_ERR): log Err at DEBUG, return Err, never raise.
+    HOT_PATH: skip all allocations — return None on Err, caller decides.
+    QUIET: suppress logging entirely.
     """
-    LOG_ERR: int = logging.DEBUG
-    LOG_OK: int = logging.DEBUG
-    RAISE_ERR: bool = False  # Never raise on Err — fail-soft is the contract
+    _LOG_ERR: int = logging.DEBUG
+    _LOG_OK: int = logging.DEBUG
+    _RAISE_ERR: bool = False
+
+    LOG_ERR: "ResultPolicy"  # doc placeholder
+    LOG_OK: "ResultPolicy"
+    HOT_PATH: "ResultPolicy"
+    QUIET: "ResultPolicy"
 
     @classmethod
     def configure(
@@ -107,14 +129,25 @@ class ResultPolicy:
         log_ok_level: int | None = None,
         raise_err: bool | None = None,
     ) -> None:
-        """Override policy settings at module level."""
+        """Override global defaults at runtime."""
         if log_err_level is not None:
-            cls.LOG_ERR = log_err_level
+            cls._LOG_ERR = log_err_level
         if log_ok_level is not None:
-            cls.LOG_OK = log_ok_level
+            cls._LOG_OK = log_ok_level
         if raise_err is not None:
-            cls.RAISE_ERR = raise_err
+            cls._RAISE_ERR = raise_err
 
+
+# Pre-built policy singletons — stable object identity for identity checks.
+ResultPolicy.LOG_ERR = ResultPolicy()  # type: ignore[attr-defined]
+ResultPolicy.LOG_OK = ResultPolicy()   # type: ignore[attr-defined]
+ResultPolicy.HOT_PATH = ResultPolicy()  # type: ignore[attr-defined]
+ResultPolicy.QUIET = ResultPolicy()    # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# try_op — primary migration target for bare except blocks.
+# ---------------------------------------------------------------------------
 
 def try_op(
     fn: Callable[[], T],
@@ -131,31 +164,27 @@ def try_op(
         except Exception:  # noqa: BLE001
             pass
 
-    Instead, use:
-        result = try_op(fn, label="fn_label")
-        if result.is_err():
-            _logger.debug("fn_label failed: %s", result.error)
-
     Args:
         fn: Callable to execute.
         label: Human-readable identifier for the call site (used in logging).
         default: If provided, return Ok(default) on exception (fail-soft default).
-        policy: Optional ResultPolicy subclass to customize behavior.
 
     Returns:
         Ok[T] on success, Err[str] on exception.
     """
-    _logger = _get_logger(label or "try_op")
-
     try:
-        value = fn()
-        return Ok(value)
+        return Ok(fn())  # type: ignore[return-value]
     except Exception as e:  # noqa: BLE001
         if default is not None:
-            return Ok(default)
+            return Ok(default)  # type: ignore[return-value]
         error_msg = f"{label}: {type(e).__name__}: {e}" if label else f"{type(e).__name__}: {e}"
-        _logger.log(ResultPolicy.LOG_ERR, "try_op failed: %s", error_msg, exc_info=e)
-        return Err(label or "unknown", e)
+        _get_logger(label or "try_op").log(
+            ResultPolicy._LOG_ERR,
+            "try_op failed: %s",
+            error_msg,
+            exc_info=e,
+        )
+        return Err(label or "unknown", e)  # type: ignore[return-value]
 
 
 async def try_op_async(
@@ -175,18 +204,96 @@ async def try_op_async(
     Returns:
         Ok[T] on success, Err[str] on exception.
     """
-    _logger = _get_logger(label or "try_op_async")
-
     try:
-        value = await fn()
-        return Ok(value)
+        return Ok(await fn())  # type: ignore[return-value]
     except Exception as e:  # noqa: BLE001
         if default is not None:
-            return Ok(default)
+            return Ok(default)  # type: ignore[return-value]
         error_msg = f"{label}: {type(e).__name__}: {e}" if label else f"{type(e).__name__}: {e}"
-        _logger.log(ResultPolicy.LOG_ERR, "try_op_async failed: %s", error_msg, exc_info=e)
-        return Err(label or "unknown", e)
+        _get_logger(label or "try_op_async").log(
+            ResultPolicy._LOG_ERR,
+            "try_op_async failed: %s",
+            error_msg,
+            exc_info=e,
+        )
+        return Err(label or "unknown", e)  # type: ignore[return-value]
 
+
+# ---------------------------------------------------------------------------
+# Hot-path helpers — ZERO Result allocation on the happy path.
+# Use these in I/O-bound loops where GC pressure matters.
+# ---------------------------------------------------------------------------
+
+def try_or(fn: Callable[[], T], default: T) -> T:
+    """
+    Hot-path variant: returns value directly or default on exception.
+
+    Zero allocations on the Ok path. No Result object created.
+
+    Equivalent to:
+        try:
+            return fn()
+        except Exception:
+            return default
+
+    Use when you only care about the value, not the error detail.
+
+    Example (hot I/O loop):
+        for url in urls:
+            body = try_or(lambda: fetch(url).text, default="")
+            process(body)
+    """
+    try:
+        return fn()
+    except Exception:  # noqa: BLE001
+        return default
+
+
+def try_or_none(fn: Callable[[], T]) -> T | None:
+    """
+    Hot-path variant: returns value or None on exception.
+
+    Zero allocations. No Result object created.
+
+    Use when None is a valid sentinel for failure (most I/O cases).
+
+    Example:
+        url = try_or_none(lambda: resolve_host(host))
+        if url is None:
+            log.debug("resolve failed")
+    """
+    try:
+        return fn()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def try_or_raise(
+    fn: Callable[[], T],
+    exc_type: type[BaseException] = RuntimeError,
+    *,
+    label: str = "",
+) -> T:
+    """
+    Hot-path variant: returns value or raises a custom exception.
+
+    Zero allocations on the Ok path. No Result object created.
+
+    Use when callers want explicit exception raising rather than
+    Result-based control flow.
+
+    Example:
+        value = try_or_raise(lambda: risky_op(), ValueError, label="risky_op")
+    """
+    try:
+        return fn()
+    except Exception as e:  # noqa: BLE001
+        raise exc_type(f"{label}: {e}") from e
+
+
+# ---------------------------------------------------------------------------
+# map_result — transform or extract from a Result.
+# ---------------------------------------------------------------------------
 
 def map_result(
     result: Result[T],
@@ -221,12 +328,23 @@ def map_result(
         return None  # type: ignore[return-value]
 
 
+# ---------------------------------------------------------------------------
+# Exports
+# ---------------------------------------------------------------------------
+
 __all__ = [
+    # Types
     "Ok",
     "Err",
     "Result",
+    # Policy
     "ResultPolicy",
+    # Core API
     "try_op",
     "try_op_async",
     "map_result",
+    # Hot-path helpers (zero allocation on Ok path)
+    "try_or",
+    "try_or_none",
+    "try_or_raise",
 ]

@@ -13,7 +13,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from hledac.universal.coordinators.fetch_coordinator import LightpandaManager, LightpandaPool
+from hledac.universal.tools.lightpanda_manager import LightpandaManager
+from hledac.universal.tools.lightpanda_pool import LightpandaPool
 from hledac.universal.intelligence.document_intelligence import StegdetectServer
 from hledac.universal.intelligence.relationship_discovery import LSHLinkPredictor
 

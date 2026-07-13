@@ -82,8 +82,7 @@ class CompressedContext:
     sentence_scores: list[float] | None = None
     cluster_info: dict[str, Any] | None = None
 
-@msgspec.Struct()
-class DecompressionResult:
+class DecompressionResult(msgspec.Struct):
     """Result of context decompression."""
     content: str
     detail_level: str

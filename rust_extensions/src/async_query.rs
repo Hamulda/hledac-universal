@@ -1,19 +1,18 @@
 //! async_query.rs — Internal DuckDB async query infrastructure
 //!
-//! NOTE: Raw SQL query functions have been removed (repository pattern only).
-//! This module provides internal DuckDB infrastructure for domain-specific
-//! repositories like graph_traverse.rs.
+//! ISSUE-19: rust_async_query_batch — rayon parallel N queries in one call.
+//! Python side: asyncio.gather(rust_async_query_batch([sql1, sql2, ...]))
+//! This gives true parallel DuckDB queries without asyncio.to_thread overhead.
 //!
-//! ## API Compatibility
+//! ## API
 //!
-//! - pyo3 0.27: Python::none() → PyNone::new(py).into_any().unbind()
-//! - pyo3 0.27: into_py() → .into_pyobject(py) na PyO3 typy
-//! - duckdb 1.105.x: Rows uses FallibleStreamingIterator (not Iterator)
-//! - duckdb 1.105.x: ValueRef variants: Null, Boolean, TinyInt, SmallInt,
-//!   Int, BigInt, Float, Double, Text, Blob, Timestamp, Date32, Time64,
-//!   Interval{months,days,nanos}, HugeInt
+//! - rust_async_query(sql) — single query, sync (via to_thread)
+//! - rust_async_query_batch(sqls) — PARALLEL N queries in rayon
+//! - rust_async_query_with_params(sql, params) — parameterized query
+//! - init_async_pool(db_path, max_connections) — initialize pool
 
 use pyo3::prelude::*;
+use rayon::prelude::*;
 use std::sync::{Arc, Mutex};
 
 /// Thread-safe DuckDB connection pool using std sync primitives.
@@ -162,12 +161,19 @@ fn format_value_ref(val: duckdb::types::ValueRef<'_>) -> String {
     }
 }
 
-/// Global connection pool — initialized lazily.
+/// P1: Lazy pool config — set by init_async_pool() before first get_async_pool() call.
+static POOL_CONFIG: std::sync::OnceLock<(String, usize)> = std::sync::OnceLock::new();
+
+/// Global connection pool — initialized lazily from POOL_CONFIG.
 static ASYNC_POOL: std::sync::OnceLock<Arc<StdConnectionPool>> = std::sync::OnceLock::new();
 
 fn get_async_pool() -> Arc<StdConnectionPool> {
     ASYNC_POOL
-        .get_or_init(|| Arc::new(StdConnectionPool::new(":memory:".to_string(), 2)))
+        .get_or_init(|| {
+            let (db_path, max_conn) = POOL_CONFIG
+                .get_or_init(|| (":memory:".to_string(), 2));
+            Arc::new(StdConnectionPool::new(db_path.clone(), *max_conn))
+        })
         .clone()
 }
 
@@ -218,6 +224,51 @@ pub fn rust_async_query_with_params(
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))
 }
 
+/// ISSUE-19: Parallel batch query — executes N SQL queries concurrently in rayon
+/// and returns N result sets. Each worker opens its own connection (no pool
+/// contention). Use from Python asyncio.gather():
+///
+///   results = await asyncio.gather(*[
+///       rust_async_query_batch([sql1, sql2, sql3])
+///   ])
+#[pyfunction]
+#[pyo3(name = "rust_async_query_batch")]
+pub fn rust_async_query_batch(sqls: Vec<String>) -> PyResult<Vec<Vec<Vec<String>>>> {
+    // P3-FIX: open fresh connection per worker — avoids pool contention in rayon.
+    // get_db_path() from pool config (":memory:" or real path). :memory: is
+    // thread-safe in DuckDB (each open = new DB), so parallelism is free.
+    let db_path = POOL_CONFIG
+        .get_or_init(|| (":memory:".to_string(), 2))
+        .0
+        .clone();
+    let results: Vec<Result<Vec<Vec<String>>, String>> = sqls
+        .par_iter()
+        .map(|sql| {
+            let conn = duckdb::Connection::open(&db_path)
+                .map_err(|e| format!("open: {}", e))?;
+            execute_duckdb_query_sync(conn, sql, &[])
+        })
+        .collect();
+
+    let mut py_errors: Vec<String> = Vec::new();
+    let mut ok_results: Vec<Vec<Vec<String>>> = Vec::new();
+
+    for result in results {
+        match result {
+            Ok(rows) => ok_results.push(rows),
+            Err(e) => py_errors.push(e),
+        }
+    }
+
+    if !py_errors.is_empty() {
+        return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            format!("{} query errors: {}", py_errors.len(), py_errors.join("; "))
+        ));
+    }
+
+    Ok(ok_results)
+}
+
 #[pyfunction]
 fn check_duckdb_health(db_path: String) -> PyResult<String> {
     let conn = duckdb::Connection::open(&db_path)
@@ -232,6 +283,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(check_duckdb_health, m)?)?;
     m.add_function(wrap_pyfunction!(rust_async_query, m)?)?;
     m.add_function(wrap_pyfunction!(rust_async_query_with_params, m)?)?;
+    m.add_function(wrap_pyfunction!(rust_async_query_batch, m)?)?;
     Ok(())
 }
 
@@ -252,6 +304,57 @@ mod tests {
         let result = pool.execute_query_sync("SELECT 42 as num".to_string());
         assert!(result.is_ok());
         assert_eq!(result.unwrap().len(), 1);
+    }
+
+    // P2: For :memory: DB, each query opens a fresh connection (pool is still
+    // sound — DuckDB :memory: connections are independent DBs, not shared).
+    // This test verifies sequential queries work without error on pool-of-1.
+    #[test]
+    fn test_pool_sequential_queries() {
+        let pool = StdConnectionPool::new(":memory:".to_string(), 1);
+        let r1 = pool.execute_query_sync("SELECT 1 as n".to_string());
+        let r2 = pool.execute_query_sync("SELECT 2 as n".to_string());
+        assert!(r1.is_ok());
+        assert!(r2.is_ok());
+        assert_eq!(r1.unwrap().len(), 1);
+        assert_eq!(r2.unwrap().len(), 1);
+    }
+
+    // P4: Parameterized query — params should reach DuckDB
+    #[test]
+    fn test_query_with_params() {
+        let pool = StdConnectionPool::new(":memory:".to_string(), 1);
+        let params = vec!["hello".to_string(), "world".to_string()];
+        let result = pool.execute_query_sync_with_params(
+            "SELECT ?1 as a, ?2 as b".to_string(),
+            &params,
+        );
+        assert!(result.is_ok());
+        let rows = result.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0][0], "hello");
+        assert_eq!(rows[0][1], "world");
+    }
+
+    // P3: Batch — each worker opens own connection (no contention with pool-of-1)
+    #[test]
+    fn test_batch_fresh_connections() {
+        let db_path = ":memory:".to_string();
+        let sqls = vec![
+            "SELECT 1 as n".to_string(),
+            "SELECT 2 as n".to_string(),
+            "SELECT 3 as n".to_string(),
+        ];
+        let results: Vec<Result<Vec<Vec<String>>, String>> = sqls
+            .par_iter()
+            .map(|sql| {
+                let conn = duckdb::Connection::open(&db_path)
+                    .map_err(|e| format!("open: {}", e))?;
+                execute_duckdb_query_sync(conn, sql, &[])
+            })
+            .collect();
+        assert_eq!(results.len(), 3);
+        assert!(results.iter().all(|r| r.is_ok()));
     }
 
     #[test]

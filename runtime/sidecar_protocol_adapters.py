@@ -643,12 +643,6 @@ class SocialIdentityMinerSidecarAdapter(BaseSidecarAdapter):
             logger.debug("SocialIdentityMinerSidecarAdapter: import failed")
             return []
 
-        try:
-            miner = create_social_identity_miner_adapter()
-            miner.reset()
-        except Exception:
-            return []
-
         # mine() requires store handle (not in SidecarContext) — wiring-only
         return []
 
@@ -680,11 +674,6 @@ class IdentityStitchingSidecarAdapter(BaseSidecarAdapter):
     priority: int = 5
 
     async def run_async(self, ctx: SidecarContext) -> list[Any]:
-        # Smoke-import the factory to validate module availability.
-        try:
-            pass
-        except Exception:
-            return []
         # builder API mismatch — wiring-only, return empty
         return []
 
@@ -872,8 +861,8 @@ class GitHubGistSidecarAdapter(BaseSidecarAdapter):
                             "confidence": 0.6,
                             "payload_text": gist.get("snippet", ""),
                         })
-                except Exception:  # noqa: BLE001
-                    pass  # noqa: BLE001  # Fail-soft per term
+                except Exception:  # noqa: BLE001 — fail-soft per term
+                    pass
 
             return findings[:50]  # Cap at 50 findings
 

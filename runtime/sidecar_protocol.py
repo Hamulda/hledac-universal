@@ -208,7 +208,7 @@ class SidecarRegistry:
 
                 available.append(instance)
 
-            except Exception:
+            except Exception:  # noqa: BLE001 — fail-safe: sidecar check error → skip, log warning
                 logger.warning("SidecarRegistry: failed to check %s", sidecar_id, exc_info=True)
                 continue
 
@@ -250,7 +250,7 @@ class SidecarRegistry:
                     cls._cached_instances[sid] = instance
                 else:
                     cls._lock_available[sid] = False
-            except Exception:
+            except Exception:  # noqa: BLE001 — fail-safe: sidecar init error → mark unavailable
                 cls._lock_available[sid] = False
 
         tasks = [
@@ -266,7 +266,7 @@ class SidecarRegistry:
         """Create a fresh instance of the sidecar class."""
         try:
             return klass()
-        except Exception:
+        except Exception:  # noqa: BLE001 — fail-safe: instantiation error → None (caller skips)
             logger.debug("SidecarRegistry: could not instantiate %s", klass.__name__)
             return None
 
@@ -313,7 +313,7 @@ class BaseSidecarAdapter:
         """
         try:
             return await self.run_async(ctx)
-        except Exception:
+        except Exception:  # noqa: BLE001 — fail-safe: sidecar run error → return empty list
             logger.warning(
                 "SidecarAdapter.%s.run: fail-soft exception",
                 self.sidecar_id, exc_info=True
