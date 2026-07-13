@@ -471,36 +471,30 @@ class _SessionManager:
         """Return a consistent status snapshot for diagnostics."""
         return {'tor_present': self._tor_session is not None, 'tor_closed': self._session_is_closed(self._tor_session), 'tor_locally_created': self._tor_session_locally_created, 'i2p_present': self._i2p_session is not None, 'i2p_closed': self._session_is_closed(self._i2p_session), 'i2p_locally_created': self._i2p_session_locally_created, 'injected_active': self._injected_session_provider is not None, 'telemetry': dict(self._session_source_telemetry)}
 _SESSION_MGR: _SessionManager = _SessionManager()
-_global_httpx_session: httpx.AsyncClient | None = None
-_global_httpx_lock: asyncio.Lock = asyncio.Lock()
+
+# ISSUE-014: _global_httpx_session dead code removed.
+# All callers migrated to network.session_runtime:async_get_httpx_session()
+# which has adaptive M1 8GB-safe limits (min(40, fd_limit//4)).
+# Keep stubs here for backward compat — they delegate to the canonical impl.
 
 async def get_httpx_session() -> httpx.AsyncClient:
-    """ISSUE-007: Get or create a shared httpx.AsyncClient singleton.
+    """ISSUE-014: Delegate to canonical session_runtime (backward compat stub).
 
-    Replaces aiohttp.ClientSession with httpx (HTTP/2, lower memory, better perf).
-
-    Returns:
-        Shared httpx.AsyncClient with 200-connection pool, 100-per-host limit.
+    The _global_httpx_session at this location was dead code (0 callers).
+    Canonical httpx session is network.session_runtime:async_get_httpx_session().
     """
-    import httpx
-    global _global_httpx_session
-    async with _global_httpx_lock:
-        if _global_httpx_session is None or _global_httpx_session.is_closed:
-            limits = httpx.Limits(max_connections=200, max_keepalive_connections=100)
-            timeout = httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0)
-            _global_httpx_session = httpx.AsyncClient(limits=limits, http2=True, timeout=timeout, follow_redirects=True, trust_env=False)
-    return _global_httpx_session
+    from network.session_runtime import async_get_httpx_session as _canonical_get
+    return await _canonical_get()
+
 
 async def close_httpx_session() -> None:
-    """ISSUE-007: Close the global httpx session if open. Idempotent."""
-    global _global_httpx_session
-    async with _global_httpx_lock:
-        if _global_httpx_session is not None and (not _global_httpx_session.is_closed):
-            await _global_httpx_session.aclose()
-        _global_httpx_session = None
+    """ISSUE-014: Delegate to canonical session_runtime (backward compat stub)."""
+    from network.session_runtime import close_httpx_session_async as _canonical_close
+    await _canonical_close()
+
 
 async def close_aiohttp_session() -> None:
-    """ISSUE-007 deprecated: Use close_httpx_session() instead."""
+    """ISSUE-014: Delegate to canonical session_runtime (backward compat stub)."""
     await close_httpx_session()
 PUBLIC_FETCHER_POOL_AUTHORITY: Final[str] = 'local_fallback_until_transport_unified'
 

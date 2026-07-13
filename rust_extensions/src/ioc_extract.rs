@@ -317,3 +317,39 @@ pub fn detect_encoding_patterns(query: &str) -> Vec<String> {
 
     patterns
 }
+
+// ---------------------------------------------------------------------------
+// Presence-check functions for claims_extraction (ISSUE-008 fix)
+// Uses ioc_patterns.rs (single source of truth) — no duplicate LazyLock
+// ---------------------------------------------------------------------------
+
+/// Check if text contains any URL.
+#[inline]
+pub fn has_url(text: &str) -> bool {
+    URL_RE.find_iter(text).next().is_some()
+}
+
+/// Check if text contains any domain.
+#[inline]
+pub fn has_domain(text: &str) -> bool {
+    DOMAIN_RE.find_iter(text).next().is_some()
+}
+
+/// Check if text contains any email.
+#[inline]
+pub fn has_email(text: &str) -> bool {
+    EMAIL_RE.find_iter(text).next().is_some()
+}
+
+/// Check if text contains any IPv4 address.
+#[inline]
+pub fn has_ipv4(text: &str) -> bool {
+    IPV4_RE.find_iter(text).next().is_some()
+}
+
+/// Check if text contains any IOC (URL, domain, email, or IP).
+/// Returns true if any IOC type is present.
+#[inline]
+pub fn has_any_ioc(text: &str) -> bool {
+    has_url(text) || has_domain(text) || has_email(text) || has_ipv4(text)
+}

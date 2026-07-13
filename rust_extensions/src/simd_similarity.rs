@@ -85,24 +85,24 @@ unsafe fn normalize_neon(vec: &mut [f32]) -> bool { unsafe {
     }
 
     // Horizontal sum of the 4-lane NEON vector.
-    let sum_sq = vgetq_lane_f32(sum_sq_vec, 0)
+    let sum_sq_neon = vgetq_lane_f32(sum_sq_vec, 0)
         + vgetq_lane_f32(sum_sq_vec, 1)
         + vgetq_lane_f32(sum_sq_vec, 2)
         + vgetq_lane_f32(sum_sq_vec, 3);
 
-    // Scalar tail.
+    // Scalar tail — accumulate into sum_sq (not discarded like original).
+    // ISSUE-007 fix: original used `sum_sq += v*v` but discarded the result.
+    let mut sum_sq = sum_sq_neon;
     for j in i..n {
         let v = vec[j];
-        let _ = sum_sq + v * v;
+        sum_sq += v * v;
     }
-    // Re-sum including tail (safe, minimal overhead).
-    let sum_sq_total: f32 = vec.iter().map(|x| x * x).sum();
 
-    if sum_sq_total <= 0.0_f32 || sum_sq_total.is_nan() {
+    if sum_sq <= 0.0_f32 || sum_sq.is_nan() {
         return false;
     }
 
-    let norm = sum_sq_total.sqrt().recip();
+    let norm = sum_sq.sqrt().recip();
 
     // Scale by norm via NEON.
     i = 0;
@@ -149,17 +149,17 @@ fn normalize_sse(vec: &mut [f32]) -> bool {
         let mut sum_val: f32 = 0.0;
         _mm_store_ss(&mut sum_val, sum_sq);
 
+        // ISSUE-007 fix: accumulate tail into sum_val (not discarded like original).
         for j in i..n {
             let v = vec[j];
-            let _ = sum_val + v * v;
+            sum_val += v * v;
         }
-        let sum_sq_total: f32 = vec.iter().map(|x| x * x).sum();
 
-        if sum_sq_total <= 0.0_f32 || sum_sq_total.is_nan() {
+        if sum_val <= 0.0_f32 || sum_val.is_nan() {
             return false;
         }
 
-        let norm = sum_sq_total.sqrt().recip();
+        let norm = sum_val.sqrt().recip();
         let norm_sse = _mm_set1_ps(norm);
 
         i = 0;
@@ -215,12 +215,17 @@ fn normalize(vec: &mut [f32]) -> bool {
 
 /// Compute dot product using ARM NEON.
 /// Caller guarantees a and b have the same length.
+/// ISSUE-007: now validates length match — original had no check.
 #[cfg(target_arch = "aarch64")]
 #[inline]
 unsafe fn dot_neon(a: &[f32], b: &[f32]) -> f32 { unsafe {
     use core::arch::aarch64::*;
 
     let n = a.len();
+    if n != b.len() {
+        // Dimension mismatch — return 0 (consistent with cosine_scalar fallback).
+        return 0.0;
+    }
     let chunks = n / 4;
     let mut dot_vec = vdupq_n_f32(0.0_f32);
     let mut i = 0usize;
@@ -247,12 +252,17 @@ unsafe fn dot_neon(a: &[f32], b: &[f32]) -> f32 { unsafe {
 
 /// Compute dot product using SSE3 (x86_64).
 /// Caller guarantees a and b have the same length.
+/// ISSUE-007 mirror: dot_neon has length check; dot_sse3 must match.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse3")]
 unsafe fn dot_sse3(a: &[f32], b: &[f32]) -> f32 {
     use core::arch::x86_64::*;
 
     let n = a.len();
+    if n != b.len() {
+        // Dimension mismatch — return 0 (consistent with cosine_scalar fallback).
+        return 0.0;
+    }
     let chunks = n / 4;
     let mut dot_sse = _mm_setzero_ps();
     let mut i = 0usize;
@@ -652,14 +662,16 @@ fn hamming_scores_for_one_query(
     }
 
     let mut scores = Vec::with_capacity(n);
+    // Single reusable buffer — avoids per-candidate allocation.
+    // For 10k × 256B candidates: 2.5 MB once vs 2.5 MB × 10k allocations.
+    let mut xor_buf = vec![0u8; num_bytes];
     for cand in candidates_packed {
         if cand.len() != num_bytes {
             scores.push(0.0_f32);
             continue;
         }
         // XOR then popcount: number of differing bits.
-        // Compute XOR bytes, then count set bits with SIMD popcount.
-        let mut xor_buf = vec![0u8; num_bytes];
+        // Reuse xor_buf across all candidates — only one allocation.
         for i in 0..num_bytes {
             xor_buf[i] = query_packed[i] ^ cand[i];
         }

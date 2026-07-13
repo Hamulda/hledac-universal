@@ -579,6 +579,11 @@ def mlx_cleanup_aggressive() -> None:
 
 # ── Metal Stream Context ───────────────────────────────────────────────────────
 
+# ISSUE-026: threading.local is CORRECT here — not contextvars.
+# Thread-bound resources (MX stream, event loop) use threading.local.
+# Task-bound state in async code uses contextvars.ContextVar (see resource_governor.py).
+# Reason: this function runs on a dedicated single-task thread (_compile_executor),
+# never handling multiple asyncio Tasks concurrently.
 _tls = threading.local()
 
 
@@ -587,6 +592,7 @@ def get_metal_stream_context():
     Return a thread-local mx.stream(gpu) context manager.
     M1 8GB: cached per-thread, prevents "Stream(gpu,1) not in current thread" errors
     when MLX is called from worker threads (MLXWorkerThread, asyncio.to_thread).
+    NOTE: threading.local is intentional — dedicated thread, not shared async pool.
     """
     mx = get_mx()
     if mx is None:

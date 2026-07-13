@@ -1486,6 +1486,8 @@ class _RustQualityDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
         # Bound<PyList> input avoids Vec<String> copy; Python fallback via _PythonQualityDomain
         MethodSpec("batch_entropy_zc", no_except=True),
         MethodSpec("batch_dedup_fingerprints_zc", no_except=True),
+        # ISSUE-022: full batch quality assessment in one rayon pass
+        MethodSpec("assess_findings_quality_batch", no_except=True),
     ]
 
 

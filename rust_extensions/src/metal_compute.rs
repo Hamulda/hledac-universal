@@ -26,7 +26,7 @@
 
 #[cfg(target_os = "macos")]
 use metal::*;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 /// Maximum texts processed in one GPU batch
 const GPU_MAX_BATCH: usize = 256;
@@ -155,25 +155,38 @@ impl GpuDevice {
         })
     }
 
-    /// Try to reuse cached keyword buffers if keywords haven't changed
+    /// Try to reuse cached keyword buffers if keywords haven't changed.
+    /// Validation: keyword count + offsets + lengths must match exactly.
     fn get_cached_keyword_buffers(
         &self,
         keywords: &[String],
     ) -> Option<(Vec<u32>, Vec<u32>, Vec<u8>)> {
         let cache = self.keyword_cache.lock().ok()?;
         let cache = cache.as_ref()?;
-        if keywords.len() > cache.max_keywords {
+
+        // Fast rejection: count or max exceeded
+        if keywords.len() > cache.max_keywords || keywords.len() > cache.keyword_lengths.len() {
             return None;
         }
-        // Check if keywords match cache
-        let expected: Vec<u32> = keywords.iter().scan(0u32, |offset, kw| {
-            let off = *offset;
-            *offset += kw.len() as u32;
-            Some(off)
-        }).collect();
-        if expected != cache.keyword_offsets[..keywords.len()] {
+
+        // Validate offsets: accumulate expected offsets and compare
+        let mut expected_offset = 0u32;
+        let mut expected_offsets = Vec::with_capacity(keywords.len());
+        for kw in keywords {
+            expected_offsets.push(expected_offset);
+            expected_offset += kw.len() as u32;
+        }
+        if expected_offsets != cache.keyword_offsets[..keywords.len()] {
             return None;
         }
+
+        // Validate lengths: must match for cache hit (stronger than offset-only)
+        for (i, kw) in keywords.iter().enumerate() {
+            if cache.keyword_lengths[i] != kw.len() as u32 {
+                return None;
+            }
+        }
+
         Some((
             cache.keyword_offsets.clone(),
             cache.keyword_lengths[..keywords.len()].to_vec(),
@@ -369,13 +382,24 @@ impl GpuDevice {
 }
 
 /// Singleton GPU device — caches None on Metal unavailability (fail-soft, no panic).
+///
+/// # Safety
+/// OnceLock requires T: Sync for static initialization. GpuDevice contains MTLDevice
+/// (raw pointer, Send but not Sync). We wrap it in Mutex<T> which is always Sync,
+/// providing thread-safe lazy initialization regardless of T's Sync impl.
+/// Note: RwLock would be ideal for read-heavy workloads but the 'static lifetime
+/// constraint on the return type conflicts with RwLockReadGuard's borrow semantics.
 #[cfg(target_os = "macos")]
-static GPU_DEVICE: std::sync::OnceLock<Option<GpuDevice>> = std::sync::OnceLock::new();
+static GPU_DEVICE: OnceLock<Mutex<Option<GpuDevice>>> = OnceLock::new();
 
 #[cfg(target_os = "macos")]
 pub fn get_gpu_device() -> Option<&'static GpuDevice> {
-    match GPU_DEVICE.get_or_init(GpuDevice::new) {
-        Some(d) => Some(d),
+    let lock = GPU_DEVICE.get_or_init(|| Mutex::new(GpuDevice::new()));
+    let guard = lock.lock().ok()?;
+    // SAFETY: OnceLock guarantees 'static lifetime for the stored Option<GpuDevice>.
+    // GpuDevice is allocated in static storage; we extend the lifetime via raw pointer.
+    match guard.as_ref() {
+        Some(dev) => Some(unsafe { &*(dev as *const GpuDevice) }),
         None => None,
     }
 }
@@ -401,23 +425,35 @@ pub fn gpu_scan_keywords(
     })
 }
 
+/// CPU Aho-Corasick automaton cache — avoids rebuild on every call.
+/// Key = keyword count + first/last keyword bytes (fast comparison).
+/// Value = compiled AhoCorasick automaton.
+#[cfg(target_os = "macos")]
+struct AhoCache {
+    /// Snapshot of keyword lengths for fast validation
+    keyword_lengths: Vec<usize>,
+    /// First 8 bytes of first keyword (for quick mismatch detection)
+    seed_bytes: [u8; 8],
+    /// Compiled automaton
+    automaton: aho_corasick::AhoCorasick,
+}
+
+/// Singleton CPU automaton cache — thread-safe via Mutex.
+#[cfg(target_os = "macos")]
+static CPU_AUTOMATON_CACHE: Mutex<Option<AhoCache>> = Mutex::new(None);
+
 /// CPU fallback: Aho-Corasick for single text or small batches.
+/// Uses cached automaton when keywords match to avoid rebuild cost.
 #[cfg(target_os = "macos")]
 pub fn cpu_scan_keywords(
     texts: &[String],
     keywords: &[String],
 ) -> Vec<(usize, usize, usize, usize)> {
-    use aho_corasick::AhoCorasick;
-
     if keywords.is_empty() || texts.is_empty() {
         return Vec::new();
     }
 
-    let patterns: Vec<&str> = keywords.iter().map(|s| s.as_str()).collect();
-    let ac = match AhoCorasick::new(&patterns) {
-        Ok(ac) => ac,
-        Err(_) => return Vec::new(),
-    };
+    let ac = get_or_build_automaton(keywords);
 
     let mut results = Vec::new();
     for (text_idx, text) in texts.iter().enumerate() {
@@ -426,6 +462,47 @@ pub fn cpu_scan_keywords(
         }
     }
     results
+}
+
+/// Get cached Aho-Corasick automaton or build new one.
+/// Cache key = keyword_lengths + seed_bytes (fast validation without full memcmp).
+/// Returns a reference that lives as long as the static, built from newly allocated automaton on cache miss.
+#[cfg(target_os = "macos")]
+fn get_or_build_automaton(keywords: &[String]) -> aho_corasick::AhoCorasick {
+    let keyword_lengths: Vec<usize> = keywords.iter().map(|k| k.len()).collect();
+    let seed_bytes = if let Some(first) = keywords.first() {
+        let mut bytes = [0u8; 8];
+        let src = first.as_bytes();
+        bytes[..src.len().min(8)].copy_from_slice(&src[..src.len().min(8)]);
+        bytes
+    } else {
+        [0u8; 8]
+    };
+
+    // Check cache
+    if let Ok(guard) = CPU_AUTOMATON_CACHE.lock() {
+        if let Some(ref cache) = *guard {
+            if cache.keyword_lengths == keyword_lengths && cache.seed_bytes == seed_bytes {
+                return cache.automaton.clone();
+            }
+        }
+    }
+
+    // Build new automaton (AhoCorasick::new only fails on empty patterns; we guard against that)
+    let patterns: Vec<&str> = keywords.iter().map(|s| s.as_str()).collect();
+    let automaton = aho_corasick::AhoCorasick::new(&patterns)
+        .expect("AhoCorasick build failure: empty patterns should be guarded");
+
+    // Update cache
+    if let Ok(mut guard) = CPU_AUTOMATON_CACHE.lock() {
+        *guard = Some(AhoCache {
+            keyword_lengths,
+            seed_bytes,
+            automaton: automaton.clone(),
+        });
+    }
+
+    automaton
 }
 
 #[cfg(not(target_os = "macos"))]

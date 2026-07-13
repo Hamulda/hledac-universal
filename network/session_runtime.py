@@ -16,7 +16,7 @@ INVARIANTS (enforced by probe_8aa tests):
 - [I4]  close_httpx_session_async() is idempotent (callable multiple times)
 - [I5]  After close, next await creates a NEW instance
 - [I9]  asyncio.timeout() is the standard timeout pattern (not wait_for)
-- [I10] httpx Limits: max_connections=200, max_keepalive_connections=100
+- [I10] httpx Limits: adaptive _SAFE_MAX_CONNECTIONS (min(40, max(8, fd_limit//4))) — ISSUE-014
 - [I11] uvloop.install() is fail-soft (diagnostic on failure)
 """
 
@@ -24,6 +24,7 @@ INVARIANTS (enforced by probe_8aa tests):
 import asyncio
 import logging
 import os
+from typing import Any
 
 import httpx
 
@@ -291,6 +292,34 @@ _async_httpx_session_lock: asyncio.Lock | None = None
 _httpx_cache_transport: Any = None  # hishel cache transport, set via set_httpx_cache_transport()
 
 
+# ISSUE-014: Adaptive connection limits for M1 8GB
+# Each TLS connection ~250KB; 200 conns = ~50MB just for TLS handshakes.
+# Also bounded by FD limit (ulimit -n) — each connection consumes a FD.
+def _detect_fd_limit() -> int:
+    """
+    Detect the soft RLIMIT_NOFILE for adaptive connection budgeting.
+
+    M1 Air default: 256-10240 depending on launch config.
+    Falls back to 256 if unavailable (e.g. non-Unix platforms).
+
+    Returns:
+        int: soft file descriptor limit
+    """
+    try:
+        import resource  # Unix only
+        soft, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
+        return soft if soft > 0 else 256
+    except (ImportError, OSError):
+        return 256  # safe fallback for non-Unix or restricted envs
+
+
+_FD_LIMIT: int = _detect_fd_limit()
+# Use 25% of FD budget for HTTP connections (rest for file FDs, stdio, etc.)
+# Cap at 40 for M1 8GB RAM budget (~10MB for 40 TLS connections).
+_SAFE_MAX_CONNECTIONS: int = min(40, max(8, _FD_LIMIT // 4))
+_SAFE_KEEPALIVE_CONNECTIONS: int = _SAFE_MAX_CONNECTIONS // 2
+
+
 async def async_get_httpx_session() -> httpx.AsyncClient:
     """
     Get or create the shared httpx.AsyncClient instance (async).
@@ -322,8 +351,9 @@ async def async_get_httpx_session() -> httpx.AsyncClient:
     async with _async_httpx_session_lock:
         if _async_httpx_session is None or _async_httpx_session.is_closed:
             limits = httpx.Limits(
-                max_connections=200,
-                max_keepalive_connections=100,
+                max_connections=_SAFE_MAX_CONNECTIONS,
+                max_keepalive_connections=_SAFE_KEEPALIVE_CONNECTIONS,
+                keepalive_expiry=15.0,  # ISSUE-014: aggressive recycling on M1 8GB
             )
             _async_httpx_session = httpx.AsyncClient(
                 limits=limits,
@@ -336,7 +366,12 @@ async def async_get_httpx_session() -> httpx.AsyncClient:
                     pool=30.0,
                 ),
             )
-            logger.debug("[SESSION] httpx.AsyncClient created (HTTP/2, 200 conn)")
+            logger.debug(
+                f"[SESSION] httpx.AsyncClient created (HTTP/2, "
+                f"max_conn={_SAFE_MAX_CONNECTIONS}, "
+                f"keepalive={_SAFE_KEEPALIVE_CONNECTIONS}, "
+                f"fd_limit={_FD_LIMIT})"
+            )
         return _async_httpx_session
 
 
@@ -414,7 +449,8 @@ async def close_httpx_session_async() -> None:
         sess = _async_httpx_session
         _async_httpx_session = None
         try:
-            await sess.aclose()
+            # ISSUE-014: shield aclose so pool isn't torn down mid-request
+            await asyncio.shield(sess.aclose())
             logger.debug("[SESSION] httpx.AsyncClient closed async")
             # Sprint F266-UV5: clear bandits at winddown to prevent unbounded dict growth
             clear_bandits()

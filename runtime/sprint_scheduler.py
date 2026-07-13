@@ -13277,7 +13277,9 @@ class SprintScheduler:
             return None
 
         try:
-            semaphore = asyncio.Semaphore(3)
+            # F350M-R: Increased from 3 to 16 — M1 8GB handles higher concurrency
+            # for I/O-bound enrichment tasks (LMDB write via asyncio.to_thread)
+            semaphore = asyncio.Semaphore(16)
 
             async def enrich_one(finding) -> None:
                 nonlocal enriched_pairs
@@ -13478,7 +13480,9 @@ class SprintScheduler:
             return None
 
         try:
-            semaphore = asyncio.Semaphore(3)
+            # F350M-R: Increased from 3 to 16 — M1 8GB handles higher concurrency
+            # for I/O-bound enrichment tasks (LMDB write via asyncio.to_thread)
+            semaphore = asyncio.Semaphore(16)
 
             async def enrich_one(finding) -> None:
                 nonlocal enriched_pairs

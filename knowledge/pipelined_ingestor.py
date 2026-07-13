@@ -36,6 +36,11 @@ if TYPE_CHECKING:
     from .duckdb_store import DuckDBShadowStore
 __all__ = ['PipelinedIngestor']
 logger = logging.getLogger(__name__)
+
+# ISSUE-026: threading.local is CORRECT here — not contextvars.
+# Thread-bound resource: one event loop per dedicated executor thread.
+# Called on duckdb_arrow_executor thread — single async context, no sharing.
+# See mlx_memory/_core.py for rationale on thread-local vs contextvars.
 _arrow_loop_local = threading.local()
 
 def _get_or_create_arrow_loop() -> asyncio.AbstractEventLoop:

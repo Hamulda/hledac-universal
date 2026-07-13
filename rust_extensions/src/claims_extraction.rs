@@ -8,17 +8,17 @@
 //!
 //! Performance strategy:
 //!   Sentence splitting: regex-automata meta Regex (no \b issues)
-//!   IOC detection: same regex set as ioc_extract_simd.rs (shared LazyLock)
+//!   IOC detection: imports from ioc_core (ISSUE-008: single source, no duplicate compilation)
 //!   Polarity: pre-categorized word sets (O(n) string search)
 //!   Confidence: deterministic policy port from confidence_policy.py
 
 use crate::gil::release_gil;
+use crate::ioc_extract;
 use crate::mixed_pool;
 use crate::adaptive_scheduler;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 use rayon::prelude::*;
-use regex::Regex;
 
 #[derive(Debug, Clone)]
 #[repr(C)]
@@ -42,30 +42,8 @@ static SENTENCE_SPLITTER: std::sync::LazyLock<regex_automata::meta::Regex> =
             .expect("claims_extraction: sentence splitter regex must be valid")
     });
 
-// IOC patterns (same as ioc_extract_simd.rs — shared precision)
-// URL detection
-static URL_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-    Regex::new(r#"https?://[^\s<>"']+"#)
-        .expect("claims_extraction: URL regex must be valid")
-});
-
-// Domain detection
-static DOMAIN_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-    Regex::new(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b")
-        .expect("claims_extraction: domain regex must be valid")
-});
-
-// Email detection
-static EMAIL_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-    Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
-        .expect("claims_extraction: email regex must be valid")
-});
-
-// IPv4 detection
-static IPV4_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-    Regex::new(r"(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)")
-        .expect("claims_extraction: IPv4 regex must be valid")
-});
+// ISSUE-008 fix: IOC presence-check now uses ioc_extract::has_* functions
+// which use ioc_patterns.rs (the canonical source of truth)
 
 // ---------------------------------------------------------------------------
 // Polarity — pre-categorized word sets (compiled once, O(n) per sentence)
@@ -104,6 +82,7 @@ const MAX_CONFIDENCE: f64 = 0.75;
 // Core extraction logic
 // ---------------------------------------------------------------------------
 
+#[inline]
 fn split_sentences(text: &str) -> Vec<String> {
     // Normalize whitespace first
     let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -118,20 +97,24 @@ fn split_sentences(text: &str) -> Vec<String> {
         .collect()
 }
 
-fn derive_polarity(text_lower: &str) -> String {
+#[inline]
+fn derive_polarity(text: &str) -> String {
+    // Single to_lowercase() per sentence — reused for both checks
+    let lower = text.to_lowercase();
     for word in NEGATIVE_WORDS.iter() {
-        if text_lower.contains(word) {
+        if lower.contains(word) {
             return "negative".to_string();
         }
     }
     for word in POSITIVE_WORDS.iter() {
-        if text_lower.contains(word) {
+        if lower.contains(word) {
             return "positive".to_string();
         }
     }
     "neutral".to_string()
 }
 
+#[inline]
 fn derive_confidence(
     text: &str,
     source_family: &str,
@@ -156,12 +139,8 @@ fn derive_confidence(
     }
 
     // IOC detection bonus (URL, domain, email, IP)
-    let has_url = URL_RE.find_iter(text).next().is_some();
-    let has_domain = DOMAIN_RE.find_iter(text).next().is_some();
-    let has_email = EMAIL_RE.find_iter(text).next().is_some();
-    let has_ip = IPV4_RE.find_iter(text).next().is_some();
-
-    if has_url || has_domain || has_email || has_ip {
+    // ISSUE-008 fix: Use ioc_extract::has_any_ioc (uses ioc_patterns.rs, no duplicate compilation)
+    if ioc_extract::has_any_ioc(text) {
         confidence += URL_BONUS;
     }
 
@@ -175,6 +154,7 @@ fn derive_confidence(
 
 /// Extract claims from a single text.
 /// Returns up to MAX_CLAIMS_PER_TEXT claims.
+#[inline]
 fn extract_claims_from_text(
     text: &str,
     title: &str,
@@ -191,15 +171,17 @@ fn extract_claims_from_text(
         return vec![];
     }
 
-    // Title corroboration: check word overlap
-    let title_words: std::collections::HashSet<String> = title
-        .split_whitespace()
-        .map(|w| w.to_lowercase())
-        .collect();
-    let summary_words: std::collections::HashSet<String> = summary
-        .split_whitespace()
-        .map(|w| w.to_lowercase())
-        .collect();
+    // Title corroboration: check word overlap — only allocate if non-empty
+    let title_words: std::collections::HashSet<String> = if title.is_empty() {
+        std::collections::HashSet::new()
+    } else {
+        title.split_whitespace().map(|w| w.to_lowercase()).collect()
+    };
+    let summary_words: std::collections::HashSet<String> = if summary.is_empty() {
+        std::collections::HashSet::new()
+    } else {
+        summary.split_whitespace().map(|w| w.to_lowercase()).collect()
+    };
 
     let source_family = match source_type.to_uppercase().as_str() {
         "CT" | "CERTIFICATE_TRANSPARENCY" => "CT",
@@ -219,13 +201,15 @@ fn extract_claims_from_text(
 
         let text_lower = sentence.to_lowercase();
 
-        // Check corroboration with title/summary
-        let sentence_words: std::collections::HashSet<String> =
-            sentence.split_whitespace().map(|w| w.to_lowercase()).collect();
-        let has_title_agreement = !title_words.is_empty()
-            && !summary_words.is_empty()
-            && sentence_words.intersection(&title_words).count() >= 2
-            && sentence_words.intersection(&summary_words).count() >= 2;
+        // Check corroboration with title/summary — only build sentence_words if needed
+        let has_title_agreement = if title_words.is_empty() || summary_words.is_empty() {
+            false
+        } else {
+            let sentence_words: std::collections::HashSet<String> =
+                sentence.split_whitespace().map(|w| w.to_lowercase()).collect();
+            sentence_words.intersection(&title_words).count() >= 2
+                && sentence_words.intersection(&summary_words).count() >= 2
+        };
 
         let polarity = derive_polarity(&text_lower);
         let confidence = derive_confidence(

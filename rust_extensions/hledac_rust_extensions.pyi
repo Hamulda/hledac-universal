@@ -636,6 +636,31 @@ def batch_normalize_quality_text(texts: list[str]) -> list[str]:
     """Bounded batch text normalization for quality gate (rayon-backed)."""
     ...
 
+# ISSUE-022: full batch quality assessment (quality_gate.rs assess_findings_quality_batch)
+
+class PyQualityDecisionDict:
+    """Dict-compatible view of PyQualityDecision for Python interop."""
+    accepted: bool
+    reason: str | None
+    rejection_reason: str | None
+    entropy: float
+    normalized_hash: str
+    duplicate: bool
+    is_url: bool
+
+def assess_findings_quality_batch(findings: list[dict]) -> list[dict]:
+    """
+    ISSUE-022: Parallel batch quality assessment.
+
+    Takes a list of dicts with keys: finding_id, source_type, provenance,
+    payload_text, query. Returns list[dict] with keys: accepted, reason,
+    rejection_reason, entropy, normalized_hash, duplicate, is_url.
+
+    Pure-compute only — stateful dedup (hot_cache, LMDB, semantic) stays
+    in Python. rayon-parallel on cpu_pool (4 threads, M1 8GB-safe).
+    """
+    ...
+
 # Text norm — Sprint F265B-III (rust_extensions/src/text_norm.rs)
 
 def nfc_normalize(text: str) -> str:

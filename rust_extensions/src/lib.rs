@@ -35,11 +35,13 @@ pub mod html_parse;
 pub mod int_counter_layout;
 pub mod ioc_dedup;
 pub mod ioc_patterns;
+// ISSUE-008: ioc_core DEPRECATED — ioc_extract now provides has_* functions using ioc_patterns.rs
 pub mod dns_tunnel; // ISSUE #33: DNS tunneling detection (entropy, n-gram, wavelet)
 pub mod ioc_extract;
 pub mod ioc_extract_fast;
 pub mod ioc_extract_simd; // R4.3: SIMD IOC extraction via regex-automata build_many (NEON on M1)
 pub mod ioc_cooccurrence_rs; // Issue 4.1: Rust HashMap<->BitSet co-occurrence engine
+pub mod lmdb_dht; // ISSUE-004: Rust LMDB backend for DHT — eliminates asyncio.to_thread overhead
 pub mod madvise;
 pub mod metal_compute;
 pub mod metal_pattern_matcher;
@@ -82,54 +84,162 @@ pub mod data;           // DuckDB bridge — isolated module for future cdylib e
 // Rayon thread pools — M1 8GB safe, P/E core optimized
 // ---------------------------------------------------------------------------
 //
-// M1 Air has 4P + 4E cores = 8 logical CPUs.
+// M1 Air: 4P + 4E cores = 8 logical CPUs.
+// MacBook Pro M3 Pro: 6P + 6E = 12 logical CPUs.
 //
-// Two-tier strategy (F270):
+// ISSUE-008: Two-tier strategy with P-core detection + QoS hints:
+//
 //   ┌─────────────────────────────────────────────────────────────────────────┐
-//   │ WORKLOAD TYPE         │ THREADS │ POOL          │ MODULES             │
-//   ├───────────────────────┼─────────┼───────────────┼─────────────────────┤
-//   │ CPU-bound (SIMD/hot)  │ 4       │ cpu_pool()    │ quality_gate,       │
-//   │                       │         │               │ xxhash_par, simd     │
-//   │ I/O-bound (DuckDB)    │ 2       │ io_pool()     │ graph_traverse,      │
-//   │                       │         │               │ compress             │
-//   │ Mixed (IOC extract)   │ 1/2     │ mixed_pool()  │ url_ops, ioc_fast,  │
-//   │                       │         │               │ simhash, html_parse  │
-//   └───────────────────────┴─────────┴───────────────┴─────────────────────┘
+//   │ WORKLOAD TYPE         │ THREADS        │ POOL          │ MODULES         │
+//   ├───────────────────────┼────────────────┼───────────────┼─────────────────┤
+//   │ CPU-bound (SIMD/hot)  │ p_cores (1-4) │ cpu_pool()    │ quality_gate,   │
+//   │                       │                │               │ xxhash_par, simd │
+//   │ I/O-bound (DuckDB)    │ 2              │ io_pool()     │ graph_traverse, │
+//   │                       │                │               │ compress         │
+//   │ Mixed (IOC extract)   │ 1-2 adaptive   │ mixed_pool()  │ url_ops, ioc_fast, simhash, html_parse  │
+//   └───────────────────────┴────────────────┴───────────────┴─────────────────┘
 //
-// P-core utilization:
-//   - CPU-bound: 4 threads = 4 P-cores (100% P-core for compute)
-//   - I/O-bound: 2 threads = ceiling for DuckDB thread-local conn bottleneck
-//   - Mixed: adaptive 1-2 threads based on batch size
+// P-core detection:
+//   - macOS: sysctl hw.perflevel0.logicalcpu → perf-level P-core count
+//   - Linux/Windows: num_cpus::get_physical() fallback
+//   - Clamped to [1, 4] for M1 8GB RAM budget safety
 //
-// E-core strategy:
-//   - macOS automatically steers I/O-bound threads to E-cores via QoS
-//   - CPU-bound pool uses 4 threads → OS优先 schedules on P-cores
-//   - When P-cores saturated, I/O threads spill to E-cores (acceptable)
+// QoS hints (macOS): USER_INITIATED → scheduler preferuje P-cores
+// Linux: SCHED_BATCH for CPU-bound threads
 //
-// Calibration (F270, 2026-06-25):
+// Calibration (F270 + ISSUE-008):
 //   - CPU-bound threshold: 32 items (was 64 for 2-thread)
 //   - I/O-bound threshold: 64 items (DuckDB conn setup amortized)
-//   - Chunk: 4 threads × 32 items = 128 (CPU-bound)
+//   - Chunk: p_cores threads × 32 items (CPU-bound)
 //   - Chunk: 2 threads × 64 items = 128 (I/O-bound)
 
 // MIXED_THRESHOLD removed — now fully delegated to adaptive_scheduler::mixed_threshold()
 // which is pressure-aware (16 idle / 32 normal / 64 pressure).
 // MLX Metal-aware threshold: adaptive_scheduler::mixed_threshold_via_metal()
 
-/// Process-wide singleton — 4 P-core ceiling for CPU-bound work.
+/// Detekuje počet P-cores (performance cores).
+///
+/// macOS: hw.perflevel0.logicalcpu = počet performance cores v perf clusteru.
+/// Linux/Windows: num_cpus::get_physical() fallback.
+/// Clamped to [1, 4] for M1 8GB RAM budget safety.
+///
+/// MacBook Pro M3 Pro (12 jader) → 6 P-cores → clamp to 4.
+#[cfg(target_os = "macos")]
+fn detect_p_core_count() -> usize {
+    use std::process::Command;
+
+    // hw.perflevel0.logicalcpu — Apple Silicon P-core count
+    if let Ok(output) = Command::new("sysctl")
+        .args(["-n", "hw.perflevel0.logicalcpu"])
+        .output()
+    {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if let Ok(n) = stdout.trim().parse::<usize>() {
+            return n.clamp(1, 4);
+        }
+    }
+
+    // Fallback: hw.physicalcpu (total physical, may include E-cores on big.LITTLE)
+    if let Ok(output) = Command::new("sysctl")
+        .args(["-n", "hw.physicalcpu"])
+        .output()
+    {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if let Ok(n) = stdout.trim().parse::<usize>() {
+            return n.clamp(1, 4);
+        }
+    }
+
+    // Krajní fallback: 4 P-cores (M1 Air default)
+    4
+}
+
+#[cfg(not(target_os = "macos"))]
+fn detect_p_core_count() -> usize {
+    num_cpus::get_physical().clamp(1, 4)
+}
+
+/// Nastaví QoS třídu pro macOS scheduler.
+/// Volá se uvnitř rayon worker thread (NE v spawn_handler parent).
+#[cfg(target_os = "macos")]
+fn apply_qos_hint() {
+    // ISSUE-FIX: pthread_set_qos_class_np was removed from Apple Silicon support.
+    // Use pthread_set_qos_class_self_np instead — sets QoS for current thread.
+    // Falls back silently if unavailable (non-fatal).
+    unsafe {
+        use libc::pthread_set_qos_class_self_np;
+        // QoS_CLASS_USER_INITIATED = 0x9, but we use the constant directly
+        // to avoid libc version compatibility issues
+        let qos = libc::qos_class_t::QOS_CLASS_USER_INITIATED;
+        pthread_set_qos_class_self_np(qos, 0);
+    }
+}
+
+/// Linux: P-core affinity via pthread_setaffinity_np.
+/// Pin na prvních `p_cores` fyzických jader.
+#[cfg(all(target_os = "linux", not(target_env = "musl")))]
+fn apply_affinity_hint(p_cores: usize) {
+    // cpu_set_t = [u64; 16] = 1024 bits = max 128 CPU v kernelu
+    let mut mask: libc::cpu_set_t = unsafe { std::mem::zeroed() };
+
+    for i in 0..p_cores.min(128) {
+        unsafe { libc::CPU_SET(i, &mut mask) };
+    }
+
+    // SAFETY: mask is zeroed + valid, pthread_setaffinity_np is async-signal-safe
+    let ret = unsafe {
+        libc::pthread_setaffinity_np(
+            libc::pthread_self(),
+            std::mem::size_of::<libc::cpu_set_t>(),
+            &mask,
+        )
+    };
+    // Non-fatal: unprivileged users may lack CAP_SYS_NICE
+    let _ = ret;
+}
+
+#[cfg(all(target_os = "linux", target_env = "musl"))]
+fn apply_affinity_hint(_p_cores: usize) {
+    // musl: sched_setaffinity not available — skip silently
+}
+
+#[cfg(not(any(target_os = "macos", all(target_os = "linux", not(target_env = "musl")))))]
+fn apply_affinity_hint(_p_cores: usize) {
+    // Windows / other: no-op
+}
+
+/// Process-wide singleton — P-core ceiling for CPU-bound work.
 ///
 /// Shared by quality_gate, xxhash_ext parallel, simd_similarity.
 ///
-/// 4 threads × 2.5 MiB = 10 MB total stack.
-/// For SIMD/hot CPU-bound: SIMD width 4×f32 on NEON = 4× throughput per thread.
+/// p_cores threads × 4 MiB = 4–16 MB total stack.
+/// P-core count = hw.perflevel0.logicalcpu on Apple Silicon (clamped 1-4).
+///
+/// Thread count is STATIC (set at pool creation):
+///   - rayon ThreadPool is a singleton, cannot be reconfigured at runtime
+///   - Dynamic thread count handled at CALL SITE via adaptive_scheduler
+///     recommended_cpu_threads() + mixed_pool() fallback
 ///
 /// Use when: BLAKE2b, xxhash parallel, cosine similarity on embeddings.
 pub(crate) fn cpu_pool() -> &'static ThreadPool {
     static POOL: LazyLock<ThreadPool, fn() -> ThreadPool> = LazyLock::new(|| {
+        let p_cores = detect_p_core_count();
+
         ThreadPoolBuilder::new()
-            .num_threads(4)
-            .stack_size(2_621_440)
+            .num_threads(p_cores)
+            .stack_size(4_194_304) // 4 MiB — SIMD BLAKE2b/xxhash stack safety
             .thread_name(|i| format!("hledac-cpu-{}", i))
+            .spawn_handler(move |thread| {
+                std::thread::spawn(move || {
+                    // QoS / affinity hint uvnitř spawned thread — správné vlákno
+                    #[cfg(target_os = "macos")]
+                    apply_qos_hint();
+                    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
+                    apply_affinity_hint(p_cores);
+                    thread.run();
+                });
+                Ok(())
+            })
             .build()
             .expect("cpu_pool: ThreadPoolBuilder::build failed (OOM?)")
     });
@@ -140,15 +250,27 @@ pub(crate) fn cpu_pool() -> &'static ThreadPool {
 ///
 /// Shared by graph_traverse (DuckDB read-only), compress.
 ///
-/// 2 threads × 2.5 MiB = 5 MB total stack.
+/// 2 threads × 4 MiB = 8 MB total stack.
 /// DuckDB thread-local connection is the bottleneck — 2 threads matches the
-/// F265-U5 thread-local pool ceiling. E-cores auto-handled by macOS QoS.
+/// F265-U5 thread-local pool ceiling.
+/// QoS hint = USER_INITIATED (stejně jako cpu_pool) — I/O-bound benefituje z P-core.
 pub(crate) fn io_pool() -> &'static ThreadPool {
     static POOL: LazyLock<ThreadPool, fn() -> ThreadPool> = LazyLock::new(|| {
         ThreadPoolBuilder::new()
             .num_threads(2)
-            .stack_size(2_621_440)
+            .stack_size(4_194_304) // 4 MiB — DuckDB stmt compilation stack
             .thread_name(|i| format!("hledac-io-{}", i))
+            .spawn_handler(|thread| {
+                std::thread::spawn(move || {
+                    // QoS hint uvnitř spawned thread (io_pool = 2 threads, P-core benefit)
+                    #[cfg(target_os = "macos")]
+                    apply_qos_hint();
+                    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
+                    apply_affinity_hint(2);
+                    thread.run();
+                });
+                Ok(())
+            })
             .build()
             .expect("io_pool: ThreadPoolBuilder::build failed (OOM?)")
     });
@@ -176,16 +298,36 @@ pub(crate) fn mixed_pool(n_items: usize) -> &'static ThreadPool {
     static POOL_SINGLE: LazyLock<ThreadPool, fn() -> ThreadPool> = LazyLock::new(|| {
         ThreadPoolBuilder::new()
             .num_threads(1)
-            .stack_size(2_621_440)
+            .stack_size(4_194_304) // 4 MiB — mixed workload stack safety
             .thread_name(|i| format!("hledac-mixed-1-{}", i))
+            .spawn_handler(|thread| {
+                std::thread::spawn(move || {
+                    #[cfg(target_os = "macos")]
+                    apply_qos_hint();
+                    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
+                    apply_affinity_hint(1);
+                    thread.run();
+                });
+                Ok(())
+            })
             .build()
             .expect("mixed_pool(1): ThreadPoolBuilder::build failed (OOM?)")
     });
     static POOL_PAIR: LazyLock<ThreadPool, fn() -> ThreadPool> = LazyLock::new(|| {
         ThreadPoolBuilder::new()
             .num_threads(2)
-            .stack_size(2_621_440)
+            .stack_size(4_194_304) // 4 MiB — mixed workload stack safety
             .thread_name(|i| format!("hledac-mixed-2-{}", i))
+            .spawn_handler(|thread| {
+                std::thread::spawn(move || {
+                    #[cfg(target_os = "macos")]
+                    apply_qos_hint();
+                    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
+                    apply_affinity_hint(2);
+                    thread.run();
+                });
+                Ok(())
+            })
             .build()
             .expect("mixed_pool(2): ThreadPoolBuilder::build failed (OOM?)")
     });
@@ -215,8 +357,24 @@ mod lib_tests {
 
     #[test]
     fn test_cpu_pool_thread_count() {
-        // 4 threads = all P-cores for CPU-bound SIMD work
-        assert_eq!(cpu_pool().current_num_threads(), 4);
+        // p_cores threads = dynamically detected P-core count (1-4)
+        let p_cores = detect_p_core_count();
+        assert!(
+            p_cores >= 1 && p_cores <= 4,
+            "p_cores must be 1-4, got {}",
+            p_cores
+        );
+        assert_eq!(
+            cpu_pool().current_num_threads(),
+            p_cores,
+            "cpu_pool thread count must match detected p_cores"
+        );
+    }
+
+    #[test]
+    fn test_detect_p_core_count_bounds() {
+        let n = detect_p_core_count();
+        assert!(n >= 1 && n <= 4, "p_core count {} out of range 1-4", n);
     }
 
     // -------------------------------------------------------------------------
@@ -377,6 +535,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // IOC extraction + URL normalization
     dns_tunnel::register_functions(m)?;  // ISSUE #33: entropy, n-gram, wavelet analysis
+    // ISSUE-008: ioc_extract provides has_* functions (uses ioc_patterns.rs, single source)
     ioc_extract::register_functions(m)?;
     // Fast IOC extraction: unified Aho-Corasick automaton (single O(n) scan)
     m.add_function(wrap_pyfunction!(ioc_extract_fast::ioc_extract_unified, m)?)?;
@@ -455,6 +614,9 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // F273F: Darwin madvise — MADV_FREE_REUSABLE for LMDB/DuckDB mmap regions
     madvise::register_functions(m)?;
+
+    // ISSUE-004: Rust LMDB backend for DHT — eliminates asyncio.to_thread overhead
+    lmdb_dht::register_functions(m)?;
 
     // Sprint P2-3: IP address parsing, classification, and CIDR containment.
     m.add_function(wrap_pyfunction!(ip_parse::parse_ip_fast, m)?)?;

@@ -100,12 +100,20 @@ impl FindingsRow {
 // ---------------------------------------------------------------------------
 
 /// Encode a string array as IPC format: null_bitmap + offsets + data bytes.
+/// Arrow IPC spec: null_bitmap MSB first per byte, 1 = valid, 0 = null.
+/// All-valid bitmap = 0xFF bytes (not 0x00 as was the bug).
 fn encode_string_array(values: &[String]) -> Vec<u8> {
     let n_values = values.len();
-    let n_offsets = n_values + 1;
+
+    // Null bitmap: 1 bit per value, MSB first. All-valid = all 1s.
+    let null_len = n_values.div_ceil(8);
+    let mut null_bitmap = vec![0u8; null_len];
+    for i in 0..n_values {
+        null_bitmap[i / 8] |= 1 << (7 - (i % 8));
+    }
 
     // Offsets (i32 LE)
-    let mut offsets = Vec::with_capacity(n_offsets * 4);
+    let mut offsets = Vec::with_capacity((n_values + 1) * 4);
     offsets.push(0i32);
     let mut cum: usize = 0;
     for v in values {
@@ -114,34 +122,42 @@ fn encode_string_array(values: &[String]) -> Vec<u8> {
     }
     let total_data = cum;
 
-    // Null bitmap (all valid)
-    let null_len = n_values.div_ceil(8);
-    let null_bitmap = vec![0u8; null_len];
-
     // Layout: null_bitmap | offsets | data
-    let mut result = Vec::with_capacity(null_len + n_offsets * 4 + total_data);
+    let mut result = Vec::with_capacity(null_len + (n_values + 1) * 4 + total_data);
     result.extend_from_slice(&null_bitmap);
     for off in &offsets {
         result.extend_from_slice(&off.to_le_bytes());
     }
-    for v in values {
-        result.extend_from_slice(v.as_bytes());
-    }
+    result.extend_from_slice(
+        &values.iter().map(|s| s.as_bytes()).collect::<Vec<_>>().concat(),
+    );
     result
 }
 
 /// Encode f64 array as IPC format: null_bitmap + data bytes.
+/// Arrow IPC spec: null_bitmap MSB first per byte, 1 = valid, 0 = null.
+/// All-valid bitmap = 0xFF bytes (not 0x00 as was the bug).
 fn encode_f64_array(values: &[f64]) -> Vec<u8> {
     let n = values.len();
     let null_len = n.div_ceil(8);
-    let null_bitmap = vec![0u8; null_len];
-    let data_len = n * 8;
 
+    // Build null bitmap: 1 bit per value, MSB first. All-valid = all 1s.
+    let mut null_bitmap = vec![0u8; null_len];
+    for i in 0..n {
+        null_bitmap[i / 8] |= 1 << (7 - (i % 8));
+    }
+
+    let data_len = n * 8;
     let mut result = Vec::with_capacity(null_len + data_len);
     result.extend_from_slice(&null_bitmap);
-    for &v in values {
-        result.extend_from_slice(&v.to_le_bytes());
+
+    // Encode all f64 values as little-endian bytes
+    let mut data = vec![0u8; data_len];
+    for (i, &v) in values.iter().enumerate() {
+        let bytes = v.to_le_bytes();
+        data[i * 8..(i + 1) * 8].copy_from_slice(&bytes);
     }
+    result.extend_from_slice(&data);
     result
 }
 
@@ -207,10 +223,13 @@ fn build_ipc_bytes(
     n: usize,
 ) -> Result<Vec<u8>, String> {
     if n == 0 {
-        // Empty batch: magic + schema_size(0) + batch_count(0) + footer
-        let mut result = Vec::with_capacity(20);
-        result.extend_from_slice(b"ARROW1\xff\xff\xff\xff"); // 8-byte magic with padding
-        result.extend_from_slice(&(0u32).to_le_bytes()); // schema_size = 0
+        // Empty batch: valid Arrow IPC stream with schema but no batches.
+        // Format: magic(8) + schema_size(4) + schema_body + batch_count(0) + footer(4)
+        let schema_body = make_schema_body();
+        let mut result = Vec::with_capacity(24 + schema_body.len());
+        result.extend_from_slice(b"ARROW1\xff\xff\xff\xff");
+        result.extend_from_slice(&(schema_body.len() as u32).to_le_bytes());
+        result.extend_from_slice(&schema_body);
         result.extend_from_slice(&(0u32).to_le_bytes()); // batch_count = 0
         result.extend_from_slice(&0u32.to_le_bytes()); // footer = end marker
         return Ok(result);
@@ -255,14 +274,45 @@ fn build_columns(rows: &[FindingsRow]) -> (Vec<String>, Vec<String>, Vec<String>
     (ids, queries, source_types, confidences, timestamps, provenance_jsons)
 }
 
+/// Single-pass columnar transpose via par_chunks + reduce.
+/// Replaces 6× par_iter() (6 Rayon scopes → 1 scope).
+/// Chunking by 1024 improves cache locality vs flat par_iter.
 fn build_columns_parallel(rows: &[FindingsRow]) -> (Vec<String>, Vec<String>, Vec<String>, Vec<f64>, Vec<f64>, Vec<String>) {
-    let ids: Vec<String> = rows.par_iter().map(|r| r.id.clone()).collect();
-    let queries: Vec<String> = rows.par_iter().map(|r| r.query.clone()).collect();
-    let source_types: Vec<String> = rows.par_iter().map(|r| r.source_type.clone()).collect();
-    let confidences: Vec<f64> = rows.par_iter().map(|r| r.confidence).collect();
-    let timestamps: Vec<f64> = rows.par_iter().map(|r| r.ts).collect();
-    let provenance_jsons: Vec<String> = rows.par_iter().map(|r| r.provenance_json.clone()).collect();
-    (ids, queries, source_types, confidences, timestamps, provenance_jsons)
+    const CHUNK_SIZE: usize = 1024;
+
+    rows.par_chunks(CHUNK_SIZE)
+        .map(|chunk| {
+            let mut ids = Vec::with_capacity(chunk.len());
+            let mut queries = Vec::with_capacity(chunk.len());
+            let mut source_types = Vec::with_capacity(chunk.len());
+            let mut confidences = Vec::with_capacity(chunk.len());
+            let mut timestamps = Vec::with_capacity(chunk.len());
+            let mut provenance_jsons = Vec::with_capacity(chunk.len());
+
+            for row in chunk {
+                ids.push(row.id.clone());
+                queries.push(row.query.clone());
+                source_types.push(row.source_type.clone());
+                confidences.push(row.confidence);
+                timestamps.push(row.ts);
+                provenance_jsons.push(row.provenance_json.clone());
+            }
+
+            (ids, queries, source_types, confidences, timestamps, provenance_jsons)
+        })
+        .reduce(
+            || (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()),
+            |(mut a_ids, mut a_q, mut a_st, mut a_c, mut a_ts, mut a_p),
+             (b_ids, b_q, b_st, b_c, b_ts, b_p)| {
+                a_ids.extend(b_ids);
+                a_q.extend(b_q);
+                a_st.extend(b_st);
+                a_c.extend(b_c);
+                a_ts.extend(b_ts);
+                a_p.extend(b_p);
+                (a_ids, a_q, a_st, a_c, a_ts, a_p)
+            },
+        )
 }
 
 // ---------------------------------------------------------------------------
@@ -424,8 +474,29 @@ mod tests {
     }
 
     #[test]
-    fn test_build_ipc_bytes_empty() {
+    fn test_encode_string_array_null_bitmap() {
+        // All-valid bitmap: MSB first per byte → 0xFF for first 2 values
+        let values = vec!["a".to_string(), "b".to_string()];
+        let encoded = encode_string_array(&values);
+        // First byte = null bitmap: 2 values = 2 bits, MSB first → 0b11000000 = 0xC0
+        assert_eq!(encoded[0], 0b11000000);
+    }
+
+    #[test]
+    fn test_encode_f64_array_null_bitmap() {
+        let values = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        let encoded = encode_f64_array(&values);
+        // 8 values = 1 byte bitmap → all 1s = 0xFF
+        assert_eq!(encoded[0], 0xFF);
+    }
+
+    #[test]
+    fn test_build_ipc_bytes_empty_has_schema() {
         let result = build_ipc_bytes(vec![], vec![], vec![], vec![], vec![], vec![], 0).unwrap();
         assert!(result.starts_with(b"ARROW1"));
+        // Empty batch with schema: magic(8) + schema_size(4) + schema + batch_count(4) + footer(4)
+        // schema_size > 0 since schema is included
+        let schema_size = u32::from_le_bytes([result[8], result[9], result[10], result[11]]);
+        assert!(schema_size > 0, "empty batch should include schema");
     }
 }

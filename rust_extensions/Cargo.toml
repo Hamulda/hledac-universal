@@ -9,7 +9,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 aho-corasick = "1.1"
-pyo3 = { version = "=0.28.2", features = ["extension-module", "abi3-py314"] }
+pyo3 = { version = "0.28", features = ["extension-module", "abi3-py314"] }
 rayon = "1.12"
 regex = "1.11"
 regex-automata = { version = "=0.4.15", default-features = false, features = ["meta"] }
@@ -25,21 +25,15 @@ blake2 = "0.10"
 blake3 = "0.1"
 unicode-normalization = "0.1"
 lz4_flex = "0.10"
-zstd = "0.13"
 libc = "0.2"
-duckdb = { version = "1.105", default-features = false, features = ["bundled"] }
-ipnetwork = "0.21.1"
 serde_json = "1"
-serde = { version = "1", features = ["derive"] }
-bincode = { version = "2.0", features = ["serde"] }
-dirs = "5"
 crossbeam-channel = "0.5"
-memmap2 = "0.4"
+dashmap = "6"
+duckdb = "1"
+ipnetwork = "0.11"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 metal = "0.33"
-objc = "0.2"
-block = "0.1"
 
 [features]
 default = []
@@ -52,7 +46,7 @@ strip = "symbols"
 panic = "abort"
 
 [build-dependencies]
-pyo3-build-config = "=0.28.2"
+pyo3-build-config = "0.28"
 
 [lints.rust]
 unused = "warn"

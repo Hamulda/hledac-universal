@@ -42,6 +42,24 @@ class _RustQualityDomain:
     def batch_dedup_fingerprints_zc(self, texts: list[str]) -> list[str]:
         return self._ext.batch_dedup_fingerprints_zc(texts)
 
+    def assess_findings_quality_batch(self, findings: list[dict]) -> list[dict]:
+        """
+        ISSUE-022: Parallel batch quality assessment.
+
+        Calls Rust assess_findings_quality_batch() which does pure-compute
+        in one rayon-parallel call per chunk: URL fp, normalize, entropy,
+        dedup fp — all in a single pass through rayon, no Python overhead
+        between stages.
+
+        Returns list[dict] with keys: accepted(bool), reason(str|None),
+        rejection_reason(str|None), entropy(float), normalized_hash(str),
+        duplicate(bool).
+
+        Stateful checks (hot_cache, LMDB, semantic dedup) remain in Python
+        after this call — this function only provides pure-compute decisions.
+        """
+        return self._ext.assess_findings_quality_batch(findings)
+
 
 class _PythonQualityDomain:
     """Pure-Python text quality assessment fallback."""

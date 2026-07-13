@@ -17,25 +17,33 @@ thread_local! {
 /// Open or reuse a thread-local DuckDB connection.
 /// Connection is opened read-only with PRAGMA threads=1 for M1 8GB safety.
 pub fn get_thread_connection(db_path: &Path) -> PyResult<duckdb::Connection> {
-    THREAD_CONN.with(|cell| {
-        let mut opt_conn = cell.borrow_mut();
+    // First: check if we already have a connection (narrow borrow)
+    let already_connected = THREAD_CONN.with(|cell| cell.borrow().is_some());
+    if already_connected {
+        return THREAD_CONN.with(|cell| {
+            // take() leaves None behind — will be restored by return_connection()
+            cell.borrow_mut()
+                .take()
+                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                    "Thread-local connection was None — return_connection() not called".to_string()))
+        });
+    }
 
-        if opt_conn.is_none() {
-            let conn = duckdb::Connection::open(db_path)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                    format!("DuckDB open failed for {:?}: {}", db_path, e)))?;
+    // Open new connection
+    let conn = duckdb::Connection::open(db_path)
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            format!("DuckDB open failed for {:?}: {}", db_path, e)))?;
 
-            // M1 8GB: read_only=True = no WAL overhead
-            // PRAGMA threads=1 = we parallelize across workers, not inside DuckDB
-            conn.execute_batch("PRAGMA threads=1; PRAGMA read_only=true")
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                    format!("PRAGMA setup failed: {}", e)))?;
+    // M1 8GB: read_only=True = no WAL overhead
+    // PRAGMA threads=1 = we parallelize across workers, not inside DuckDB
+    conn.execute_batch("PRAGMA threads=1; PRAGMA read_only=true")
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            format!("PRAGMA setup failed: {}", e)))?;
 
-            *opt_conn = Some(conn);
-        }
+    // Store before taking — so return_connection() can restore it
+    THREAD_CONN.with(|cell| *cell.borrow_mut() = Some(conn.clone()));
 
-        Ok(opt_conn.take().unwrap())
-    })
+    Ok(conn)
 }
 
 /// Return a connection to the thread-local cache after use.

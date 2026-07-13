@@ -218,6 +218,14 @@ if not _QUALITY_GATE_BATCH_AVAILABLE:
     _rust_dedup_fingerprint = None
     _rust_url_fingerprint_b2b = None
     _rust_normalize_quality_text = None
+_rust_assess_quality_batch_opt = optional("hledac_rust_extensions:assess_findings_quality_batch")
+
+
+def _get_rust_assess_quality_batch():
+    return _rust_assess_quality_batch_opt()
+
+
+_RUST_ASSESS_QUALITY_BATCH_AVAILABLE = _rust_assess_quality_batch_opt.available
 _rust_arrow_opt = optional("hledac_rust_extensions:build_arrow_batch_from_findings")
 
 
@@ -3059,17 +3067,23 @@ class DuckDBShadowStore:
                     _logger.debug(f"[DUCKDB] Removed stale lock {duckdb_lock_path}: {reason}")
         except Exception:
             pass
-        # F350M-R FIX: flush pending accepted findings before close.
-        # Without this, up to _min_flush=50 CanonicalFinding objects (~50-200KB)
-        # accumulate per sprint and leak if _do_sync_close is called before async_ingest_findings_batch
-        # next runs. Safe in sync context: runs flush in thread pool.
-        _pending = getattr(self, "_pending_accepted_findings", None)
-        if _pending:
+        # ISSUE-021: flush pending accepted findings before close.
+        # Both lists are an invariant pair — clearing only findings and not indices
+        # would leave stale indices that grow unbounded across sprints.
+        # Safe in sync context: runs flush in thread pool.
+        _pending_findings = getattr(self, "_pending_accepted_findings", None)
+        _pending_indices = getattr(self, "_pending_accepted_indices", None)
+        if _pending_findings:
             try:
-                _pending_copy = list(_pending)
-                _pending.clear()
-                if _pending_copy:
-                    self._executor.submit(self._flush_pending_findings_sync, _pending_copy)
+                _copy_findings = list(_pending_findings)
+                _pending_findings.clear()
+                if _copy_findings:
+                    self._executor.submit(self._flush_pending_findings_sync, _copy_findings)
+            except Exception:
+                pass
+        if _pending_indices:
+            try:
+                _pending_indices.clear()
             except Exception:
                 pass
         if hasattr(self, "_arrow_metrics") and self._arrow_metrics is not None:
@@ -6201,6 +6215,199 @@ class DuckDBShadowStore:
         """
         return self._quality_state.get_rejection_history()
 
+    def _apply_stateful_quality_checks(
+        self, findings: list[CanonicalFinding], rust_decisions: list[dict]
+    ) -> list[FindingQualityDecision]:
+        """
+        ISSUE-022: Apply stateful quality checks after Rust pure-compute decisions.
+
+        Rust assess_findings_quality_batch() handles pure compute:
+          URL fp, normalize, entropy, dedup fp — all rayon-parallel.
+
+        This method applies the stateful checks that Rust cannot do:
+          hot_cache lookup, LMDB persistent dedup, semantic dedup cache,
+          IOC dedup flags, persistent dedup storage.
+
+        Mirrors the stateful parts of the legacy _assess_finding_quality_batch loop.
+        Returns list[FindingQualityDecision] in same order as findings.
+        """
+        n = len(findings)
+        results: list[FindingQualityDecision] = [FindingQualityDecision(
+            accepted=True, reason=None, entropy=0.0, normalized_hash="", duplicate=False
+        )] * n
+
+        # Pre-compute IOC dedup flags (same as legacy, before the per-finding loop)
+        ioc_items: list[list[tuple[str, str]]] = []
+        has_any_ioc: list[bool] = []
+        if _IOC_EXTRACT_BATCH_AVAILABLE and _get_rust_batch_ioc_extract() is not None:
+            texts_for_ioc = []
+            for f in findings:
+                pt = f.payload_text if f.payload_text else f.query or ""
+                texts_for_ioc.append(pt[:5000] if pt else "")
+            try:
+                raw_iocs = _get_rust_batch_ioc_extract()(texts_for_ioc)
+                for ioc_list in raw_iocs:
+                    seen_types: set[str] = set()
+                    deduped: list[tuple[str, str]] = []
+                    for val, ioc_type in ioc_list:
+                        key = (val, ioc_type)
+                        if key not in seen_types:
+                            seen_types.add(key)
+                            deduped.append(key)
+                    ioc_items.append(deduped)
+                    has_any_ioc.append(bool(deduped))
+            except Exception:
+                ioc_items = [[] for _ in findings]
+                has_any_ioc = [False] * n
+        else:
+            ioc_items = [[] for _ in findings]
+            has_any_ioc = [False] * n
+
+        all_iocs_flat: list[tuple[str, str]] = []
+        ioc_offsets: list[int] = [0]
+        for ioc_list in ioc_items:
+            ioc_offsets.append(ioc_offsets[-1] + len(ioc_list))
+            all_iocs_flat.extend(ioc_list)
+        ioc_dup_flags: list[bool] = [False] * len(all_iocs_flat)
+        if all_iocs_flat and self._dedup_manager is not None:
+            try:
+                ioc_dup_flags = self._dedup_manager.is_duplicate_ioc_batch(all_iocs_flat)
+            except Exception:
+                pass
+
+        for idx, f in enumerate(findings):
+            rd = rust_decisions[idx]
+            is_url = rd.get("is_url", False)
+            url_fp = rd.get("normalized_hash", "") if is_url else ""
+            fp = rd.get("normalized_hash", "") if not is_url else ""
+            entropy = rd.get("entropy", 0.0)
+            rust_accepted = rd.get("accepted", True)
+
+            # If Rust already rejected, respect that decision (no stateful checks needed)
+            if not rust_accepted:
+                self._record_quality_rejection(f, FindingQualityDecision(
+                    accepted=False,
+                    reason=rd.get("reason", "rejected"),
+                    rejection_reason=rd.get("rejection_reason"),
+                    entropy=entropy,
+                    normalized_hash=fp,
+                    duplicate=rd.get("duplicate", False),
+                ))
+                results[idx] = FindingQualityDecision(
+                    accepted=False,
+                    reason=rd.get("reason", "rejected"),
+                    rejection_reason=rd.get("rejection_reason"),
+                    entropy=entropy,
+                    normalized_hash=fp,
+                    duplicate=rd.get("duplicate", False),
+                )
+                continue
+
+            # --- Stateful checks start here ---
+            is_feed_source = f.source_type == "rss_atom_pipeline"
+            text_for_embed = url_fp or (f.payload_text or f.query)
+            is_high_conf_ioc = bool(text_for_embed and _HIGH_CONF_IOC_RE.match(text_for_embed.strip()))
+
+            if self._hot_cache_lookup(fp) is not None:
+                self._quality_state._quality_duplicate_count += 1
+                reason = "persistent_duplicate" if url_fp else "duplicate_detected"
+                results[idx] = FindingQualityDecision(
+                    accepted=False, reason=reason, entropy=entropy, normalized_hash=fp, duplicate=True
+                )
+                continue
+            stored_id = self._lookup_persistent_dedup(fp)
+            if stored_id is not None:
+                self._add_to_hot_cache(fp, stored_id)
+                self._quality_state._persistent_duplicate_count += 1
+                reason = "persistent_duplicate" if url_fp else "duplicate_detected"
+                results[idx] = FindingQualityDecision(
+                    accepted=False, reason=reason, entropy=entropy, normalized_hash=fp, duplicate=True
+                )
+                continue
+            if url_fp:
+                self._store_persistent_dedup(fp, f.finding_id)
+                if not is_feed_source:
+                    self._add_to_hot_cache(fp, f.finding_id)
+                results[idx] = FindingQualityDecision(
+                    accepted=True, reason=None, entropy=entropy, normalized_hash=fp, duplicate=False
+                )
+                continue
+            if len(fp) < _QUALITY_MIN_ENTROPY_LEN:
+                dedup_cache = self._dedup_manager.semantic_dedup_cache if self._dedup_manager else None
+                if dedup_cache is not None and (not is_high_conf_ioc):
+                    try:
+                        if text_for_embed and len(text_for_embed) >= 16:
+                            _semantic_thresh = 0.8 if is_feed_source else 0.85
+                            is_dup = dedup_cache.check_and_cache(text_for_embed, threshold=_semantic_thresh)
+                            if is_dup:
+                                self._quality_state._quality_duplicate_count += 1
+                                results[idx] = FindingQualityDecision(
+                                    accepted=False, reason="semantic_duplicate",
+                                    entropy=entropy, normalized_hash=fp, duplicate=True,
+                                )
+                                continue
+                    except Exception:
+                        pass
+                self._store_persistent_dedup(fp, f.finding_id)
+                if not is_feed_source:
+                    self._add_to_hot_cache(fp, f.finding_id)
+                results[idx] = FindingQualityDecision(
+                    accepted=True, reason="short_string_skip", entropy=entropy, normalized_hash=fp, duplicate=False
+                )
+                continue
+            _threshold = 0.3 if is_feed_source else _QUALITY_ENTROPY_THRESHOLD
+            if entropy < _threshold:
+                self._quality_state._quality_rejected_count += 1
+                results[idx] = FindingQualityDecision(
+                    accepted=False, reason="low_entropy_rejected", entropy=entropy, normalized_hash=fp, duplicate=False
+                )
+                continue
+            dedup_cache = self._dedup_manager.semantic_dedup_cache if self._dedup_manager else None
+            if dedup_cache is not None and (not is_high_conf_ioc):
+                try:
+                    if text_for_embed and len(text_for_embed) >= 16:
+                        _semantic_thresh = 0.8 if is_feed_source else 0.85
+                        is_dup = dedup_cache.check_and_cache(text_for_embed, threshold=_semantic_thresh)
+                        if is_dup:
+                            self._quality_state._quality_duplicate_count += 1
+                            results[idx] = FindingQualityDecision(
+                                accepted=False, reason="semantic_duplicate",
+                                entropy=entropy, normalized_hash=fp, duplicate=True,
+                            )
+                            continue
+                except Exception:
+                    pass
+            new_iocs_for_batch: list[tuple[str, str, float]] = []
+            if has_any_ioc[idx]:
+                ioc_start = ioc_offsets[idx]
+                ioc_end = ioc_offsets[idx + 1]
+                finding_ioc_dup_flags = ioc_dup_flags[ioc_start:ioc_end]
+                finding_iocs = ioc_items[idx]
+                any_ioc_dup = any(finding_ioc_dup_flags)
+                if any_ioc_dup:
+                    self._quality_state._quality_duplicate_count += 1
+                    results[idx] = FindingQualityDecision(
+                        accepted=False, reason="ioc_duplicate", entropy=entropy, normalized_hash=fp, duplicate=True
+                    )
+                    continue
+                new_iocs_for_batch = [
+                    (val, ioc_type, float(f.confidence))
+                    for (val, ioc_type), is_dup in zip(finding_iocs, finding_ioc_dup_flags)
+                    if not is_dup
+                ]
+            self._store_persistent_dedup(fp, f.finding_id)
+            if not is_feed_source:
+                self._add_to_hot_cache(fp, f.finding_id)
+            if new_iocs_for_batch and self._dedup_manager is not None:
+                try:
+                    self._dedup_manager.add_ioc_batch(new_iocs_for_batch)
+                except (OSError, RuntimeError) as e:
+                    logger.debug(f"[DUCKDB] add_ioc_batch failed: {e}")
+            results[idx] = FindingQualityDecision(
+                accepted=True, reason=None, entropy=entropy, normalized_hash=fp, duplicate=False
+            )
+        return results
+
     def _assess_finding_quality(self, finding: CanonicalFinding) -> FindingQualityDecision:
         """
         Sprint 8W + 8AG + 8AK: Assess a single finding's quality via entropy + dedup.
@@ -6357,17 +6564,44 @@ class DuckDBShadowStore:
         P1-07: Added IOC-level dedup — extracted IOCs are checked against
         Rust MmapIocDedupStore before the finding is accepted.
 
-        Identical decision logic to _assess_finding_quality() but pre-computes
-        fingerprints and entropies in a single Rust rayon batch call per chunk,
-        then walks findings in original order applying URL-first → hot_cache →
-        LMDB → short_string → entropy → semantic_dedup → IOC dedup.
+        ISSUE-022: Tries assess_findings_quality_batch() Rust fast path first —
+        pure-compute decisions (URL fp, normalize, entropy, dedup fp) in a single
+        rayon pass. Stateful checks (hot_cache, LMDB, semantic dedup) run in Python
+        after Rust returns.
+
+        Falls back to the full per-finding loop if Rust is unavailable or fails.
 
         Bounded: caller should chunk at 4096 max (Rust BATCH_HARD_CAP).
-        Below 100 items falls through to sequential (avoids rayon dispatch overhead).
         Returns list[FindingQualityDecision] in same order as findings.
         Fail-soft: any exception propagates to caller for per-row fallback.
         """
         n = len(findings)
+
+        # ISSUE-022: Try Rust fast path — pure-compute decisions in one rayon pass
+        if _RUST_ASSESS_QUALITY_BATCH_AVAILABLE:
+            _assess_batch_fn = _get_rust_assess_quality_batch()
+            if _assess_batch_fn is not None:
+                try:
+                    # Build PyFindingInput dicts — mirror Rust PyFindingInput struct fields
+                    py_findings: list[dict] = [
+                        {
+                            "finding_id": f.finding_id,
+                            "source_type": f.source_type,
+                            "provenance": f.provenance or "",
+                            "payload_text": f.payload_text or None,
+                            "query": f.query or "",
+                        }
+                        for f in findings
+                    ]
+                    rust_decisions: list[dict] = _assess_batch_fn(py_findings)
+                    if rust_decisions is not None and len(rust_decisions) == n:
+                        # Convert Rust dict output to FindingQualityDecision,
+                        # then apply only the stateful Python checks.
+                        return self._apply_stateful_quality_checks(findings, rust_decisions)
+                except Exception:
+                    pass  # Fall through to legacy implementation
+
+        # Legacy implementation — runs when Rust fast path is unavailable or failed
         results: list[FindingQualityDecision | None] = [None] * n
         ioc_items: list[list[tuple[str, str]]] = []
         has_any_ioc: list[bool] = []
@@ -6647,25 +6881,62 @@ class DuckDBShadowStore:
         CHUNK_SIZE: int = _chunk_size
         self._last_ingest_ts = _time.monotonic()
         self._batch_start_ts = self._last_ingest_ts
+        # ISSUE-021: entry clear — both lists cleared together so they stay in sync.
+        # The three intermediate flush sites below each call .clear() on both lists
+        # together, preserving the invariant pair.  _do_sync_close also clears both.
         self._pending_accepted_findings.clear()
         self._pending_accepted_indices.clear()
+        # F350M-R: Phase 1 — launch ALL quality assessments CONCURRENTLY via asyncio.gather.
         pending_tasks: list[tuple[list[int], asyncio.Task[list[ActivationResult]]]] = []
+        loop = asyncio.get_running_loop()
+        quality_tasks: list[asyncio.Future[list[FindingQualityDecision]]] = []
+        chunk_boundaries: list[tuple[int, int, list[CanonicalFinding]]] = []
         for chunk_start in range(0, n, CHUNK_SIZE):
             chunk_end = min(chunk_start + CHUNK_SIZE, n)
             chunk_findings = findings[chunk_start:chunk_end]
+            chunk_boundaries.append((chunk_start, chunk_end, chunk_findings))
+            task = loop.run_in_executor(
+                self._shared_executor,
+                lambda cf=chunk_findings: self._assess_finding_quality_batch(cf),
+            )
+            quality_tasks.append(task)
+
+        # Wait for ALL quality assessments concurrently — this is the main speedup
+        quality_results: tuple[list[FindingQualityDecision] | Exception, ...] = (
+            await safe_gather_return_exceptions(*quality_tasks, label="duckdb_store:quality_gate")
+        )
+
+        # Phase 2 — process decisions sequentially (fast Python, no I/O)
+        self._last_ingest_ts = _time.monotonic()
+        for (chunk_start, chunk_end, chunk_findings), quality_result in zip(
+            chunk_boundaries, quality_results, strict=True
+        ):
+            chunk_decisions: list[FindingQualityDecision]
+            if isinstance(quality_result, Exception):
+                self._quality_state._quality_fail_open_count += 1
+                chunk_decisions = []
+                _batch_rust_ok = False
+            else:
+                chunk_decisions = quality_result
+                _batch_rust_ok = True
+
             fail_open_chunk_findings: list[CanonicalFinding] = []
             fail_open_chunk_indices: list[int] = []
             chunk_accepted_findings: list[CanonicalFinding] = []
             chunk_accepted_indices: list[int] = []
-            _batch_rust_ok = False
-            try:
-                loop = asyncio.get_running_loop()
-                chunk_decisions: list[FindingQualityDecision] = await loop.run_in_executor(
-                    self._shared_executor, lambda cf=chunk_findings: self._assess_finding_quality_batch(cf)
-                )
-                _batch_rust_ok = True
-            except Exception:
-                self._quality_state._quality_fail_open_count += 1
+
+            # F350M-R: hoist ZERO_ATTRIBUTION check outside the per-finding loop
+            _do_zero_attribution = os.getenv("HLEDAC_ENABLE_ZERO_ATTRIBUTION") == "1"
+            _temporal_anonymizer: Any = None
+            if _do_zero_attribution and not hasattr(self, "_temporal_anonymizer"):
+                try:
+                    from hledac.universal.security.temporal_anonymizer import TemporalAnonymizer
+                    self._temporal_anonymizer = TemporalAnonymizer()
+                except Exception:
+                    _do_zero_attribution = False
+            if _do_zero_attribution:
+                _temporal_anonymizer = self._temporal_anonymizer
+
             for i_offset, f in enumerate(chunk_findings):
                 i = chunk_start + i_offset
                 try:
@@ -6690,17 +6961,14 @@ class DuckDBShadowStore:
                     self._record_quality_rejection(f, decision)
                     results[i] = decision
                 else:
-                    if os.getenv("HLEDAC_ENABLE_ZERO_ATTRIBUTION") == "1":
+                    if _do_zero_attribution:
                         try:
-                            from hledac.universal.security.temporal_anonymizer import TemporalAnonymizer
-
-                            if not hasattr(self, "_temporal_anonymizer"):
-                                self._temporal_anonymizer = TemporalAnonymizer()
-                            f.timestamp = self._temporal_anonymizer.anonymize_timestamp(f.timestamp)
+                            f.timestamp = _temporal_anonymizer.anonymize_timestamp(f.timestamp)
                         except Exception:
                             pass
                     chunk_accepted_findings.append(f)
                     chunk_accepted_indices.append(i)
+
             if fail_open_chunk_findings:
                 batch_results = await self._record_fail_open_batch(
                     fail_open_chunk_findings, results, fail_open_chunk_indices
@@ -6708,25 +6976,41 @@ class DuckDBShadowStore:
                 for idx, br in zip(fail_open_chunk_indices, batch_results, strict=False):
                     if br is not None:
                         results[idx] = br
+
             self._pending_accepted_findings.extend(chunk_accepted_findings)
             self._pending_accepted_indices.extend(chunk_accepted_indices)
             _elapsed = _time.monotonic() - self._last_ingest_ts
-            _should_flush = (
-                len(self._pending_accepted_findings) >= self._min_flush or _elapsed >= self._max_flush_interval
-            )
-            if _should_flush and self._pending_accepted_findings:
+            # ISSUE-021: both lists are an invariant pair — flush must check both.
+            # If lengths diverge due to a bug, force flush to prevent unbounded divergence.
+            _findings_len = len(self._pending_accepted_findings)
+            _indices_len = len(self._pending_accepted_indices)
+            if _findings_len != _indices_len:
+                _should_flush = True  # force flush to break any divergence spiral
+            else:
+                _should_flush = _findings_len >= self._min_flush or _elapsed >= self._max_flush_interval
+            if _should_flush and _findings_len > 0:
                 _flush_indices = list(self._pending_accepted_indices)
                 _flush_findings = list(self._pending_accepted_findings)
                 _flush_task = safe_create_task(
-                    self.async_record_canonical_findings_batch_arrow(_flush_findings), name="duckdb:record_arrow_tb"
+                    self.async_record_canonical_findings_batch_arrow(_flush_findings),
+                    name="duckdb:record_arrow_tb",
                 )
                 pending_tasks.append((_flush_indices, _flush_task))
                 self._pending_accepted_findings.clear()
                 self._pending_accepted_indices.clear()
                 self._last_ingest_ts = _time.monotonic()
-            if chunk_end < n:
-                await asyncio.sleep(0)
-        if self._pending_accepted_findings:
+        # ISSUE-021: final flush — guard against length divergence between findings and indices.
+        _fp_findings_len = len(self._pending_accepted_findings)
+        _fp_indices_len = len(self._pending_accepted_indices)
+        if _fp_findings_len != _fp_indices_len:
+            # Diverged — force flush with whatever is present to stop the spiral.
+            _logger.warning(
+                "[A8HIGH] pending list length divergence at final flush: "
+                "findings=%d indices=%d — force flushing",
+                _fp_findings_len,
+                _fp_indices_len,
+            )
+        if _fp_findings_len > 0:
             _flush_indices = list(self._pending_accepted_indices)
             _flush_findings = list(self._pending_accepted_findings)
             _flush_task = safe_create_task(

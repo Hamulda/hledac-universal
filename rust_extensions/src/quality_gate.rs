@@ -329,6 +329,207 @@ fn blake2b_128_to_hex(result: &[u8]) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Batch quality gate — full assessment in one Rayon-parallel call
+// ---------------------------------------------------------------------------
+
+/// ISSUE-002: Input struct for batch quality assessment.
+///mirrors Python CanonicalFinding fields used by _assess_finding_quality_batch.
+#[derive(Debug, Clone)]
+pub struct PyFindingInput {
+    pub finding_id: String,
+    pub source_type: String,
+    pub provenance: Option<String>,
+    pub payload_text: Option<String>,
+    pub query: String,
+}
+
+/// ISSUE-002: Output struct for batch quality assessment.
+/// Mirrors Python FindingQualityDecision.
+#[derive(Debug, Clone)]
+pub struct PyQualityDecision {
+    pub accepted: bool,
+    pub reason: Option<String>,
+    pub rejection_reason: Option<String>,
+    pub entropy: f64,
+    pub normalized_hash: String,
+    pub duplicate: bool,
+    /// ISSUE-022: whether URL fingerprint path was taken (vs payload text).
+    /// Python uses this to distinguish url_fp vs fp in stateful checks.
+    pub is_url: bool,
+}
+
+impl PyQualityDecision {
+    pub fn accepted(entropy: f64, normalized_hash: String, is_url: bool) -> Self {
+        Self {
+            accepted: true,
+            reason: None,
+            rejection_reason: None,
+            entropy,
+            normalized_hash,
+            duplicate: false,
+            is_url,
+        }
+    }
+
+    pub fn rejected(
+        reason: &str,
+        rejection_reason: &str,
+        entropy: f64,
+        normalized_hash: String,
+        duplicate: bool,
+        is_url: bool,
+    ) -> Self {
+        Self {
+            accepted: false,
+            reason: Some(reason.to_string()),
+            rejection_reason: Some(rejection_reason.to_string()),
+            entropy,
+            normalized_hash,
+            duplicate,
+            is_url,
+        }
+    }
+
+    pub fn duplicate_detected(entropy: f64, normalized_hash: String, persistent: bool, is_url: bool) -> Self {
+        Self {
+            accepted: false,
+            reason: if persistent {
+                Some("persistent_duplicate".to_string())
+            } else {
+                Some("duplicate_detected".to_string())
+            },
+            rejection_reason: Some("quality_gate_duplicate".to_string()),
+            entropy,
+            normalized_hash,
+            duplicate: true,
+            is_url,
+        }
+    }
+
+    pub fn low_entropy(entropy: f64, normalized_hash: String, is_url: bool) -> Self {
+        Self {
+            accepted: false,
+            reason: Some("low_entropy_rejected".to_string()),
+            rejection_reason: Some("quality_gate_low_entropy".to_string()),
+            entropy,
+            normalized_hash,
+            duplicate: false,
+            is_url,
+        }
+    }
+
+    pub fn short_string(entropy: f64, normalized_hash: String, is_url: bool) -> Self {
+        Self {
+            accepted: true,
+            reason: Some("short_string_skip".to_string()),
+            rejection_reason: None,
+            entropy,
+            normalized_hash,
+            duplicate: false,
+            is_url,
+        }
+    }
+}
+
+/// ISSUE-002: Extract URL from provenance string.
+/// Mirrors Python _extract_url_from_provenance.
+fn extract_url_from_provenance(provenance: &str) -> String {
+    if provenance.starts_with("url:") {
+        provenance[4..].trim().to_string()
+    } else {
+        provenance.to_string()
+    }
+}
+
+/// ISSUE-002: Quality gate threshold for minimum entropy (mirrors Python _QUALITY_ENTROPY_THRESHOLD).
+const QUALITY_ENTROPY_THRESHOLD: f64 = 3.5;
+
+/// ISSUE-002: Minimum length for entropy check (mirrors Python _QUALITY_MIN_ENTROPY_LEN).
+const QUALITY_MIN_ENTROPY_LEN: usize = 16;
+
+/// ISSUE-002: High-confidence IOC regex pattern.
+/// Mirrors Python _HIGH_CONF_IOC_RE.
+static HIGH_CONF_IOC_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+    Regex::new(r"(?i)\b(ip(?:v6)?:|https?://|www\.|onion|i2p|freenet|tor|bitcoin:|ethereum:|wallet|seed|mnemonic|bip39|私钥|密钥|wallet\.dat)\b").expect("hardcoded HIGH_CONF_IOC_RE")
+});
+
+/// ISSUE-002: Assess a single finding's quality — pure compute, no state.
+/// Returns PyQualityDecision with accepted=True/False.
+/// This is the CPU-bound hot path that benefits from Rayon parallelization.
+fn assess_single_finding(f: &PyFindingInput) -> PyQualityDecision {
+    // Extract URL from provenance if present
+    let url_fp_opt = f.provenance.as_ref().map(|p| extract_url_from_provenance(p));
+    let is_url = url_fp_opt.as_ref().map(|s| !s.is_empty()).unwrap_or(false);
+
+    let is_feed_source = f.source_type == "rss_atom_pipeline";
+
+    // Compute text and normalized hash
+    let (text_for_embed, normalized_hash, entropy) = if is_url {
+        let url = url_fp_opt.as_ref().unwrap();
+        let fp = url_fingerprint(url);
+        (url.clone(), fp, 0.0)
+    } else {
+        let raw_text = f.payload_text.as_ref().or(Some(&f.query)).map(|s| s.as_str()).unwrap_or("");
+        if raw_text.is_empty() {
+            (String::new(), String::new(), 0.0)
+        } else {
+            let normalized = normalize_quality_text(raw_text);
+            let fp = dedup_fingerprint(&normalized);
+            let ent = if normalized.len() >= QUALITY_MIN_ENTROPY_LEN {
+                compute_entropy(&normalized)
+            } else {
+                0.0
+            };
+            (raw_text.to_string(), fp, ent)
+        }
+    };
+
+    // High-confidence IOC check
+    let text_stripped = text_for_embed.trim();
+    let is_high_conf_ioc = !text_stripped.is_empty() && HIGH_CONF_IOC_RE.is_match(text_stripped);
+
+    // URL-based findings are always accepted (URL fingerprints are sufficient)
+    if is_url {
+        return PyQualityDecision::accepted(entropy, normalized_hash, true);
+    }
+
+    // Short string check
+    if normalized_hash.len() < _QUALITY_MIN_ENTROPY_LEN && !is_high_conf_ioc {
+        return PyQualityDecision::short_string(entropy, normalized_hash, false);
+    }
+
+    // Low entropy check — feed sources have lower threshold
+    let threshold = if is_feed_source { 0.3 } else { QUALITY_ENTROPY_THRESHOLD };
+    if entropy < threshold {
+        return PyQualityDecision::low_entropy(entropy, normalized_hash, false);
+    }
+
+    PyQualityDecision::accepted(entropy, normalized_hash, false)
+}
+
+/// ISSUE-002: Parallel batch quality assessment for a list of findings.
+/// CPU-bound hot path: all computation (URL fp, entropy, dedup fp, normalization)
+/// is parallelized via Rayon across the shared cpu_pool.
+///
+/// Returns Vec<PyQualityDecision> in same order as inputs.
+///
+/// Note: This function computes quality decisions WITHOUT accessing hot_cache or
+/// persistent dedup state (those are stateful and live on Python side).
+/// Python is responsible for deduplication checks after getting decisions from Rust.
+#[pyfunction]
+pub fn assess_findings_quality_batch(findings: Vec<PyFindingInput>) -> Vec<PyQualityDecision> {
+    use rayon::prelude::*;
+    let n = findings.len();
+    if n == 0 {
+        return vec![];
+    }
+    // cpu_pool: 4 threads for BLAKE2b SIMD-bound work
+    crate::cpu_pool().install(|| {
+        findings.par_iter().map(assess_single_finding).collect()
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Batch APIs (rayon-parallel via shared bounded pool)
 // ---------------------------------------------------------------------------
 
@@ -451,6 +652,7 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(batch_dedup_fingerprints, m)?)?;
     m.add_function(wrap_pyfunction!(batch_url_fingerprints, m)?)?;
     m.add_function(wrap_pyfunction!(batch_normalize_quality_text, m)?)?;
+    m.add_function(wrap_pyfunction!(assess_findings_quality_batch, m)?)?;
     Ok(())
 }
 

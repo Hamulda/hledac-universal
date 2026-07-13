@@ -127,6 +127,9 @@ _DEFAULT_DECODER = msgspec.json.Decoder()
 # next call allocates fresh — acceptable trade-off vs. unbounded growth).
 _POOL_MAX = 8  # per-thread bound (8 × ~2KB Encoder ≈ 16KB/thread)
 
+# ISSUE-026: threading.local is CORRECT — Encoder/Decoder are stateless Rust
+# objects, no async or task-bound state. Pool is per-thread for performance.
+# See mlx_memory/_core.py for thread-local vs contextvars decision framework.
 # Per-thread local storage: each thread lazily allocates its own list.
 _thread_local = threading.local()
 
