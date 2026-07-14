@@ -128,6 +128,54 @@ pub fn serde_json_compact_sorted(json_str: &str) -> String {
     serde_json_reexport(json_str, false, true)
 }
 
+// ---------------------------------------------------------------------------
+// ISSUE-005: bytes-in/bytes-out variants — zero-copy for STIX export
+// ---------------------------------------------------------------------------
+
+/// Compact JSON from bytes — bytes-in, bytes-out (zero-copy output).
+///
+/// For STIX export where we have pre-encoded JSON bytes and want
+/// compact bytes back. Avoids String↔bytes conversion overhead.
+///
+/// # Arguments
+/// * `input` - UTF-8 encoded JSON bytes
+///
+/// # Returns
+/// Compact JSON bytes — empty Vec<u8> on error (caller falls back to Python)
+#[pyfunction]
+pub fn serde_json_compact_bytes(input: &[u8]) -> Vec<u8> {
+    let value: serde_json::Value = match serde_json::from_slice(input) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    // serde_json::to_vec uses Writer internally — no extra allocation vs to_string
+    serde_json::to_vec(&value).unwrap_or_default()
+}
+
+/// Pretty JSON from bytes with optional key sorting.
+///
+/// # Arguments
+/// * `input` - UTF-8 encoded JSON bytes
+/// * `sort_keys` - if true, sort object keys alphabetically
+///
+/// # Returns
+/// Pretty-printed JSON bytes (indent=2) — empty Vec<u8> on error
+#[pyfunction]
+pub fn serde_json_pretty_bytes(input: &[u8], sort_keys: bool) -> Vec<u8> {
+    let value: serde_json::Value = match serde_json::from_slice(input) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    let value = if sort_keys {
+        sort_object_keys(&value)
+    } else {
+        value
+    };
+    serde_json::to_string_pretty(&value)
+        .unwrap_or_default()
+        .into_bytes()
+}
+
 /// Batch serialize multiple JSON strings via rayon.
 ///
 /// # Arguments
@@ -404,5 +452,8 @@ pub fn register_functions(m: &Bound<'_, pyo3::prelude::PyModule>) -> PyResult<()
     m.add_function(wrap_pyfunction!(batch_serde_json_compact, m)?)?;
     m.add_function(wrap_pyfunction!(batch_serde_json_pretty_sorted, m)?)?;
     m.add_function(wrap_pyfunction!(batch_serde_json_compact_sorted, m)?)?;
+    // ISSUE-005: bytes-in/bytes-out — zero-copy for STIX export, avoids String↔bytes overhead
+    m.add_function(wrap_pyfunction!(serde_json_compact_bytes, m)?)?;
+    m.add_function(wrap_pyfunction!(serde_json_pretty_bytes, m)?)?;
     Ok(())
 }

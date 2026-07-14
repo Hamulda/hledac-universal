@@ -19,9 +19,11 @@ Features:
 M1 Optimized: Streaming processing, MLX-accelerated where possible
 """
 import asyncio
+import concurrent.futures
 import hashlib
 import io
 import logging
+import multiprocessing as mp
 import os
 import re
 import tempfile
@@ -33,6 +35,34 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, BinaryIO
 logger = logging.getLogger(__name__)
+
+# M1 8GB: ProcessPoolExecutor for CPU-bound forensics (max 2 workers to avoid RAM pressure)
+# Shared across all DeepForensicsAnalyzer instances via module-level singleton
+_forensics_pool: concurrent.futures.Executor | None = None
+_forensics_pool_lock = asyncio.Lock()
+
+
+def _get_forensics_pool() -> concurrent.futures.Executor:
+    """Get or create the shared forensics ProcessPoolExecutor (M1 8GB safe: max_workers=2).
+
+    Uses spawn context on macOS to avoid fork issues with MPS/Swift libraries.
+    Fail-safe: returns ThreadPoolExecutor fallback if ProcessPool creation fails.
+    """
+    global _forensics_pool
+    if _forensics_pool is None:
+        try:
+            ctx = mp.get_context('spawn')
+            _forensics_pool = concurrent.futures.ProcessPoolExecutor(
+                max_workers=2,
+                mp_context=ctx,
+            )
+        except Exception as e:
+            logger.warning(f'[FORENSICS] ProcessPoolExecutor init failed, using ThreadPool fallback: {e}')
+            _forensics_pool = concurrent.futures.ThreadPoolExecutor(
+                max_workers=2,
+                thread_name_prefix='forensics_cpu_fallback',
+            )
+    return _forensics_pool
 try:
     import piexif
     from PIL import ExifTags, Image, ImageChops
@@ -466,8 +496,7 @@ class OfficeDocumentAnalyzer:
     async def analyze_async(self, file_path: str | bytes) -> DocumentAnalysis:
         """Analyze Office document with FOCA enrichment (async, M1-safe)."""
         if isinstance(file_path, str):
-            with open(file_path, 'rb') as f:
-                content = f.read()
+            content = await asyncio.to_thread(Path(file_path).read_bytes)
         else:
             content = file_path
         if content[:4] == b'PK\x03\x04':
@@ -726,7 +755,11 @@ class ImageAnalyzer:
         return DocumentAnalysis(metadata=metadata)
 
 class DeepForensicsAnalyzer:
-    """Advanced forensics for images - EXIF, ELA, steganography detection."""
+    """Advanced forensics for images - EXIF, ELA, steganography detection.
+
+    Uses shared ProcessPoolExecutor for CPU-bound operations (M1 8GB safe: max 2 workers).
+    Steganography detection uses async subprocess pool via StegdetectServer.
+    """
     __slots__ = tuple(('_orch', '_stegdetect_path', '_stegdetect_server', '_thread_pool'))
 
     def __init__(self, orch: Any=None):
@@ -735,11 +768,11 @@ class DeepForensicsAnalyzer:
         Args:
             orch: Optional orchestrator reference for graph integration (S49-C)
         """
-        import concurrent.futures
         self._orch = orch
         self._stegdetect_path = Path.home() / '.hledac' / 'bin' / 'stegdetect'
         self._stegdetect_server = StegdetectServer()
-        self._thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix='stego_detect')
+        # ThreadPool for short-lived sync CPU work (not CPU-bound image analysis)
+        self._thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix='forensics_short')
 
     async def _ensure_stegdetect(self):
         """Compile and install stegdetect if missing."""
@@ -783,6 +816,9 @@ class DeepForensicsAnalyzer:
     async def analyze_image(self, content: bytes, url: str | None=None):
         """Analyze image for forensic artifacts.
 
+        Uses ProcessPoolExecutor for CPU-bound image analysis (ELA) to avoid
+        contention with MLX workers. M1 8GB safe: max 2 workers.
+
         Args:
             content: Image bytes
             url: Optional URL of the image for graph integration (S49-C)
@@ -802,6 +838,7 @@ class DeepForensicsAnalyzer:
             except Exception:
                 pass
         try:
+            # CPU-bound: run ELA in ProcessPool to avoid blocking MLX workers
             ela_score = await self._ela_analysis(content)
             result['ela_score'] = ela_score
             if ela_score > 0.3:
@@ -829,7 +866,8 @@ class DeepForensicsAnalyzer:
     async def _ela_analysis(self, content: bytes) -> float:
         """Error Level Analysis - returns manipulation probability 0-1.
 
-        Uses MPS if available, otherwise falls back to CPU.
+        Uses ProcessPool for CPU-bound analysis to avoid contention with MLX workers.
+        M1 8GB safe: max 2 workers in shared pool.
         """
         if _check_mps_available():
             return await self._ela_analysis_mps(content)
@@ -837,9 +875,10 @@ class DeepForensicsAnalyzer:
             return await self._ela_analysis_cpu(content)
 
     async def _ela_analysis_mps(self, content: bytes) -> float:
-        """MPS-accelerated ELA analysis."""
+        """MPS-accelerated ELA analysis (runs sync MPS in ProcessPool to avoid GIL)."""
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(self._thread_pool, self._ela_analysis_mps_sync, content)
+        pool = _get_forensics_pool()
+        return await loop.run_in_executor(pool, self._ela_analysis_mps_sync, content)
 
     def _ela_analysis_mps_sync(self, content: bytes) -> float:
         """Synchronous MPS implementation of ELA."""
@@ -863,10 +902,8 @@ class DeepForensicsAnalyzer:
                 return ela_score
         except Exception as e:
             logger.warning(f'MPS ELA failed, falling back to CPU: {e}')
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix='ela_cpu_fallback') as executor:
-                future = executor.submit(self._ela_analysis_cpu_sync, content)
-                return future.result()
+            # Fallback: run CPU sync directly (single thread, no pool needed for error path)
+            return self._ela_analysis_cpu_sync(content)
         finally:
             if hasattr(torch.mps, 'empty_cache'):
                 try:
@@ -875,9 +912,10 @@ class DeepForensicsAnalyzer:
                     pass
 
     async def _ela_analysis_cpu(self, content: bytes) -> float:
-        """CPU-based ELA analysis."""
+        """CPU-based ELA analysis (runs in ProcessPool to avoid blocking MLX workers)."""
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(self._thread_pool, self._ela_analysis_cpu_sync, content)
+        pool = _get_forensics_pool()
+        return await loop.run_in_executor(pool, self._ela_analysis_cpu_sync, content)
 
     def _ela_analysis_cpu_sync(self, content: bytes) -> float:
         """Synchronous CPU implementation of ELA."""
@@ -1001,13 +1039,37 @@ class DocumentIntelligenceEngine:
 
     Provides unified interface for analyzing all document types.
     """
-    __slots__ = tuple(('_forensics', 'image_analyzer', 'office_analyzer', 'pdf_analyzer'))
+    __slots__ = tuple(('_forensics', 'image_analyzer', 'office_analyzer', 'pdf_analyzer', '_forensics_thread_pool'))
 
     def __init__(self):
         self.pdf_analyzer = PDFAnalyzer()
         self.office_analyzer = OfficeDocumentAnalyzer()
         self.image_analyzer = ImageAnalyzer()
         self._forensics = DeepForensicsAnalyzer()
+        # Dedicated thread pool for running async forensics analysis from sync context
+        self._forensics_thread_pool = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix='forensics_sync_wrapper'
+        )
+
+    def _run_async(self, coro) -> Any:
+        """Run an async coroutine in a separate thread with its own event loop.
+
+        This avoids asyncio.run() crash on M1 and prevents blocking MLX workers.
+        """
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(coro)
+            finally:
+                loop.close()
+        except Exception as e:
+            logger.debug('[F206AC] async run failed: %s', e)
+            return None
+
+    def _run_forensics_async(self, content: bytes) -> dict[str, Any] | None:
+        """Run async forensics analysis in a separate thread with its own event loop."""
+        return self._run_async(self._forensics.analyze_image(content))
 
     def analyze(self, file_path: str) -> DocumentAnalysis:
         """
@@ -1031,12 +1093,13 @@ class DocumentIntelligenceEngine:
                     content = f.read()
                 if hasattr(self, '_forensics'):
                     try:
-                        forensics = asyncio.run(self._forensics.analyze_image(content))
+                        # M1-SAFE: run async forensics in dedicated thread with its own event loop
+                        # This avoids asyncio.run() crash and CPU-bound work runs in ProcessPool
+                        forensics = self._run_forensics_async(content)
+                        if forensics:
+                            analysis.metadata.raw_metadata['forensics'] = forensics
                     except Exception as e:
-                        logger.debug('[F206AC] forensics analyze failed: %s', e)
-                        forensics = None
-                    if forensics:
-                        analysis.metadata.raw_metadata['forensics'] = forensics
+                        logger.warning(f'[F206AC] forensics analyze failed: {e}')
             except Exception as e:
                 logger.warning(f'[F206AC] forensics analyze failed: {e}')
             return analysis
@@ -1071,7 +1134,8 @@ class DocumentIntelligenceEngine:
 
         async def analyze_one(path: str) -> tuple[str, DocumentAnalysis | None]:
             try:
-                return (path, self.analyze(path))
+                # Wrap sync analyze() in to_thread to avoid blocking event loop
+                return (path, await asyncio.to_thread(self.analyze, path))
             except Exception as e:
                 logger.error(f'Error analyzing {path}: {e}')
                 return (path, None)
@@ -1095,6 +1159,19 @@ class DocumentIntelligenceEngine:
                 logger.error(f'Error analyzing {path}: {e}')
                 results[path] = None
         return results
+
+    def close(self) -> None:
+        """Clean up resources: forensics thread pool and stegdetect server."""
+        if hasattr(self, '_forensics_thread_pool') and self._forensics_thread_pool:
+            self._forensics_thread_pool.shutdown(wait=False)
+            self._forensics_thread_pool = None
+        if hasattr(self, '_forensics') and self._forensics:
+            steg_server = getattr(self._forensics, '_stegdetect_server', None)
+            if steg_server and hasattr(steg_server, 'restart'):
+                try:
+                    self._run_async(steg_server.restart())
+                except Exception:
+                    pass
 
     def probe(self, url: str, preview_bytes: bytes, query: str='') -> dict[str, Any]:
         """

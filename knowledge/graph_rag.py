@@ -37,14 +37,19 @@ from dataclasses import dataclass, field
 import msgspec
 from functools import partial
 from typing import Any
-from hledac.universal.utils.optional_imports import optional
-_numpy_opt = optional('numpy')
+
+# numpy — strict import with fallback
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    np = None
+    NUMPY_AVAILABLE = False
+
 
 def _get_numpy():
     """Lazy getter for numpy with availability check."""
-    return _numpy_opt()
-NUMPY_AVAILABLE = _numpy_opt.available
-np: Any = None if not NUMPY_AVAILABLE else _get_numpy()
+    return np
 logger = logging.getLogger(__name__)
 from hledac.universal.utils.graph_utils import lazy_ig
 

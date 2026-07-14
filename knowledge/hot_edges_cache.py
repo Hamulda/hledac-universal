@@ -76,24 +76,27 @@ logger = logging.getLogger(__name__)
 # individual (src_id, dst_id) → counter for O(1) increments without list decode/encode.
 # Import here makes it available for the module; actual integration needs
 # storage redesign (key schema change from per-node lists to flat counters).
-# F265C: Use centralized rust backend
-# F330: Migrated to optional() pattern
-from hledac.universal.utils.optional_imports import optional  # ISSUE-#2: replaces try/except ImportError
-
-_rust_backend_opt = optional("core.rust_backend:rust")
+# Rust backend — strict import
+try:
+    from core.rust_backend import rust
+except ImportError:
+    try:
+        from hledac.universal.core.rust_backend import rust
+    except ImportError:
+        rust = None
 
 
 def _get_rust_backend():
     """Lazy getter for Rust backend."""
-    return _rust_backend_opt()
+    return rust
 
 
 def _is_rust_hot_edges_available() -> bool:
     """Check if Rust hot_edges is available at runtime."""
-    rust = _get_rust_backend()
-    if rust is None or not rust.is_available:
+    r = _get_rust_backend()
+    if r is None or not r.is_available:
         return False
-    return rust.hot_edges is not None
+    return r.hot_edges is not None
 
 
 _RUST_COUNTERS_AVAILABLE = _is_rust_hot_edges_available()

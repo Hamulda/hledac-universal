@@ -22,31 +22,58 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 import numpy as np
-from hledac.universal.utils.optional_imports import optional
-_scapy_mod = optional('scapy.all:DNS')
-_scapy_mod_val = _scapy_mod()
-DNS = getattr(_scapy_mod_val, 'DNS', None)
-DNSQR = getattr(_scapy_mod_val, 'DNSQR', None)
-PcapReader = getattr(_scapy_mod_val, 'PcapReader', None)
-HAS_SCAPY = _scapy_mod.available
-_pywt_mod = optional('pywt')
-HAS_PYWAVELETS = bool(_pywt_mod)
-_mlx_mod = optional('mlx.core')
-_mlx_nn_mod = optional('mlx.nn')
-HAS_MLX = bool(_mlx_mod)
-mx = _mlx_mod() if HAS_MLX else None
-nn = _mlx_nn_mod() if HAS_MLX else None
-_rust_detect_mod = optional('hledac_rust_extensions')
-HAS_RUST_ENCODING = bool(_rust_detect_mod)
-_rust_detect_encoding = _rust_detect_mod() if HAS_RUST_ENCODING else None
-_rust_entropy_mod = optional('hledac_rust_extensions:rust_calculate_entropy')
-_rust_entropy = _rust_entropy_mod()
-HAS_RUST_ENTROPY = bool(_rust_entropy_mod)
-rust_calculate_entropy = getattr(_rust_entropy, 'rust_calculate_entropy', None) if HAS_RUST_ENTROPY else None
-rust_fast_entropy_screen = getattr(_rust_entropy, 'rust_fast_entropy_screen', None) if HAS_RUST_ENTROPY else None
-rust_ngram_analysis = getattr(_rust_entropy, 'rust_ngram_analysis', None) if HAS_RUST_ENTROPY else None
-rust_majority_vote = getattr(_rust_entropy, 'rust_majority_vote', None) if HAS_RUST_ENTROPY else None
-rust_batch_entropy_analysis = getattr(_rust_entropy, 'rust_batch_entropy_analysis', None) if HAS_RUST_ENTROPY else None
+
+# scapy.all — strict import with fallback
+try:
+    from scapy.all import DNS, DNSQR, PcapReader
+    HAS_SCAPY = True
+except ImportError:
+    DNS = None
+    DNSQR = None
+    PcapReader = None
+    HAS_SCAPY = False
+
+# pywt — strict import with fallback
+try:
+    import pywt
+    HAS_PYWAVELETS = True
+except ImportError:
+    pywt = None
+    HAS_PYWAVELETS = False
+
+# mlx — strict import with fallback
+try:
+    import mlx.core as mx
+    import mlx.nn as nn
+    HAS_MLX = True
+except ImportError:
+    mx = None
+    nn = None
+    HAS_MLX = False
+
+# hledac_rust_extensions — strict import with fallback
+try:
+    import hledac_rust_extensions
+    HAS_RUST_ENCODING = True
+except ImportError:
+    hledac_rust_extensions = None
+    HAS_RUST_ENCODING = False
+
+# rust_calculate_entropy — strict import with fallback
+try:
+    from hledac_rust_extensions import rust_calculate_entropy
+    rust_fast_entropy_screen = rust_calculate_entropy.fast_entropy_screen if hasattr(rust_calculate_entropy, 'fast_entropy_screen') else None
+    rust_ngram_analysis = rust_calculate_entropy.ngram_analysis if hasattr(rust_calculate_entropy, 'ngram_analysis') else None
+    rust_majority_vote = rust_calculate_entropy.majority_vote if hasattr(rust_calculate_entropy, 'majority_vote') else None
+    rust_batch_entropy_analysis = rust_calculate_entropy.batch_entropy_analysis if hasattr(rust_calculate_entropy, 'batch_entropy_analysis') else None
+    HAS_RUST_ENTROPY = True
+except ImportError:
+    rust_calculate_entropy = None
+    rust_fast_entropy_screen = None
+    rust_ngram_analysis = None
+    rust_majority_vote = None
+    rust_batch_entropy_analysis = None
+    HAS_RUST_ENTROPY = False
 
 class Verdict(Enum):
     """Detection verdict enumeration."""

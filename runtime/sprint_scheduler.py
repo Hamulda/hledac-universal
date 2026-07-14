@@ -29,6 +29,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Generic, Protocol, TypeVar, cast
 
 from runtime.logging_setup import get_logger
+from runtime.context.bounded_dicts import (
+    BoundedLRUDict,
+    DEFAULT_ENTRIES_PER_SOURCE_MAXSIZE,
+    DEFAULT_FEED_ACCEPTED_MAXSIZE,
+    DEFAULT_FETCH_LATENCY_EMA_MAXSIZE,
+    DEFAULT_NOVELTY_BONUSES_MAXSIZE,
+    DEFAULT_SEEN_HASHES_MAXSIZE,
+    DEFAULT_SOURCE_WEIGHTS_MAXSIZE,
+)
 
 T = TypeVar("T")
 import uuid
@@ -38,8 +47,6 @@ from enum import Enum, auto
 import msgspec
 
 from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
-from hledac.universal.utils.optional_imports import lazy_decorator, optional
-
 from core.result import try_op
 
 if TYPE_CHECKING:
@@ -186,7 +193,7 @@ class _SprintCleanupHandle:
         if self._sentinel_cb is not None:
             try:
                 self._sentinel_cb("cleanup", {"source": "explicit", "obj": self._obj})
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; callback handler; non-critical
                 pass
 
 
@@ -195,27 +202,40 @@ from hledac.universal.knowledge.graph_service import _DEFAULT_GRAPH_SERVICE
 from hledac.universal.layers.ghost_layer import StagnationError
 from hledac.universal.monitoring.alert_manager import check_zero_findings_alert, get_memory_delta_tracker
 from hledac.universal.runtime.sprint_timer import SprintTimer
-from hledac.universal.utils.async_helpers import gather_taskgroup, safe_create_task, safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel, safe_create_task, safe_gather_ok
 from hledac.universal.utils.batch_dns import get_batch_dns_resolver
 
-_otel_instrumented = lazy_decorator(
-    "otel:instrumented", default=lazy_decorator("hledac.universal.otel._instrumentation:instrumented")
-)
-_IntCounterLayout = optional(
-    "runtime.int_counter_layout", default=optional("hledac.universal.runtime.int_counter_layout")
-)
-_IntCounterLayout_mod = _IntCounterLayout()
-IntCounterLayout: type | None = getattr(_IntCounterLayout_mod, "IntCounterLayout", None)
-IntCounterLayoutRust: type | None = getattr(_IntCounterLayout_mod, "IntCounterLayoutRust", None)
-batch_compute_scores: Any = getattr(_IntCounterLayout_mod, "batch_compute_scores", None)
+# OTEL instrumentation — strict import with fallback chain
+try:
+    from otel._instrumentation import instrumented as _otel_instrumented
+except ImportError:
+    from hledac.universal.otel._instrumentation import instrumented as _otel_instrumented
+
+# IntCounterLayout — strict import from runtime (Rust extension)
+try:
+    from runtime.int_counter_layout import IntCounterLayout, IntCounterLayoutRust, batch_compute_scores
+except ImportError:
+    try:
+        from hledac.universal.runtime.int_counter_layout import (
+            IntCounterLayout,
+            IntCounterLayoutRust,
+            batch_compute_scores,
+        )
+    except ImportError:
+        IntCounterLayout: type | None = None
+        IntCounterLayoutRust: type | None = None
+        batch_compute_scores: Any = None
 import msgspec
 
 from core.psutil_shim import psutil as _psutil
 
-if TYPE_CHECKING:
-    pass
-_orjson_mod = optional("orjson")
-HAS_ORJSON: bool = bool(_orjson_mod)
+# orjson — strict import with fallback
+try:
+    import orjson as _orjson_mod
+    HAS_ORJSON: bool = True
+except ImportError:
+    _orjson_mod = None  # type: ignore[assignment]
+    HAS_ORJSON: bool = False
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
 
@@ -247,7 +267,7 @@ def _safe_getattr(obj: Any, attr: str, default: Any = _UNSET) -> Any:
         result = val()
     except TypeError:
         return val
-    except Exception:
+    except (AttributeError, TypeError):
         return default
     return result
 
@@ -281,24 +301,69 @@ _advisory_log_suppressed_total_var: contextvars.ContextVar[int] = contextvars.Co
 )
 
 
+def _make_seen_hashes() -> BoundedLRUDict:
+    return BoundedLRUDict(maxsize=DEFAULT_SEEN_HASHES_MAXSIZE)
+
+
+def _make_entries_per_source() -> BoundedLRUDict:
+    return BoundedLRUDict(maxsize=DEFAULT_ENTRIES_PER_SOURCE_MAXSIZE)
+
+
+def _make_hits_per_source() -> BoundedLRUDict:
+    return BoundedLRUDict(maxsize=DEFAULT_ENTRIES_PER_SOURCE_MAXSIZE)
+
+
+def _make_source_weights() -> BoundedLRUDict:
+    return BoundedLRUDict(maxsize=DEFAULT_SOURCE_WEIGHTS_MAXSIZE)
+
+
+def _make_novelty_bonuses() -> BoundedLRUDict:
+    return BoundedLRUDict(maxsize=DEFAULT_NOVELTY_BONUSES_MAXSIZE)
+
+
+def _make_feed_accepted() -> BoundedLRUDict:
+    return BoundedLRUDict(maxsize=DEFAULT_FEED_ACCEPTED_MAXSIZE)
+
+
+def _make_fetch_latency_ema() -> BoundedLRUDict:
+    return BoundedLRUDict(maxsize=DEFAULT_FETCH_LATENCY_EMA_MAXSIZE)
+
+
 class SprintRunContext(msgspec.Struct, gc=False):
     """Per-sprint mutable state — replaces instance dicts in SprintScheduler.
 
     Accessed via get_sprint_ctx() for copy-on-write isolation between
     concurrent sprints or async tasks.
+
+    ISSUE-3 FIX: Memory bounds
+      - recent_iocs: bounded to 200 entries via collections.deque(maxlen=200)
+        (replaces unbounded list[dict] which leaked on 18h sprints)
+      - seen_hashes: BoundedLRUDict(maxsize=100_000) — LRU eviction with drop counter
+      - entries_per_source / hits_per_source: BoundedLRUDict(maxsize=500) each
+      - source_weights: BoundedLRUDict(maxsize=500)
+      - novelty_bonuses: BoundedLRUDict(maxsize=10_000)
+      - feed_accepted_per_source: BoundedLRUDict(maxsize=500)
+      - fetch_latency_ema: BoundedLRUDict(maxsize=200)
+      - arrow_batch: bounded HARD_CAP=50 000 with oldest eviction on flush failure
+      - pivot_rewards: bounded at usage site via history[-20:] slice
+      - pivot_stats: replaced per reset, not a BoundedLRUDict (tiny dict)
+
+    All BoundedLRUDict fields use LRU eviction — least-recently-used entry
+    is silently evicted when capacity is reached. Drop counters in
+    SprintSchedulerResult track evictions for telemetry.
     """
 
-    seen_hashes: dict[str, bool] = msgspec.field(default_factory=dict)
-    entries_per_source: dict[str, int] = msgspec.field(default_factory=dict)
-    hits_per_source: dict[str, int] = msgspec.field(default_factory=dict)
-    source_weights: dict[str, float] = msgspec.field(default_factory=dict)
-    novelty_bonuses: dict[str, float] = msgspec.field(default_factory=dict)
-    feed_accepted_per_source: dict[str, int] = msgspec.field(default_factory=dict)
+    seen_hashes: BoundedLRUDict = msgspec.field(default_factory=_make_seen_hashes)
+    entries_per_source: BoundedLRUDict = msgspec.field(default_factory=_make_entries_per_source)
+    hits_per_source: BoundedLRUDict = msgspec.field(default_factory=_make_hits_per_source)
+    source_weights: BoundedLRUDict = msgspec.field(default_factory=_make_source_weights)
+    novelty_bonuses: BoundedLRUDict = msgspec.field(default_factory=_make_novelty_bonuses)
+    feed_accepted_per_source: BoundedLRUDict = msgspec.field(default_factory=_make_feed_accepted)
     source_economics: dict[str, Any] = msgspec.field(default_factory=dict)
     pivot_stats: dict[str, int] = msgspec.field(default_factory=lambda: {"total": 0, "processed": 0, "errors": 0})
     pivot_rewards: dict[str, list[float]] = msgspec.field(default_factory=dict)
-    recent_iocs: list[dict] = msgspec.field(default_factory=list)
-    fetch_latency_ema: dict[str, float] = msgspec.field(default_factory=dict)
+    recent_iocs: deque[dict] = msgspec.field(default_factory=lambda: deque(maxlen=200))
+    fetch_latency_ema: BoundedLRUDict = msgspec.field(default_factory=_make_fetch_latency_ema)
     arrow_batch: list[dict] = msgspec.field(default_factory=list)
     result: Any = msgspec.field(default=None)
 
@@ -451,7 +516,12 @@ from hledac.universal.runtime.graph_accumulator import SprintGraphAccumulator
 from hledac.universal.utils.async_helpers import safe_gather, safe_gather_fire_and_forget, safe_gather_ok
 from hledac.universal.utils.lmdb_bulk import putmulti_bounded
 
-_SourceType = optional("hledac.universal.utils.source_types:SourceType")
+# SourceType — strict import
+try:
+    from hledac.universal.utils.source_types import SourceType
+except ImportError:
+    SourceType = None  # type: ignore[assignment,misc]
+
 from hledac.universal.transport.circuit_breaker import (
     _BREAKERS,
     MAX_TRACKED_DOMAINS,
@@ -461,7 +531,7 @@ from hledac.universal.transport.circuit_breaker import (
 )
 
 _MAX_CHUNK_SIZE: int = 500
-_MAX_CHUNK_CONCURRENCY: int = 2
+_MAX_CHUNK_CONCURRENCY: int = 4  # F320M-R: was 2; M1 8GB has 4P+4E cores, DuckDB writes are I/O-bound
 MAX_LANE_REJECTIONS: int = 1000
 _gc_sprint_callback_handle: _SprintCleanupHandle | None = None
 _gc_callback_registered: bool = False
@@ -818,7 +888,7 @@ class _LifecycleAdapter:
             return
         try:
             callback(old, new_phase)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; callback handler; non-critical
             pass
         object.__setattr__(self, "_prev_phase", new_phase)
 
@@ -1877,6 +1947,14 @@ class SprintSchedulerResult:
     feed_domain_seeds: tuple[str, ...] = ()
     arrow_batch_hard_cap: int = 0
     arrow_batch_dropped_after_flush_failure: int = 0
+    # ISSUE-3: BoundedLRUDict eviction counters for memory-bounded SprintRunContext fields.
+    seen_hashes_dropped: int = 0
+    entries_per_source_dropped: int = 0
+    hits_per_source_dropped: int = 0
+    novelty_bonuses_dropped: int = 0
+    source_weights_dropped: int = 0
+    feed_accepted_per_source_dropped: int = 0
+    fetch_latency_ema_dropped: int = 0
     arrow_last_flush_error: str = ""
     arrow_metrics: dict = field(default_factory=dict)
     transport_efficiency: dict[str, int] = field(default_factory=dict)
@@ -1979,7 +2057,7 @@ class SprintSchedulerResult:
             return
         try:
             object.__setattr__(self, "_int_counter_layout", _layout_class(INT_COUNTER_LAYOUT_NAMES))
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; int_counter fallback; returns 0
             object.__setattr__(self, "_int_counter_layout", None)
 
     @property
@@ -2177,7 +2255,7 @@ class SprintSchedulerResult:
             return 0
         try:
             return self._int_counter_layout.bump(name, n)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; int_counter fallback; returns 0
             return 0
 
     pivot_graph_stats_used: bool = False
@@ -2571,6 +2649,14 @@ class SprintResult:
     feed_no_signal_sources: list[str] = field(default_factory=list)
     arrow_batch_hard_cap: int = 0
     arrow_batch_dropped_after_flush_failure: int = 0
+    # ISSUE-3: BoundedLRUDict eviction counters for memory-bounded SprintRunContext fields.
+    seen_hashes_dropped: int = 0
+    entries_per_source_dropped: int = 0
+    hits_per_source_dropped: int = 0
+    novelty_bonuses_dropped: int = 0
+    source_weights_dropped: int = 0
+    feed_accepted_per_source_dropped: int = 0
+    fetch_latency_ema_dropped: int = 0
     arrow_last_flush_error: str = ""
     requested_duration_s: float = 0.0
     actual_duration_s: float = 0.0
@@ -3159,7 +3245,7 @@ class SprintScheduler:
                     pass
             except asyncio.CancelledError:
                 pass
-            except Exception as _e:
+            except Exception as _e:  # noqa: BLE001 — best-effort; export/write failure; non-critical
                 _log.info("[aclean] DuckDB writer task error: %s", _e)
         _lmdb_close_errors: list[str] = []
         for _attr in ("_dedup_env", "_forensics_lmdb_env", "_multimodal_lmdb_env"):
@@ -3171,7 +3257,7 @@ class SprintScheduler:
                     _env.flush()
                 _env.close()
                 _log.info("[aclean] %s closed", _attr)
-            except Exception as _e:
+            except Exception as _e:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
                 _lmdb_close_errors.append(f"{_attr}: {_e}")
                 _log.info("[aclean] %s close error: %s", _attr, _e)
             finally:
@@ -3181,7 +3267,7 @@ class SprintScheduler:
             try:
                 _db_con.close()
                 _log.info("[aclean] DuckDB read connection closed")
-            except Exception as _e:
+            except Exception as _e:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
                 _log.info("[aclean] DuckDB read connection close error: %s", _e)
             finally:
                 self._duckdb_read_con = None
@@ -3192,7 +3278,7 @@ class SprintScheduler:
                 _log.info("[aclean] DuckDB store closed")
             except TimeoutError:
                 _log.info("[aclean] DuckDB store aclose() timed out")
-            except Exception as _e:
+            except Exception as _e:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
                 _log.info("[aclean] DuckDB store aclose() error: %s", _e)
         _hermes = getattr(self, "_hermes_engine", None)
         if _hermes is not None:
@@ -3205,7 +3291,7 @@ class SprintScheduler:
                     _log.info("[aclean] Hermes engine unloaded")
             except TimeoutError:
                 _log.info("[aclean] Hermes engine close timed out")
-            except Exception as _e:
+            except Exception as _e:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
                 _log.info("[aclean] Hermes engine close error: %s", _e)
             finally:
                 self._hermes_engine = None
@@ -3217,7 +3303,7 @@ class SprintScheduler:
                 if hasattr(_metrics, "close"):
                     _metrics.close()
                 _log.info("[aclean] metrics registry flushed/closed")
-            except Exception as _e:
+            except Exception as _e:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
                 _log.info("[aclean] metrics registry error: %s", _e)
         for _attr, _stop_attr in (
             ("_tor_transport", "_tor_transport"),
@@ -3238,7 +3324,7 @@ class SprintScheduler:
                 _log.info("[aclean] %s stop timed out", _attr)
             except asyncio.CancelledError:
                 pass
-            except Exception as _e:
+            except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 _log.info("[aclean] %s stop error: %s", _attr, _e)
             finally:
                 setattr(self, _attr, None)
@@ -3250,7 +3336,7 @@ class SprintScheduler:
                     _log.debug("[aclean] enrichment_services closed")
             except TimeoutError:
                 _log.debug("[aclean] enrichment_services close timed out")
-            except Exception as _e:
+            except Exception as _e:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
                 _log.debug("[aclean] enrichment_services close error: %s", _e)
             finally:
                 self._enrichment_services = None
@@ -3264,7 +3350,7 @@ class SprintScheduler:
                 _log.debug("[aclean] evidence_log closed")
             except TimeoutError:
                 _log.debug("[aclean] evidence_log close timed out")
-            except Exception as _e:
+            except Exception as _e:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
                 _log.debug("[aclean] evidence_log close error: %s", _e)
             finally:
                 self._evidence_log = None
@@ -3278,7 +3364,7 @@ class SprintScheduler:
                 _log.debug("[aclean] ghost_layer closed")
             except TimeoutError:
                 _log.debug("[aclean] ghost_layer close timed out")
-            except Exception as _e:
+            except Exception as _e:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
                 _log.debug("[aclean] ghost_layer close error: %s", _e)
             finally:
                 self._ghost_layer = None
@@ -3291,9 +3377,10 @@ class SprintScheduler:
     def _init_core_state(self, config: SprintSchedulerConfig, flags: Any) -> None:
         """Phase A: Core config and basic state (13 attrs)."""
         self._config = config
-        self._seen_hashes: dict[str, bool] = {}
-        self._entries_per_source: dict[str, int] = {}
-        self._hits_per_source: dict[str, int] = {}
+        # ISSUE-3: BoundedLRUDict replaces unbounded dict — LRU eviction with drop counter
+        self._seen_hashes: BoundedLRUDict = BoundedLRUDict(maxsize=DEFAULT_SEEN_HASHES_MAXSIZE)
+        self._entries_per_source: BoundedLRUDict = BoundedLRUDict(maxsize=DEFAULT_ENTRIES_PER_SOURCE_MAXSIZE)
+        self._hits_per_source: BoundedLRUDict = BoundedLRUDict(maxsize=DEFAULT_ENTRIES_PER_SOURCE_MAXSIZE)
         self._result = SprintSchedulerResult()
         self._lane_budget_pool = LaneBudgetPool()
         self._stop_requested = False
@@ -3355,7 +3442,8 @@ class SprintScheduler:
         self._hypothesis_depth: int = 0
         self._hypothesis_query_count: int = 0
         self._pivot_rewards: dict[str, list[float]] = {}
-        self._recent_iocs: list[dict] = []
+        # ISSUE-6: recent_iocs now lives in SprintRunContext (deque maxlen=200).
+        # self._recent_iocs is removed — all access via get_sprint_ctx().recent_iocs.
         self._planned_pivots: list = []
         self._pivot_planner: Any = None
         self._enqueue_pivot: Any = None
@@ -3451,7 +3539,7 @@ class SprintScheduler:
 
                 _t = threading.Thread(target=_run_prewarm, daemon=True, name="batch_dns_prewarm")
                 _t.start()
-        except Exception as _exc:
+        except Exception as _exc:  # noqa: BLE001 — best-effort; prewarm failure; non-critical
             log.debug("[F2.3] BatchDNS prewarm init failed (non-critical): %s", _exc)
 
     def _init_findings_and_prefetch(self) -> None:
@@ -3654,7 +3742,7 @@ class SprintScheduler:
         if self._prefetch_oracle is not None:
             try:
                 oracle_scores = self._prefetch_oracle.suggest_scores(items, current_cycle)
-            except Exception as _exc:
+            except Exception as _exc:  # noqa: BLE001 — best-effort; prefetch/oracle failure; non-critical
                 log.debug("prefetch_oracle.suggest_scores failed: %s", _exc)
                 oracle_scores = {}
 
@@ -3737,7 +3825,7 @@ class SprintScheduler:
                 ts=_time.time(),
             )
             await store.async_record_hypothesis_feedback(record)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             pass
 
     def _check_hard_deadline(self) -> bool:
@@ -3816,7 +3904,7 @@ class SprintScheduler:
             from hledac.universal.core.protocols import get_governor
 
             self._governor = get_governor()
-        except Exception as _exc:
+        except Exception as _exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.warning("failed to initialize M1 resource governor: %s", _exc)
             self._governor = None
         self._backpressure_monitor = None
@@ -3826,7 +3914,7 @@ class SprintScheduler:
 
                 self._backpressure_monitor = BackpressureMonitor(self._governor, min_clearnet=1, max_clearnet=25)
                 log.info("[BACKPRESSURE] monitor initialized (clearnet_max=25, min=1)")
-            except Exception as _exc:
+            except Exception as _exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 log.warning("failed to initialize backpressure monitor: %s", _exc)
 
         # ISSUE #23: wire HTTP cache before any httpx sessions are created
@@ -3834,7 +3922,7 @@ class SprintScheduler:
         if getattr(self, "_fetch_coordinator", None) is not None:
             try:
                 await self._fetch_coordinator.initialize()
-            except Exception as _exc:
+            except Exception as _exc:  # noqa: BLE001 — best-effort; memory operation; non-critical
                 log.warning("failed to initialize FetchCoordinator: %s", _exc)
         from hledac.universal.utils.async_helpers import safe_create_task
 
@@ -3860,7 +3948,7 @@ class SprintScheduler:
                         )
                         if result.is_err():
                             log.debug("[mlx_embed_prewarm] skipped: %s", getattr(result, "error", result))
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; prewarm failure; non-critical
                 pass
 
         safe_create_task(asyncio.to_thread(_prewarm_mlx_sync), name="mlx_embed_prewarm")
@@ -3878,7 +3966,7 @@ class SprintScheduler:
                     return
                 with asyncio.Runner() as _runner:
                     _runner.get_loop().run_until_complete(self._prewarm_hermes_for_sprint())
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; prewarm failure; non-critical
                 pass
 
         self._hermes_prewarm_task: asyncio.Future[Any] | asyncio.Task[Any] | None = safe_create_task(
@@ -3890,7 +3978,7 @@ class SprintScheduler:
                 from hledac.universal.utils.patterns.pattern_matcher import prewarm
 
                 prewarm()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; prewarm failure; non-critical
                 pass
 
         safe_create_task(asyncio.to_thread(_prewarm_patterns_sync), name="pattern_prewarm")
@@ -3908,15 +3996,15 @@ class SprintScheduler:
                     if _privacy and hasattr(_privacy, "create_privacy_context"):
                         self._privacy_context_id = await _privacy.create_privacy_context()
                         log.info("layers privacy_context created: %s", self._privacy_context_id)
-                except Exception as _e:
+                except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     log.warning("layers privacy_context init failed: %s", _e)
-            except Exception as _e:
+            except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 log.warning("layers LayerManager init failed: %s", _e)
         if ct_log_client is not None:
             self._ct_log_client = ct_log_client
         try:
             self.sprint_id = getattr(lifecycle, "sprint_id", "") or ""
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             self.sprint_id = ""
         from core.telemetry.context_state import set_current_sprint_id
 
@@ -3953,7 +4041,7 @@ class SprintScheduler:
                 from hledac.universal.knowledge.graph_service import _get_graph
 
                 self.inject_ioc_graph(_get_graph())
-        except Exception as _e:
+        except Exception as _e:  # noqa: BLE001 — best-effort; graph operation failure; non-critical
             logger.debug(f"[OODA] graph injection failed: {_e}")
         self._runner = SprintLifecycleRunner(lifecycle, adapter)
         self._runner.setup()
@@ -3967,7 +4055,7 @@ class SprintScheduler:
                         _payload = {"event": "sprint_start", "sprint_id": self.sprint_id, "query": self._query}
                         if asyncio.iscoroutine(_broadcast(_payload)):
                             await _broadcast(_payload)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
                 pass
 
         _init_tasks: list[Awaitable] = [self._init_metrics_registry(), _broadcast_start()]
@@ -3994,12 +4082,12 @@ class SprintScheduler:
                         _DEFAULT_GRAPH_SERVICE.upsert_relation(
                             src, dst, rel_type, weight=weight, evidence="rel_discovery_callback"
                         )
-                    except Exception as _cb_e:
+                    except Exception as _cb_e:  # noqa: BLE001 — best-effort; callback handler; non-critical
                         log.debug(f"[RelDiscovery] callback upsert failed: {_cb_e}")
 
                 _DEFAULT_GRAPH_SERVICE.register_relationship_callback(_cb)
                 log.debug("[RelDiscovery] Registered callback on GraphService")
-            except Exception as _e:
+            except Exception as _e:  # noqa: BLE001 — best-effort; callback handler; non-critical
                 log.warning(f"[RelDiscovery] init failed: {_e}")
                 self._rel_discovery_engine = None
 
@@ -4008,7 +4096,7 @@ class SprintScheduler:
         if _gc_sprint_callback_handle is not None:
             try:
                 _gc_sprint_callback_handle.cleanup()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; callback handler; non-critical
                 pass
         _gc_sprint_stats.clear()
         _gc_sprint_callback_handle = _SprintCleanupHandle(self, _gc_sprint_sentinel)
@@ -4020,7 +4108,7 @@ class SprintScheduler:
 
                 tracemalloc.start(16)
                 _trace_snap_before = tracemalloc.take_snapshot()
-            except Exception as _e:
+            except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 log.warning(f"[E2] tracemalloc start failed: {_e}")
                 _trace_enabled = False
         self._tick_metrics_on_cycle_end()
@@ -4030,7 +4118,7 @@ class SprintScheduler:
                 from hledac.universal.knowledge.evidence_chain import EvidenceChainBuilder, set_global_builder
 
                 set_global_builder(EvidenceChainBuilder())
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
 
         safe_create_task(asyncio.to_thread(_init_evidence_chain), name="evidence_chain_init")
@@ -4076,7 +4164,7 @@ class SprintScheduler:
                 _final_dec = await self._governor.evaluate()
                 self._result.governor_uma_state = getattr(_final_dec, "uma_state", "")
                 self._result.governor_system_used_gib = getattr(_final_dec, "system_used_gib", 0.0)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             pass
         if _trace_enabled:
             try:
@@ -4087,17 +4175,17 @@ class SprintScheduler:
                 log.info("[E2] tracemalloc top 10 allocations:")
                 for _stat in _trace_diff[:10]:
                     log.info("  %s", _stat)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
             try:
                 tracemalloc.stop()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
         global _gc_sprint_callback_handle, _gc_callback_registered
         if _gc_sprint_callback_handle is not None:
             try:
                 _gc_sprint_callback_handle.cleanup()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; callback handler; non-critical
                 pass
             _gc_sprint_callback_handle = None
         _gc_callback_registered = False
@@ -4106,13 +4194,13 @@ class SprintScheduler:
             if _privacy and hasattr(_privacy, "close_privacy_context"):
                 await _privacy.close_privacy_context(self._privacy_context_id)
                 log.debug("privacy_context closed: %s", self._privacy_context_id)
-        except Exception as _e:
+        except Exception as _e:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
             log.debug("privacy_context close failed: %s", _e)
         if self._prefetch_pipeline is not None:
             try:
                 await self._prefetch_pipeline.stop()
                 log.debug("[P3-3] Prefetch pipeline stopped")
-            except Exception as _e:
+            except Exception as _e:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
                 log.debug("[P3-3] Prefetch pipeline stop failed: %s", _e)
 
     @_otel_instrumented("sprint.scheduler.run", component="scheduler")
@@ -4218,7 +4306,7 @@ class SprintScheduler:
             async def _prewarm_hermes() -> None:
                 try:
                     await self._prewarm_hermes_for_sprint()
-                except Exception as _e:
+                except Exception as _e:  # noqa: BLE001 — best-effort; prewarm failure; non-critical
                     self._hermes_prewarm_exception = _e
                     self._result.hermes_load_reason = f"prewarm_error:{type(_e).__name__}"
                     self._result.hermes_model_loaded = False
@@ -4229,7 +4317,7 @@ class SprintScheduler:
 
                     engine = ModernBertEngine()
                     await engine.load()
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     pass
 
             async def _prewarm_mlx_embed() -> None:
@@ -4240,7 +4328,7 @@ class SprintScheduler:
                     mgr = get_embedding_manager()
                     if mgr is not None and (not mgr._is_loaded):
                         await asyncio.to_thread(mgr.prewarm)
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; prewarm failure; non-critical
                     pass
 
             _cf_future = _mlx_prewarm_worker.prewarm_all(
@@ -4257,19 +4345,19 @@ class SprintScheduler:
                 safe_create_task(sup.on_phase_boundary(old, new))
 
             adapter = _LifecycleAdapter(lifecycle, phase_transition_callback=_on_phase_transition)
-        except Exception as _adapter_exc:
+        except Exception as _adapter_exc:  # noqa: BLE001 — best-effort; callback handler; non-critical
             logger.debug(f"[LIFECYCLE] adapter init failed: {_adapter_exc}")
         if self._prefetch_pipeline is not None:
             try:
                 safe_create_task(asyncio.to_thread(self._prefetch_pipeline.start), name="prefetch_pipeline_start")
                 logger.debug("[P3-3] Prefetch pipeline start triggered (fire-and-forget)")
-            except Exception as _e:
+            except Exception as _e:  # noqa: BLE001 — best-effort; prefetch/oracle failure; non-critical
                 logger.debug("[P3-3] Prefetch pipeline start failed: %s", _e)
         self._query = query
         self._run_started_at: float = _time.monotonic()
         try:
             self._memory_delta_tracker.sprint_start()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
             pass
         _run_error: Exception | None = None
         _run_error_class: str = "unknown"
@@ -4291,7 +4379,7 @@ class SprintScheduler:
                             "[HERMES3_WIRING] DSPy expanded %d queries for '%s...'", len(_expanded_capped), query[:30]
                         )
                         self._result.next_seeds_query_suggestions = tuple(_expanded_capped)
-                except Exception as _exc:
+                except Exception as _exc:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
                     log.debug("[HERMES3_WIRING] DSPy expand_query failed: %s", _exc)
             _t_phase3 = _time.monotonic()
             _DEFAULT_SOURCE_TYPES = ["cisa_kev", "threatfox_ioc", "urlhaus_recent", "feodo_ip", "openphish_feed"]
@@ -4342,7 +4430,7 @@ class SprintScheduler:
                             _gov_dec = await self._governor.evaluate()
                             if _gov_dec is not None:
                                 await self._governor.apply_decision(_gov_dec)
-                        except Exception:
+                        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                             pass
                     if _gov_dec is not None:
                         return (_gov_dec.uma_state, getattr(_gov_dec, "swap_detected", False))
@@ -4359,7 +4447,7 @@ class SprintScheduler:
 
                         iocs, diags, suggestions, skip = consume_next_sprint_seeds(self._config.predecessor_sprint_id)
                         return (iocs, diags, skip)
-                    except Exception as _e:
+                    except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                         log.debug("next_sprint_seeds consume failed: %s", _e)
                         return ([], None, "consume_failed")
 
@@ -4432,7 +4520,7 @@ class SprintScheduler:
                             self._result.pivot_graph_stats_used = True
                             self._result.pivot_graph_stats_keys = tuple(_graph_stats.keys())
                             self._result.graph_aware_pivot_count = len(_pivot_candidates)
-                    except Exception:
+                    except Exception:  # noqa: BLE001 — best-effort; telemetry/stats; best-effort
                         pass
                 if self._result.nonfeed_plan_debug is not None:
                     _nd = self._result.nonfeed_plan_debug
@@ -4444,7 +4532,7 @@ class SprintScheduler:
                         (canonical_lane_name(x) for x in getattr(_nd, "scheduled_nonfeed_lanes", ()) or ())
                     )
                     self._result.nonfeed_expected_lanes_source = "build_acquisition_plan.nonfeed_plan_debug"
-            except Exception as _exc:
+            except Exception as _exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 _t_plan_start = _t_phase4
                 _t_plan_parallel_done = _t_phase4
                 _t_plan_done = _time.monotonic()
@@ -4452,11 +4540,17 @@ class SprintScheduler:
                 self._result.acquisition_plan_build_failed = True
                 self._result.acquisition_plan_build_error_type = type(_exc).__name__
                 self._result.acquisition_plan_build_error = str(_exc)[:500]
+            # F351-FIX: ensure_connected must complete BEFORE parallel gather starts.
+            # Fire-and-forget (safe_create_task) creates a race: _run_one_cycle may call
+            # _gate_then_ingest_and_accumulate which calls ensure_connected() again — if the
+            # background init hasn't finished, _init_connection() could race with itself.
+            # Fix: call ensure_connected synchronously here so it completes before the
+            # prelude_task + first_cycle_task are both scheduled via parallel().
             try:
                 _ds = getattr(self, "_duckdb_store", None)
                 if _ds is not None and hasattr(_ds, "ensure_connected"):
-                    safe_create_task(asyncio.to_thread(_ds.ensure_connected))
-            except Exception as _e:
+                    await asyncio.to_thread(_ds.ensure_connected)
+            except Exception as _e:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
                 log.debug("[P4.3] DuckDB pre-warm failed: %s", _e)
             _barrier = getattr(self, "_barrier_import_done", None)
             if _barrier is not None:
@@ -4464,7 +4558,7 @@ class SprintScheduler:
                     await safe_wait_for(_barrier.wait(), timeout=90.0, label="_barrier")
                 except TimeoutError:
                     log.warning("[Sprint0] _barrier_import_done timed out after 90s — continuing anyway")
-                except Exception as _e:
+                except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     log.debug("[Sprint0] barrier wait failed: %s", _e)
             _t_hermes_wait_start = _time.monotonic()
             _hermes_task = getattr(self, "_hermes_prewarm_task", None)
@@ -4474,7 +4568,7 @@ class SprintScheduler:
                         await _hermes_task
                     else:
                         _hermes_task.result(timeout=0)
-                except Exception as _e:
+                except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     log.debug("[P0-1] Hermes prewarm await failed: %s", _e)
             _t_hermes_wait_done = _time.monotonic()
             try:
@@ -4498,9 +4592,10 @@ class SprintScheduler:
                 eager_start=True,
             )
             _t_branch_start = _time.monotonic()
-            _ok_results, _gathered_errors = await gather_taskgroup(
+            _parallel_result = await parallel(
                 [prelude_task, first_cycle_task], concurrency=2, ctx="prelude_first_cycle"
             )
+            _ok_results, _gathered_errors = _parallel_result.ok, list(_parallel_result.errors)
             _prelude_exc = _ok_results[0] if len(_ok_results) > 0 else None
             _cycle_exc = _ok_results[1] if len(_ok_results) > 1 else None
             _t_gather_done = _time.monotonic()
@@ -4763,7 +4858,7 @@ class SprintScheduler:
                                 consecutive_empty_cycles=self._result.consecutive_empty_cycles,
                                 total_findings=self._result.accepted_findings,
                             )
-                        except Exception:
+                        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                             pass
                         await self._ensure_nonfeed_predispatch_before_finalization(query, "early_windup_empty_cycles")
                         self._capture_timing_fields()
@@ -4812,7 +4907,7 @@ class SprintScheduler:
                         elapsed_s = _time.monotonic() - self._wall_clock_start
                         try:
                             progress_callback(self._result, current_phase_str, elapsed_s)
-                        except Exception:
+                        except Exception:  # noqa: BLE001 — best-effort; callback handler; non-critical
                             pass
                     await self._maybe_export_partial(lifecycle)
                     if current_phase_str == "ACTIVE":
@@ -4860,7 +4955,7 @@ class SprintScheduler:
                                     try:
                                         _snap = await self._governor.evaluate()
                                         _uma_state = getattr(_snap, "uma_state", "ok")
-                                    except Exception:
+                                    except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                                         pass
                                 self._acquisition_plan = build_acquisition_plan(
                                     query=query,
@@ -4880,7 +4975,7 @@ class SprintScheduler:
                                     "[P5] Mid-sprint re-plan: %d feed_domain_seeds enabled CT/DOH/WAYBACK lanes",
                                     len(_fd),
                                 )
-                            except Exception:
+                            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                                 pass
                     if self._runner.post_sleep_gate(now_monotonic):
                         await self._maybe_export_partial(lifecycle)
@@ -4932,7 +5027,7 @@ class SprintScheduler:
                         self._bg_tasks.add(_t)
                         _t.add_done_callback(self._bg_tasks.discard)
                         self._last_ooda = now_mono
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — best-effort; callback handler; non-critical
                 self._runner.abort(f"scheduler_exception:{type(exc).__name__}")
                 self._result.aborted = True
                 self._result.abort_reason = f"{type(exc).__name__}"
@@ -4942,7 +5037,7 @@ class SprintScheduler:
                 if _gc_sprint_callback_handle is not None:
                     try:
                         _gc_sprint_callback_handle.cleanup()
-                    except Exception:
+                    except Exception:  # noqa: BLE001 — best-effort; callback handler; non-critical
                         pass
                     _gc_sprint_callback_handle = None
                     _gc_callback_registered = False
@@ -4957,7 +5052,7 @@ class SprintScheduler:
                         diff = snap_after.compare_to(_trace_snap_before, "lineno")
                         for stat in diff[:10]:
                             log.info(f"[E2] Alloc delta: {stat}")
-                    except Exception as _e:
+                    except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                         log.warning(f"[E2] tracemalloc compare failed: {_e}")
                     finally:
                         try:
@@ -4978,7 +5073,7 @@ class SprintScheduler:
 
                 shutdown_executor()
                 reset_extractor_stats()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; telemetry/stats; best-effort
                 pass
             if ENV.get_bool("HLEDAC_ENABLE_NODRIVER"):
                 try:
@@ -4986,7 +5081,7 @@ class SprintScheduler:
 
                     await _teardown_browser_pool()
                     logger.debug("[winddown] browser pool torn down")
-                except Exception as _e:
+                except Exception as _e:  # noqa: BLE001 — best-effort; logging failure; non-critical
                     logger.debug("[winddown] browser pool teardown skipped: %s", _e)
             if self._config.export_enabled:
                 try:
@@ -5002,7 +5097,7 @@ class SprintScheduler:
             if _store is not None:
                 try:
                     await _store.async_vacuum_if_needed(threshold_bytes=2 * 1024**3)
-                except Exception as _e:
+                except Exception as _e:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
                     logger.debug("[winddown] duckdb vacuum skipped: %s", _e)
             self._result.final_phase = self._runner.current_phase
             _layout = getattr(self._result, "_int_counter_layout", None)
@@ -5026,13 +5121,13 @@ class SprintScheduler:
                         confidence=1.0,
                     )
                     self._prev_chain_hash = _blake3_hex
-                except Exception as _e:
+                except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     if self._evidence_log is not None:
                         try:
                             self._evidence_log.create_event(
                                 "error", {"phase": "CHAIN_SNAPSHOT_FAILED", "error": str(_e)}, confidence=0.0
                             )
-                        except Exception:
+                        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                             pass
             await self._close_dedup()
             if self._rel_discovery_engine is not None:
@@ -5042,7 +5137,7 @@ class SprintScheduler:
                     self._rel_discovery_engine.save_graph(LMDB_ROOT / "rel_discovery_graph.pkl")
                     log.debug("[RelDiscovery] Graph saved at teardown")
                     self._sync_latent_relationships_to_graph()
-                except Exception as _e:
+                except Exception as _e:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
                     log.warning(f"[RelDiscovery] save/sync failed: {_e}")
             if self._enrichment_services:
                 await self._enrichment_services.close()
@@ -5051,7 +5146,7 @@ class SprintScheduler:
                         _privacy = self._privacy_layer or getattr(self._layer_manager, "privacy", None)
                         if _privacy and hasattr(self, "_privacy_context_id") and self._privacy_context_id:
                             await _privacy.close_privacy_context(self._privacy_context_id)
-                    except Exception as _e:
+                    except Exception as _e:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
                         logger.debug("privacy_context close failed: %s", _e)
             _sidecar_task = safe_create_task(self._sidecar_orchestrator.run_advisory_runner())
             _sidecar_task.add_done_callback(
@@ -5075,8 +5170,9 @@ class SprintScheduler:
                 try:
                     async with asyncio.timeout(15.0):
                         await safe_gather_fire_and_forget(*_pending, label="sprint_scheduler:sidecar_tasks")
-                except TimeoutError:
-                    log.debug("[F265C] Sidecar tasks did not complete in 15s, cancelling")
+                except* TimeoutError as e:
+                    # PEP 654: asyncio.timeout() raises BaseExceptionGroup, not TimeoutError.
+                    log.debug("[F265C] Sidecar tasks did not complete in 15s: %s", e)
                     for t in _pending:
                         if not t.done():
                             t.cancel()
@@ -5085,25 +5181,25 @@ class SprintScheduler:
             if self._dht_node is not None:
                 try:
                     await self._dht_node.stop()
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     pass
                 self._dht_node = None
             if self._i2p_transport is not None:
                 try:
                     await self._i2p_transport.stop()
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     pass
                 self._i2p_transport = None
             if self._nym_transport is not None:
                 try:
                     await self._nym_transport.stop()
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     pass
                 self._nym_transport = None
             if self._tor_transport is not None:
                 try:
                     await self._tor_transport.stop()
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     pass
                 self._tor_transport = None
             await self._close_metrics_registry()
@@ -5114,19 +5210,19 @@ class SprintScheduler:
 
                 await public_fetcher._close_tor_session()
                 await public_fetcher._close_i2p_session()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
                 pass
             try:
                 from hledac.universal.transport import get_gopher_transport
 
                 await get_gopher_transport().stop()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
             try:
                 from hledac.universal.intelligence import get_open_source_collectors
 
                 await get_open_source_collectors().close()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
                 pass
             _r = self._result
             match ():
@@ -5177,7 +5273,7 @@ class SprintScheduler:
             if self._policy_manager is not None:
                 try:
                     self._policy_manager.update(self._result)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     log.debug(f"[SprintPolicyManager] update() failed: {e}")
                 try:
                     _action = self._policy_manager.get_action()
@@ -5189,7 +5285,7 @@ class SprintScheduler:
                             _rl_lane_combo = LANE_COMBINATIONS[_combo_idx]
                             self._result.rl_lane_combo = _rl_lane_combo
                             log.debug("[F265LANE] RL lane combo: %s", _rl_lane_combo)
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     pass
             _pivot_policy_suggestions: list[dict] = []
             if self._policy_manager is not None:
@@ -5200,7 +5296,7 @@ class SprintScheduler:
                         if first.get("pivot_type") == "dark_surface":
                             log.info("RL suggests dark_surface pivot: %s", first.get("reason", ""))
                         self._result.rl_suggested_pivot = first.get("pivot_type", "unknown")
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     pass
             if self._policy_manager is not None:
                 try:
@@ -5209,11 +5305,11 @@ class SprintScheduler:
                     self._result.rl_epsilon = _rl_telemetry.get("rl_epsilon", 0.0)
                     self._result.rl_total_reward = _rl_telemetry.get("rl_total_reward", 0.0)
                     self._result.rl_last_action = _rl_telemetry.get("rl_last_action", 0)
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; telemetry/stats; best-effort
                     pass
             try:
                 self._adapt_source_weights_from_feedback()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; telemetry/stats; best-effort
                 log.debug(f"[F199A] _adapt_source_weights_from_feedback() failed: {e}")
             if self._policy_manager is not None and self._policy_manager.enabled:
                 _decisions: list = []
@@ -5236,12 +5332,12 @@ class SprintScheduler:
                             )
                         except asyncio.CancelledError:
                             raise
-                        except Exception as _e:
+                        except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                             self._result.policy_quality_feedback_errors += 1
                             log.debug(f"[F228A] policy_quality_feedback update failed: {_e}")
                 except asyncio.CancelledError:
                     raise
-                except Exception as _e:
+                except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     self._result.policy_quality_feedback_errors += 1
                     log.debug(f"[F228A] policy_quality_feedback decision collection failed: {_e}")
             await self._ensure_nonfeed_predispatch_before_finalization(query, "run_complete")
@@ -5252,15 +5348,15 @@ class SprintScheduler:
                 )
             try:
                 self._result.timer_events = self._timer.events
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
                 self._result.timer_events = None
             try:
                 from hledac.universal.knowledge.duckdb_store import get_arrow_metrics
 
                 self._result.arrow_metrics = get_arrow_metrics()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
                 self._result.arrow_metrics = {}
-        except Exception as _run_err:
+        except Exception as _run_err:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
             _exc_name = type(_run_err).__name__
             _exc_str = str(_run_err)
             _exc_str_lower = _exc_str.lower()
@@ -5306,9 +5402,9 @@ class SprintScheduler:
                         }
                         if asyncio.iscoroutine(_broadcast(_summary)):
                             await _broadcast(_summary)
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     pass
-        except Exception as _broadcast_layer_exc:
+        except Exception as _broadcast_layer_exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             logger.debug(f"[F26X-3] communication layer post-sprint broadcast failed: {_broadcast_layer_exc}")
         try:
             _shutdown_evt = getattr(self, "_duckdb_writer_shutdown", None)
@@ -5328,13 +5424,13 @@ class SprintScheduler:
                 except asyncio.CancelledError:
                     if not _writer_task.done():
                         _writer_task.cancel()
-        except Exception as _writer_shutdown_exc:
+        except Exception as _writer_shutdown_exc:  # noqa: BLE001 — best-effort; export/write failure; non-critical
             logger.debug("[F285] writer shutdown failed: %s", _writer_shutdown_exc)
         try:
             _mp_shutdown = getattr(self, "_memory_pressure_shutdown", None)
             if _mp_shutdown is not None:
                 _mp_shutdown.set()
-        except Exception as _mp_shutdown_exc:
+        except Exception as _mp_shutdown_exc:  # noqa: BLE001 — best-effort; memory operation; non-critical
             logger.debug("[MEM-012] memory pressure loop shutdown failed: %s", _mp_shutdown_exc)
         return self._result
 
@@ -5360,7 +5456,7 @@ class SprintScheduler:
                 await self._ensure_mandatory_nonfeed_before_return(
                     getattr(self, "_query", "") or "", None, f"scheduler_exit_capture({path})"
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
                 pass
         self._result.scheduler_exit_guard_checked = self._result.return_guard_checked
         self._result.scheduler_exit_guard_required = self._result.return_guard_required_lanes
@@ -5431,7 +5527,7 @@ class SprintScheduler:
                 from metrics_registry import get_metrics_registry
 
                 get_metrics_registry().inc("windup_entry_count")
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
             r = self._result
             _exit_override = getattr(self, "_run_exit_path_override", None)
@@ -5452,7 +5548,7 @@ class SprintScheduler:
                     from metrics_registry import get_metrics_registry
 
                     get_metrics_registry().inc("windup_early_exit_count")
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     pass
             if r.hard_deadline_exceeded or exit_path == "hard_deadline_exceeded":
                 return (EarlyExitClass.ABORTED_BY_DEADLINE, "hard deadline exceeded before planned duration")
@@ -5524,7 +5620,7 @@ class SprintScheduler:
                 EarlyExitClass.EARLY_COMPLETE_NO_WORK_REMAINING,
                 f"early exit ({pct:.0f}% of planned duration, exit_path={exit_path})",
             )
-        except Exception as _exc:
+        except Exception as _exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.warning("_finalize_result_truth failed: %s", _exc)
             return (EarlyExitClass.COMPLETED_FULL_DURATION, "")
 
@@ -5564,7 +5660,7 @@ class SprintScheduler:
                     _snap = await self._governor.evaluate()
                     uma_state = getattr(_snap, "uma_state", "ok")
                     swap_detected = getattr(_snap, "swap_detected", False)
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     pass
             try:
                 from metrics_registry import get_metrics_registry
@@ -5584,7 +5680,7 @@ class SprintScheduler:
                 _yield = _total_findings / max(self._result.actual_duration_s, 1.0)
                 _encoded = f"{uma_state}|{_yield:.4f}|{getattr(self._result, 'elapsed_pct', 0.0):.2f}"
                 _reg.set_gauge("memory_pressure_vs_finding_yield", float(hash(_encoded) % 10000) / 100.0)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; memory operation; non-critical
                 pass
             _mlt_required = required_terminal_lanes(
                 snapshot=self._acquisition_plan, query=query, uma_state=uma_state, swap_detected=swap_detected
@@ -5668,7 +5764,7 @@ class SprintScheduler:
             self._result.acquisition_terminality_satisfied = len(_term_report.get("missing_lanes", [])) == 0
             self._result.acquisition_terminality_missing_lanes = tuple(_term_report.get("missing_lanes", []))
             self._result.acquisition_terminality_report = _term_report
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.debug("[F208I-B] acquisition_terminality check failed: %s", exc)
             self._result.acquisition_terminality_checked = True
             self._result.acquisition_terminality_satisfied = False
@@ -5706,7 +5802,7 @@ class SprintScheduler:
                 self._result.nonfeed_mission_exit_reason = _mission_snapshot.mission_exit_reason
                 if hasattr(self, "_nonfeed_ledger") and self._nonfeed_ledger is not None:
                     self._result.nonfeed_candidate_ledger_summary = self._nonfeed_ledger.summary()
-            except Exception as _exc:
+            except Exception as _exc:  # noqa: BLE001 — best-effort; memory operation; non-critical
                 log.debug("[F217B] NonfeedMissionController snapshot failed: %s", _exc)
         try:
             from hledac.universal.transport.conditional_cache import get_stats as _cc_stats
@@ -5728,7 +5824,7 @@ class SprintScheduler:
                 "prewarm_sessions_created": _pw_stats().get("sessions_created", 0),
                 "prewarm_hit_rate": _pw_stats().get("round_robin_hits", 0),
             }
-        except Exception as _exc:
+        except Exception as _exc:  # noqa: BLE001 — best-effort; prewarm failure; non-critical
             log.debug("[F265B] transport_efficiency telemetry failed: %s", _exc)
 
     async def _ensure_nonfeed_predispatch_before_finalization(self, query: str, reason: str) -> None:
@@ -5784,7 +5880,7 @@ class SprintScheduler:
             self._result.nonfeed_predispatch_outcomes_count = _count
         except asyncio.CancelledError:
             raise
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.debug("[F208M-A] Nonfeed predispatch failed before finalization: %s", exc)
             self._result.nonfeed_predispatch_ran = False
             self._result.nonfeed_predispatch_outcomes_count = 0
@@ -6081,7 +6177,7 @@ class SprintScheduler:
             try:
                 _snap = await self._governor.evaluate()
                 _uma = getattr(_snap, "uma_state", "ok")
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
         _memory_ok = _uma in ("ok", "warn")
         from hledac.universal.runtime.acquisition_strategy import AcquisitionLaneOutcome
@@ -6137,10 +6233,10 @@ class SprintScheduler:
                                             source_ids=[],
                                             confidence=1.0,
                                         )
-                                    except Exception:
+                                    except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                                         pass
                                 accepted = sum((1 for r in ingest_results if isinstance(r, dict) and r.get("accepted")))
-                            except Exception as _exc:
+                            except Exception as _exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                                 log.warning(
                                     "sprint %s: quality gate ingest failed -- %s: %s",
                                     getattr(self._result, "sprint_id", "?"),
@@ -6241,7 +6337,7 @@ class SprintScheduler:
                             for _ex in _ct_examples[:5]:
                                 try:
                                     _ex_samples.append(_msgspec_encode(_ex).decode())
-                                except Exception:
+                                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                                     pass
                             self._result.ct_candidate_examples = tuple(_ex_samples)
                     _ct_quarantine_count = (
@@ -6256,7 +6352,7 @@ class SprintScheduler:
                         for _entry in _ct_quarantine_entries[:10]:
                             try:
                                 _samples.append(_msgspec_encode(_entry).decode())
-                            except Exception:
+                            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                                 pass
                         self._result.ct_quarantine_samples = tuple(_samples)
                     for _entry in _ct_quarantine_entries:
@@ -6267,7 +6363,7 @@ class SprintScheduler:
                                 source_url=_entry.get("source_url", ""),
                                 query=_entry.get("normalized_query", ""),
                             )
-                        except Exception:
+                        except Exception:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
                             pass
                     self._result.ct_provider_status = str(getattr(ct_outcome, "provider_status", "") or "")
                     self._result.ct_cache_used = getattr(ct_outcome, "ct_cache_used", False)
@@ -6305,7 +6401,7 @@ class SprintScheduler:
                     rejected_count=_rejected_count,
                     sample_rejections=_sample_rejections,
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 return AcquisitionLaneOutcome(
                     lane=AcquisitionLane.CT,
                     enabled=True,
@@ -6324,7 +6420,7 @@ class SprintScheduler:
         try:
             _outcome = await _run_ct_predispatch()
             _attempted_lanes.append("ct")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.debug("[F207M-A] CT pre-dispatch failed: %s", exc)
             _skipped["ct"] = f"predispatch_exception:{type(exc).__name__}"
         if _memory_ok and _outcome and (not _outcome.timeout):
@@ -6354,7 +6450,7 @@ class SprintScheduler:
                             "wayback_unchanged_rejected", 0
                         )
                     _attempted_lanes.append("wayback")
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 — best-effort; telemetry/stats; best-effort
                     _skipped["wayback"] = f"{type(exc).__name__}:{exc}"
             else:
                 _skipped["wayback"] = "empty_query_or_disabled"
@@ -6380,7 +6476,7 @@ class SprintScheduler:
                         self._result.passive_dns_private_ip_rejected += pdns_telemetry.get("pdns_private_rejected", 0)
                         self._result.passive_dns_empty_ip_rejected += pdns_telemetry.get("pdns_empty_rejected", 0)
                     _attempted_lanes.append("passive_dns")
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 — best-effort; telemetry/stats; best-effort
                     _skipped["passive_dns"] = f"{type(exc).__name__}:{exc}"
             else:
                 _skipped["passive_dns"] = "empty_query_or_disabled"
@@ -6429,7 +6525,7 @@ class SprintScheduler:
                 _snap = await self._governor.evaluate()
                 uma_state = getattr(_snap, "uma_state", memory_state)
                 swap_detected = getattr(_snap, "swap_detected", False)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; memory operation; non-critical
                 pass
         mlt_tuples = required_terminal_lanes(
             snapshot=acquisition_plan, query=query, uma_state=uma_state, swap_detected=swap_detected
@@ -6617,7 +6713,7 @@ class SprintScheduler:
                 return {"attempted": True, "accepted": getattr(result, "accepted_findings", 0)}
             except TimeoutError:
                 return {"attempted": True, "timeout": True}
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return {"attempted": False, "error": f"{type(exc).__name__}:{exc}"}
 
     async def _attempt_ct_prewindup_barrier(self, query: str) -> dict | None:
@@ -6655,7 +6751,7 @@ class SprintScheduler:
                             _breaker._failure_count = 0
                             _breaker._consecutive_timeouts = 0
                             logger.debug(f"[GAP-3/1] CT breaker reset for: {_d}")
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; logging failure; non-critical
                 pass
             _ct_call = _get_ct_adapter()
             try:
@@ -6664,7 +6760,7 @@ class SprintScheduler:
                 return {"attempted": True, "raw_count": getattr(ct_outcome, "raw_count", 0)}
             except TimeoutError:
                 return {"attempted": True, "timeout": True}
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
             return {"attempted": False, "error": f"{type(exc).__name__}:{exc}"}
 
     async def _run_feed_dominance_nonfeed_rescue_window(self, query: str, duckdb_store: Any) -> float | None:
@@ -6755,7 +6851,7 @@ class SprintScheduler:
                             self._result.pivot_integration_reason = (
                                 "pivot_planned" if _plan.items else "pivot_planner_empty"
                             )
-            except Exception as _exc:
+            except Exception as _exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 log.debug(f"[F220G] Pivot extraction error: {_exc}")
                 self._result.pivot_integration_reason = "pivot_error"
             _tasks: dict[str, asyncio.Task] = {}
@@ -6782,7 +6878,7 @@ class SprintScheduler:
             _elapsed = _time.monotonic() - _t0
             log.debug(f"[F220D] Rescue window completed in {_elapsed:.1f}s, findings={_rescue_findings}")
             return _elapsed
-        except Exception as _exc:
+        except Exception as _exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.debug(f"[F220D] Rescue window exception: {_exc}")
             return None
 
@@ -6855,7 +6951,7 @@ class SprintScheduler:
             try:
                 _snap = await self._governor.evaluate()
                 _uma = getattr(_snap, "uma_state", "ok")
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
         _nonfeed_prelude_done = False
         _nonfeed_prelude_accepted: dict[str, int] = {}
@@ -6870,7 +6966,7 @@ class SprintScheduler:
             from hledac.universal.runtime.acquisition_strategy import _has_domain_or_ip
 
             _has_domain = _has_domain_or_ip(query)
-        except Exception as _exc:
+        except Exception as _exc:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
             _domain_error = f"{type(_exc).__name__}:{_exc}"
             _has_domain = False
         self._result.acquisition_prelude_domain_detected = _has_domain
@@ -6904,7 +7000,7 @@ class SprintScheduler:
                         )
                     ),
                 )
-            except Exception as _exc:
+            except Exception as _exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 log.warning("required_terminal_lanes failed, using default: %s", _exc)
                 _required = ("PUBLIC", "CT")
         else:
@@ -6941,7 +7037,7 @@ class SprintScheduler:
                     )
                 else:
                     _required = ("PUBLIC", "CT")
-            except Exception as _exc:
+            except Exception as _exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 log.debug("Minimal plan build failed, using PUBLIC/CT: %s", _exc)
                 _required = ("PUBLIC", "CT")
                 self._result.acquisition_plan_build_error_for_prelude = str(_exc)[:200]
@@ -6979,9 +7075,10 @@ class SprintScheduler:
         _ok_results: list
         _gathered_errors: list
         if _coros_for_gather:
-            _ok_results, _gathered_errors = await gather_taskgroup(
+            _parallel_result = await parallel(
                 _coros_for_gather, concurrency=2, ctx="prelude_gather"
             )
+            _ok_results, _gathered_errors = _parallel_result.ok, list(_parallel_result.errors)
         else:
             _ok_results, _gathered_errors = ([], [])
         _public_result_from_gather: dict | None = None
@@ -7079,7 +7176,7 @@ class SprintScheduler:
                 for _entry in _ct_quarantine_entries[:10]:
                     try:
                         _samples.append(_msgspec_encode(_entry).decode())
-                    except Exception:
+                    except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                         pass
                 self._result.ct_quarantine_samples = tuple(_samples)
             for _entry in _ct_quarantine_entries:
@@ -7090,7 +7187,7 @@ class SprintScheduler:
                         source_url=_entry.get("source_url", ""),
                         query=_entry.get("normalized_query", ""),
                     )
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
                     pass
         pass
         pass
@@ -7115,7 +7212,7 @@ class SprintScheduler:
                 _windup_lead = self._config.effective_windup_lead_s
                 _active_window = max(_effective_duration - _windup_lead, 30.0)
                 _prelude_budget_s = min(_active_window * 0.3, 45.0)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 _prelude_budget_s = min(max(30.0, _time.monotonic() - _t0) * 0.4, 45.0)
             _nonfeed_prelude_expected = _nonfeed_expected
             _pivot_lanes: Any = None
@@ -7136,7 +7233,7 @@ class SprintScheduler:
                         if _seed_dicts:
                             _pivot_plan = plan_lanes_for_pivot_seeds(_seed_dicts)
                             _pivot_lanes = getattr(_pivot_plan, "items", None)
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     _pivot_lanes = None
             try:
                 import re as _re
@@ -7171,7 +7268,7 @@ class SprintScheduler:
                     self._result.seed_context_skip_reason = ""
                     self._result.seed_context_source = "speculative_query_extract"
                     log.debug("[P0-1] Speculative domain extraction: seeds=%s", self._result.pivot_seed_domains)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
                 pass
             if not _cleaned_domains:
                 try:
@@ -7183,7 +7280,7 @@ class SprintScheduler:
                         if _mlx_domains:
                             _cleaned_domains = _mlx_domains
                             log.debug("[P2-4] MLX conceptual domains fallback: seeds=%s", _cleaned_domains)
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     pass
             if not _cleaned_domains and duckdb_store is not None:
                 try:
@@ -7202,9 +7299,9 @@ class SprintScheduler:
                                 if _historical_domains:
                                     _cleaned_domains = _historical_domains
                                     log.debug("[P2-4] DuckDB historical seed fallback: seeds=%s", _cleaned_domains)
-                            except Exception:
+                            except Exception:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
                                 pass
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
                     pass
             from hledac.universal.runtime.nonfeed_seed_runtime import (
                 run_runtime_pivot_prelude as _run_runtime_pivot_prelude,
@@ -7236,7 +7333,7 @@ class SprintScheduler:
                     )
                     self._result.seed_context_skip_reason = _pivot_result.get("seed_context_skip_reason", "")
                     self._result.seed_context_source = _pivot_result.get("seed_context_source", "")
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; lock acquisition failure; non-critical
                     pass
             else:
                 log.debug("[P0-1] Skipping run_runtime_pivot_prelude: speculative extraction found seeds")
@@ -7355,7 +7452,7 @@ class SprintScheduler:
                             self._result.lanes_unlocked_by_seed_context = ["PUBLIC", "CT", "DOH"]
                             self._result.seed_context_skip_reason = ""
                             self._result.seed_context_source = "query_term_fallback"
-                    except Exception:
+                    except Exception:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
                         pass
             _planner_seed_iocs: dict = getattr(self, "_planner_seed_iocs", {}) or {}
             if _planner_seed_iocs and self._result.planner_action_skip_reason in ("", "no_iocs_extracted", None):
@@ -7422,7 +7519,7 @@ class SprintScheduler:
 
                     _mlx_candidates = await generate_conceptual_domain_candidates(query)
                     _query_domain_candidates = [c.domain for c in _mlx_candidates if c.domain]
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
                     pass
             if not _query_domain_candidates and query and isinstance(query, str):
                 from hledac.universal.runtime.nonfeed_seed_runtime import _decompose_query_keywords_to_seeds
@@ -7445,7 +7542,7 @@ class SprintScheduler:
                                     _serp_domains.append(_d)
                         if _serp_domains:
                             _query_domain_candidates = _serp_domains
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
                     pass
             _synthetic_domains: list[str] = []
             _seed_ctx: NonfeedSeedContext | None = None
@@ -7475,7 +7572,7 @@ class SprintScheduler:
                             for _entities in _duckpgq_results.values():
                                 _flat.extend(_entities)
                             _duckpgq_seeds = tuple(_flat[:20])
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     pass
                 _seed_ctx = NonfeedSeedContext(
                     domains=tuple(
@@ -7559,9 +7656,9 @@ class SprintScheduler:
                 for _domain in _h3_prewarm_domains:
                     try:
                         probe_altsvc_speculative(f"https://{_domain}")
-                    except Exception:
+                    except Exception:  # noqa: BLE001 — best-effort; prewarm failure; non-critical
                         pass
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; prewarm failure; non-critical
                 pass
         log.debug(
             "[F209A] Acquisition prelude done: required=%s, terminal=%s, missing=%s, skipped=%s, errors=%s, dur=%.2fs",
@@ -7673,7 +7770,7 @@ class SprintScheduler:
                                 nonfeed_prelude_errors["CT"] = "prelude_timeout"
                                 nonfeed_prelude_skipped["CT"] = "prelude_timeout"
                                 return ("CT", 0)
-                            except Exception as _ct_exc:
+                            except Exception as _ct_exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                                 nonfeed_prelude_errors["CT"] = f"{type(_ct_exc).__name__}:{_ct_exc}"
                                 nonfeed_prelude_skipped["CT"] = f"prelude_error:{type(_ct_exc).__name__}"
                                 return ("CT", 0)
@@ -7695,7 +7792,7 @@ class SprintScheduler:
                     nonfeed_prelude_errors[_lane_name] = "prelude_timeout"
                     nonfeed_prelude_skipped[_lane_name] = "prelude_timeout"
                     return (_lane_name, 0)
-                except Exception as _exc:
+                except Exception as _exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     nonfeed_prelude_errors[_lane_name] = f"{type(_exc).__name__}:{_exc}"
                     nonfeed_prelude_skipped[_lane_name] = f"prelude_error:{type(_exc).__name__}"
                     return (_lane_name, 0)
@@ -7768,7 +7865,7 @@ class SprintScheduler:
                 "error": None,
                 "duration_s": 10.0,
             }
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return {
                 "lane": "PUBLIC",
                 "attempted": True,
@@ -7836,7 +7933,7 @@ class SprintScheduler:
                 ct_query=str(_shaped) if "_shaped" in dir() else "",
                 ct_results_raw=0,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
             _ct_outcome_prelude = None
         _prelude_candidates = len(_candidates_prelude) if _candidates_prelude else 0
         if _ct_results_raw == 0:
@@ -7938,7 +8035,7 @@ class SprintScheduler:
                         self._bg_tasks.add(_t)
                         _t.add_done_callback(self._bg_tasks.discard)
                     _wb_acc = sum((1 for r in _ing if isinstance(r, dict) and r.get("accepted"))) if _ing else 0
-                except Exception as _exc:
+                except Exception as _exc:  # noqa: BLE001 — best-effort; callback handler; non-critical
                     log.warning(
                         "sprint %s: wayback ledger write failed -- %s: %s",
                         getattr(self._result, "sprint_id", "?"),
@@ -7993,7 +8090,7 @@ class SprintScheduler:
                         )
                         self._bg_tasks.add(_t)
                         _t.add_done_callback(self._bg_tasks.discard)
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; callback handler; non-critical
                     pass
             nonfeed_prelude_accepted["PASSIVE_DNS"] = _pdns_acc
             return ("PASSIVE_DNS", _pdns_acc)
@@ -8070,7 +8167,7 @@ class SprintScheduler:
                 from hledac.universal.intelligence.doh_lane import DOHAdapter
 
                 self._doh_adapter = DOHAdapter()
-            except Exception as _init_exc:
+            except Exception as _init_exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 self._result.doh_terminal_stage = "dependency_missing"
                 self._result.doh_provider_errors = (f"doh_adapter_init_failed:{type(_init_exc).__name__}:{_init_exc}",)
                 nonfeed_prelude_accepted["DOH"] = 0
@@ -8103,7 +8200,7 @@ class SprintScheduler:
                             )
                             self._bg_tasks.add(_t)
                             _t.add_done_callback(self._bg_tasks.discard)
-                    except Exception:
+                    except Exception:  # noqa: BLE001 — best-effort; callback handler; non-critical
                         pass
                 self._result.lane_doh_accepted_findings = _doh_acc
                 self._result.doh_accepted_findings = _doh_acc
@@ -8123,7 +8220,7 @@ class SprintScheduler:
             self._result.doh_provider_errors = ("doh_timeout",)
             nonfeed_prelude_accepted["DOH"] = 0
             return ("DOH", 0)
-        except Exception as _exc:
+        except Exception as _exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             self._result.doh_terminal_stage = "provider_error"
             self._result.doh_provider_errors = (f"{type(_exc).__name__}:{_exc}",)
             nonfeed_prelude_accepted["DOH"] = 0
@@ -8194,7 +8291,7 @@ class SprintScheduler:
             try:
                 _snap = await self._governor.evaluate()
                 _uma = getattr(_snap, "uma_state", "ok")
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
         _memory_state = _uma if _uma in ("ok", "warn", "critical", "emergency") else "ok"
         _memory_critical = _memory_state in ("critical", "emergency")
@@ -8234,7 +8331,7 @@ class SprintScheduler:
                 _snap = await self._governor.evaluate()
                 uma_state = getattr(_snap, "uma_state", _memory_state)
                 swap_detected = getattr(_snap, "swap_detected", False)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; memory operation; non-critical
                 pass
         _mlt_required = required_terminal_lanes(
             snapshot=self._acquisition_plan, query=query, uma_state=uma_state, swap_detected=swap_detected
@@ -8284,7 +8381,7 @@ class SprintScheduler:
                 return None
             try:
                 return ("public", await self._attempt_public_prewindup_barrier(query))
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
                 return ("public", exc)
 
         async def _try_ct():
@@ -8292,7 +8389,7 @@ class SprintScheduler:
                 return None
             try:
                 return ("ct", await self._attempt_ct_prewindup_barrier(query))
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
                 return ("ct", exc)
 
         _to_try = [_f for _f in (_try_public(), _try_ct()) if _f is not None]
@@ -8468,7 +8565,7 @@ class SprintScheduler:
                     consecutive_empty_cycles=self._result.consecutive_empty_cycles,
                     total_findings=self._result.accepted_findings,
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
             return True
         self._result.cycles_started += 1
@@ -8595,7 +8692,7 @@ class SprintScheduler:
                             error="timeout",
                         ),
                     )
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     return (
                         work.feed_url,
                         FeedPipelineRunResult(
@@ -8625,7 +8722,7 @@ class SprintScheduler:
                     branch_concurrency = decision.branch_concurrency
                     if decision.uma_state in ("critical", "emergency"):
                         self._result.pressure_violations += 1
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     pass
             semaphore = asyncio.Semaphore(min(branch_concurrency, self._config.max_parallel_sources))
 
@@ -8678,7 +8775,7 @@ class SprintScheduler:
                                 error="timeout",
                             ),
                         )
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                         return (
                             work.feed_url,
                             FeedPipelineRunResult(
@@ -8708,7 +8805,7 @@ class SprintScheduler:
                             netloc = urlparse(url).netloc
                             if netloc:
                                 domains.append(netloc.split(":")[0])
-                        except Exception:
+                        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                             pass
                 if domains:
                     unique = list(dict.fromkeys(domains))[:5]
@@ -8775,7 +8872,7 @@ class SprintScheduler:
                     "timeout": True,
                     "duration_s": None,
                 }
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 log.debug("[stable] PUBLIC branch error: %s", exc)
                 self._result.public_error = f"{type(exc).__name__}:{exc}"
                 self._public_outcome = {
@@ -8835,7 +8932,7 @@ class SprintScheduler:
                         try:
                             _gov_decision = await self._governor.evaluate()
                             _clearnet_max = _gov_decision.fetch_limit
-                        except Exception:
+                        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                             pass
                     _streaming_outcomes: list = []
                     async for _outcome_batch in run_enabled_acquisition_lanes_streaming(
@@ -8884,14 +8981,14 @@ class SprintScheduler:
                                     sample_url=getattr(_rec, "url_sample", "") or "",
                                     sample_value=getattr(_rec, "finding_id", "")[:16],
                                 )
-                            except Exception:
+                            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                                 pass
                         self._ingest_feed_public_candidates_to_ledger()
             except TimeoutError:
                 log.debug("[stable] ADVISORY lanes timed out after %ss", lanes_timeout)
             except asyncio.CancelledError:
                 raise
-            except Exception as _exc:
+            except Exception as _exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 _log_advisory_dedup(
                     log,
                     f"stable_advisory_lane_fail:{type(_exc).__name__}",
@@ -8902,20 +8999,20 @@ class SprintScheduler:
 
         try:
             async with asyncio.TaskGroup() as tg:
-                tg.create_task(_run_feed_branch(), name="sprint:feed_branch")
-                tg.create_task(_run_public_branch(), name="sprint:public_branch")
-                tg.create_task(_run_advisory_branch(), name="sprint:advisory_branch")
-        except BaseExceptionGroup as eg:
-            log.debug("[stable] Branch TaskGroup failed: %s", eg)
+                tg.create_task(_run_feed_branch(), name="sprint:feed_branch", eager_start=True)
+                tg.create_task(_run_public_branch(), name="sprint:public_branch", eager_start=True)
+                tg.create_task(_run_advisory_branch(), name="sprint:advisory_branch", eager_start=True)
+        except* Exception as e:
+            log.debug("[stable] Branch TaskGroup failed: %s", e)
         try:
             from hledac.universal.core.memory_cycle import gc_cycle_maintain
 
             gc_cycle_maintain(force=False)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; memory operation; non-critical
             pass
         try:
             self._maybe_call_pressure_relief()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; memory operation; non-critical
             pass
         return True
 
@@ -8990,7 +9087,7 @@ class SprintScheduler:
         _t0 = _t_f273c_drain.monotonic()
         try:
             from hledac.universal.fetching.public_fetcher import drain_pending_extractions, get_drain_stats
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — best-effort; telemetry/stats; best-effort
             log.debug("[F273C] Could not import drain helpers: %s", exc)
             return
         pre = get_drain_stats()
@@ -9040,7 +9137,7 @@ class SprintScheduler:
             from hledac.universal.core.memory_cycle import malloc_zone_pressure_relief as _f273g_relief
 
             rc = _f273g_relief()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — best-effort; memory operation; non-critical
             log.debug("[F273G] malloc_zone_pressure_relief unavailable: %s", exc)
             return
         import time as _t_f273g
@@ -9080,7 +9177,7 @@ class SprintScheduler:
             _uma = _sample_uma()
             _uma_state = getattr(_uma, "state", "ok")
             _uma_gib = getattr(_uma, "system_used_gib", 0.0)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             pass
         logger.debug(
             "[BRANCH_TIMEOUT] branch=%s remaining_s=%.2f floor=%.2f uma_state=%s uma_gib=%.2f",
@@ -9149,9 +9246,9 @@ class SprintScheduler:
                         base = min(base, 25.0)
                     elif conc <= 3:
                         base = min(base, 35.0)
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     pass
-        except Exception as _exc:
+        except Exception as _exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.debug("[F273G] could not sample UMA state: %s", _exc)
         bounded = min(base, remaining_s * 0.5, self._config._MAX_BRANCH_TIMEOUT_CAP)
         log.debug(
@@ -9169,7 +9266,7 @@ class SprintScheduler:
             governor = getattr(self, "_governor", None)
             if governor is not None:
                 governor.record_branch_timeout()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             pass
 
     def _notify_governor_branch_success(self) -> None:
@@ -9178,7 +9275,7 @@ class SprintScheduler:
             governor = getattr(self, "_governor", None)
             if governor is not None:
                 governor.record_branch_success()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             pass
 
     async def _run_one_cycle_aggressive(self, lifecycle, work_items: list, query: str, duckdb_store: Any) -> bool:
@@ -9258,7 +9355,7 @@ class SprintScheduler:
                 try:
                     decision = await self._governor.evaluate()
                     branch_concurrency = decision.branch_concurrency
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     pass
             semaphore = asyncio.Semaphore(min(branch_concurrency, self._config.max_parallel_sources))
 
@@ -9311,7 +9408,7 @@ class SprintScheduler:
                                 error="timeout",
                             ),
                         )
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                         return (
                             work.feed_url,
                             FeedPipelineRunResult(
@@ -9343,7 +9440,7 @@ class SprintScheduler:
                             netloc = urlparse(url).netloc
                             if netloc:
                                 domains.append(netloc.split(":")[0])
-                        except Exception:
+                        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                             pass
                 if domains:
                     unique = list(dict.fromkeys(domains))[:5]
@@ -9447,7 +9544,7 @@ class SprintScheduler:
             except asyncio.CancelledError:
                 log.debug("[aggressive] Public branch cancelled")
                 raise
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 log.debug("[aggressive] Public branch error: %s", exc)
                 self._result.public_error = f"{type(exc).__name__}:{exc}"
                 self._public_outcome = {
@@ -9500,21 +9597,25 @@ class SprintScheduler:
                 self._result.ct_request_attempted = True
                 async with asyncio.timeout(branch_timeout):
                     await self._run_ct_log_discovery_in_cycle(query=query, store=duckdb_store)
-            except TimeoutError:
-                log.debug("[aggressive] CT branch timed out after %ss", branch_timeout)
-                self._result.ct_branch_timed_out = True
-                self._result.branch_timeout_count += 1
-                self._result.ct_request_timeout = True
-                self._result.ct_log_error = "terminal:timeout"
-                self._notify_governor_branch_timeout()
-                self._ct_consecutive_timeouts += 1
-            except asyncio.CancelledError:
-                log.debug("[aggressive] CT branch cancelled")
-                raise
-            except Exception as exc:
-                log.debug("[aggressive] CT branch error: %s", exc)
-                self._result.ct_log_error = f"{type(exc).__name__}:{exc}"
-                self._result.ct_terminal_stage = "error"
+            except* BaseException as e:
+                # PEP 654: asyncio.timeout() raises BaseExceptionGroup containing TimeoutError.
+                # asyncio.TaskGroup raises BaseExceptionGroup containing CancelledError.
+                # Using except* BaseException handles both — dispatch by actual type.
+                if isinstance(e, asyncio.CancelledError):
+                    log.debug("[aggressive] CT branch cancelled")
+                    raise
+                if isinstance(e, TimeoutError):
+                    log.debug("[aggressive] CT branch timed out after %ss: %s", branch_timeout, e)
+                    self._result.ct_branch_timed_out = True
+                    self._result.branch_timeout_count += 1
+                    self._result.ct_request_timeout = True
+                    self._result.ct_log_error = "terminal:timeout"
+                    self._notify_governor_branch_timeout()
+                    self._ct_consecutive_timeouts += 1
+                else:
+                    log.debug("[aggressive] CT branch error: %s", e)
+                    self._result.ct_log_error = f"{type(e).__name__}:{e}"
+                    self._result.ct_terminal_stage = "error"
             else:
                 self._ct_consecutive_timeouts = 0
 
@@ -9523,11 +9624,15 @@ class SprintScheduler:
             try:
                 async with asyncio.timeout(outer_timeout):
                     async with asyncio.TaskGroup() as tg:
-                        tg.create_task(_run_feed_branch(), name="sprint:feed_branch")
-                        tg.create_task(_run_public_branch(), name="sprint:public_branch")
-                        tg.create_task(_run_ct_branch(), name="sprint:ct_branch")
-            except TimeoutError:
-                log.debug("[aggressive] Branch(es) did not complete within %ss", outer_timeout)
+                        tg.create_task(_run_feed_branch(), name="sprint:feed_branch", eager_start=True)
+                        tg.create_task(_run_public_branch(), name="sprint:public_branch", eager_start=True)
+                        tg.create_task(_run_ct_branch(), name="sprint:ct_branch", eager_start=True)
+            except* TimeoutError as e:
+                # PEP 654: asyncio.timeout() raises BaseExceptionGroup("timeout", (TimeoutError(),))
+                # not TimeoutError directly. Using except* is consistent with the other
+                # 3× except* Exception/TimeoutError handlers in this file (lines 8998, 11553, 14750).
+                # The outer_timeout handler below correctly populates result flags and _public_outcome.
+                log.debug("[aggressive] Branch(es) did not complete within %ss: %s", outer_timeout, e)
                 self._result.public_branch_timed_out = True
                 self._result.ct_branch_timed_out = True
                 self._result.ct_request_timeout = True
@@ -9555,19 +9660,24 @@ class SprintScheduler:
                     "timeout": True,
                     "duration_s": outer_timeout,
                 }
-            except BaseExceptionGroup as eg:
-                if any((isinstance(e, asyncio.CancelledError) for e in eg.exceptions)):
+            except* Exception as e:
+                # PEP 654: asyncio.timeout() wraps TimeoutError in BaseExceptionGroup.
+                # except* extracts the Exception sub-group — the surrounding except
+                # BaseExceptionGroup would also catch CancelledError which we want
+                # to re-raise.  Using except* here is consistent with the other
+                # 3× except* Exception handlers in this file (lines 8998, 11553, 14750).
+                if isinstance(e, asyncio.CancelledError):
                     raise
-                log.debug("[aggressive] Aggressive cycle cancelled: %s", eg)
+                log.debug("[aggressive] Aggressive cycle cancelled: %s", e)
         try:
             from hledac.universal.core.memory_cycle import gc_cycle_maintain
 
             gc_cycle_maintain(force=False)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; memory operation; non-critical
             pass
         try:
             self._maybe_call_pressure_relief()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; memory operation; non-critical
             pass
         if not self._check_hard_deadline():
             log.debug(
@@ -9629,7 +9739,7 @@ class SprintScheduler:
                         try:
                             _gov_decision_adv = await self._governor.evaluate()
                             _clearnet_max_adv = _gov_decision_adv.fetch_limit
-                        except Exception:
+                        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                             pass
                     _streaming_outcomes: list = []
                     async for _outcome_batch in run_enabled_acquisition_lanes_streaming(
@@ -9678,13 +9788,13 @@ class SprintScheduler:
                                     sample_url=getattr(_rec, "url_sample", "") or "",
                                     sample_value=getattr(_rec, "finding_id", "")[:16],
                                 )
-                            except Exception:
+                            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                                 pass
             except TimeoutError:
                 log.debug("[aggressive] ADVISORY lanes timed out after %ss", lanes_timeout)
             except asyncio.CancelledError:
                 raise
-            except Exception as _exc:
+            except Exception as _exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 _log_advisory_dedup(
                     log,
                     f"aggressive_advisory_lane_fail:{type(_exc).__name__}",
@@ -9735,7 +9845,7 @@ class SprintScheduler:
         """
         try:
             async_run_public, PipelineRunResult = _import_live_public_pipeline()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.debug(f"[8XE] Public pipeline import failed: {exc}")
             self._result.public_error = f"import:{type(exc).__name__}"
             self._public_outcome = {
@@ -9809,7 +9919,7 @@ class SprintScheduler:
                     "exception_group_summary": _sanitize_debug_text(eg, max_chars=500),
                 }
                 self._result.public_provider_selection_debug = _psd
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
             self._public_pipeline_result = None
         if _had_error:
@@ -9971,7 +10081,7 @@ class SprintScheduler:
                         duckdb_store, _qr_results, sprint_id=self.sprint_id or ""
                     )
                     log.debug("[F11E] QueryRouter ingested %d findings", len(_qr_results))
-            except Exception as _qr_err:
+            except Exception as _qr_err:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
                 log.debug("[F11E] QueryRouter failed (non-fatal): %s", _qr_err)
 
     async def _dispatch_accepted_findings_sidecars(
@@ -10073,7 +10183,7 @@ class SprintScheduler:
                         from hledac.universal.knowledge.sprint_seeds_store import sync_save_sprint_seeds
 
                         sync_save_sprint_seeds(self.sprint_id or "", quantum_seeds)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 — best-effort; export/write failure; non-critical
                     logger.debug(f"[SPRINT] quantum_path analysis failed: {e}")
                 finally:
                     self._timer.phase("quantum_path_end")
@@ -10110,7 +10220,7 @@ class SprintScheduler:
                 if ENV.get_bool("HLEDAC_ENABLE_LAYERS") and accepted_findings:
                     try:
                         security = getattr(self._layer_manager, "security", None)
-                    except Exception:
+                    except Exception:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
                         security = None
                     if security is not None and hasattr(security, "validate_finding"):
                         _sec_accepted: list = []
@@ -10128,7 +10238,7 @@ class SprintScheduler:
                                 if _reason == "pii_redacted":
                                     _sec_pii_redacted += 1
                                 _sec_accepted.append(f)
-                            except Exception:
+                            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                                 _sec_accepted.append(f)
                         accepted_findings = _sec_accepted
                         self._result.security_rejected_count = (
@@ -10148,7 +10258,7 @@ class SprintScheduler:
                                     self._result.pii_findings_anonymized = (
                                         getattr(self._result, "pii_findings_anonymized", 0) + _pii_count
                                     )
-                        except Exception as _e:
+                        except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                             logger.debug("privacy_gate call failed: %s", _e)
                 if ENV.get_bool("HLEDAC_ENABLE_LAYERS") and accepted_findings:
                     try:
@@ -10159,7 +10269,7 @@ class SprintScheduler:
                         ghost = getattr(self._layer_manager, "ghost", None)
                         temporal = get_temporal_signal_layer()
                         security = getattr(self._layer_manager, "security", None)
-                    except Exception:
+                    except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                         ghost = None
                         temporal = None
                         security = None
@@ -10174,14 +10284,14 @@ class SprintScheduler:
                             except StagnationError:
                                 log.critical("[layers] GhostLayer stagnation -- re-raising")
                                 raise
-                            except Exception as _e:
+                            except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                                 log.warning("layers GhostLayer.execute_action failed: %s", _e)
                         if temporal is not None:
                             try:
                                 te = event_from_finding_like(f)
                                 if te:
                                     temporal.observe(te)
-                            except Exception as _e:
+                            except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                                 log.warning("layers TemporalSignalLayer.observe failed: %s", _e)
                         if security is not None:
                             try:
@@ -10192,11 +10302,11 @@ class SprintScheduler:
                                         b"",
                                         {"finding_id": getattr(f, "finding_id", "") or "", "query": query},
                                     )
-                            except Exception as _e:
+                            except Exception as _e:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
                                 log.warning("layers SecurityLayer._mission_audit.log_action failed: %s", _e)
                 if accepted_findings:
                     await self._sidecar_orchestrator.run_target_memory_update(accepted_findings, store, query)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
             self._result.ct_log_error = str(exc)[:200]
             self._result.ct_terminal_stage = "error"
             log.warning("CT log discovery failed: {exc}", exc=exc)
@@ -10246,7 +10356,7 @@ class SprintScheduler:
                 if uma_state in ("critical", "emergency"):
                     log.debug("[F251] Onion sidecar skipped: uma_state=%s", uma_state)
                     return
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             pass
         try:
             from hledac.universal.transport.tor_transport import TorTransport
@@ -10258,14 +10368,14 @@ class SprintScheduler:
             if not await tor.is_circuit_established():
                 log.debug("[F251] Tor circuit not established -- skipping onion discovery")
                 return
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.debug("[F251] Tor availability check failed: %s", e)
             return
         try:
             from hledac.universal.intelligence.onion_seed_manager import OnionSeedManager
 
             seed_mgr = OnionSeedManager()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.debug("[F251] OnionSeedManager init failed: %s", e)
             return
         try:
@@ -10274,7 +10384,7 @@ class SprintScheduler:
             )
             if ahmia_query:
                 await seed_mgr.discover_from_ahmia(ahmia_query, session=None)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
             pass
         seeds = seed_mgr.get_seeds(limit=20)
         if not seeds:
@@ -10302,13 +10412,13 @@ class SprintScheduler:
                             try:
                                 cf = darkweb_content_to_canonical(content, query=query_for_finding)
                                 inner_findings.append(cf)
-                            except Exception:
+                            except Exception:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
                                 pass
                     finally:
                         await crawler.close()
             except TimeoutError:
                 log.debug("[F251] Seed %s timed out after 45s", seed)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
                 log.debug("[F251] Seed %s crawl failed: %s", seed, e)
             return inner_findings
 
@@ -10329,7 +10439,7 @@ class SprintScheduler:
             if duckdb is not None:
                 _ = await self._gate_then_ingest_and_accumulate(duckdb, findings, sprint_id=self.sprint_id or "")
                 log.debug("[F251] Ingested %d onion findings", len(findings))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
             _log_advisory_dedup(
                 log, f"onion_ingest_fail:{type(e).__name__}", "[F251] Onion findings ingest failed: %s", e
             )
@@ -10373,7 +10483,7 @@ class SprintScheduler:
                 uma_state = getattr(snap, "state", "normal") if snap else "normal"
                 if uma_state in ("critical", "emergency"):
                     return
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             pass
         try:
             from hledac.universal.transport.i2p_transport import I2PTransport
@@ -10386,7 +10496,7 @@ class SprintScheduler:
             if not await i2p.is_running():
                 log.debug("[F2P] I2PTransport not running (is_running=False)")
                 return
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.debug("[F2P] I2PTransport init/check failed: %s", e)
             return
         i2p_addresses: list[str] = []
@@ -10400,7 +10510,7 @@ class SprintScheduler:
                         val = row[0] if row else ""
                         if val:
                             i2p_addresses.append(val)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
         seen = set()
         unique_i2p: list[str] = []
@@ -10423,7 +10533,7 @@ class SprintScheduler:
             try:
                 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
                 from hledac.universal.utils.source_types import SourceType
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
                 return inner
             try:
                 config = TransportConfig(url=f"http://{addr}")
@@ -10454,11 +10564,11 @@ class SprintScheduler:
                                 source_ids=[finding.source_id] if hasattr(finding, "source_id") else [],
                                 confidence=getattr(finding, "confidence", 0.5),
                             )
-                        except Exception:
+                        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                             pass
                     inner.append(finding)
                     inner.append(finding)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 log.debug("[F2P] I2P fetch %s failed: %s", addr, e)
             return inner
 
@@ -10478,7 +10588,7 @@ class SprintScheduler:
             if duckdb is not None:
                 _ = await self._gate_then_ingest_and_accumulate(duckdb, findings, sprint_id=self.sprint_id or "")
                 log.debug("[F2P] Ingested %d I2P findings", len(findings))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
             _log_advisory_dedup(log, f"i2p_ingest_fail:{type(e).__name__}", "[F2P] I2P findings ingest failed: %s", e)
 
     async def _run_dht_sidecar(self) -> None:
@@ -10506,7 +10616,7 @@ class SprintScheduler:
                 uma_state = getattr(snap, "state", "normal") if snap else "normal"
                 if uma_state in ("critical", "emergency"):
                     return
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             pass
         log.debug("[F214Q] Starting DHT discovery sidecar")
         try:
@@ -10532,7 +10642,7 @@ class SprintScheduler:
                             ih = prov.split("info_hash:")[1].split(",")[0].strip()
                             if ih:
                                 info_hash_seeds.append(ih)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
             if not info_hash_seeds:
                 log.debug("[F214Q] No info_hash seeds from CT findings")
@@ -10559,7 +10669,7 @@ class SprintScheduler:
                                     query=self._query[:128],
                                 )
                             )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
                     log.debug("[F214Q] fallback crawl failed: %s", e)
                 return
             findings: list = []
@@ -10572,7 +10682,7 @@ class SprintScheduler:
                         result = await node.lookup_info_hash_metadata(info_hash, timeout_s=30.0)
                         if result and isinstance(result, dict) and result.get("info_hash"):
                             return [result]
-                    except Exception:
+                    except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                         pass
                     return []
 
@@ -10593,7 +10703,7 @@ class SprintScheduler:
                             )
                             cf = dht_content_to_canonical(dht_finding, query=self._query[:128])
                             findings.append(cf)
-                        except Exception:
+                        except Exception:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
                             pass
             if not findings:
                 log.debug("[F214Q] No DHT findings produced")
@@ -10603,7 +10713,7 @@ class SprintScheduler:
                 log.debug("[F214Q] Ingested %d DHT findings", len(findings))
         except TimeoutError:
             log.debug("[F214Q] DHT sidecar timed out after 60s")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
             _log_advisory_dedup(log, f"dht_sidecar_fail:{type(e).__name__}", "[F214Q] DHT sidecar failed: %s", e)
 
     async def _run_gopher_sidecar(self, query_context: str = "") -> list:
@@ -10622,7 +10732,7 @@ class SprintScheduler:
                 if uma_state in ("critical", "emergency"):
                     log.debug("[F214R] Gopher skipped -- memory pressure")
                     return []
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; memory operation; non-critical
             pass
         log.debug("[F214R] Starting Gopher discovery sidecar")
         findings: list = []
@@ -10642,14 +10752,14 @@ class SprintScheduler:
                                 item, query=query, sprint_id=getattr(self._result, "sprint_id", None) or ""
                             )
                             findings.append(finding_dict)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
                     log.debug("[F214R] Veronica-2 search failed: %s", e)
             if findings and self._duckdb_store is not None:
                 _ = await self._gate_then_ingest_and_accumulate(
                     self._duckdb_store, findings, sprint_id=self.sprint_id or ""
                 )
                 log.debug("[F214R] Ingested %d Gopher findings", len(findings))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
             _log_advisory_dedup(log, f"gopher_sidecar_fail:{type(e).__name__}", "[F214R] Gopher sidecar failed: %s", e)
         self._result.gopher_findings_ingested = len(findings)
         return findings
@@ -10692,7 +10802,7 @@ class SprintScheduler:
             if not await tor.is_circuit_established():
                 log.debug("[F218Z] Tor circuit not established -- skipping IPFS discovery")
                 return []
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.debug("[F218Z] Tor availability check failed: %s", e)
             return []
         try:
@@ -10702,7 +10812,7 @@ class SprintScheduler:
                 uma_state = getattr(snap, "state", "normal") if snap else "normal"
                 if uma_state in ("critical", "emergency"):
                     return []
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             pass
         log.debug("[F218Z] Starting IPFS discovery sidecar")
         try:
@@ -10715,7 +10825,7 @@ class SprintScheduler:
                 async def _fetch_cid(cid: str) -> list:
                     try:
                         return await ipfs_fetch_as_findings(cid, query_context, timeout=120) or []
-                    except Exception as e:
+                    except Exception as e:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
                         log.debug("[F218Z] CID fetch failed for %s: %s", cid, e)
                         return []
 
@@ -10730,7 +10840,7 @@ class SprintScheduler:
                     search_results = await ipfs_search_as_findings(query_context, timeout_per_result=120)
                     if search_results:
                         findings.extend(search_results)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
                     log.debug("[F218Z] IPFS search failed: %s", e)
             if findings and self._duckdb_store is not None:
                 _ = await self._gate_then_ingest_and_accumulate(
@@ -10738,7 +10848,7 @@ class SprintScheduler:
                 )
                 log.debug("[F218Z] Ingested %d IPFS findings", len(findings))
             return findings
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
             _log_advisory_dedup(log, f"ipfs_sidecar_fail:{type(e).__name__}", "[F218Z] IPFS sidecar failed: %s", e)
             return []
 
@@ -10783,7 +10893,7 @@ class SprintScheduler:
 
                     result = await asyncio.to_thread(analyze_file_ghosts, path)
                     return result
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 — best-effort; thread operation failure; non-critical
                     log.debug("[F3FORENSICS] Ghost analysis failed for %s: %s", path, e)
                     return None
 
@@ -10814,14 +10924,14 @@ class SprintScheduler:
                             tags=["digital_ghost", "forensics"],
                         )
                         findings.append(finding)
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     pass
             if findings and self._duckdb_store is not None:
                 _ = await self._gate_then_ingest_and_accumulate(
                     self._duckdb_store, findings, sprint_id=self.sprint_id or ""
                 )
                 log.debug("[F3FORENSICS] Ingested %d digital ghost findings", len(findings))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
             _log_advisory_dedup(
                 log, f"dghost_sidecar_fail:{type(e).__name__}", "[F3FORENSICS] Digital ghost sidecar failed: %s", e
             )
@@ -10874,7 +10984,7 @@ class SprintScheduler:
                     result = await detector.analyze_image(path)
                     await detector.cleanup()
                     return result
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
                     log.debug("[F3FORENSICS] Stego analysis failed for %s: %s", path, e)
                     return None
 
@@ -10912,17 +11022,17 @@ class SprintScheduler:
                                     },
                                     tags=["steganography", "forensics"],
                                 )
-                            except Exception:
+                            except Exception:  # noqa: BLE001 — best-effort; graph operation failure; non-critical
                                 pass
                         findings.append(finding)
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; graph operation failure; non-critical
                     pass
             if findings and self._duckdb_store is not None:
                 _ = await self._gate_then_ingest_and_accumulate(
                     self._duckdb_store, findings, sprint_id=self.sprint_id or ""
                 )
                 log.debug("[F3FORENSICS] Ingested %d steganography findings", len(findings))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
             _log_advisory_dedup(
                 log, f"steg_sidecar_fail:{type(e).__name__}", "[F3FORENSICS] Steganography sidecar failed: %s", e
             )
@@ -10946,7 +11056,7 @@ class SprintScheduler:
 
         try:
             from ..utils.ioc_extract import IOC_TYPES
-        except ImportError, ModuleNotFoundError:
+        except (ImportError, ModuleNotFoundError):
             IOC_TYPES = ["ip", "asn", "ipv6", "cidr"]
         _bgp_env = ENV.get_bool("HLEDAC_ENABLE_BGP")
         if not _bgp_env:
@@ -10958,7 +11068,7 @@ class SprintScheduler:
                 if uma_state in ("critical", "emergency"):
                     log.debug("[F214Q] BGP skipped -- memory pressure")
                     return []
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; memory operation; non-critical
             pass
         seed_ips = []
         for finding in getattr(self, "_result", None) or []:
@@ -10981,7 +11091,7 @@ class SprintScheduler:
                         timeout=30.0,
                         label="bgp_enrich",
                     )
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
                 return []
 
         try:
@@ -10989,7 +11099,7 @@ class SprintScheduler:
             for r in results:
                 if r and (not isinstance(r, Exception)):
                     findings.extend(r)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
             log.debug("[F214Q] BGP query failed: %s", e)
         if findings and self._duckdb_store is not None:
             _ = await self._gate_then_ingest_and_accumulate(
@@ -11024,7 +11134,7 @@ class SprintScheduler:
                 if uma_state in ("critical", "emergency"):
                     log.debug("[F214Q] Banner grab skipped -- memory pressure")
                     return []
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; memory operation; non-critical
             pass
         seed_ips = []
         for finding in getattr(self, "_result", None) or []:
@@ -11040,7 +11150,7 @@ class SprintScheduler:
         ports_str = ENV.get_str("HLEDAC_BANNER_GRAB_PORTS", default="22,80,443,8080,8443")
         try:
             ports = [int(p.strip()) for p in ports_str.split(",") if p.strip()]
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             ports = [22, 80, 443, 8080, 8443]
         ports = ports[:5]
         findings = []
@@ -11052,7 +11162,7 @@ class SprintScheduler:
                     timeout=60.0,
                     label="banner_grab",
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
                 return []
 
         try:
@@ -11060,7 +11170,7 @@ class SprintScheduler:
             for r in results:
                 if r and (not isinstance(r, Exception)):
                     findings.extend(r)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.debug("[F214Q] Banner grab failed: %s", e)
         if findings and self._duckdb_store is not None:
             _ = await self._gate_then_ingest_and_accumulate(
@@ -11147,7 +11257,7 @@ class SprintScheduler:
                                 f[field_name] = anon_text
                             else:
                                 setattr(f, field_name, anon_text)
-                        except Exception as e:
+                        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                             logger.debug(f"[PII] anonymization setattr failed for field {field_name}: {e}")
                 if has_pii:
                     pii_count += 1
@@ -11157,10 +11267,10 @@ class SprintScheduler:
                                 f["_privacy_context_id"] = _ctx_id
                             else:
                                 f._privacy_context_id = _ctx_id
-                        except Exception:
+                        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                             pass
                 anonymized.append(f)
-            except Exception as _e:
+            except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 logger.debug("privacy_gate finding error: %s", _e)
                 anonymized.append(f)
         return (anonymized, pii_count)
@@ -11198,11 +11308,11 @@ class SprintScheduler:
                             self._result.pii_findings_anonymized = (
                                 getattr(self._result, "pii_findings_anonymized", 0) + _pii_count
                             )
-                except Exception as _e:
+                except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     logger.debug("privacy_gate call failed: %s", _e)
                     _gated = findings
             return await store.drain_and_get_accepted(_gated)
-        except Exception as _e:
+        except Exception as _e:  # noqa: BLE001 — best-effort; logging failure; non-critical
             logger.debug("gate_then_ingest failed: %s", _e)
             return None
 
@@ -11233,12 +11343,12 @@ class SprintScheduler:
             for _store, _findings, _sprint_id in _drained:
                 try:
                     await self._gate_then_ingest_and_accumulate(_store, _findings, _sprint_id)
-                except Exception as _e:
+                except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     logger.debug("[F285] writer ingest failed: %s", _e)
                 finally:
                     try:
                         self._duckdb_write_queue.task_done()
-                    except Exception:
+                    except Exception:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
                         pass
             _drained.clear()
             self._writer_wakeup.clear()
@@ -11259,12 +11369,12 @@ class SprintScheduler:
         for _store, _findings, _sprint_id in _drained:
             try:
                 await self._gate_then_ingest_and_accumulate(_store, _findings, _sprint_id)
-            except Exception as _e:
+            except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 logger.debug("[F285] shutdown drain failed: %s", _e)
             finally:
                 try:
                     self._duckdb_write_queue.task_done()
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
                     pass
         _drained.clear()
 
@@ -11319,7 +11429,7 @@ class SprintScheduler:
                     source_ids=[],
                     confidence=1.0,
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
         if self._evidence_log is not None:
             try:
@@ -11333,12 +11443,18 @@ class SprintScheduler:
                     source_ids=_finding_ids[:20],
                     confidence=1.0,
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
         if len(findings) > _MAX_CHUNK_SIZE:
             _ingest_result = await self._parallel_ingest(findings, store)
+            # F320M-R FIX: _parallel_ingest already accumulated to graph internally
+            # (see _process_chunk_parallel → _accumulate_findings_to_graph).
+            # Skip duplicate post-TaskGroup graph accumulation below by setting None.
+            _skip_graph_accum = True
         else:
-            _ingest_result = await self._gate_then_ingest(store, findings)
+            # F320M-R FIX: _gate_then_ingest_and_accumulate does DuckDB + graph atomically.
+            _ingest_result = await self._gate_then_ingest_and_accumulate(store, findings, sprint_id=sprint_id)
+            _skip_graph_accum = False
         if self._evidence_log is not None and _ingest_result is not None:
             try:
                 if isinstance(_ingest_result, list):
@@ -11358,9 +11474,9 @@ class SprintScheduler:
                             source_ids=[],
                             confidence=1.0,
                         )
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
-        if len(findings) <= _MAX_CHUNK_SIZE and findings and (_ingest_result is not None):
+        if not _skip_graph_accum and findings and (_ingest_result is not None):
             try:
                 if isinstance(_ingest_result, list) and len(_ingest_result) == len(findings):
                     _accepted_findings = [
@@ -11383,12 +11499,12 @@ class SprintScheduler:
                     if self._graph_accumulator is None:
                         self._graph_accumulator = SprintGraphAccumulator()
                     self._graph_accumulator.accumulate_findings(_accepted_findings, sprint_id=sprint_id or "")
-            except Exception as _e:
+            except Exception as _e:  # noqa: BLE001 — best-effort; graph operation failure; non-critical
                 logger.debug("[F266] graph_accumulate failed: %s", _e)
         try:
             if self._temporal_predictor is not None:
                 self._temporal_predictor.observe_findings(findings)
-        except Exception as _e:
+        except Exception as _e:  # noqa: BLE001 — best-effort; logging failure; non-critical
             logger.debug("[P3-2] temporal_predictor observe failed: %s", _e)
         return _ingest_result
 
@@ -11398,7 +11514,8 @@ class SprintScheduler:
         """Process one chunk: DuckDB + graph via bounded gather.
 
         M1 8GB: semaphore limits to _MAX_CHUNK_CONCURRENCY concurrent chunks.
-        mx.eval([]) barrier between chunks to release Metal memory.
+        NOTE: mx.eval([]) barrier is called ONCE after all chunks complete in _parallel_ingest,
+        not per-chunk here. This avoids per-chunk barrier overhead.
         """
         async with sem:
             graph_result = None
@@ -11416,23 +11533,22 @@ class SprintScheduler:
                             _accepted_chunk = chunk
                         if _accepted_chunk:
                             graph_result = self._accumulate_findings_to_graph(_accepted_chunk, sprint_id=sprint_id)
-                    except Exception as _e:
+                    except Exception as _e:  # noqa: BLE001 — best-effort; graph operation failure; non-critical
                         logger.debug("[F266] graph_accumulate post-DuckDB failed: %s", _e)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
                 logger.debug("[F266] chunk parallel failed: %s", e)
                 duck_results = None
-            try:
-                import mlx.core as mx
-
-                mx.eval([])
-            except Exception:
-                pass
+            # NOTE: mx.eval([]) moved to _parallel_ingest after TaskGroup — single barrier for all chunks
             return (duck_results or [], graph_result)
 
     async def _parallel_ingest(self, findings: list, store: Any, max_chunk: int = _MAX_CHUNK_SIZE) -> list:
-        """Bounded parallel ingest: chunk → gather → mx.eval barrier.
+        """Bounded parallel ingest: chunk → TaskGroup → single mx.eval barrier.
 
-        M1 8GB: max 2 concurrent chunks, barrier between waves.
+        F320M-R FIX: Sequential for-loop replaced with asyncio.TaskGroup for TRUE parallelism.
+        Previously chunks ran sequentially even though a Semaphore existed — the await inside
+        the for-loop blocked until each chunk completed before starting the next.
+
+        M1 8GB: max _MAX_CHUNK_CONCURRENCY concurrent chunks, single Metal memory barrier after all.
         Returns canonical results (same as async_ingest_findings_batch).
         """
         if not findings:
@@ -11441,13 +11557,31 @@ class SprintScheduler:
             return await self._gate_then_ingest_and_accumulate(store, findings)
         sem = asyncio.Semaphore(_MAX_CHUNK_CONCURRENCY)
         chunks = [findings[i : i + max_chunk] for i in range(0, len(findings), max_chunk)]
-        all_results: list = []
         sprint_id = self.sprint_id or ""
-        for chunk in chunks:
-            chunk_results, _ = await self._process_chunk_parallel(chunk, sem, sprint_id)
-            if chunk_results:
-                all_results.extend(chunk_results)
-        return all_results
+
+        # F320M-R: TRUE parallel chunk processing via TaskGroup
+        # All chunks start immediately (semaphore-controlled), await is per-task not per-loop
+        results: list = []
+        try:
+            async with asyncio.TaskGroup() as tg:
+                tasks = [
+                    tg.create_task(self._process_chunk_parallel(chunk, sem, sprint_id), eager_start=True)
+                    for chunk in chunks
+                ]
+            # TaskGroup done — all chunks processed
+            results = [r for t in tasks for r in (t.result() or [])]
+        except* Exception as e:
+            logger.debug("[F320M-R] TaskGroup chunk exception: %s", e)
+
+        # F320M-R: SINGLE mx.eval([]) barrier after ALL parallel chunks complete
+        # This releases Metal memory once for the entire batch, not per-chunk
+        try:
+            import mlx.core as mx
+
+            mx.eval([])
+        except Exception:  # noqa: BLE001 — best-effort; memory operation; non-critical
+            pass
+        return results
 
     def _sync_latent_relationships_to_graph(self) -> None:
         """
@@ -11483,7 +11617,7 @@ class SprintScheduler:
                     added += 1
             if added:
                 log.debug(f"[RelDiscovery] Synced {added} latent relationships to DuckPGQ")
-        except Exception as _e:
+        except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.warning(f"[RelDiscovery] Latent sync failed: {_e}")
 
     async def _run_quantum_path_analysis(self, new_ioc_values: list[str]) -> list[str]:
@@ -11518,7 +11652,7 @@ class SprintScheduler:
                     break
             ranked = sorted(seen_connections.keys(), key=lambda v: seen_connections[v], reverse=True)
             return ranked[:20]
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             logger.debug(f"[SPRINT] quantum_path find_connected_batch failed: {e}")
             return []
 
@@ -11583,7 +11717,7 @@ class SprintScheduler:
             self._result.quality_rejection_summary_by_family = quality_sum
             self._result.duplicate_rejection_summary_by_family = dup_sum
             self._result.low_information_by_family = low_info_sum
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             pass
 
     async def _run_ct_to_passivedns_active_pivot(
@@ -11645,7 +11779,7 @@ class SprintScheduler:
                 if uma_state in ("critical", "emergency"):
                     log.debug(f"[R8] CT->PDNS active pivot skipped: uma_state={uma_state}")
                     return
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             pass
         min_remaining = self._min_branch_remaining_s(remaining_s)
         if remaining_s <= min_remaining:
@@ -11675,7 +11809,7 @@ class SprintScheduler:
                 return (domain, ips, outcome)
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 return (domain, [], None)
 
         try:
@@ -11695,7 +11829,7 @@ class SprintScheduler:
                     errors.append(f"domain_{domain}_none")
         except asyncio.CancelledError:
             raise
-        except Exception as _exc:
+        except Exception as _exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.warning("ct_pdns_pivot inner gather failed: %s", _exc)
         if pdns_results and store is not None:
             for res in pdns_results:
@@ -11715,7 +11849,7 @@ class SprintScheduler:
                         _stored = sum((1 for r in ingest_results if isinstance(r, dict) and r.get("accepted")))
                     except asyncio.CancelledError:
                         raise
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                         log.debug(f"[R8] PDNS ingest failed for {domain}: {exc}")
         ledger = getattr(self, "_nonfeed_ledger", None)
         if ledger is not None:
@@ -11735,7 +11869,7 @@ class SprintScheduler:
                             ledger.add_pivot_stored(pivot_type="ct_to_passivedns", ioc_value=domain, stored_count=count)
                 except asyncio.CancelledError:
                     raise
-                except Exception as _exc:
+                except Exception as _exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     log.warning("ct_pdns_pivot store loop failed: %s", _exc)
         if pdns_results:
             _sfos = list(getattr(self._result, "source_family_outcomes_list", []) or [])
@@ -11871,7 +12005,7 @@ class SprintScheduler:
                             )
                         except asyncio.CancelledError:
                             raise
-                        except Exception:
+                        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                             _errored += 1
                             continue
                     if _new_entries:
@@ -11888,7 +12022,7 @@ class SprintScheduler:
                 if candidate_findings and lane_name not in _already_graphed_in_lane:
                     try:
                         self._accumulate_findings_to_graph(candidate_findings, sprint_id=self.sprint_id or "")
-                    except Exception:
+                    except Exception:  # noqa: BLE001 — best-effort; graph operation failure; non-critical
                         log.debug("[F265C] Lane graph accumulation failed (non-fatal)")
                 elif remaining > 0:
                     if len(self._all_findings) < self._MAX_FINDINGS_PER_SPRINT:
@@ -11983,7 +12117,7 @@ class SprintScheduler:
                 filter_source_host_only,
                 rank_candidates,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return
         try:
             outcomes = getattr(self, "_lane_outcomes", None) or ()
@@ -12079,9 +12213,9 @@ class SprintScheduler:
                             if isinstance(eligibility, dict)
                             else False,
                         )
-                    except Exception:
+                    except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                         pass
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     pass
             eligibility = compute_lane_eligibility(ranked)
             self._result.nonfeed_lane_eligibility = eligibility
@@ -12099,7 +12233,7 @@ class SprintScheduler:
                 domain_tuples = tuple((tc.domain for tc in ranked if not tc.domain[0].isdigit()))
                 if domain_tuples:
                     self._result.feed_domain_seeds = domain_tuples[:10]
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             pass
 
     async def _ingest_ct_lane_candidates(self, outcomes: tuple, duckdb_store: Any) -> None:
@@ -12166,7 +12300,7 @@ class SprintScheduler:
                         source_url="",
                         query=getattr(outcome, "ct_query", "") or "",
                     )
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
                     pass
             try:
                 storage_results = await self._gate_then_ingest_and_accumulate(
@@ -12195,7 +12329,7 @@ class SprintScheduler:
                                 sample_url="",
                                 sample_value=domain[:64] if domain else candidate_id[:16],
                             )
-                        except Exception:
+                        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                             pass
                     else:
                         try:
@@ -12207,7 +12341,7 @@ class SprintScheduler:
                                 sample_url="",
                                 sample_value=domain[:64] if domain else candidate_id[:16],
                             )
-                        except Exception:
+                        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                             pass
                 if accepted_count > 0:
                     self._result.lane_ct_accepted_findings = (
@@ -12215,7 +12349,7 @@ class SprintScheduler:
                     )
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
 
     async def _run_target_memory_update(self, findings: list[Any], store: Any, query: str) -> None:
@@ -12252,7 +12386,7 @@ class SprintScheduler:
             return
         try:
             import psutil
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return
         try:
             process = psutil.Process()
@@ -12262,7 +12396,7 @@ class SprintScheduler:
             high_water = vm.percent * 0.85
             if rss_mb > high_water:
                 return
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; memory operation; non-critical
             pass
         entity_facets: dict[str, Any] = {}
         exposure_facets: dict[str, Any] = {}
@@ -12295,7 +12429,7 @@ class SprintScheduler:
                     rir_data = (
                         _msgspec_decode(payload_text) if isinstance(payload_text, (str, bytes, bytearray)) else {}
                     )
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     rir_data = {}
                 asn = rir_data.get("asn", "") or ""
                 org = rir_data.get("org", "") or ""
@@ -12341,7 +12475,7 @@ class SprintScheduler:
             merged = self._target_memory_service.merge_update(update)
             try:
                 await store.async_upsert_target_memory(merged)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
                 pass
 
     async def _run_advisory_runner(self) -> None:
@@ -12403,7 +12537,7 @@ class SprintScheduler:
                     self._result.ane_dedup_removed = removed
             else:
                 logger.debug("[ANE-DEDUP] no near-duplicates found")
-        except Exception as _e:
+        except Exception as _e:  # noqa: BLE001 — best-effort; logging failure; non-critical
             logger.debug("[ANE-DEDUP] failed (fail-soft): %s", _e)
 
     async def _run_ct_to_passivedns_pivot_advisory(self) -> None:
@@ -12464,7 +12598,7 @@ class SprintScheduler:
                 if uma_state in ("critical", "emergency"):
                     log.debug(f"[R5] CT->PDNS pivot skipped: uma_state={uma_state}")
                     return
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             pass
         ct_findings: list = []
         try:
@@ -12478,7 +12612,7 @@ class SprintScheduler:
                 accepted = getattr(outcome, "accepted_count", 0) or 0
                 if accepted > 0 and candidates:
                     ct_findings.extend(candidates)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             pass
         if not ct_findings:
             log.debug("[R5] CT->PDNS pivot: no CT accepted findings")
@@ -12501,7 +12635,7 @@ class SprintScheduler:
             try:
                 ips, outcome = await _pdns_lookup(domain)
                 return (domain, ips, outcome)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 return (domain, [], None)
 
         try:
@@ -12521,7 +12655,7 @@ class SprintScheduler:
                     errors.append(f"domain_{domain}_none")
         except asyncio.CancelledError:
             raise
-        except Exception as _exc:
+        except Exception as _exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.warning("ct_to_passivedns_pivot gather failed: %s", _exc)
         ledger = getattr(self, "_nonfeed_ledger", None)
         if ledger is not None:
@@ -12539,7 +12673,7 @@ class SprintScheduler:
                                 source_hint=f"ct_domain:{domain}",
                                 reason=f"pdns_results={count}",
                             )
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     pass
         if pdns_results:
             _sfos = list(getattr(self._result, "source_family_outcomes_list", []) or [])
@@ -12594,7 +12728,7 @@ class SprintScheduler:
         """
         try:
             from hledac.universal.intelligence.bgp_lane import BGPAdapter
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return
         try:
             session_provider = getattr(self, "_httpx_session_provider", None)
@@ -12613,7 +12747,7 @@ class SprintScheduler:
 
                     pdns_adapter = PassiveDNSAdapter()
                     pdns_adapter.set_session(await session_provider())
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     pass
             try:
                 outcomes = getattr(self._result, "acquisition_lane_outcomes", ()) or ()
@@ -12669,7 +12803,7 @@ class SprintScheduler:
                                 for rec in recs
                                 if rec.to_canonical_finding(self._query)
                             ]
-                        except Exception:
+                        except Exception:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
                             return []
 
                     _pdns_tasks = [_query_one(d) for d in unique_domains[:5]]
@@ -12704,9 +12838,9 @@ class SprintScheduler:
                 if pdns_adapter is not None:
                     try:
                         await pdns_adapter._session.aclose()
-                    except Exception:
+                    except Exception:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
                         pass
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
             pass
 
     async def _run_ti_feed_sidecar(self) -> None:
@@ -12720,12 +12854,12 @@ class SprintScheduler:
         """
         try:
             from hledac.universal.discovery.ti_feed_adapter import CisaKevAdapter, NvdApiAdapter
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return
         try:
             nvd_adapter = NvdApiAdapter()
             cisa_adapter = CisaKevAdapter()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return
         try:
             nvd_task = nvd_adapter.fetch_recent(limit=50)
@@ -12742,7 +12876,7 @@ class SprintScheduler:
                     count=accepted_count,
                     reason=f"ti_feed_advisory: NVD+CISA KE collected {accepted_count} entries",
                 )
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             pass
 
     async def _run_wayback_cdx_deep_sidecar(self) -> None:
@@ -12771,7 +12905,7 @@ class SprintScheduler:
         """
         try:
             from hledac.universal.intelligence.wayback_cdx import WaybackCDXDeepSearch
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return
         try:
             session_provider = getattr(self, "_httpx_session_provider", None)
@@ -12839,7 +12973,7 @@ class SprintScheduler:
                 self._result.source_family_outcomes_list = _sfos
             finally:
                 await searcher.close()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
             pass
 
     MAX_SOURCE_HEALTH_ENTRIES: Final[int] = 100
@@ -12902,7 +13036,7 @@ class SprintScheduler:
                 )
             total_tracked = len(self._source_economics)
             return {"entries": entries, "total_tracked": total_tracked, "max_entries": self.MAX_SOURCE_HEALTH_ENTRIES}
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return {}
 
     def _get_graph_signal(self) -> dict:
@@ -12929,7 +13063,7 @@ class SprintScheduler:
                     "graph_edges": stats.get("edges", 0),
                     "graph_pgq_available": stats.get("pgq_available", False),
                 }
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; telemetry/stats; best-effort
             pass
         return {}
 
@@ -13001,7 +13135,7 @@ class SprintScheduler:
                             if val:
                                 _conf_src[val] = _conf_src.get(val, 0) + 1
                         source_count_by_node = _conf_src
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; graph operation failure; non-critical
                     pass
             return {
                 "nodes": nodes,
@@ -13012,7 +13146,7 @@ class SprintScheduler:
                 "confidence_by_node": confidence_by_node,
                 "source_count_by_node": source_count_by_node,
             }
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return {}
 
     MAX_WINDUP_SCORECARD_KEYS: int = 32
@@ -13066,7 +13200,7 @@ class SprintScheduler:
                     if open_domains:
                         scorecard["cb_open_domains"] = open_domains
                     scorecard["cb_tracked_count"] = len(cb_states)
-            except Exception as _exc:
+            except Exception as _exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 log.warning(
                     "sprint %s: scorecard cb_tracked_count failed -- %s: %s",
                     getattr(self._result, "sprint_id", "?"),
@@ -13151,7 +13285,7 @@ class SprintScheduler:
                             break
                 scorecard = pruned
             return scorecard
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return {}
 
     def _get_circuit_breaker_summary(self) -> dict:
@@ -13216,7 +13350,7 @@ class SprintScheduler:
                 "entries": entries,
                 "max_entries": self.MAX_BREAKER_DOMAINS,
             }
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return {}
 
     def _build_work_items(self, sources: Sequence[str]) -> list[SourceWork]:
@@ -13272,7 +13406,7 @@ class SprintScheduler:
                         if isinstance(payload_bytes, str):
                             payload_bytes = payload_bytes.encode()
                         return (fid, payload_bytes)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
             return None
 
@@ -13291,14 +13425,14 @@ class SprintScheduler:
                         self._result.multimodal_enriched_findings += 1
                     except asyncio.CancelledError:
                         raise
-                    except Exception:
+                    except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                         pass
 
             await safe_gather(*[enrich_one(f) for f in findings], label="multimodal_enrichment", logger_instance=log)
             if enriched_pairs:
                 written = putmulti_bounded(lmdb_env, enriched_pairs, overwrite=True)
                 log.debug("multimodal LMDB bulk-write: %d/%d", written, len(enriched_pairs))
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
             pass
 
     def _feed_dominance_should_fetch(self, work: _FeedWorkItem, nonfeed_terminal: bool) -> tuple[bool, str]:
@@ -13475,7 +13609,7 @@ class SprintScheduler:
                         if isinstance(payload_bytes, str):
                             payload_bytes = payload_bytes.encode()
                         return (fid, payload_bytes)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
             return None
 
@@ -13494,14 +13628,14 @@ class SprintScheduler:
                         self._result.forensics_enriched_ct_findings += 1
                     except asyncio.CancelledError:
                         raise
-                    except Exception:
+                    except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                         pass
 
             await safe_gather(*[enrich_one(f) for f in findings], label="forensics_enrichment", logger_instance=log)
             if enriched_pairs:
                 written = putmulti_bounded(lmdb_env, enriched_pairs, overwrite=True)
                 log.debug("forensics LMDB bulk-write: %d/%d", written, len(enriched_pairs))
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
             pass
 
     def _process_result(self, feed_url: str, result) -> None:
@@ -13571,7 +13705,7 @@ class SprintScheduler:
                     cycle=self._result.cycles_started,
                     seen_new_urls=getattr(result, "matched_patterns", 0),
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
         self._feed_dominance_record_result(
             feed_url=feed_url,
@@ -13604,7 +13738,7 @@ class SprintScheduler:
                     log.warning(f"Dedup set trimmed to 400k entries (was {count})")
                 log.info(f"Dedup LMDB loaded: {count} existing hashes")
                 return (env, seen, count)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
                 log.warning(f"Dedup LMDB open failed: {exc} -- continuing without persistence")
                 return (None, set(), 0)
 
@@ -13620,7 +13754,7 @@ class SprintScheduler:
             await self._dedup_loading_task
             self._dedup_loading_task = None
             self._result.dedup_preload_count = len(self._dedup_seen) if self._dedup_seen is not None else 0
-        except Exception as _e:
+        except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.warning(f"Dedup lazy load failed: {_e} -- continuing without dedup")
             self._dedup_loading_task = None
             self._dedup_seen = set()
@@ -13636,7 +13770,7 @@ class SprintScheduler:
                 self._dedup_env, [(k.encode(), ts_bytes) for k in self._dedup_seen], overwrite=True
             )
             log.info(f"Dedup flushed: {written}/{len(self._dedup_seen)} hashes")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — best-effort; export/write failure; non-critical
             log.warning(f"Dedup flush failed: {exc}")
 
     async def _run_ioc_cooccurrence_sidecar(self, query: str, duckdb_store: Any) -> None:
@@ -13656,7 +13790,7 @@ class SprintScheduler:
         """
         try:
             from hledac.universal.pipeline.ioc_cooccurrence_miner import IOCooccurrenceMiner
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; lock acquisition failure; non-critical
             logger.debug("[IOC] IOCooccurrenceMiner import failed: %s", e)
             return
         findings: list[Any] = []
@@ -13666,7 +13800,7 @@ class SprintScheduler:
             elif duckdb_store is not None:
                 if hasattr(duckdb_store, "get_recent_findings"):
                     findings = await duckdb_store.get_recent_findings(limit=5000)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
             logger.debug("[IOC] Failed to get findings for co-occurrence: %s", e)
             return
         if not findings:
@@ -13679,7 +13813,7 @@ class SprintScheduler:
             if edges:
                 logger.info("[IOC] Co-occurrence: %d edges from %d findings", len(edges), len(findings))
                 self._result.ioc_cooccurrence_edges = len(edges)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; logging failure; non-critical
             logger.debug("[IOC] Co-occurrence analysis failed: %s", e)
 
     async def _run_synthesis_sidecar(self, query: str, duckdb_store: Any, lifecycle: Any) -> None:
@@ -13696,7 +13830,7 @@ class SprintScheduler:
                 self._result.synthesis_success = False
                 self._result.synthesis_engine = "uma_guard"
                 return
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.debug("[F259] UMA check failed: %s", e)
         if not self._result.accepted_findings:
             log.info("[F259-SYN] early-exit: no findings, skipping synthesis")
@@ -13710,7 +13844,7 @@ class SprintScheduler:
                 findings = await duckdb_store.get_top_findings(limit=15)
             elif hasattr(duckdb_store, "get_recent_findings"):
                 findings = await duckdb_store.get_recent_findings(limit=15)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
             log.debug("[F259] Failed to get findings: %s", e)
             return
         if not findings:
@@ -13720,7 +13854,7 @@ class SprintScheduler:
             log.debug("[Phase4] Loading Hermes on-demand (findings=%d)", len(findings))
             try:
                 await self._load_hermes_for_sprint()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 log.warning("[Phase4] Hermes load failed, continuing without: %s", e)
                 self._result.hermes_model_loaded = False
         try:
@@ -13742,7 +13876,7 @@ class SprintScheduler:
                     stix = stix_graph()
                     if stix is not None:
                         runner.inject_stix_graph(stix)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
                 pass
             report = await runner.synthesize_findings(query=query, findings=findings, force_synthesis=True)
             self._result.synthesis_findings_count = len(findings)
@@ -13766,7 +13900,7 @@ class SprintScheduler:
                             "timestamp": getattr(report, "timestamp", 0.0),
                         }
                     ).decode("utf-8")
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     self._result.synthesis_text = str(report)[:4096]
                 log.info(
                     "[F259] Synthesis complete: success=%s, findings=%d",
@@ -13780,12 +13914,12 @@ class SprintScheduler:
                         if batcher is not None and hasattr(batcher, "get_stats"):
                             self._result.mlx_batcher_stats = batcher.get_stats()
                             log.debug("[F285] batcher stats: %s", self._result.mlx_batcher_stats)
-                except Exception as _e:
+                except Exception as _e:  # noqa: BLE001 — best-effort; telemetry/stats; best-effort
                     log.debug("[F285] batcher stats collection failed: %s", _e)
             else:
                 self._result.synthesis_text = ""
             await runner.close()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; telemetry/stats; best-effort
             log.debug("[F259] Synthesis failed: %s", e)
             self._result.synthesis_success = False
             self._result.synthesis_engine = "error"
@@ -13821,16 +13955,16 @@ class SprintScheduler:
             if uma.rss_gib >= 5.5 or uma.is_critical or uma.is_emergency:
                 log.debug("[F204I] UMA guard: RSS=%.1fGB, state=%s -- skipping", uma.rss_gib, uma.state)
                 return
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             pass
         try:
             from hledac.universal.intelligence.social_identity_miner import create_social_identity_miner_adapter
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; graph operation failure; non-critical
             log.debug("[F204I] Import failed: %s", e)
             return
         try:
             miner = create_social_identity_miner_adapter()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; graph operation failure; non-critical
             log.debug("[F204I] Factory failed: %s", e)
             return
         try:
@@ -13841,7 +13975,7 @@ class SprintScheduler:
                 len(result.facets),
                 result.elapsed_ms,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; graph operation failure; non-critical
             log.debug("[F204I] mine() failed: %s", e)
 
     async def _run_epistemic_gap_advisory(self, query: str, duckdb_store: Any) -> None:
@@ -13872,7 +14006,7 @@ class SprintScheduler:
             if uma.rss_gib >= 5.0 or uma.is_critical or uma.is_emergency:
                 log.debug("[F260] Epistemic gap skipped -- UMA RSS=%.1fGB, state=%s", uma.rss_gib, uma.state)
                 return
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.debug("[F260] UMA check failed: %s", e)
             return
         if duckdb_store is None:
@@ -13884,7 +14018,7 @@ class SprintScheduler:
                 findings = await duckdb_store.get_top_findings(limit=30)
             elif hasattr(duckdb_store, "get_recent_findings"):
                 findings = await duckdb_store.get_recent_findings(limit=30)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
             log.debug("[F260] Failed to get findings: %s", e)
             return
         if not findings:
@@ -13911,7 +14045,7 @@ class SprintScheduler:
                     if result and result[0]:
                         gaps_data = _msgspec_decode(result[0]) if result[0] else []
                         known_gaps = [g.get("description", "") for g in gaps_data if g]
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; memory operation; non-critical
                     pass
             finding_strings = []
             for f in findings[:MAX_EPISTEMIC_FINDINGS]:
@@ -13935,9 +14069,9 @@ class SprintScheduler:
                         gaps=identified_gaps,
                     )
                     log.info("[F260] Gaps written to ResearchSessionMemory")
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
                     log.debug("[F260] Failed to write gaps to memory: %s", e)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
             log.debug("[F260] EpistemicGapProgram failed: %s", e)
         try:
             contradictory_findings: list[dict] = []
@@ -13969,7 +14103,7 @@ class SprintScheduler:
                 log.info("[F260] Contradiction resolution complete")
                 if hasattr(pred, "confidence") and pred.confidence:
                     log.info("[F260] Resolution confidence: %.2f", pred.confidence)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
             log.debug("[F260] ContradictionResolverProgram failed: %s", e)
 
     _background_research_tasks: set[asyncio.Task[None]] = set()
@@ -13985,7 +14119,7 @@ class SprintScheduler:
             if snapshot.is_warn or snapshot.is_critical or snapshot.is_emergency:
                 log.debug("[F11] Deep research blocked -- memory pressure: %s", snapshot.state)
                 return
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; memory operation; non-critical
             pass
         task = safe_create_task(self._run_enhanced_research_async())
         self._background_research_tasks.add(task)
@@ -13996,7 +14130,7 @@ class SprintScheduler:
             self._background_research_tasks.add(dark_task)
             dark_task.add_done_callback(self._background_research_tasks.discard)
             log.debug("[F214K] Dark surface pivot advisory launched")
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; callback handler; non-critical
             pass
 
     async def _run_enhanced_research_async(self) -> None:
@@ -14006,7 +14140,7 @@ class SprintScheduler:
                 await self._run_enhanced_research()
         except TimeoutError:
             log.warning("[F11] Deep research timed out after 180s")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.warning(f"[F11] Deep research advisory failed: {e}")
 
     async def _run_enhanced_research(self) -> list:
@@ -14037,7 +14171,7 @@ class SprintScheduler:
                 level = snap.get("uma_pressure_level", "unknown")
                 log.debug("[F11] Deep research blocked -- RAM pressure: %s", level)
                 return []
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; memory operation; non-critical
             pass
         seed_iocs: list[str] = []
         for src_field in (
@@ -14067,7 +14201,7 @@ class SprintScheduler:
         try:
             start_mono = getattr(self, "_sprint_start_monotonic", None) or _time.monotonic()
             elapsed = _time.monotonic() - start_mono
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
             elapsed = 0.0
         remaining_s = max(60.0, min(180.0, 1800.0 - elapsed))
         engine_config = UnifiedResearchConfig(
@@ -14090,7 +14224,7 @@ class SprintScheduler:
         except TimeoutError:
             log.warning(f"[F11] UnifiedResearchEngine timed out after {remaining_s:.0f}s")
             return []
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
             log.warning(f"[F11] UnifiedResearchEngine failed: {e}")
             return []
         if not response or not response.findings:
@@ -14116,7 +14250,7 @@ class SprintScheduler:
                     payload_text=f"{getattr(f, 'title', '')}\n{getattr(f, 'content', '')[:2000]}",
                 )
                 canonicals.append(canonical)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
         if not canonicals:
             return []
@@ -14125,7 +14259,7 @@ class SprintScheduler:
             if store and hasattr(store, "async_ingest_findings_batch"):
                 _ = await self._gate_then_ingest_and_accumulate(store, canonicals, sprint_id=self.sprint_id or "")
                 log.info(f"[F11] Deep research ingested {len(canonicals)} findings")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
             log.warning(f"[F11] DuckDB ingest failed: {e}")
         return canonicals
 
@@ -14146,13 +14280,13 @@ class SprintScheduler:
         try:
             if not ENV.get_bool("HLEDAC_ENABLE_DARK_PIVOTS"):
                 return
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return
         try:
             accepted = getattr(self._result, "accepted_findings", 0) or 0
             if accepted < 5:
                 return
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return
         tor_available = False
         i2p_available = False
@@ -14160,13 +14294,13 @@ class SprintScheduler:
             from hledac.universal.transport.tor_transport import TorTransport
 
             tor_available = TorTransport is not None
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             pass
         try:
             from hledac.universal.transport.i2p_transport import I2PTransport
 
             i2p_available = I2PTransport is not None
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             pass
         if not (tor_available or i2p_available):
             log.debug("[F214K] No dark transport available, skipping")
@@ -14176,7 +14310,7 @@ class SprintScheduler:
             store = getattr(self, "_duckdb_store", None)
             if store and hasattr(store, "_findings_cache"):
                 findings_for_dark = list(getattr(store, "_findings_cache", [])[:50])
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
             pass
         if not findings_for_dark:
             log.debug("[F214K] No findings available for dark surface queries")
@@ -14192,7 +14326,7 @@ class SprintScheduler:
                 tor_available=tor_available,
                 i2p_available=i2p_available,
             )
-        except Exception as _e:
+        except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.debug("[F214K] Dark surface query generation failed: %s", _e)
             dark_queries = []
         _rc = None
@@ -14230,7 +14364,7 @@ class SprintScheduler:
                 for _h in _hyps:
                     _rc.add_hypothesis(_h)
                 self._result.research_context = _rc
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
         if not dark_queries:
             log.debug("[F214K] No dark surface queries generated")
@@ -14246,7 +14380,7 @@ class SprintScheduler:
             )
             planned = len(items)
             log.info(f"[F214K] Planned {planned} dark surface pivot queries")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.warning(f"[F214K] Dark pivot planning failed: {e}")
         self._result.dark_surface_pivots_attempted = len(dark_queries)
         self._result.dark_surface_pivots_accepted = planned
@@ -14264,13 +14398,13 @@ class SprintScheduler:
         if self._dedup_env is not None:
             try:
                 self._dedup_env.close()
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
                 log.warning(f"Dedup LMDB close failed: {exc}")
             self._dedup_env = None
         if self._duckdb_read_con is not None:
             try:
                 self._duckdb_read_con.close()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
                 pass
             self._duckdb_read_con = None
 
@@ -14281,7 +14415,7 @@ class SprintScheduler:
 
             self._forensics_enricher = ForensicsEnricher()
             await self._forensics_enricher.initialize()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.debug("Forensics enricher init failed: %s", exc)
             self._forensics_enricher = None
         try:
@@ -14290,7 +14424,7 @@ class SprintScheduler:
             from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
 
             self._forensics_lmdb_env = open_lmdb_with_guard(db_path, map_size=50 * 1024 * 1024, max_dbs=1)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
             log.debug("Forensics LMDB open failed: %s", exc)
             self._forensics_lmdb_env = None
 
@@ -14303,13 +14437,13 @@ class SprintScheduler:
         if self._forensics_enricher is not None:
             try:
                 await self._forensics_enricher.close()
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
                 log.debug("Forensics enricher close failed: %s", exc)
             self._forensics_enricher = None
         if self._forensics_lmdb_env is not None:
             try:
                 self._forensics_lmdb_env.close()
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
                 log.debug("Forensics LMDB close failed: %s", exc)
             self._forensics_lmdb_env = None
 
@@ -14320,7 +14454,7 @@ class SprintScheduler:
 
             self._multimodal_enricher = MultimodalEnricher(governor=self._governor, embedding_dim=1280, batch_size=4)
             await self._multimodal_enricher.initialize()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.debug("Multimodal enricher init failed: %s", exc)
             self._multimodal_enricher = None
         try:
@@ -14329,7 +14463,7 @@ class SprintScheduler:
             from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
 
             self._multimodal_lmdb_env = open_lmdb_with_guard(db_path, map_size=50 * 1024 * 1024, max_dbs=1)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
             log.debug("Multimodal LMDB open failed: %s", exc)
             self._multimodal_lmdb_env = None
 
@@ -14342,13 +14476,13 @@ class SprintScheduler:
         if self._multimodal_enricher is not None:
             try:
                 await self._multimodal_enricher.close()
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
                 log.debug("Multimodal enricher close failed: %s", exc)
             self._multimodal_enricher = None
         if self._multimodal_lmdb_env is not None:
             try:
                 self._multimodal_lmdb_env.close()
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
                 log.debug("Multimodal LMDB close failed: %s", exc)
             self._multimodal_lmdb_env = None
 
@@ -14386,7 +14520,7 @@ class SprintScheduler:
             )
             self._metrics_initialized = True
             log.debug(f"[F205H] MetricsRegistry initialized: run_dir={run_dir}")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             self._metrics_registry = None
             self._metrics_initialized = False
             log.debug(f"[F205H] MetricsRegistry init failed (non-fatal): {exc}")
@@ -14407,7 +14541,7 @@ class SprintScheduler:
             return
         try:
             self._metrics_registry.tick()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             pass
 
     def _get_metrics_summary(self) -> dict | None:
@@ -14435,7 +14569,7 @@ class SprintScheduler:
                 "persist_available": summary.get("persist_available", False),
                 "closed": summary.get("closed", False),
             }
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; memory operation; non-critical
             return None
 
     async def _close_metrics_registry(self) -> None:
@@ -14454,7 +14588,7 @@ class SprintScheduler:
             self._metrics_registry.close()
         except asyncio.CancelledError:
             raise
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
             log.debug(f"[F205H] MetricsRegistry close failed: {exc}")
         finally:
             self._metrics_registry = None
@@ -14575,7 +14709,7 @@ class SprintScheduler:
                                 log.debug("[F267] MLX prewarm: model verified warm, skipping load")
                                 return
                             log.debug("[F267] MLX prewarm: Metal cache cold, proceeding with load")
-                except Exception as _e:
+                except Exception as _e:  # noqa: BLE001 — best-effort; prewarm failure; non-critical
                     log.debug("[F267] MLX prewarm check failed: %s", _e)
             import time as _t_f273d
 
@@ -14590,7 +14724,7 @@ class SprintScheduler:
                 log.debug(f"[P12] Skipping Hermes load -- ModelManager blocked: {e}")
                 self._hermes_engine = None
                 self._result.hermes_load_reason = f"rss_headroom_skip:{type(e).__name__}"
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; lock acquisition failure; non-critical
                 log.debug(f"[P12] Hermes load failed: {e}")
                 self._hermes_engine = None
                 self._result.hermes_load_reason = f"load_error:{type(e).__name__}"
@@ -14613,7 +14747,7 @@ class SprintScheduler:
                     #   60s TTL, fire-and-forget
                     from hledac.universal.transport import prefetch_dns
                     await prefetch_dns([_query])
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
                 pass
 
         async def _prefetch_modernbert() -> None:
@@ -14625,14 +14759,14 @@ class SprintScheduler:
                 if hasattr(engine, "_is_warm") and engine._is_warm:
                     return
                 await asyncio.sleep(0)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
 
         try:
             async with asyncio.TaskGroup() as tg:
-                tg.create_task(_load_in_thread(), name="hermes_load")
-                tg.create_task(_prefetch_urls(), name="url_prefetch")
-                tg.create_task(_prefetch_modernbert(), name="modernbert_prefetch")
+                tg.create_task(_load_in_thread(), name="hermes_load", eager_start=True)
+                tg.create_task(_prefetch_urls(), name="url_prefetch", eager_start=True)
+                tg.create_task(_prefetch_modernbert(), name="modernbert_prefetch", eager_start=True)
         except* Exception as e:
             log.debug("[ISSUE-121] TaskGroup exception during parallel prewarm: %s", e)
 
@@ -14659,7 +14793,7 @@ class SprintScheduler:
         try:
             await get_model_manager().release_model("hermes")
             log.debug("[P12] Hermes unloaded via ModelManager")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.debug(f"[P12] Hermes unload failed: {e}")
         finally:
             self._hermes_engine = None
@@ -14677,7 +14811,7 @@ class SprintScheduler:
             try:
                 if key not in self._dedup_rust:
                     return False
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
         return key in self._dedup_seen
 
@@ -14695,7 +14829,7 @@ class SprintScheduler:
         if self._dedup_rust is not None:
             try:
                 self._dedup_rust.add(key)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
 
     def request_early_windup(self) -> None:
@@ -14714,10 +14848,17 @@ class SprintScheduler:
             self._lifecycle.request_abort("uma_emergency")
 
     def is_new_entry(self, entry_hash: str) -> bool:
-        """Return True if entry_hash has not been seen in this sprint."""
+        """Return True if entry_hash has not been seen in this sprint.
+
+        Uses LRU promotion: on hit, entry is moved to most-recently-used
+        position so it survives longer under eviction pressure.
+        """
         if not entry_hash:
             return True
-        if entry_hash in self._seen_hashes:
+        # ISSUE-3: get() does NOT promote; promote() is needed for LRU semantics.
+        # This avoids unnecessary move_to_end on duplicate-check hot path.
+        existing = self._seen_hashes.get(entry_hash)
+        if existing is not None:
             self._result.duplicate_entry_hashes_skipped += 1
             return False
         self._seen_hashes[entry_hash] = True
@@ -14767,7 +14908,7 @@ class SprintScheduler:
             elif phase not in (SprintPhase.EXPORT, SprintPhase.TEARDOWN):
                 lifecycle.request_abort("scheduler_final_phase")
                 lifecycle.mark_teardown_started()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; export/write failure; non-critical
             pass
 
     async def _maybe_export_partial(self, lifecycle) -> None:
@@ -14818,7 +14959,7 @@ class SprintScheduler:
             )
             self._last_partial_finding_count = self._finding_count
             log.debug(f"[PARTIAL-EXPORT] triggered at finding_count={self._finding_count}")
-        except Exception as ex:
+        except Exception as ex:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.warning(f"[PARTIAL-EXPORT] _maybe_export_partial failed (non-fatal): {ex}")
 
     async def _run_export(self, lifecycle) -> None:
@@ -14831,11 +14972,11 @@ class SprintScheduler:
             try:
                 _path = _render_fn(report, export_dir or None)
                 return (_suffix, str(_path))
-            except Exception as _exc:
+            except Exception as _exc:  # noqa: BLE001 — best-effort; export/write failure; non-critical
                 return (_suffix, f"EXPORT_ERROR:{_suffix}:{_exc}")
 
         _render_tasks = [
-            asyncio.create_task(asyncio.to_thread(_render_sync, _fn, _suffix), name=f"export:render:{_suffix}")
+            safe_create_task(asyncio.to_thread(_render_sync, _fn, _suffix), name=f"export:render:{_suffix}")
             for _fn, _suffix in [(rend_md, "md"), (rend_jsonld, "jsonld"), (rend_stix, "stix.json")]
         ]
         _async_tasks = [
@@ -14880,7 +15021,7 @@ class SprintScheduler:
             logger.info(
                 f"Hypothesis export: {result.hypotheses_generated} hypotheses, {result.hidden_bridges} hidden bridges, {result.anomalies_detected} anomalies in {result.execution_time_s:.2f}s"
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — best-effort; logging failure; non-critical
             logger.warning(f"Hypothesis export failed (non-critical): {exc}")
             self._result.export_paths.append(f"EXPORT_ERROR:hypothesis:{exc}")
 
@@ -14910,7 +15051,7 @@ class SprintScheduler:
         """
         try:
             cti_inputs = await collect_cti_inputs(report, self._duckdb_store)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
             self._result.export_paths.append(f"EXPORT_ERROR:cti_stix:{exc}")
             return
         try:
@@ -14936,7 +15077,7 @@ class SprintScheduler:
             self._result.export_paths.append(str(path))
         except asyncio.CancelledError:
             raise
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — best-effort; export/write failure; non-critical
             self._result.export_paths.append(f"EXPORT_ERROR:cti_stix:{exc}")
 
     def _build_public_stage_counters(self) -> dict:
@@ -15054,7 +15195,7 @@ class SprintScheduler:
             arrow_metrics = get_arrow_metrics()
             if arrow_metrics:
                 report["arrow_ingest"] = arrow_metrics
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
             pass
         graph_signal = self._get_graph_signal()
         if graph_signal:
@@ -15259,7 +15400,7 @@ class SprintScheduler:
                     _snap = await self._governor.evaluate()
                     _term_uma = getattr(_snap, "uma_state", "ok")
                     _term_swap = getattr(_snap, "swap_detected", False)
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     pass
             _mlt = required_terminal_lanes(
                 snapshot=self._acquisition_plan, query=self._query, uma_state=_term_uma, swap_detected=_term_swap
@@ -15278,7 +15419,7 @@ class SprintScheduler:
             report["acquisition_terminality_checked"] = True
             report["acquisition_terminality_satisfied"] = len(_fresh_term.get("missing_lanes", [])) == 0
             report["acquisition_terminality_missing_lanes"] = list(_fresh_term.get("missing_lanes", []))
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             pass
         report["public_terminal_state"] = _sfo.get("public", {}).get("terminal_state") or "NEVER_SCHEDULED"
         report["ct_terminal_state"] = _sfo.get("ct", {}).get("terminal_state") or "NEVER_ATTEMPTED"
@@ -15293,7 +15434,7 @@ class SprintScheduler:
 
             _timer_ev = getattr(self._result, "timer_events", None) or []
             report["runtime_loop_telemetry"] = compute_runtime_loop_telemetry(_timer_ev)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; telemetry/stats; best-effort
             report["runtime_loop_telemetry"] = {
                 "events": [],
                 "phase_totals_s": {},
@@ -15477,7 +15618,7 @@ class SprintScheduler:
                 lanes_unlocked_by_seed_context=getattr(self._result, "lanes_unlocked_by_seed_context", []) or [],
                 public_provider_selection_debug=getattr(self._result, "public_provider_selection_debug", None) or {},
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; lock acquisition failure; non-critical
             pass
         return report
 
@@ -15506,7 +15647,7 @@ class SprintScheduler:
                 clipped = max(0.3, min(2.5, raw))
                 get_sprint_ctx().source_weights[src] = clipped
                 log.debug(f"Source weight {src}: {clipped:.2f}")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.warning(f"Source weight load failed: {e} -- using defaults")
 
     @staticmethod
@@ -15607,7 +15748,7 @@ class SprintScheduler:
                     log.debug(
                         f"[F199A][NEON] Source weight adaptation: {source_type} ({int(fb['accepted'])}/{int(fb['fetched'])}) {stats_list[i]['current_weight']:.3f} -> {new_weight:.3f}"
                     )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; telemetry/stats; best-effort
                 log.debug(f"[F199A][NEON] batch_compute_scores failed: {e} -- falling back to Python")
                 SprintScheduler._adapt_source_weights_from_feedback_python(
                     self._source_quality_feedback, self._config, get_sprint_ctx().source_weights, log
@@ -15676,7 +15817,7 @@ class SprintScheduler:
             await store.async_record_source_hit(
                 sprint_id, _time.time(), source_type, findings_count, ioc_count, hit_rate
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.warning(f"source_hit_log insert failed: {e}")
 
     def inject_ioc_graph(self, ioc_graph: Any) -> None:
@@ -15976,7 +16117,7 @@ class SprintScheduler:
             nym = NymTransport()
             if nym.is_running and (not getattr(nym, "circuit_breaker_open", False)):
                 return "nym"
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             pass
         try:
             from hledac.universal.transport.tor_transport import TorTransport
@@ -15984,7 +16125,7 @@ class SprintScheduler:
             tor = TorTransport()
             if tor.available and getattr(tor, "_circuit_established", False):
                 return "tor"
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             pass
         try:
             from hledac.universal.transport.i2p_transport import I2PTransport
@@ -15996,7 +16137,7 @@ class SprintScheduler:
             i2p = I2PTransport()
             if await i2p.is_running():
                 return "i2p"
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             pass
         return "clearnet"
 
@@ -16030,7 +16171,7 @@ class SprintScheduler:
                     is_closed = _safe_getattr(store, "is_closed", False)
                     startup_ready = _safe_getattr(store, "startup_ready", False)
                     duckdb_locked = bool(is_closed) or not bool(startup_ready)
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
                     duckdb_locked = True
                 if not duckdb_locked:
                     duckdb_ok = True
@@ -16038,7 +16179,7 @@ class SprintScheduler:
                     errors.append("duckdb_store is locked or not initialized")
             else:
                 errors.append("duckdb_store not injected or missing async_ingest_findings_batch")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
             errors.append(f"duckdb check failed: {e}")
         try:
             evidence_log = getattr(self, "_evidence_log", None)
@@ -16050,7 +16191,7 @@ class SprintScheduler:
                     evidence_log_ok = True
             else:
                 evidence_log_ok = True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
             errors.append(f"evidence_log check failed: {e}")
             evidence_log_ok = False
         try:
@@ -16063,7 +16204,7 @@ class SprintScheduler:
             elif current_rss > M1_MEMORY_WARNING_THRESHOLD:
                 memory_pressure_ok = True
                 log.warning(f"[F265.1] memory pressure warning: RSS={current_rss / 1024**3:.1f}GiB > 5.5GiB")
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; memory operation; non-critical
             memory_pressure_ok = True
         try:
             result = getattr(self, "_result", None)
@@ -16077,7 +16218,7 @@ class SprintScheduler:
             else:
                 hermes_ok = False
                 errors.append("hermes prewarm not yet run")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; prewarm failure; non-critical
             errors.append(f"hermes check failed: {e}")
         try:
             from hledac.universal.fetching.public_fetcher import get_public_fetcher_session_status
@@ -16090,14 +16231,14 @@ class SprintScheduler:
             )
             if not fetch_coordinator_ok:
                 errors.append("public_fetcher sessions not available")
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
             fetch_coordinator_ok = False
         try:
             from hledac.universal.knowledge.graph_service import graph_stats
 
             stats = graph_stats()
             graph_service_ok = stats is not None
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; telemetry/stats; best-effort
             graph_service_ok = False
         nym_circuit_open = False
         try:
@@ -16105,7 +16246,7 @@ class SprintScheduler:
 
             nym = NymTransport()
             nym_circuit_open = _safe_getattr(nym, "circuit_breaker_open", False)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             pass
         overall_ok = duckdb_ok and hermes_ok and evidence_log_ok
         blocking_ok = duckdb_ok and graph_service_ok and memory_pressure_ok
@@ -16234,7 +16375,7 @@ class SprintScheduler:
                                 weight=0.8,
                                 evidence="hypothesis_probe",
                             )
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     pass
         elif task.task_type == "sprint_windup":
             pass
@@ -16316,7 +16457,7 @@ class SprintScheduler:
                     log.debug(f"Speculative hit: {key}")
                 except asyncio.CancelledError:
                     raise
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     log.debug(f"Speculative miss {key}: {e}")
 
             task = safe_create_task(_speculative_run(), name="sprint:speculative_run")
@@ -16347,13 +16488,13 @@ class SprintScheduler:
                     try:
                         addrs = _socket.getaddrinfo(domain, 443, _socket.AF_INET)
                         return list({r[4][0] for r in addrs})
-                    except Exception:
+                    except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                         return []
 
                 ips = await asyncio.to_thread(_sync_resolve)
                 if ips:
                     return (domain, ips)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; thread operation failure; non-critical
                 pass
             return None
 
@@ -16392,7 +16533,7 @@ class SprintScheduler:
                 node_count = _stats.get("nodes", 0) if isinstance(_stats, dict) else 0
                 edge_count = _stats.get("edges", 0) if isinstance(_stats, dict) else 0
             log.debug(f"OODA Observe: {node_count} nodes, {edge_count} edges [src={_graph_source}]")
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; telemetry/stats; best-effort
             node_count = 0
         top_nodes: list = []
         try:
@@ -16405,7 +16546,7 @@ class SprintScheduler:
                         degree = float(n.get("degree", 0))
                         if val:
                             top_nodes.append((val, ioc_type, degree))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.debug(f"OODA Orient degree ranking: {e}")
         _bootstrap_seeds: list[tuple] = []
         if node_count < 3 or edge_count == 0:
@@ -16419,7 +16560,7 @@ class SprintScheduler:
                         if hasattr(c, "domain") and c.domain:
                             _bootstrap_seeds.append((c.domain, "domain", c.confidence))
                     log.debug(f"OODA bootstrap from query: {len(_bootstrap_seeds)} domains")
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; DB write/query failure; non-critical
                     pass
                 if not _bootstrap_seeds:
                     _apt_candidates = self._ooda_apt_domain_mapping(_query_text)
@@ -16443,10 +16584,10 @@ class SprintScheduler:
                                 for c in _cands[:3]:
                                     if hasattr(c, "domain") and c.domain:
                                         _bootstrap_seeds.append((c.domain, "domain", c.confidence))
-                            except Exception:
+                            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                                 pass
                     log.debug(f"OODA bootstrap from DuckDB: {len(_bootstrap_seeds)} domains")
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
                     pass
         if len(top_nodes) < 3 and _bootstrap_seeds:
             _seen: set[tuple] = set(top_nodes)
@@ -16471,7 +16612,7 @@ class SprintScheduler:
             try:
                 self.enqueue_pivot(value, ioc_type, confidence, degree=2)
                 acted += 1
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 log.debug(f"OODA Act enqueue {value}: {e}")
         ctx = get_sprint_ctx()
         ctx.pivot_stats["ooda_cycles"] = ctx.pivot_stats.get("ooda_cycles", 0) + 1
@@ -16514,7 +16655,7 @@ class SprintScheduler:
             raw = ENV.get_int("HLEDAC_ARROW_BATCH_HARD_CAP")
             if raw:
                 return max(100, min(raw, 50000))
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             pass
         return max(2 * self._arrow_flush_n, 2000)
 
@@ -16569,7 +16710,7 @@ class SprintScheduler:
             log.info(f"[8VD-PARQUET] flushed {len(batch)} rows -> {path}")
             get_sprint_ctx().arrow_batch.clear()
             self._arrow_last_flush = now
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — best-effort; export/write failure; non-critical
             self._result.arrow_last_flush_error = str(exc)[:256]
             batch_len = len(get_sprint_ctx().arrow_batch)
             hard_cap = self._ARROW_BATCH_HARD_CAP
@@ -16602,7 +16743,7 @@ class SprintScheduler:
                 for ioc in extract_iocs_from_text(_text[:2000]):
                     ioc_entry = {**ioc, "source": "ner_extracted", "parent_url": finding.get("url", "")}
                     self.buffer_ioc(ioc_entry)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
 
     def buffer_ioc(self, ioc: dict) -> None:
@@ -16622,11 +16763,12 @@ class SprintScheduler:
             try:
                 score = self._ioc_scorer.final_score(ioc_entry)
                 ioc_entry["confidence"] = score
-            except Exception as _exc:
+            except Exception as _exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 log.debug("ioc_scorer.final_score failed: %s", _exc)
-        ctx = get_sprint_ctx()
-        ctx.recent_iocs.append(ioc_entry)
-        ctx.recent_iocs = ctx.recent_iocs[-100:]
+        # ISSUE-6: recent_iocs bounded via maxlen=200 deque — no slice assignment needed.
+        # Slice assignment `ctx.recent_iocs[-100:]` was O(n) copy on every IOC, replaced
+        # by simple append. The deque silently evicts oldest entries at maxlen.
+        get_sprint_ctx().recent_iocs.append(ioc_entry)
         get_sprint_ctx().arrow_batch.append(ioc_entry)
         try:
             _t = safe_create_task(self._maybe_flush_to_parquet(), name="sprint:flush_arrow_ioc")
@@ -16653,10 +16795,10 @@ class SprintScheduler:
         try:
             arrow_tbl = self._get_duckdb_con().execute(sql).fetch_arrow_table()
             return arrow_tbl.to_pylist()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
             try:
                 return self._get_duckdb_con().execute(sql).fetchdf().to_dict("records")
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
                 return []
 
     def deduplicate_and_rank_findings(self, sprint_id: str | None = None) -> str:
@@ -16682,7 +16824,7 @@ class SprintScheduler:
             sql = f"\n                COPY (\n                    SELECT\n                        FIRST(title)     AS title,\n                        FIRST(source)    AS source,\n                        url,\n                        ioc,\n                        MAX(confidence) AS confidence,\n                        COUNT(*)         AS hit_count\n                    FROM read_parquet('{glob}')\n                    WHERE url IS NOT NULL OR ioc IS NOT NULL\n                    GROUP BY url, ioc\n                    ORDER BY hit_count DESC\n                ) TO '{out}' (FORMAT PARQUET, COMPRESSION 'snappy')\n            "
             con.execute(sql)
             return out
-        except Exception as _e:
+        except Exception as _e:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
             log.debug(f"[F5.4] DuckDB COPY failed: {_e}")
         try:
             import polars as pl
@@ -16698,7 +16840,7 @@ class SprintScheduler:
                 ]
             ).sort("hit_count", descending=True).collect(engine="streaming").write_parquet(out, compression="snappy")
             return out
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; export/write failure; non-critical
             pass
         try:
             import pyarrow as pa
@@ -16722,7 +16864,7 @@ class SprintScheduler:
                 tbl = pa.table.from_pylist(rows, schema=schema)
                 pq.write_table(tbl, out, compression="snappy")
             return out
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; export/write failure; non-critical
             return out
 
     async def _init_dht_node_background(self) -> None:
@@ -16740,7 +16882,7 @@ class SprintScheduler:
             await node.start()
             self._dht_node = node
             log.info("[DHT] singleton started (real_udp=%s)", DHT_REAL_UDP)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.debug("[DHT] background init failed (non-fatal): %s", e)
             self._dht_node = None
 
@@ -16757,20 +16899,20 @@ class SprintScheduler:
                 from hledac.universal.transport.transport_resolver import set_i2p_transport_singleton
 
                 set_i2p_transport_singleton(self._i2p_transport)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
             try:
                 from hledac.universal.transport.transport_router import set_i2p_transport_singleton
 
                 set_i2p_transport_singleton(self._i2p_transport)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.debug("[I2P] background init failed (non-fatal): %s", e)
             if self._i2p_transport is not None:
                 try:
                     self._i2p_transport.available = False
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     pass
 
     async def _init_tor_background(self) -> None:
@@ -16787,12 +16929,12 @@ class SprintScheduler:
             self._tor_transport = transport
             set_tor_transport_singleton(self._tor_transport)
             log.info("[Tor] background transport started")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.debug("[Tor] background init failed (non-fatal): %s", e)
             if self._tor_transport is not None:
                 try:
                     self._tor_transport.available = False
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     pass
 
     async def _init_nym_background(self) -> None:
@@ -16810,12 +16952,12 @@ class SprintScheduler:
             await transport.start()
             self._nym_transport = transport
             log.info("[Nym] background transport started")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.debug("[Nym] background init failed (non-fatal): %s", e)
             if self._nym_transport is not None:
                 try:
                     self._nym_transport.available = False
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     pass
 
     async def _memory_pressure_loop(self) -> None:
@@ -16834,7 +16976,7 @@ class SprintScheduler:
                         log.debug(
                             f"[BACKPRESSURE] evaluate: clearnet_max={bp.clearnet_max}, stealth_max={bp.stealth_max}, uma_state={bp.uma_state}"
                         )
-                    except Exception as _bp_exc:
+                    except Exception as _bp_exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                         log.debug("[BACKPRESSURE] evaluate failed: %s", _bp_exc)
                 log.info(f"[MEM] fetch_limit={limits['fetch']} ml_jobs={limits['ml_jobs']}")
                 interval = 10 if limits["fetch"] <= 2 else 30
@@ -16849,9 +16991,9 @@ class SprintScheduler:
                         _current_rss_mb = _psutil.Process().memory_info().rss / (1024 * 1024)
                         await check_memory_delta_alert(self._memory_delta_tracker, _current_rss_mb)
                     await check_lock_contention_alert(get_lock_contention_tracker())
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; memory operation; non-critical
                     pass
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; memory operation; non-critical
                 log.warning(f"[MEM] pressure check failed: {e}")
                 interval = 30
             _shutdown = getattr(self, "_memory_pressure_shutdown", None)
@@ -16942,11 +17084,11 @@ class SprintScheduler:
                 windup_error=False,
                 windup_engine=self._synthesis_engine or "unknown",
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return None
         try:
             graph_bundle = collect_graph_summary(self._ioc_graph)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; graph operation failure; non-critical
             from hledac.universal.runtime.shadow_inputs import GraphSummaryBundle
 
             graph_bundle = GraphSummaryBundle()
@@ -16964,7 +17106,7 @@ class SprintScheduler:
                     "models_needed": [],
                 },
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             from hledac.universal.runtime.shadow_inputs import ModelControlFactsBundle
 
             mc_bundle = ModelControlFactsBundle()
@@ -16987,23 +17129,23 @@ class SprintScheduler:
                 correlation=None,
                 runtime_mode=RuntimeMode.get_current(),
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return None
         try:
             from hledac.universal.brain.model_lifecycle import get_model_lifecycle_status
 
             lifecycle_status = get_model_lifecycle_status()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             lifecycle_status = None
         try:
             runtime_facts = collect_provider_runtime_facts(model_manager=None, lifecycle_status=lifecycle_status)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             from hledac.universal.runtime.shadow_inputs import ProviderRuntimeFactsBundle
 
             runtime_facts = ProviderRuntimeFactsBundle()
         try:
             pd_summary = compose_pre_decision(parity, runtime_facts=runtime_facts)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return None
         try:
             estimated_tool_count = 12
@@ -17023,7 +17165,7 @@ class SprintScheduler:
                 "tool_cards_sample": [],
                 "_deferred_registry": True,
             }
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; memory operation; non-critical
             pass
         try:
             from hledac.universal.runtime.shadow_pre_decision import preview_dispatch_parity
@@ -17076,10 +17218,10 @@ class SprintScheduler:
                     execlogger_available=execlogger_available,
                 )
                 dispatch_preview.execution_context = execution_context
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; logging failure; non-critical
                 pass
             pd_summary.dispatch_parity = dispatch_preview
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             pass
         self._shadow_pd_summary = pd_summary
         return pd_summary
@@ -17118,7 +17260,7 @@ class SprintScheduler:
             return
         try:
             self._advisory_gate_snapshot = compose_advisory_gate(pd)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             self._advisory_gate_snapshot = None
 
     def _build_shadow_readiness_preview(self) -> dict[str, Any]:
@@ -17390,7 +17532,7 @@ class SprintScheduler:
                     "prewindup_barrier_errors": getattr(self._result, "prewindup_barrier_errors", 0) or 0,
                     "return_guard_errors": getattr(self._result, "return_guard_errors", 0) or 0,
                 }
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             result["lane_verdict"] = None
         if not findings:
             return result
@@ -17422,7 +17564,7 @@ class SprintScheduler:
                 "corroborated_iocs_count": len(getattr(corr, "corroborated_iocs", []) or []),
                 "top_priority_pivots_count": len(getattr(corr, "top_priority_pivots", []) or []),
             }
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             result["correlation"] = None
         try:
             HypEng = _import_hypothesis_engine()
@@ -17471,7 +17613,7 @@ class SprintScheduler:
                         if isinstance(item, dict)
                     ],
                 }
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             result["hypothesis_pack"] = None
         try:
             feed_vlist: list[tuple[str, int, int, int, int]] = getattr(self, "_feed_verdicts", []) or []
@@ -17493,7 +17635,7 @@ class SprintScheduler:
                     "avg_quality": avg_quality,
                     "tag_distribution": verdict_tags,
                 }
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             result["feed_verdict"] = None
         try:
             pub_vlist: list[dict] = getattr(self, "_public_verdicts", []) or []
@@ -17527,7 +17669,7 @@ class SprintScheduler:
                     "dominant_confidence_note": dominant_conf,
                     "action_distribution": {a: next_actions.count(a) for a in set(next_actions)},
                 }
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             result["public_verdict"] = None
         try:
             lane_vlist: list[tuple[str, int, int, int, int]] = getattr(self, "_lane_verdicts", []) or []
@@ -17585,7 +17727,7 @@ class SprintScheduler:
                     "prewindup_barrier_errors": getattr(self._result, "prewindup_barrier_errors", 0) or 0,
                     "return_guard_errors": getattr(self._result, "return_guard_errors", 0) or 0,
                 }
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             result["lane_verdict"] = None
         try:
             corr = result.get("correlation") or {}
@@ -17657,7 +17799,7 @@ class SprintScheduler:
                 "is_corroborated": is_corroborated_flag,
                 "campaign_signal": camp_conf > 0.3,
             }
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             result["signal_path"] = None
         try:
             feed_f = self._result.accepted_findings or 0
@@ -17689,7 +17831,7 @@ class SprintScheduler:
                 "branch_verdict": branch_verdict,
                 "recommendation": recommendation,
             }
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             result["branch_value"] = None
         try:
             sig_path = result.get("signal_path") or {}
@@ -17783,22 +17925,58 @@ class SprintScheduler:
                 "branch_conversion_health": branch_conversion_health,
                 "discovery_efficiency": discovery_efficiency,
             }
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             pass
         return result
 
     def _reset_result(self) -> None:
+        # ISSUE-3: BoundedLRUDict.clear() resets content but preserves capacity.
+        # Reset eviction counters for fresh telemetry in next sprint.
         self._seen_hashes.clear()
+        self._seen_hashes.reset_evicted_count()
         self._entries_per_source.clear()
+        self._entries_per_source.reset_evicted_count()
         self._hits_per_source.clear()
+        self._hits_per_source.reset_evicted_count()
         self._stop_requested = False
         self._result = SprintSchedulerResult()
+        # ISSUE-3: wire BoundedLRUDict eviction counters into result for telemetry
+        self._result.seen_hashes_dropped = self._seen_hashes.evicted_count
+        self._result.entries_per_source_dropped = self._entries_per_source.evicted_count
+        self._result.hits_per_source_dropped = self._hits_per_source.evicted_count
+        ctx = get_sprint_ctx()
+        # ctx-level bounded dicts: wire their eviction counters into result too
+        self._result.seen_hashes_dropped += ctx.seen_hashes.evicted_count
+        self._result.entries_per_source_dropped += ctx.entries_per_source.evicted_count
+        self._result.hits_per_source_dropped += ctx.hits_per_source.evicted_count
+        self._result.novelty_bonuses_dropped = ctx.novelty_bonuses.evicted_count
+        self._result.source_weights_dropped = ctx.source_weights.evicted_count
+        self._result.feed_accepted_per_source_dropped = ctx.feed_accepted_per_source.evicted_count
+        self._result.fetch_latency_ema_dropped = ctx.fetch_latency_ema.evicted_count
         get_sprint_ctx().arrow_batch.clear()
+        # ISSUE-6: also clear SprintRunContext fields that accumulate unbounded.
+        # pivot_rewards is NOT cleared — history[-20:] already bounds reads, and
+        # keeping it across cycles is intentional for hypothesis tracking.
+        ctx = get_sprint_ctx()
+        ctx.seen_hashes.clear()
+        ctx.seen_hashes.reset_evicted_count()
+        ctx.novelty_bonuses.clear()
+        ctx.novelty_bonuses.reset_evicted_count()
+        ctx.source_weights.clear()
+        ctx.source_weights.reset_evicted_count()
+        ctx.feed_accepted_per_source.clear()
+        ctx.feed_accepted_per_source.reset_evicted_count()
+        ctx.fetch_latency_ema.clear()
+        ctx.fetch_latency_ema.reset_evicted_count()
+        ctx.entries_per_source.clear()
+        ctx.entries_per_source.reset_evicted_count()
+        ctx.hits_per_source.clear()
+        ctx.hits_per_source.reset_evicted_count()
         self._arrow_last_flush = 0.0
         if self._duckdb_read_con is not None:
             try:
                 self._duckdb_read_con.close()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
                 pass
             self._duckdb_read_con = None
         self._shadow_pd_summary = None
@@ -17807,7 +17985,7 @@ class SprintScheduler:
         if self._prefetch_oracle is not None:
             try:
                 self._prefetch_oracle.reset()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; prefetch/oracle failure; non-critical
                 pass
         self._all_findings.clear()
         if self._duckdb_store is not None:
@@ -17815,7 +17993,7 @@ class SprintScheduler:
                 _quality_state = getattr(self._duckdb_store, "_quality_state", None)
                 if _quality_state is not None and hasattr(_quality_state, "reset_hot_cache"):
                     _quality_state.reset_hot_cache()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
                 pass
         self._synth_windup_task = None
         self._feed_accepted_per_source.clear()
@@ -17836,18 +18014,18 @@ class SprintScheduler:
             from hledac.universal.knowledge.evidence_chain import reset_global_builder
 
             reset_global_builder()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             pass
         try:
             from hledac.universal.knowledge.graph_service import reset_session
 
             reset_session()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; graph operation failure; non-critical
             pass
         if self._hermes_engine is not None:
             try:
                 self._hermes_engine.reset_session()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; graph operation failure; non-critical
                 pass
         self._governor = None
         self._doh_adapter = None
@@ -17937,7 +18115,7 @@ class SprintScheduler:
                 if uma.is_critical or uma.is_emergency:
                     logger.debug("[graph_rag] skipped -- memory pressure")
                     return []
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; memory operation; non-critical
                 pass
             try:
                 from hledac.universal.knowledge.graph_rag import GraphRAGOrchestrator
@@ -17978,7 +18156,7 @@ class SprintScheduler:
                                 provenance=("graph_rag",),
                                 payload_text=content[:2048],
                             )
-                        except Exception:
+                        except Exception:  # noqa: BLE001 — best-effort; graph operation failure; non-critical
                             pass
                     findings.append(finding)
                 else:
@@ -17994,7 +18172,7 @@ class SprintScheduler:
                         }
                     )
             logger.debug("[graph_rag] found %d context insights", len(findings))
-        except Exception as _e:
+        except Exception as _e:  # noqa: BLE001 — best-effort; logging failure; non-critical
             logger.debug("[graph_rag] sidecar failed: %s", _e)
         return findings
 

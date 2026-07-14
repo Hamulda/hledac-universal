@@ -13,6 +13,7 @@ Design: cascade L0 cheap deterministic → L1 bounded temporal scoring.
 No numpy, no pandas, no mlx, no model loading. Pure Python. M1 8GB safe.
 """
 import heapq
+import itertools
 import math
 from collections import deque
 from collections.abc import Iterable
@@ -230,14 +231,13 @@ class TemporalSignalLayer:
             if len(active_sources) >= 2:
                 sources = list(active_sources.keys())
                 jaccard_scores = []
-                for i in range(min(len(sources), 8)):
-                    for j in range(i + 1, min(len(sources), 8)):
-                        set_i = active_sources[sources[i]]
-                        set_j = active_sources[sources[j]]
-                        if set_i and set_j:
-                            inter = len(set_i & set_j)
-                            union = len(set_i | set_j)
-                            jaccard_scores.append(_safe_div(inter, union))
+                for idx_i, idx_j in itertools.combinations(range(min(len(sources), 8)), 2):
+                    set_i = active_sources[sources[idx_i]]
+                    set_j = active_sources[sources[idx_j]]
+                    if set_i and set_j:
+                        inter = len(set_i & set_j)
+                        union = len(set_i | set_j)
+                        jaccard_scores.append(_safe_div(inter, union))
                 if jaccard_scores:
                     source_synchrony_score = sum(jaccard_scores) / len(jaccard_scores)
         rate_score = 0.0

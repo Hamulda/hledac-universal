@@ -867,9 +867,11 @@ class WaybackCDX:
         zst_path = self._cache_dir / f'{key}.json.zst'
         json_path = self._cache_dir / f'{key}.json'
         if zst_path.exists() and time.time() - zst_path.stat().st_mtime < self._CACHE_TTL:
-            return orjson.loads(_zstd.decompress(zst_path.read_bytes()))
+            raw_bytes = await asyncio.to_thread(zst_path.read_bytes)
+            return orjson.loads(_zstd.decompress(raw_bytes))
         if json_path.exists() and time.time() - json_path.stat().st_mtime < self._CACHE_TTL:
-            return orjson.loads(json_path.read_bytes())
+            raw_bytes = await asyncio.to_thread(json_path.read_bytes)
+            return orjson.loads(raw_bytes)
         await self._throttle()
         is_domain = '*.' in url_or_domain or not url_or_domain.startswith('http')
         url_param = url_or_domain if is_domain else f'*.{url_or_domain}'

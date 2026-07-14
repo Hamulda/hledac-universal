@@ -32,25 +32,27 @@ from collections.abc import Callable
 from typing import Any
 
 from hledac.universal.graph.quantum_pathfinder import DuckPGQGraph
-from hledac.universal.utils.optional_imports import optional  # F330: replaces try/except ImportError
-
-# ── Rust IOC dedup (lazy import) ───────────────────────────────────────────────
-# F265C: Use centralized rust backend
-# F330: Migrated to optional() pattern
-_rust_backend_opt = optional("core.rust_backend:rust")
+# Rust backend — strict import
+try:
+    from core.rust_backend import rust
+except ImportError:
+    try:
+        from hledac.universal.core.rust_backend import rust
+    except ImportError:
+        rust = None
 
 
 def _get_rust_backend():
     """Lazy getter for Rust backend."""
-    return _rust_backend_opt()
+    return rust
 
 
 def _is_ioc_dedup_available() -> bool:
     """Check if Rust IOC dedup is available at runtime."""
-    rust = _get_rust_backend()
-    if rust is None or not rust.is_available:
+    r = _get_rust_backend()
+    if r is None or not r.is_available:
         return False
-    return rust.ioc_dedup is not None
+    return r.ioc_dedup is not None
 
 
 _RUST_IOC_DEDUP_AVAILABLE = _is_ioc_dedup_available()

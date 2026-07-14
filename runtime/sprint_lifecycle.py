@@ -318,6 +318,10 @@ class SprintLifecycleManager:
             )
         return remaining <= _effective_trigger
 
+    def set_first_cycle_ran(self) -> None:
+        """F290: Signal that first acquisition cycle has completed."""
+        self.first_cycle_ran = True
+
     def set_deadline_expired_pre_cycle(self) -> None:
         """
         F290-Deadline: Signal that hard deadline expired before first cycle.

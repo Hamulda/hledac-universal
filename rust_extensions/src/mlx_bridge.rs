@@ -46,7 +46,8 @@
 //! Always-on, fail-safe, M1 8GB bounded.
 
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyList, PyTuple};
+use rayon::prelude::*;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -438,6 +439,83 @@ impl MLXBridge {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// batch_tokenize — Rayon-parallel prompt tokenization
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Parallel tokenization of multiple prompts using rayon.
+///
+/// CPU-bound: tokenization runs in parallel across prompts.
+/// GPU-bound mlx_lm.generate() stays in Python (Metal is single-stream).
+///
+/// Returns Vec of token IDs (as Vec<u32> per prompt).
+#[pyfunction]
+#[pyo3(name = "batch_tokenize")]
+pub fn batch_tokenize_(
+    py: Python<'_>,
+    tokenizers: Vec<Py<PyAny>>,
+    prompts: Vec<String>,
+    add_special_tokens: bool,
+) -> PyResult<Py<PyList>> {
+    use rayon::prelude::*;
+
+    if tokenizers.is_empty() || prompts.is_empty() {
+        return Ok(PyList::empty(py));
+    }
+    if tokenizers.len() != prompts.len() {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "tokenizers and prompts must have same length",
+        ));
+    }
+
+    // Small batch: serialize to avoid overhead
+    if prompts.len() < 4 {
+        let results: PyResult<Vec<Py<PyList>>> = tokenizers
+            .iter()
+            .zip(prompts.iter())
+            .map(|(tok, p)| {
+                Python::with_gil(|py| {
+                    let tok_ref = tok.as_ref(py);
+                    let result = tok_ref.call_method1("encode", (p,))?;
+                    let ids: Vec<u32> = if result.is_instance_of::<PyList>() {
+                        result
+                            .extract::<Vec<u32>>()
+                            .unwrap_or_default()
+                    } else if result.is_instance_of::<PyTuple>() {
+                        result.extract::<Vec<u32>>().unwrap_or_default()
+                    } else {
+                        vec![]
+                    };
+                    PyList::new(py, &ids)
+                })
+            })
+            .collect();
+        return Ok(results?);
+    }
+
+    // Large batch: rayon parallel (CPU-bound)
+    let results: Vec<Py<PyList>> = (0..tokenizers.len())
+        .into_par_iter()
+        .map(|i| {
+            Python::with_gil(|py| {
+                let tok = tokenizers[i].as_ref(py);
+                let p = &prompts[i];
+                let result = tok.call_method1("encode", (p,)).unwrap();
+                let ids: Vec<u32> = if result.is_instance_of::<PyList>() {
+                    result.extract::<Vec<u32>>().unwrap_or_default()
+                } else if result.is_instance_of::<PyTuple>() {
+                    result.extract::<Vec<u32>>().unwrap_or_default()
+                } else {
+                    vec![]
+                };
+                PyList::new(py, &ids)
+            })
+        })
+        .collect();
+
+    Ok(PyList::new(py, &results))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Registration
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -447,5 +525,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<MLXBridgeConfig>()?;
     m.add_class::<TokenChunk>()?;
     m.add_class::<AdaptiveChunkSizer>()?;
+    m.add_function(wrap_pyfunction!(batch_tokenize_, m)?)?;
     Ok(())
 }

@@ -509,7 +509,7 @@ async def _parallel_taskgroup[T](
     try:
         async with asyncio.TaskGroup() as tg:
             for idx, coro in enumerate(coros):
-                tg.create_task(_run(idx, coro), name=f"parallel[{idx}]")
+                tg.create_task(_run(idx, coro), name=f"parallel[{idx}]", eager_start=True)
     except BaseExceptionGroup as eg:
         for exc in eg.exceptions:
             if isinstance(exc, asyncio.CancelledError):

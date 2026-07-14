@@ -35,15 +35,15 @@ class TestWriteQueueBasics:
     def test_write_worker_drains_queue(self, session_event_loop: asyncio.AbstractEventLoop) -> None:
         """Write worker drains queue items and calls table.add."""
         mock_table = MagicMock()
-        queue: asyncio.Queue[tuple[list, float]] = asyncio.Queue()
+        queue: asyncio.Queue[tuple[list | None, float]] = asyncio.Queue()
 
         async def run():
             # Put one item
             import time
 
             await queue.put(([{"id": "test"}], time.monotonic() + 5.0))
-            # Put sentinel to stop
-            await queue.put(([], 0.0))  # type: ignore[arg-type]
+            # Put sentinel to stop (batch=None triggers break before stale-check)
+            await queue.put((None, 0.0))  # type: ignore[arg-type]
             # Start worker (it will process the item then exit on sentinel)
             await _write_worker(mock_table, queue)
 

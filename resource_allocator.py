@@ -84,7 +84,7 @@ class ResourceAllocator:
             X = mx.concatenate([X, ones], axis=1)
             self.coeffs, _, _, _ = mx.linalg.lstsq(X, y, rcond=None)
             logger.debug(f'Updated MLX prediction model with {len(self.history)} samples')
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             logger.warning(f'Failed to update MLX model: {e}')
             self.coeffs = None
 
@@ -97,7 +97,7 @@ class ResourceAllocator:
             features = mx.array(self._extract_features(ctx) + [1.0])
             prediction = float(mx.sum(features * self.coeffs))
             return max(100.0, prediction)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             logger.warning(f'RAM prediction failed: {e}')
             return _FALLBACK_RAM_ESTIMATE_MB
 
@@ -154,7 +154,7 @@ class ResourceAllocator:
             self.cancel(lowest.request_id)
             logger.warning(f'Emergency brake: cancelled {lowest.request_id} (RSS: {mem.used / 1024 ** 3:.2f} GB)')
             return lowest.request_id
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             logger.error(f'Emergency brake failed: {e}')
             return None
 
@@ -185,7 +185,7 @@ def get_memory_pressure_level() -> str:
         pool = AdaptiveWorkerPool._instance
         if pool is not None:
             return _uma_state_to_pressure_level(pool.get_uma_state())
-    except Exception:
+    except Exception:  # noqa: BLE001 — best-effort; UMA state check failure returns 'normal'
         pass
     return 'normal'
 
@@ -206,7 +206,7 @@ def get_recommended_concurrency() -> dict[str, int]:
     try:
         from utils.concurrency import AdaptiveWorkerPool
         pool = AdaptiveWorkerPool._instance
-    except Exception:
+    except Exception:  # noqa: BLE001 — best-effort; pool import failure falls back to legacy limits
         pass
     if pool is not None and level != 'normal':
         fetch = pool.get_fetch_limit()
@@ -313,7 +313,7 @@ def get_mlx_memory_mb() -> float:
             return mx.get_cache_memory() / (1024 * 1024)
         elif hasattr(mx.metal, 'get_active_memory'):
             return mx.get_active_memory() / (1024 * 1024)
-    except Exception:
+    except Exception:  # noqa: BLE001 — best-effort; MLX memory check failure returns 0.0
         pass
     return 0.0
 
@@ -338,7 +338,7 @@ def clear_mlx_cache_if_needed(threshold_mb: float=500.0) -> bool:
                 mx.metal.clear_cache()
             gc.collect()
             return True
-    except Exception:
+    except Exception:  # noqa: BLE001 — best-effort; MLX cache clear failure is non-fatal
         pass
     return False
 from hledac.universal.utils.concurrency import FETCH_SEMAPHORE, adjust_fetch_workers

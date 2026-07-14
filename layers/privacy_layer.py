@@ -18,38 +18,76 @@ from typing import Any
 from hledac.universal.config import PrivacyConfig
 from hledac.universal.project_types import AnonymizationLevel, PrivacyEventCategory, PrivacyLevel, ProtocolType, Severity
 logger = logging.getLogger(__name__)
-from hledac.universal.utils.optional_imports import optional
-_ppm_mod = optional('hledac.universal.privacy_protection.personal_privacy_manager')
-_ppm_mod_val = _ppm_mod()
-HAS_PPM = _ppm_mod.available
-BrowserFingerprint = getattr(_ppm_mod_val, 'BrowserFingerprint', None)
-DNSConfig = getattr(_ppm_mod_val, 'DNSConfig', None)
-PersonalPrivacyManager = getattr(_ppm_mod_val, 'PersonalPrivacyManager', None)
-TorConfig = getattr(_ppm_mod_val, 'TorConfig', None)
-VPNConfig = getattr(_ppm_mod_val, 'VPNConfig', None)
-PPMLevel = getattr(_ppm_mod_val, 'PrivacyLevel', None)
-_ac_mod = optional('hledac.universal.privacy_protection.anonymous_communication')
-_ac_mod_val = _ac_mod()
-HAS_AC = _ac_mod.available
-AnonymousCommunication = getattr(_ac_mod_val, 'AnonymousCommunication', None)
-BurnerIdentity = getattr(_ac_mod_val, 'BurnerIdentity', None)
-EmailConfig = getattr(_ac_mod_val, 'EmailConfig', None)
-PGPKey = getattr(_ac_mod_val, 'PGPKey', None)
-SecureChannel = getattr(_ac_mod_val, 'SecureChannel', None)
-SecureMessage = getattr(_ac_mod_val, 'SecureMessage', None)
-_pal_mod = optional('hledac.universal.privacy_protection.privacy_audit_log')
-_pal_mod_val = _pal_mod()
-HAS_PAL = _pal_mod.available
-PALLevel = getattr(_pal_mod_val, 'AnonymizationLevel', None)
-PIIAnonymizer = getattr(_pal_mod_val, 'PIIAnonymizer', None)
-PrivacyAuditLog = getattr(_pal_mod_val, 'PrivacyAuditLog', None)
-PrivacyLogEntry = getattr(_pal_mod_val, 'PrivacyLogEntry', None)
-_pcg_mod = optional('hledac.universal.privacy_protection.protocol_code_generator')
-_pcg_mod_val = _pcg_mod()
-HAS_PCG = _pcg_mod.available
-GeneratedProtocol = getattr(_pcg_mod_val, 'GeneratedProtocol', None)
-ProtocolCodeGenerator = getattr(_pcg_mod_val, 'ProtocolCodeGenerator', None)
-ProtocolSpec = getattr(_pcg_mod_val, 'ProtocolSpec', None)
+
+# personal_privacy_manager — strict import with fallback
+try:
+    from hledac.universal.privacy_protection.personal_privacy_manager import (
+        BrowserFingerprint,
+        DNSConfig,
+        PersonalPrivacyManager,
+        TorConfig,
+        VPNConfig,
+        PrivacyLevel as PPMLevel,
+    )
+    HAS_PPM = True
+except ImportError:
+    BrowserFingerprint = None
+    DNSConfig = None
+    PersonalPrivacyManager = None
+    TorConfig = None
+    VPNConfig = None
+    PPMLevel = None
+    HAS_PPM = False
+
+# anonymous_communication — strict import with fallback
+try:
+    from hledac.universal.privacy_protection.anonymous_communication import (
+        AnonymousCommunication,
+        BurnerIdentity,
+        EmailConfig,
+        PGPKey,
+        SecureChannel,
+        SecureMessage,
+    )
+    HAS_AC = True
+except ImportError:
+    AnonymousCommunication = None
+    BurnerIdentity = None
+    EmailConfig = None
+    PGPKey = None
+    SecureChannel = None
+    SecureMessage = None
+    HAS_AC = False
+
+# privacy_audit_log — strict import with fallback
+try:
+    from hledac.universal.privacy_protection.privacy_audit_log import (
+        AnonymizationLevel as PALLevel,
+        PIIAnonymizer,
+        PrivacyAuditLog,
+        PrivacyLogEntry,
+    )
+    HAS_PAL = True
+except ImportError:
+    PALLevel = None
+    PIIAnonymizer = None
+    PrivacyAuditLog = None
+    PrivacyLogEntry = None
+    HAS_PAL = False
+
+# protocol_code_generator — strict import with fallback
+try:
+    from hledac.universal.privacy_protection.protocol_code_generator import (
+        GeneratedProtocol,
+        ProtocolCodeGenerator,
+        ProtocolSpec,
+    )
+    HAS_PCG = True
+except ImportError:
+    GeneratedProtocol = None
+    ProtocolCodeGenerator = None
+    ProtocolSpec = None
+    HAS_PCG = False
 
 @dataclass(slots=True)
 class PrivacyContext:

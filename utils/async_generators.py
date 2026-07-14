@@ -255,7 +255,7 @@ async def aclose_safe(agen: AsyncIterator) -> None:
     try:
         if hasattr(agen, "aclose"):
             await agen.aclose()
-    except AttributeError, StopAsyncIteration, RuntimeError:
+    except (AttributeError, StopAsyncIteration, RuntimeError):
         # Already closed or doesn't support aclose
         pass
 

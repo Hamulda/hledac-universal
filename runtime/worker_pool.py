@@ -7,9 +7,15 @@ Thread budget on M1 8GB:
   - Rayon cpu_pool:    4 threads (Rust MLX inference)
   - Rayon io_pool:     2 threads (Rust async I/O)
   - asyncio event loop: 1 thread
-  - Shared pool:        4 threads (P-cores, this module)
+  - Shared pool:        adaptive (governed by M1ResourceGovernor)
   ─────────────────────────────────────────────────────
-  Total:               11 threads (fits 8-core M1 without thrashing)
+  Total:               11 threads max (fits 8-core M1 without thrashing)
+
+ISSUE #014: Adaptive worker count based on M1ResourceGovernor.
+  - max_workers dynamically derived from UMA state via ConcurrencyPreset
+  - emergency: 0 workers, critical: 1, warn: 3, soft_warn/ok: 5
+  - Reconfiguration is lazy (on next run() after state change)
+  - Thread-stack RAM: ~1 MB/thread × N — bounded by governor
 
 Design note:
   cpu_bound and io_bound are aliases for the SAME pool on M1 8GB.
@@ -34,6 +40,16 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from hledac.universal.utils.async_helpers import safe_wait_for
+
+# ISSUE #014: Memory-aware — uses sample_uma_status() + ConcurrencyPreset at runtime
+try:
+    from hledac.universal.core.resource_governor import (
+        ConcurrencyPreset,
+        sample_uma_status,
+    )
+    _GOVERNOR_AVAILABLE = True
+except ImportError:
+    _GOVERNOR_AVAILABLE = False
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -91,25 +107,31 @@ class SharedWorkerPool:
     Replaces asyncio.to_thread() calls that would otherwise hit the
     Python default executor (12 workers on M1 = unnecessary overhead).
 
-    Sizing logic:
-      M1 8GB (8 logical CPUs):
-        - 4 P-cores reserved for Rayon cpu_pool  → 4 workers
-        - 2 E-cores for Rayon io_pool            → shared pool gets 4
-        - 1 thread for asyncio event loop
-        - 1 thread headroom for OS scheduler
-      Total: 4 workers, bounded.
+    ISSUE #014: Adaptive sizing via M1ResourceGovernor.
+      - max_workers derived from UMA state via ConcurrencyPreset
+      - emergency: 0 workers, critical: 1, warn: 3, soft_warn/ok: 5
+      - Lazy reconfiguration: executor swapped only when state changes
+        and no tasks are currently running (safe, no mid-job disruption)
+      - Thread-stack RAM: ~1 MB/thread × N workers — bounded by governor
 
     This class is safe to use from multiple asyncio tasks simultaneously
     because it wraps a ThreadPoolExecutor behind run_in_executor().
     """
 
-    __slots__ = ("_executor", "_max_workers", "_active_count", "_lock", "_async_lock")
+    __slots__ = (
+        "_executor",
+        "_max_workers",
+        "_active_count",
+        "_async_lock",
+        "_last_state",
+        "_executor_lock",
+    )
 
     def __init__(self, max_workers: int | None = None) -> None:
         cpu_count = os.cpu_count() or 4
         if max_workers is None:
-            # M1 8GB: 4 workers — fits alongside Rayon + event loop.
-            # Cap at 6 to preserve headroom; floor at 2 for safety.
+            # ISSUE #014: Start with conservative default.
+            # Governor will adjust dynamically on first run().
             max_workers = max(2, min(6, cpu_count - 4))
         self._max_workers = max_workers
         self._executor = ThreadPoolExecutor(
@@ -117,8 +139,45 @@ class SharedWorkerPool:
             thread_name_prefix="hledac-shared",
         )
         self._active_count = 0
-        self._lock = threading.Lock()
         self._async_lock: asyncio.Lock | None = None
+        self._last_state: str | None = None
+        # Protects executor swap (thread-safe reconfiguration)
+        self._executor_lock = threading.Lock()
+
+    def _compute_governed_workers(self) -> int:
+        """Compute target worker count from M1ResourceGovernor, falling back to static config."""
+        if not _GOVERNOR_AVAILABLE:
+            cpu_count = os.cpu_count() or 4
+            return max(2, min(6, cpu_count - 4))
+        # Use sample_uma_status() — canonical UMA sampling API
+        try:
+            from hledac.universal.core.resource_governor import sample_uma_status
+
+            uma = sample_uma_status()
+            preset = ConcurrencyPreset.from_state(uma.state)
+            return preset.max_workers
+        except Exception:
+            cpu_count = os.cpu_count() or 4
+            return max(2, min(6, cpu_count - 4))
+
+    def _should_reconfigure(self, target_workers: int) -> bool:
+        """Return True if executor should be reconfigured to target_workers."""
+        if self._last_state is None:
+            return True
+        # Reconfigure when governor signals a state change
+        return target_workers != self._max_workers
+
+    def _reconfigure_executor(self, target_workers: int) -> None:
+        """Swap executor for a new one with target_workers. Thread-safe."""
+        with self._executor_lock:
+            old_executor = self._executor
+            self._executor = ThreadPoolExecutor(
+                max_workers=target_workers,
+                thread_name_prefix="hledac-shared",
+            )
+            self._max_workers = target_workers
+            # Give in-flight tasks a chance to complete before shutting down old executor
+            old_executor.shutdown(wait=False)
 
     async def _get_async_lock(self) -> asyncio.Lock:
         """Lazily create asyncio.Lock in the running event loop."""
@@ -133,6 +192,11 @@ class SharedWorkerPool:
         Uses loop.run_in_executor() so the call is awaitable and bounded
         by max_workers.
 
+        ISSUE #014: Reconfigures executor dynamically based on M1ResourceGovernor
+        state. When UMA state changes (e.g., soft_warn → warn), the executor
+        is swapped to a new ThreadPoolExecutor with the appropriate worker count.
+        In-flight tasks are never disrupted — reconfiguration is lazy.
+
         Args:
             func: The blocking callable to run.
             timeout: Optional timeout in seconds. If None, runs without timeout.
@@ -141,6 +205,20 @@ class SharedWorkerPool:
         Note: functools.partial is used instead of a lambda to avoid
         allocating a new closure object on every call.
         """
+        # ISSUE #014: Lazy reconfiguration — check governor on each run()
+        target_workers = self._compute_governed_workers()
+        if target_workers == 0:
+            # Emergency mode: no workers available, run inline to prevent OOM
+            # This is better than crashing with ThreadPoolExecutor(max_workers=0)
+            self._last_state = "emergency"
+            if timeout is not None:
+                return await safe_wait_for(asyncio.to_thread(func, *args, **kwargs), timeout=timeout, label="worker_pool_emergency")
+            return await asyncio.to_thread(func, *args, **kwargs)
+
+        if self._should_reconfigure(target_workers):
+            self._reconfigure_executor(target_workers)
+            self._last_state = "governed"  # mark as governor-settled
+
         loop = asyncio.get_running_loop()
         async_lock = await self._get_async_lock()
         async with async_lock:

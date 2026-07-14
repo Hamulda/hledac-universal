@@ -142,8 +142,8 @@ class DSPyOptimizer:
                         break
                     for pkt_file in sorted(shard.glob('*.json'))[:5]:
                         try:
-                            with open(pkt_file, 'rb') as f:
-                                data = orjson.loads(f.read()) if ORJSON_AVAILABLE else _json.load(f)
+                            raw = await asyncio.to_thread(pkt_file.read_bytes)
+                            data = orjson.loads(raw) if ORJSON_AVAILABLE else _json.loads(raw.decode())
                             url = data.get('url', '')
                             content = data.get('content', '')[:3000]
                             if url and content and (len(content) > 100):

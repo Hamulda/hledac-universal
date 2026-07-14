@@ -14,17 +14,36 @@ from dataclasses import dataclass, field
 import msgspec
 from typing import Any
 from urllib.parse import urljoin, urlparse
-from hledac.universal.utils.optional_imports import optional
-_selectolax = optional('selectolax.parser:HTMLParser')
-SELECTOLAX_AVAILABLE = bool(_selectolax)
-HTMLParser = _selectolax() if _selectolax else None
-_lxml_html_mod = optional('lxml:html')
-LXML_AVAILABLE = bool(_lxml_html_mod)
-lxml_html = _lxml_html_mod() if _lxml_html_mod else None
+
+# selectolax — strict import with fallback
+try:
+    from selectolax.parser import HTMLParser
+    SELECTOLAX_AVAILABLE = True
+except ImportError:
+    HTMLParser = None
+    SELECTOLAX_AVAILABLE = False
+
+# lxml — strict import with fallback
+try:
+    from lxml import html as lxml_html
+    LXML_AVAILABLE = True
+except ImportError:
+    lxml_html = None
+    LXML_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
-_html_text_fast_mod = optional('hledac.universal.utils.html_text_fast:html_to_text_fast')
-_CANONICAL_HTML_TEXT_AVAILABLE = bool(_html_text_fast_mod)
-html_to_text_fast = _html_text_fast_mod() if _html_text_fast_mod else None
+
+# html_text_fast — strict import with fallback
+try:
+    from hledac.universal.utils.html_text_fast import html_to_text_fast
+    _CANONICAL_HTML_TEXT_AVAILABLE = True
+except ImportError:
+    try:
+        from hledac.universal.utils.html_text_fast import html_to_text_fast
+        _CANONICAL_HTML_TEXT_AVAILABLE = True
+    except ImportError:
+        html_to_text_fast = None
+        _CANONICAL_HTML_TEXT_AVAILABLE = False
 _CLEAN_PATTERNS: list[tuple[re.Pattern, str]] = [(re.compile('<script[^>]*>.*?</script>', flags=re.DOTALL | re.IGNORECASE), ' '), (re.compile('<style[^>]*>.*?</style>', flags=re.DOTALL | re.IGNORECASE), ' '), (re.compile('<head[^>]*>.*?</head>', flags=re.DOTALL | re.IGNORECASE), ' '), (re.compile('<nav[^>]*>.*?</nav>', flags=re.DOTALL | re.IGNORECASE), ' '), (re.compile('<footer[^>]*>.*?</footer>', flags=re.DOTALL | re.IGNORECASE), ' '), (re.compile('<header[^>]*>.*?</header>', flags=re.DOTALL | re.IGNORECASE), ' '), (re.compile('<aside[^>]*>.*?</aside>', flags=re.DOTALL | re.IGNORECASE), ' '), (re.compile('<[^>]+>'), ' '), (re.compile('&nbsp;'), ' '), (re.compile('&amp;'), '&'), (re.compile('&lt;'), '<'), (re.compile('&gt;'), '>'), (re.compile('&quot;'), '"'), (re.compile('&apos;'), "'"), (re.compile('\\s+'), ' ')]
 
 @dataclass(slots=True)

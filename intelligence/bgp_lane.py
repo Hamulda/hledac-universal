@@ -143,7 +143,7 @@ async def ip_to_asn(ip: str, session: httpx.AsyncClient) -> BGPFinding | None:
         if resp.status_code != 200:
             logger.debug(f'bgpview /ip {ip} → HTTP {resp.status_code}')
             return None
-        data = resp.json().get('data', {})
+        data = (await resp.json()).get('data', {})
     except TimeoutError:
         logger.debug(f'bgpview /ip {ip} → timeout')
         return None
@@ -174,7 +174,7 @@ async def asn_to_prefixes(asn: int, session: httpx.AsyncClient) -> list[BGPFindi
         resp = await session.get(url, params={'query': ''}, timeout=httpx.Timeout(TIMEOUT_PER_REQUEST))
         if resp.status_code != 200:
             return []
-        data = resp.json().get('data', {})
+        data = (await resp.json()).get('data', {})
     except Exception:
         return []
     asn_name = data.get('name', '')
@@ -210,7 +210,7 @@ async def org_to_asns(org_query: str, session: httpx.AsyncClient, *, limit: int=
         if resp.status_code != 200:
             logger.debug(f'bgpview /search {org_query} → HTTP {resp.status_code}')
             return []
-        data = resp.json().get('data', {})
+        data = (await resp.json()).get('data', {})
     except TimeoutError:
         logger.debug(f'bgpview /search {org_query} → timeout')
         return []

@@ -41,7 +41,6 @@ import time
 from dataclasses import dataclass
 from typing import Any, Literal
 import orjson
-from hledac.universal.paths import open_lmdb
 logger = logging.getLogger(__name__)
 MAX_SOURCES_IN_REGISTRY: int = 200
 LMDB_MAP_SIZE: int = 1 * 1024 * 1024
@@ -159,8 +158,12 @@ class DeepSourceRegistry:
         if self._lmdb_path is None:
             return None
         try:
-            from pathlib import Path
-            self._env = open_lmdb(Path(self._lmdb_path), map_size=LMDB_MAP_SIZE, max_dbs=2)
+            # Lazy import uvnitř — open_lmdb je sám lazy wrapper,
+            # ale import samotného paths modulu může mít side-effects.
+            # Kompletní lazy loading: nic se nestane dokud není _open_env zavolána.
+            from pathlib import Path as _Path
+            from hledac.universal.paths import open_lmdb as _open_lmdb
+            self._env = _open_lmdb(_Path(self._lmdb_path), map_size=LMDB_MAP_SIZE, max_dbs=2)
             return self._env
         except Exception as exc:
             logger.warning('DeepSourceRegistry: LMDB open failed: %s', exc)

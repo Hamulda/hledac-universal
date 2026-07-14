@@ -457,36 +457,40 @@ class BaseIntelligenceLane(ABC):
         """
         self._stats["queries"] += 1
 
-        try:
-            # Phase 1: Resolve
-            resolved = await self.resolve(target, ctx)
+        # Per-lane concurrency control via semaphore (lazy init)
+        # Fixes ISSUE #15: head-of-line blocking — lanes no longer run
+        # sequentially when multiple SprintScheduler lanes are active.
+        async with self._get_semaphore():
+            try:
+                # Phase 1: Resolve
+                resolved = await self.resolve(target, ctx)
 
-            # Phase 2: Fetch
-            fetch_result = await self.fetch(resolved, ctx)
-            if fetch_result.error:
-                self._stats["fetch_fail"] += 1
+                # Phase 2: Fetch
+                fetch_result = await self.fetch(resolved, ctx)
+                if fetch_result.error:
+                    self._stats["fetch_fail"] += 1
+                    return []
+                self._stats["fetch_ok"] += 1
+
+                # Phase 3: Parse
+                parsed = await self.parse(fetch_result, ctx)
+
+                # Phase 4: Dedup
+                dedup_result = await self.dedup(parsed, ctx)
+                if dedup_result.is_duplicate:
+                    return []
+
+                # Phase 5: Emit
+                findings = await self.emit(parsed, ctx)
+                return findings
+
+            except Exception:
+                self._stats["errors"] += 1
+                logger.warning(
+                    "BaseIntelligenceLane(%s).run(%r): fail-soft",
+                    self.sidecar_id, target, exc_info=True,
+                )
                 return []
-            self._stats["fetch_ok"] += 1
-
-            # Phase 3: Parse
-            parsed = await self.parse(fetch_result, ctx)
-
-            # Phase 4: Dedup
-            dedup_result = await self.dedup(parsed, ctx)
-            if dedup_result.is_duplicate:
-                return []
-
-            # Phase 5: Emit
-            findings = await self.emit(parsed, ctx)
-            return findings
-
-        except Exception:
-            self._stats["errors"] += 1
-            logger.warning(
-                "BaseIntelligenceLane(%s).run(%r): fail-soft",
-                self.sidecar_id, target, exc_info=True,
-            )
-            return []
 
     # -------------------------------------------------------------------------
     # Shared primitives for subclasses

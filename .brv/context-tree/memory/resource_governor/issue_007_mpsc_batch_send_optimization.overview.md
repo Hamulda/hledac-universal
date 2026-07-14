@@ -1,0 +1,10 @@
+- **MPSC batch send optimization**: Reduces GIL acquisition overhead from N× to 1× by batching N items in a single Python→Rust call via `send_batch` Rust method
+- **Memory budget**: 2048 slots × 512 bytes per slot ≈ 1 MiB total (2× headroom over evidence_log maxsize=500)
+- **Flow**: Python `append()` × N → Rust `send_batch()` → crossbeam bounded MPSC → `recv_batch()` → Python async
+- **Issue-064 fix**: `#[pyclass(unsendable)]` required on Receiver because it is NOT Send (Senders are Send)
+- **Performance**: ~1µs/event vs 5µs for N× individual calls; each `send()` still does `to_vec()` internally per crossbeam requirement
+- **Zero-copy path**: msgspec.msgpack.encode() enables zero-copy bytes serialization (ISSUE-006)
+- **3 call sites in sprint_scheduler.py**: I2P findings, steganography findings, graph_rag insights
+- **Key files**: rust_extensions/src/mpsc_pool.rs, evidence_log.py
+- **Constants**: `MPSC_DEFAULT_CAPACITY = 2048`, `MPSC_SLOT_BYTES = 512`
+- **Tests**: test_pool_create, test_add_sender, test_send_and_recv, test_full_backpressure(capacity=2), test_multi_sender, test_recv_batch_limits

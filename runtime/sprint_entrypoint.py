@@ -3895,10 +3895,8 @@ def _main_dispatch() -> None:
         _os.environ["HLEDAC_RL_TRAIN_INTERVAL"] = str(args.rl_train_interval)
     args = args_with_rl_resolution
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    )
+    # NOTE: basicConfig removed — structlog already configured in __main__.py:configure_logging().
+    # Adding basicConfig here would reset the root logger and conflict with structlog setup.
 
     # P2-SILENCE: Suppress coremltools warnings about missing native libs.
     # coremltools 8.x/9.x on py3.14 tries to dlopen libcoremlpython / libmilstoragepython

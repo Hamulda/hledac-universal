@@ -285,56 +285,26 @@ def get_default_limit() -> int:
 
 # =============================================================================
 # F4XX: httpx Session Surface — replaces aiohttp
+# F350M-R ISSUE-010: httpx singleton DELEGATED to transport.session_pool
+#   This module retains: ContextVar bandits, timeout constants,
+#   and test isolation helpers.
+#   The httpx client itself now comes from session_pool.httpx_client().
+#   Connection limits are managed by session_pool (M1 8GB safe: 25/10).
 # =============================================================================
-
-_async_httpx_session: httpx.AsyncClient | None = None
-_async_httpx_session_lock: asyncio.Lock | None = None
-_httpx_cache_transport: Any = None  # hishel cache transport, set via set_httpx_cache_transport()
-
-
-# ISSUE-014: Adaptive connection limits for M1 8GB
-# Each TLS connection ~250KB; 200 conns = ~50MB just for TLS handshakes.
-# Also bounded by FD limit (ulimit -n) — each connection consumes a FD.
-def _detect_fd_limit() -> int:
-    """
-    Detect the soft RLIMIT_NOFILE for adaptive connection budgeting.
-
-    M1 Air default: 256-10240 depending on launch config.
-    Falls back to 256 if unavailable (e.g. non-Unix platforms).
-
-    Returns:
-        int: soft file descriptor limit
-    """
-    try:
-        import resource  # Unix only
-        soft, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
-        return soft if soft > 0 else 256
-    except (ImportError, OSError):
-        return 256  # safe fallback for non-Unix or restricted envs
-
-
-_FD_LIMIT: int = _detect_fd_limit()
-# Use 25% of FD budget for HTTP connections (rest for file FDs, stdio, etc.)
-# Cap at 40 for M1 8GB RAM budget (~10MB for 40 TLS connections).
-_SAFE_MAX_CONNECTIONS: int = min(40, max(8, _FD_LIMIT // 4))
-_SAFE_KEEPALIVE_CONNECTIONS: int = _SAFE_MAX_CONNECTIONS // 2
 
 
 async def async_get_httpx_session() -> httpx.AsyncClient:
     """
     Get or create the shared httpx.AsyncClient instance (async).
 
-    F4XX: Replaces async_get_aiohttp_session(). httpx provides HTTP/2 support
-    natively (h2 bundled in httpx >= 0.28.0) and SOCKS5 proxy support via
-    httpx-socks.
+    F350M-R ISSUE-010: Delegated to transport.session_pool.httpx_client().
+    This module retains: ContextVar bandits, adaptive FD-aware limits,
+    timeout constants, and test isolation helpers.
 
     Session lifecycle:
     - Lazy: session created on first await
     - Shared: repeated awaits return the same instance
     - Idempotent close: close_httpx_session_async() is safe to call multiple times
-
-    F266-UV7: Session state is now task-local via ContextVar[_SessionRuntimeState].
-    Each async task gets its own isolated session — no cross-task pollution.
 
     Returns:
         httpx.AsyncClient: the shared session instance
@@ -343,57 +313,29 @@ async def async_get_httpx_session() -> httpx.AsyncClient:
         [I2] lazy — no session created until first await
         [I3] repeated awaits return same instance
     """
-    global _async_httpx_session, _async_httpx_session_lock
+    # ISSUE-010: Delegate to canonical session_pool (import here to avoid circular deps)
+    from transport.session_pool import httpx_client as _httpx_client
 
-    if _async_httpx_session_lock is None:
-        _async_httpx_session_lock = asyncio.Lock()
-
-    async with _async_httpx_session_lock:
-        if _async_httpx_session is None or _async_httpx_session.is_closed:
-            limits = httpx.Limits(
-                max_connections=_SAFE_MAX_CONNECTIONS,
-                max_keepalive_connections=_SAFE_KEEPALIVE_CONNECTIONS,
-                keepalive_expiry=15.0,  # ISSUE-014: aggressive recycling on M1 8GB
-            )
-            _async_httpx_session = httpx.AsyncClient(
-                limits=limits,
-                transport=_httpx_cache_transport,
-                http2=True,  # HTTP/2 enabled by default in httpx 0.28+
-                timeout=httpx.Timeout(
-                    connect=HTML_CONNECT_TIMEOUT_S,
-                    read=HTML_READ_TIMEOUT_S,
-                    write=20.0,
-                    pool=30.0,
-                ),
-            )
-            logger.debug(
-                f"[SESSION] httpx.AsyncClient created (HTTP/2, "
-                f"max_conn={_SAFE_MAX_CONNECTIONS}, "
-                f"keepalive={_SAFE_KEEPALIVE_CONNECTIONS}, "
-                f"fd_limit={_FD_LIMIT})"
-            )
-        return _async_httpx_session
+    return await _httpx_client()
 
 
 # Backward-compat aliases
 async_get_aiohttp_session = async_get_httpx_session
 
 
-def set_httpx_cache_transport(transport: Any) -> None:
+def set_httpx_cache_transport(_transport: Any) -> None:
     """
     Set the hishel cache transport for httpx sessions (Issue #23).
 
-    When called with a non-None transport, any existing httpx session is
-    recreated with the cache transport on the next async_get_httpx_session() call.
-    Call this from FetchCoordinator._do_initialize() after build_cache_transport()
-    to wire the HTTP cache into httpx sessions used for HTML preview fetches.
+    F350M-R ISSUE-010: This function is DEPRECATED. The cache transport
+    is now managed directly by transport/session_pool.py. Calling this
+    function has no effect.
 
-    Invariant:
-        [I12] set_httpx_cache_transport() is called before session creation
-              so the transport is available at AsyncClient init time.
+    Deprecated: cache transport wiring is handled by FetchCoordinator
+    using session_pool directly.
     """
-    global _httpx_cache_transport
-    _httpx_cache_transport = transport
+    # ISSUE-010: No-op — session_pool manages its own cache transport
+    pass
 def get_aiohttp_session() -> httpx.AsyncClient:
     """F4XX: alias for async_get_httpx_session(). Provided for backward compatibility."""
     import asyncio
@@ -410,7 +352,7 @@ def close_httpx_session() -> None:
     """
     Close the shared httpx.AsyncClient if it exists (sync marker).
 
-    F266-UV7: Session is module-level shared singleton.
+    F350M-R ISSUE-010: Delegated to transport.session_pool.close_httpx().
 
     In async contexts, prefer close_httpx_session_async().
     This sync version just marks the session for close;
@@ -420,9 +362,22 @@ def close_httpx_session() -> None:
         [I4] idempotent — multiple calls are safe
         [I5] after close, next await creates new instance
     """
-    global _async_httpx_session
-    if _async_httpx_session is not None and not _async_httpx_session.is_closed:
-        _async_httpx_session = None
+    # ISSUE-010: Delegate to canonical session_pool
+    from transport.session_pool import close_httpx as _close_httpx
+
+    # Run sync close wrapper (close_httpx is async, wrap in sync for BC)
+    import asyncio
+
+    try:
+        loop = asyncio.get_running_loop()
+        loop.run_until_complete(_close_httpx())
+    except RuntimeError:
+        # No running loop — create new loop for sync context
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(_close_httpx())
+        finally:
+            loop.close()
 
 
 # Alias for backward compatibility
@@ -434,7 +389,7 @@ async def close_httpx_session_async() -> None:
     """
     Close the shared httpx.AsyncClient (async, proper await).
 
-    F266-UV7: Session is module-level shared singleton.
+    F350M-R ISSUE-010: Delegated to transport.session_pool.close_httpx().
 
     Idempotent: safe to call multiple times.
     After close, next async_get_httpx_session() await creates a fresh instance.
@@ -443,19 +398,12 @@ async def close_httpx_session_async() -> None:
         [I4] idempotent — multiple calls are safe
         [I5] after close, next await creates new instance
     """
-    global _async_httpx_session
+    # ISSUE-010: Delegate to canonical session_pool
+    from transport.session_pool import close_httpx as _close_httpx
 
-    if _async_httpx_session is not None and not _async_httpx_session.is_closed:
-        sess = _async_httpx_session
-        _async_httpx_session = None
-        try:
-            # ISSUE-014: shield aclose so pool isn't torn down mid-request
-            await asyncio.shield(sess.aclose())
-            logger.debug("[SESSION] httpx.AsyncClient closed async")
-            # Sprint F266-UV5: clear bandits at winddown to prevent unbounded dict growth
-            clear_bandits()
-        except Exception as e:
-            logger.warning(f"[SESSION] async close error: {e}")
+    await _close_httpx()
+    # Sprint F266-UV5: clear bandits at winddown to prevent unbounded dict growth
+    clear_bandits()
 
 
 # Alias for backward compatibility
@@ -467,6 +415,8 @@ def get_session_runtime_status() -> dict:
     """
     Return lightweight runtime status of the shared httpx session (O(1), side-effect free).
 
+    F350M-R ISSUE-010: Status now comes from transport.session_pool.
+
     Returns:
         dict with keys:
             - session_created: bool  — a session instance exists or existed
@@ -474,10 +424,14 @@ def get_session_runtime_status() -> dict:
             - uvloop_enabled: bool   — uvloop was successfully installed
             - last_error: str | None — last error string if any
     """
+    # ISSUE-010: Delegate to session_pool for actual session state
+    from transport.session_pool import session_pool as _sp
+
+    status = _sp.get_status()
     return {
-        "session_created": _async_httpx_session is not None,
-        "session_closed": _async_httpx_session is None or _async_httpx_session.is_closed,
-        "uvloop_enabled": get_runtime_state().uvloop_installed,  # from runtime/state (canonical)
+        "session_created": status.get("httpx", {}).get("initialized", False),
+        "session_closed": not status.get("httpx", {}).get("initialized", False),
+        "uvloop_enabled": get_runtime_state().uvloop_installed,
         "last_error": None,
     }
 
@@ -494,25 +448,23 @@ def _reset_session_runtime_for_tests() -> None:
     It exists solely to enable hermetic test isolation.
     It MUST NOT be called from any production code path.
 
-    F4XX: Resets the shared httpx session singleton.
+    F350M-R ISSUE-010: Delegates to session_pool.close_httpx().
 
     Usage:
         # In test fixture:
         from network import session_runtime as sr
         sr._reset_session_runtime_for_tests()
     """
-    global _async_httpx_session, _httpx_cache_transport
+    # ISSUE-010: Delegate to session_pool for actual session close
+    from transport.session_pool import close_httpx as _close_httpx
 
-    _httpx_cache_transport = None  # ISSUE #23: clear cache transport on reset
-    if _async_httpx_session is not None and not _async_httpx_session.is_closed:
-        loop = asyncio.new_event_loop()
-        try:
-            loop.run_until_complete(_async_httpx_session.aclose())
-        except Exception:  # noqa: BLE001
-            pass
-        finally:
-            loop.close()
-        _async_httpx_session = None
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(_close_httpx())
+    except Exception:  # noqa: BLE001
+        pass
+    finally:
+        loop.close()
 
     # Clear bandits
     clear_bandits()

@@ -1,18 +1,13 @@
 """
 transport/session_pool.py
 
-ISSUE-007: aiohttp deprecation — migrated to httpx + httpx-socks (2026-07-05)
+ISSUE-007 / ISSUE-010: Canonical session pool — unified HTTP session entry point.
 
-F4.3: Canonical session pool — singleton per kind.
-
-Provides a single shared httpx.AsyncClient (HTTP/2 capable) and
-httpx-socks for SOCKS5 proxy support. All transport lanes
-(Tor, I2P, clearnet) share these singletons for connection reuse.
-
-Architecture:
-- 1 httpx.AsyncClient (HTTP/2) for clearnet API
-- 1 httpx.AsyncClient with SOCKS5 proxy for Tor/I2P
-- 1 curl_cffi session pool via curl_cffi_runtime (JA3 impersonation)
+F4.3 / F350M-R: Canonical session pool — singleton per kind.
+This module is the SINGLE CANONICAL entry point for ALL HTTP session types:
+  - httpx.AsyncClient (HTTP/2) for clearnet API/text fetching
+  - httpx-socks (SOCKS5) for Tor/I2P
+  - curl_cffi for JA3 stealth fingerprinting
 
 M1 8GB bounds:
 - httpx clearnet: max_connections=25, max_keepalive_connections=10
@@ -21,10 +16,15 @@ M1 8GB bounds:
 Lazy init — no network side effects at import time.
 Thread-safe via asyncio.Lock.
 
-Usage:
-    from transport.session_pool import session_pool, HTTPX, CURL_CFFI
+DEPRECATION PATH (ISSUE-010):
+- network/session_runtime.py: DEPRECATED — import from here instead
+  (its httpx singleton will delegate to session_pool.httpx())
+- transport/connection_pool_manager.py: DEPRECATED — import from here instead
 
-    # httpx (HTTP/2 clearnet)
+Usage:
+    from transport.session_pool import session_pool
+
+    # httpx (HTTP/2 clearnet) — CANONICAL
     client = await session_pool.httpx()
     resp = await client.get(url)
 
@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import httpx
+    from httpx import AsyncClient
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +78,6 @@ _CONNECT_TIMEOUT_S = 5.0
 
 _httpx_client: httpx.AsyncClient | None = None
 _httpx_lock = asyncio.Lock()
-_httpx_closed = False
 
 # ISSUE-007: SOCKS5 httpx clients — one per proxy URL (bounded cache)
 # ISSUE-080: cache_key changed from str to tuple(proxy_url, rdns)
@@ -107,7 +107,7 @@ async def httpx_client() -> httpx.AsyncClient:
     Raises:
         RuntimeError: if httpx is not installed
     """
-    global _httpx_client, _httpx_closed
+    global _httpx_client
 
     # Lazy capability check
     try:
@@ -117,7 +117,7 @@ async def httpx_client() -> httpx.AsyncClient:
         raise RuntimeError(f"httpx with HTTP/2 not available: {e}") from e
 
     async with _httpx_lock:
-        if _httpx_client is None or _httpx_closed:
+        if _httpx_client is None or _httpx_client.is_closed:
             limits = httpx.Limits(
                 max_connections=_HTTPX_MAX_CONNECTIONS,
                 max_keepalive_connections=_HTTPX_MAX_KEEPALIVE,
@@ -137,7 +137,6 @@ async def httpx_client() -> httpx.AsyncClient:
                 cookies=None,
                 trust_env=False,
             )
-            _httpx_closed = False
             logger.debug("[SessionPool] httpx.AsyncClient created (HTTP/2, singleton)")
         return _httpx_client
 
@@ -148,14 +147,13 @@ async def close_httpx() -> None:
 
     After close, next httpx_client() creates a fresh instance.
     """
-    global _httpx_client, _httpx_closed
+    global _httpx_client
 
     client = None
     async with _httpx_lock:
-        if _httpx_client is not None and not _httpx_closed:
+        if _httpx_client is not None and not _httpx_client.is_closed:
             client = _httpx_client
             _httpx_client = None
-            _httpx_closed = True
 
     if client is not None:
         try:
@@ -257,9 +255,7 @@ async def close_httpx_socks() -> None:
 
     clients = []
     async with _httpx_socks_lock:
-        # ISSUE-080: cache_key is now (proxy_url, rdns) tuple
-        for cache_key, client in _httpx_socks_clients.items():
-            _httpx_socks_clients[cache_key] = None  # type: ignore
+        for client in _httpx_socks_clients.values():
             clients.append(client)
         _httpx_socks_clients.clear()
 
@@ -332,11 +328,11 @@ class SessionPool:
 
     __slots__ = ()
 
-    async def httpx(self) -> httpx.AsyncClient:
+    async def httpx(self) -> AsyncClient:
         """Get httpx.AsyncClient singleton (HTTP/2 clearnet)."""
         return await httpx_client()
 
-    async def httpx_socks(self, proxy_url: str) -> httpx.AsyncClient:
+    async def httpx_socks(self, proxy_url: str) -> AsyncClient:
         """Get httpx.AsyncClient with SOCKS5 proxy."""
         return await httpx_socks_client(proxy_url)
 
@@ -386,7 +382,7 @@ class SessionPool:
         return {
             "httpx": {
                 "available": True,
-                "initialized": _httpx_client is not None and not _httpx_closed,
+                "initialized": _httpx_client is not None and not _httpx_client.is_closed,
                 "max_connections": _HTTPX_MAX_CONNECTIONS,
                 "max_keepalive": _HTTPX_MAX_KEEPALIVE,
             },
@@ -436,17 +432,33 @@ async def get_curl_cffi_session(profile: str = "chrome110") -> tuple[bool, Any, 
     return await session_pool.curl_cffi(profile)
 
 
+# Backward-compat: Tor/I2P pool factory functions
+async def get_tor_pool() -> httpx.AsyncClient:
+    """Backward-compat: get httpx client via SOCKS5 proxy for Tor. Use httpx_socks_client() directly."""
+    return await httpx_socks_client("socks5://127.0.0.1:9050")
+
+
+async def get_i2p_pool() -> httpx.AsyncClient:
+    """Backward-compat: get httpx client via SOCKS5 proxy for I2P. Use httpx_socks_client() directly."""
+    return await httpx_socks_client("socks5://127.0.0.1:4447")
+
+
 __all__ = [
     "session_pool",
     "SessionPool",
     "PoolKind",
     # Backward compat
     "httpx_client",
+    "httpx_socks_client",
     "aiohttp_session",
     "curl_cffi_session",
     "close_httpx",
     "close_aiohttp",
+    "close_httpx_socks",
     "close_curl_cffi",
     "get_httpx_client",
     "get_curl_cffi_session",
+    # Backward-compat Tor/I2P
+    "get_tor_pool",
+    "get_i2p_pool",
 ]

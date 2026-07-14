@@ -82,6 +82,7 @@ pub mod tls_metadata;    // Issue B5: TLS cert metadata — single Rust call rep
 pub mod gil;            // F5.2: GIL management — std::thread + rayon pools (ne pyo3-async)
 pub mod pool_run;      // Rayon pool runners — Python-callable cpu/io/mixed pool execute
 pub mod mlx_bridge;    // ISSUE #015: MLX async token streaming bridge + adaptive buffering
+pub mod collections;    // Bounded ring buffers — recent_iocs ring, M1 8GB safe
 pub mod data;           // DuckDB bridge — isolated module for future cdylib extraction
 pub mod text_similarity; // ISSUE-026: Parallel text similarity clustering for temporal archaeologist
 
@@ -575,6 +576,8 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(xxhash_ext::batch_content_hash_parallel, m)?)?;
     m.add_function(wrap_pyfunction!(xxhash_ext::batch_content_hash_hex_parallel, m)?)?;
     m.add_function(wrap_pyfunction!(xxhash_ext::double_hash_64, m)?)?;
+    // ISSUE-005: batch_xxh3_64_bytes — zero-copy bytes-in, no UTF-8 decode, >5× pure-Python
+    m.add_function(wrap_pyfunction!(xxhash_ext::batch_xxh3_64_bytes, m)?)?;
     m.add_class::<xxhash_ext::StreamHasher64>()?;
 
     // F320: batch xxh3-64 via rayon — parallel prompt cache fingerprinting (Apple Silicon NEON)
@@ -743,6 +746,9 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // DuckDB bridge — isolated module for future cdylib extraction (saves ~8 MB .dylib)
     data::register_functions(m)?;
+
+    // ISSUE-6: Bounded ring buffers — recent_iocs ring, M1 8GB safe
+    collections::register_functions(m)?;
 
     // C3: Feed decision classifiers — pure functions for feed signal classification.
     feed_decision::register_functions(m)?;

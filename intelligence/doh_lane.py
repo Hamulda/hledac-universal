@@ -100,7 +100,7 @@ async def resolve_doh(domain: str, record_type: RecordType, session: httpx.Async
         try:
             resp = await session.get(url, headers=headers, params=params, timeout=httpx.Timeout(timeout))
             resp.raise_for_status()
-            data = resp.json()
+            data = await resp.json()
         except Exception:
             return []
     findings: list[DOHFinding] = []

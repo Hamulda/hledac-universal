@@ -566,11 +566,13 @@ class PasteMonitorClient:
         if zst_path.exists() and time.time() - zst_path.stat().st_mtime < self._CACHE_TTL:
             try:
                 import compression.zstd as _zstd
-                return orjson.loads(_zstd.decompress(zst_path.read_bytes()))
+                raw_bytes = await asyncio.to_thread(zst_path.read_bytes)
+                return orjson.loads(_zstd.decompress(raw_bytes))
             except (ImportError, Exception):
                 pass
         if json_path.exists() and time.time() - json_path.stat().st_mtime < self._CACHE_TTL:
-            return orjson.loads(json_path.read_bytes())
+            raw_bytes = await asyncio.to_thread(json_path.read_bytes)
+            return orjson.loads(raw_bytes)
         await self._throttle()
         try:
             async with session.get(f'{self._SCRAPE_URL}?limit={limit}', timeout=httpx.Timeout(total=15)) as r:

@@ -13,7 +13,6 @@ import msgspec
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, TypeVar
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 T = TypeVar('T', default=Any)
 ValidationResult = dict[str, Any]

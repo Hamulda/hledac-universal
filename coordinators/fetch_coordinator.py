@@ -410,7 +410,7 @@ class FetchCoordinator(UniversalCoordinator):
                 if self._tor_transport_enabled:
                     logger.info('TorTransport enabled via HLEDAC_ENABLE_TOR=1')
                     logger.info('  Circuit rotation after {self._tor_transport._max_circuit_requests} requests', _max_circuit_requests=self._tor_transport._max_circuit_requests)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; transport init failure; Tor disabled gracefully
                 logger.warning('TorTransport init failed: {e}', e=e)
                 self._tor_transport_enabled = False
         self._gopher_transport: Any = None
@@ -421,7 +421,7 @@ class FetchCoordinator(UniversalCoordinator):
                 self._gopher_transport = GopherTransport()
                 self._gopher_transport_enabled = True
                 logger.info('GopherTransport enabled via HLEDAC_ENABLE_GOPHER=1')
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; transport init failure; Gopher disabled gracefully
                 logger.warning('GopherTransport init failed: {e}', e=e)
                 self._gopher_transport_enabled = False
         self._http_cache_transport: Any = None
@@ -433,7 +433,7 @@ class FetchCoordinator(UniversalCoordinator):
                 from ..security.captcha_detector import CaptchaDetector
                 self._captcha_detector = CaptchaDetector()
                 logger.info('CaptchaDetector enabled via HLEDAC_ENABLE_CAPTCHA_DETECTION=1')
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; transport init failure; CaptchaDetector disabled gracefully
                 logger.warning('CaptchaDetector init failed: {e}', e=e)
                 self._captcha_detector = None
         self._dedup_lock = asyncio.Lock()
@@ -455,7 +455,7 @@ class FetchCoordinator(UniversalCoordinator):
             from transport import circuit_breaker as cb
             decision = cb.domain_breaker_check(domain)
             return (decision.allowed, decision.reason, decision.retry_after_s)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; circuit_breaker unavailable; fail-open is safe
             return (True, f'cb_check_error:{e}', 0.0)
 
     def _record_success(self, domain: str) -> None:
@@ -463,7 +463,7 @@ class FetchCoordinator(UniversalCoordinator):
         try:
             from transport import circuit_breaker as cb
             cb.domain_breaker_record_success(domain)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; circuit_breaker telemetry; non-critical
             pass
 
     def _record_failure(self, domain: str, is_timeout: bool=False, failure_kind: str='') -> None:
@@ -474,10 +474,10 @@ class FetchCoordinator(UniversalCoordinator):
             if self._sprint_remaining_provider is not None:
                 try:
                     sprint_remaining = self._sprint_remaining_provider()
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; sprint_remaining provider unavailable; non-critical
                     pass
             cb.domain_breaker_record_failure(domain, is_timeout=is_timeout, failure_kind=failure_kind or 'fetch_error', sprint_remaining_s=sprint_remaining)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; circuit_breaker telemetry; non-critical
             pass
 
 
@@ -497,7 +497,7 @@ class FetchCoordinator(UniversalCoordinator):
                 'circuit_breaker_states': states,
                 'open_count': sum(1 for s in states.values() if s == 'OPEN'),
             }
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; circuit_breaker stats unavailable; telemetry fallback
             return {'error': str(e)}
 
     def get_stats(self) -> dict[str, Any]:
@@ -521,7 +521,7 @@ class FetchCoordinator(UniversalCoordinator):
                     'failures': self._aimd_window.failures,
                     **self._aimd_window.stats,
                 }
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; aimd_window stats unavailable; telemetry fallback
             aimd_window_stats = {'error': 'unavailable'}
 
         # _AIMDSlotController
@@ -532,7 +532,7 @@ class FetchCoordinator(UniversalCoordinator):
                     'available_approx': self._aimd_slot.available,
                     **self._aimd_slot.stats,
                 }
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; aimd_slot stats unavailable; telemetry fallback
             aimd_slot_stats = {'error': 'unavailable'}
 
         # BoundedPerHostGate
@@ -543,19 +543,19 @@ class FetchCoordinator(UniversalCoordinator):
                     'active_hosts': len(self._per_host_gate._gates),
                     **self._per_host_gate._stats,
                 }
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; per_host_gate stats unavailable; telemetry fallback
             per_host_gate_stats = {'error': 'unavailable'}
 
         # Circuit breaker
         try:
             circuit_stats = self.get_circuit_stats()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; circuit_breaker stats unavailable; telemetry fallback
             circuit_stats = {'error': str(e)}
 
         # CAPTCHA
         try:
             captcha_stats = self.get_captcha_stats()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; captcha_stats unavailable; telemetry fallback
             captcha_stats = {'error': str(e)}
 
         return {
@@ -582,7 +582,7 @@ class FetchCoordinator(UniversalCoordinator):
             if self._session_lmdb_env is not None and _session_mgr_cls is not None:
                 self._session_manager = _session_mgr_cls(self._session_lmdb_env)
                 self._start_checkpoint_loop()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; LMDB session persistence disabled; non-critical fallback
             logger.warning('[FETCH] LMDB session init failed: {e} — session persistence disabled', e=e)
             self._session_manager = None
 
@@ -594,7 +594,7 @@ class FetchCoordinator(UniversalCoordinator):
             try:
                 with open(proxy_file) as f:
                     return json.load(f)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; proxy config load failure; returns empty dict
                 pass
         return {}
     _PRIVATE_NETS = [ipaddress.ip_network(n) for n in ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8', '169.254.0.0/16', '100.64.0.0/10']]
@@ -613,7 +613,7 @@ class FetchCoordinator(UniversalCoordinator):
             if ip.is_loopback:
                 return False
             return True
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; ip_address parse failure; returns False (private check)
             return False
 
     async def _validate_fetch_target(self, url: str) -> tuple[bool, dict[str, Any]]:
@@ -664,7 +664,7 @@ class FetchCoordinator(UniversalCoordinator):
                 if not self._is_ip_public(ip_str):
                     return (False, {'resolved_ips': ips, 'blocked_reason': 'private_ip_resolved', 'blocked_ip': ip_str})
             return (True, {'resolved_ips': ips})
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; httpx client creation failure; non-critical
             return (False, {'blocked_reason': f'validation_error: {e}'})
 
     def _is_js_heavy(self, url: str, html_preview: str='') -> bool:
@@ -700,7 +700,7 @@ class FetchCoordinator(UniversalCoordinator):
                 _bp_result = self._concurrency_provider()
                 if _bp_result is not None:
                     _bp_clearing, _bp_stealth, _bp_uma_state, _ = _bp_result
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; dns resolution failure; non-critical fallback
                 pass
         if _bp_clearing is not None and _bp_clearing < self._aimd_window.window:
             await self._aimd_window.set_window(_bp_clearing)
@@ -791,7 +791,7 @@ class FetchCoordinator(UniversalCoordinator):
             async with self._privacy_lock:
                 await sem.acquire()
             return (lane, True)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; canonical fetch result; best-effort parse
             return ('clearnet', True)
 
     def _privacy_release(self, lane: str) -> None:
@@ -819,7 +819,7 @@ class FetchCoordinator(UniversalCoordinator):
                 return {'url': url, 'content': content, 'js_rendered': True}
             finally:
                 await self._lightpanda_pool.release(lp)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; httpx request failure; non-critical fallback
             logger.warning('[LIGHTPANDA] Failed: {e}, falling back to curl_cffi', e=e)
             return None
 
@@ -866,7 +866,7 @@ class FetchCoordinator(UniversalCoordinator):
             logger.debug('[TOR] Timeout for {url}', url=url)
             await self._aimd_release_failure()
             return None
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; httpx response body read; non-critical
             logger.warning('Tor fetch failed: {e}', e=e)
             await self._aimd_release_failure()
             return None
@@ -900,7 +900,7 @@ class FetchCoordinator(UniversalCoordinator):
             logger.debug('[I2P] Timeout for {url}', url=url)
             await self._aimd_release_failure()
             return None
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; httpx stream read; non-critical
             logger.warning('I2P fetch failed: {e}', e=e)
             await self._aimd_release_failure()
             return None
@@ -917,7 +917,7 @@ class FetchCoordinator(UniversalCoordinator):
             try:
                 from hledac.universal.transport.http3_lane import probe_altsvc_speculative
                 probe_altsvc_speculative(url)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; per_host_gate unavailable; fail-open
                 pass
             _curl_http_version = _altsvc_http_version_for(_altsvc_extract_host(url))
             _curl_result = await fetch_via_curl_cffi_cached(url=url, headers=None, timeout_s=30.0, max_bytes=10 * 1024 * 1024, profile='chrome110', http_version=_curl_http_version, _pre_probe=False)
@@ -933,7 +933,7 @@ class FetchCoordinator(UniversalCoordinator):
             logger.debug('[CURL] Timeout for {url}', url=url)
             await self._aimd_release_failure()
             return {'url': url, 'content': b'', 'error': 'timeout'}
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; dns resolution failure; best-effort fallback
             logger.warning('[CURL] Failed: {e}', e=e)
             return {'url': url, 'content': b'', 'error': str(e)}
 
@@ -965,7 +965,7 @@ class FetchCoordinator(UniversalCoordinator):
                     logger.info('FetchCoordinator HTTP cache active (opt-out via HLEDAC_HTTP_CACHE=0)')
                 else:
                     logger.info('FetchCoordinator HTTP cache requested but unavailable (install: \'uv pip install ".[osint-cache]"\')')
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — best-effort; aimd release failure; non-critical
                 logger.warning('HTTP cache init failed: %s', exc)
                 self._http_cache_transport = None
         elif not self._http_cache_enabled:
@@ -1046,7 +1046,7 @@ class FetchCoordinator(UniversalCoordinator):
                     continue
                 try:
                     hostname = httpx.URL(url).host
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; httpx session creation; non-critical
                     continue
                 if hostname:
                     hosts.add(hostname.lower())
@@ -1064,7 +1064,7 @@ class FetchCoordinator(UniversalCoordinator):
             try:
                 _result = self._concurrency_provider()
                 self._batch_cp_result = _result if _result is not None else _CP_RETURNED_NONE
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; httpx close failure; non-critical
                 pass
         resolver = get_batch_dns_resolver()
         raw_hosts_task = asyncio.to_thread(_extract_raw_hosts)
@@ -1078,7 +1078,7 @@ class FetchCoordinator(UniversalCoordinator):
             try:
                 resolved = await dns_coro
                 self._host_ips_cache = {h: list(ips) for h, ips in resolved.items()}
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — best-effort; session close failure; non-critical
                 logger.debug('[F-A4] batch DNS pre-resolve failed: %s: %s', type(exc).__name__, exc)
         candidates: list[tuple[float, str]] = []
         for url in unique_batch:
@@ -1154,7 +1154,7 @@ class FetchCoordinator(UniversalCoordinator):
         try:
             _parsed = httpx.URL(url)
             _host_name = _parsed.host or ''
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; dns resolution failure; returns None
             pass
         if _host_name and (not url.endswith(('.onion', '.i2p'))):
             _host_sem, _ = await self._per_host_gate.acquire(_host_name)
@@ -1162,7 +1162,7 @@ class FetchCoordinator(UniversalCoordinator):
         _privacy_acquired = False
         try:
             _privacy_lane, _privacy_acquired = await self._privacy_acquire_for_url(url)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; httpx response body; non-critical
             _privacy_lane = 'clearnet'
             _privacy_acquired = True
         _aimd_sem: asyncio.Semaphore | None = None
@@ -1176,7 +1176,7 @@ class FetchCoordinator(UniversalCoordinator):
                         async with self._dedup_lock:
                             self._processed_urls.discard(url)
                         return None
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; per_host_gate release; non-critical
                 pass
             _concurrency, _aimd_sem = await self._aimd_acquire()
         domain = httpx.URL(url).host
@@ -1196,7 +1196,7 @@ class FetchCoordinator(UniversalCoordinator):
                 cb_task = tg.create_task(_circuit_breaker_check(), name='circuit_breaker')
             dns_safe, dns_meta = dns_task.result()
             canonical_allowed, canonical_reason, canonical_retry_after = cb_task.result()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; domain_breaker unavailable; non-critical
             dns_safe, dns_meta = (True, {})
             canonical_allowed, canonical_reason, canonical_retry_after = (True, '', 0.0)
         if not dns_safe:
@@ -1229,7 +1229,7 @@ class FetchCoordinator(UniversalCoordinator):
                         cb_task = tg.create_task(_circuit_breaker_check(), name='circuit_breaker')
                     dns_safe, dns_meta = dns_task.result()
                     canonical_allowed, canonical_reason, canonical_retry_after = cb_task.result()
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; lock acquisition failure; non-critical
                     dns_safe, dns_meta = (True, {})
                     canonical_allowed, canonical_reason, canonical_retry_after = (True, '', 0.0)
                 if not dns_safe:
@@ -1298,7 +1298,7 @@ class FetchCoordinator(UniversalCoordinator):
                                 trace_fetch_end(url, 'gopher_transport', 'ok', 0.0)
                                 break
                             logger.debug('GopherTransport fetch failed: {gopher_res.err}', err=gopher_res.err)
-                        except Exception as e:
+                        except Exception as e:  # noqa: BLE001 — best-effort; telemetry flush failure; non-critical
                             logger.debug('GopherTransport error: {e}', e=e)
                             trace_fetch_end(url, 'gopher_transport', 'error', 0.0)
                 session_cookies = None
@@ -1328,7 +1328,7 @@ class FetchCoordinator(UniversalCoordinator):
                             return ''
                     except TimeoutError:
                         logger.debug('[PREVIEW] Timeout for {url}', url=url)
-                    except Exception as e:
+                    except Exception as e:  # noqa: BLE001 — best-effort; event wait failure; non-critical
                         logger.debug('[PREVIEW] Failed to fetch preview for {url}: {e}', url=url, e=e)
                     return ''
 
@@ -1387,7 +1387,7 @@ class FetchCoordinator(UniversalCoordinator):
             elif result is None or result.get('error'):
                 is_timeout = result.get('error') == 'timeout' if result else True
                 self._record_failure(domain, is_timeout=is_timeout, failure_kind='fetch_error')
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; httpx request failure; non-critical
             logger.warning('[_fetch_url] Unexpected error for {url}: {e}', url=url, e=e)
             await self._aimd_release_failure()
             result = {'url': url, 'content': b'', 'error': str(e)}
@@ -1424,7 +1424,7 @@ class FetchCoordinator(UniversalCoordinator):
                         logger.debug('[CAPTCHA] CAPTCHA detected at {url_for_check}, skipping', url_for_check=url_for_check)
                         self._captcha_detections += 1
                         return None
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; lightpanda close failure; non-critical
                     pass
         return result
 
@@ -1465,7 +1465,7 @@ class FetchCoordinator(UniversalCoordinator):
             fused = top_k(rows, k=limit)
             logger.info('[DEEP] query={query!r} → {raw_rows} raw rows → {fused_rows} fused', query=query, raw_rows=len(rows), fused_rows=len(fused))
             return fused
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; httpx close failure; non-critical
             logger.debug('[DEEP] research failed: {e}', e=e)
             return None
 
@@ -1484,13 +1484,13 @@ class FetchCoordinator(UniversalCoordinator):
         if self._session_manager is not None:
             try:
                 await self._session_manager.close()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; canonical fetch result; best-effort parse
                 pass
             self._session_manager = None
         if self._session_lmdb_env is not None:
             try:
                 self._session_lmdb_env.close()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; canonical fetch result; best-effort parse
                 pass
             self._session_lmdb_env = None
         from ..transport.darknet_session_provider import close_all as _close_darknet_sessions
@@ -1498,7 +1498,7 @@ class FetchCoordinator(UniversalCoordinator):
         if self._lightpanda_pool is not None:
             try:
                 await self._lightpanda_pool.close()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; canonical fetch result; best-effort parse
                 pass
             self._lightpanda_pool = None
         await asyncio.sleep(0.25)
@@ -1533,7 +1533,7 @@ class FetchCoordinator(UniversalCoordinator):
                 from metrics_registry import get_metrics_registry
                 get_metrics_registry().inc('cover_traffic_fired')
                 logger.debug('[COVER] fired cover traffic #{self._cover_count} for transport={transport}', _cover_count=self._cover_count, transport=transport)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; httpx response close; non-critical
             pass
 
     async def _fire_cover_traffic_url(self, url: str, delay: float, transport: str) -> None:
@@ -1545,11 +1545,11 @@ class FetchCoordinator(UniversalCoordinator):
         """
         try:
             await asyncio.sleep(delay)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; lightpanda close; non-critical
             return
         try:
             domain = httpx.URL(url).host
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; event wait failure; non-critical
             return
         # Circuit breaker check delegated to transport/circuit_breaker.py
         try:
@@ -1562,7 +1562,7 @@ class FetchCoordinator(UniversalCoordinator):
                     if tor and await tor.is_running():
                         config = TransportConfig(url=url, method='GET', headers=None, body=None, timeout=10.0)
                         await tor.fetch(config)
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; httpx request failure; non-critical
                     pass
             elif transport_lower == 'i2p':
                 try:
@@ -1572,16 +1572,16 @@ class FetchCoordinator(UniversalCoordinator):
                     if i2p and i2p.is_running():
                         config = TransportConfig(url=url, method='GET', headers=None, body=None, timeout=10.0)
                         await i2p.fetch(config)
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; httpx stream read; non-critical
                     pass
             else:
                 try:
                     import curl_cffi.requests as _cffi
                     async with _cffi.AsyncSession(impersonate='chrome131') as session:
                         await session.get(url, timeout=10.0)
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; httpx stream read; non-critical
                     pass
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; httpx response close; non-critical
             pass
 
     async def _fire_cover_traffic(self, url: str, delay: float, transport: str) -> None:
@@ -1670,7 +1670,7 @@ class FetchCoordinator(UniversalCoordinator):
                 try:
                     env.sync()
                     _logger.debug('[Issue#20] session LMDB checkpoint synced')
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; body hash update; non-critical telemetry
                     pass
 
     def _start_checkpoint_loop(self) -> None:

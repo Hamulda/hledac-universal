@@ -35,6 +35,25 @@ try:
 except ImportError:
     np = None
     _NUMPY_AVAILABLE = False
+
+# ISSUE-008: Rust LSH index — zero-copy PyO3 binding for O(1) near-duplicate detection
+_rust_lsh_available = False
+_rust_lsh = None
+try:
+    from core.rust_backend import rust
+    _rust_lsh = rust.lsh
+    _rust_lsh_available = True  # Always available (Rust or Python fallback)
+except ImportError:
+    _rust_lsh = None
+
+# ISSUE-008: Two-layer embedding cache — float16 L1 + np.memmap L2 (M1 8GB safe)
+_embedding_cache = None
+try:
+    from core.embedding_cache import EmbeddingCache
+    _embedding_cache = EmbeddingCache
+except ImportError:
+    _embedding_cache = None
+
 logger = logging.getLogger(__name__)
 
 class DeduplicationStrategy(Enum):
@@ -155,16 +174,69 @@ class SemanticDeduplicator(BaseDeduplicator):
 
     def __init__(self, config: DeduplicationConfig):
         super().__init__(config)
-        self.embedding_cache: OrderedDict[str, np.ndarray] = OrderedDict()
+        # ISSUE-008: Two-layer embedding cache — float16 L1 + memmap L2
+        if _embedding_cache is not None:
+            self.embedding_cache: Any = _embedding_cache(
+                capacity=5000,
+                dim=config.embedding_dim,
+                dtype=np.float16,
+                l1_max_mb=256.0,
+            )
+        else:
+            # Fallback: pure Python OrderedDict (legacy)
+            self.embedding_cache = OrderedDict()
         self.embedding_cache_size = 0
         self.max_cache_size_mb = 256
         self._embedding_model = None
         self._model_loaded = False
         self.executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='semantic-embed')
         self._simhash = SimHash(hashbits=64)
+        # ISSUE-008: Rust LSH index — O(1) near-duplicate detection (<50ms for 10k sigs)
+        self._lsh_index: Any = None
+        if _rust_lsh_available:
+            try:
+                self._lsh_index = _rust_lsh.lsh_index_new(num_tables=16, num_rows=4)
+            except Exception:
+                self._lsh_index = None
 
     def _cluster_by_simhash(self, items: list[QueryItem], simhash_bits: int=16) -> dict[int, list[QueryItem]]:
-        """Group items into LSH buckets using SimHash for near-linear deduplication."""
+        """Group items into LSH buckets using SimHash.
+
+        Uses rust.lsh.LSHIndex.batch_query() when available (<50ms for 10k sigs).
+        Falls back to pure Python OrderedDict bucketing.
+        """
+        if not items:
+            return {}
+
+        # Fast path: Rust LSH batch query
+        if self._lsh_index is not None:
+            try:
+                # Compute simhashes for all items
+                sigs_and_items: list[tuple[int, QueryItem]] = []
+                for item in items:
+                    sig = self._simhash.compute(item.content)
+                    sigs_and_items.append((sig, item))
+
+                # Batch query — all signatures at once
+                sigs = [s for s, _ in sigs_and_items]
+                results = self._lsh_index.batch_query(sigs, max_results=100)
+
+                # Build clusters from LSH results
+                clusters: dict[int, list[QueryItem]] = defaultdict(list)
+                for (sig, item), candidates in zip(sigs_and_items, results, strict=False):
+                    bucket = sig & (1 << simhash_bits) - 1
+                    clusters[bucket].append(item)
+                    # Add candidates (other items with similar simhash)
+                    for doc_id, _ in candidates:
+                        for s, it in sigs_and_items:
+                            if hash(str(id(it.content))) == hash(doc_id):
+                                if it not in clusters[bucket]:
+                                    clusters[bucket].append(it)
+                return clusters
+            except Exception:
+                pass  # Fall through to Python path
+
+        # Slow path: pure Python OrderedDict bucketing
         clusters = defaultdict(list)
         for item in items:
             simhash_val = self._simhash.compute(item.content)

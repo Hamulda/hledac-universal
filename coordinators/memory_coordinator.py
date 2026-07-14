@@ -193,7 +193,7 @@ class UniversalMemoryCoordinator:
     - Callback system for pressure events
     - Neuromorphic memory zones and pattern storage
     """
-    __slots__ = tuple(('_cached_on_battery', '_last_battery_check', '_neuro_enabled', '_neuro_memory', '_running', '_thermal_history', '_thermal_state', 'allocations', 'callbacks', 'lock', 'memory_limit_bytes', 'memory_limit_mb', 'statistics', 'zone_allocations'))
+    __slots__ = tuple(('_alloc_lock', '_cached_on_battery', '_last_battery_check', '_neuro_enabled', '_neuro_lock', '_neuro_memory', '_pressure_lock', '_running', '_stats_lock', '_thermal_history', '_thermal_lock', '_thermal_state', 'allocations', 'callbacks', 'lock', 'memory_limit_bytes', 'memory_limit_mb', 'statistics', 'zone_allocations'))
 
     def __init__(self, memory_limit_mb: float=5500, enable_neuromorphic: bool=True):
         """
@@ -209,7 +209,17 @@ class UniversalMemoryCoordinator:
         self.zone_allocations: dict[MemoryZone, OrderedDict] = {zone: OrderedDict() for zone in MemoryZone}
         self.statistics = MemoryStatistics(total_memory_mb=psutil.virtual_memory().total / (1024 * 1024), used_memory_mb=0, available_memory_mb=0, peak_usage_mb=0, current_level=MemoryPressureLevel.NORMAL, cleanup_count=0, last_cleanup_time=0)
         self.callbacks: list[Callable] = []
-        self.lock = asyncio.Lock()
+        # ISSUE #15 FIX: Split global lock into fine-grained zones.
+        # _alloc_lock  — allocation/free/touch (serializes heap writes)
+        # _stats_lock  — statistics updates (memory reads, no heap mutation)
+        # _thermal_lock — thermal state reads (fast, no heap mutation)
+        # _pressure_lock — memory pressure handling (brief, serializes eviction)
+        # _neuro_lock   — neuromorphic memory (separate subsystem)
+        self._alloc_lock = asyncio.Lock()
+        self._stats_lock = asyncio.Lock()
+        self._thermal_lock = asyncio.Lock()
+        self._pressure_lock = asyncio.Lock()
+        self._neuro_lock = asyncio.Lock()
         self._neuro_memory: NeuromorphicMemoryManager | None = None
         self._neuro_enabled = enable_neuromorphic
         if enable_neuromorphic:
@@ -220,6 +230,9 @@ class UniversalMemoryCoordinator:
         self._running = True
         self._last_battery_check = 0
         self._cached_on_battery = False
+        # Backward compatibility — route old self.lock users to _alloc_lock
+        import warnings
+        self.lock = self._alloc_lock
 
     def _get_thermal_state_native(self) -> ThermalState | None:
         """
@@ -491,7 +504,7 @@ class UniversalMemoryCoordinator:
         Returns:
             True if allocation successful
         """
-        async with self.lock:
+        async with self._alloc_lock:
             if allocation_id in self.allocations:
                 logger.warning(f'Allocation {allocation_id} already exists')
                 return False
@@ -516,7 +529,7 @@ class UniversalMemoryCoordinator:
         Returns:
             True if allocation was freed
         """
-        async with self.lock:
+        async with self._alloc_lock:
             if allocation_id not in self.allocations:
                 return False
             allocation = self.allocations[allocation_id]
@@ -534,7 +547,7 @@ class UniversalMemoryCoordinator:
         Args:
             allocation_id: Allocation ID to touch
         """
-        async with self.lock:
+        async with self._alloc_lock:
             if allocation_id in self.allocations:
                 allocation = self.allocations[allocation_id]
                 allocation.last_accessed = time.time()
@@ -627,7 +640,7 @@ class UniversalMemoryCoordinator:
         Returns:
             Number of allocations cleared
         """
-        async with self.lock:
+        async with self._alloc_lock:
             allocations = list(self.zone_allocations[zone].keys())
             count = 0
             for allocation_id in allocations:
@@ -651,7 +664,7 @@ class UniversalMemoryCoordinator:
         Args:
             component: Component that performed cleanup
         """
-        async with self.lock:
+        async with self._stats_lock:
             self.statistics.cleanup_count += 1
             self.statistics.last_cleanup_time = time.time()
             logger.info(f'Cleanup recorded for {component} (total: {self.statistics.cleanup_count})')
@@ -665,7 +678,7 @@ class UniversalMemoryCoordinator:
         """
         vm = psutil.virtual_memory()
         process = psutil.Process()
-        async with self.lock:
+        async with self._stats_lock:
             used_mb = process.memory_info().rss / (1024 * 1024)
             self.statistics.used_memory_mb = used_mb
             self.statistics.available_memory_mb = vm.available / (1024 * 1024)
@@ -685,7 +698,7 @@ class UniversalMemoryCoordinator:
         Returns:
             ZoneStatistics object
         """
-        async with self.lock:
+        async with self._stats_lock:
             allocations = list(self.zone_allocations[zone].values())
             total_bytes = sum((a.size_bytes for a in allocations))
             evictable = sum((1 for a in allocations if a.evictable))
@@ -751,7 +764,7 @@ class UniversalMemoryCoordinator:
             True if enough memory was freed
         """
         logger.warning(f'Handling memory pressure, need {required_bytes} bytes')
-        async with self.lock:
+        async with self._pressure_lock:
             evictable = [a for a in self.allocations.values() if a.evictable]
             evictable.sort(key=lambda a: (a.priority, a.last_accessed))
             freed_bytes = 0

@@ -1,0 +1,1 @@
+MPSC batch send optimization reduces GIL acquisition overhead from N× to 1× by enabling single Python→Rust calls for N items within a 1 MiB memory budget (2048×512B slots).

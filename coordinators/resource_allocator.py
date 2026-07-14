@@ -19,7 +19,6 @@ from core.psutil_shim import psutil
 import yaml
 from hledac.universal.utils.async_helpers import safe_create_task
 SKLEARN_AVAILABLE = True
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 MAX_PENDING_RESOURCE_REQUESTS = 1000
 

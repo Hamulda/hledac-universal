@@ -22,7 +22,6 @@ import psutil
 from .async_helpers import safe_create_task, safe_gather_ok, safe_gather_shielded
 if TYPE_CHECKING:
     pass
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 PSUTIL_AVAILABLE = True
 

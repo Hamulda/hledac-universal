@@ -54,6 +54,7 @@ from . import quality as _quality_mod
 from . import rolling_hash as _rolling_hash_mod
 from . import simhash as _simhash_mod
 from . import url as _url_mod
+from . import lsh as _lsh_mod
 from ._prober import force_python as _force_python
 from ._prober import force_rust as _force_rust
 from ._prober import probe as _probe
@@ -82,6 +83,7 @@ if TYPE_CHECKING:
     from .rolling_hash import _PythonRollingHashDomain, _RustRollingHashDomain
     from .simhash import _PythonSimhashDomain, _RustSimhashDomain
     from .url import _PythonUrlDomain, _RustUrlDomain
+    from .lsh import _PythonLshDomain, _RustLshDomain
 
 logger = logging.getLogger(__name__)
 
@@ -271,6 +273,10 @@ class AccelBackend:
     @property
     def simhash(self) -> "_RustSimhashDomain | _PythonSimhashDomain":
         return self._get_domain("simhash", _simhash_mod.get_domain)
+
+    @property
+    def lsh(self) -> "_RustLshDomain | _PythonLshDomain":
+        return self._get_domain("lsh", _lsh_mod.get_lsh_domain)
 
     @property
     def metal(self) -> "_RustMetalDomain | _PythonMetalDomain":
@@ -475,6 +481,10 @@ class _RustCompatShim:
     @property
     def simhash(self) -> Any:
         return self._accel.simhash
+
+    @property
+    def lsh(self) -> Any:
+        return self._accel.lsh
 
     def __repr__(self) -> str:
         return repr(self._accel)

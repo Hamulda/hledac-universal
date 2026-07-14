@@ -177,12 +177,34 @@ impl LSHIndex {
         }
     }
 
+    /// Batch query for multiple fingerprints at once.
+    ///
+    /// ## Arguments
+    /// - `fingerprints`: List of 64-bit SimHash fingerprints to query
+    /// - `max_results`: Maximum results per query (default 100)
+    ///
+    /// ## Returns
+    /// List of result lists, one per fingerprint, sorted by similarity descending.
+    /// Empty inner list if no candidates found.
+    #[pyo3(signature = (fingerprints, max_results=100))]
+    pub fn batch_query(&self, fingerprints: Vec<u64>, max_results: usize) -> Vec<Vec<(String, f64)>> {
+        fingerprints
+            .iter()
+            .map(|fp| self.query(*fp, max_results))
+            .collect()
+    }
+
     /// Clear all documents from the index.
     pub fn clear(&mut self) {
         for table in &mut self.tables {
             table.clear();
         }
         self.fingerprints.clear();
+    }
+
+    /// Return number of stored fingerprints.
+    pub fn cluster_size(&self) -> usize {
+        self.fingerprints.len()
     }
 }
 

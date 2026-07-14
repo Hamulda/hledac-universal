@@ -216,7 +216,7 @@ class TestSubprocessInParensDrift:
                     continue
                 try:
                     src = py_file.read_text(encoding="utf-8")
-                except OSError, UnicodeDecodeError:
+                except (OSError, UnicodeDecodeError):
                     continue
                 try:
                     ast.parse(src, filename=str(py_file))

@@ -980,6 +980,37 @@ class _RustJsonDomain:
             return None
         return msgspec.json.decode(validated.encode())
 
+    # ISSUE-005: bytes-in/bytes-out — zero-copy for STIX export.
+    # dict → msgspec.encode() → Rust serde_json_compact_bytes() → bytes (no String↔bytes overhead)
+    def compact_bytes(self, data: dict) -> bytes:
+        """Compact JSON as bytes (no String↔bytes conversion).
+
+        dict → msgspec.json.encode() → Rust serde_json_compact_bytes() → bytes.
+        Symmetric: parse_bytes(bytes) → dict.
+        """
+        json_bytes = self._msgspec.json.encode(data)
+        return self._ext.serde_json_compact_bytes(json_bytes)
+
+    def pretty_bytes(self, data: dict, sort_keys: bool = False) -> bytes:
+        """Pretty JSON (indent=2) as bytes.
+
+        dict → msgspec.json.encode() → Rust serde_json_pretty_bytes() → bytes.
+        """
+        json_bytes = self._msgspec.json.encode(data)
+        return self._ext.serde_json_pretty_bytes(json_bytes, sort_keys)
+
+    def parse_bytes(self, json_bytes: bytes) -> Any:
+        """Parse JSON bytes via Rust serde_json (SIMD-validated) → msgspec.json.decode().
+
+        bytes → Rust serde_json_compact_bytes (validate) → msgspec.json.decode().
+        """
+        import msgspec
+
+        validated = self._ext.serde_json_compact_bytes(json_bytes)
+        if not validated:
+            return None
+        return msgspec.json.decode(validated)
+
 
 class _RustMetalDomain:
     """Rust-backed Metal pattern matcher with GPU acceleration and CPU fallback.
@@ -1314,6 +1345,10 @@ class RustBackend:
         return self._get_domain("html", _RustHtmlDomain, _PythonHtmlDomain)
 
     @property
+    def lsh(self) -> Any:
+        return self._get_domain("lsh", _RustLshDomain, _PythonLshDomain)
+
+    @property
     def ioc_dedup(self) -> Any:
         return self._get_domain("ioc_dedup", _RustIocDedupDomain, _PythonIocDedupDomain)
 
@@ -1431,6 +1466,8 @@ class _RustHashDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
         MethodSpec("sha256_hex"),
         MethodSpec("blake3_64"),
         MethodSpec("batch_xxh3_64_hex", no_except=True),
+        # ISSUE-005: batch_xxh3_64_bytes — zero-copy bytes-in, no UTF-8 decode, >5× pure-Python
+        MethodSpec("batch_xxh3_64_bytes", no_except=True),
     ]
 
     # Override: Python calls with list[bytes], Rust expects list[str].
@@ -1450,6 +1487,11 @@ class _RustHashDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
     def batch_content_hash_hex_parallel(self, items: list[bytes]) -> list[str]:
         str_items = [item.decode("utf-8", errors="surrogateescape") for item in items]
         return self._ext.batch_content_hash_hex_parallel(str_items)
+
+    # ISSUE-005: Zero-copy bytes-in path — no UTF-8 decode overhead.
+    # Delegates directly to batch_xxh3_64_bytes (Rust, bytes→u64, rayon-parallel).
+    def batch_xxh3_64_bytes(self, items: list[bytes]) -> list[int]:
+        return self._ext.batch_xxh3_64_bytes(items)
 
 
 class _RustRollingHashDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
@@ -1545,6 +1587,22 @@ class _RustHtmlDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
     _spec = [
         MethodSpec("html_extract"),
         MethodSpec("extract_links_zero_copy"),
+        MethodSpec("batch_extract_links"),
+        MethodSpec("batch_extract_links_with_text"),
+        MethodSpec("batch_extract_emails"),
+        MethodSpec("batch_extract_titles"),
+        MethodSpec("batch_extract_html_text"),
+    ]
+
+
+class _RustLshDomain(DelegatingDomain, metaclass=DelegatingDomainMeta):
+    """Rust-backed LSH domain for O(1) near-duplicate detection at scale."""
+
+    __slots__ = ("_ext",)
+    _target = RustTarget
+    _spec = [
+        MethodSpec("lsh_index_new"),
+        MethodSpec("LSHIndex"),
     ]
 
 
@@ -1980,6 +2038,63 @@ class _PythonSimhashDomain:
         return _python_batch_compute_simhash(texts)
 
 
+class _PythonLshIndex:
+    """Python fallback LSH index — pure-Python OrderedDict bucketing (slow path).
+
+    Mirrors ``rust.lsh.LSHIndex`` API for fail-soft fallback.
+    """
+
+    def __init__(self, num_tables: int = 16, num_rows: int = 4) -> None:
+        self._num_tables = num_tables
+        self._num_rows = num_rows
+        self._tables: list[dict[int, list[tuple[str, int]]]] = [{} for _ in range(num_tables)]
+        self._fingerprints: dict[str, int] = {}
+
+    def insert(self, doc_id: str, fingerprint: int) -> None:
+        self._fingerprints[doc_id] = fingerprint
+        for band_idx in range(self._num_tables):
+            band_hash = self._compute_band_hash(fingerprint, band_idx)
+            self._tables[band_idx].setdefault(band_hash, []).append((doc_id, fingerprint))
+
+    def query(self, fingerprint: int, max_results: int = 100) -> list[tuple[str, float]]:
+        candidate_counts: dict[str, int] = {}
+        for band_idx in range(self._num_tables):
+            band_hash = self._compute_band_hash(fingerprint, band_idx)
+            for doc_id, _ in self._tables[band_idx].get(band_hash, ()):
+                candidate_counts[doc_id] = candidate_counts.get(doc_id, 0) + 1
+        threshold = self._num_rows
+        matching = [did for did, cnt in candidate_counts.items() if cnt >= threshold]
+        scored = []
+        for doc_id in matching:
+            stored_fp = self._fingerprints.get(doc_id)
+            if stored_fp is not None:
+                distance = (fingerprint ^ stored_fp).bit_count()
+                similarity = 1.0 - (distance / 64.0)
+                scored.append((doc_id, similarity))
+        scored.sort(key=lambda x: -x[1])
+        return scored[:max_results]
+
+    def batch_insert(self, items: list[tuple[str, int]]) -> None:
+        for doc_id, fp in items:
+            self.insert(doc_id, fp)
+
+    def batch_query(self, fingerprints: list[int], max_results: int = 100) -> list[list[tuple[str, float]]]:
+        return [self.query(fp, max_results) for fp in fingerprints]
+
+    def clear(self) -> None:
+        for table in self._tables:
+            table.clear()
+        self._fingerprints.clear()
+
+    def cluster_size(self) -> int:
+        return len(self._fingerprints)
+
+    def _compute_band_hash(self, fingerprint: int, band_idx: int) -> int:
+        import hashlib
+        data = f"{fingerprint}:{band_idx}".encode()
+        return int(hashlib.sha256(data).hexdigest()[:16], 16)
+
+
 class _PythonQualityDomain:
     __slots__ = ()
 
@@ -2177,6 +2292,17 @@ class _PythonHtmlDomain:
 
     def extract_links_zero_copy(self, html: str, base_url: str) -> list[tuple[int, int]]:
         return _python_extract_links_zero_copy(html, base_url)
+
+
+class _PythonLshDomain:
+    """Python fallback LSH domain — pure-Python OrderedDict bucketing (slow path)."""
+    __slots__ = ()
+
+    def lsh_index_new(self, num_tables: int = 16, num_rows: int = 4) -> Any:
+        return _PythonLshIndex(num_tables=num_tables, num_rows=num_rows)
+
+    def LSHIndex(self, num_tables: int = 16, num_rows: int = 4) -> Any:
+        return _PythonLshIndex(num_tables=num_tables, num_rows=num_rows)
 
 
 class _PythonIocDedupDomain:
@@ -2475,6 +2601,24 @@ class _RustMLXDomain:
             pressure_critical,
         )
 
+    def batch_tokenize(
+        self,
+        tokenizers: list[Any],
+        prompts: list[str],
+        add_special_tokens: bool = True,
+    ) -> list[list[int]]:
+        """Rayon-parallel prompt tokenization (CPU-bound).
+
+        Args:
+            tokenizers: List of tokenizer instances (same length as prompts)
+            prompts: List of input strings to tokenize
+            add_special_tokens: Whether to add BOS/EOS tokens
+
+        Returns:
+            List of token ID lists (same order as prompts)
+        """
+        return self._ext.batch_tokenize(tokenizers, prompts, add_special_tokens)
+
 
 class _PythonMLXDomain:
     """Python fallback MLX bridge domain.
@@ -2517,6 +2661,21 @@ class _PythonMLXDomain:
             "pressure_warning": pressure_warning,
             "pressure_critical": pressure_critical,
         }
+
+    def batch_tokenize(
+        self,
+        tokenizers: list[Any],
+        prompts: list[str],
+        add_special_tokens: bool = True,
+    ) -> list[list[int]]:
+        """Python fallback: serialize tokenization (small batch)."""
+        results = []
+        for tok, prompt in zip(tokenizers, prompts):
+            ids = tok.encode(prompt, add_special_tokens=add_special_tokens)
+            if hasattr(ids, "tolist"):
+                ids = ids.tolist()
+            results.append(list(ids) if isinstance(ids, (list, tuple)) else ids)
+        return results
 
 
 def check_metal_availability() -> dict[str, Any]:

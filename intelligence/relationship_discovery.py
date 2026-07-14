@@ -69,11 +69,15 @@ def get_session_relationship_engine() -> RelationshipDiscoveryEngine:
     if _SESSION_ENGINE is None:
         _SESSION_ENGINE = RelationshipDiscoveryEngine(use_sparse=True, max_memory_mb=512)
     return _SESSION_ENGINE
-from hledac.universal.utils.optional_imports import optional
-_igraph_mod = optional('igraph')
-_igraph_mod_val = _igraph_mod()
-IGRAPH_AVAILABLE = _igraph_mod.available
-ig = _igraph_mod_val if IGRAPH_AVAILABLE else None
+
+# igraph — strict import with fallback
+try:
+    import igraph as ig
+    IGRAPH_AVAILABLE = True
+except ImportError:
+    ig = None
+    IGRAPH_AVAILABLE = False
+
 SCIPY_AVAILABLE = True
 _sparse_mod = None
 
@@ -128,12 +132,23 @@ def _idx_discard(index, key):
             del index[key]
         except KeyError:
             return
-_louvain_mod = optional('community')
-LOUVAIN_AVAILABLE = bool(_louvain_mod)
-community_louvain = _louvain_mod() if LOUVAIN_AVAILABLE else None
-_mlx_mod = optional('mlx.core')
-MLX_AVAILABLE = bool(_mlx_mod)
-mx = _mlx_mod() if MLX_AVAILABLE else None
+
+# community (python-louvain) — strict import with fallback
+try:
+    from community import community_louvain
+    LOUVAIN_AVAILABLE = True
+except ImportError:
+    community_louvain = None
+    LOUVAIN_AVAILABLE = False
+
+# mlx — strict import with fallback
+try:
+    import mlx.core as mx
+    MLX_AVAILABLE = True
+except ImportError:
+    mx = None
+    MLX_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 class EntityType(Enum):
@@ -308,11 +323,16 @@ class InfluenceModel:
     def to_dict(self) -> dict[str, Any]:
         """Convert influence model to dictionary."""
         return {'seed_entities': self.seed_entities, 'influence_scores': self.influence_scores, 'propagation_paths': [p.to_dict() for p in self.propagation_paths], 'iterations': self.iterations, 'convergence_delta': self.convergence_delta}
-_datasketch_mod = optional('datasketch')
-_datasketch_mod_val = _datasketch_mod()
-LSH_AVAILABLE = _datasketch_mod.available
-MinHash = getattr(_datasketch_mod_val, 'MinHash', None) if LSH_AVAILABLE else None
-MinHashLSH = getattr(_datasketch_mod_val, 'MinHashLSH', None) if LSH_AVAILABLE else None
+
+# datasketch — strict import with fallback
+try:
+    from datasketch import MinHash, MinHashLSH
+    LSH_AVAILABLE = True
+except ImportError:
+    MinHash = None
+    MinHashLSH = None
+    LSH_AVAILABLE = False
+
 if not LSH_AVAILABLE:
     logger.warning('[LSH] datasketch not installed, LSH prediction disabled')
 
@@ -430,7 +450,7 @@ class GNNPredictorWrapper:
                         predictions.append((node_ids[i], node_ids[j], score))
             predictions.sort(key=lambda x: x[2], reverse=True)
             return predictions[:10]
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             logger.warning(f'GNN prediction failed: {e}')
             return []
 
@@ -514,7 +534,7 @@ class RelationshipDiscoveryEngine:
             try:
                 self._igraph_graph.write_picklez(path)
                 return
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 logger.warning('[RelDiscovery] igraph write_picklez failed: %s', e)
         try:
             from ._graph_serde import save_nx_graph_jsonl
@@ -572,7 +592,7 @@ class RelationshipDiscoveryEngine:
                     return True
                 else:
                     logger.warning(f'[F196B] igraph load rejected for path outside graphs dir: {path}')
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; igraph load failure is non-fatal
                 pass
         if is_safe_path and NETWORKX_AVAILABLE:
             try:
@@ -581,7 +601,7 @@ class RelationshipDiscoveryEngine:
                 if obj is not None:
                     self._nx_graph = obj
                     return True
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 logger.warning('[F196B] legacy JSON load failed: %s', e)
         elif not is_safe_path:
             logger.warning(f'[F196B] legacy pickle load rejected for unsafe path: {path}')
@@ -592,7 +612,7 @@ class RelationshipDiscoveryEngine:
                 if loaded is not None:
                     self._nx_graph = loaded
                     return True
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; networkx JSON load failure is non-fatal
                 pass
         else:
             logger.warning(f'[F196B] Pickle fallback rejected for unsafe path: {path}')
@@ -894,7 +914,7 @@ class RelationshipDiscoveryEngine:
             self._stats['graphs_built'] += 1
             logger.debug(f'Built igraph graph in {time.time() - start_time:.3f}s')
             return graph
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             logger.warning(f'igraph build failed: {e}, falling back to networkx')
             return self._build_networkx_graph()
 
@@ -927,7 +947,7 @@ class RelationshipDiscoveryEngine:
                 e = self._igraph_graph.es[self._igraph_graph.ecount() - 1]
                 e['predicted'] = True
                 e['confidence'] = score
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 logger.warning(f'[PREDICT] Failed to add edge: {e}')
 
     async def predict_hidden_connections(self, max_predictions: int=10):
@@ -1045,7 +1065,7 @@ class RelationshipDiscoveryEngine:
                     self._stats['centrality_calculations'] += 1
                     logger.debug(f'Calculated {metric} centrality (igraph) in {time.time() - start_time:.3f}s')
                     return scores
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 logger.warning(f'igraph centrality failed: {e}, falling back to networkx')
         if not NETWORKX_AVAILABLE:
             raise ImportError('NetworkX is required for centrality calculations')
@@ -1101,7 +1121,7 @@ class RelationshipDiscoveryEngine:
             else:
                 return None
             return dict(zip(entity_ids, map(float, scores)))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             logger.warning(f'igraph {metric} centrality failed: {e}')
             return None
 
@@ -1115,7 +1135,7 @@ class RelationshipDiscoveryEngine:
             exp_values = mx.exp(mx_values - mx.max(mx_values))
             normalized = exp_values / mx.sum(exp_values)
             return {k: float(v) for k, v in zip(scores.keys(), normalized.tolist(), strict=False)}
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             logger.warning(f'MLX centrality acceleration failed: {e}')
             return scores
 
@@ -1137,7 +1157,7 @@ class RelationshipDiscoveryEngine:
                     if len(clique) >= min_size:
                         cliques.append([ig.vs[node]['id'] for node in clique])
                 return sorted(cliques, key=len, reverse=True)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 logger.warning(f'igraph cliques failed: {e}, falling back to networkx')
         if not NETWORKX_AVAILABLE:
             raise ImportError('NetworkX is required for clique detection')
@@ -1162,7 +1182,7 @@ class RelationshipDiscoveryEngine:
                     stats['connected_components'] = len(components)
                     stats['largest_component_size'] = max([len(c) for c in components], default=0)
                 return stats
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 logger.warning(f'igraph stats failed: {e}, falling back to networkx')
         if not NETWORKX_AVAILABLE:
             return {'error': 'NetworkX not available'}
@@ -1232,7 +1252,7 @@ class RelationshipDiscoveryEngine:
                 self._stats['community_detections'] += 1
                 logger.debug(f'Detected {len(communities)} communities (igraph) in {time.time() - start_time:.3f}s')
                 return communities
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 logger.warning(f'igraph community detection failed: {e}, falling back to networkx')
         if not NETWORKX_AVAILABLE:
             raise ImportError('NetworkX is required for community detection')
@@ -1301,7 +1321,7 @@ class RelationshipDiscoveryEngine:
                 try:
                     a_idx = ig.vs.find(id=entity_a).index
                     b_idx = ig.vs.find(id=entity_b).index
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     logger.warning(f'Entity not found in graph: {e}')
                     return []
                 paths_gen = undirected.get_all_simple_paths(a_idx, to=b_idx, cutoff=max_depth)
@@ -1324,7 +1344,7 @@ class RelationshipDiscoveryEngine:
                 self._stats['path_searches'] += 1
                 logger.debug(f'Found {len(paths)} paths (igraph) in {time.time() - start_time:.3f}s')
                 return paths
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 logger.warning(f'igraph path finding failed: {e}, falling back to networkx')
         if not NETWORKX_AVAILABLE:
             raise ImportError('NetworkX is required for path finding')
@@ -1466,7 +1486,7 @@ class RelationshipDiscoveryEngine:
                 return np.array(mx_similarity)
             else:
                 return self._numpy_similarity_matrix(vectors, metric)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             logger.warning(f'MLX similarity computation failed: {e}, falling back to NumPy')
             return self._numpy_similarity_matrix(vectors, metric)
 
@@ -1498,7 +1518,7 @@ class RelationshipDiscoveryEngine:
                         continue
                     try:
                         seed_idx = g.vs.find(id=seed).index
-                    except Exception:
+                    except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                         continue
                     sorted_targets = sorted(influence_scores.items(), key=lambda x: x[1], reverse=True)
                     for target, score in sorted_targets[:5]:
@@ -1513,13 +1533,13 @@ class RelationshipDiscoveryEngine:
                                 propagation_paths.append(path)
                                 if len(propagation_paths) >= max_paths:
                                     break
-                        except Exception:
+                        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                             continue
                     if len(propagation_paths) >= max_paths:
                         break
                 logger.debug(f'Influence propagation (igraph) in {time.time() - start_time:.3f}s')
                 return InfluenceModel(seed_entities=seed_entities, influence_scores=influence_scores, propagation_paths=propagation_paths, iterations=0, convergence_delta=0.0)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 logger.warning(f'igraph influence propagation failed: {e}, falling back to networkx')
         if not NETWORKX_AVAILABLE:
             raise ImportError('NetworkX is required for influence modeling')
@@ -1615,7 +1635,7 @@ class RelationshipDiscoveryEngine:
                 try:
                     from intelligence._graph_serde import load_nx_graph_jsonl
                     nx_graph = load_nx_graph_jsonl(str(path), max_nodes=self.MAX_NODES)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     logger.warning('[F196B] legacy JSON load_graph failed: %s', e)
                     nx_graph = None
             else:
@@ -1640,7 +1660,7 @@ class RelationshipDiscoveryEngine:
                 self.add_relationship(Relationship(source=src, target=dst, type=rel_type, strength=strength, confidence=0.5))
             logger.info(f'[RelDiscovery] Graph loaded: {nx_graph.number_of_nodes()} nodes, {nx_graph.number_of_edges()} edges')
             return True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             logger.warning(f'[RelDiscovery] Failed to load graph from {path}: {e}')
             return False
 

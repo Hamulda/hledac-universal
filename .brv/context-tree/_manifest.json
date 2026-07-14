@@ -3,7 +3,7 @@
     {
       "order": 3,
       "path": "_index.md",
-      "tokens": 660,
+      "tokens": 809,
       "type": "summary"
     },
     {
@@ -213,6 +213,14 @@
       "type": "context"
     },
     {
+      "abstractPath": "memory/resource_governor/issue_007_mpsc_batch_send_optimization.abstract.md",
+      "abstractTokens": 43,
+      "importance": 50,
+      "path": "memory/resource_governor/issue_007_mpsc_batch_send_optimization.md",
+      "tokens": 43,
+      "type": "context"
+    },
+    {
       "abstractPath": "memory/resource_governor/uma_memory_management.abstract.md",
       "abstractTokens": 57,
       "importance": 50,
@@ -249,13 +257,13 @@
       "type": "context"
     }
   ],
-  "generated_at": "2026-07-12T13:48:19.270Z",
+  "generated_at": "2026-07-14T09:49:40.438Z",
   "lane_tokens": {
-    "contexts": 1977,
+    "contexts": 2020,
     "stubs": 0,
-    "summaries": 1848
+    "summaries": 1997
   },
-  "source_fingerprint": "88dd4bcecdeeaef693245d101543e7e0a682dd00f64f5303e4896d3ddf0b97a8",
-  "total_tokens": 3825,
+  "source_fingerprint": "03a567e7bb31187945b446a0ef2fa31aebb90a298d4d501efb04d2b12a2b1b55",
+  "total_tokens": 4017,
   "version": 1
 }

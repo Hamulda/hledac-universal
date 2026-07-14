@@ -120,7 +120,7 @@ class UnifiedWebIntelligence:
     4. Task ownership tracking with symmetric cleanup
     5. Memory pressure awareness for M1 8GB environments
     """
-    __slots__ = tuple(('_MAX_ACTIVE_TASKS', '_MAX_QUEUE', '_MAX_QUEUED_OPS', '_active_tasks', '_aging_interval_seconds', '_aging_shutdown', '_aging_task', '_aging_threshold_seconds', '_completed_operations', '_completed_operations_limit', '_components_init_error', '_components_init_task', '_components_initialized', '_init_lock', '_memory_limit_bytes', '_process', '_process_dead', '_process_initialized', '_queue_counter', '_queued_op_times', '_queued_ops', 'active_operations', 'automation_orchestrator', 'config', 'enable_flashattention', 'enable_osint', 'enable_stealth', 'intelligent_scraper', 'max_concurrent_operations', 'metrics', 'operation_queue', 'osint_aggregator', 'osint_reporter'))
+    __slots__ = tuple(('_MAX_ACTIVE_TASKS', '_MAX_QUEUE', '_MAX_QUEUED_OPS', '_active_tasks', '_aging_interval_seconds', '_aging_shutdown', '_aging_task', '_aging_threshold_seconds', '_completed_operations', '_completed_operations_limit', '_components_init_error', '_components_init_task', '_components_initialized', '_init_lock', '_memory_limit_bytes', '_per_host_gate', '_process', '_process_dead', '_process_initialized', '_queue_counter', '_queued_op_times', '_queued_ops', 'active_operations', 'automation_orchestrator', 'config', 'enable_flashattention', 'enable_osint', 'enable_stealth', 'intelligent_scraper', 'max_concurrent_operations', 'metrics', 'operation_queue', 'osint_aggregator', 'osint_reporter'))
 
     def __init__(self, config: dict[str, Any] | None=None):
         self.config = config or {}
@@ -151,6 +151,11 @@ class UnifiedWebIntelligence:
         self._process_dead: bool = False
         self._init_lock = asyncio.Lock()
         self._components_init_error: Exception | None = None
+        # ISSUE #15 FIX: Per-host concurrency gate — prevents head-of-line blocking
+        # when multiple operations target the same host (e.g. example.com scraping).
+        # BoundedPerHostGate uses LRU eviction at 512 hosts × 4 concurrent = ~128 KB RAM.
+        from hledac.universal.utils.async_helpers import BoundedPerHostGate
+        self._per_host_gate = BoundedPerHostGate(max_hosts=512, per_host_limit=4)
         self.metrics = {'total_operations': 0, 'completed_operations': 0, 'failed_operations': 0, 'average_execution_time': 0.0, 'total_pages_processed': 0, 'total_captcha_solved': 0, 'total_detections_evaded': 0, 'flashattention_usage': 0, 'success_rate': 0.0, 'stealth_score_average': 0.0}
         self.max_concurrent_operations = self.config.get('max_concurrent_operations', 5)
         self.enable_flashattention = self.config.get('enable_flashattention', True)
@@ -299,7 +304,19 @@ class UnifiedWebIntelligence:
         return operation_id
 
     async def _execute_operation_async(self, target: IntelligenceTarget, operation_types: list[IntelligenceOperationType], operation_id: str) -> None:
-        """Execute intelligence operation asynchronously."""
+        """Execute intelligence operation asynchronously with per-host concurrency control."""
+        # ISSUE #15 FIX: Per-host concurrency gate prevents head-of-line blocking
+        # when many operations target the same host.
+        host = self._extract_host(target)
+        sem: Any | None = None
+        if host:
+            try:
+                sem, gate_op_id = await self._per_host_gate.acquire(host)
+                if gate_op_id == "miss":
+                    logger.debug("web_intelligence: per-host gate miss for %s (LRU eviction occurred)", host)
+            except Exception as e:
+                logger.warning("web_intelligence: per-host gate acquire failed for %s: %s", host, e)
+
         result = self.active_operations[operation_id]
         result.status = OperationStatus.INITIALIZING
         try:
@@ -326,6 +343,8 @@ class UnifiedWebIntelligence:
             self._update_success_rate()
             logger.error(f'❌ Operation {operation_id} failed: {e}')
         finally:
+            if sem is not None:
+                self._per_host_gate.release(sem)
             self._add_completed_operation(operation_id, result)
             self.active_operations.pop(operation_id, None)
             await self._process_next_queued_operation()
@@ -348,6 +367,31 @@ class UnifiedWebIntelligence:
         self.active_operations[operation_id] = result
         self._track_task(safe_create_task(self._execute_operation_async(target, op_types, operation_id), name='web_intelligence:process_queued'))
         logger.info(f'⏭️ Processing queued operation: {operation_id}')
+
+    def _extract_host(self, target: IntelligenceTarget) -> str:
+        """
+        Extract the primary host from a target's URLs.
+
+        Used by per-host gate to rate-limit concurrent operations per domain.
+
+        Args:
+            target: IntelligenceTarget with urls list
+
+        Returns:
+            Host string (e.g. "example.com") or empty string if no valid URL
+        """
+        from urllib.parse import urlparse
+
+        for url in target.urls:
+            try:
+                parsed = urlparse(url)
+                if parsed.netloc:
+                    # Remove port if present
+                    host = parsed.netloc.split(':')[0]
+                    return host.lower()
+            except Exception:
+                continue
+        return ""
 
     async def _ensure_components_initialized(self) -> None:
         """Lazy initialization — spustí komponenty a aging task pouze jednou při první operaci.

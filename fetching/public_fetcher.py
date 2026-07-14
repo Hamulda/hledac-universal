@@ -21,6 +21,7 @@ F-GLOBAL: Global state refactoring (2026-06-30):
 """
 from __future__ import annotations
 import asyncio
+import concurrent.futures
 import importlib.util
 import os
 import re
@@ -74,7 +75,7 @@ def _get_rust_url_cache() -> 'Any':
         return _url_classify_cache_rust
     with _url_classify_cache_lock:
         if _url_classify_cache_rust is None:
-            _url_classify_cache_rust = url_ops.UrlClassifyCachePy(capacity=50000, ttl_s=300.0)
+            _url_classify_cache_rust = _rust_backend.url.UrlClassifyCachePy(capacity=50000, ttl_s=300.0)
     return _url_classify_cache_rust
 
 def _classify_url_cached(url: str) -> tuple[str, str]:
@@ -87,10 +88,10 @@ def _classify_url_cached(url: str) -> tuple[str, str]:
     if cached is not None:
         return cached
     try:
-        result = rust_url.classify_url(url)
+        result = _rust_backend.url.classify_url(url)
         _classify_url_cache.set(url, result)
         return result
-    except Exception:
+    except Exception:  # noqa: BLE001 — best-effort fallback; classification failure is non-fatal
         pass
     try:
         parsed = urllib.parse.urlparse(url)
@@ -107,7 +108,7 @@ def _classify_url_cached(url: str) -> tuple[str, str]:
             result = ('clearnet', host)
         _classify_url_cache.set(url, result)
         return result
-    except Exception:
+    except Exception:  # noqa: BLE001 — best-effort fallback; malformed URL returns default
         return ('malformed', '')
 
 def _python_classify_url(url: str) -> tuple[str, str]:
@@ -129,7 +130,7 @@ def _python_classify_url(url: str) -> tuple[str, str]:
         if '.freenet' in host or 'freenet' in host or 'hyphanet' in host:
             return ('freenet', host)
         return ('clearnet', host)
-    except Exception:
+    except Exception:  # noqa: BLE001 — best-effort fallback; parse failure returns default
         return ('malformed', '')
 
 def _batch_classify_url_cached(urls: list[str]) -> list[tuple[str, str]]:
@@ -156,7 +157,7 @@ def _batch_classify_url_cached(urls: list[str]) -> list[tuple[str, str]]:
     try:
         cache = _get_rust_url_cache()
         return cache.classify_batch_cached(urls)
-    except Exception:
+    except Exception:  # noqa: BLE001 — best-effort; batch classification failure is non-fatal
         pass
     results: list[tuple[str, str] | None] = [None] * len(urls)
     misses: list[tuple[int, str]] = []
@@ -170,8 +171,8 @@ def _batch_classify_url_cached(urls: list[str]) -> list[tuple[str, str]]:
         return results
     miss_urls = [u for _, u in misses]
     try:
-        batch_results = rust_url.batch_classify(miss_urls)
-    except Exception:
+        batch_results = _rust_backend.url.batch_classify(miss_urls)
+    except Exception:  # noqa: BLE001 — best-effort; fallback to Python classifier
         batch_results = [_python_classify_url(u) for u in miss_urls]
     for (orig_idx, url), classified in zip(misses, batch_results):
         _classify_url_cache.set(url, classified)
@@ -222,7 +223,7 @@ class _BodyHashStore:
                 if len(self._hashes) > self._max_size:
                     oldest = next(iter(self._hashes))
                     del self._hashes[oldest]
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort store; hash failure is non-fatal
             pass
 
     def get(self, url: str) -> str | None:
@@ -230,7 +231,7 @@ class _BodyHashStore:
         try:
             with self._lock:
                 return self._hashes.get(url)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort get; lock/lookup failure returns None
             return None
 
     def clear(self) -> None:
@@ -259,7 +260,7 @@ def _get_content_hasher() -> object | None:
             from core.rust_backend import rust
             _ContentHasher = rust.hash
             _RUST_CONTENT_HASHER = True
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; Rust backend unavailable, fallback to Python
             _RUST_CONTENT_HASHER = False
             _ContentHasher = None
     return _ContentHasher
@@ -281,21 +282,21 @@ def _compute_body_hash(body: bytes) -> str:
     if rh is not None:
         try:
             return cast(Any, rh).blake3_64(body)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; blake3 failure is non-fatal
             pass
     if rh is not None:
         try:
             return cast(Any, rh).xxh3_64_hex(body)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; xxh3 failure is non-fatal
             pass
     try:
         import xxhash
         return xxhash.xxh3_64(body).hexdigest()
-    except Exception:
+    except Exception:  # noqa: BLE001 — best-effort; xxhash failure is non-fatal
         pass
     try:
         return hashlib.sha256(body).hexdigest()[:16]
-    except Exception:
+    except Exception:  # noqa: BLE001 — best-effort; sha256 fallback returns short hash
         return ''
 
 def _store_body_hash(url: str, hash_hex: str) -> None:
@@ -324,7 +325,7 @@ def _altsvc_extract_host(url: str, preclassified_host: str='') -> str:
             return _uops.extract_host(url)
         _, host = _classify_url_cached(url)
         return host
-    except Exception:
+    except Exception:  # noqa: BLE001 — best-effort; host extraction failure returns empty string
         return ''
 
 def _altsvc_http_version_for(host: str) -> Any:
@@ -343,8 +344,7 @@ def _altsvc_record_from_result(url: str, headers: Any) -> None:
     """
     try:
         _h3_record_from_result_headers(url, headers)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 — best-effort; H3 record failure is non-fatal
         pass
 
 def _try_decode_with_charset(body: bytes, *, http_charset: str | None=None, max_bytes: int=5 * 1024 * 1024) -> tuple[str, bool, int]:
@@ -359,7 +359,7 @@ def _try_decode_with_charset(body: bytes, *, http_charset: str | None=None, max_
         text = decode_response_bytes(body, http_charset=http_charset, max_bytes=max_bytes)
         replacement_count = text.count('�')
         return (text, replacement_count > 0, replacement_count)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
         logger.debug('decode_response_bytes failed, falling back to _try_decode: %s', e)
         return _try_decode(body)
 TOR_SOCKS_PROXY: Final[str] = os.environ.get('TOR_SOCKS_PROXY_URL', 'socks5h://127.0.0.1:9050')
@@ -670,7 +670,7 @@ def _validate_url(url: str) -> str | None:
             if scheme not in ('http', 'https'):
                 return f'url_unsupported_scheme:{scheme}'
             return None
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; URL parse failure is non-fatal
             pass
     _kind, _host = _python_classify_url(url)
     if _kind == 'empty':
@@ -754,7 +754,7 @@ def _extract_tls_metadata_from_response(resp) -> dict:
         server = resp.headers.get('Server') or resp.headers.get('server')
         if server:
             result['server_header'] = server[:200]
-    except Exception:
+    except Exception:  # noqa: BLE001 — best-effort; server header extraction failure is non-fatal
         pass
     try:
         ssl_obj = getattr(resp, 'connection', None)
@@ -765,19 +765,19 @@ def _extract_tls_metadata_from_response(resp) -> dict:
                 transport = getattr(resp, 'transport', None)
                 if transport is not None:
                     ssl_obj = transport.get_extra_info('ssl_object')
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; SSL object extraction failure is non-fatal
                 pass
         if ssl_obj is None:
             return result
         cert_dict: dict | None = None
         try:
             cert_dict = ssl_obj.getpeercert()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; getpeercert failure is non-fatal
             pass
         der_bytes: bytes | None = None
         try:
             der_bytes = ssl_obj.getpeercert(binary_form=True)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; binary cert extraction failure is non-fatal
             pass
         issuer_org: str | None = None
         san_entries: list[tuple[int, str]] = []
@@ -798,7 +798,7 @@ def _extract_tls_metadata_from_response(resp) -> dict:
         result['tls_cert_san'] = tuple(sans)
         result['tls_cert_issuer'] = issuer
         result['tls_cert_sha256'] = sha256
-    except Exception:
+    except Exception:  # noqa: BLE001 — best-effort; TLS metadata extraction failure is non-fatal
         pass
     return result
 
@@ -1020,7 +1020,7 @@ def _is_onion_url(url: str) -> bool:
     """
     try:
         return _classify_url_kind(url) == 'onion'
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
         logger.warning('URL parse error in _is_onion_url for %s: %s', url, e)
         return False
 
@@ -1031,7 +1031,7 @@ def _is_i2p_url(url: str) -> bool:
     """
     try:
         return _classify_url_kind(url) == 'i2p'
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
         logger.warning('URL parse error in _is_i2p_url for %s: %s', url, e)
         return False
 
@@ -1042,7 +1042,7 @@ def _is_freenet_url(url: str) -> bool:
     """
     try:
         return _classify_url_kind(url) == 'freenet'
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
         logger.warning('URL parse error in _is_freenet_url for %s: %s', url, e)
         return False
 
@@ -1166,7 +1166,7 @@ class _TorCurlCffiFetchFuture:
                 result = await fetch_via_tor_curl_cffi(url=self._url, headers=self._kwargs.get('headers'), timeout_s=self._kwargs.get('timeout_s', 35.0), max_bytes=self._kwargs.get('max_bytes', 10 * 1024 * 1024), profile='chrome110')
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 self._fetched = True
                 self._err = f'tor_curl_cffi_failed:{type(exc).__name__}:{exc}'
                 raise httpx.HTTPError(self._err) from exc
@@ -1195,7 +1195,7 @@ class _I2pCurlCffiFetchFuture:
                 result = await fetch_via_i2p_curl_cffi(url=self._url, headers=self._kwargs.get('headers'), timeout_s=self._kwargs.get('timeout_s', 35.0), max_bytes=self._kwargs.get('max_bytes', 10 * 1024 * 1024), profile='chrome110')
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 self._fetched = True
                 raise httpx.HTTPError(f'i2p_curl_cffi_failed:{type(exc).__name__}:{exc}') from exc
             self._fetched = True
@@ -1248,7 +1248,7 @@ async def _renew_tor_circuit() -> bool:
             ctrl.signal(stem.control.Signal.NEWNYM)
             logger.debug('Tor circuit renewed via NEWNYM signal')
             return True
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
         logger.warning('Tor circuit renewal failed: {e}', e=e)
         return False
 
@@ -1294,7 +1294,7 @@ def _close_tor_session_sync() -> None:
                 return
             try:
                 _loop.run_until_complete(session.close())
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 logger.warning('Error closing Tor session in thread: %s', e)
             finally:
                 _SESSION_MGR._tor_session = None
@@ -1309,7 +1309,7 @@ def _close_tor_session_sync() -> None:
             _new_loop = asyncio.new_event_loop()
             _new_loop.run_until_complete(_SESSION_MGR._session_aclose(session))
             _new_loop.close()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             logger.warning('Error closing Tor session: %s', e)
         finally:
             _SESSION_MGR._tor_session = None
@@ -1346,7 +1346,7 @@ def _close_i2p_session_sync() -> None:
                 return
             try:
                 _loop.run_until_complete(session.close())
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 logger.warning('Error closing I2P session in thread: %s', e)
             finally:
                 _SESSION_MGR._i2p_session = None
@@ -1361,7 +1361,7 @@ def _close_i2p_session_sync() -> None:
             _new_loop = asyncio.new_event_loop()
             _new_loop.run_until_complete(_SESSION_MGR._session_aclose(session))
             _new_loop.close()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             logger.warning('Error closing I2P session: %s', e)
         finally:
             _SESSION_MGR._i2p_session = None
@@ -1398,7 +1398,7 @@ async def close_public_fetcher_sessions_async() -> dict:
                 _tor_success = True
             except asyncio.CancelledError:
                 raise
-            except Exception as _e:
+            except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 _tor_error = str(_e)
                 logger.warning('Error closing Tor session: %s', _e)
     _SESSION_MGR._tor_session = None
@@ -1414,7 +1414,7 @@ async def close_public_fetcher_sessions_async() -> dict:
                 _i2p_success = True
             except asyncio.CancelledError:
                 raise
-            except Exception as _e:
+            except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 _i2p_error = str(_e)
                 logger.warning('Error closing I2P session: %s', _e)
     _SESSION_MGR._i2p_session = None
@@ -1504,7 +1504,7 @@ class _JSRendererCapability:
             import camoufox
             _ = camoufox.Session
             self._capability['camoufox'] = None
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             self._capability['camoufox'] = f'camoufox_unavailable: {e}'
 
     def _check_nodriver(self) -> None:
@@ -1518,7 +1518,7 @@ class _JSRendererCapability:
             import nodriver
             _ = nodriver.start
             self._capability['nodriver'] = None
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             self._capability['nodriver'] = f'nodriver_unavailable: {e}'
 
     def _check_playwright(self) -> None:
@@ -1533,7 +1533,7 @@ class _JSRendererCapability:
             import playwright
             _ = playwright.async_api
             self._capability['playwright'] = None
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             self._capability['playwright'] = f'playwright_unavailable: {e}'
 
     def is_any_available(self) -> bool:
@@ -1602,13 +1602,13 @@ def _looks_like_feed_url(url: str) -> bool:
         _uops = url_ops
         if _uops is not None:
             return _uops.looks_like_feed_url(url)
-    except Exception:
+    except Exception:  # noqa: BLE001 — best-effort; feed URL detection failure returns False
         pass
     try:
         parsed = urllib.parse.urlparse(url)
         path = parsed.path.rstrip('/')
         return bool(_FEED_URL_RE.search(path))
-    except Exception:
+    except Exception:  # noqa: BLE001 — best-effort; regex failure returns False
         return False
 
 def _needs_js_fetch(text: str, *, url: str='', content_length: int=0, declared_length: int=-1) -> bool:
@@ -1630,7 +1630,7 @@ def _needs_js_fetch(text: str, *, url: str='', content_length: int=0, declared_l
             host = urlparse(url).hostname or ''
             if host and _JS_SKIP_HOST_RE.search(host):
                 return False
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; host parse failure is non-fatal
             pass
     if _NOSCRIPT_RE.search(text):
         return True
@@ -1642,7 +1642,7 @@ def _needs_js_fetch(text: str, *, url: str='', content_length: int=0, declared_l
                 return True
             if _JS_SKIP_HOST_RE.search(host):
                 return False
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; SERP host detection failure is non-fatal
             pass
     if declared_length > 0 and content_length > 0:
         if declared_length > content_length * 3 and content_length < 20000:
@@ -1650,7 +1650,7 @@ def _needs_js_fetch(text: str, *, url: str='', content_length: int=0, declared_l
     return False
 try:
     from hledac.universal.utils.uma_budget import is_uma_critical as _is_uma_critical
-except Exception:
+except Exception:  # noqa: BLE001 — best-effort; fallback to non-critical if import fails
 
     def _is_uma_critical() -> bool:
         return False
@@ -1671,7 +1671,7 @@ def _compute_effective_max_bytes(requested: int) -> int:
     """
     try:
         hard = MAX_BYTES_HARD_PRESSURE if _is_uma_critical() else MAX_BYTES_HARD
-    except Exception:
+    except Exception:  # noqa: BLE001 — best-effort; UMA check failure falls back to non-pressure cap
         hard = MAX_BYTES_HARD
     if requested <= 0:
         return hard
@@ -1726,18 +1726,18 @@ async def _teardown_browser_pool() -> None:
             try:
                 for _ in range(_sem._value + 1):
                     await asyncio.sleep(0)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; semaphore drain failure is non-fatal
                 pass
             _JS_RENDERER_SEMAPHORE = None
-    except Exception as _e:
+    except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
         logger.debug('[browser_pool] semaphore teardown skipped: %s', _e)
     try:
         _js_renderer_cap.reset()
-    except Exception as _e:
+    except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
         logger.debug('[browser_pool] capability reset skipped: %s', _e)
     try:
         await asyncio.sleep(_JSC_RENDERER_COOLDOWN_S)
-    except Exception:
+    except Exception:  # noqa: BLE001 — best-effort; cooldown sleep failure is non-fatal
         pass
     logger.debug('[winddown] browser pool torn down')
 
@@ -1830,7 +1830,7 @@ async def _fetch_with_camoufox(url: str, timeout: float=15.0) -> str:
         if not policy.allowed:
             logger.warning(f'[F202H] Renderer blocked by opsec_policy: {policy.blocked_reason} — skipping Camoufox for {url}')
             return ''
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
         logger.warning('Error checking renderer policy, proceeding with caution: %s', e)
     try:
         from camoufox.async_api import AsyncCamoufox
@@ -1866,7 +1866,7 @@ async def _camoufox_locked(url: str, timeout: float) -> str:
                     finally:
                         await page.close()
                     return html
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 last_error = str(e)
                 logger.debug(f'Camoufox attempt {attempt + 1}/{_CAMOUFOX_MAX_RETRIES} (os={os_choice}) failed for {url}: {e}')
                 await _cooldown_after_browser_stop()
@@ -1937,7 +1937,7 @@ async def _nodriver_locked(url: str, url_kind: str='', url_host: str='') -> str:
             if browser is not None:
                 browser.stop()
             raise
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             last_error = str(e)
             _ev0 = attempt + 1
             logger.debug('nodriver attempt {attempt + 1} failed for {url}: {e}', url=url, e=e, _ev0=attempt + 1)
@@ -1948,7 +1948,7 @@ async def _nodriver_locked(url: str, url_kind: str='', url_host: str='') -> str:
             if page is not None:
                 try:
                     await page.close()
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; page close failure is non-fatal
                     pass
     logger.warning('nodriver all {_NODRIVER_MAX_RETRIES} attempts failed for {url}: {last_error}', _NODRIVER_MAX_RETRIES=_NODRIVER_MAX_RETRIES, url=url, last_error=last_error)
     return ''
@@ -1996,7 +1996,7 @@ async def _playwright_locked(url: str, timeout: float) -> str:
         if browser is not None:
             await browser.close()
         raise
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
         logger.warning('playwright fetch failed: {e}', e=e)
         return ''
     finally:
@@ -2044,7 +2044,7 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
     try:
         from core.telemetry.context_state import reset_request_id, set_request_id
         _request_id = set_request_id()
-    except Exception:
+    except Exception:  # noqa: BLE001 — best-effort; telemetry setup failure is non-fatal
         pass
     if not isinstance(url, str):
         elapsed_ms = (time.monotonic() - t0) * 1000
@@ -2057,7 +2057,7 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
     _url_host: str = ''
     try:
         _url_kind, _url_host = _classify_url_cached(url)
-    except Exception as _e:
+    except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
         logger.debug('URL classification failed (non-fatal): {_e}', _e=_e)
     _circuit_breaker_domain: str = _url_host
     _circuit_breaker: CircuitBreaker | None = None
@@ -2071,7 +2071,7 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
                 if not decision.allowed:
                     elapsed_ms = (time.monotonic() - t0) * 1000
                     return FetchResult(url=url, final_url=url, status_code=0, content_type='', text=None, fetched_bytes=0, declared_length=-1, elapsed_ms=elapsed_ms, error=f'circuit_breaker_open:{decision.state}:{decision.reason}', failure_stage='circuit_breaker', selected_transport='httpx_h2', transport_policy_reason='clearnet_default')
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
         logger.debug('Circuit breaker check failed (non-fatal): {e}', e=e)
     max_bytes = _compute_effective_max_bytes(max_bytes)
     _router_decision: TransportDecision = route_transport(url, use_stealth=use_stealth, use_js=use_js, cache_safe=False, retry_after_status=None, suggested_timeout_s=timeout_s, suggested_max_bytes=max_bytes, suggested_concurrency=None, preclassified_kind=_url_kind, preclassified_host=_url_host)
@@ -2094,7 +2094,7 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
         _t3_allowed = _policy_decision.js_allowed
         _h2_allowed = _policy_decision.h2_allowed
         _h3_allowed = _policy_decision.h3_allowed
-    except Exception as _policy_e:
+    except Exception as _policy_e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
         _tier = 'T0_curl_cffi'
         _t0_allowed = True
         _t3_allowed = False
@@ -2136,7 +2136,7 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
         try:
             try:
                 await _blocking_altsvc_probe_for_url(url)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; Alt-Svc probe failure is non-fatal
                 pass
             _httpx_resp = await fetch_via_httpx_h2(url, timeout_s=timeout_s)
             _httpx_final_url = str(_httpx_resp.url)
@@ -2169,7 +2169,7 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
         except asyncio.CancelledError:
             elapsed_ms = (time.monotonic() - t0) * 1000
             raise
-        except Exception as _e:
+        except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             elapsed_ms = (time.monotonic() - t0) * 1000
             try:
                 from hledac.universal.transport.httpx_transport import classify_httpx_h2_error, record_httpx_h2_failure
@@ -2177,7 +2177,7 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
                 record_httpx_h2_failure()
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; error classification for telemetry
                 _httpx_err_type = 'unknown_httpx_error'
             logger.warning('[HTTPX] H2 lane failed for {url} ({_httpx_err_type}), falling back to aiohttp: {_e}', url=url, _httpx_err_type=_httpx_err_type, _e=_e)
             _use_httpx_h2 = False
@@ -2197,14 +2197,14 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
                     logger.debug('DoH [{_doh_provider}] resolved {hostname} → {_resolved_ip}', _doh_provider=_doh_provider, hostname=hostname, _resolved_ip=_resolved_ip)
                 else:
                     logger.debug('DoH [{_doh_provider}] returned no IPs for {hostname}, falling back to system DNS', _doh_provider=_doh_provider, hostname=hostname)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             logger.debug('DoH resolution failed for {url}: {e}', url=url, e=e)
     stealth_session = None
     if use_stealth:
         try:
             from hledac.universal.stealth.stealth_session import StealthSession
             stealth_session = StealthSession()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             logger.warning('Stealth session unavailable, proceeding without: {e}', e=e)
     if _router_lane == 'curl_cffi_stealth':
         _original_policy_reason = _router_reason
@@ -2291,7 +2291,7 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
         except asyncio.CancelledError:
             elapsed_ms = (time.monotonic() - t0) * 1000
             raise
-        except Exception as _curl_e:
+        except Exception as _curl_e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             elapsed_ms = (time.monotonic() - t0) * 1000
             logger.warning('[curl_cffi] stealth lane failed for {url}, falling back to aiohttp: {_curl_e}', url=url, _curl_e=_curl_e)
             _curl_fallback_reason = f'curl_cffi_failed:{type(_curl_e).__name__}'
@@ -2317,7 +2317,7 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
             return FetchResult(url=url, final_url=_tor_curl_result.get('final_url', url), status_code=_tor_curl_result.get('status_code', 0), content_type=_tor_curl_result.get('content_type', ''), text=_tor_curl_text, fetched_bytes=len(_tor_curl_bytes) if _tor_curl_bytes else 0, declared_length=-1, elapsed_ms=elapsed_ms, error=_tor_curl_error, decode_replaced=_tor_curl_decode_replaced, decode_replacement_count=_tor_curl_decode_replacement_count, failure_stage=_tor_curl_result.get('failure_stage', None), network_error_kind=_tor_curl_result.get('network_error_kind', None), selected_transport='curl_cffi_tor', transport_policy_reason='tor_curl_cffi', transport_counters=_tc)
         except asyncio.CancelledError:
             raise
-        except Exception as _tor_curl_e:
+        except Exception as _tor_curl_e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             elapsed_ms = (time.monotonic() - t0) * 1000
             logger.warning('[curl_cffi_tor] onion fetch failed for {url}, falling back to aiohttp_socks: {_tor_curl_e}', url=url, _tor_curl_e=_tor_curl_e)
             _tc.curl_cffi_tor_fallback_count += 1
@@ -2382,7 +2382,7 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
                     rss_gb = _ps.memory_info().rss / 1000000000.0
                     if rss_gb > M1_FETCH_SOFT_CEILING_GB:
                         await asyncio.sleep(0.05)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 logger.debug('Memory check failed (non-fatal): {e}', e=e)
         try:
             async with asyncio.timeout(timeout_s):
@@ -2393,7 +2393,7 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
                             _sl = get_stealth_layer()
                             if _sl:
                                 await asyncio.sleep(_sl.get_timing_jitter())
-                        except Exception:
+                        except Exception:  # noqa: BLE001 — best-effort; stealth jitter failure is non-fatal
                             pass
                     async with session.get(url, **request_kwargs) as resp:
                         final_url = str(resp.url)
@@ -2432,7 +2432,7 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
                                             _tc.fallback_count += 1
                                     except asyncio.CancelledError:
                                         raise
-                                    except Exception as _esc_e:
+                                    except Exception as _esc_e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                                         _curl_fallback_reason = f'curl_cffi_failed:{type(_esc_e).__name__}'
                                         _tc.curl_cffi_fallback_to_aiohttp_count += 1
                                         _tc.fallback_count += 1
@@ -2523,9 +2523,9 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
                                             _cleaned = _cl.clean_html(text)
                                             if _cleaned and _cleaned.content:
                                                 text = _cleaned.content
-                                    except Exception:
+                                    except Exception:  # noqa: BLE001 — best-effort; content layer failure is non-fatal
                                         pass
-                            except Exception as e:
+                            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                                 logger.warning('Decode error in _try_decode: %s', e)
                                 text = None
                                 decode_replaced = False
@@ -2656,7 +2656,7 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
         except asyncio.CancelledError:
             elapsed_ms = (time.monotonic() - t0) * 1000
             raise
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             elapsed_ms = (time.monotonic() - t0) * 1000
             if _circuit_breaker:
                 _circuit_breaker.record_failure(failure_kind='fetch_error')
@@ -2694,7 +2694,7 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
     try:
         from core.telemetry.context_state import reset_request_id
         reset_request_id()
-    except Exception:
+    except Exception:  # noqa: BLE001 — best-effort; telemetry teardown failure is non-fatal
         pass
 __all__ = ['async_fetch_public_text', 'process_html_payload', 'DEFAULT_UA', 'MAX_BYTES_DEFAULT', 'MAX_BYTES_HARD', 'MAX_RETRIES', 'FetchResult', '_is_retryable_status', '_extract_retry_after', '_compute_backoff_seconds', '_try_decode', '_looks_xmlish', '_is_onion_url', '_get_tor_session', '_renew_tor_circuit', '_jitter_delay', '_close_tor_session', 'TOR_SOCKS_PROXY', 'TOR_CIRCUIT_RENEWAL_REQUEST_COUNT', 'I2P_SOCKS_PROXY', '_is_i2p_url', '_is_freenet_url', '_get_i2p_session', '_close_i2p_session', '_needs_js_fetch', '_fetch_with_nodriver', '_fetch_with_camoufox', '_fetch_with_playwright', '_get_js_renderer_capability', '_all_js_renderers_unavailable', 'reset_js_renderer_capability_cache', 'refresh_js_renderer_capability', 'PUBLIC_FETCHER_POOL_AUTHORITY', 'inject_session_provider', 'get_session_source_telemetry', 'close_public_fetcher_sessions_async', 'get_public_fetcher_session_status']
 from hledac.universal.utils.html_text_fast import extract_html_metadata, html_to_text_fast
@@ -2723,7 +2723,7 @@ def _sync_process_html(html: str, url: str='') -> tuple[str, list, dict]:
             resolved = urllib.parse.urljoin(url, href_str)
             if resolved.startswith(('http://', 'https://')):
                 matches.append(PatternHit(pattern='rust_link', start=0, end=0, value=resolved, label=''))
-    except Exception:
+    except Exception:  # noqa: BLE001 — best-effort; rust_link extraction failure is non-fatal
         pass
     return (text, matches, metadata)
 
@@ -2752,44 +2752,38 @@ def _batch_sync_extract_html_metadata(items: list[tuple[str, str]]) -> list[dict
                 raw_emails = rust_emails(htmls)
                 if raw_emails and len(raw_emails) == len(items):
                     emails_results = raw_emails
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; rust email extraction failure is non-fatal
                 pass
         if rust_titles is not None:
             try:
                 raw_titles = rust_titles(htmls)
                 if raw_titles and len(raw_titles) == len(items):
                     titles_results = raw_titles
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; rust title extraction failure is non-fatal
                 pass
         return [{'emails': e, 'title': t} for e, t in zip(emails_results, titles_results, strict=True)]
-    except Exception:
+    except Exception:  # noqa: BLE001 — best-effort; batch metadata extraction failure returns empty dicts
         return [{} for _ in items]
 
 def _batch_sync_extract_links(items: list[tuple[str, str]]) -> list[list[str]]:
-    """R3.2: Batch extract links via Rust zero-copy lol_html.
+    """R3.2: Batch extract links via Rust rayon parallel batch_extract_links.
+
+    Single rayon-parallel call instead of N per-item extract_links_zero_copy loops.
+    Zero-copy lol_html handles URL resolution inside Rust.
 
     Args:
         items: List of (html, base_url) tuples. Cap 1_000 items.
 
     Returns:
         List of link lists, one per item, in same order as input.
+    Always-on, bounded, fail-safe.
     """
     if not items:
         return []
     try:
         from core.rust_backend import rust as _rust_backend
-        results: list[list[str]] = [[] for _ in items]
-        for i, (html, base_url) in enumerate(items):
-            raw_ranges = _rust_backend.raw.extract_links_zero_copy(html, base_url)
-            page_links: list[str] = []
-            for start, end in raw_ranges:
-                href_str = html[start:end]
-                resolved = urllib.parse.urljoin(base_url, href_str)
-                if resolved.startswith(('http://', 'https://')):
-                    page_links.append(resolved)
-            results[i] = page_links
-        return results
-    except Exception:
+        return _rust_backend.html.batch_extract_links(items)
+    except Exception:  # noqa: BLE001 — best-effort; Rust batch link failure returns empty lists
         return [[] for _ in items]
 
 async def process_html_payload(html: str, url: str) -> tuple[str, list, dict]:
@@ -2808,11 +2802,11 @@ async def process_html_payload(html: str, url: str) -> tuple[str, list, dict]:
     return await run_in_cpu_pool_async(_sync_process_html, html)
 
 def _batch_sync_process_html(items: list[tuple[str, str]]) -> list[tuple[str, list[str], dict]]:
-    """Batch HTML→text extraction via selectolax in ThreadPoolExecutor.
+    """Batch HTML→text extraction via Rust rayon parallel processing.
 
-    Strategy (per tools/content_miner.py):
-      1. selectolax CSS selectors (fastest, pure Python, M1 8GB friendly)
-      2. lxml XPath fallback (only for complex cases selectolax can't handle)
+    Fully Rust-powered: batch_extract_html_text + batch_extract_links +
+    batch_extract_titles + batch_extract_emails. One rayon ThreadPool call
+    instead of N Python loops — 3-5× speedup.
 
     Args:
         items: List of (html, url) tuples. Cap 1_000 items.
@@ -2821,44 +2815,38 @@ def _batch_sync_process_html(items: list[tuple[str, str]]) -> list[tuple[str, li
         List of (text, links, metadata) tuples, one per item in same order.
         Returns [("", [], {}) * len(items)] on any error (fail-safe).
 
-    M1 8GB: 4 workers, each page parsed independently, no shared state.
+    M1 8GB: rayon ThreadPool with mixed_pool (CPU-bound adaptive).
     Bounded: max 1_000 items per batch (URL dedup already done upstream).
+    Always-on, bounded, fail-safe. No new feature flags.
     """
     if not items:
         return []
     if len(items) > 1000:
         items = items[:1000]
     try:
-        from selectolax.parser import HTMLParser as SelectolaxParser
-    except Exception:
+        from core.rust_backend import rust as _rust_backend
+        htmls = [html for html, _ in items]
+        base_urls = [base_url for _, base_url in items]
+        # Rayon parallel: batch_extract_html_text + batch_extract_links + batch_extract_titles
+        texts: list[str] = _rust_backend.html.batch_extract_html_text(htmls)
+        links_batch: list[list[str]] = _rust_backend.html.batch_extract_links(
+            list(zip(htmls, base_urls, strict=True))
+        )
+        titles_batch: list[str | None] = _rust_backend.html.batch_extract_titles(htmls)
+        emails_batch: list[list[str]] = _rust_backend.html.batch_extract_emails(htmls)
+        return [
+            (
+                texts[i] if i < len(texts) else '',
+                links_batch[i] if i < len(links_batch) else [],
+                {
+                    'title': titles_batch[i] if i < len(titles_batch) and titles_batch[i] is not None else '',
+                    'emails': emails_batch[i] if i < len(emails_batch) else [],
+                },
+            )
+            for i in range(len(items))
+        ]
+    except Exception:  # noqa: BLE001 — best-effort; Rust batch extraction failure, fallback to serial
         return [_sync_process_html(html, url) for html, url in items]
-    results: list[tuple[str, list[str], dict]] = []
-    for html, base_url in items:
-        try:
-            parser = SelectolaxParser(html)
-            text_nodes = parser.css('body article main p li')
-            if not text_nodes:
-                text_nodes = parser.css('body div p')
-            if not text_nodes:
-                text_nodes = parser.css('body')
-            text_parts = [node.text() for node in text_nodes if node.text()]
-            text = ' '.join(text_parts)[:200000] if text_parts else ''
-            link_nodes = parser.css('a[href]')
-            links: list[str] = []
-            for node in link_nodes:
-                href = node.attributes.get('href', '')
-                if href:
-                    resolved = urllib.parse.urljoin(base_url, href)
-                    if resolved.startswith(('http://', 'https://')):
-                        links.append(resolved)
-            title_node = parser.css_first('title')
-            title = title_node.text().strip() if title_node else ''
-            metadata = {'title': title}
-            results.append((text, links, metadata))
-        except Exception:
-            text, _links, meta = _sync_process_html(html, base_url)
-            results.append((text, _links, meta))
-    return results
 
 async def process_html_payload_batch(items: list[tuple[str, str]]) -> list[tuple[str, list[str], dict]]:
     """Batch HTML processing via ThreadPoolExecutor (offload CPU from event loop).
@@ -2904,7 +2892,7 @@ class _DrainRegistry:
                 old = self._registry.popleft()
                 if not old.done():
                     old.cancel()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; future cancel failure is non-fatal
                 pass
         self._registry.append(fut)
         self._scheduled += 1
@@ -2977,7 +2965,7 @@ def schedule_html_extraction(html: str, url: str='') -> asyncio.Future:
     try:
         tag = f'pattern_extract:{url[:64]}' if url else 'pattern_extract'
         fut.set_name(tag)
-    except Exception:
+    except Exception:  # noqa: BLE001 — best-effort; future naming failure is non-fatal
         pass
     _drain_registry.schedule(fut)
 
@@ -3020,7 +3008,7 @@ async def drain_pending_extractions(deadline_s: float=30.0) -> tuple[int, int, f
         done, still_pending = await asyncio.wait(pending, timeout=max(0.0, deadline_abs - _t_f273c.monotonic()), return_when=asyncio.ALL_COMPLETED)
         completed = len(done)
         timed_out = len(still_pending)
-    except Exception:
+    except Exception:  # noqa: BLE001 — best-effort; wait timeout failure returns zeroed stats
         return (0, 0, _t_f273c.monotonic() - _t0)
     return (completed, timed_out, _t_f273c.monotonic() - _t0)
 

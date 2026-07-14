@@ -288,7 +288,7 @@ async def _preflight_check() -> dict:
         import mlx.core as mx
 
         results["metal"] = mx.metal.is_available()
-    except ImportError, AttributeError:
+    except (ImportError, AttributeError):
         results["metal"] = False
     try:
         import psutil
@@ -296,7 +296,7 @@ async def _preflight_check() -> dict:
         vm = psutil.virtual_memory()
         results["free_ram_mb"] = round(vm.available / 1024 / 1024, 1)
         results["memory_pct"] = vm.percent
-    except ImportError, AttributeError, OSError:
+    except (ImportError, AttributeError, OSError):
         results["free_ram_mb"] = -1
     # Sprint F500J §2: REMOVED duckdb.connect() eager check.
     # DuckDB availability is verified through store.async_initialize() in the
@@ -864,7 +864,7 @@ def _record_runtime_truth() -> None:
 
         _default_bootstrap_count = len(get_default_bootstrap_patterns())
         _bootstrap_pack_version = 2  # Sprint 8AZ bootstrap pack v2
-    except ImportError, AttributeError:
+    except (ImportError, AttributeError):
         _bootstrap_pack_version = 0
         _default_bootstrap_count = 0
 
@@ -1443,7 +1443,7 @@ def _get_pattern_count() -> int:
         pm = get_pattern_matcher()
         if hasattr(pm, "pattern_count"):
             return pm.pattern_count()
-    except ImportError, AttributeError:
+    except (ImportError, AttributeError):
         pass
     return 0
 
@@ -1464,7 +1464,7 @@ def _get_pattern_status() -> tuple[int, bool]:
             count = pm.pattern_count()
             status = pm.get_status()
             return count, status.get("bootstrap_default_configured", False)
-    except ImportError, AttributeError:
+    except (ImportError, AttributeError):
         pass
     return 0, False
 
@@ -1493,7 +1493,7 @@ def _ensure_runtime_patterns_configured_for_live_validation() -> tuple[int, bool
         # Registry empty — apply bootstrap
         applied = configure_default_bootstrap_patterns_if_empty()
         return pm.pattern_count(), applied
-    except ImportError, AttributeError:
+    except (ImportError, AttributeError):
         return 0, False
 
 
@@ -1947,7 +1947,7 @@ async def _print_scorecard_report(
         try:
             dedup = store.get_dedup_runtime_status()
             accepted = dedup.get("accepted_count", 0)
-        except AttributeError, RuntimeError:
+        except (AttributeError, RuntimeError):
             pass
 
     # Calculate metrics
@@ -1990,7 +1990,7 @@ async def _print_scorecard_report(
         from transport.circuit_breaker import get_all_breaker_states
 
         scorecard_data["cb_open_domains"] = get_all_breaker_states()
-    except ImportError, AttributeError:
+    except (ImportError, AttributeError):
         pass
 
     # Sprint F204E: Attach analyst brief to scorecard for markdown export
@@ -2005,7 +2005,7 @@ async def _print_scorecard_report(
             scorecard_data["investigation_packet"] = _build_investigation_packet(sprint_report)
         elif sprint_report is not None and hasattr(sprint_report, "__dict__"):
             scorecard_data["investigation_packet"] = _build_investigation_packet(sprint_report.__dict__)
-    except ImportError, AttributeError:
+    except (ImportError, AttributeError):
         pass
 
     # Print structured report
@@ -2043,14 +2043,14 @@ async def _print_scorecard_report(
     if store is not None and hasattr(store, "_arrow_metrics"):
         try:
             scorecard_data["arrow_metrics"] = store._arrow_metrics
-        except AttributeError, TypeError:
+        except (AttributeError, TypeError):
             pass
     elif store is not None and hasattr(store, "get_arrow_metrics"):
         try:
             from hledac.universal.knowledge.duckdb_store import get_arrow_metrics
 
             scorecard_data["arrow_metrics"] = get_arrow_metrics()
-        except ImportError, AttributeError:
+        except (ImportError, AttributeError):
             pass
 
     # Persist to DuckDB
@@ -2105,7 +2105,7 @@ async def _print_scorecard_report(
             if entities and hasattr(store, "upsert_global_entities"):
                 n_upserted = await store.upsert_global_entities(entities)
                 logger.info("ghost_global_entities_upserted", count=n_upserted)
-        except AttributeError, RuntimeError, OSError:
+        except (AttributeError, RuntimeError, OSError):
             pass
 
     # Sprint 8VZ §B: FIRST producer-side cutover — canonical path constructs
@@ -2139,7 +2139,7 @@ async def _print_scorecard_report(
             try:
                 if hasattr(store, "get_top_seed_nodes"):
                     _top_nodes = store.get_top_seed_nodes(n=10)
-            except AttributeError, RuntimeError:
+            except (AttributeError, RuntimeError):
                 pass
 
         handoff = ExportHandoff(
@@ -2196,7 +2196,7 @@ async def _windup_synthesis(
             )  # noqa: E501
             if analytics_graph is not None:
                 runner.inject_graph(analytics_graph)
-    except ImportError, AttributeError, RuntimeError:
+    except (ImportError, AttributeError, RuntimeError):
         pass
 
     # Sprint 8UC B.2: Inject DuckDB store for episode recall
@@ -2284,7 +2284,7 @@ def _fatal(exc: BaseException, code: int = 1) -> None:
         3   = programmer error / regression (NameError, ImportError, AttributeError)
         130 = SIGINT (KeyboardInterrupt)
     """
-    logger.critical("main_fatal", exit_code=code, error=str(exc), traceback=traceback.format_exc())
+    logger.critical("_MAIN_FATAL [exit=%d]: %s", code, exc, traceback=traceback.format_exc())
     sys.exit(code)
 
 

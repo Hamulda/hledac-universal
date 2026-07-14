@@ -26,6 +26,7 @@ import msgspec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str
+from hledac.universal.utils.async_helpers import parallel
 if TYPE_CHECKING:
     pass
 _dd_int: defaultdict[str, int] = defaultdict(int)
@@ -512,7 +513,7 @@ class RAGEngine:
     - Automatic ToT detection
     - HNSW Vector Search for fast approximate nearest neighbor search
     """
-    __slots__ = tuple(('_coreml_embedder', '_document_map', '_enclave_status', '_hnsw_index', '_infinite_context', '_mlx_embedder', '_raptor_nodes', '_retriever', '_secure_enclave', '_spr_compressor', '_use_hnsw', 'config'))
+    __slots__ = tuple(('_bm25_hnsw_cache', '_bm25_hnsw_doc_count', '_coreml_embedder', '_document_map', '_enclave_status', '_hnsw_index', '_infinite_context', '_mlx_embedder', '_raptor_nodes', '_retriever', '_secure_enclave', '_spr_compressor', '_use_hnsw', 'config'))
 
     def __init__(self, config: RAGConfig | None=None):
         self.config = config or RAGConfig()
@@ -527,6 +528,9 @@ class RAGEngine:
         self._raptor_nodes: dict[str, RaptorNode] = {}
         self._coreml_embedder = None
         self._mlx_embedder = None
+        # ISSUE-021-FIX #2: BM25 cache pro HNSW — avoids O(n) rebuild na kazde query
+        self._bm25_hnsw_cache: BM25Index | None = None
+        self._bm25_hnsw_doc_count: int = 0
 
     async def initialize(self) -> None:
         """Inicializovat RAG engine"""
@@ -706,6 +710,12 @@ class RAGEngine:
         """
         Retrieve relevant documents using hybrid search (dense + sparse).
 
+        ISSUE-021: Parallel retrieval — embed + BM25 paralelně přes asyncio.gather.
+        embed(query + docs) a BM25.index_build běží concurrent:
+        - MLX GPU embed: [query] + [doc_contents] v jednom batch call
+        - CPU: BM25 add_documents v thread pool
+        - Po embed dokončení: dense_retrieval + sparse BM25.search → fusion
+
         Args:
             query: Search query
             documents: List of documents to search
@@ -719,11 +729,33 @@ class RAGEngine:
             return [RetrievedChunk(document=doc, chunk_text=doc.content[:self.config.chunk_size], final_score=1.0) for doc in documents[:top_k or 5]]
         top_k = top_k or 10
         bm25 = BM25Index(k1=self.config.bm25_k1, b=self.config.bm25_b)
-        for doc in documents:
-            bm25.add_document(doc)
-        embeddings: list[list[float]] = await self._generate_embeddings([d.content for d in documents])
-        doc_embeddings = {doc.id: embeddings[i] for i, doc in enumerate(documents)}
-        query_embedding = (await self._generate_embeddings([query]))[0]
+
+        # ISSUE-021 + ISSUE-021-FIX: Paralelní init — BM25 build (CPU) a embed (GPU) concurrent.
+        # Fallback SHA256 embeddings pokud MLX embed selže — BM25 výsledky neplýtváme.
+        # NOTE: _bm25_build je sync (asyncio.to_thread() ne协调 async funkce správně)
+        def _bm25_build() -> None:
+            for doc in documents:
+                bm25.add_document(doc)
+
+        doc_contents = [d.content for d in documents]
+        embed_coro = self._generate_embeddings([query] + doc_contents)
+        build_result = await parallel(
+            [embed_coro, asyncio.to_thread(_bm25_build)],
+            policy="log",
+            ctx="rag:hybrid_init",
+        )
+        all_embeddings: list[list[float]] = build_result.ok[0] if build_result.ok else []
+        # ISSUE-021-FIX #1: Sha256 fallback embeddings — BM25 už je postaven (thread pool dokončil)
+        if not all_embeddings:
+            all_embeddings = [
+                [float(b) / 255.0 for b in hashlib.sha256(t.encode()).digest()]
+                for t in [query] + doc_contents
+            ]
+        query_embedding = all_embeddings[0]
+        doc_embeddings_list = all_embeddings[1:]
+        doc_embeddings = {doc.id: doc_embeddings_list[i] for i, doc in enumerate(documents)}
+
+        # Dense + sparse retrieval (oba CPU bound, běží sequential —相依)
         dense_results = self._dense_retrieval(query_embedding, doc_embeddings, top_k * 2)
         sparse_results = bm25.search(query, top_k=top_k * 2)
         sparse_doc_ids = [(bm25.documents[idx].id, score) for idx, score in sparse_results]
@@ -807,6 +839,9 @@ class RAGEngine:
         logger.info(f'Building HNSW index for {len(documents)} documents...')
         self._hnsw_index = HNSWVectorIndex(dim=self.config.hnsw_dim, max_elements=self.config.hnsw_max_elements, M=self.config.hnsw_M, ef_construction=self.config.hnsw_ef_construction, ef_search=self.config.hnsw_ef_search, space=self.config.hnsw_space, index_path=self.config.hnsw_index_path)
         self._document_map = {doc.id: doc for doc in documents}
+        # ISSUE-021-FIX #2: Invalidate BM25 cache when documents change
+        self._bm25_hnsw_cache = None
+        self._bm25_hnsw_doc_count = 0
         if embeddings is None:
             logger.info('Generating embeddings for HNSW index...')
             try:
@@ -912,13 +947,56 @@ class RAGEngine:
     async def _hybrid_retrieve_hnsw(self, query: str, top_k: int | None=None, filters: dict[str, Any] | None=None) -> list[RetrievedChunk]:
         """
         Internal hybrid retrieval using HNSW for dense search.
+
+        ISSUE-021: Paralelní — embed(query) + BM25.build běží concurrent.
+        ANN HNSW search (Rust, GIL-free) běží sequential po embed.
         """
         top_k = top_k or 10
-        query_embedding = (await self._generate_embeddings([query]))[0]
+
+        # ISSUE-021-FIX #2: BM25 cache — reuse cached index pokud document_map nezměnil
+        doc_count = len(self._document_map)
+        if self._bm25_hnsw_cache is None or self._bm25_hnsw_doc_count != doc_count:
+            # Cache miss: rebuild BM25 (O(n), spusteno v thread pool)
+            bm25 = BM25Index(k1=self.config.bm25_k1, b=self.config.bm25_b)
+
+            def _bm25_build() -> None:
+                for doc in self._document_map.values():
+                    bm25.add_document(doc)
+
+            embed_coro = self._generate_embeddings([query])
+            build_result = await parallel(
+                [embed_coro, asyncio.to_thread(_bm25_build)],
+                policy="log",
+                ctx="rag:hnsw_init",
+            )
+            all_embeddings: list[list[float]] = build_result.ok[0] if build_result.ok else []
+            # ISSUE-021-FIX #1: Sha256 fallback — BM25 už je postaven
+            if not all_embeddings:
+                all_embeddings = [
+                    [float(b) / 255.0 for b in hashlib.sha256(query.encode()).digest()]
+                ]
+            query_embedding = all_embeddings[0]
+            # Uložit do cache
+            self._bm25_hnsw_cache = bm25
+            self._bm25_hnsw_doc_count = doc_count
+        else:
+            # Cache hit: použít cached BM25, embed pouze query
+            bm25 = self._bm25_hnsw_cache
+            embed_coro = self._generate_embeddings([query])
+            build_result = await parallel(
+                [embed_coro],
+                policy="log",
+                ctx="rag:hnsw_embed",
+            )
+            all_embeddings: list[list[float]] = build_result.ok[0] if build_result.ok else []
+            if not all_embeddings:
+                all_embeddings = [
+                    [float(b) / 255.0 for b in hashlib.sha256(query.encode()).digest()]
+                ]
+            query_embedding = all_embeddings[0]
+
+        # ANN HNSW search (Rust/GIL-free) + BM25 search sequential
         dense_results = self._hnsw_retrieval(query_embedding, top_k * 2, filters)
-        bm25 = BM25Index(k1=self.config.bm25_k1, b=self.config.bm25_b)
-        for doc in self._document_map.values():
-            bm25.add_document(doc)
         sparse_results = bm25.search(query, top_k=top_k * 2)
         sparse_doc_ids = [(bm25.documents[idx].id, score) for idx, score in sparse_results]
         doc_scores: dict[str, dict[str, float]] = _dense_sparse_factory.copy()

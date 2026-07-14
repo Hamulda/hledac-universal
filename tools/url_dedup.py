@@ -39,32 +39,37 @@ else:
 # rejects the sentinel `= None` assignment.
 # ---------------------------------------------------------------------------
 
-# Probables library — runtime contract varies between probables and
-# pyprobables; the factory raises ImportError when both are missing,
-# so the `object` sentinel never reaches a real call site. Cast at the
-# call site preserves the DeduplicationStrategy return type for callers.
-# F3XX: migrated to optional() — zero-cost lazy chain, no import-time penalty.
-from utils.optional_imports import optional as _optional
+# Probables library — RotatingBloomFilter from either probables or pyprobables.
+# F3XX: migrated to strict imports with try/except fallback.
+_RotatingBloomFilter: type | None = None  # type: ignore[assignment,misc]
+_PROBABLES_AVAILABLE = False
 
-_ProbablesRBF = _optional(
-    "probables:RotatingBloomFilter",
-    default=_optional("pyprobables:RotatingBloomFilter"),
-)
+try:
+    from probables import RotatingBloomFilter as _RBF
+    _RotatingBloomFilter = _RBF
+    _PROBABLES_AVAILABLE = True
+except ImportError:
+    try:
+        from pyprobables import RotatingBloomFilter as _RBF
+        _RotatingBloomFilter = _RBF
+        _PROBABLES_AVAILABLE = True
+    except ImportError:
+        _RotatingBloomFilter = None
+        _PROBABLES_AVAILABLE = False
 
-
-@property
 
 # Backward compat alias — factory function so callers can pass kwargs.
-# _ProbablesRBF() resolves to the class; RotatingBloomFilter() instantiates it.
 def RotatingBloomFilter(*args: Any, **kwargs: Any) -> Any:
-    """Lazy factory — resolves and instantiates RotatingBloomFilter on first call."""
-    return _ProbablesRBF()(*args, **kwargs)
+    """Factory — resolves and instantiates RotatingBloomFilter on first call."""
+    if _RotatingBloomFilter is None:
+        msg = "Neither 'probables' nor 'pyprobables' is installed"
+        raise ImportError(msg)
+    return _RotatingBloomFilter(*args, **kwargs)  # type: ignore[operator]
 
 
-@property
 def PROBABLES_AVAILABLE() -> bool:  # noqa: N802
     """True if either probables or pyprobables RotatingBloomFilter resolved."""
-    return _ProbablesRBF.available
+    return _PROBABLES_AVAILABLE
 
 
 # ---------------------------------------------------------------------------
@@ -887,16 +892,18 @@ def create_rotating_bloom_filter(
             RustRotatingBloomFilter(est_elements, false_positive_rate),
         )
 
-    if not _ProbablesRBF.available:
+    if not _PROBABLES_AVAILABLE:
         raise ImportError(
             "No BloomFilter implementation available — install hledac-rust-extensions "
             "(maturin develop) or probables: pip install probables"
         )
+    if _RotatingBloomFilter is None:
+        raise ImportError("Neither 'probables' nor 'pyprobables' is installed")
     return cast(
         DeduplicationStrategy,
-        _ProbablesRBF()(
-            est_elements=est_elements,  # type: ignore[unknown-argument]
-            false_positive_rate=false_positive_rate,  # type: ignore[unknown-argument]
+        _RotatingBloomFilter(
+            est_elements=est_elements,
+            false_positive_rate=false_positive_rate,
         ),
     )
 

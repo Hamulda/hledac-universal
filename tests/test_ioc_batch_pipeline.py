@@ -155,6 +155,10 @@ class TestBatchSyncProcessHtml:
         assert len(result) == 1000
 
     def test_links_resolved_correctly(self):
+        """Rust batch path: relative links resolved to absolute via lol_html urljoin."""
+        from core.rust_backend import rust
+        if not rust.is_available:
+            pytest.skip("Rust extension not available")
         from hledac.universal.fetching.public_fetcher import _batch_sync_process_html
 
         html_with_link = '<html><body><a href="/path">Link</a></body></html>'
@@ -163,6 +167,10 @@ class TestBatchSyncProcessHtml:
         assert any("example.com/path" in link for link in links)
 
     def test_relative_links_not_duplicated(self):
+        """Rust batch path: relative links resolved to absolute, no http/https duplication."""
+        from core.rust_backend import rust
+        if not rust.is_available:
+            pytest.skip("Rust extension not available")
         from hledac.universal.fetching.public_fetcher import _batch_sync_process_html
 
         html_rel = '<html><body><a href="/relative">Rel</a></body></html>'

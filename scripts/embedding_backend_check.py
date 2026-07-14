@@ -20,7 +20,8 @@ import psutil
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-logging.basicConfig(level=logging.INFO, format="%(message)s")
+# NOTE: basicConfig removed — use utils.logging_config.configure_logging() for structured logging.
+# This script uses stdlib logging since it's a standalone tool.
 logger = logging.getLogger("embedding_backend_check")
 
 

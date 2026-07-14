@@ -63,7 +63,8 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+# NOTE: basicConfig removed — use utils.logging_config.configure_logging() for structured logging.
+# This script uses stdlib logging since it's a standalone tool.
 logger = logging.getLogger("compile_dspy_programs")
 
 # ── Defaults ────────────────────────────────────────────────────────────────

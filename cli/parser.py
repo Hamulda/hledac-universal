@@ -333,7 +333,7 @@ def _dispatch_sprint(args: argparse.Namespace) -> int:
                 )
             )
         return 0
-    except NameError, AttributeError, ImportError:
+    except (NameError, AttributeError, ImportError):
         raise  # propagate to main() for code=3
     except SystemExit as e:
         return e.code if isinstance(e.code, int) else 1

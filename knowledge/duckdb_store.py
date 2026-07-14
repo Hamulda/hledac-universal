@@ -31,11 +31,21 @@ import weakref
 
 from core.env_config import ENV
 from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
-from hledac.universal.utils.async_task import BoundedTaskSet
-from hledac.universal.utils.optional_imports import lazy_decorator, optional
 
-_otel_instrumented = lazy_decorator("otel:instrumented", default=lazy_decorator("hledac.universal.otel:instrumented"))
-_instrument_duckdb_connection = optional("runtime._telemetry_setup:instrument_duckdb_connection")
+# OTEL instrumentation — strict import with fallback chain
+try:
+    from otel._instrumentation import instrumented as _otel_instrumented
+except ImportError:
+    from hledac.universal.otel._instrumentation import instrumented as _otel_instrumented
+
+# instrument_duckdb_connection — strict import
+try:
+    from runtime._telemetry_setup import instrument_duckdb_connection
+except ImportError:
+    try:
+        from hledac.universal.runtime._telemetry_setup import instrument_duckdb_connection
+    except ImportError:
+        instrument_duckdb_connection = None
 import datetime as _dt
 import logging
 import os
@@ -48,16 +58,30 @@ from typing import TYPE_CHECKING, Any, cast
 
 from hledac.universal.transport.circuit_breaker import CBState
 
-_SourceType = optional("hledac.universal.utils.source_types:SourceType")
-_canonical_source_type = optional("hledac.universal.utils.source_types:canonical_source_type")
-_BoundedTaskSet = optional("hledac.universal.utils.async_utils:BoundedTaskSet")
+# SourceType — strict import
+try:
+    from hledac.universal.utils.source_types import SourceType, canonical_source_type
+except ImportError:
+    SourceType = None  # type: ignore[assignment,misc]
+    canonical_source_type = None  # type: ignore[assignment,misc]
+
+# BoundedTaskSet — strict import
+try:
+    from hledac.universal.utils.async_utils import BoundedTaskSet
+except ImportError:
+    BoundedTaskSet = None  # type: ignore[assignment,misc]
+
 import msgspec
 
-_orjson_mod = optional("orjson")
-_HAS_ORJSON = bool(_orjson_mod)
-if _HAS_ORJSON:
-    _ORJSON_DECODER = _orjson_mod().loads
-else:
+# orjson — strict import with fallback
+try:
+    import orjson as _orjson_mod
+    _HAS_ORJSON: bool = True
+    _ORJSON_DECODER = _orjson_mod.loads
+except ImportError:
+    _orjson_mod = None  # type: ignore[assignment]
+    _HAS_ORJSON = False
+
     import json as _stdjson
 
     def _ORJSON_DECODER(b: Any) -> Any:
@@ -122,22 +146,25 @@ def _json_loads_flexible(raw: Any) -> Any:
     if isinstance(raw, (bytes, bytearray)):
         return _ORJSON_DECODER(raw)
     if isinstance(raw, str):
-        if _HAS_ORJSON:
-            return _orjson_mod().loads(raw.encode("utf-8"))
+        if _HAS_ORJSON and _orjson_mod is not None:
+            return _orjson_mod.loads(raw.encode("utf-8"))
         import json as _stdjson
 
         return _stdjson.loads(raw)
     return raw
 
 
-_TargetProfileSummary = optional("hledac.universal.knowledge.sprint_diff_engine:TargetProfileSummary", default=None)
+# TargetProfileSummary — strict import with inline fallback
+try:
+    from hledac.universal.knowledge.sprint_diff_engine import TargetProfileSummary
+except ImportError:
+    TargetProfileSummary = None  # type: ignore[assignment,misc]
 
 
 def _get_TargetProfileSummary():
     """Lazy loader for TargetProfileSummary with inline fallback."""
-    cls = _TargetProfileSummary()
-    if cls is not None:
-        return cls
+    if TargetProfileSummary is not None:
+        return TargetProfileSummary
     from dataclasses import dataclass
 
     @dataclass(slots=True)
@@ -151,24 +178,22 @@ def _get_TargetProfileSummary():
     return TargetProfileSummary
 
 
-_TargetMemory = optional("hledac.universal.knowledge.target_memory:TargetMemory", default=None)
-_TargetMemoryUpdate = optional("hledac.universal.knowledge.target_memory:TargetMemoryUpdate", default=None)
+# TargetMemory — strict import
+try:
+    from hledac.universal.knowledge.target_memory import TargetMemory, TargetMemoryUpdate
+except ImportError:
+    TargetMemory = None  # type: ignore[assignment,misc]
+    TargetMemoryUpdate = None  # type: ignore[assignment,misc]
 
 
 def _get_TargetMemory():
     """Lazy loader for TargetMemory."""
-    cls = _TargetMemory()
-    if cls is not None:
-        return cls
-    return None
+    return TargetMemory
 
 
 def _get_TargetMemoryUpdate():
     """Lazy loader for TargetMemoryUpdate."""
-    cls = _TargetMemoryUpdate()
-    if cls is not None:
-        return cls
-    return None
+    return TargetMemoryUpdate
 
 
 __all__ = [
@@ -200,12 +225,18 @@ from .quality_assessment import (
     _normalize_osint_url,
 )
 
-_rust_backend_opt = optional("core.rust_backend:rust")
+# Rust backend — strict import
+try:
+    from core.rust_backend import rust
+except ImportError:
+    try:
+        from hledac.universal.core.rust_backend import rust
+    except ImportError:
+        rust = None
 
 
 def _is_quality_gate_available() -> bool:
     """Check if Rust quality gate is available at runtime."""
-    rust = _rust_backend_opt()
     return rust is not None and rust.is_available and (rust.quality is not None)
 
 
@@ -218,65 +249,107 @@ if not _QUALITY_GATE_BATCH_AVAILABLE:
     _rust_dedup_fingerprint = None
     _rust_url_fingerprint_b2b = None
     _rust_normalize_quality_text = None
-_rust_assess_quality_batch_opt = optional("hledac_rust_extensions:assess_findings_quality_batch")
+
+# Rust assess_findings_quality_batch — strict import
+try:
+    from hledac_rust_extensions import assess_findings_quality_batch as _rust_assess_quality_batch_func
+except ImportError:
+    _rust_assess_quality_batch_func = None
+
+_RUST_ASSESS_QUALITY_BATCH_AVAILABLE = _rust_assess_quality_batch_func is not None
 
 
 def _get_rust_assess_quality_batch():
-    return _rust_assess_quality_batch_opt()
+    return _rust_assess_quality_batch_func
 
 
-_RUST_ASSESS_QUALITY_BATCH_AVAILABLE = _rust_assess_quality_batch_opt.available
-_rust_arrow_opt = optional("hledac_rust_extensions:build_arrow_batch_from_findings")
+# Rust build_arrow_batch_from_findings — strict import
+try:
+    from hledac_rust_extensions import build_arrow_batch_from_findings as _rust_arrow_func
+except ImportError:
+    _rust_arrow_func = None
+
+_RUST_ARROW_AVAILABLE = _rust_arrow_func is not None
 
 
 def _get_rust_build_arrow_batch():
     """Lazy getter for Rust Arrow batch builder."""
-    return _rust_arrow_opt()
+    return _rust_arrow_func
 
 
-_RUST_ARROW_AVAILABLE = _rust_arrow_opt.available
-_rust_batch_ioc_extract_opt = optional("hledac_rust_extensions:batch_ioc_extract_unified")
-_rust_batch_ioc_extract_python_opt = optional("hledac_rust_extensions:batch_ioc_extract_unified_python")
+# Rust batch_ioc_extract_unified — strict import
+try:
+    from hledac_rust_extensions import batch_ioc_extract_unified as _rust_batch_ioc_extract_func
+except ImportError:
+    _rust_batch_ioc_extract_func = None
+
+_IOC_EXTRACT_BATCH_AVAILABLE = _rust_batch_ioc_extract_func is not None
 
 
 def _get_rust_batch_ioc_extract():
-    return _rust_batch_ioc_extract_opt()
+    return _rust_batch_ioc_extract_func
+
+
+# Rust batch_ioc_extract_unified_python — strict import (zero-copy)
+try:
+    from hledac_rust_extensions import batch_ioc_extract_unified_python as _rust_batch_ioc_extract_python_func
+except ImportError:
+    _rust_batch_ioc_extract_python_func = None
+
+_IOC_EXTRACT_PYTHON_ZERO_COPY_AVAILABLE = _rust_batch_ioc_extract_python_func is not None
 
 
 def _get_rust_batch_ioc_extract_python():
-    return _rust_batch_ioc_extract_python_opt()
+    return _rust_batch_ioc_extract_python_func
 
 
-_IOC_EXTRACT_BATCH_AVAILABLE = _rust_batch_ioc_extract_opt.available
-_IOC_EXTRACT_PYTHON_ZERO_COPY_AVAILABLE = _rust_batch_ioc_extract_python_opt.available
-_parquet_get_metadata_opt = optional("hledac_rust_extensions:parquet_get_metadata")
-_parquet_row_group_stats_opt = optional("hledac_rust_extensions:parquet_row_group_stats")
-_parquet_read_row_group_ipc_opt = optional("hledac_rust_extensions:parquet_read_row_group_ipc")
-_parquet_iter_all_row_groups_opt = optional("hledac_rust_extensions:parquet_iter_all_row_groups")
-_parquet_read_table_opt = optional("hledac_rust_extensions:parquet_read_table")
+# Rust parquet functions — strict imports
+try:
+    from hledac_rust_extensions import parquet_get_metadata as _parquet_get_metadata_func
+except ImportError:
+    _parquet_get_metadata_func = None
+
+try:
+    from hledac_rust_extensions import parquet_row_group_stats as _parquet_row_group_stats_func
+except ImportError:
+    _parquet_row_group_stats_func = None
+
+try:
+    from hledac_rust_extensions import parquet_read_row_group_ipc as _parquet_read_row_group_ipc_func
+except ImportError:
+    _parquet_read_row_group_ipc_func = None
+
+try:
+    from hledac_rust_extensions import parquet_iter_all_row_groups as _parquet_iter_all_row_groups_func
+except ImportError:
+    _parquet_iter_all_row_groups_func = None
+
+try:
+    from hledac_rust_extensions import parquet_read_table as _parquet_read_table_func
+except ImportError:
+    _parquet_read_table_func = None
+
+_RUST_PARQUET_AVAILABLE = _parquet_get_metadata_func is not None
 
 
 def _get_parquet_get_metadata():
-    return _parquet_get_metadata_opt()
+    return _parquet_get_metadata_func
 
 
 def _get_parquet_row_group_stats():
-    return _parquet_row_group_stats_opt()
+    return _parquet_row_group_stats_func
 
 
 def _get_parquet_read_row_group_ipc():
-    return _parquet_read_row_group_ipc_opt()
+    return _parquet_read_row_group_ipc_func
 
 
 def _get_parquet_iter_all_row_groups():
-    return _parquet_iter_all_row_groups_opt()
+    return _parquet_iter_all_row_groups_func
 
 
 def _get_parquet_read_table():
-    return _parquet_read_table_opt()
-
-
-_RUST_PARQUET_AVAILABLE = _parquet_get_metadata_opt.available
+    return _parquet_read_table_func
 
 
 def extract_iocs_from_texts(texts: list[str]):
@@ -314,7 +387,7 @@ def extract_iocs_from_texts(texts: list[str]):
             for text_result in batch_results:
                 yield from text_result
             return
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
             pass
     if _IOC_EXTRACT_BATCH_AVAILABLE and _get_rust_batch_ioc_extract() is not None:
         try:
@@ -322,14 +395,14 @@ def extract_iocs_from_texts(texts: list[str]):
             for text_result in batch_results:
                 yield from text_result
             return
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
             pass
     try:
         from intelligence import ioc_qs
 
         for text in texts:
             yield from ioc_qs.extract_iocs_from_text(text)
-    except Exception:
+    except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
         return
 
 
@@ -402,7 +475,7 @@ class ParquetHistoryReader:
                 if result is not None:
                     self._rg_stats_cached = result
                     return result
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; Arrow/Parquet operation; non-critical
                 pass
         # Fallback: compute from data (expensive but correct)
         self._rg_stats_cached = self._compute_rg_stats_fallback()
@@ -429,7 +502,7 @@ class ParquetHistoryReader:
                 else:
                     stats.append((rg_idx, 0.0, 0.0, 0))
             return stats
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; telemetry/stats; best-effort
             return []
 
     def _filter_row_groups(self) -> list[int]:
@@ -458,7 +531,7 @@ class ParquetHistoryReader:
                 if result is not None:
                     self._num_rg, self._total_rows = result
                     return self._num_rg
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; Arrow/Parquet operation; non-critical
                 pass
         try:
             import pyarrow.parquet as pq
@@ -467,7 +540,7 @@ class ParquetHistoryReader:
             self._num_rg = pf.num_row_groups
             self._total_rows = pf.metadata.num_rows
             return self._num_rg
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; rowgroup filter failure; non-critical
             self._num_rg = 0
             return 0
 
@@ -514,7 +587,7 @@ class ParquetHistoryReader:
                     batch = self._filter_batch_source_types(batch)
                 if batch.num_rows > 0:
                     yield batch
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; memory operation; non-critical
                 continue
 
     def _iter_pyarrow_filtered(self, rg_indices: list[int] | range):
@@ -533,7 +606,7 @@ class ParquetHistoryReader:
                         yield batch
                 except StopIteration:
                     continue
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; rowgroup filter failure; non-critical
             return
 
     def _filter_batch_source_types(self, batch):
@@ -551,7 +624,7 @@ class ParquetHistoryReader:
             # Use filter directly on the column
             mask = pa.compute.is_in(type_col, value_set=self._source_types)
             return batch.filter(mask)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; rowgroup filter failure; non-critical
             return batch
 
     def to_polars_lazy(self):
@@ -611,13 +684,13 @@ class ParquetHistoryReader:
         if _RUST_PARQUET_AVAILABLE and _get_parquet_read_table() is not None:
             try:
                 return _get_parquet_read_table()(self.path, None, self.batch_size)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; Arrow/Parquet operation; non-critical
                 pass
         try:
             import pyarrow.parquet as pq
 
             return pq.read_table(self.path)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; Arrow/Parquet operation; non-critical
             return None
 
     def __len__(self) -> int:
@@ -667,12 +740,12 @@ def export_findings_to_parquet(
                         break
         try:
             conn.execute(f"ATTACH '{db_path}' AS source_db")
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             return False
         conn.execute("USE source_db")
         conn.execute(f"COPY ({query}) TO '{path}' (FORMAT PARQUET)")
         return True
-    except Exception:
+    except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
         return False
 
 
@@ -842,7 +915,7 @@ class _DuckDBQueryCache:
             lmdb_path.parent.mkdir(parents=True, exist_ok=True)
             env = lmdb.open(str(lmdb_path), map_size=16 * 1024 * 1024, writemap=False, readahead=False, meminit=False)
             object.__setattr__(self, "_l2_env", env)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; export failure; non-critical
             object.__setattr__(self, "_l2_env", None)
 
     @staticmethod
@@ -893,7 +966,7 @@ class _DuckDBQueryCache:
             if time.monotonic() - entry["ts"] > object.__getattribute__(self, "_ttl_s"):
                 return None
             return entry["rows"]
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return None
 
     def _l2_set(self, key: str, rows: list) -> None:
@@ -913,7 +986,7 @@ class _DuckDBQueryCache:
                         txn.delete(k)
                         break
                 txn.put(key.encode(), entry_bytes)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             pass
 
     def get(self, sql: str, params: tuple) -> list | None:
@@ -944,7 +1017,7 @@ class _DuckDBQueryCache:
             try:
                 with env.begin(write=True) as txn:
                     txn.drop(txn.database(), delete=False)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; export failure; non-critical
                 pass
 
     def close(self) -> None:
@@ -952,7 +1025,7 @@ class _DuckDBQueryCache:
         if env is not None:
             try:
                 env.close()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
                 pass
             object.__setattr__(self, "_l2_env", None)
 
@@ -1206,19 +1279,19 @@ def _apply_schema(conn, schema_sql: str) -> None:
                     continue
                 try:
                     conn.execute(stmt_sql)
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                     if "already exists" in str(exc).lower():
                         continue
                     raise
             return
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             pass
     for s in _regex_split_statements(sql):
         if not s:
             continue
         try:
             conn.execute(s)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             if "already exists" in str(exc).lower():
                 continue
             raise
@@ -1249,7 +1322,7 @@ def _duckdb_at_exit_shutdown(instance: DuckDBShadowStore) -> None:
     try:
         if instance._shared_executor is not None:
             instance._shared_executor.shutdown(wait=False, cancel_futures=True)
-    except Exception:
+    except Exception:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
         pass
 
 
@@ -1349,7 +1422,9 @@ class DuckDBShadowStore:
         self._duckdb_module: Any | None = None
         self._uma_state: str | None = uma_state
         self._duckdb_settings: dict[str, str | int] = {}
-        _max_workers = min(2, max(1, (os.cpu_count() or 2) - 1))
+        # F320M-R: M1 8GB has 4P+4E cores. DuckDB writes are I/O-bound (Arrow batch + LMDB WAL),
+        # so we use 4 workers (not cpu_count()-1 which gives only 2 for 8-core M1).
+        _max_workers = min(4, max(1, (os.cpu_count() or 2)))
         self._shared_executor: ThreadPoolExecutor = ThreadPoolExecutor(
             max_workers=_max_workers, thread_name_prefix="duckdb_unified"
         )
@@ -1360,7 +1435,7 @@ class DuckDBShadowStore:
         from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
 
         self._executor_semaphore: asyncio.Semaphore = get_semaphore_for_testing(ConcurrencyCategory.GRAPH_RAG)
-        self._write_semaphore: asyncio.Semaphore = asyncio.Semaphore(2)
+        self._write_semaphore: asyncio.Semaphore = asyncio.Semaphore(4)  # F320M-R: was 2; match _max_workers
         self._persistent_conn: Any | None = None
         self._file_conn: Any | None = None
         self._replay_lock: asyncio.Lock | None = None
@@ -1420,7 +1495,7 @@ class DuckDBShadowStore:
         try:
             self._finalizer = weakref.finalize(self, _duckdb_at_exit_shutdown, self)
             atexit.register(self._finalizer)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             self._finalizer = None
 
     def _adjust_executor_pool(self) -> None:
@@ -1446,7 +1521,7 @@ class DuckDBShadowStore:
 
             snap = sample_uma_status()
             state = snap.state if snap else "ok"
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             state = "ok"
         if state in ("critical", "emergency", "soft_warn"):
             target_workers = 1
@@ -1459,7 +1534,7 @@ class DuckDBShadowStore:
                     self._shared_executor._max_workers = target_workers
                     _dbg = logging.getLogger(__name__)
                     _dbg.debug("[DuckDB] executor workers: %d -> %d (uma_state=%s)", current, target_workers, state)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 pass
 
     @property
@@ -1528,13 +1603,13 @@ class DuckDBShadowStore:
         """
         try:
             graph_stats = self.get_graph_stats() if hasattr(self, "_DuckDBShadowStore__graph_store") else {}
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             graph_stats = {}
         total_iocs = graph_stats.get("nodes", 0) if isinstance(graph_stats, dict) else 0
         try:
             conn = self._qe()._conn if hasattr(self, "_qe") else None
             total_findings = conn.execute("SELECT COUNT(*) FROM canonical_findings").fetchone()[0] if conn else 0
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
             total_findings = 0
         return {
             "total_findings": total_findings,
@@ -1658,7 +1733,7 @@ class DuckDBShadowStore:
                 }
                 for row in rows
             ]
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return []
 
     def inject_semantic_store(self, store: Any) -> None:
@@ -1748,7 +1823,7 @@ class DuckDBShadowStore:
                         seen_iocs.add(ioc_key)
                 for _, id_a, id_b, ts, src in finding_observations:
                     await truth_graph.buffer_observation(id_a, id_b, fid, ts, src)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
                 import logging
 
                 _logger2 = logging.getLogger(__name__)
@@ -1792,7 +1867,7 @@ class DuckDBShadowStore:
                 conn.execute("PRAGMA busy_timeout=30000")
                 conn.execute("PRAGMA synchronous=NORMAL")
                 conn.execute("PRAGMA wal_autocheckpoint=51200")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 logger.debug(f"[DUCKDB] WAL/busy_timeout config failed: {e!r}")
         try:
             conn.execute(
@@ -1808,7 +1883,7 @@ class DuckDBShadowStore:
                 conn.execute(
                     "SET temp_file_encryption = ?", [str(runtime.get("temp_file_encryption", "false")).lower()]
                 )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             logger.debug(f"[DUCKDB] columnar/allocator tuning failed: {e}")
 
     def _init_connection(self) -> None:
@@ -1856,7 +1931,7 @@ class DuckDBShadowStore:
                 if setup_conn is not None:
                     try:
                         setup_conn.close()
-                    except Exception:
+                    except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                         pass
             self._file_conn = duckdb.connect(str(self._db_path), read_only=_read_only_flag)
             if _instrument_duckdb_connection:
@@ -1865,10 +1940,10 @@ class DuckDBShadowStore:
                 self._configure_connection(self._file_conn, runtime, is_read_only=_read_only_flag)
                 try:
                     self._file_conn.execute("SET preserve_insertion_order = false")
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                     logger.debug(f"[DUCKDB] preserve_insertion_order config failed: {e}")
                 self._file_conn.execute("PRAGMA force_checkpoint")
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 self._file_conn.close()
                 raise
             self._read_pool = []
@@ -1881,7 +1956,7 @@ class DuckDBShadowStore:
                     self._configure_connection(read_conn, runtime, is_read_only=True)
                     read_conn.execute("SET preserve_insertion_order = false")
                     self._read_pool.append(read_conn)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                     logger.debug(f"[DUCKDB] read pool connection {i} failed: {e}")
                     break
         else:
@@ -1909,7 +1984,7 @@ class DuckDBShadowStore:
                     _conn.execute(
                         "SET enable_fsst_vectors = ?", [str(runtime.get("enable_fsst_vectors", "true")).lower()]
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                     logger.debug(f"[DUCKDB] columnar/allocator tuning failed: {e}")
                 try:
                     _conn.execute("SET preserve_insertion_order = false")
@@ -1917,7 +1992,7 @@ class DuckDBShadowStore:
                     logger.debug(f"[DUCKDB] preserve_insertion_order tuning failed: {e}")
                 _apply_schema(_conn, _SCHEMA_SQL)
                 self._persistent_conn = _conn
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 _conn.close()
                 raise
             if self._query_cache is None and self._db_path is not None:
@@ -1970,7 +2045,7 @@ class DuckDBShadowStore:
             if conn is not None:
                 try:
                     conn.close()
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                     pass
 
     def ensure_target_profiles_schema(self) -> None:
@@ -1986,7 +2061,7 @@ class DuckDBShadowStore:
             conn.execute(
                 "\n                CREATE TABLE IF NOT EXISTS target_profiles (\n                    target_id TEXT PRIMARY KEY,\n                    first_seen DOUBLE,\n                    last_seen DOUBLE,\n                    cumulative_finding_count INTEGER,\n                    entity_summary_json TEXT\n                )\n                "
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             pass
 
     def ensure_target_memory_schema(self) -> None:
@@ -2002,7 +2077,7 @@ class DuckDBShadowStore:
             conn.execute(
                 "\n                CREATE TABLE IF NOT EXISTS target_memory (\n                    target_id TEXT PRIMARY KEY,\n                    first_seen_ts DOUBLE,\n                    last_seen_ts DOUBLE,\n                    sprint_count INTEGER,\n                    cumulative_finding_count INTEGER,\n                    entity_facets_json TEXT,\n                    exposure_facets_json TEXT,\n                    pivot_facets_json TEXT,\n                    confidence_drift_json TEXT,\n                    updated_by_sprint_id TEXT,\n                    updated_ts DOUBLE\n                )\n                "
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             pass
 
     async def async_ingest_dht_metadata(self, metadata: list[dict[str, Any]]) -> int:
@@ -2158,10 +2233,10 @@ class DuckDBShadowStore:
                 object.__setattr__(self, "_stmt_insert_finding", stmt)
                 object.__setattr__(self, "_stmt_insert_finding_conn_id", conn_id)
                 return stmt
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 try:
                     logger.debug(f"[DUCKDB] prepare() failed, falling back to execute(): {e}")
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                     pass
                 object.__setattr__(self, "_stmt_insert_finding", None)
                 object.__setattr__(self, "_stmt_insert_finding_conn_id", None)
@@ -2177,7 +2252,7 @@ class DuckDBShadowStore:
             try:
                 object.__setattr__(self, "_stmt_insert_finding", None)
                 object.__setattr__(self, "_stmt_insert_finding_conn_id", None)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 pass
 
         @staticmethod
@@ -2206,7 +2281,7 @@ class DuckDBShadowStore:
                 result = fn(conn)
                 self._commit(conn)
                 return result
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 self._rollback(conn)
                 raise
 
@@ -2235,7 +2310,7 @@ class DuckDBShadowStore:
 
                 self._with_transaction(conn, _do)
                 return True
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 return False
 
         def insert_findings_bulk(self, findings: list[dict[str, Any]]) -> int:
@@ -2266,7 +2341,7 @@ class DuckDBShadowStore:
 
                 self._with_transaction(conn, _do)
                 return len(rows)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 _logger.error(f"[D7] DuckDB bulk insert failed: {type(e).__name__}: {e}")
                 return 0
 
@@ -2295,7 +2370,7 @@ class DuckDBShadowStore:
 
                 self._with_transaction(conn, _do)
                 return len(rows)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 _logger.error(f"[D7] DuckDB bulk-as-tuples insert failed: {type(e).__name__}: {e}")
                 return 0
 
@@ -2339,20 +2414,20 @@ class DuckDBShadowStore:
                     if result:
                         original_mode = str(result[0]).upper()
                     object.__setattr__(self, "_stmt_insert_finding_conn_id", (conn_id, original_mode))
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                     original_mode = None
             try:
                 if original_mode == "WAL":
                     conn.execute("PRAGMA journal_mode=DELETE")
                 yield
-            except Exception as _e:
+            except Exception as _e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 _logger.debug(f"[F275-2] WAL→DELETE switch failed: {_e}")
                 yield
             finally:
                 if original_mode == "WAL":
                     try:
                         conn.execute("PRAGMA journal_mode=WAL")
-                    except Exception as _e2:
+                    except Exception as _e2:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                         _logger.debug(f"[F275-2] WAL restore failed: {_e2}")
 
         def insert_findings_bulk_arrow(self, table: Any) -> tuple[int, str | None]:
@@ -2385,7 +2460,7 @@ class DuckDBShadowStore:
                 return (0, "table_none")
             try:
                 n_rows = int(table.num_rows)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 return (0, "num_rows_err")
             if n_rows == 0:
                 return (0, "zero_rows")
@@ -2408,10 +2483,10 @@ class DuckDBShadowStore:
                     finally:
                         try:
                             conn.unregister(reg_name)
-                        except Exception:
+                        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                             pass
                     return (n_rows, None)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 _logger.error(f"[P0-4 Arrow] DuckDB Arrow bulk insert failed: {type(e).__name__}: {e}")
                 return (0, "duckdb_error")
 
@@ -2428,7 +2503,7 @@ class DuckDBShadowStore:
             try:
                 self._with_transaction(conn, lambda c: c.execute(cast_sql, params))
                 return True
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 return False
 
         def upsert_target_profile(self, profile) -> None:
@@ -2462,7 +2537,7 @@ class DuckDBShadowStore:
                 result = conn.execute(sql, [target_id]).fetchone()
                 DuckDBShadowStore._record_query_latency(self._store._qe()._query_latencies_ns, perf_counter_ns() - t0)
                 return result
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 return None
 
         def query_findings(self, limit: int) -> list[dict]:
@@ -2488,7 +2563,7 @@ class DuckDBShadowStore:
                     }
                     for row in result
                 ]
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 return []
 
     @staticmethod
@@ -2503,7 +2578,7 @@ class DuckDBShadowStore:
             from hledac.universal.metrics_registry import get_metrics_registry
 
             get_metrics_registry().set_gauge("duckdb_query_latency_ms", avg)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             pass
 
     def _qe(self):
@@ -2559,7 +2634,7 @@ class DuckDBShadowStore:
                 cumulative_finding_count=result[3],
                 entity_summary_json=result[4],
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return None
 
     def _sync_record_hypothesis_feedback(self, record: Any) -> bool:
@@ -2589,7 +2664,7 @@ class DuckDBShadowStore:
                 ],
             )
             return True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             logger.warning(f"[F206L] _sync_record_hypothesis_feedback failed for {record.id}: {e}")
             return False
 
@@ -2632,7 +2707,7 @@ class DuckDBShadowStore:
                 }
                 for r in result
             ]
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return []
 
     def _sync_record_research_session(
@@ -2670,7 +2745,7 @@ class DuckDBShadowStore:
             )
             conn.commit()
             return True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             logger.warning(f"[F350M] _sync_record_research_session failed: {e}")
             return False
 
@@ -2699,7 +2774,7 @@ class DuckDBShadowStore:
             )
             conn.commit()
             return len(rows)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             logger.warning(f"[F350M] _sync_record_entity_observations_bulk failed: {e}")
             return 0
 
@@ -2725,7 +2800,7 @@ class DuckDBShadowStore:
                 }
                 for r in result
             ]
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return []
 
     def _sync_get_entity_observations_by_entity(self, entity_value: str, limit: int = 50) -> list[dict[str, Any]]:
@@ -2747,7 +2822,7 @@ class DuckDBShadowStore:
                 }
                 for r in result
             ]
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return []
 
     def _sync_get_recent_research_sessions(self, limit: int = 10) -> list[dict[str, Any]]:
@@ -2772,7 +2847,7 @@ class DuckDBShadowStore:
                 }
                 for r in result
             ]
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return []
 
     def _sync_get_previous_findings_for_target(
@@ -2806,13 +2881,13 @@ class DuckDBShadowStore:
                 }
                 for row in result
             ]
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             try:
                 conn = self._file_conn if self._db_path else self._persistent_conn
                 if conn is None:
                     return []
                 return []
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 return []
 
     def _sync_insert_sprint_delta(self, row: dict) -> bool:
@@ -2864,7 +2939,7 @@ class DuckDBShadowStore:
                     ],
                 )
             return True
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return False
 
     def _sync_insert_source_hit(
@@ -2884,7 +2959,7 @@ class DuckDBShadowStore:
                     [sprint_id, ts, source_type, findings_count, ioc_count, hit_rate],
                 )
             return True
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
             return False
 
     def _sync_query_sprint_trend(self, last_n: int) -> list[dict]:
@@ -2911,7 +2986,7 @@ class DuckDBShadowStore:
                 }
                 for r in result
             ]
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return []
 
     def _sync_query_source_leaderboard(self, since_ts: float) -> list[dict]:
@@ -2935,7 +3010,7 @@ class DuckDBShadowStore:
                 }
                 for r in result
             ]
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return []
 
     def _sync_query_sprint_source_stats(self) -> list[dict]:
@@ -2956,7 +3031,7 @@ class DuckDBShadowStore:
                 result = self._persistent_conn.execute(sql, [cutoff])
                 result = list(self.arrow_fetch_batch(self._persistent_conn, sql, [cutoff]))
             return [{"source_type": r[0], "avg_hit_rate": r[1] or 0.0} for r in result]
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; Arrow/Parquet operation; non-critical
             return []
 
     def _prewarm_file_conn(self) -> bool:
@@ -2970,7 +3045,7 @@ class DuckDBShadowStore:
         try:
             self._file_conn.execute("SELECT 1").fetchall()
             return True
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             return False
 
     def _sync_close_on_worker(self) -> None:
@@ -2980,24 +3055,24 @@ class DuckDBShadowStore:
                 qe = self._qe()
                 if qe is not None:
                     qe._invalidate_insert_stmt()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB write failure; non-critical
             pass
         if self._persistent_conn is not None:
             try:
                 self._persistent_conn.close()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 pass
             self._persistent_conn = None
         if self._file_conn is not None:
             try:
                 self._file_conn.close()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 pass
             self._file_conn = None
         if self._wal_manager is not None:
             try:
                 self._wal_manager.close()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 pass
             self._wal_manager = None
 
@@ -3021,7 +3096,7 @@ class DuckDBShadowStore:
             else:
                 self._db_path = DUCKDB_STORE_ROOT / "analytics.duckdb"
                 self._temp_dir = None
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             self._db_path = None
             self._temp_dir = None
 
@@ -3050,7 +3125,7 @@ class DuckDBShadowStore:
             self._initialized = True
             self._startup_ready.set()
             return True
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             self._initialized = False
             return False
 
@@ -3061,7 +3136,7 @@ class DuckDBShadowStore:
         try:
             fut = self._executor.submit(self._sync_insert_finding, finding_id, query, source_type, confidence)
             return fut.result()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB write failure; non-critical
             return False
 
     def insert_shadow_run(
@@ -3073,7 +3148,7 @@ class DuckDBShadowStore:
         try:
             fut = self._executor.submit(self._sync_insert_run, run_id, started_at, ended_at, total_fds, rss_mb)
             return fut.result()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB write failure; non-critical
             return False
 
     def query_recent_findings(self, limit: int = 10) -> list[dict[str, Any]]:
@@ -3083,7 +3158,7 @@ class DuckDBShadowStore:
         try:
             fut = self._executor.submit(self._sync_query_findings, limit)
             return fut.result()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB query failure; non-critical
             return []
 
     def close(self) -> None:
@@ -3120,7 +3195,7 @@ class DuckDBShadowStore:
                         result = truth_graph.close()
                         if asyncio.iscoroutine(result):
                             await result
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
                     pass
             ioc_graph = getattr(gs, "_ioc_graph", None)
             if ioc_graph is not None:
@@ -3129,7 +3204,7 @@ class DuckDBShadowStore:
                         result = ioc_graph.close()
                         if asyncio.iscoroutine(result):
                             await result
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
                     pass
             stix_graph = getattr(gs, "_stix_graph", None)
             if stix_graph is not None:
@@ -3138,19 +3213,19 @@ class DuckDBShadowStore:
                         result = stix_graph.close()
                         if asyncio.iscoroutine(result):
                             await result
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
                     pass
         if self._semantic_store is not None:
             try:
                 result = self._semantic_store.close()
                 if asyncio.iscoroutine(result):
                     await result
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
                 pass
         if self._wal_manager is not None:
             try:
                 await self._wal_manager.aclose()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
                 pass
             self._wal_manager = None
 
@@ -3168,19 +3243,19 @@ class DuckDBShadowStore:
         if self._finalizer is not None:
             try:
                 self._finalizer.detach()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
                 pass
         self._closed = True
         self._initialized = False
         try:
             self._startup_ready.clear()
             self._startup_replay_done = False
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
             pass
         try:
             f = self._executor.submit(self._sync_close_on_worker)
             f.result(timeout=5)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
             pass
         gs = self._graph_store() if hasattr(self, "_DuckDBShadowStore__graph_store") else None
         if gs is not None:
@@ -3189,42 +3264,42 @@ class DuckDBShadowStore:
                 try:
                     if callable(getattr(truth_graph, "flush_buffers", None)):
                         truth_graph.flush_buffers()
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; export failure; non-critical
                     pass
         if self._semantic_store is not None:
             try:
                 result = self._semantic_store.close()
                 if not asyncio.iscoroutine(result):
                     pass
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
                 pass
             self._semantic_store = None
         _wal = getattr(self, "_wal_lmdb", None)
         if _wal is not None:
             try:
                 _wal.close()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
                 pass
             self._wal_lmdb = None
         if self._read_pool:
             for conn in self._read_pool:
                 try:
                     conn.close()
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                     pass
             self._read_pool = []
             self._read_pool_idx = 0
         if self._dedup_manager is not None:
             try:
                 self._dedup_manager.close()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
                 pass
             self._dedup_manager = None
         _dedup = getattr(self, "_dedup_lmdb", None)
         if _dedup is not None:
             try:
                 _dedup.close()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
                 pass
             self._dedup_lmdb = None
         try:
@@ -3237,7 +3312,7 @@ class DuckDBShadowStore:
                 if is_stale:
                     duckdb_lock_path.unlink(missing_ok=True)
                     _logger.debug(f"[DUCKDB] Removed stale lock {duckdb_lock_path}: {reason}")
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             pass
         # ISSUE-021: flush pending accepted findings before close.
         # Both lists are an invariant pair — clearing only findings and not indices
@@ -3251,12 +3326,12 @@ class DuckDBShadowStore:
                 _pending_findings.clear()
                 if _copy_findings:
                     self._executor.submit(self._flush_pending_findings_sync, _copy_findings)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
         if _pending_indices:
             try:
                 _pending_indices.clear()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
         if hasattr(self, "_arrow_metrics") and self._arrow_metrics is not None:
             self._arrow_metrics.clear()
@@ -3275,7 +3350,7 @@ class DuckDBShadowStore:
                 self._record_canonical_findings_batch_arrow(findings)
             elif hasattr(self, "_sync_record_canonical_findings_batch_arrow_standalone"):
                 self._sync_record_canonical_findings_batch_arrow_standalone(findings)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; Arrow/Parquet operation; non-critical
             pass  # fail-soft: don't fail close for flush errors
 
     async def async_initialize(self, replay_pending_limit: int | None = None, replay_timeout_s: float = 5.0) -> bool:
@@ -3313,7 +3388,7 @@ class DuckDBShadowStore:
             return True
         try:
             self._cleanup_orphaned_locks()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; lock failure; non-critical
             pass
         if self._lazy:
             if self._db_path is None:
@@ -3328,7 +3403,7 @@ class DuckDBShadowStore:
             await loop.run_in_executor(self._executor, self._init_connection)
             self._duckdb_module = _get_duckdb()
             self._initialized = True
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             self._initialized = False
             return False
         if self._wal_manager is None:
@@ -3378,7 +3453,7 @@ class DuckDBShadowStore:
             self._initialized = True
             self._startup_ready.set()
             return True
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             return False
 
     async def async_record_shadow_run(
@@ -3398,7 +3473,7 @@ class DuckDBShadowStore:
                 self._executor, self._sync_insert_run, run_id, started_at, ended_at, total_fds, rss_mb
             )
             return True
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB write failure; non-critical
             return False
 
     def ensure_connected(self) -> None:
@@ -3488,7 +3563,7 @@ class DuckDBShadowStore:
                 self._executor, self._sync_insert_finding, finding_id, query, source_type, confidence
             )
             return True
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB write failure; non-critical
             return False
 
     async def async_record_shadow_findings_batch(
@@ -3513,7 +3588,7 @@ class DuckDBShadowStore:
             try:
                 count = await loop.run_in_executor(self._executor, self._sync_insert_findings_bulk, chunk)
                 total_inserted += count
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; DB write failure; non-critical
                 break
         return total_inserted
 
@@ -3535,7 +3610,7 @@ class DuckDBShadowStore:
             )
         except asyncio.TimeoutError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB query failure; non-critical
             return []
 
     def _sync_execute_raw_sql(self, sql: str) -> list[Any]:
@@ -3550,7 +3625,7 @@ class DuckDBShadowStore:
             return []
         try:
             return list(conn.execute(sql).fetchall())
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             return []
 
     async def async_execute_raw_sql(self, sql: str) -> list[Any]:
@@ -3628,7 +3703,7 @@ class DuckDBShadowStore:
                     ]
                 if rows_list:
                     yield rows_list
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return
 
     async def async_query_arrow_batches(
@@ -3693,7 +3768,7 @@ class DuckDBShadowStore:
                         except StopIteration:
                             break
                     return
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
             os.environ.setdefault("HLEDAC_WARN_ARROW_FALLBACK", "1")
             result = conn.execute(sql, params or [])
@@ -3714,7 +3789,7 @@ class DuckDBShadowStore:
                     results.append(batch)
                 except StopIteration:
                     break
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     break
             return results
 
@@ -3732,7 +3807,7 @@ class DuckDBShadowStore:
                     yield batch
             except StopIteration:
                 break
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 break
 
     def arrow_fetch_batch(
@@ -3763,7 +3838,7 @@ class DuckDBShadowStore:
             return
         try:
             result = conn.execute(sql, params or [])
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             return
         if hasattr(result, "fetch_record_batch"):
             try:
@@ -3794,7 +3869,7 @@ class DuckDBShadowStore:
                                 )
                                 for i in range(nrows)
                             ]
-                    except Exception:
+                    except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                         cols = batch.columns
                         nrows = batch.num_rows
                         ncols = len(cols)
@@ -3808,7 +3883,7 @@ class DuckDBShadowStore:
                             for i in range(nrows)
                         ]
                 return
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
         try:
             while True:
@@ -3816,7 +3891,7 @@ class DuckDBShadowStore:
                 if not rows:
                     break
                 yield list(rows)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return
 
     def duckdb_fetch_polars(self, conn: Any, sql: str, params: list[Any] | None = None) -> pl.DataFrame | None:
@@ -3856,7 +3931,7 @@ class DuckDBShadowStore:
                 reader = result.to_arrow_reader()
                 return pl.from_arrow(reader)
             return None
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; Arrow/Parquet operation; non-critical
             return None
 
     async def async_healthcheck(self) -> bool:
@@ -3872,7 +3947,7 @@ class DuckDBShadowStore:
         try:
             await loop.run_in_executor(self._executor, self._sync_query_findings, 1)
             return True
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             return False
 
     async def async_record_sprint_delta(self, row: dict) -> bool:
@@ -3887,7 +3962,7 @@ class DuckDBShadowStore:
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(self._executor, self._sync_insert_sprint_delta, row)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             return False
 
     async def async_record_source_hit(
@@ -3913,7 +3988,7 @@ class DuckDBShadowStore:
                 ioc_count,
                 hit_rate,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
             return False
 
     async def async_query_sprint_trend(self, last_n: int = 10) -> list[dict]:
@@ -3927,7 +4002,7 @@ class DuckDBShadowStore:
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(self._executor, self._sync_query_sprint_trend, last_n)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             return []
 
     async def async_ingest_cooccurrence_batch(self, pairs: list[dict]) -> bool:
@@ -3953,7 +4028,7 @@ class DuckDBShadowStore:
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(self._executor, self._sync_ingest_cooccurrence_batch, pairs)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             return False
 
     def _sync_ingest_cooccurrence_batch(self, pairs: list[dict]) -> bool:
@@ -3979,7 +4054,7 @@ class DuckDBShadowStore:
                         ),
                     )
             return True
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return False
 
     async def async_load_cooccurrence(self, limit: int = 100000) -> list[dict]:
@@ -4002,7 +4077,7 @@ class DuckDBShadowStore:
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(self._executor, self._sync_load_cooccurrence, limit)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             return []
 
     def _sync_load_cooccurrence(self, limit: int) -> list[dict]:
@@ -4028,7 +4103,7 @@ class DuckDBShadowStore:
                 }
                 for r in rows
             ]
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return []
 
     async def async_query_recent_findings_by_sprint(self, sprint_id: str, limit: int = 20) -> list[dict]:
@@ -4047,7 +4122,7 @@ class DuckDBShadowStore:
             return await loop.run_in_executor(
                 self._executor, self._sync_query_recent_findings_by_sprint, sprint_id, limit
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB query failure; non-critical
             return []
 
     async def async_query_findings_by_text(self, like_pattern: str, limit: int = 1000) -> list[dict[str, Any]]:
@@ -4070,7 +4145,7 @@ class DuckDBShadowStore:
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(self._executor, self._sync_query_findings_by_text, like_pattern, limit)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             return []
 
     async def async_query_findings_by_keywords(self, keywords: list[str], limit: int = 1000) -> list[dict[str, Any]]:
@@ -4096,7 +4171,7 @@ class DuckDBShadowStore:
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(self._executor, self._sync_query_findings_by_keywords, keywords, limit)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB query failure; non-critical
             return []
 
     def _sync_query_findings_by_keywords(self, keywords: list[str], limit: int) -> list[dict]:
@@ -4138,7 +4213,7 @@ class DuckDBShadowStore:
                 }
                 for r in rows
             ]
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return []
 
     def _sync_query_findings_by_text(self, like_pattern: str, limit: int) -> list[dict]:
@@ -4177,7 +4252,7 @@ class DuckDBShadowStore:
                 }
                 for r in rows
             ]
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return []
 
     def _sync_query_recent_findings_by_sprint(self, sprint_id: str, limit: int) -> list[dict]:
@@ -4192,7 +4267,7 @@ class DuckDBShadowStore:
             if not rows:
                 return []
             return [{"id": r[0], "query": r[1], "source_type": r[2], "confidence": r[3], "ts": r[4]} for r in rows]
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; Arrow/Parquet operation; non-critical
             return []
 
     async def async_query_top_entities_by_sprint(self, sprint_id: str, limit: int = 20) -> list[dict]:
@@ -4210,7 +4285,7 @@ class DuckDBShadowStore:
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(self._executor, self._sync_query_top_entities_by_sprint, sprint_id, limit)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             return []
 
     def _sync_query_top_entities_by_sprint(self, sprint_id: str, limit: int) -> list[dict]:
@@ -4259,7 +4334,7 @@ class DuckDBShadowStore:
                 candidates.values(), key=lambda x: (x["occurrences"], x["last_seen_ts"]), reverse=True
             )
             return sorted_candidates[:limit]
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return []
 
     async def async_query_sprint_ioc_summary(self, sprint_id: str) -> dict:
@@ -4277,7 +4352,7 @@ class DuckDBShadowStore:
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(self._executor, self._sync_query_sprint_ioc_summary, sprint_id)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
             return {}
 
     def _sync_query_sprint_ioc_summary(self, sprint_id: str) -> dict:
@@ -4314,7 +4389,7 @@ class DuckDBShadowStore:
                 "last_ts": row[4] or 0.0,
                 "span_seconds": (row[4] or 0.0) - (row[3] or 0.0),
             }
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return {}
 
     async def async_query_top_sources_by_sprint(self, sprint_id: str, limit: int = 10) -> list[dict]:
@@ -4331,7 +4406,7 @@ class DuckDBShadowStore:
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(self._executor, self._sync_query_top_sources_by_sprint, sprint_id, limit)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             return []
 
     def _sync_query_top_sources_by_sprint(self, sprint_id: str, limit: int) -> list[dict]:
@@ -4347,7 +4422,7 @@ class DuckDBShadowStore:
                 {"source_type": r[0], "findings_count": r[1] or 0, "avg_confidence": round(r[2] or 0.0, 3)}
                 for r in rows
             ]
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; Arrow/Parquet operation; non-critical
             return []
 
     async def upsert_scorecard(self, data: dict) -> bool:
@@ -4364,7 +4439,7 @@ class DuckDBShadowStore:
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(self._executor, self._sync_upsert_scorecard, data)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             return False
 
     def _sync_upsert_scorecard(self, data: dict) -> bool:
@@ -4389,7 +4464,7 @@ class DuckDBShadowStore:
                 ],
             )
             return True
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
             return False
 
     async def submit_findings(self, findings: list[CanonicalFinding]) -> None:
@@ -4420,7 +4495,7 @@ class DuckDBShadowStore:
             await self.async_ingest_findings_batch(findings)
             self._ingest_breaker_failures = 0
             self._ingest_breaker_state = CBState.CLOSED
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; lock failure; non-critical
             self._ingest_breaker_failures += 1
             self._ingest_breaker_last_failure = _time.monotonic()
             if self._ingest_breaker_failures >= self._ingest_breaker_threshold:
@@ -4444,7 +4519,7 @@ class DuckDBShadowStore:
             return []
         try:
             return await self.async_ingest_findings_batch(findings)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; async operation failure; non-critical
             return []
 
     def _execute_in_thread_sync(self, fn) -> Any:
@@ -4464,7 +4539,7 @@ class DuckDBShadowStore:
         try:
             f = self._executor.submit(fn)
             return f.result()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; async operation failure; non-critical
             return None
 
     async def upsert_episode(self, data: dict) -> None:
@@ -4509,7 +4584,7 @@ class DuckDBShadowStore:
                     return []
                 cols = ["sprint_id", "query", "summary", "top_findings", "source_yield", "ts"]
                 return [dict(zip(cols, r, strict=False)) for r in rows]
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; Arrow/Parquet operation; non-critical
                 return []
 
         loop = asyncio.get_running_loop()
@@ -4530,7 +4605,7 @@ class DuckDBShadowStore:
             return await loop.run_in_executor(self._executor, self._sync_upsert_target_memory, memory)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB write failure; non-critical
             return False
 
     def _sync_upsert_target_memory(self, memory: TargetMemory) -> bool:
@@ -4559,7 +4634,7 @@ class DuckDBShadowStore:
                 ],
             )
             return True
-        except Exception as _exc:
+        except Exception as _exc:  # noqa: BLE001 — best-effort; memory operation; non-critical
             _logger.warning(f"_sync_upsert_target_memory failed: {_exc}")
             return False
 
@@ -4594,7 +4669,7 @@ class DuckDBShadowStore:
                     confidence_drift=_json_loads_flexible(r[8]),
                     updated_by_sprint_id=r[9],
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 return None
 
         loop = asyncio.get_running_loop()
@@ -4602,7 +4677,7 @@ class DuckDBShadowStore:
             return await loop.run_in_executor(self._executor, _sync)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; async operation failure; non-critical
             return None
 
     async def upsert_global_entities(self, entities: list[tuple[str, str, float]]) -> int:
@@ -4621,7 +4696,7 @@ class DuckDBShadowStore:
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(self._executor, self._sync_upsert_global_entities, entities)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB write failure; non-critical
             return 0
 
     def _sync_upsert_global_entities(self, entities: list[tuple[str, str, float]]) -> int:
@@ -4665,7 +4740,7 @@ class DuckDBShadowStore:
             return await loop.run_in_executor(
                 self._executor, self._sync_query_source_leaderboard, _time.time() - days * 86400
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB query failure; non-critical
             return []
 
     async def async_query_sprint_source_stats(self) -> list[dict]:
@@ -4680,7 +4755,7 @@ class DuckDBShadowStore:
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(self._executor, self._sync_query_sprint_source_stats)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             return []
 
     def get_sprint_trend(self, last_n: int = 10) -> list[dict]:
@@ -4697,7 +4772,7 @@ class DuckDBShadowStore:
         try:
             fut = self._executor.submit(self._sync_query_sprint_trend, last_n)
             return fut.result()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB query failure; non-critical
             return []
 
     def get_source_leaderboard(self, days: int = 7) -> list[dict]:
@@ -4714,7 +4789,7 @@ class DuckDBShadowStore:
         try:
             fut = self._executor.submit(self._sync_query_source_leaderboard, _time.time() - days * 86400)
             return fut.result()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB query failure; non-critical
             return []
 
     def get_sprint_scorecard_trend(self, last_n: int = 6) -> list[dict]:
@@ -4731,7 +4806,7 @@ class DuckDBShadowStore:
         try:
             fut = self._executor.submit(self._sync_query_scorecard_trend, last_n)
             return fut.result()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB query failure; non-critical
             return []
 
     def _sync_query_scorecard_trend(self, last_n: int) -> list[dict]:
@@ -4751,7 +4826,7 @@ class DuckDBShadowStore:
             if df is None:
                 return []
             return df.head(last_n).to_dicts()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
             return []
 
     def get_sprint_delta_comparison(self, current_sprint_id: str, lookback: int = 4) -> dict:
@@ -4771,7 +4846,7 @@ class DuckDBShadowStore:
         try:
             fut = self._executor.submit(self._sync_query_delta_comparison, current_sprint_id, lookback)
             return fut.result()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB query failure; non-critical
             return {}
 
     def _sync_query_delta_comparison(self, current_sprint_id: str, lookback: int) -> dict:
@@ -4816,7 +4891,7 @@ class DuckDBShadowStore:
                 "current": {f: cur_vals[i] for i, f in enumerate(fields)},
                 "vs_prior_mean": deltas,
             }
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return {}
 
     def get_source_mix_trend(self, days: int = 14) -> list[dict]:
@@ -4833,7 +4908,7 @@ class DuckDBShadowStore:
         try:
             fut = self._executor.submit(self._sync_query_source_mix_trend, _time.time() - days * 86400)
             return fut.result()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB query failure; non-critical
             return []
 
     def _sync_query_source_mix_trend(self, since_ts: float) -> list[dict]:
@@ -4855,7 +4930,7 @@ class DuckDBShadowStore:
                 }
                 for r in rows
             ]
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
             return []
 
     def get_yield_trend(self, last_n: int = 8) -> list[dict]:
@@ -4872,7 +4947,7 @@ class DuckDBShadowStore:
         try:
             fut = self._executor.submit(self._sync_query_yield_trend, last_n)
             return fut.result()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB query failure; non-critical
             return []
 
     def _sync_query_yield_trend(self, last_n: int) -> list[dict]:
@@ -4902,7 +4977,7 @@ class DuckDBShadowStore:
                     }
                 )
             return result
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
             return []
 
     def get_high_value_sprint_ranking(self, last_n: int = 8) -> list[dict]:
@@ -4919,7 +4994,7 @@ class DuckDBShadowStore:
         try:
             fut = self._executor.submit(self._sync_query_high_value_ranking, last_n)
             return fut.result()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB query failure; non-critical
             return []
 
     def _sync_query_high_value_ranking(self, last_n: int) -> list[dict]:
@@ -4944,7 +5019,7 @@ class DuckDBShadowStore:
                 }
                 for r in rows
             ]
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return []
 
     def get_scorecard_consistency_check(self, sprint_id: str) -> dict:
@@ -4964,7 +5039,7 @@ class DuckDBShadowStore:
         try:
             fut = self._executor.submit(self._sync_query_consistency_check, sprint_id)
             return fut.result()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB query failure; non-critical
             return {}
 
     def _sync_query_consistency_check(self, sprint_id: str) -> dict:
@@ -4995,7 +5070,7 @@ class DuckDBShadowStore:
                 "new_findings": r[3] or 0,
                 "duration_s": r[4] or 0.0,
             }
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return {}
 
     def get_recent_best_sprints(self, last_n: int = 5) -> list[dict]:
@@ -5008,7 +5083,7 @@ class DuckDBShadowStore:
         try:
             fut = self._executor.submit(self._sync_query_best_sprints, last_n)
             return fut.result()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB query failure; non-critical
             return []
 
     def _sync_query_best_sprints(self, last_n: int) -> list[dict]:
@@ -5036,7 +5111,7 @@ class DuckDBShadowStore:
                 }
                 for r in rows
             ]
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return []
 
     def get_recent_worst_sprints(self, last_n: int = 5) -> list[dict]:
@@ -5050,7 +5125,7 @@ class DuckDBShadowStore:
         try:
             fut = self._executor.submit(self._sync_query_worst_sprints, last_n)
             return fut.result()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB query failure; non-critical
             return []
 
     def _sync_query_worst_sprints(self, last_n: int) -> list[dict]:
@@ -5078,7 +5153,7 @@ class DuckDBShadowStore:
                 }
                 for r in rows
             ]
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return []
 
     async def async_record_activation(
@@ -5139,7 +5214,7 @@ class DuckDBShadowStore:
                 error=None,
                 accepted=True,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return ActivationResult(
                 finding_id=str(finding_id),
                 lmdb_success=False,
@@ -5220,7 +5295,7 @@ class DuckDBShadowStore:
                     )
                 )
             return results
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return [
                 ActivationResult(
                     finding_id=str(f.get("id", "")),
@@ -5264,7 +5339,7 @@ class DuckDBShadowStore:
                 )
                 if SourceType is not None and _raw not in SourceType._value2member_map_:
                     finding.source_type = canonical_source_type(_raw)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
         if not self._initialized or self._closed:
             return ActivationResult(
@@ -5304,7 +5379,7 @@ class DuckDBShadowStore:
                 error=result.get("error"),
                 accepted=lmdb_ok,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return ActivationResult(
                 finding_id=str(finding.finding_id),
                 lmdb_success=False,
@@ -5358,7 +5433,7 @@ class DuckDBShadowStore:
             if not lmdb_ok:
                 _logger.warning(f"[Sprint 8P] WAL failed for {finding.finding_id}")
                 return result
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             result["error"] = str(e)
             _logger.error(f"[Sprint 8P] WAL exception for {finding.finding_id}: {e}")
             return result
@@ -5378,7 +5453,7 @@ class DuckDBShadowStore:
                 self._wal_manager.wal_write_pending_sync_marker(
                     finding.finding_id, finding.query, finding.source_type, finding.confidence
                 )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             result["duckdb_success"] = False
             result["error"] = str(e)
             _logger.error(f"[Sprint 8P] DuckDB exception for {finding.finding_id}: {e}, LMDB preserved")
@@ -5440,7 +5515,7 @@ class DuckDBShadowStore:
                         for f in findings:
                             ret.append({"lmdb_success": False, "duckdb_success": None, "error": "lmdb batch failed"})
                         return ret
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 _logger.error(f"[D7] Batch WAL exception: {e}")
                 for f in findings:
                     ret.append({"lmdb_success": False, "duckdb_success": None, "error": str(e)})
@@ -5455,7 +5530,7 @@ class DuckDBShadowStore:
                     duckdb_all_ok = True
                 else:
                     duckdb_all_ok = True
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 _logger.error(f"[D7] Batch DuckDB exception: {e}, LMDB preserved")
                 duckdb_all_ok = False
             accepted_total = 0
@@ -5539,7 +5614,7 @@ class DuckDBShadowStore:
                     )
                     for r in results
                 ]
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 return [
                     ActivationResult(
                         finding_id=str(f.founding_id),
@@ -5729,7 +5804,7 @@ class DuckDBShadowStore:
         loop = asyncio.get_running_loop()
         try:
             rows: list[dict] = await loop.run_in_executor(self._executor, self._sync_query_findings, limit)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             return []
         findings: list[CanonicalFinding] = []
         for row in rows:
@@ -5742,7 +5817,7 @@ class DuckDBShadowStore:
                             decoded = msgspec.json.decode(raw_prov.encode())
                             if isinstance(decoded, list):
                                 provenance = tuple((str(v) for v in decoded))
-                        except Exception:
+                        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                             provenance = ()
                     elif isinstance(raw_prov, list):
                         provenance = tuple((str(v) for v in raw_prov))
@@ -5756,7 +5831,7 @@ class DuckDBShadowStore:
                     payload_text=row.get("payload_text"),
                 )
                 findings.append(finding)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 continue
         return findings
 
@@ -5773,7 +5848,7 @@ class DuckDBShadowStore:
         loop = asyncio.get_running_loop()
         try:
             await loop.run_in_executor(self._executor, self._sync_upsert_target_profile, profile)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             pass
 
     async def async_get_target_profile(self, target_id: str) -> TargetProfileSummary | None:
@@ -5789,7 +5864,7 @@ class DuckDBShadowStore:
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(self._executor, self._sync_get_target_profile, target_id)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             return None
 
     async def async_upsert_target_memory(self, memory: TargetMemory) -> None:
@@ -5812,7 +5887,7 @@ class DuckDBShadowStore:
             await loop.run_in_executor(self._executor, self._sync_upsert_target_memory, memory)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB write failure; non-critical
             pass
 
     async def async_get_target_memory(self, target_id: str) -> TargetMemory | None:
@@ -5852,7 +5927,7 @@ class DuckDBShadowStore:
             return await loop.run_in_executor(self._executor, _sync_get)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; async operation failure; non-critical
             return None
 
     async def async_record_research_session(
@@ -5892,7 +5967,7 @@ class DuckDBShadowStore:
             )
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; async operation failure; non-critical
             return False
 
     async def async_record_entity_observations_bulk(self, observations: list[dict[str, Any]]) -> int:
@@ -5905,7 +5980,7 @@ class DuckDBShadowStore:
             return await loop.run_in_executor(self._executor, self._sync_record_entity_observations_bulk, observations)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; async operation failure; non-critical
             return 0
 
     async def async_get_research_sessions_by_sprint(self, sprint_id: str) -> list[dict[str, Any]]:
@@ -5918,7 +5993,7 @@ class DuckDBShadowStore:
             return await loop.run_in_executor(self._executor, self._sync_get_research_sessions_by_sprint, sprint_id)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; async operation failure; non-critical
             return []
 
     async def async_get_entity_observations_by_entity(self, entity_value: str, limit: int = 50) -> list[dict[str, Any]]:
@@ -5933,7 +6008,7 @@ class DuckDBShadowStore:
             )
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; async operation failure; non-critical
             return []
 
     async def async_get_recent_research_sessions(self, limit: int = 10) -> list[dict[str, Any]]:
@@ -5946,7 +6021,7 @@ class DuckDBShadowStore:
             return await loop.run_in_executor(self._executor, self._sync_get_recent_research_sessions, limit)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; async operation failure; non-critical
             return []
 
     async def async_get_previous_findings_for_target(
@@ -5975,7 +6050,7 @@ class DuckDBShadowStore:
             rows: list[dict] = await loop.run_in_executor(
                 self._executor, self._sync_get_previous_findings_for_target, target_id, before_sprint_id, limit
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; async operation failure; non-critical
             return []
         findings: list[CanonicalFinding] = []
         for row in rows:
@@ -5988,7 +6063,7 @@ class DuckDBShadowStore:
                             decoded = msgspec.json.decode(raw_prov.encode())
                             if isinstance(decoded, list):
                                 provenance = tuple((str(v) for v in decoded))
-                        except Exception:
+                        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                             provenance = ()
                     elif isinstance(raw_prov, list):
                         provenance = tuple((str(v) for v in raw_prov))
@@ -6002,7 +6077,7 @@ class DuckDBShadowStore:
                     payload_text=row.get("payload_text"),
                 )
                 findings.append(finding)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 continue
         return findings
 
@@ -6027,7 +6102,7 @@ class DuckDBShadowStore:
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(self._executor, self._sync_record_hypothesis_feedback, record)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             return False
 
     async def async_get_hypothesis_feedback(self, target_id: str | None = None, limit: int = 1000) -> list[Any]:
@@ -6052,7 +6127,7 @@ class DuckDBShadowStore:
             rows: list[dict] = await loop.run_in_executor(
                 self._executor, self._sync_get_hypothesis_feedback, target_id, limit
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; async operation failure; non-critical
             return []
         from hledac.universal.runtime.hypothesis_feedback import HypothesisFeedbackRecord
 
@@ -6071,7 +6146,7 @@ class DuckDBShadowStore:
                         ts=float(row["ts"] or 0.0),
                     )
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 continue
         return records
 
@@ -6109,7 +6184,7 @@ class DuckDBShadowStore:
                 disproved_by_sprint_id,
             )
             return True
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return False
 
     def _sync_record_hypothesis_tracking(
@@ -6199,7 +6274,7 @@ class DuckDBShadowStore:
                                 decoded = msgspec.json.decode(raw_prov.encode())
                                 if isinstance(decoded, list):
                                     provenance = tuple((str(v) for v in decoded))
-                            except Exception:
+                            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                                 provenance = ()
                     canonical_findings.append(
                         CanonicalFinding(
@@ -6212,7 +6287,7 @@ class DuckDBShadowStore:
                             payload_text=f.get("payload_text"),
                         )
                     )
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     continue
             else:
                 continue
@@ -6329,7 +6404,7 @@ class DuckDBShadowStore:
                             }
                         )
                     return results
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             _logger.error(f"[Sprint 8P] Batch WAL exception: {e}")
             for f in findings:
                 results.append(
@@ -6345,7 +6420,7 @@ class DuckDBShadowStore:
             duckdb_all_ok = inserted >= len(findings)
             if inserted < len(findings):
                 _logger.error(f"[Sprint 8P] Partial DuckDB batch: {inserted}/{len(findings)}")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             _logger.error(f"[Sprint 8P] Batch DuckDB exception: {e}, LMDB preserved")
             duckdb_all_ok = False
         for _i, f in enumerate(findings):
@@ -6428,7 +6503,7 @@ class DuckDBShadowStore:
                             deduped.append(key)
                     ioc_items.append(deduped)
                     has_any_ioc.append(bool(deduped))
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
                 ioc_items = [[] for _ in findings]
                 has_any_ioc = [False] * n
         else:
@@ -6444,8 +6519,11 @@ class DuckDBShadowStore:
         if all_iocs_flat and self._dedup_manager is not None:
             try:
                 ioc_dup_flags = self._dedup_manager.is_duplicate_ioc_batch(all_iocs_flat)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
                 pass
+
+        # ISSUE-FXXX: Collect all (fp, finding_id) pairs for batch dedup flush.
+        _dedup_batch: list[tuple[str, str]] = []
 
         for idx, f in enumerate(findings):
             rd = rust_decisions[idx]
@@ -6497,7 +6575,7 @@ class DuckDBShadowStore:
                 )
                 continue
             if url_fp:
-                self._store_persistent_dedup(fp, f.finding_id)
+                _dedup_batch.append((fp, f.finding_id))
                 if not is_feed_source:
                     self._add_to_hot_cache(fp, f.finding_id)
                 results[idx] = FindingQualityDecision(
@@ -6518,9 +6596,9 @@ class DuckDBShadowStore:
                                     entropy=entropy, normalized_hash=fp, duplicate=True,
                                 )
                                 continue
-                    except Exception:
+                    except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                         pass
-                self._store_persistent_dedup(fp, f.finding_id)
+                _dedup_batch.append((fp, f.finding_id))
                 if not is_feed_source:
                     self._add_to_hot_cache(fp, f.finding_id)
                 results[idx] = FindingQualityDecision(
@@ -6547,7 +6625,7 @@ class DuckDBShadowStore:
                                 entropy=entropy, normalized_hash=fp, duplicate=True,
                             )
                             continue
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     pass
             new_iocs_for_batch: list[tuple[str, str, float]] = []
             if has_any_ioc[idx]:
@@ -6567,7 +6645,7 @@ class DuckDBShadowStore:
                     for (val, ioc_type), is_dup in zip(finding_iocs, finding_ioc_dup_flags)
                     if not is_dup
                 ]
-            self._store_persistent_dedup(fp, f.finding_id)
+            _dedup_batch.append((fp, f.finding_id))
             if not is_feed_source:
                 self._add_to_hot_cache(fp, f.finding_id)
             if new_iocs_for_batch and self._dedup_manager is not None:
@@ -6578,6 +6656,14 @@ class DuckDBShadowStore:
             results[idx] = FindingQualityDecision(
                 accepted=True, reason=None, entropy=entropy, normalized_hash=fp, duplicate=False
             )
+
+        # ISSUE-FXXX: Flush all dedup writes in one batch = one LMDB transaction.
+        if _dedup_batch and self._dedup_manager is not None:
+            try:
+                self._dedup_manager.store_persistent_dedup_batch(_dedup_batch)
+            except Exception as e:  # noqa: BLE001 — best-effort; export failure; non-critical
+                logger.debug(f"[DUCKDB] store_persistent_dedup_batch failed: {e}")
+
         return results
 
     def _assess_finding_quality(self, finding: CanonicalFinding) -> FindingQualityDecision:
@@ -6674,7 +6760,7 @@ class DuckDBShadowStore:
                                 normalized_hash=fingerprint,
                                 duplicate=True,
                             )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     _logger.warning(f"Quality gate error (short_string path): {e}")
             self._store_persistent_dedup(fingerprint, finding.finding_id)
             if not _is_feed_source:
@@ -6720,7 +6806,7 @@ class DuckDBShadowStore:
                             normalized_hash=fingerprint,
                             duplicate=True,
                         )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 _logger.warning(f"Quality gate error (entropy path): {e}")
         self._store_persistent_dedup(fingerprint, finding.finding_id)
         if not _is_feed_source:
@@ -6770,7 +6856,7 @@ class DuckDBShadowStore:
                         # Convert Rust dict output to FindingQualityDecision,
                         # then apply only the stateful Python checks.
                         return self._apply_stateful_quality_checks(findings, rust_decisions)
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     pass  # Fall through to legacy implementation
 
         # Legacy implementation — runs when Rust fast path is unavailable or failed
@@ -6794,7 +6880,7 @@ class DuckDBShadowStore:
                             deduped.append(key)
                     ioc_items.append(deduped)
                     has_any_ioc.append(bool(deduped))
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
                 ioc_items = [[] for _ in findings]
                 has_any_ioc = [False] * len(findings)
         else:
@@ -6809,7 +6895,7 @@ class DuckDBShadowStore:
         if all_iocs_flat and self._dedup_manager is not None:
             try:
                 ioc_dup_flags = self._dedup_manager.is_duplicate_ioc_batch(all_iocs_flat)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
                 pass
         url_fingerprints: list[str] = [""] * n
         entropies: list[float] = [0.0] * n
@@ -6836,7 +6922,7 @@ class DuckDBShadowStore:
                     batch_urls: list[str] = _rust_batch_url_fingerprints(url_texts)
                     for j, idx in enumerate(url_indices):
                         url_fingerprints[idx] = batch_urls[j]
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     for j, idx in enumerate(url_indices):
                         url_fingerprints[idx] = _compute_url_fingerprint(url_texts[j])
             else:
@@ -6847,30 +6933,36 @@ class DuckDBShadowStore:
             if _QUALITY_GATE_BATCH_AVAILABLE and _rust_batch_normalize_quality_text is not None:
                 try:
                     normalized_batch: list[str] = _rust_batch_normalize_quality_text(payload_texts)
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     normalized_batch = [_normalize_for_quality(t) for t in payload_texts]
             else:
                 normalized_batch = [_normalize_for_quality(t) for t in payload_texts]
             if _QUALITY_GATE_BATCH_AVAILABLE and _rust_batch_entropy is not None:
                 try:
                     entropies_batch: list[float] = _rust_batch_entropy(normalized_batch)
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     entropies_batch = [_compute_entropy(t) for t in normalized_batch]
             else:
                 entropies_batch = [_compute_entropy(t) for t in normalized_batch]
             if _QUALITY_GATE_BATCH_AVAILABLE and _rust_batch_dedup_fingerprints is not None:
                 try:
                     fps_batch: list[str] = _rust_batch_dedup_fingerprints(normalized_batch)
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     try:
                         fps_batch = [_rust_dedup_fingerprint(t) for t in normalized_batch]
-                    except Exception:
+                    except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                         fps_batch = [_compute_dedup_fingerprint(t) for t in normalized_batch]
             else:
                 fps_batch = [_compute_dedup_fingerprint(t) for t in normalized_batch]
             for j, idx in enumerate(payload_indices):
                 entropies[idx] = entropies_batch[j]
                 fingerprints[idx] = fps_batch[j]
+        # ISSUE-FXXX: Collect all (fp, finding_id) pairs for batch dedup flush.
+        # Previously each accepted finding wrote a single-item LMDB transaction
+        # (putmulti of 1 pair = txn.begin + cursor.putmulti + txn.commit).
+        # Batch: one txn.begin + N×cursor.putmulti + txn.commit per chunk.
+        _dedup_batch: list[tuple[str, str]] = []
+
         for idx, f in enumerate(findings):
             url_fp = url_fingerprints[idx]
             fp = fingerprints[idx]
@@ -6895,7 +6987,7 @@ class DuckDBShadowStore:
                 )
                 continue
             if url_fp:
-                self._store_persistent_dedup(fp, f.finding_id)
+                _dedup_batch.append((fp, f.finding_id))
                 if not is_feed_source:
                     self._add_to_hot_cache(fp, f.finding_id)
                 results[idx] = FindingQualityDecision(
@@ -6919,9 +7011,9 @@ class DuckDBShadowStore:
                                     duplicate=True,
                                 )
                                 continue
-                    except Exception:
+                    except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                         pass
-                self._store_persistent_dedup(fp, f.finding_id)
+                _dedup_batch.append((fp, f.finding_id))
                 if not is_feed_source:
                     self._add_to_hot_cache(fp, f.finding_id)
                 results[idx] = FindingQualityDecision(
@@ -6951,7 +7043,7 @@ class DuckDBShadowStore:
                                 duplicate=True,
                             )
                             continue
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     pass
             new_iocs_for_batch: list[tuple[str, str, float]] = []
             if has_any_ioc[idx]:
@@ -6971,7 +7063,7 @@ class DuckDBShadowStore:
                     for (val, ioc_type), is_dup in zip(finding_iocs, finding_ioc_dup_flags)
                     if not is_dup
                 ]
-            self._store_persistent_dedup(fp, f.finding_id)
+            _dedup_batch.append((fp, f.finding_id))
             if not is_feed_source:
                 self._add_to_hot_cache(fp, f.finding_id)
             if new_iocs_for_batch and self._dedup_manager is not None:
@@ -6982,6 +7074,14 @@ class DuckDBShadowStore:
             results[idx] = FindingQualityDecision(
                 accepted=True, reason=None, entropy=entropy, normalized_hash=fp, duplicate=False
             )
+
+        # ISSUE-FXXX: Flush all dedup writes in one batch = one LMDB transaction.
+        if _dedup_batch and self._dedup_manager is not None:
+            try:
+                self._dedup_manager.store_persistent_dedup_batch(_dedup_batch)
+            except Exception as e:  # noqa: BLE001 — best-effort; export failure; non-critical
+                logger.debug(f"[DUCKDB] store_persistent_dedup_batch failed: {e}")
+
         assert None not in results, "_assess_finding_quality_batch: 1:1 invariant violated"
         return results
 
@@ -7000,7 +7100,7 @@ class DuckDBShadowStore:
         """
         try:
             decision = self._assess_finding_quality(finding)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             self._quality_state._quality_fail_open_count += 1
             result = await self.async_record_canonical_finding(finding)
             return result
@@ -7104,7 +7204,7 @@ class DuckDBShadowStore:
                 try:
                     from hledac.universal.security.temporal_anonymizer import TemporalAnonymizer
                     self._temporal_anonymizer = TemporalAnonymizer()
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     _do_zero_attribution = False
             if _do_zero_attribution:
                 _temporal_anonymizer = self._temporal_anonymizer
@@ -7125,7 +7225,7 @@ class DuckDBShadowStore:
                             decision = chunk_decisions[i_offset]
                     else:
                         decision = self._assess_finding_quality(f)
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     fail_open_chunk_findings.append(f)
                     fail_open_chunk_indices.append(i)
                     continue
@@ -7136,7 +7236,7 @@ class DuckDBShadowStore:
                     if _do_zero_attribution:
                         try:
                             f.timestamp = _temporal_anonymizer.anonymize_timestamp(f.timestamp)
-                        except Exception:
+                        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                             pass
                     chunk_accepted_findings.append(f)
                     chunk_accepted_indices.append(i)
@@ -7235,7 +7335,7 @@ class DuckDBShadowStore:
                                     _ioc_id = f"{ioc_type}:{xxhash.xxh64(ioc_value.encode()).hexdigest()}"
                                     buffer_ioc(ioc_type, ioc_value, 1.0)
                             flush_buffers()
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
                     pass
             self._schedule_graph_update(all_accepted_findings)
         assert None not in results, "Internal error: 1:1 invariant violated"
@@ -7263,7 +7363,7 @@ class DuckDBShadowStore:
                         compact_result.get("pages_reclaimed", -1),
                         compact_result.get("pages_free", -1),
                     )
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             pass
         try:
             _ingest_end = _time.monotonic()
@@ -7272,7 +7372,7 @@ class DuckDBShadowStore:
             from hledac.universal.metrics_registry import get_metrics_registry
 
             get_metrics_registry().set_gauge("duckdb_ingest_latency_ms", _ingest_latency_ms)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             pass
         return results
 
@@ -7326,7 +7426,7 @@ class DuckDBShadowStore:
             else:
                 return False
             return self._wal_lmdb.put(key, existing)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return False
 
     async def async_ingest_findings_with_envelope(
@@ -7393,7 +7493,7 @@ class DuckDBShadowStore:
                 return None
             payload_text = entry.get("payload_text")
             return self._payload_to_envelope(payload_text)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return None
 
     async def async_get_findings_with_envelope(self, limit: int = 20) -> list[dict]:
@@ -7473,7 +7573,7 @@ class DuckDBShadowStore:
                     if duckdb_err is not None:
                         return (0, "duckdb_insert_failed")
                     return (duckdb_count, None)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; Arrow/Parquet operation; non-critical
                 pass
         try:
             provenance_raw = [_provenance_to_arrow_native(f.provenance) for f in findings]
@@ -7487,7 +7587,7 @@ class DuckDBShadowStore:
                 [id_arr, query_arr, src_arr, conf_arr, ts_arr, provenance_arr],
                 names=["id", "query", "source_type", "confidence", "ts", "provenance_json"],
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; DB query failure; non-critical
             import logging as _logging
 
             _logging.getLogger(__name__).error(f"[P0-4 Arrow] Table build failed: {type(e).__name__}: {e}")
@@ -7544,7 +7644,7 @@ class DuckDBShadowStore:
                     _logger.warning(f"[P1-2 WAL] Batch WAL: unexpected return type {type(results)}")
                     return False
             return True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             _logger.error(f"[P1-2 WAL] Batch WAL exception: {e}")
             return False
 
@@ -7607,7 +7707,7 @@ class DuckDBShadowStore:
                     for _ in findings:
                         ret.append({"lmdb_success": False, "duckdb_success": None, "error": "lmdb batch failed"})
                     return ret
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; Arrow/Parquet operation; non-critical
             _logger.error(f"[Arrow-standalone] WAL exception: {e}")
             for _ in findings:
                 ret.append({"lmdb_success": False, "duckdb_success": None, "error": str(e)})
@@ -7697,7 +7797,7 @@ class DuckDBShadowStore:
                     }
                     for r in rows
                 ]
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 return []
 
         return await loop.run_in_executor(self._executor, _sync_rrf_rank)
@@ -7804,7 +7904,7 @@ class DuckDBShadowStore:
                     result["read_back_verified"] = True
                     result["error"] = None
                     return result
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 pass
             result["marker_found"] = False
             result["error"] = f"no pending marker found for {finding_id}"
@@ -7822,7 +7922,7 @@ class DuckDBShadowStore:
                 result["error"] = f"WAL truth missing for {finding_id}"
                 return result
             result["wal_truth_found"] = True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             result["wal_truth_found"] = False
             result["error"] = f"WAL lookup failed: {e}"
             return result
@@ -7832,7 +7932,7 @@ class DuckDBShadowStore:
         try:
             db_written = await loop.run_in_executor(self._executor, self._sync_replay_single_marker, finding_id, marker)
             result["duckdb_written"] = db_written
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             result["duckdb_written"] = False
             result["error"] = f"DuckDB write exception: {e}"
         if not result["duckdb_written"]:
@@ -7855,7 +7955,7 @@ class DuckDBShadowStore:
         try:
             read_back_ok = await loop.run_in_executor(self._executor, self._sync_verify_duckdb_record, finding_id)
             result["read_back_verified"] = read_back_ok
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             result["read_back_verified"] = False
             result["error"] = f"read-back failed: {e}"
             return result
@@ -7988,13 +8088,13 @@ class DuckDBShadowStore:
                     size / 1024**3,
                     total_ram / 1024**3,
                 )
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             pass
         loop = asyncio.get_running_loop()
         try:
             await loop.run_in_executor(self._executor, self._vacuum_sync)
             return True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; async operation failure; non-critical
             logger.warning(f"[duckdb_vacuum] VACUUM failed: {e}")
             return False
 
@@ -8069,7 +8169,7 @@ class DuckDBShadowStore:
                             break
                         count += 1
             return count
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return 0
 
     @property
@@ -8123,7 +8223,7 @@ class DuckDBShadowStore:
                 results["memory_limit_ok"] = mem_mb <= 1024
             else:
                 results["memory_limit_ok"] = True
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; memory operation; non-critical
             results["memory_limit_ok"] = False
         try:
             temp_val = self._max_temp.strip().upper()
@@ -8137,14 +8237,14 @@ class DuckDBShadowStore:
                 results["temp_size_ok"] = temp_mb <= 1024
             else:
                 results["temp_size_ok"] = True
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             results["temp_size_ok"] = False
         if self._temp_dir is not None:
             try:
                 from hledac.universal.paths import RAMDISK_ROOT
 
                 results["temp_dir_on_ramdisk"] = str(self._temp_dir).startswith(str(RAMDISK_ROOT))
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 results["temp_dir_on_ramdisk"] = False
         else:
             results["temp_dir_on_ramdisk"] = True
@@ -8204,7 +8304,7 @@ class DuckDBShadowStore:
             if not db_ok:
                 _logger.error(f"[Sprint 8A] WAL-DuckDB desync: DuckDB write failed for {finding_id}, LMDB preserved")
                 self._wal_write_pending_sync_marker(finding_id, query, source_type, confidence)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             result["duckdb_success"] = False
             _logger.error(f"[Sprint 8A] WAL-DuckDB desync: DuckDB exception for {finding_id}: {e}, LMDB preserved")
             self._wal_write_pending_sync_marker(finding_id, query, source_type, confidence)
@@ -8245,7 +8345,7 @@ class DuckDBShadowStore:
                             value = _ORJSON_DECODER(vb)
                             ts = value.get("ts", 0.0)
                             markers.append((ts, key))
-                        except Exception:
+                        except Exception:  # noqa: BLE001 — best-effort; memory operation; non-critical
                             continue
             if len(markers) <= keep_count:
                 return 0
@@ -8259,7 +8359,7 @@ class DuckDBShadowStore:
             if evicted > 0:
                 _logger.warning(f"[P0-9] Evicted {evicted} oldest pending sync markers (limit={keep_count})")
             return evicted
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return 0
 
     def _wal_write_pending_sync_marker(self, finding_id: str, query: str, source_type: str, confidence: float) -> bool:
@@ -8298,7 +8398,7 @@ class DuckDBShadowStore:
                 "ts": _time.time(),
             }
             return self._wal_lmdb.put(key, value)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return False
 
     def _wal_scan_pending_sync_markers(self) -> list[dict[str, Any]]:
@@ -8333,10 +8433,10 @@ class DuckDBShadowStore:
                             vb = bytes(value_bytes) if isinstance(value_bytes, memoryview) else value_bytes
                             value = _ORJSON_DECODER(vb)
                             results.append(value)
-                        except Exception:
+                        except Exception:  # noqa: BLE001 — best-effort; memory operation; non-critical
                             continue
             return results
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; memory operation; non-critical
             return []
 
     def _wal_clear_pending_sync_marker(self, finding_id: str) -> bool:
@@ -8350,7 +8450,7 @@ class DuckDBShadowStore:
                 return False
             key = f"pending_duckdb_sync:{finding_id}"
             return self._wal_lmdb.delete(key)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             return False
 
     def _wal_write_deadletter_marker(
@@ -8378,7 +8478,7 @@ class DuckDBShadowStore:
                 "retry_count": retry_count,
             }
             return self._wal_lmdb.put(key, value)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return False
 
     def _wal_get_pending_marker(self, finding_id: str) -> dict[str, Any] | None:
@@ -8392,7 +8492,7 @@ class DuckDBShadowStore:
                 return None
             key = f"pending_duckdb_sync:{finding_id}"
             return self._wal_lmdb.get(key)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             return None
 
     def _wal_delete_deadletter_marker(self, finding_id: str) -> bool:
@@ -8404,7 +8504,7 @@ class DuckDBShadowStore:
                 return False
             key = f"{self.DEADLETTER_PREFIX}{finding_id}"
             return self._wal_lmdb.delete(key)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return False
 
     def _sync_replay_single_marker(self, finding_id: str, marker: dict[str, Any]) -> bool:
@@ -8422,7 +8522,7 @@ class DuckDBShadowStore:
                 confidence=marker.get("confidence", 1.0),
             )
             return db_ok
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB query failure; non-critical
             return False
 
     def _sync_verify_duckdb_record(self, finding_id: str) -> bool:
@@ -8447,7 +8547,7 @@ class DuckDBShadowStore:
                 sql = "SELECT 1 FROM canonical_findings WHERE id = ? LIMIT 1"
                 result = list(self.arrow_fetch_batch(self._persistent_conn, sql, [finding_id]))
                 return bool(result)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; Arrow/Parquet operation; non-critical
             return False
 
     def _get_and_bump_retry_count(self, finding_id: str) -> int:
@@ -8467,7 +8567,7 @@ class DuckDBShadowStore:
             key = f"pending_duckdb_sync:{finding_id}"
             self._wal_lmdb.put(key, marker)
             return new_count
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             return 0
 
     def _activation_record_findings_batch(self, findings: list[dict[str, Any]]) -> dict:
@@ -8516,7 +8616,7 @@ class DuckDBShadowStore:
                 if not lmdb_ok:
                     _logger.warning(f"[Sprint 8A] Batch WAL failed for {len(items)} items")
                     return result
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             _logger.error(f"[Sprint 8A] Batch WAL exception: {e}")
             return result
         try:
@@ -8536,7 +8636,7 @@ class DuckDBShadowStore:
                 result["count"] = inserted
                 if inserted < len(db_findings):
                     _logger.error(f"[Sprint 8A] Partial DuckDB batch: {inserted}/{len(db_findings)}, LMDB preserved")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             _logger.error(f"[Sprint 8A] Batch DuckDB exception: {e}, LMDB preserved")
         return result
 
@@ -8564,7 +8664,7 @@ class DuckDBShadowStore:
                 from hledac.universal.monitoring.alert_manager import get_lock_contention_tracker
 
                 get_lock_contention_tracker().record_attempt(acquired=True)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; lock failure; non-critical
                 pass
             return ("excl", f"PID {my_pid} acquired exclusive lock via GraphLockManager")
         denial = lock_mgr.denial_reason
@@ -8578,17 +8678,17 @@ class DuckDBShadowStore:
                 from hledac.universal.monitoring.alert_manager import get_lock_contention_tracker
 
                 get_lock_contention_tracker().record_attempt(acquired=False)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 pass
             msg = f"PID {my_pid} opening READ-ONLY (GraphLockManager denied: {denial})"
             if holder:
                 msg = f"PID {my_pid} opening READ-ONLY (holder PID {holder}: {denial})"
             return ("ro", msg)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             if test_conn is not None:
                 try:
                     test_conn.close()
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                     pass
             return (
                 None,
@@ -8608,7 +8708,7 @@ class DuckDBShadowStore:
         if self._db_path is None:
             try:
                 self._resolve_path()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 return
         if self._db_path is None:
             return
@@ -8623,7 +8723,7 @@ class DuckDBShadowStore:
                 if is_stale:
                     lock_path.unlink(missing_ok=True)
                     logger.debug(f"[DUCKDB] Removed stale lock {lock_path}: {reason}")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             logger.warning(f"[DUCKDB] Lock cleanup failed: {e}")
 
     def _do_close(self) -> None:
@@ -8639,7 +8739,7 @@ class DuckDBShadowStore:
         try:
             self._startup_ready.clear()
             self._startup_replay_done = False
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
             pass
         try:
             if hasattr(self, "_db_path") and self._db_path is not None:
@@ -8651,20 +8751,20 @@ class DuckDBShadowStore:
                     _lock_file = _lock_path.parent / (_lock_path.name + ".lock")
                     try:
                         _lock_file.unlink(missing_ok=True)
-                    except Exception:
+                    except Exception:  # noqa: BLE001 — best-effort; lock failure; non-critical
                         pass
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; lock failure; non-critical
             pass
         try:
             if hasattr(self, "_shared_executor") and self._shared_executor is not None:
                 self._shared_executor.shutdown(wait=False)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; lock failure; non-critical
             pass
         try:
             if self._query_cache is not None:
                 self._query_cache.close()
                 self._query_cache = None
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DB query failure; non-critical
             pass
 
     DEDUP_NAMESPACE: str = "dedup:"
@@ -8690,7 +8790,7 @@ class DuckDBShadowStore:
             self._dedup_lmdb_path = dedup_path
             self._dedup_lmdb_last_error = None
             self._dedup_lmdb_boot_error = None
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             self._dedup_lmdb = None
             self._dedup_lmdb_path = None
             self._dedup_lmdb_boot_error = str(e)
@@ -8738,7 +8838,7 @@ class DuckDBShadowStore:
             value_bytes = finding_id.encode("utf-8")
             with _dedup_lmdb._env.begin(write=True) as txn:
                 txn.put(key, value_bytes)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; export failure; non-critical
             pass
 
     def _add_to_hot_cache(self, fp: str, finding_id: str) -> None:
@@ -8892,7 +8992,7 @@ class DuckDBShadowStore:
                             rows.append((ioc_value, ioc_type, float(f.confidence), f.source_type or ""))
                     if rows:
                         truth_graph.upsert_ioc_batch(rows)
-                except Exception:
+                except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
                     pass
 
             tasks = getattr(self, "_bg_tasks", None)
@@ -8909,7 +9009,7 @@ class DuckDBShadowStore:
             if tasks.count >= _MAX_INFLIGHT_GRAPH_UPDATES:
                 return
             tasks.spawn(_graph_update_coro(), name="duckdb:_schedule_graph_update")
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             pass
 
     async def _checkpoint_loop(self) -> None:
@@ -8932,11 +9032,11 @@ class DuckDBShadowStore:
                 try:
                     self._file_conn.execute("PRAGMA checkpoint")
                     self._file_conn.execute("ANALYZE")
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                     _logger.debug(f"[P3-2] checkpoint/ANALYZE error: {e}")
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 _logger.debug(f"[P3-2] checkpoint loop error: {e}")
 
 
@@ -8964,5 +9064,5 @@ def create_owned_store() -> DuckDBShadowStore:
             return DuckDBShadowStore(db_path=db_path, temp_dir=temp_dir)
         else:
             return DuckDBShadowStore()
-    except Exception:
+    except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
         return DuckDBShadowStore()

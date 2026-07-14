@@ -60,6 +60,7 @@ def get_source_adapter(source_type: str) -> SourceEntry | None:
 
     Returns None if source_type is not registered.
     """
+    _ensure_adapters_registered()
     entry = _SOURCE_REGISTRY.get(source_type)
     if entry is None:
         return None
@@ -79,19 +80,47 @@ def get_source_adapter(source_type: str) -> SourceEntry | None:
 
 def list_registered_source_types() -> list[str]:
     """Return sorted list of all registered source types."""
+    _ensure_adapters_registered()
     return sorted(_SOURCE_REGISTRY.keys())
-_LAZY_SUBMODULES: dict[str, tuple[str, str]] = {'circl_pdns_adapter': ('hledac.universal.discovery.circl_pdns_adapter', 'async_search_circl_pdns'), 'dht_adapter': ('hledac.universal.discovery.dht_adapter', 'async_search_dht')}
+_LAZY_SUBMODULES: dict[str, tuple[str, str]] = {
+    'circl_pdns_adapter': ('hledac.universal.discovery.circl_pdns_adapter', 'async_search_circl_pdns'),
+    'dht_adapter':         ('hledac.universal.discovery.dht_adapter',         'async_search_dht'),
+    'ipfs_discovery':       ('hledac.universal.network.ipfs_client',            'ipfs_fetch_as_findings'),
+}
+
+# PEP 810 lazy registration — register source adapters on first access, not at import.
+# This avoids eager module-level side-effects that trigger I/O in __init__ or
+# transitively-loaded submodules during `from discovery import *`.
+_LAZY_ADAPTERS: tuple[tuple[str, str, str, int, str, str], ...] = (
+    ('circl_pdns',     'hledac.universal.discovery.circl_pdns_adapter', 'async_search_circl_pdns', 1, 'passive_dns',  'hledac.universal.discovery.circl_pdns_adapter'),
+    ('dht_discovery',  'hledac.universal.discovery.dht_adapter',         'async_search_dht',         3, 'experimental', 'hledac.universal.discovery.dht_adapter'),
+    ('ipfs_discovery', 'hledac.universal.network.ipfs_client',            'ipfs_fetch_as_findings',    3, 'experimental', 'hledac.universal.network.ipfs_client'),
+)
 
 def __getattr__(name: str) -> Any:
-    """PEP 810: lazily import submodules on demand from the discovery package."""
+    """PEP 810: lazily import submodules on demand + lazy source-adapter registration."""
     if name in _LAZY_SUBMODULES:
         mod_path, attr_name = _LAZY_SUBMODULES[name]
         mod = importlib.import_module(mod_path)
         return getattr(mod, attr_name)
     raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
-register_source_adapter('circl_pdns', SourceEntry(adapter=None, tier=1, acquisition_lane='passive_dns', _lazy_module='hledac.universal.discovery.circl_pdns_adapter', _lazy_attr='async_search_circl_pdns', _loaded=False))
-register_source_adapter('dht_discovery', SourceEntry(adapter=None, tier=3, acquisition_lane='experimental', _lazy_module='hledac.universal.discovery.dht_adapter', _lazy_attr='async_search_dht', _loaded=False))
-register_source_adapter('ipfs_discovery', SourceEntry(adapter=None, tier=3, acquisition_lane='experimental', _lazy_module='hledac.universal.network.ipfs_client', _lazy_attr='ipfs_fetch_as_findings', _loaded=False))
+
+def _ensure_adapters_registered() -> None:
+    """Register all lazy adapters once (idempotent)."""
+    for (source_type, mod_path, attr_name, tier, lane, _lazy_mod) in _LAZY_ADAPTERS:
+        if source_type not in _SOURCE_REGISTRY:
+            register_source_adapter(
+                source_type,
+                SourceEntry(
+                    adapter=None,
+                    tier=tier,
+                    acquisition_lane=lane,
+                    _lazy_module=mod_path,
+                    _lazy_attr=attr_name,
+                    _loaded=False,
+                ),
+            )
+
 _quality_cache: PyCacheDict[tuple[bool, bool, bool, str], int] = PyCacheDict(512, 300.0)
 
 def source_quality_score(parseable: bool, stable_schema: bool, identifier_rich: bool, source_tier: str) -> int:

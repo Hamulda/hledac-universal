@@ -170,7 +170,7 @@ async def _lookup_ip_batch_http(ips: list[str]) -> dict[str, dict[str, Any]]:
                 async with httpx.AsyncClient() as client:
                     resp = await client.post(_RIR_API_URL, json=payload, timeout=RIR_TIMEOUT_S)
                     if resp.status_code == 200:
-                        data = resp.json()
+                        data = await resp.json()
                         if isinstance(data, list):
                             for entry in data:
                                 if isinstance(entry, dict) and entry.get('status') == 'success':

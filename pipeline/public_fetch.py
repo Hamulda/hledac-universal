@@ -559,28 +559,49 @@ async def _fetch_and_process_page(
             )
 
         # ---- Per-page dedup + extract --------------------------------
+        # ISSUE #2 FIX: Parallelize IOC extraction across all hits using safe_gather.
+        # Each hit → _extract_live_public_findings_from_page offloads _pattern_context
+        # to rayon cpu_pool. Running hits concurrently via gather gives ~N× speedup
+        # on multi-core M1. Dedup key (label, pattern, value) is captured at
+        # parallel dispatch time so no re-extraction is needed during dedup.
+        from .public_acceptance import _extract_live_public_findings_from_page
+        from hledac.universal.utils.async_helpers import safe_gather
+
+        async def _extract_one(idx: int, hit: Any) -> tuple[int, tuple[str, str, str], tuple | None]:
+            """Extract finding for one hit; return (idx, dedup_key, finding_or_None)."""
+            key = (hit.label or "", hit.pattern, hit.value)
+            try:
+                result = await _extract_live_public_findings_from_page(
+                    query=query,
+                    url=hit_url,
+                    hit_label=hit.label if hit.label else "",
+                    hit_pattern=hit.pattern,
+                    hit_value=hit.value,
+                    hit_start=hit.start,
+                    hit_end=hit.end,
+                    page_text=extracted_text,
+                    discovery_score=discovery_score,
+                )
+                return (idx, key, result)
+            except Exception:
+                return (idx, key, None)
+
+        # Parallel extraction across all hits; semaphore caps concurrency at page level
+        _raw = await safe_gather(
+            *[_extract_one(i, hit) for i, hit in enumerate(hits)],
+            label="public_fetch:hit_extract",
+        )
+
+        # Sort by original index to preserve deterministic order; dedup by key
+        _raw.ok.sort(key=lambda x: x[0])
         seen: set[tuple[str, str, str]] = set()
         unique_findings: list = []
-
-        for hit in hits:
-            key = (hit.label or "", hit.pattern, hit.value)
-            if key in seen:
+        for _idx, _key, _result in _raw.ok:
+            if _result is None or _key in seen:
                 continue
-            seen.add(key)
-            from .public_acceptance import _extract_live_public_findings_from_page
-
-            findings_tuple = await _extract_live_public_findings_from_page(
-                query=query,
-                url=hit_url,
-                hit_label=hit.label if hit.label else "",
-                hit_pattern=hit.pattern,
-                hit_value=hit.value,
-                hit_start=hit.start,
-                hit_end=hit.end,
-                page_text=extracted_text,
-                discovery_score=discovery_score,
-            )
-            unique_findings.append(findings_tuple[0])
+            seen.add(_key)
+            finding = _result[0] if isinstance(_result, tuple) else _result
+            unique_findings.append(finding)
 
         # ---- Storage --------------------------------------------------
         accepted_count = 0

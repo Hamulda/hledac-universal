@@ -470,7 +470,7 @@ async def search_paste_sites(query: str, max_results: int=MAX_PASTE_RESULTS) -> 
             resp = await session.post('https://paste.gg/api/v1/pastes/search', json={'query': query, 'limit': 10}, timeout=15.0)
             if resp.status_code != 200:
                 return []
-            data = resp.json()
+            data = await resp.json()
             items = (data.get('data') or {}).get('pasties') or []
             item_list = items[:10]
 

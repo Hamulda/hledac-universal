@@ -35,10 +35,8 @@ def _resolve_rl_args(args: argparse.Namespace) -> argparse.Namespace:
 def _configure_logging() -> None:
     import logging
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    )
+    # NOTE: basicConfig removed — use utils.logging_config.configure_logging() instead.
+    # This prevents conflicts with structlog configuration from __main__.py
 
     # Suppress coremltools warnings about missing native libs on py3.14.
     class _CoremlNativeLibFilter(logging.Filter):

@@ -1710,12 +1710,18 @@ class StreamingMonitor:
                 return None
             _mark_surface_patched('StreamingMonitor._fetch_api')
             async with self._session.get(source.url, headers=headers) as response:
-                content = await response.text()
                 try:
-                    data = json.loads(content)
+                    # async JSON parse — httpx handles it natively, no event-loop block
+                    data = await response.json(content_type=None)
                     return json.dumps(data, indent=2, ensure_ascii=False)
-                except json.JSONDecodeError:
-                    return content
+                except Exception:
+                    # Fallback: try to pretty-print what we got
+                    content = await response.text()
+                    try:
+                        data = json.loads(content)
+                        return json.dumps(data, indent=2, ensure_ascii=False)
+                    except json.JSONDecodeError:
+                        return content
         except Exception as e:
             logger.error(f'API fetch failed for {source.source_id}: {e}')
             return None

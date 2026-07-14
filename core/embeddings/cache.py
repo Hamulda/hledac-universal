@@ -351,8 +351,7 @@ class EmbeddingCache:
     async def _load_meta(self) -> None:
         try:
             if self._meta_path.exists():
-                with open(self._meta_path) as f:
-                    content = f.read()
+                content = await asyncio.to_thread(self._meta_path.read_text)
                 meta = _msgspec_decode(content) if _msgspec_decode else msgspec.json.decode(content)
                 max_entries = meta.get("max_entries", self._max_shape()[0])
                 self._version = meta.get("version", _VERSION_INT8)
@@ -394,13 +393,14 @@ class EmbeddingCache:
                 "slot_mtimes": slot_mtimes,
                 "format": "int8_scale" if self._version >= _VERSION_INT8 else "float16",
             }
-            with open(self._meta_path, "w") as f:
-                if _msgspec_encode:
-                    f.write(_msgspec_encode(meta).decode())
-                else:
-                    import json
-
-                    json.dump(meta, f)
+            def _write_sync():
+                with open(self._meta_path, "w") as f:
+                    if _msgspec_encode:
+                        f.write(_msgspec_encode(meta).decode())
+                    else:
+                        import json
+                        json.dump(meta, f)
+            await asyncio.to_thread(_write_sync)
         except Exception as e:
             logger.debug(f"[EmbedCache] meta save failed (non-fatal): {e}")
 

@@ -1216,7 +1216,7 @@ async def query_ripe_stat_asn(ip: str) -> dict:
         s = await async_get_aiohttp_session()
         resp = await s.get('https://stat.ripe.net/data/prefix-overview/data.json', params={'resource': ip}, timeout=httpx.Timeout(15))
         if resp.status_code == 200:
-            data = resp.json().get('data', {})
+            data = (await resp.json()).get('data', {})
             asns = data.get('asns', [])
             return {'ip': ip, 'asn': asns[0].get('asn') if asns else None, 'holder': asns[0].get('holder') if asns else None, 'prefix': data.get('resource', ip), 'source': 'ripe_stat'}
     except Exception as e:

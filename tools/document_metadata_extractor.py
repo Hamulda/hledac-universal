@@ -36,22 +36,45 @@ logger = logging.getLogger(__name__)
 # LIBRARY AVAILABILITY FLAGS
 # =============================================================================
 
-from hledac.universal.utils.optional_imports import optional
+# fitz (PyMuPDF) — strict import with fallback
+try:
+    import fitz
+    FITZ_AVAILABLE = True
+except ImportError:
+    fitz = None  # type: ignore[assignment]
+    FITZ_AVAILABLE = False
 
-_fitz_mod = optional("fitz")
-FITZ_AVAILABLE = bool(_fitz_mod)
+# docx — strict import with fallback
+try:
+    import docx
+    DOCX_AVAILABLE = True
+except ImportError:
+    docx = None  # type: ignore[assignment]
+    DOCX_AVAILABLE = False
 
-_docx_mod = optional("docx")
-DOCX_AVAILABLE = bool(_docx_mod)
+# openpyxl — strict import with fallback
+try:
+    import openpyxl
+    OPENPYXL_AVAILABLE = True
+except ImportError:
+    openpyxl = None  # type: ignore[assignment]
+    OPENPYXL_AVAILABLE = False
 
-_openpyxl_mod = optional("openpyxl")
-OPENPYXL_AVAILABLE = bool(_openpyxl_mod)
+# PIL — strict import with fallback
+try:
+    from PIL import Image as PIL_Image
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_Image = None  # type: ignore[assignment]
+    PIL_AVAILABLE = False
 
-_pil_mod = optional("PIL:Image")
-PIL_AVAILABLE = bool(_pil_mod)
-
-_olevba_mod = optional("olevba")
-OLEVB_AVAILABLE = bool(_olevba_mod)
+# olevba — strict import with fallback
+try:
+    import olevba
+    OLEVB_AVAILABLE = True
+except ImportError:
+    olevba = None  # type: ignore[assignment]
+    OLEVB_AVAILABLE = False
 
 # =============================================================================
 # CONSTANTS
