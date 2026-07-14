@@ -14600,26 +14600,19 @@ class SprintScheduler:
                 self._memory_manager = None
 
         async def _prefetch_urls() -> None:
-            """ISSUE-121: Parallel DNS prefetch during Hermes load."""
+            """ISSUE-121: DNS prefetch during Hermes load — uses unified_transport.prefetch_dns.
+
+            Replaces blocking socket.getaddrinfo (M1 thread pool contention)
+            with async_getaddrinfo via prefetch_dns (LRU-bounded, fire-and-forget).
+            """
             try:
-                import re as _re
-                import socket
-
                 _query = getattr(self, "_query", "") or ""
-                _domain_m = _re.search("https?://([^/]+)", _query)
-                if not _domain_m:
-                    return
-                _domain = _domain_m.group(1)
-                _hosts = [f"{p}.{_domain}" for p in _prefixes]
-                _loop = asyncio.get_running_loop()
-
-                async def _resolve_dns(host: str) -> None:
-                    try:
-                        await _loop.run_in_executor(None, lambda h=host: socket.getaddrinfo(h, 443))
-                    except Exception:
-                        pass
-
-                await bounded_parallel_map(_hosts, _resolve_dns, concurrency=5, ctx="dns_prefetch")
+                if _query and _query.startswith(("http://", "https://")):
+                    # ISSUE-010: Delegate to unified_transport.prefetch_dns
+                    # — async_getaddrinfo (no thread pool), LRU bounded (256 hosts),
+                    #   60s TTL, fire-and-forget
+                    from hledac.universal.transport import prefetch_dns
+                    await prefetch_dns([_query])
             except Exception:
                 pass
 

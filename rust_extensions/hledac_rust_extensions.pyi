@@ -683,6 +683,36 @@ def batch_strip_diacritics(texts: list[str]) -> list[str]:
     """Bounded batch diacritic stripping via rayon. Raises ValueError if >50 000 items."""
     ...
 
+# ISSUE #014: Pipeline operators via rayon (rust_extensions/src/pipeline_compose.rs)
+
+def pipeline_map(items: list[str], fn_name: str) -> list[Any]:
+    """MAP stage with named transform: "len", "lower", "upper", "strip", "hash_xxh3", "hash_xxh3_hex"."""
+    ...
+
+def pipeline_filter(items: list[str], fn_name: str) -> list[str]:
+    """FILTER stage with named predicate: "not_empty", "has_at", "has_scheme", "is_ascii", "len_gt_0", "len_lt_2048"."""
+    ...
+
+def pipeline_filter_map(items: list[str], filter_fn: str, map_fn: str) -> list[Any]:
+    """FILTER-MAP stage: filter first, then map on items that pass. fn names same as above."""
+    ...
+
+def pipeline_fold(items: list[str], fold_fn: str, initial: Any) -> Any:
+    """FOLD stage: "count", "sum_len", "concat_comma", "first", "last"."""
+    ...
+
+def pipeline_count(items: list[str], predicate_fn: str) -> int:
+    """COUNT items matching predicate: "not_empty", "has_at", "has_scheme", "is_ascii", "len_lt_2048"."""
+    ...
+
+def pipeline_compose_two(items: list[str], stage1: str, stage2: str) -> list[Any]:
+    """ISSUE #022: Compose two MAP stages in one rayon pass. "passthrough" = no-op. stage1+stage2: "len", "lower", "upper", "strip", "hash_xxh3", "hash_xxh3_hex"."""
+    ...
+
+def pipeline_batch_stats(items: list[str]) -> tuple[int, int, int, int, int]:
+    """Parallel stats: returns (count, sum_len, min_len, max_len, unique_count). Uses xxh3-64 for unique."""
+    ...
+
 # IOC dedup store helpers (rust_extensions/src/ioc_dedup.rs)
 
 def ioc_dedup_from_bytes(path: str) -> IocDedupStore:
@@ -912,6 +942,35 @@ def get_metal_limit_bytes_py(py: Any = None, /) -> int:
     """Probe Python get_dynamic_metal_cache_limit() from Rust. Returns bytes or 0 on failure."""
     ...
 
+# ISSUE #016: NVD API Rate Limiter — Token Bucket (rust_extensions/src/rate_limit.rs)
+
+class NvdRateLimiter:
+    """
+    NVD API rate limiter using token bucket algorithm.
+
+    ISSUE #016: NVD API has rate limits of 5 req/30s (no API key) or 50 req/30s (with API key).
+    This Rust-based implementation provides precise token bucket timing via a background thread,
+    avoiding Python asyncio.Semaphore precision issues on M1.
+
+    Usage:
+        limiter = NvdRateLimiter(has_api_key=False)  # 5 req/30s
+        if limiter.acquire(timeout=35.0):
+            # make NVD API call
+    """
+    def acquire(self, timeout_secs: float) -> bool:
+        """Wait for a token up to timeout_secs. Returns True if token acquired."""
+        ...
+    def try_acquire(self) -> bool:
+        """Non-blocking. Returns True if a token was immediately available."""
+        ...
+    def available_tokens(self) -> int:
+        """Return the current number of available tokens."""
+        ...
+
+def create_nvd_limiter(has_api_key: bool = False) -> NvdRateLimiter:
+    """Create an NVD rate limiter. has_api_key=False → 5 req/30s, True → 50 req/30s."""
+    ...
+
 # Pool runners — R4.1: Rayon pool wrappers (rust_extensions/src/pool_run.rs)
 
 def cpu_pool_run(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -924,6 +983,33 @@ def io_pool_run(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
 
 def mixed_pool_run(n_items: int, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     """Run a Python callable on the adaptive mixed pool (1-2 threads based on n_items). Wraps mixed_pool(n)."""
+    ...
+
+def rayon_submit(pool_type: str, n_items: int, func: Callable[..., Any], args: tuple[Any, ...]) -> int:
+    """Spawn a rayon pool task, return opaque handle (usize) for join/abort.
+
+    pool_type: "cpu" | "io" | "mixed"
+    n_items: batch size hint for mixed pool adaptive threading
+    func: Python callable
+    args: Python tuple of arguments
+
+    Returns: opaque handle pointer (int) to pass to rayon_join or rayon_abort.
+    """
+    ...
+
+def rayon_join(handle: int, /) -> Any:
+    """Wait for a rayon_submit task to complete and return the Python result.
+
+    handle: opaque handle from rayon_submit
+    Raises RuntimeError if handle already joined or was aborted.
+    """
+    ...
+
+def rayon_abort(handle: int, /) -> None:
+    """Abort a rayon_submit task (calls thread::spawn(...).abort()).
+
+    handle: opaque handle from rayon_submit
+    """
     ...
 
 # Compression — F265B-III (rust_extensions/src/compress.rs)
@@ -992,6 +1078,23 @@ def munmap_hugepage(addr: int, size: int) -> bool:
 
 def get_hugepage_size() -> int:
     """Get system huge page size in bytes (2MB on M1, 0 if unavailable)."""
+    ...
+
+def get_memory_snapshot() -> dict[str, Any]:
+    """Combined memory snapshot for M1 8GB SSOT surface.
+
+    Returns dict with keys:
+      - rss_bytes: u64 — current process RSS
+      - rss_gib: f64 — same in GiB
+      - peak_rss_bytes: u64 — peak RSS since process start
+      - available_memory_gib: f64 — system available RAM
+      - total_memory_gib: f64 — system total RAM
+      - metal_active_bytes: u64 — MLX Metal active memory
+      - metal_active_gib: f64 — same in GiB
+      - pressure_level: int — 0=normal, 1=elevated, 2=critical
+
+    All values are fail-safe (0 / 0.0 on error).
+    """
     ...
 
 # Zero-copy batch utilities — F265B-ZC (rust_extensions/src/zero_copy.rs)

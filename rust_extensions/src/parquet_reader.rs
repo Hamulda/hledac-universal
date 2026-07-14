@@ -37,6 +37,104 @@ const CANONICAL_COLUMNS: [&str; 6] = [
     "provenance_json",
 ];
 
+/// Row-group metadata for filter pushdown (M1 8GB safe).
+///
+/// Returns per row-group: (row_group_idx, min_ts, max_ts, num_rows).
+/// Enables O(1) row-group pruning before reading data.
+#[pyfunction]
+pub fn parquet_row_group_stats(path: &str) -> PyResult<Option<Vec<(usize, f64, f64, usize)>>> {
+    Python::attach(|py| {
+        let pa = match py.import("pyarrow") {
+            Ok(m) => m,
+            Err(_) => return Ok(None),
+        };
+        let pf_class = match pa.getattr("parquet") {
+            Ok(m) => m,
+            Err(_) => return Ok(None),
+        };
+        let pf = match pf_class.call_method1("ParquetFile", (path,)) {
+            Ok(f) => f,
+            Err(_) => return Ok(None),
+        };
+
+        let num_rg: usize = pf
+            .call_method0("num_row_groups")
+            .ok()
+            .and_then(|v| v.extract().ok())
+            .unwrap_or(0);
+
+        if num_rg == 0 {
+            return Ok(Some(Vec::new()));
+        }
+
+        // Read only ts column for row-group stats (column projection)
+        let cols_list = match PyList::new(py, &["ts"]) {
+            Ok(list) => list,
+            Err(_) => return Ok(None),
+        };
+
+        let mut results: Vec<(usize, f64, f64, usize)> = Vec::with_capacity(num_rg);
+
+        for rg_idx in 0..num_rg {
+            let batch_size: usize = 10_000; // Small batch for stats only
+
+            // Build row_groups list for iter_batches(batch_size, row_groups, columns)
+            let row_groups_list = match PyList::new(py, &[rg_idx]) {
+                Ok(list) => list,
+                Err(_) => break,
+            };
+
+            // Read single row-group with ts column only
+            // PyArrow signature: iter_batches(batch_size, row_groups=None, columns=None)
+            let batches = match pf.call_method1("iter_batches", (batch_size, &row_groups_list, &cols_list)) {
+                Ok(b) => b,
+                Err(_) => break,
+            };
+
+            let mut min_ts: Option<f64> = None;
+            let mut max_ts: Option<f64> = None;
+            let mut count: usize = 0;
+
+            // Iterate batches within row-group
+            let iter = batches.into_iter();
+            for batch_result in iter {
+                if batch_result.is_err() {
+                    break;
+                }
+                let batch = batch_result.unwrap();
+                let table = match batch.call_method0("to_table") {
+                    Ok(t) => t,
+                    Err(_) => break,
+                };
+                let col = match table.call_method0("column") {
+                    Ok(c) => c,
+                    Err(_) => break,
+                };
+                let arr = match col.call_method0("to_pylist") {
+                    Ok(a) => a,
+                    Err(_) => break,
+                };
+
+                for val in arr {
+                    count += 1;
+                    if let Some(ts_val) = val.extract::<f64>().ok() {
+                        min_ts = Some(min_ts.map_or(ts_val, |m| m.min(ts_val)));
+                        max_ts = Some(max_ts.map_or(ts_val, |m| m.max(ts_val)));
+                    }
+                }
+            }
+
+            if count > 0 {
+                results.push((row_group, min_ts.unwrap_or(0.0), max_ts.unwrap_or(0.0), count));
+            } else {
+                results.push((row_group, 0.0, 0.0, 0));
+            }
+        }
+
+        Ok(Some(results))
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Public PyO3 API
 // ---------------------------------------------------------------------------
@@ -296,6 +394,7 @@ pub fn parquet_read_table(
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(parquet_get_metadata, m)?)?;
+    m.add_function(wrap_pyfunction!(parquet_row_group_stats, m)?)?;
     m.add_function(wrap_pyfunction!(parquet_read_row_group_ipc, m)?)?;
     m.add_function(wrap_pyfunction!(parquet_iter_all_row_groups, m)?)?;
     m.add_function(wrap_pyfunction!(parquet_read_table, m)?)?;

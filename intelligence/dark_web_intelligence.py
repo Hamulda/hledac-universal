@@ -39,7 +39,20 @@ try:
 except ImportError:
     httpx_socks = None
 from hledac.universal.project_types import RiskLevel
+from hledac.universal.utils.async_helpers import parallel
+
 TOR_AVAILABLE = _HTTpx_SOCKS_AVAILABLE
+
+# Rust URL set — parking_lot::RwLock for thread-safe async dedup
+_RUST_URL_SET_AVAILABLE = False
+_UrlSet = None
+try:
+    from hledac.universal import rust
+    if hasattr(rust, "url_set"):
+        _RUST_URL_SET_AVAILABLE = True
+        _UrlSet = rust.url_set.MmapUrlSet
+except Exception:
+    pass
 try:
     from selectolax.parser import HTMLParser as _SelectolaxHTMLParser
     SELECTOLAX_AVAILABLE = True
@@ -74,6 +87,18 @@ class OnionType(Enum):
     V2 = 'v2'
     V3 = 'v3'
     UNKNOWN = 'unknown'
+
+
+@dataclass(slots=True, frozen=True)
+class CrawlTask:
+    """
+    ISSUE-017: BFS crawl task — single URL with depth for parallel processing.
+    Thread-safe: immutable (frozen=True), no internal mutable state.
+    """
+    url: str
+    depth: int
+    parent_url: str | None = None
+
 
 @dataclass(slots=True)
 class HiddenService:
@@ -234,7 +259,7 @@ class DarkWebCrawler:
     EMAIL_PATTERN = re.compile('[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}')
     MAGNET_PATTERN = re.compile('magnet:\\?xt=urn:btih:[a-fA-F0-9]{40}')
     PGP_BLOCK_PATTERN = re.compile('-----BEGIN PGP (PUBLIC|PRIVATE) KEY BLOCK-----.*?-----END PGP \\1 KEY BLOCK-----', re.DOTALL)
-    __slots__ = tuple(('content_cache', 'discovered_services', 'max_depth', 'max_pages_per_site', 'request_delay', 'respect_robots_txt', 'stats', 'tor_proxy', 'url_queue', 'visited_urls'))
+    __slots__ = tuple(('content_cache', 'discovered_services', 'max_depth', 'max_pages_per_site', 'request_delay', 'respect_robots_txt', 'stats', 'tor_proxy', 'url_queue', 'visited_urls', '_rust_url_set', '_bfs_queue', '_bfs_lock', '_bfs_sem'))
 
     def __init__(self, tor_proxy: TorProxyManager | None=None, max_depth: int=3, max_pages_per_site: int=100, request_delay: float=2.0, respect_robots_txt: bool=False):
         self.tor_proxy = tor_proxy or TorProxyManager()
@@ -247,21 +272,117 @@ class DarkWebCrawler:
         self.content_cache: OrderedDict[str, DarkWebContent] = OrderedDict()
         self.url_queue: asyncio.Queue = asyncio.Queue(maxsize=self.MAX_URL_QUEUE)
         self.stats = {'pages_crawled': 0, 'services_discovered': 0, 'bitcoin_addresses': 0, 'monero_addresses': 0, 'pgp_keys_found': 0, 'errors': 0}
+        # ISSUE-017: BFS engine — Rust URL dedup + bounded concurrency
+        self._rust_url_set = None  # lazy init in initialize()
+        self._bfs_queue: list[CrawlTask] = []
+        self._bfs_lock = asyncio.Lock()
+        self._bfs_sem: asyncio.Semaphore | None = None
 
     async def initialize(self) -> bool:
-        """Initialize the crawler."""
-        return await self.tor_proxy.initialize()
+        """Initialize the crawler + Rust URL set."""
+        ok = await self.tor_proxy.initialize()
+        if ok and _RUST_URL_SET_AVAILABLE and _UrlSet is not None:
+            try:
+                self._rust_url_set = _UrlSet('/tmp/darkweb_url_set_' + str(os.getpid()), False)
+                logger.debug('Rust MmapUrlSet initialized for BFS dedup')
+            except Exception as e:
+                logger.warning('Rust MmapUrlSet init failed, falling back to OrderedDict: %s', e)
+                self._rust_url_set = None
+        self._bfs_sem = asyncio.Semaphore(min(5, max(1, os.cpu_count() or 2)))
+        return ok
+
+    async def _crawl_single_onion(self, onion_address: str, depth: int) -> list[DarkWebContent]:
+        """Crawl a single onion address and return results list (for parallel())."""
+        if not onion_address.endswith('.onion'):
+            onion_address = f'{onion_address}.onion'
+        url = f'http://{onion_address}'
+        if url in self.visited_urls or depth > self.max_depth:
+            return []
+        self._bounded_insert_visited_url(url)
+        results = []
+        try:
+            content = await self._fetch_page(url)
+            if content:
+                results.append(content)
+                if depth < self.max_depth:
+                    links = self._extract_links(content.text_content, onion_address)
+                    fresh_links = [link for link in links[:10] if link not in self.visited_urls]
+                    if fresh_links and depth + 1 < self.max_depth:
+                        sub_results = await self._crawl_depth_parallel(fresh_links, depth + 1)
+                        results.extend(sub_results)
+        except Exception as e:
+            logger.error(f'Error crawling {url}: {e}')
+            self.stats['errors'] += 1
+        return results
+
+    async def _crawl_depth_parallel(self, links: list[str], depth: int) -> list[DarkWebContent]:
+        """
+        ISSUE-003: Parallelize crawling of multiple links at the same depth.
+        Uses bounded concurrency (max 3 concurrent Tor requests) for rate safety.
+        """
+        if not links or depth > self.max_depth:
+            return []
+        result = await parallel(
+            [self._crawl_single_onion(link, depth) for link in links],
+            concurrency=min(3, len(links)),
+            policy="collect",
+            ctx="darkweb_crawl",
+        )
+        all_results = []
+        for content_list in result.ok:
+            all_results.extend(content_list)
+        return all_results
 
     async def crawl_onion(self, onion_address: str, depth: int=0) -> AsyncIterator[DarkWebContent]:
         """
-        Crawl a Tor hidden service.
+        ISSUE-017: BFS crawl — bounded concurrency, Rust URL dedup.
 
-        Args:
-            onion_address: .onion address (with or without .onion suffix)
-            depth: Current crawl depth
+        Replaces depth-first serial crawling with breadth-first parallel
+        processing using asyncio.Queue + parallel() bounded concurrency.
 
-        Yields:
-            DarkWebContent objects
+        Pipeline: enqueue → parallel fetch → process results → enqueue new URLs
+        Rust MmapUrlSet (parking_lot::RwLock) for thread-safe URL dedup across coroutines.
+        """
+        if not onion_address.endswith('.onion'):
+            onion_address = f'{onion_address}.onion'
+        url = f'http://{onion_address}'
+        async with self._bfs_lock:
+            if self._is_url_visited(url):
+                return
+            self._mark_url_visited(url, None)
+        task = CrawlTask(url=url, depth=depth, parent_url=None)
+        async with self._bfs_lock:
+            self._bfs_queue.append(task)
+        if self._bfs_sem is None:
+            self._bfs_sem = asyncio.Semaphore(5)
+        while True:
+            batch: list[CrawlTask] = []
+            async with self._bfs_lock:
+                while self._bfs_queue and len(batch) < 5:
+                    t = self._bfs_queue.pop(0)
+                    if t.depth > self.max_depth:
+                        continue
+                    batch.append(t)
+            if not batch:
+                break
+            result = await parallel(
+                [self._crawl_task(task) for task in batch],
+                concurrency=5,
+                policy="collect",
+                ctx="darkweb_bfs",
+            )
+            for content_list in result.ok:
+                if content_list:
+                    for content in content_list:
+                        yield content
+            if result.errors:
+                self.stats['errors'] += len(result.errors)
+                for err in result.errors:
+                    logger.debug('BFS crawl error: %s', err)
+
+    async def crawl_onion_legacy(self, onion_address: str, depth: int=0) -> AsyncIterator[DarkWebContent]:
+        """
+        Legacy depth-first crawl (kept for backward compatibility).
         """
         if not onion_address.endswith('.onion'):
             onion_address = f'{onion_address}.onion'
@@ -275,13 +396,61 @@ class DarkWebCrawler:
                 yield content
                 if depth < self.max_depth:
                     links = self._extract_links(content.text_content, onion_address)
-                    for link in links[:10]:
-                        if link not in self.visited_urls:
-                            async for subcontent in self.crawl_onion(link, depth + 1):
-                                yield subcontent
+                    fresh_links = [link for link in links[:10] if link not in self.visited_urls]
+                    if fresh_links:
+                        sub_results = await self._crawl_depth_parallel(fresh_links, depth + 1)
+                        for sub_content in sub_results:
+                            yield sub_content
         except Exception as e:
             logger.error(f'Error crawling {url}: {e}')
             self.stats['errors'] += 1
+
+    def _is_url_visited(self, url: str) -> bool:
+        """Check if URL was visited (Rust MmapUrlSet or fallback OrderedDict)."""
+        if self._rust_url_set is not None:
+            return self._rust_url_set.contains(url)
+        return url in self.visited_urls
+
+    def _mark_url_visited(self, url: str, _: Any) -> None:
+        """Mark URL as visited (Rust MmapUrlSet or fallback OrderedDict)."""
+        if self._rust_url_set is not None:
+            self._rust_url_set.add(url)
+        else:
+            self._bounded_insert_visited_url(url)
+
+    async def _crawl_task(self, task: CrawlTask) -> list[DarkWebContent]:
+        """
+        ISSUE-017: Process single crawl task — fetch + extract links + enqueue new URLs.
+        Thread-safe: uses Rust MmapUrlSet (or OrderedDict fallback) for dedup.
+        """
+        # DEDUP: use unified _is_url_visited to keep Rust set and visited_urls in sync
+        if self._is_url_visited(task.url) or task.depth > self.max_depth:
+            return []
+        self._bounded_insert_visited_url(task.url)
+        results: list[DarkWebContent] = []
+        try:
+            content = await self._fetch_page(task.url)
+            if content:
+                results.append(content)
+                self.stats['pages_crawled'] += 1
+                if task.depth < self.max_depth:
+                    links = self._extract_links(content.text_content, task.url)
+                    fresh_links = [link for link in links[:10]]
+                    new_tasks: list[CrawlTask] = []
+                    for link in fresh_links:
+                        link_url = link if link.startswith('http') else f'http://{link}'
+                        if self._rust_url_set is not None:
+                            is_new = self._rust_url_set.add(link_url)
+                        else:
+                            is_new = link_url not in self.visited_urls
+                        if is_new:
+                            new_tasks.append(CrawlTask(url=link_url, depth=task.depth + 1, parent_url=task.url))
+                    async with self._bfs_lock:
+                        self._bfs_queue.extend(new_tasks)
+        except Exception as e:
+            logger.debug('Error crawling %s: %s', task.url, e)
+            self.stats['errors'] += 1
+        return results
 
     async def _fetch_page(self, url: str) -> DarkWebContent | None:
         """Fetch a single page through Tor."""
@@ -577,6 +746,15 @@ class DarkWebCrawler:
                 self.url_queue.get_nowait()
             except asyncio.QueueEmpty:
                 break
+        # ISSUE-017: clear BFS queue
+        self._bfs_queue.clear()
+        # Rust MmapUrlSet: clear + persist
+        if self._rust_url_set is not None:
+            try:
+                self._rust_url_set.clear()
+                self._rust_url_set.msync()
+            except Exception as e:
+                logger.debug('Rust MmapUrlSet clear error: %s', e)
         self.stats = {'pages_crawled': 0, 'services_discovered': 0, 'bitcoin_addresses': 0, 'monero_addresses': 0, 'pgp_keys_found': 0, 'errors': 0}
 
     async def close(self):

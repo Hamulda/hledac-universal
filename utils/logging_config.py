@@ -53,8 +53,8 @@ _SPRINT_CONTEXT: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar
 )
 
 
-def _inject_trace_context() -> dict[str, Any]:
-    """Pull trace_id/span_id from OTel context and inject into log extra."""
+def _get_trace_context() -> dict[str, Any]:
+    """Extract trace context dict for direct calls (non-structlog use)."""
     out: dict[str, Any] = {}
     try:
         from otel._instrumentation import current_span_id, current_trace_id
@@ -70,8 +70,19 @@ def _inject_trace_context() -> dict[str, Any]:
     return out
 
 
-def _inject_task_context() -> dict[str, Any]:
-    """Inject asyncio task info into log extra for context correlation."""
+def _inject_trace_context(logger: Any, method_name: str, event_dict: dict[str, Any]) -> dict[str, Any]:
+    """structlog processor: inject trace context into event_dict.
+
+    structlog processor protocol: (logger, method_name, event_dict) -> event_dict
+    """
+    ctx = _get_trace_context()
+    if ctx:
+        event_dict.update(ctx)
+    return event_dict
+
+
+def _get_task_context() -> dict[str, Any]:
+    """Extract task context dict for direct calls (non-structlog use)."""
     out: dict[str, Any] = {}
     try:
         task = asyncio.current_task()
@@ -89,13 +100,24 @@ def _inject_task_context() -> dict[str, Any]:
     return out
 
 
-def _json_renderer(_logger: Any, method: str, event: dict[str, Any]) -> None:
+def _inject_task_context(logger: Any, method_name: str, event_dict: dict[str, Any]) -> dict[str, Any]:
+    """structlog processor: inject task context into event_dict.
+
+    structlog processor protocol: (logger, method_name, event_dict) -> event_dict
+    """
+    ctx = _get_task_context()
+    if ctx:
+        event_dict.update(ctx)
+    return event_dict
+
+
+def _json_renderer(_logger: Any, method: str, event: dict[str, Any]) -> str:
     """structlog processor: render event as JSON line to stdout/stderr."""
     try:
         import msgspec.json as _json
 
-        ctx = _inject_trace_context()
-        task_ctx = _inject_task_context()
+        ctx = _get_trace_context()
+        task_ctx = _get_task_context()
         if ctx:
             event = {**ctx, **event}
         if task_ctx:
@@ -111,18 +133,21 @@ def _json_renderer(_logger: Any, method: str, event: dict[str, Any]) -> None:
         line = _json.encode(rendered)[:_MAX_LOG_LINE].decode("utf-8", errors="replace")
         out = sys.stderr if method.upper() in ("ERROR", "CRITICAL", "WARNING") else sys.stdout
         out.write(line + "\n")
+        return ""  # structlog requires non-None return
     except Exception:
         try:
-            print(f"[{method.upper()}] {event}", file=sys.stderr)
+            fallback = f"[{method.upper()}] {event}"
+            print(fallback, file=sys.stderr)
+            return fallback
         except Exception:
-            pass
+            return ""
 
 
-def _plain_renderer(_logger: Any, method: str, event: dict[str, Any]) -> None:
+def _plain_renderer(_logger: Any, method: str, event: dict[str, Any]) -> str:
     """structlog processor: render event as human-readable line."""
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-    ctx = _inject_trace_context()
-    task_ctx = _inject_task_context()
+    ctx = _get_trace_context()
+    task_ctx = _get_task_context()
 
     parts = [f"{ts} [{method.upper():8}]"]
     if ctx.get("trace_id"):
@@ -140,6 +165,7 @@ def _plain_renderer(_logger: Any, method: str, event: dict[str, Any]) -> None:
     line = " ".join(parts)[:_MAX_LOG_LINE]
     out = sys.stderr if method.upper() in ("ERROR", "CRITICAL", "WARNING") else sys.stdout
     print(line, file=out)
+    return ""  # structlog requires non-None return
 
 
 def _configure_stdlib_logging() -> None:

@@ -19,14 +19,18 @@ Python 3.14+: httpx 0.28+ native http2=True (no h2 extra needed for basic H2)
 Invariant:
   [UT-1] No network side effect at import time
   [UT-2] Lazy session creation on first await
-  [UT-3] Bounded pools: max 4 httpx, max 3 curl_cffi profiles
+  [UT-3] Bounded pools: max 4 httpx, max 3 curl_cffi profiles, max 256 DNS entries
   [UT-4] Fail-safe: any error returns None, caller has fallback path
   [UT-5] Sessions closed only via close_all() at winddown
+  [UT-6] DNS prefetch: fire-and-forget, never blocks transport
 """
 import asyncio
 import logging
 import time
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_fire_and_forget
+from collections import OrderedDict
+from urllib.parse import urlparse
+
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_fire_and_forget, async_getaddrinfo
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any
@@ -43,6 +47,10 @@ class TransportKind(Enum):
     CURL_CFFI = auto()
     CURL_CFFI_TOR = auto()
     CURL_CFFI_I2P = auto()
+    # H3-aware variants: prefer HTTP/3 via ALPN negotiation + 0-RTT for known servers
+    CURL_CFFI_H3 = auto()
+    CURL_CFFI_H3_TOR = auto()
+    CURL_CFFI_H3_I2P = auto()
 
 @dataclass(frozen=True, slots=True)
 class TransportPolicy:
@@ -67,6 +75,11 @@ POLICY_STEALTH_CHROME = TransportPolicy(kind=TransportKind.CURL_CFFI, tls_profil
 POLICY_STEALTH_SAFARI = TransportPolicy(kind=TransportKind.CURL_CFFI, tls_profile='safari17_4', timeout_s=15.0)
 POLICY_TOR = TransportPolicy(kind=TransportKind.CURL_CFFI_TOR, tls_profile='chrome136', timeout_s=30.0)
 POLICY_I2P = TransportPolicy(kind=TransportKind.CURL_CFFI_I2P, tls_profile='chrome136', timeout_s=30.0)
+# H3-aware policies: prefer HTTP/3 via ALPN for known servers (0-RTT enabled)
+POLICY_H3_CHROME = TransportPolicy(kind=TransportKind.CURL_CFFI_H3, tls_profile='chrome136', timeout_s=15.0)
+POLICY_H3_SAFARI = TransportPolicy(kind=TransportKind.CURL_CFFI_H3, tls_profile='safari17_4', timeout_s=15.0)
+POLICY_H3_TOR = TransportPolicy(kind=TransportKind.CURL_CFFI_H3_TOR, tls_profile='chrome136', timeout_s=30.0)
+POLICY_H3_I2P = TransportPolicy(kind=TransportKind.CURL_CFFI_H3_I2P, tls_profile='chrome136', timeout_s=30.0)
 _HTTPX_MAX_CLIENTS = 4
 
 class _HttpxPool:
@@ -145,17 +158,26 @@ class _CurlCffiPool:
             self._max_host_sessions = 64
             self._host_ttl_s = 300.0
 
-    async def get_session(self, host: str, profile: str='chrome110', proxy: str | None=None) -> tuple[bool, Any, str]:
+    async def get_session(self, host: str, profile: str='chrome110', proxy: str | None=None, http_version: Any=None) -> tuple[bool, Any, str]:
         """
         Get or create curl_cffi AsyncSession.
 
         Proxy is baked into the cache key so Tor vs I2P sessions are distinct.
+        http_version is included in cache key so H3 vs H2 sessions are distinct.
+
+        Args:
+            host: Target host for H3 ALPN negotiation.
+            profile: TLS JA3 profile (e.g., 'chrome136').
+            proxy: SOCKS proxy URL for Tor/I2P.
+            http_version: Optional HttpVersion.v3 hint for H3-capable servers.
+                          When set, curl_cffi will attempt HTTP/3 via ALPN.
 
         Returns:
             (success, session_or_None, used_profile)
         """
         from urllib.parse import urlparse
-        cache_key = f"{profile}:{proxy or ''}"
+        h3_hint = 'h3' if http_version else 'h2'
+        cache_key = f"{profile}:{proxy or ''}:{h3_hint}"
         async with self._lock:
             if cache_key in self._sessions:
                 cached_session, _cached_proxy = self._sessions[cache_key]
@@ -175,11 +197,12 @@ class _CurlCffiPool:
                     except Exception:
                         pass
             try:
-                from curl_cffi.requests import AsyncSession
+                from curl_cffi.requests import AsyncSession  # type: ignore[unresolved-import]
             except ImportError:
                 return (False, None, 'import_error')
             try:
-                session = AsyncSession(impersonate=profile, timeout=10.0, max_clients=25)
+                # http_version enables HTTP/3 ALPN negotiation in curl_cffi >= 0.7
+                session = AsyncSession(impersonate=profile, timeout=10.0, max_clients=25, http_version=http_version)
                 self._sessions[cache_key] = (session, proxy)
                 self._profile_order.append(cache_key)
                 await self._cache_host_locked(host, session, profile)
@@ -229,12 +252,107 @@ _curl_pool = _CurlCffiPool()
 _initialized = False
 _init_lock = asyncio.Lock()
 
+# Issue #010: DNS prefetch cache — LRU-bounded, zero network at import
+class _DnsCache:
+    """
+    LRU DNS cache for transport-layer prefetch.
+
+    Bounded: max 256 entries (~128KB RAM for 50-char hostname + 4IP)
+    TTL: 60s (balances freshness vs DNS overhead)
+    """
+    __slots__ = ('_cache', '_order', '_lock', '_max_size', '_ttl_s')
+
+    def __init__(self, max_size: int = 256, ttl_s: float = 60.0) -> None:
+        self._cache: dict[str, tuple[list[str], float]] = {}
+        self._order: OrderedDict[str, None] = OrderedDict()
+        self._lock = asyncio.Lock()
+        self._max_size = max_size
+        self._ttl_s = ttl_s
+
+    async def resolve(self, host: str) -> list[str] | None:
+        """Resolve hostname, returning cached IPs if fresh."""
+        now = time.monotonic()
+        async with self._lock:
+            if host in self._cache:
+                ips, cached_at = self._cache[host]
+                if now - cached_at < self._ttl_s:
+                    self._order.move_to_end(host)
+                    return ips
+                del self._cache[host]
+                self._order.pop(host, None)
+        # Miss — resolve async
+        try:
+            # Extract port from host:port if present
+            if ':' in host:
+                parts = host.rsplit(':', 1)
+                try:
+                    port = int(parts[1])
+                    real_host = parts[0]
+                except (ValueError, IndexError):
+                    port = 443
+                    real_host = host
+            else:
+                port = 443
+                real_host = host
+            infos = await async_getaddrinfo(real_host, port, timeout=2.0)
+            if infos:
+                ips = [info[4][0] for info in infos if len(info) > 4]
+                async with self._lock:
+                    if host in self._order:
+                        self._order.pop(host, None)
+                    while len(self._cache) >= self._max_size and self._order:
+                        oldest = self._order.popitem(last=False)
+                        if oldest[0] in self._cache:
+                            self._cache.pop(oldest[0], None)
+                    self._cache[host] = (ips, now)
+                    self._order[host] = None
+                return ips
+        except Exception:
+            pass
+        return None
+
+    async def prefetch(self, urls: list[str]) -> None:
+        """Prefetch DNS for top-N unique hosts from URL list. Fire-and-forget."""
+        hosts = set()
+        for url in urls[:50]:  # Cap at 50 URLs
+            try:
+                parsed = urlparse(url)
+                if parsed.netloc:
+                    clean_host = parsed.netloc.split(':')[0]
+                    hosts.add(clean_host)
+            except Exception:
+                continue
+        for host in hosts:
+            safe_create_task(self.resolve(host), name=f'dns_prefetch:{host}')
+
+    async def close(self) -> None:
+        async with self._lock:
+            self._cache.clear()
+            self._order.clear()
+
+_dns_cache = _DnsCache()
+
 async def close_all_transports() -> None:
     """Close all transport pools. Call at winddown."""
     global _initialized
-    await safe_gather_fire_and_forget(_httpx_pool.close_all(), _curl_pool.close_all(), label='close_all_transports')
+    await safe_gather_fire_and_forget(_httpx_pool.close_all(), _curl_pool.close_all(), _dns_cache.close(), label='close_all_transports')
     _initialized = False
     logger.debug('[TransportRuntime] all transports closed')
+
+
+async def prefetch_dns(urls: list[str]) -> None:
+    """
+    Prefetch DNS for top-50 unique hosts from URL list.
+
+    Call at acquisition prelude before parallel fetch phase.
+    Fire-and-forget: errors are swallowed, never blocks transport.
+    """
+    await _dns_cache.prefetch(urls)
+
+
+def dns_cache_status() -> dict[str, Any]:
+    """Return DNS cache telemetry snapshot."""
+    return {'cached_hosts': len(_dns_cache._cache), 'max_size': _dns_cache._max_size, 'ttl_s': _dns_cache._ttl_s}
 _TOR_PROXY = 'socks5h://127.0.0.1:9050'
 _I2P_PROXY = 'socks5h://127.0.0.1:4447'
 
@@ -266,17 +384,38 @@ async def get_transport_client(policy: TransportPolicy, url: str) -> tuple[bool,
         if client is None:
             return (False, None, 'httpx_unavailable')
         return (True, client, 'httpx_h2')
-    elif kind in (TransportKind.CURL_CFFI, TransportKind.CURL_CFFI_TOR, TransportKind.CURL_CFFI_I2P):
+    elif kind in (TransportKind.CURL_CFFI, TransportKind.CURL_CFFI_TOR, TransportKind.CURL_CFFI_I2P,
+                  TransportKind.CURL_CFFI_H3, TransportKind.CURL_CFFI_H3_TOR, TransportKind.CURL_CFFI_H3_I2P):
         profile = policy.tls_profile or 'chrome110'
         proxy: str | None = None
-        if kind == TransportKind.CURL_CFFI_TOR:
+        is_h3 = kind in (TransportKind.CURL_CFFI_H3, TransportKind.CURL_CFFI_H3_TOR, TransportKind.CURL_CFFI_H3_I2P)
+        if kind in (TransportKind.CURL_CFFI_TOR, TransportKind.CURL_CFFI_H3_TOR):
             proxy = ENV.get_str('TOR_SOCKS_PROXY_URL', _TOR_PROXY)
-        elif kind == TransportKind.CURL_CFFI_I2P:
+        elif kind in (TransportKind.CURL_CFFI_I2P, TransportKind.CURL_CFFI_H3_I2P):
             proxy = ENV.get_str('I2P_SOCKS_PROXY_URL', _I2P_PROXY)
-        ok, session, used_profile = await _curl_pool.get_session(host=host, profile=profile, proxy=proxy)
+        # Resolve HTTP/3 hint: for H3 variants or when Alt-Svc cache knows the host supports h3
+        http_version: Any = None
+        if is_h3:
+            try:
+                from hledac.universal.transport.http3_lane import http_version_for_curl_cffi as _h3_resolver
+                http_version = _h3_resolver(url)
+                # Fire-and-forget speculative probe to prime Alt-Svc cache for future requests.
+                # Safe: no-op if cache already warm, no-op outside event loop.
+                try:
+                    from hledac.universal.transport.http3_lane import probe_altsvc_speculative as _probe
+                    _probe(url)
+                except Exception:
+                    pass
+            except Exception:
+                pass  # fail-soft: proceed without H3
+        ok, session, used_profile = await _curl_pool.get_session(host=host, profile=profile, proxy=proxy, http_version=http_version)
         if not ok:
             return (False, None, f'curl_cffi_error:{session}' if session else 'curl_cffi_unavailable')
-        return (True, session, f'curl_cffi:{used_profile}')
+        # session_kind reflects the TRANSPORT POLICY (is_h3), not the transient http_version.
+        # This is intentional: is_h3=True means "prefer H3" — the session_kind should reflect
+        # that intent even if memory pressure temporarily suppressed the http_version hint.
+        session_kind = 'curl_cffi_h3' if is_h3 else 'curl_cffi'
+        return (True, session, f'{session_kind}:{used_profile}')
     else:
         return (False, None, f'unknown_policy:{kind}')
 
@@ -312,15 +451,28 @@ async def fetch_via_unified(url: str, policy: TransportPolicy | None=None, heade
             return {'url': url, 'final_url': str(resp.url), 'status_code': resp.status_code, 'content_type': resp.headers.get('Content-Type', ''), 'text': body.decode('utf-8', errors='replace') if body else '', 'fetched_bytes': len(body), 'declared_length': int(resp.headers.get('Content-Length', -1)), 'elapsed_ms': elapsed_ms, 'error': None, 'failure_stage': None, 'headers': dict(resp.headers)}
         elif kind.startswith('curl_cffi'):
             proxies = None
-            if policy.kind == TransportKind.CURL_CFFI_TOR:
+            if policy.kind in (TransportKind.CURL_CFFI_TOR, TransportKind.CURL_CFFI_H3_TOR):
                 proxies = {'https': ENV.get_str('TOR_SOCKS_PROXY_URL', _TOR_PROXY)}
-            elif policy.kind == TransportKind.CURL_CFFI_I2P:
+            elif policy.kind in (TransportKind.CURL_CFFI_I2P, TransportKind.CURL_CFFI_H3_I2P):
                 proxies = {'https': ENV.get_str('I2P_SOCKS_PROXY_URL', _I2P_PROXY)}
             extra_headers = headers or {}
-            resp = await client.get(url, headers=extra_headers, timeout=timeout_s, proxies=proxies)
+            resp = await client.get(url, headers=extra_headers, timeout=timeout_s, proxies=proxies, follow_redirects=True)
             body = resp.content[:max_bytes]
             elapsed_ms = (time.monotonic() - t0) * 1000
-            return {'url': url, 'final_url': url, 'status_code': resp.status_code, 'content_type': resp.headers.get('Content-Type', ''), 'text': body.decode('utf-8', errors='replace') if body else '', 'fetched_bytes': len(body), 'declared_length': -1, 'elapsed_ms': elapsed_ms, 'error': None, 'failure_stage': None, 'headers': dict(resp.headers) if hasattr(resp, 'headers') else {}}
+            # Record Alt-Svc h3 advertisement for future H3 ALPN negotiation
+            try:
+                from hledac.universal.transport.http3_lane import record_from_curl_cffi_result as _record_h3
+                _record_h3(url, resp.headers)
+            except Exception:
+                pass  # fail-soft: Alt-Svc recording is best-effort
+            # final_url: curl_cffi stores final URL after redirects in resp.url
+            final_url = url
+            try:
+                if hasattr(resp, 'url') and resp.url:
+                    final_url = str(resp.url)
+            except Exception:
+                pass
+            return {'url': url, 'final_url': final_url, 'status_code': resp.status_code, 'content_type': resp.headers.get('Content-Type', ''), 'text': body.decode('utf-8', errors='replace') if body else '', 'fetched_bytes': len(body), 'declared_length': -1, 'elapsed_ms': elapsed_ms, 'error': None, 'failure_stage': None, 'headers': dict(resp.headers) if hasattr(resp, 'headers') else {}}
         else:
             elapsed_ms = (time.monotonic() - t0) * 1000
             return {'url': url, 'final_url': url, 'status_code': 0, 'content_type': '', 'text': None, 'fetched_bytes': 0, 'declared_length': -1, 'elapsed_ms': elapsed_ms, 'error': f'unknown_transport:{kind}', 'failure_stage': 'transport_dispatch', 'headers': {}}

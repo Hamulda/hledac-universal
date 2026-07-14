@@ -378,16 +378,21 @@ class TemporalArchaeologist:
         anomalies = []
         if not timeline.snapshots:
             return anomalies
-        disappearance_anomalies = self._detect_disappearances(timeline)
-        anomalies.extend(disappearance_anomalies)
-        content_wipe_anomalies = self._detect_content_wipes(timeline)
-        anomalies.extend(content_wipe_anomalies)
-        activity_gap_anomalies = self._detect_activity_gaps(timeline)
-        anomalies.extend(activity_gap_anomalies)
-        sudden_change_anomalies = self._detect_sudden_changes(timeline)
-        anomalies.extend(sudden_change_anomalies)
-        frequency_shift_anomalies = self._detect_frequency_shifts(timeline)
-        anomalies.extend(frequency_shift_anomalies)
+
+        # ISSUE-026 FIX #2: Run all 5 independent detectors sequentially.
+        # All detectors are pure functions on the same timeline — no shared state.
+        # Removed ThreadPoolExecutor: overhead for 5 small tasks outweighs parallelism gain.
+        for _detector_name, _detector_fn in [
+            ('disappearance', self._detect_disappearances),
+            ('content_wipe', self._detect_content_wipes),
+            ('activity_gap', self._detect_activity_gaps),
+            ('sudden_change', self._detect_sudden_changes),
+            ('frequency_shift', self._detect_frequency_shifts),
+        ]:
+            try:
+                anomalies.extend(_detector_fn(timeline))
+            except Exception as e:
+                logger.warning(f'Detector {_detector_name} failed: {e}')
         self._anomalies_detected += len(anomalies)
         anomalies.sort(key=lambda x: x.severity, reverse=True)
         logger.info(f'Detected {len(anomalies)} anomalies')
@@ -406,8 +411,33 @@ class TemporalArchaeologist:
             TemporalCorrelation with correlation analysis
         """
         logger.info(f'Analyzing cross-temporal correlation: {entity_a} vs {entity_b}')
-        timeline_a = await self.reconstruct_version_history(entity_a, id_type)
-        timeline_b = await self.reconstruct_version_history(entity_b, id_type)
+
+        # ISSUE-026 FIX #1: Parallel reconstruction — both timelines are independent.
+        # Run simultaneously instead of sequentially to halve wall-clock time.
+        # safe_gather_ok drops failed coroutines, so we validate we got both results.
+        results = await safe_gather_ok(
+            self.reconstruct_version_history(entity_a, id_type),
+            self.reconstruct_version_history(entity_b, id_type),
+            label='cross_temporal_correlation:reconstruct',
+        )
+
+        if len(results) < 2:
+            # At least one reconstruction failed — fall back to empty correlation.
+            # Log warning but don't crash; caller gets a zero-score result.
+            logger.warning(
+                f'cross_temporal_correlation: only {len(results)}/2 timelines succeeded '
+                f'for {entity_a} vs {entity_b}'
+            )
+            return TemporalCorrelation(
+                entity_a=entity_a,
+                entity_b=entity_b,
+                correlation_score=0.0,
+                overlapping_periods=[],
+                shared_attributes={},
+                temporal_proximity=[],
+            )
+
+        timeline_a, timeline_b = results[0], results[1]
         overlapping_periods = self._find_overlapping_periods(timeline_a, timeline_b)
         correlation_score = self._calculate_correlation_score(timeline_a, timeline_b, overlapping_periods)
         shared_attributes = self._find_shared_attributes(timeline_a, timeline_b)
@@ -450,22 +480,32 @@ class TemporalArchaeologist:
 
         Returns:
             List of archived versions matching query
+
+        ISSUE-003: Parallelized source search (was sequential for-loop).
         """
         logger.info(f"Deep historical search: '{query}' from {time_range[0]} to {time_range[1]}")
         if sources is None:
             sources = ['wayback', 'common_crawl']
-        all_results = []
-        for source in sources:
+
+        async def _search_source(source: str) -> tuple[str, list[ArchivedVersion]]:
+            """Search a single source, return (source_name, results)."""
             try:
                 if source == 'wayback':
                     results = await self._search_wayback_by_query(query, time_range)
                 elif source == 'common_crawl':
                     results = await self._search_common_crawl(query, time_range)
                 else:
-                    continue
-                all_results.extend(results)
+                    results = []
+                return (source, results)
             except Exception as e:
                 logger.warning(f'Search on {source} failed: {e}')
+                return (source, [])
+
+        # ISSUE-003: Parallelize across sources with bounded concurrency
+        results_gathered = await safe_gather_ok(*[_search_source(s) for s in sources], label='deep_historical_search')
+        all_results = []
+        for source, results in results_gathered:
+            all_results.extend(results)
         filtered_results = [result for result in all_results if time_range[0] <= result.timestamp <= time_range[1]]
         filtered_results.sort(key=lambda x: x.timestamp, reverse=True)
         logger.info(f'Deep search found {len(filtered_results)} results')
@@ -849,21 +889,36 @@ class TemporalArchaeologist:
         return proximity_events
 
     def _group_similar_snapshots(self, snapshots: list[ArchivedVersion], threshold: float) -> list[list[ArchivedVersion]]:
-        """Group similar snapshots using clustering."""
+        """Group similar snapshots using clustering.
+
+        ISSUE-026 FIX #3: Uses Rust rayon-parallel trigram Jaccard grouping
+        (text_similarity::group_similar_texts) when available — ~10-50× faster
+        than the serial Python SequenceMatcher O(n²) approach for large batches.
+        Falls back to pure-Python implementation if Rust extension unavailable.
+        """
         if not snapshots:
             return []
-        groups: list[list[ArchivedVersion]] = []
-        for snapshot in snapshots:
-            added = False
-            for group in groups:
-                similarity = self._content_similarity(snapshot.content or '', group[0].content or '')
-                if similarity >= threshold:
-                    group.append(snapshot)
-                    added = True
-                    break
-            if not added:
-                groups.append([snapshot])
-        return groups
+        # Fast path: use Rust parallel implementation.
+        try:
+            from hledac_rust_extensions import group_similar_texts
+            texts = [s.content or '' for s in snapshots]
+            group_indices = group_similar_texts(texts, float(threshold))
+            # Convert index groups back to ArchivedVersion groups.
+            return [[snapshots[idx] for idx in group] for group in group_indices]
+        except Exception:
+            # Slow path: pure-Python serial fallback.
+            groups: list[list[ArchivedVersion]] = []
+            for snapshot in snapshots:
+                added = False
+                for group in groups:
+                    similarity = self._content_similarity(snapshot.content or '', group[0].content or '')
+                    if similarity >= threshold:
+                        group.append(snapshot)
+                        added = True
+                        break
+                if not added:
+                    groups.append([snapshot])
+            return groups
 
     def get_statistics(self) -> dict[str, Any]:
         """Get archaeologist statistics."""

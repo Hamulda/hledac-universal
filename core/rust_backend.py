@@ -1363,6 +1363,11 @@ class RustBackend:
     def tls(self) -> Any:
         return self._get_domain("tls", _RustTlsDomain, _PythonTlsDomain)
 
+    @property
+    def mlx(self) -> Any:
+        """MLX bridge domain -- adaptive token streaming + memory pressure feedback."""
+        return self._get_domain("mlx", _RustMLXDomain, _PythonMLXDomain)
+
 
 # F285: Domain delegation framework
 from core._domain_protocol import (  # noqa: E402
@@ -2420,6 +2425,98 @@ class _RustTlsDomain:
     ) -> tuple[list[str], str | None, str | None]:
         """Extract TLS cert metadata — delegates to Rust `extract_tls_metadata`."""
         return self._ext.extract_tls_metadata(san_entries, issuer_org, der_bytes)
+
+
+# ISSUE #015: MLX async token streaming bridge
+class _RustMLXDomain:
+    """Rust-backed MLX bridge domain.
+
+    Provides:
+        - MLXBridge(engine, tokenizer, config) -> async streaming bridge
+        - MLXBridgeConfig(max_tokens, temperature, chunk_size, adaptive_chunk, ...)
+        - TokenChunk(text, token_id, pressure, total_generated)
+        - AdaptiveChunkSizer: memory-aware chunk sizing
+    """
+
+    __slots__ = ("_ext",)
+
+    def __init__(self, ext: Any) -> None:
+        self._ext = ext
+
+    def MLXBridge(
+        self,
+        engine: Any,
+        tokenizer: Any,
+        config: Any | None = None,
+    ) -> Any:
+        """Create MLX streaming bridge."""
+        if config is not None:
+            return self._ext.MLXBridge(engine, tokenizer, config)
+        return self._ext.MLXBridge(engine, tokenizer)
+
+    def MLXBridgeConfig(
+        self,
+        max_tokens: int = 1024,
+        temperature: float = 0.1,
+        chunk_size: int = 0,
+        adaptive_chunk: bool = True,
+        stream_buffer_size: int = 8,
+        pressure_warning: float = 0.70,
+        pressure_critical: float = 0.85,
+    ) -> Any:
+        """Create MLX bridge configuration."""
+        return self._ext.MLXBridgeConfig(
+            max_tokens,
+            temperature,
+            chunk_size,
+            adaptive_chunk,
+            stream_buffer_size,
+            pressure_warning,
+            pressure_critical,
+        )
+
+
+class _PythonMLXDomain:
+    """Python fallback MLX bridge domain.
+
+    Fallback implementation using existing DeepHermes3Engine.generate_stream()
+    when Rust extension is unavailable.
+    """
+
+    __slots__ = ()
+
+    def __init__(self) -> None:
+        pass
+
+    def MLXBridge(
+        self,
+        engine: Any,
+        tokenizer: Any,
+        config: Any | None = None,
+    ) -> Any:
+        """Return engine directly for Python fallback path."""
+        return engine
+
+    def MLXBridgeConfig(
+        self,
+        max_tokens: int = 1024,
+        temperature: float = 0.1,
+        chunk_size: int = 0,
+        adaptive_chunk: bool = True,
+        stream_buffer_size: int = 8,
+        pressure_warning: float = 0.70,
+        pressure_critical: float = 0.85,
+    ) -> Any:
+        """Return config dict for Python fallback."""
+        return {
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "chunk_size": chunk_size,
+            "adaptive_chunk": adaptive_chunk,
+            "stream_buffer_size": stream_buffer_size,
+            "pressure_warning": pressure_warning,
+            "pressure_critical": pressure_critical,
+        }
 
 
 def check_metal_availability() -> dict[str, Any]:

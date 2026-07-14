@@ -1061,9 +1061,33 @@ class DocumentIntelligenceEngine:
         metadata = DocumentMetadata(file_hash_md5=md5_hash, file_hash_sha1=sha1_hash, file_hash_sha256=sha256_hash, file_size_bytes=len(content), file_type=DocumentType.UNKNOWN, file_extension=f".{file_path.split('.')[-1]}" if '.' in file_path else '.unknown')
         return DocumentAnalysis(metadata=metadata)
 
+    async def batch_analyze_async(self, file_paths: list[str]) -> dict[str, DocumentAnalysis]:
+        """Analyze multiple documents in parallel (M1-safe, concurrency=8).
+
+        Uses bounded_gather with policy='collect' — all documents processed,
+        individual failures return None for that document without aborting others.
+        """
+        from hledac.universal.utils.async_helpers import parallel
+
+        async def analyze_one(path: str) -> tuple[str, DocumentAnalysis | None]:
+            try:
+                return (path, self.analyze(path))
+            except Exception as e:
+                logger.error(f'Error analyzing {path}: {e}')
+                return (path, None)
+
+        coros = [analyze_one(path) for path in file_paths]
+        result = await parallel(
+            coros,
+            concurrency=8,
+            policy="collect",
+            ctx="DocumentIntelligenceEngine.batch_analyze_async",
+        )
+        return dict(result.ok)
+
     def batch_analyze(self, file_paths: list[str]) -> dict[str, DocumentAnalysis]:
-        """Analyze multiple documents."""
-        results = {}
+        """Analyze multiple documents (sync wrapper for backward compatibility)."""
+        results: dict[str, DocumentAnalysis] = {}
         for path in file_paths:
             try:
                 results[path] = self.analyze(path)
@@ -1511,9 +1535,53 @@ class MLXLongContextAnalyzer:
             memory_usage += self.chunk_embeddings.size * 4 / (1024 * 1024)
         return LongContextAnalysis(total_chunks=len(chunks), total_tokens=len(text) // 4, entities=all_entities, cross_document_links=cross_links, timeline=timeline, summary=f'Analyzed {len(chunks)} chunks, found {len(all_entities)} entities', key_findings=key_findings, memory_usage_mb=memory_usage, processing_time_seconds=processing_time)
 
+    async def analyze_multiple_dumps_async(self, dumps: dict[str, str], cross_correlate: bool=True) -> dict[str, LongContextAnalysis]:
+        """
+        Analyze multiple document dumps in parallel with optional cross-correlation.
+
+        Uses parallel() with concurrency=4 for M1-safe parallel processing.
+        """
+        from hledac.universal.utils.async_helpers import parallel
+
+        async def analyze_one(source_text: tuple[str, str]) -> tuple[str, LongContextAnalysis]:
+            source, text = source_text
+            logger.info(f'Analyzing dump from {source}...')
+            return (source, self.analyze_massive_dump(text, source))
+
+        coros = [analyze_one(s) for s in dumps.items()]
+        result = await parallel(
+            coros,
+            concurrency=4,
+            policy="collect",
+            ctx="MLXLongContextAnalyzer.analyze_multiple_dumps_async",
+        )
+        results = dict(result.ok)
+
+        if cross_correlate:
+            logger.info('Cross-correlating all dumps...')
+            all_entities = []
+            for analysis in results.values():
+                all_entities.extend(analysis.entities)
+            global_links = self.cross_reference_entities(all_entities)
+            for source in results:
+                source_links = [link for link in global_links if any((source in doc for doc in link.documents))]
+                analysis = results[source]
+                results[source] = LongContextAnalysis(
+                    total_chunks=analysis.total_chunks,
+                    total_tokens=analysis.total_tokens,
+                    entities=analysis.entities,
+                    cross_document_links=source_links,
+                    timeline=analysis.timeline,
+                    summary=analysis.summary,
+                    key_findings=analysis.key_findings + [f'Linked to {len(source_links)} other sources'],
+                    memory_usage_mb=analysis.memory_usage_mb,
+                    processing_time_seconds=analysis.processing_time_seconds,
+                )
+        return results
+
     def analyze_multiple_dumps(self, dumps: dict[str, str], cross_correlate: bool=True) -> dict[str, LongContextAnalysis]:
         """
-        Analyze multiple document dumps and optionally cross-correlate.
+        Analyze multiple document dumps and optionally cross-correlate (sync wrapper).
 
         Args:
             dumps: Dict of {source_name: text_content}
@@ -1538,9 +1606,36 @@ class MLXLongContextAnalyzer:
                 results[source] = LongContextAnalysis(total_chunks=analysis.total_chunks, total_tokens=analysis.total_tokens, entities=analysis.entities, cross_document_links=source_links, timeline=analysis.timeline, summary=analysis.summary, key_findings=analysis.key_findings + [f'Linked to {len(source_links)} other sources'], memory_usage_mb=analysis.memory_usage_mb, processing_time_seconds=analysis.processing_time_seconds)
         return results
 
+    async def search_across_dumps_async(self, query: str, dumps: dict[str, str], top_k_per_dump: int=3) -> dict[str, list[dict]]:
+        """
+        Search for query across multiple dumps using MLX similarity (parallel).
+
+        Uses parallel() with concurrency=4 for M1-safe parallel processing.
+        """
+        from hledac.universal.utils.async_helpers import parallel
+
+        async def search_one(source_text: tuple[str, str]) -> tuple[str, list[dict]]:
+            source, text = source_text
+            self.analyze_massive_dump(text, source)
+            similar = self.find_similar_chunks_mlx(query, top_k_per_dump)
+            source_results = []
+            for idx, score in similar:
+                if idx < len(self.chunk_texts):
+                    source_results.append({'chunk_id': idx, 'text': self.chunk_texts[idx][:500], 'similarity': score})
+            return (source, source_results)
+
+        coros = [search_one(s) for s in dumps.items()]
+        result = await parallel(
+            coros,
+            concurrency=4,
+            policy="collect",
+            ctx="MLXLongContextAnalyzer.search_across_dumps_async",
+        )
+        return dict(result.ok)
+
     def search_across_dumps(self, query: str, dumps: dict[str, str], top_k_per_dump: int=3) -> dict[str, list[dict]]:
         """
-        Search for query across multiple dumps using MLX similarity.
+        Search for query across multiple dumps using MLX similarity (sync wrapper).
 
         Args:
             query: Search query

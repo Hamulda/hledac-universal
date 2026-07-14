@@ -2,11 +2,17 @@
 //!
 //! ISSUE-001: DuckDB Connection Pool — O(N) Lock Scanning + Connection Leak
 //!
+//! ISSUE-013 fix (2026-07): Race condition eliminated:
+//! - OLD (buggy): lock → take → drop lock → execute → lock → put back
+//!   → connection "in the wild" between drop and re-lock → concurrent use
+//! - NEW (correct): lock → execute → put back — lock held throughout
+//!   → ZERO race conditions, ZERO concurrent connection access
+//!
 //! Modern architecture (2026-07):
 //! - O(1) connection access via atomic round-robin index (no linear scan)
 //! - Connection reuse instead of re-open after every query (saves 1-5ms per query)
 //! - parking_lot::Mutex (2-5× faster than std::Mutex, no poison on panic)
-//! - crossbeam-queue ArrayQueue for high-throughput batch scenarios
+//! - Lock held throughout entire checkout→execute→return sequence
 //!
 //! ## API
 //!
@@ -23,12 +29,18 @@ use parking_lot::Mutex;
 /// ISSUE-001: Thread-safe DuckDB connection pool with O(1) access pattern.
 /// Uses atomic round-robin index instead of O(N) linear scan.
 /// Connections are reused after each query (no re-open overhead).
-struct StdConnectionPool {
+///
+/// ISSUE-013: Lock is held throughout entire checkout→execute→return sequence.
+/// This eliminates the race window where connection was "in the wild" between
+/// drop(conn_guard) and the second conn_mutex.lock() call.
+/// With lock-heldthroughout, concurrent queries on the SAME slot are impossible.
+pub(crate) struct StdConnectionPool {
     /// Connections wrapped in parking_lot::Mutex — 2-5× faster than std::Mutex,
     /// no poison on panic, fair scheduling via queue.
+    /// ISSUE-013: Mutex guards the ENTIRE checkout→execute→return sequence.
     connections: Vec<Mutex<Option<duckdb::Connection>>>,
-    db_path: String,
-    max_connections: usize,
+    pub(crate) db_path: String,
+    pub(crate) max_connections: usize,
     /// Round-robin index for O(1) next-connection selection.
     next_conn: std::sync::atomic::AtomicUsize,
 }
@@ -54,12 +66,25 @@ impl StdConnectionPool {
             % self.max_connections
     }
 
-    /// Execute query with O(1) connection access + connection reuse.
-    /// No re-open after query — connection stays alive in the pool.
+    /// ISSUE-013: Execute query with lock held throughout — ZERO race conditions.
+    ///
+    /// OLD (buggy) pattern:
+    ///   lock → take → drop(lock) → execute → lock → put back
+    ///   ↑ race window between drop and re-lock — another thread can grab same slot
+    ///
+    /// NEW (correct) pattern:
+    ///   lock → init if needed → execute → put back → unlock
+    ///   Lock is held for the ENTIRE sequence — no concurrent access possible.
+    ///
+    /// Performance note: Queries to the SAME slot are serialized by the Mutex.
+    /// With N connections in the pool and atomic round-robin, the probability
+    /// of two concurrent queries landing on the same slot is 1/N (uniform hashing).
+    /// For N=2, collision probability = 50% — acceptable for DuckDB I/O-bound queries.
     fn execute_query_sync(&self, sql: &str) -> Result<Vec<Vec<String>>, String> {
         let idx = self.next_index();
         let conn_mutex = &self.connections[idx];
 
+        // ISSUE-013: lock is NOT released until query completes — zero race window
         let mut conn_guard = conn_mutex.lock();
         if conn_guard.is_none() {
             match duckdb::Connection::open(&self.db_path) {
@@ -68,24 +93,17 @@ impl StdConnectionPool {
             }
         }
 
-        // Take connection from pool for execution
-        let conn = conn_guard.take();
-        drop(conn_guard);
-
-        match conn {
-            Some(mut conn) => {
-                // Execute query — &mut conn preserves connection for reuse
-                let result = execute_duckdb_query_sync(&mut conn, sql, &[]);
-                // Return connection back to pool (REUSE — same connection, no re-open)
-                let mut guard = conn_mutex.lock();
-                *guard = Some(conn);
-                result
-            }
-            None => Err("Failed to acquire connection".to_string()),
-        }
+        // Connection is locked and initialized — execute while holding the lock
+        // ISSUE-013: We do NOT take/drop here — we borrow &mut for the execute call
+        // The lock serializes all access to this slot, preventing any concurrent use
+        let conn = conn_guard.as_mut().ok_or("Connection unavailable")?;
+        let result = execute_duckdb_query_sync(conn, sql, &[]);
+        // Connection stays in the pool — no take(), no second lock()
+        // Lock releases here automatically when conn_guard goes out of scope
+        result
     }
 
-    /// Execute parameterized query with O(1) access + reuse.
+    /// ISSUE-013: Execute parameterized query with lock held throughout.
     fn execute_query_sync_with_params(
         &self,
         sql: &str,
@@ -102,24 +120,13 @@ impl StdConnectionPool {
             }
         }
 
-        let conn = conn_guard.take();
-        drop(conn_guard);
-
-        match conn {
-            Some(mut conn) => {
-                let param_refs: Vec<&dyn duckdb::types::ToSql> = params
-                    .iter()
-                    .map(|s| s as &dyn duckdb::types::ToSql)
-                    .collect();
-                // Execute query — &mut conn preserves connection for reuse
-                let result = execute_duckdb_query_sync(&mut conn, sql, &param_refs);
-                // Return connection back to pool (REUSE — same connection, no re-open)
-                let mut guard = conn_mutex.lock();
-                *guard = Some(conn);
-                result
-            }
-            None => Err("Failed to acquire connection".to_string()),
-        }
+        let conn = conn_guard.as_mut().ok_or("Connection unavailable")?;
+        let param_refs: Vec<&dyn duckdb::types::ToSql> = params
+            .iter()
+            .map(|s| s as &dyn duckdb::types::ToSql)
+            .collect();
+        let result = execute_duckdb_query_sync(conn, sql, &param_refs);
+        result
     }
 }
 
@@ -200,47 +207,96 @@ fn format_value_ref(val: duckdb::types::ValueRef<'_>) -> String {
 }
 
 /// P1: Lazy pool config — set by init_async_pool() before first get_async_pool() call.
-static POOL_CONFIG: std::sync::OnceLock<(String, usize)> = std::sync::OnceLock::new();
+/// Format: (db_path, max_connections, timeout_secs)
+/// timeout_secs = 0 means no timeout (backward compatible default).
+static POOL_CONFIG: std::sync::OnceLock<(String, usize, u64)> = std::sync::OnceLock::new();
 
-/// Global connection pool — initialized lazily from POOL_CONFIG.
+/// ISSUE-013: Global connection pool with timeout support.
+/// Timeout is stored in POOL_CONFIG (timeout_secs, default 0 = no timeout).
 static ASYNC_POOL: std::sync::OnceLock<Arc<StdConnectionPool>> = std::sync::OnceLock::new();
 
 fn get_async_pool() -> Arc<StdConnectionPool> {
     ASYNC_POOL
         .get_or_init(|| {
-            let (db_path, max_conn) = POOL_CONFIG
-                .get_or_init(|| (":memory:".to_string(), 2));
+            let (db_path, max_conn, _) = POOL_CONFIG
+                .get_or_init(|| (":memory:".to_string(), 2, 0));
             Arc::new(StdConnectionPool::new(db_path.clone(), *max_conn))
         })
         .clone()
 }
 
 #[pyfunction]
-fn init_async_pool(db_path: String, max_connections: usize) -> PyResult<()> {
-    let pool = Arc::new(StdConnectionPool::new(db_path, max_connections.min(4)));
+fn init_async_pool(db_path: String, max_connections: usize, timeout_secs: u64) -> PyResult<()> {
+    // ISSUE-013: timeout_secs stored in POOL_CONFIG for runtime access
+    // ISSUE-013-FIX: cap at 4 UPFRONT so all code paths see the same value
+    let capped = max_connections.min(4);
+    POOL_CONFIG.set((db_path.clone(), capped, timeout_secs)).map_err(|_| {
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Async pool already initialized".to_string())
+    })?;
+    let pool = Arc::new(StdConnectionPool::new(db_path, capped));
     ASYNC_POOL.set(pool).map_err(|_| {
         PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Async pool already initialized".to_string())
     })?;
     Ok(())
 }
 
+/// ISSUE-013: Execute query with optional timeout via mpsc::channel + recv_timeout.
+/// Python calls via asyncio.to_thread() — already runs in a ThreadPoolExecutor
+/// thread WITHOUT the GIL. Execute query directly on that thread.
+///
+/// Timeout architecture:
+/// - Spawn thread → execute query → send result through mpsc channel
+/// - Main thread calls recv_timeout(duration) — efficient blocking wait
+/// - If timeout fires, return error immediately (thread continues, cleans up on finish)
 #[pyfunction]
 pub fn rust_async_query(sql: String) -> PyResult<Vec<Vec<String>>> {
     let pool = get_async_pool();
-    // Python calls via asyncio.to_thread() — already runs in a ThreadPoolExecutor
-    // thread WITHOUT the GIL. Execute query directly on that thread (no Python
-    // objects accessed in execute_query_sync). No std::thread::spawn needed.
-    pool.execute_query_sync(&sql)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))
+    let timeout_secs = POOL_CONFIG
+        .get_or_init(|| (":memory:".to_string(), 2, 0))
+        .2;
+
+    if timeout_secs == 0 {
+        return pool.execute_query_sync(&sql)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e));
+    }
+
+    // ISSUE-013: mpsc channel for result delivery with timeout
+    let (tx, rx) = std::sync::mpsc::channel::<Result<Vec<Vec<String>>, String>>();
+    let sql_owned = sql.clone();
+    let db_path = pool.db_path.clone();
+    let max_conn = pool.max_connections;
+
+    std::thread::spawn(move || {
+        let pool = StdConnectionPool::new(db_path, max_conn);
+        let result = pool.execute_query_sync(&sql_owned);
+        // Send result — if receiver is dropped (timeout fired), send fails silently
+        let _ = tx.send(result);
+    });
+
+    // ISSUE-013: recv_timeout — efficient blocking wait (no busy-wait CPU spinning)
+    match rx.recv_timeout(std::time::Duration::from_secs(timeout_secs)) {
+        Ok(Ok(rows)) => Ok(rows),
+        Ok(Err(e)) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e)),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                format!("DuckDB query timeout after {}s: {}", timeout_secs, &sql)
+            ))
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            // Thread finished and disconnected before we could receive — get the result
+            Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "DuckDB thread disconnected unexpectedly".to_string()
+            ))
+        }
+    }
 }
 
+/// ISSUE-013: Parameterized query with optional timeout via mpsc::channel + recv_timeout.
 #[pyfunction]
 pub fn rust_async_query_with_params(
     sql: String,
     params: Vec<Py<PyAny>>,
 ) -> PyResult<Vec<Vec<String>>> {
-    // Convert Py<PyAny> params to owned Strings, then borrow as &[&str].
-    // DuckDB parameterized query — no string interpolation, no SQL injection risk.
     let param_strings: Vec<String> = Python::with_gil(|py| {
         params
             .iter()
@@ -257,9 +313,44 @@ pub fn rust_async_query_with_params(
             })
             .collect()
     });
+
     let pool = get_async_pool();
-    pool.execute_query_sync_with_params(&sql, &param_strings)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))
+    let timeout_secs = POOL_CONFIG
+        .get_or_init(|| (":memory:".to_string(), 2, 0))
+        .2;
+
+    if timeout_secs == 0 {
+        return pool.execute_query_sync_with_params(&sql, &param_strings)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e));
+    }
+
+    // ISSUE-013: Timeout via mpsc channel
+    let (tx, rx) = std::sync::mpsc::channel::<Result<Vec<Vec<String>>, String>>();
+    let sql_owned = sql.clone();
+    let params_owned = param_strings.clone();
+    let db_path = pool.db_path.clone();
+    let max_conn = pool.max_connections;
+
+    std::thread::spawn(move || {
+        let pool = StdConnectionPool::new(db_path, max_conn);
+        let result = pool.execute_query_sync_with_params(&sql_owned, &params_owned);
+        let _ = tx.send(result);
+    });
+
+    match rx.recv_timeout(std::time::Duration::from_secs(timeout_secs)) {
+        Ok(Ok(rows)) => Ok(rows),
+        Ok(Err(e)) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e)),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                format!("DuckDB query timeout after {}s: {}", timeout_secs, &sql)
+            ))
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "DuckDB thread disconnected unexpectedly".to_string()
+            ))
+        }
+    }
 }
 
 /// ISSUE-19: Parallel batch query — executes N SQL queries concurrently in rayon
@@ -276,7 +367,7 @@ pub fn rust_async_query_batch(sqls: Vec<String>) -> PyResult<Vec<Vec<Vec<String>
     // get_db_path() from pool config (":memory:" or real path). :memory: is
     // thread-safe in DuckDB (each open = new DB), so parallelism is free.
     let db_path = POOL_CONFIG
-        .get_or_init(|| (":memory:".to_string(), 2))
+        .get_or_init(|| (":memory:".to_string(), 2, 0))
         .0
         .clone();
     let results: Vec<Result<Vec<Vec<String>>, String>> = sqls

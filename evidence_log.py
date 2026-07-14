@@ -174,6 +174,27 @@ class EvidenceEvent(msgspec.Struct, frozen=False):
         """Convert event to JSONL line."""
         return orjson.dumps(self.to_dict()).decode() + '\n'
 
+    def to_bytes(self) -> bytes:
+        """Serialize event to bytes using msgspec (faster than orjson).
+
+        ISSUE-006: New method for zero-copy path — bytes serialized directly,
+        no intermediate dict decode/re-encode cycle.
+        Used by EvidenceLog.append() → MPSC → SQLite BLOB insert.
+        """
+        return msgspec.msgpack.encode(self._to_struct_tuple())
+
+    def _to_struct_tuple(self) -> tuple:
+        """Internal: tuple form for msgspec encoding (faster than dict)."""
+        return (self.event_id, self.event_type, self.timestamp, self.payload,
+                self.source_ids, self.confidence, self.content_hash, self.run_id,
+                self.seq_no, self.prev_chain_hash, self.chain_hash)
+
+    @classmethod
+    def from_bytes(cls, data: bytes) -> EvidenceEvent:
+        """Deserialize event from msgspec bytes."""
+        decoded = msgspec.msgpack.decode(data)
+        return cls(*decoded)
+
 def _normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Normalize payload for consistent hashing."""
     normalized = {}
@@ -199,120 +220,39 @@ def _normalize_value(value: Any) -> Any:
         return value.decode('utf-8', errors='replace')
     return value
 
-class _RustMPSC:
-    """Python wrapper for Rust MPSCPool with asyncio integration.
+class _RustMPSCBytes:
+    """Single canonical Rust MPSC wrapper — bytes in, bytes out.
 
-    Attrs:
-        _pool: MPSCPool instance
-        _sender_ptr: opaque usize handle for send()
-        _wake_fd: pipe read fd for asyncio.AddedReader
-        fallback: True if Rust MPSCPool unavailable (uses asyncio.Queue)
+    ISSUE-006 FIX: Unified _RustMPSC + _RustMPSC2 into one bytes-only class.
+    - send() accepts bytes directly — serialization happens at caller side
+    - recv_batch() returns bytes directly — deserialization happens at caller side
+    - asyncio fallback via asyncio.Queue[bytes] (only for JSONL path)
 
     F320-ISSUE12: Replaces asyncio.Queue in the SQLite flush path.
-    - send() is non-blocking, lock-free, ~2-5ns vs ~1-2µs for asyncio.Queue.put()
-    - recv_batch() drains the Rust MPSC channel directly, no asyncio coordination needed
+    - send() is non-blocking, lock-free, ~2-5ns via ARM LSE atomics
+    - recv_batch() drains the Rust MPSC channel directly
 
-    ISSUE-025: async-channel (PyPI) was considered but NOT needed.
-    async-channel is a pure-Python wrapper over asyncio.Queue — no performance advantage.
-    Rust crossbeam-channel MPSC pool (this class) provides the 5-10× speedup
-    via native ARM LSE atomics (ldadd, cas) on M1 — ~2-5ns per send.
-    """
-    __slots__ = tuple(('_impl', '_pool', '_sender_ptr', '_wake_fd', 'fallback'))
-
-    def __init__(self, capacity: int=2048) -> None:
-        self._pool: Any = None
-        self._sender_ptr: int = 0
-        self._wake_fd: int = -1
-        self.fallback: bool = True
-        self._impl: str = 'asyncio'
-        self._init_rust(capacity)
-
-    def _init_rust(self, capacity: int) -> None:
-        try:
-            from hledac_rust_extensions import MPSCPool as _MPSC
-            pool = _MPSC(capacity=capacity)
-            sender_ptr = pool.add_sender()
-            wake_fd = pool.wake_fd()
-            self._pool = pool
-            self._sender_ptr = sender_ptr
-            self._wake_fd = wake_fd
-            self.fallback = False
-            self._impl = 'rust'
-        except Exception:
-            self._pool = None
-            self._sender_ptr = 0
-            self._wake_fd = -1
-            self.fallback = True
-            self._impl = 'asyncio'
-
-    def send(self, item: dict[str, Any]) -> bool:
-        """Send an item (msgspec-serialized bytes) to the pool.
-
-        Non-blocking: never parks the calling coroutine.
-        Returns True if sent, False if queue is full or disconnected.
-        """
-        if self._impl == 'rust' and self._pool is not None:
-            try:
-                payload = orjson.dumps(item)
-                return self._pool.send(self._sender_ptr, payload)
-            except Exception:
-                return False
-        return False
-
-    def recv_batch(self, max_items: int | None=None) -> list[dict[str, Any]]:
-        """Drain up to max_items from the pool (non-blocking).
-
-        Called from the flush worker after wake_fd fires.
-        """
-        if self._impl == 'rust' and self._pool is not None:
-            try:
-                batch_bytes = self._pool.recv_batch(max_items)
-                return [orjson.loads(item) for item in batch_bytes]
-            except Exception:
-                return []
-        return []
-
-    def wake_fd(self) -> int:
-        """Pipe read fd for asyncio reader registration."""
-        return self._wake_fd
-
-    def len(self) -> int:
-        """Current queue depth."""
-        if self._pool is not None:
-            return self._pool.len()
-        return 0
-
-    def is_empty(self) -> bool:
-        if self._pool is not None:
-            return self._pool.is_empty()
-        return True
-
-class _RustMPSC2:
-    """Python wrapper for Rust MPSCPool — bytes-only variant for JSONL path.
-
-    Attrs:
-        _pool: MPSCPool instance (Rust path)
-        _queue: asyncio.Queue (asyncio fallback path)
-        _sender_ptr: opaque usize handle for send()
-        _wake_fd: pipe read fd for asyncio.AddedReader
-        fallback: True if Rust MPSCPool unavailable
-
-    F320-ISSUE12b: Replaces asyncio.Queue in the JSONL write path.
-    - Rust path: ~2-5ns send via crossbeam-channel
-    - Asyncio path: uses asyncio.Queue.put/get for correct blocking behavior
+    M1 8GB: ~1 MiB total (2048 slots × 512B), negligible overhead.
     """
     __slots__ = tuple(('_impl', '_pool', '_queue', '_sender_ptr', '_wake_fd', 'fallback'))
 
-    def __init__(self, capacity: int=2048) -> None:
+    def __init__(self, capacity: int=2048, asyncio_fallback: bool=False) -> None:
+        """Initialize MPSC pool.
+
+        Args:
+            capacity: Max queue depth (default 2048, 2× asyncio.Queue maxsize=500)
+            asyncio_fallback: If True, create asyncio.Queue fallback (for JSONL path).
+                             If False, fallback is None (SQLite path doesn't need async).
+        """
         self._pool: Any = None
         self._queue: asyncio.Queue[bytes] | None = None
         self._sender_ptr: int = 0
         self._wake_fd: int = -1
         self.fallback: bool = True
         self._impl: str = 'asyncio'
-        self._init_rust(capacity)
+        self._init_rust(capacity, asyncio_fallback)
 
-    def _init_rust(self, capacity: int) -> None:
+    def _init_rust(self, capacity: int, asyncio_fallback: bool) -> None:
         try:
             from hledac_rust_extensions import MPSCPool as _MPSC
             pool = _MPSC(capacity=capacity)
@@ -327,12 +267,19 @@ class _RustMPSC2:
             self._pool = None
             self._sender_ptr = 0
             self._wake_fd = -1
-            self._queue = asyncio.Queue(maxsize=capacity)
+            if asyncio_fallback:
+                self._queue = asyncio.Queue(maxsize=capacity)
+            else:
+                self._queue = None
             self.fallback = True
             self._impl = 'asyncio'
 
     def send(self, item: bytes) -> bool:
-        """Send raw bytes to the pool. Non-blocking (Rust) or blocking (asyncio)."""
+        """Send raw bytes to the pool. Non-blocking (Rust) or blocking (asyncio).
+
+        ISSUE-006: bytes-only — serialization is caller's responsibility.
+        This eliminates the redundant orjson.dumps() that _RustMPSC did internally.
+        """
         if self._impl == 'rust' and self._pool is not None:
             try:
                 return self._pool.send(self._sender_ptr, item)
@@ -359,7 +306,11 @@ class _RustMPSC2:
         return False
 
     def recv_batch(self, max_items: int | None=None) -> list[bytes]:
-        """Drain up to max_items as raw bytes (non-blocking)."""
+        """Drain up to max_items as raw bytes (non-blocking).
+
+        ISSUE-006: Returns bytes directly — caller deserializes only when needed.
+        SQLite path now uses _flush_batch_bytes() for zero-copy BLOB insert.
+        """
         if self._impl == 'rust' and self._pool is not None:
             try:
                 return self._pool.recv_batch(max_items)
@@ -374,15 +325,6 @@ class _RustMPSC2:
                     break
             return batch
         return []
-
-    async def get_async(self) -> bytes | None:
-        """Async get — blocks until item available or shutdown."""
-        if self._queue is not None:
-            try:
-                return await safe_wait_for(self._queue.get(), timeout=1.0, label='_queue.get')
-            except (asyncio.TimeoutError, asyncio.QueueEmpty):
-                return None
-        return None
 
     def wake_fd(self) -> int:
         """Pipe read fd for asyncio reader registration."""
@@ -483,8 +425,8 @@ class EvidenceLog:
             except Exception as e:
                 logger.error(f'Failed to open evidence log: {e}')
                 self._enable_persist = False
-        self._mpsc: _RustMPSC = _RustMPSC(capacity=2048)
-        self._mpsc2: _RustMPSC2 = _RustMPSC2(capacity=2048)
+        self._mpsc: _RustMPSCBytes = _RustMPSCBytes(capacity=2048, asyncio_fallback=False)
+        self._mpsc2: _RustMPSCBytes = _RustMPSCBytes(capacity=2048, asyncio_fallback=True)
         self._flush_task: asyncio.Task | None = None
         self._async_write_queue: asyncio.Queue[bytes | None] | None = None
         self._async_write_task: asyncio.Task | None = None
@@ -687,12 +629,14 @@ class EvidenceLog:
     async def _flush_worker(self) -> None:
         """Background worker that flushes events in batches.
 
-        F320-ISSUE12: Uses _RustMPSC (Rust MPSCPool) instead of asyncio.Queue.
+        F320-ISSUE12: Uses _RustMPSCBytes (Rust MPSCPool) instead of asyncio.Queue.
         - recv_batch() is non-blocking, drains all available items from the Rust channel.
         - asyncio.timeout(1.0) provides the periodic wake cycle (instead of queue.get() blocking).
         - shutdown signal: _flush_shutdown.set() from aclose() → worker drains and exits.
+
+        ISSUE-006: Now works with bytes directly — _flush_batch_bytes() for zero-copy SQLite BLOB insert.
         """
-        batch: list[dict[str, Any]] = []
+        batch: list[bytes] = []
         last_flush = datetime.now(UTC)
         while True:
             try:
@@ -707,7 +651,7 @@ class EvidenceLog:
             if len(batch) >= self._SQLITE_BATCH_SIZE or (batch and (datetime.now(UTC) - last_flush).total_seconds() >= self._SQLITE_FLUSH_INTERVAL):
                 flush_start = time.perf_counter()
                 try:
-                    await self._flush_batch(batch)
+                    await self._flush_batch_bytes(batch)
                     flush_latency_ms = (time.perf_counter() - flush_start) * 1000
                     trace_evidence_flush(len(batch), flush_latency_ms, 'ok', len(batch))
                 except Exception as _flush_err:
@@ -721,7 +665,7 @@ class EvidenceLog:
             batch.extend(remaining)
         if batch and self._db is not None:
             flush_start = time.perf_counter()
-            await self._flush_batch(batch)
+            await self._flush_batch_bytes(batch)
             flush_latency_ms = (time.perf_counter() - flush_start) * 1000
             trace_evidence_flush(len(batch), flush_latency_ms, 'ok', len(batch))
 
@@ -795,12 +739,12 @@ class EvidenceLog:
             _write_buf.clear()
         while True:
             if self._mpsc2.fallback:
-                data = await self._mpsc2.get_async()
-                if data is None:
+                batch = self._mpsc2.recv_batch(max_items=1)
+                if not batch:
                     if self._async_write_shutdown.is_set():
                         break
+                    await asyncio.sleep(0.05)
                     continue
-                batch = [data]
             else:
                 try:
                     async with asyncio.timeout(1.0):
@@ -826,6 +770,97 @@ class EvidenceLog:
             except Exception:
                 pass
     _ARROW_SUB_BATCH = 256
+
+    async def _flush_batch_bytes(self, batch: list[bytes]) -> None:
+        """Flush a batch of bytes directly to SQLite BLOB (zero-copy).
+
+        ISSUE-006: New method for zero-copy path.
+        - Takes bytes directly from recv_batch()
+        - Inserts into SQLite as BLOB without re-serialization
+        - Falls back to _flush_batch() for legacy TEXT data or Arrow IPC
+        """
+        if not batch:
+            return
+        arrow_loader = _get_arrow()
+        if arrow_loader and self._arrow_writer is not None:
+            pa, _ = arrow_loader
+            try:
+                # Decode batch for Arrow IPC (Arrow needs string columns)
+                decoded_batch = []
+                for b in batch:
+                    try:
+                        decoded_batch.append(msgspec.msgpack.decode(b))
+                    except Exception:
+                        continue
+                if not decoded_batch:
+                    return
+                for i in range(0, len(decoded_batch), self._ARROW_SUB_BATCH):
+                    sub = decoded_batch[i:i + self._ARROW_SUB_BATCH]
+                    arrays = [
+                        pa.array([e.get('timestamp', datetime.now(UTC).timestamp()) for e in sub], type=pa.float64()),
+                        pa.array([e.get('event_type', 'unknown') for e in sub], type=pa.string()),
+                        pa.array([orjson.dumps(e.get('data', {})).decode() for e in sub], type=pa.string()),
+                        pa.array([e.get('content_hash', '') for e in sub], type=pa.string())
+                    ]
+                    batch_arrow = pa.record_batch(arrays, schema=self._arrow_schema)
+                    self._arrow_writer.write_batch(batch_arrow)
+                return
+            except Exception as e:
+                logger.warning(f'[Arrow] IPC write failed, falling back to SQLite: {e}')
+
+        # SQLite BLOB path — zero-copy insert
+        # Each bytes item is: msgspec encoded EvidenceEvent
+        # Schema: (timestamp REAL, event_type TEXT, data BLOB, hash TEXT)
+        records: list[tuple[float, str, bytes, str]] = []
+        for b in batch:
+            try:
+                event = msgspec.msgpack.decode(b)
+                # event is a tuple: (event_id, event_type, timestamp, payload, source_ids,
+                #                     confidence, content_hash, run_id, seq_no, prev_chain_hash, chain_hash)
+                timestamp = event[2] if len(event) > 2 else datetime.now(UTC).timestamp()
+                event_type = event[1] if len(event) > 1 else 'unknown'
+                payload_bytes = event[3] if len(event) > 3 else b''
+                content_hash = event[6] if len(event) > 6 else ''
+                records.append((timestamp, event_type, payload_bytes, content_hash))
+            except Exception:
+                # Legacy format or decode error — skip or insert raw
+                continue
+
+        db = self._db
+        if db is None:
+            return
+        if not hasattr(db, 'executemany'):
+            logger.warning('EvidenceLog._db not initialized as aiosqlite.Connection')
+            return
+
+        # ISSUE-006: BLOB insert — data is stored as BLOB, not TEXT
+        # This eliminates the orjson.dumps() decode/re-encode cycle
+        try:
+            await db.executemany(
+                'INSERT INTO events (timestamp, event_type, data, hash) VALUES (?, ?, ?, ?)',
+                records
+            )
+            await db.commit()
+        except Exception as e:
+            logger.warning(f'[_flush_batch_bytes] BLOB insert failed, falling back: {e}')
+            # Fallback: encode as TEXT
+            text_records = []
+            for b in batch:
+                try:
+                    event = msgspec.msgpack.decode(b)
+                    timestamp = event[2] if len(event) > 2 else datetime.now(UTC).timestamp()
+                    event_type = event[1] if len(event) > 1 else 'unknown'
+                    data_str = orjson.dumps(event).decode()
+                    content_hash = event[6] if len(event) > 6 else ''
+                    text_records.append((timestamp, event_type, data_str, content_hash))
+                except Exception:
+                    continue
+            if text_records:
+                await db.executemany(
+                    'INSERT INTO events (timestamp, event_type, data, hash) VALUES (?, ?, ?, ?)',
+                    text_records
+                )
+                await db.commit()
 
     async def _flush_batch(self, batch: list[dict[str, Any]]) -> None:
         """Flush a batch of events to SQLite (default) or Arrow IPC (HLEDAC_ARROW_EVIDENCE=1).
@@ -959,7 +994,8 @@ class EvidenceLog:
         trace_evidence_append(event.event_type, queue_size, 'queued')
         _worker_alive = self._initialized and self._flush_task is not None and (not self._flush_task.done())
         if _worker_alive and (not self._closing):
-            _sent = self._mpsc.send(event.to_dict())
+            # ISSUE-006: send bytes directly — zero-copy path
+            _sent = self._mpsc.send(event.to_bytes())
             if not _sent:
                 logger.warning('MPSCPool full, falling back to direct sync write')
                 trace_queue_drop('mpsc_pool', queue_size + 1)
@@ -1537,6 +1573,9 @@ class EvidenceLog:
             finally:
                 self._async_write_task = None
         drained = self._mpsc.recv_batch(max_items=None)
+        # ISSUE-FIX: Also drain mpsc2 in case _async_write_worker was cancelled before draining.
+        # This prevents data loss on premature shutdown. Safe to call even if worker already drained.
+        mpsc2_drained = self._mpsc2.recv_batch(max_items=None)
         if self._arrow_writer is not None:
             try:
                 self._arrow_writer.close()
@@ -1547,9 +1586,17 @@ class EvidenceLog:
                 self._arrow_writer = None
         if drained and self._db is not None:
             try:
-                await self._flush_batch(drained)
+                await self._flush_batch_bytes(drained)
             except Exception as e:
                 logger.warning(f'Failed to flush remaining items: {e}')
+        if mpsc2_drained and self._persist_file:
+            try:
+                # Write remaining mpsc2 items (JSONL path) before closing
+                _combined = b''.join(mpsc2_drained)
+                self._persist_file.write(_combined)
+                self._persist_file.flush()
+            except Exception as e:
+                logger.warning(f'Failed to flush mpsc2 remaining items: {e}')
         if self._db is not None:
             try:
                 await self._db.execute('PRAGMA wal_checkpoint(TRUNCATE)')

@@ -33,6 +33,7 @@ import httpx
 from hledac.universal.intelligence._http_helpers import get_intelligence_session
 from hledac.universal.paths import open_lmdb
 from hledac.universal.utils.msgspec_json import decode, encode
+from hledac.universal.utils.async_helpers import parallel
 logger = logging.getLogger(__name__)
 
 async def _aclose_stream(stream):
@@ -43,7 +44,8 @@ async def _aclose_stream(stream):
         pass
 EXPOSURE_CACHE_ROOT = Path.home() / '.hledac' / 'lmdb' / 'exposure_cache.lmdb'
 _EXPOSURE_CACHE_TTL = 7 * 24 * 60 * 60
-_CVE_CACHE_TTL = 6 * 60 * 60
+# ISSUE #016: NVD data changes daily — 24h TTL instead of 6h
+_CVE_CACHE_TTL = 24 * 60 * 60
 _DB_EXECUTOR = ThreadPoolExecutor(max_workers=1)
 
 def _shutdown_db_executor() -> None:
@@ -518,7 +520,8 @@ class CVIntelligenceClient:
 
     NVD API 2.0 fallback (if OSV returns 0 results):
       GET https://services.nvd.nist.gov/rest/json/cves/2.0
-      Rate limited: semaphore(5) + sliding window 30s.
+      Rate limited: Rust NvdRateLimiter token bucket (5 req/30s bez API key,
+      50 req/30s s API key) — ISSUE #016.
 
     EPSS enrichment:
       GET https://api.first.org/data/v1/epss?cve={cve_id}
@@ -526,25 +529,34 @@ class CVIntelligenceClient:
 
     M1 invariants:
       - get_intelligence_session() for HTTP (shared aiohttp session)
-      - LMDB cache with 6h TTL
+      - LMDB cache with 24h TTL (NVD data changes daily)
       - AsyncIterator[dict] for streaming results
       - No asyncio.run() inside async functions
       - Generator pattern with chunk processing
+      - Rust NvdRateLimiter (crossbeam-channel, ~zero RAM, no GIL)
     """
     _OSV_BATCH_URL = 'https://api.osv.dev/v1/querybatch'
     _NVD_API_URL = 'https://services.nvd.nist.gov/rest/json/cves/2.0'
     _EPSS_URL = 'https://api.first.org/data/v1/epss'
     _MAX_CVES = 200
     _BATCH_SIZE = 20
-    _NVD_SEMAPHORE_LIMIT = 5
+    _NVD_RATE_LIMIT = 5
     _NVD_WINDOW_S = 30.0
+    _NVD_ACQUIRE_TIMEOUT = 35.0  # ISSUE #016: slightly > window to allow refill
     _ECOSYSTEM_MAP = {'python': 'PyPI', 'pip': 'PyPI', 'node': 'npm', 'npm': 'npm', 'js': 'npm', 'java': 'Maven', 'maven': 'Maven', 'go': 'Go', 'golang': 'Go', 'rust': 'crates.io', 'ruby': 'RubyGems', 'php': 'Packagist', 'dotnet': 'NuGet', 'nuget': 'NuGet', 'c': 'OSS-Fuzz', 'cpp': 'OSS-Fuzz'}
-    __slots__ = tuple(('_EPSS_CACHE_EVICT_BATCH', '_EPSS_CACHE_MAX_SIZE', '_cache', '_epss_cache', '_epss_cache_order', '_nvd_last_req', '_nvd_semaphore'))
+    __slots__ = tuple(('_EPSS_CACHE_EVICT_BATCH', '_EPSS_CACHE_MAX_SIZE', '_cache', '_epss_cache', '_epss_cache_order', '_nvd_limiter'))
 
     def __init__(self) -> None:
         self._cache = ExposureCache(prefix='cve')
-        self._nvd_last_req = 0.0
-        self._nvd_semaphore = asyncio.Semaphore(self._NVD_SEMAPHORE_LIMIT)
+        # ISSUE #016: Rust token bucket — precision bez GIL overhead
+        has_api_key = bool(os.environ.get('NVD_API_KEY'))
+        try:
+            from hledac_rust_extensions import create_nvd_limiter
+            self._nvd_limiter = create_nvd_limiter(has_api_key=has_api_key)
+        except ImportError:
+            # Fallback: Python asyncio.Semaphore (degraded precision)
+            logger.warning('Rust NvdRateLimiter unavailable — using asyncio.Semaphore fallback')
+            self._nvd_limiter = asyncio.Semaphore(self._NVD_RATE_LIMIT)
         self._epss_cache: dict[str, dict[str, float]] = {}
         self._epss_cache_order: list[str] = []
         self._EPSS_CACHE_MAX_SIZE = 1000
@@ -631,39 +643,73 @@ class CVIntelligenceClient:
             async for cve in self._fetch_nvd_fallback(tech_stack, session):
                 yield cve
 
+    async def _fetch_single_nvd(self, tech: str, session: httpx.AsyncClient) -> list[dict]:
+        """
+        Fetch CVEs for a single tech from NVD (rate-limited, cached).
+        Returns list of CVE dicts for yield.
+
+        ISSUE #016: Unified rate limiter interface — Rust NvdRateLimiter (token bucket)
+        or Python asyncio.Semaphore fallback.
+        - Rust try_acquire() non-blocking → cooperative async sleep loop
+        - Python Semaphore → async context manager
+        """
+        cache_key = f'nvd:{tech}'
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached.get('cves', [])
+        # ISSUE #016: Unified acquire — Rust try_acquire() or Python Semaphore
+        if hasattr(self._nvd_limiter, 'try_acquire'):
+            # Rust NvdRateLimiter: non-blocking try_acquire + cooperative async sleep
+            # Cooperative = don't block event loop; yield to event loop between checks
+            max_wait = self._NVD_ACQUIRE_TIMEOUT
+            waited = 0.0
+            while not self._nvd_limiter.try_acquire():
+                await asyncio.sleep(0.1)  # cooperative yield, 100ms chunks
+                waited += 0.1
+                if waited >= max_wait:
+                    logger.warning(f'NVD rate limit timeout for {tech}')
+                    return []
+        else:
+            # Python asyncio.Semaphore fallback
+            async with self._nvd_limiter:  # type: ignore[union-attr]
+                pass
+        try:
+            async with session.get(self._NVD_API_URL, params={'keywordSearch': tech, 'resultsPerPage': 20}, timeout=httpx.Timeout(total=30)) as resp:
+                if resp.status != 200:
+                    logger.warning(f'NVD API error for {tech}: {resp.status}')
+                    return []
+                data = await resp.json(content_type=None)
+                cves = data.get('vulnerabilities', [])
+                stored = {'cves': cves[:20]}
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(_DB_EXECUTOR, lambda k=cache_key, v=stored: self._cache.set(k, v))
+                return [self._nvd_to_cve(cve) for cve in cves[:20]]
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning(f'NVD fetch error for {tech}: {e}')
+            return []
+
     async def _fetch_nvd_fallback(self, tech_stack: list[str], session: httpx.AsyncClient) -> AsyncIterator[dict]:
         """
-        NVD API 2.0 fallback - rate limited with semaphore + sliding window.
+        NVD API 2.0 fallback - parallelized with bounded concurrency.
+
+        ISSUE-003: Replaced sequential `for tech in tech_stack` with parallel().
+        Yields CVEs as they complete (not in order) for better UX.
         """
-        for tech in tech_stack:
-            async with self._nvd_semaphore:
-                elapsed = time.time() - self._nvd_last_req
-                if elapsed < self._NVD_WINDOW_S / self._NVD_SEMAPHORE_LIMIT:
-                    await asyncio.sleep(self._NVD_WINDOW_S / self._NVD_SEMAPHORE_LIMIT - elapsed)
-                self._nvd_last_req = time.time()
-            cache_key = f'nvd:{tech}'
-            cached = self._cache.get(cache_key)
-            if cached is not None:
-                for cve in cached.get('cves', []):
-                    yield cve
-                continue
-            try:
-                async with session.get(self._NVD_API_URL, params={'keywordSearch': tech, 'resultsPerPage': 20}, timeout=httpx.Timeout(total=30)) as resp:
-                    if resp.status != 200:
-                        logger.warning(f'NVD API error for {tech}: {resp.status}')
-                        continue
-                    data = await resp.json(content_type=None)
-                    cves = data.get('vulnerabilities', [])
-                    stored = {'cves': cves[:20]}
-                    loop = asyncio.get_running_loop()
-                    await loop.run_in_executor(_DB_EXECUTOR, lambda k=cache_key, v=stored: self._cache.set(k, v))
-                    for cve in cves[:20]:
-                        yield self._nvd_to_cve(cve)
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                logger.warning(f'NVD fetch error for {tech}: {e}')
-                continue
+        if not tech_stack:
+            return
+        result = await parallel(
+            [self._fetch_single_nvd(tech, session) for tech in tech_stack],
+            concurrency=min(5, len(tech_stack)),
+            policy="collect",
+            ctx="nvd_fallback",
+        )
+        for cve_list in result.ok:
+            for cve in cve_list:
+                yield cve
+        for exc in result.errors:
+            logger.warning(f'NVD fallback parallel error: {exc}')
 
     async def _enrich_epss(self, cve_id: str, session: httpx.AsyncClient) -> dict[str, float] | None:
         """
@@ -717,6 +763,40 @@ class CVIntelligenceClient:
             severity = cvss_v3[0].get('cvssData', {}).get('baseSeverity', 'UNKNOWN')
         return {'cve_id': cve_id, 'source': 'nvd', 'summary': cve.get('descriptions', [{}])[0].get('value', ''), 'severity': severity, 'published': cve.get('published', ''), 'modified': cve.get('lastModified', ''), 'references': [r.get('url', '') for r in cve.get('references', []) if r.get('url')], 'affected': []}
 
+    async def _enrich_batch_epss(self, cves: list[dict], session: httpx.AsyncClient) -> list[dict]:
+        """
+        ISSUE-003: Parallelize EPSS enrichment for a batch of CVEs.
+        Replaces sequential `await _enrich_epss` per CVE with parallel().
+        Returns list of CVEs with EPSS fields populated.
+        """
+        if not cves:
+            return []
+        cve_ids = [cve.get('cve_id', '') for cve in cves if cve.get('cve_id')]
+        if not cve_ids:
+            return cves
+        # parallel() for bounded concurrent EPSS requests
+        result = await parallel(
+            [self._enrich_epss(cve_id, session) for cve_id in cve_ids],
+            concurrency=min(5, len(cve_ids)),
+            policy="collect",
+            ctx="epss_enrichment",
+        )
+        # Build lookup from results
+        epss_map: dict[str, dict[str, float]] = {}
+        for cve_id, epss_result in zip(cve_ids, result.ok, strict=False):
+            if epss_result:
+                epss_map[cve_id] = epss_result
+        # Apply enrichment to CVEs
+        for cve in cves:
+            cve_id = cve.get('cve_id', '')
+            if cve_id and cve_id in epss_map:
+                epss = epss_map[cve_id]
+                cve['epss_score'] = epss['epss_score']
+                cve['epss_percentile'] = epss['percentile']
+                if epss['epss_score'] > 0.7:
+                    cve['action_flag'] = 'IMMEDIATE_ACTION'
+        return cves
+
     def _osv_severity(self, vuln: dict) -> str:
         """Extract severity from OSV format."""
         severity = vuln.get('severity', [])
@@ -751,21 +831,16 @@ class CVIntelligenceClient:
             async for cve in self._fetch_osv_batch(tech_stack, session):
                 if cves_yielded >= self._MAX_CVES:
                     break
-                cve_id = cve.get('cve_id', '')
-                if cve_id:
-                    epss = await self._enrich_epss(cve_id, session)
-                    if epss:
-                        cve['epss_score'] = epss['epss_score']
-                        cve['epss_percentile'] = epss['percentile']
-                        if epss['epss_score'] > 0.7:
-                            cve['action_flag'] = 'IMMEDIATE_ACTION'
                 pending_epss.append(cve)
                 cves_yielded += 1
                 if len(pending_epss) >= self._BATCH_SIZE:
-                    yield {'cves': list(pending_epss), 'batch_complete': True}
+                    # ISSUE-003: Parallelize EPSS enrichment per batch (was sequential per CVE)
+                    enriched = await self._enrich_batch_epss(pending_epss, session)
+                    yield {'cves': enriched, 'batch_complete': True}
                     pending_epss.clear()
             if pending_epss:
-                yield {'cves': list(pending_epss), 'batch_complete': True}
+                enriched = await self._enrich_batch_epss(pending_epss, session)
+                yield {'cves': enriched, 'batch_complete': True}
             yield {'cves': [], 'batch_complete': False, 'total_cves': cves_yielded}
         finally:
             await session.close()

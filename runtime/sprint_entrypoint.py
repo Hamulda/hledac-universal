@@ -67,7 +67,7 @@ if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
     from hledac.universal.knowledge.semantic_store import SemanticStore
     from hledac.universal.runtime.scheduler_result import SprintSchedulerResult
-    from hledac.universal.runtime.scheduler_v2 import SprintScheduler as SprintScheduler
+    from hledac.universal.runtime.scheduler_v2 import SprintSchedulerV2 as SprintScheduler
 
 # Runtime imports — lightweight, fast-loading only
 from evidence_log import EvidenceLog
@@ -1969,6 +1969,11 @@ async def run_sprint(
     # process. Returns None if no event loop is running.
     _pressure_relief_task = _memory_cycle.start_pressure_relief_loop()
 
+    # Issue #042: Start background gc.collect(2) loop. Runs a full
+    # generational sweep every 60s to prevent RSS drift on M1 8GB.
+    # Idempotent — only one task per process.
+    _gc_background_task = _memory_cycle.start_gc_background_loop()
+
     # Pre-sprint checks
     run_pre_sprint_checks()
 
@@ -3501,6 +3506,15 @@ async def run_sprint(
             raise
         except Exception as e:
             logger.debug(f"[TEARDOWN] pressure_relief stop failed: {e}")  # fail-soft
+
+        # Issue #042: Stop background gc.collect(2) loop. Idempotent,
+        # bounded 5s timeout.
+        try:
+            await _memory_cycle.stop_gc_background_loop()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"[TEARDOWN] gc_background stop failed: {e}")  # fail-soft
         # F266-U4 FIX: gc.collect() can block the event loop — offload to
         # a thread so teardown doesn't starve in-flight coroutines.
         try:

@@ -69,12 +69,22 @@ class AdaptiveEmbeddingBatcher:
         except Exception:
             return 0.5
 
+    async def _gpu_arbiter_defer(self) -> None:
+        """Defer via GPUArbiter before a sub-batch encode (GPU arbitration)."""
+        arbiter = get_gpu_arbiter()
+        if arbiter.should_defer():
+            if not await arbiter.wait_until_free():
+                logger.debug('[AdaptiveBatcher] GPU arbiter timeout — proceeding anyway')
+
     async def process(self, texts: list[str], embedder: 'MLXEmbeddingManager', memory_provider: Callable[[], float] | Callable[[], Awaitable[float]]) -> list[list[float]]:
         """
         Process all texts with dynamic batch sizing.
 
         Memory pressure is checked BEFORE each sub-batch, enabling
         mid-stream batch size adjustment.
+
+        GPUArbiter is consulted before each encode_async call to avoid
+        Metal memory-bandwidth contention with Hermes3 inference (ISSUE #023).
 
         Args:
             texts: List of texts to embed
@@ -106,6 +116,7 @@ class AdaptiveEmbeddingBatcher:
             self._record_batch_size(current_batch_size)
             batch = texts[i:i + current_batch_size]
             try:
+                await self._gpu_arbiter_defer()
                 batch_result = await embedder.encode_async(batch, batch_size=len(batch))
                 if hasattr(batch_result, 'tolist'):
                     results.extend(batch_result.tolist())
@@ -126,6 +137,9 @@ class AdaptiveEmbeddingBatcher:
         Enables true streaming with memory pressure feedback between batches.
         Yields incrementally instead of materializing all embeddings at once,
         reducing peak RSS on M1 8GB.
+
+        GPUArbiter is consulted before each encode_async call to avoid
+        Metal memory-bandwidth contention with Hermes3 inference (ISSUE #023).
 
         Args:
             texts: List of texts to embed
@@ -157,6 +171,7 @@ class AdaptiveEmbeddingBatcher:
             batch = texts[i:i + current_batch_size]
             batch_indices = list(range(i, i + len(batch)))
             try:
+                await self._gpu_arbiter_defer()
                 batch_result = await embedder.encode_async(batch, batch_size=len(batch))
                 yield (batch_indices, batch_result)
             except Exception as e:
@@ -170,6 +185,151 @@ class AdaptiveEmbeddingBatcher:
     def stats(self) -> dict[str, int | float]:
         """Return batching statistics for telemetry."""
         return dict(self._stats)
+
+# ── GPU Resource Arbitration (ISSUE #023) ────────────────────────────────────
+#
+# Hermes3 MLX inference and MLX embedder share Metal GPU memory bandwidth.
+# When Hermes3 saturates GPU memory (>85% of dynamic cache), concurrent
+# embedder access causes contention → -30% inference time.
+#
+# GPUArbiter defers embed calls until GPU pressure drops, complementing
+# ANE_MLX_Mutex (model-loading) with runtime GPU scheduling.
+#
+# Threshold: fraction = active_GPU_bytes / dynamic_cache_limit
+#   < 0.60 → idle    → embed immediately
+#   0.60–0.85 → normal → embed immediately
+#   > 0.85   → pressure → DEFER (wait 100ms polling, max 5s timeout)
+#
+# Fail-safe: returns 0.0 (idle) if MLX unavailable.
+
+# Cached at module level — avoid per-call import overhead in hot polling loop
+_mlx_memory_module: Any = None
+
+
+def _get_mlx_memory_module() -> Any:
+    """Lazily cached mlx_memory module reference."""
+    global _mlx_memory_module
+    if _mlx_memory_module is None:
+        try:
+            from hledac.universal.utils import mlx_memory
+
+            _mlx_memory_module = mlx_memory
+        except Exception:
+            pass
+    return _mlx_memory_module
+
+
+def _probe_gpu_fraction() -> float:
+    """Probe MLX Metal GPU memory fraction (active / dynamic_limit)."""
+    try:
+        global mx
+        limit = 0
+        mod = _get_mlx_memory_module()
+        if mod is not None:
+            try:
+                limit = mod.get_dynamic_metal_cache_limit()
+            except Exception:
+                pass
+        if limit <= 0:
+            return 0.0
+        try:
+            active = mx.get_active_memory()
+        except (AttributeError, NameError):
+            try:
+                active = mx.metal.get_active_memory()
+            except Exception:
+                return 0.0
+        return min(1.0, float(active) / float(limit))
+    except Exception:
+        return 0.0
+
+
+class GPUArbiter:
+    """
+    Fine-grained GPU resource arbiter for MLX embedder vs Hermes3 inference.
+
+    ISSUE #023 fix: When Hermes3 saturates the Metal GPU, defer embedder calls
+    to avoid memory-bandwidth contention on M1 8GB UMA.
+
+    Usage:
+        arbiter = get_gpu_arbiter()
+        if arbiter.should_defer():
+            await arbiter.wait_until_free()
+        embeddings = await embedder.encode_async(texts)
+
+    Always-on, fail-safe, bounded for M1 8GB UMA.
+    """
+    DEFER_THRESHOLD: float = 0.85
+    POLL_INTERVAL: float = 0.1
+    DEFAULT_TIMEOUT: float = 5.0
+
+    __slots__ = ('_defer_count', '_poll_count', '_last_fraction')
+
+    def __init__(self) -> None:
+        self._defer_count: int = 0
+        self._poll_count: int = 0
+        self._last_fraction: float = 0.0
+
+    def should_defer(self) -> bool:
+        """Return True if GPU is saturated (>85%) and embedder should defer."""
+        try:
+            fraction = _probe_gpu_fraction()
+            self._last_fraction = fraction
+            if fraction > self.DEFER_THRESHOLD:
+                self._defer_count += 1
+                return True
+            return False
+        except Exception:
+            self._last_fraction = 0.0
+            return False
+
+    async def wait_until_free(self, timeout: float = DEFAULT_TIMEOUT) -> bool:
+        """
+        Wait until GPU pressure drops below threshold, or timeout expires.
+
+        Polls should_defer() every 100ms. Returns True if GPU is free within
+        timeout, False if timeout expired.
+
+        Args:
+            timeout: Max seconds to wait (default 5.0). 0 = no-wait fallback.
+        """
+        if timeout <= 0:
+            return not self.should_defer()
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if not self.should_defer():
+                return True
+            self._poll_count += 1
+            try:
+                await asyncio.sleep(self.POLL_INTERVAL)
+            except asyncio.CancelledError:
+                return False
+        return False
+
+    @property
+    def stats(self) -> dict[str, int | float]:
+        return {
+            'defer_count': self._defer_count,
+            'poll_count': self._poll_count,
+            'last_gpu_fraction': self._last_fraction,
+        }
+
+
+_arbiter: GPUArbiter | None = None
+_arbiter_lock = threading.Lock()
+
+
+def get_gpu_arbiter() -> GPUArbiter:
+    """Global singleton GPU arbiter."""
+    global _arbiter
+    if _arbiter is None:
+        with _arbiter_lock:
+            if _arbiter is None:
+                _arbiter = GPUArbiter()
+    return _arbiter
+
+# ── MLX import ────────────────────────────────────────────────────────────────
+
 try:
     import mlx.core as mx
     MLX_AVAILABLE = True
@@ -286,7 +446,11 @@ class MLXEmbeddingManager:
                 logger.info(f'[mlx-embed] ensure_loaded completed in {load_dur:.1f}s RSS={rss_gb:.2f}GB')
 
     async def encode_async(self, texts: str | list[str], batch_size: int=32, normalize: bool=True, show_progress: bool=False, truncate_dim: int | None=None, _for_indexing: bool=False) -> np.ndarray:
-        """Async-safe encode — load + encode in thread pool."""
+        """Async-safe encode — load + encode in thread pool with GPU arbitration."""
+        arbiter = get_gpu_arbiter()
+        # Single probe: wait_until_free calls should_defer internally; avoid double-probe
+        if arbiter.should_defer():
+            await arbiter.wait_until_free()
         t0 = time.monotonic()
         await self.ensure_loaded()
         load_dur = time.monotonic() - t0

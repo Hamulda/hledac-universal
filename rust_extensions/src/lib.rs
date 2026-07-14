@@ -35,6 +35,7 @@ pub mod html_parse;
 pub mod int_counter_layout;
 pub mod ioc_dedup;
 pub mod ioc_patterns;
+pub mod ioc_patterns_generated; // Issue #031: generated from ioc_patterns.rs (codegen)
 // ISSUE-008: ioc_core DEPRECATED — ioc_extract now provides has_* functions using ioc_patterns.rs
 pub mod dns_tunnel; // ISSUE #33: DNS tunneling detection (entropy, n-gram, wavelet)
 pub mod ioc_extract;
@@ -72,13 +73,17 @@ pub mod embedding_index; // ANN HNSW index v Rust (M1 8GB safe)
 pub mod lancedb_bridge; // F320+: Rust HNSW bridge → LanceDB Python API (ANN only, zero-copy)
 pub mod graph_cache;    // TinyLFU LRU cache pro graph operations
 pub mod dedup_bloom;    // Distribuovaný BloomFilter s Count-Min Sketch
+pub mod rate_limit;     // ISSUE #016: NVD API rate limiter — token bucket + MPSC
 pub mod telemetry_agg;  // Real-time metrics aggregation
 pub mod health;         // Issue #22: health_check() endpoint
 pub mod claims_extraction; // ISSUE-27: CPU-bound claims extraction (polarity, confidence, sentence split)
 pub mod sprint_policies;
 pub mod tls_metadata;    // Issue B5: TLS cert metadata — single Rust call replacing 5-level Python fallback
 pub mod gil;            // F5.2: GIL management — std::thread + rayon pools (ne pyo3-async)
+pub mod pool_run;      // Rayon pool runners — Python-callable cpu/io/mixed pool execute
+pub mod mlx_bridge;    // ISSUE #015: MLX async token streaming bridge + adaptive buffering
 pub mod data;           // DuckDB bridge — isolated module for future cdylib extraction
+pub mod text_similarity; // ISSUE-026: Parallel text similarity clustering for temporal archaeologist
 
 // ---------------------------------------------------------------------------
 // Rayon thread pools — M1 8GB safe, P/E core optimized
@@ -585,6 +590,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // F275: CommonCrypto SHA-256 hardware acceleration on Apple Silicon (~3× vs sha2 crate).
     crypto_accelerate::register_functions(m)?;
     adaptive_scheduler::register_functions(m)?;
+    rate_limit::register_module(m)?;  // ISSUE #016: NVD token bucket rate limiter
     // F5.2: FeedDominanceGuard + LaneBudgetPool in Rust (zero-copy, no GIL)
     sprint_policies::register(m)?;
 
@@ -716,12 +722,24 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Pre-compiled regexes via LazyLock, mixed_pool adaptive threading.
     claims_extraction::register_functions(m)?;
 
+    // ISSUE-026: Parallel text similarity clustering for temporal archaeologist.
+    // Rayon-parallel trigram Jaccard grouping — replaces O(n²) serial _group_similar_snapshots.
+    text_similarity::register_functions(m)?;
+
     // ISSUE-013: Async Rust DuckDB queries via std::thread + rayon pool.
     // rust_async_query() se volá z Python asyncio přes asyncio.to_thread().
     async_query::register(m)?;
 
+    // ISSUE #014: Multi-stage pipeline operators via rayon — zero-copy Arc<T> between stages.
+    // Replaces Python async Queue + dict overhead in sidecar_bus.py for 100+ events/sec.
+    // Pipeline primitives: MAP, FILTER-MAP, FOLD, COUNT — all parallel via mixed_pool.
+    pipeline_compose::register(m)?;
+
     // F5.2: GIL management — Python::with_gil() + rayon pools (ne pyo3-async)
     gil::register_functions(m)?;
+
+    // ISSUE #015: MLX async token streaming bridge — adaptive buffering + memory pressure feedback
+    mlx_bridge::register(m)?;
 
     // DuckDB bridge — isolated module for future cdylib extraction (saves ~8 MB .dylib)
     data::register_functions(m)?;

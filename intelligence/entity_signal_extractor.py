@@ -17,26 +17,31 @@ Bounded for M1 8GB:
 
 Role: feeds identity_stitching_canonical.py adapter which produces
 derived identity findings for async_ingest_findings_batch().
+
+ISSUE #032: Migrated from ThreadPoolExecutor to RustWorkerPool (cpu pool, 4 P-cores).
+  - _NUM_EXTRACTION_WORKERS=2 → 2 concurrent chunk extractions
+  - pool.submit() replaces executor.submit() + f.result()
+  - pool.shutdown() replaces executor.shutdown()
 """
 import asyncio
 import logging
 import re
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 import msgspec
 from datetime import datetime
 from typing import Any
 from hledac.universal.utils.async_helpers import safe_gather_shielded
+from hledac.universal.runtime.worker_pool import RustWorkerPool
 logger = logging.getLogger(__name__)
 _NUM_EXTRACTION_WORKERS: int = 2
 _CHUNK_SIZE: int = 32
-_executor: ThreadPoolExecutor | None = None
+_pool: RustWorkerPool | None = None
 
-def _get_executor() -> ThreadPoolExecutor:
-    global _executor
-    if _executor is None:
-        _executor = ThreadPoolExecutor(max_workers=_NUM_EXTRACTION_WORKERS, thread_name_prefix='entity_extract')
-    return _executor
+def _get_pool() -> RustWorkerPool:
+    global _pool
+    if _pool is None:
+        _pool = RustWorkerPool(pool_type="cpu")
+    return _pool
 MAX_PROFILES: int = 500
 MAX_COMPARISONS: int = 2000
 _EMAIL_RE = re.compile('[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}')
@@ -178,12 +183,13 @@ def extract_entities_from_findings(findings: list[Any], max_profiles: int=MAX_PR
     if not findings:
         return []
     chunks: list[list[Any]] = [findings[i:i + _CHUNK_SIZE] for i in range(0, len(findings), _CHUNK_SIZE)]
-    executor = _get_executor()
-    futures = [executor.submit(_extract_chunk, chunk) for chunk in chunks]
+    pool = _get_pool()
     all_results: list[tuple[str, Any, ExtractedEntity]] = []
-    for f in futures:
+    for chunk in chunks:
         try:
-            all_results.extend(f.result())
+            result = pool.submit_sync(_extract_chunk, chunk)
+            if result is not None:
+                all_results.extend(result)
         except Exception as exc:
             logger.warning(f'Entity extraction chunk failed: {exc}')
     profile_map: dict[str, EntitySignalProfile] = {}
@@ -308,9 +314,9 @@ def get_extractor_stats() -> dict[str, int]:
     return {'profiles_extracted': _extracted_profiles_total, 'entities_extracted': _extracted_entities_total}
 
 def shutdown_executor() -> None:
-    """Shutdown thread pool executor. Call at sprint teardown."""
-    global _executor
-    if _executor is not None:
-        _executor.shutdown(wait=False)
-        _executor = None
+    """Shutdown RustWorkerPool. Call at sprint teardown."""
+    global _pool
+    if _pool is not None:
+        _pool.shutdown()
+        _pool = None
 __all__ = ['ExtractedEntity', 'EntitySignalProfile', 'extract_entities_from_finding', 'extract_entities_from_findings', 'extract_entities_from_findings_async', 'reset_extractor_stats', 'get_extractor_stats', 'shutdown_executor', 'MAX_PROFILES', 'MAX_COMPARISONS']

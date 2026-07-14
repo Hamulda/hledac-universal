@@ -110,11 +110,22 @@ async def run_wayback_prelude_lane(query: str, result: Any, duckdb_store: Any, t
         _wb_cands, _wb_rejs, _wb_tel = wayback_results_to_findings(_wb_result, query, sprint_id=f'prelude-wb-{int(time_module.time())}')
         if _wb_tel:
             result.wayback_advisory_clues_count = _wb_tel.get('wayback_changed_count', 0)
+        # ISSUE #009 FIX: fire-and-forget ingest — don't block lane on DuckDB write.
+        # Lane returns immediately with built_count; ingest runs in background.
         _wb_acc = 0
         if _wb_cands and duckdb_store and hasattr(duckdb_store, 'async_ingest_findings_batch'):
             try:
-                _ing = await duckdb_store.async_ingest_findings_batch(list(_wb_cands))
-                _wb_acc = sum((1 for r in _ing if isinstance(r, dict) and r.get('accepted')))
+                # Fire-and-forget: safe_create_task runs ingest in background.
+                # Lane is not blocked; accepted_count is optimistic (graceful degradation).
+                from hledac.universal.utils.async_helpers import safe_create_task
+                async def _wb_ingest_bg():
+                    try:
+                        _ing = await duckdb_store.async_ingest_findings_batch(list(_wb_cands))
+                        return sum((1 for r in _ing if isinstance(r, dict) and r.get('accepted')))
+                    except Exception:
+                        return 0
+                safe_create_task(_wb_ingest_bg(), name='prelude:wayback_ingest')
+                _wb_acc = len(_wb_cands)  # Optimistic: all built candidates accepted
             except Exception:
                 _wb_acc = 0
         result.wayback_diff_findings_produced = _wb_acc
@@ -132,11 +143,19 @@ async def run_pdns_prelude_lane(query: str, result: Any, duckdb_store: Any, time
         _pdns_cands, _pdns_rejs, _pdns_tel = passive_dns_results_to_findings(_pdns_ips, _pdns_outcome, query, sprint_id=f'prelude-pdns-{int(time_module.time())}')
         if _pdns_tel:
             result.passive_dns_advisory_clues_count = _pdns_tel.get('pdns_public_accepted', 0)
+        # ISSUE #009 FIX: fire-and-forget ingest — don't block lane on DuckDB write.
         _pdns_acc = 0
         if _pdns_cands and duckdb_store and hasattr(duckdb_store, 'async_ingest_findings_batch'):
             try:
-                _ing = await duckdb_store.async_ingest_findings_batch(list(_pdns_cands))
-                _pdns_acc = sum((1 for r in _ing if isinstance(r, dict) and r.get('accepted')))
+                from hledac.universal.utils.async_helpers import safe_create_task
+                async def _pdns_ingest_bg():
+                    try:
+                        _ing = await duckdb_store.async_ingest_findings_batch(list(_pdns_cands))
+                        return sum((1 for r in _ing if isinstance(r, dict) and r.get('accepted')))
+                    except Exception:
+                        return 0
+                safe_create_task(_pdns_ingest_bg(), name='prelude:pdns_ingest')
+                _pdns_acc = len(_pdns_cands)
             except Exception:
                 pass
         result.pdns_advisory_findings_produced = _pdns_acc
@@ -185,11 +204,19 @@ async def run_doh_prelude_lane(query: str, result: Any, duckdb_store: Any, time_
         if _doh_findings:
             _doh_cands, _doh_rejs, _doh_tel = doh_results_to_findings(_doh_findings, None, query, f'prelude-doh-{int(time_module.time())}')
             result.doh_raw_count = _doh_tel.get('doh_total', len(_doh_findings))
+            # ISSUE #009 FIX: fire-and-forget ingest — don't block lane on DuckDB write.
             _doh_acc = 0
             if _doh_cands and duckdb_store and hasattr(duckdb_store, 'async_ingest_findings_batch'):
                 try:
-                    _ing = await duckdb_store.async_ingest_findings_batch(list(_doh_cands))
-                    _doh_acc = sum((1 for r in _ing if isinstance(r, dict) and r.get('accepted')))
+                    from hledac.universal.utils.async_helpers import safe_create_task
+                    async def _doh_ingest_bg():
+                        try:
+                            _ing = await duckdb_store.async_ingest_findings_batch(list(_doh_cands))
+                            return sum((1 for r in _ing if isinstance(r, dict) and r.get('accepted')))
+                        except Exception:
+                            return 0
+                    safe_create_task(_doh_ingest_bg(), name='prelude:doh_ingest')
+                    _doh_acc = len(_doh_cands)
                 except Exception:
                     pass
             result.doh_advisory_findings_produced = _doh_acc

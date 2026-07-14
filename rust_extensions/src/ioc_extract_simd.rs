@@ -48,7 +48,8 @@
 //! text_idx) for flat per-IOC results across the batch.
 //!
 //! Pattern order (matches `pattern_id` indices):
-//!   0=IPv4, 1=IPv6, 2=Domain, 3=MD5, 4=SHA1, 5=SHA256, 6=Email, 7=CVE
+//!   0=IPv4, 1=Domain, 2=MD5, 3=SHA1, 4=SHA256, 5=Email, 6=CVE, 7=MAC, 8=BTC, 9=ETH
+//! Issue #4: Added MAC (7), BTC (8), ETH (9) IOC types.
 
 use pyo3::prelude::*;
 use pyo3::types::PyList;
@@ -56,6 +57,13 @@ use rayon::prelude::*;
 use regex::Regex as RegexSimple;
 use regex_automata::meta::Regex;
 use std::collections::HashSet;
+
+// Issue #031: Import patterns from generated module (single source of truth).
+// Previously had inline patterns in build_many — now uses ioc_patterns_generated.rs.
+use crate::ioc_patterns_generated::{
+    IPV4_PAT, DOMAIN_PAT, MD5_PAT, SHA1_PAT, SHA256_PAT,
+    EMAIL_PAT, CVE_PAT, MAC_PAT, BTC_PAT, ETH_PAT,
+};
 
 /// Issue #5: Single-pass meta-regex — one automaton, one scan, all patterns.
 /// `build_many` compiles all patterns into one NFA; regex-automata auto-selects
@@ -76,21 +84,17 @@ static IOC_META_REGEX: std::sync::LazyLock<Result<Regex, regex_automata::meta::B
                     .dfa_size_limit(Some(50 * 1024 * 1024)), // 50 MB DFA cache
             )
             .build_many(&[
-                // IPv4 — full octet range with \b boundaries
-                // Note: [0-9][0-9] (not \d) avoids matching non-ASCII digits
-                r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b",
-                // Domain — LDH rules + TLD
-                r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b",
-                // MD5 — 32 hex chars with \b
-                r"\b[a-fA-F0-9]{32}\b",
-                // SHA1 — 40 hex chars with \b
-                r"\b[a-fA-F0-9]{40}\b",
-                // SHA256 — 64 hex chars with \b
-                r"\b[a-fA-F0-9]{64}\b",
-                // Email — standard addr-spec pattern
-                r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
-                // CVE — no trailing \b (CVE numbers don't terminate with word break)
-                r"CVE-\d{4}-\d{4,}",
+                // Issue #031: Use constants from ioc_patterns_generated (single source of truth).
+                IPV4_PAT,
+                DOMAIN_PAT,
+                MD5_PAT,
+                SHA1_PAT,
+                SHA256_PAT,
+                EMAIL_PAT,
+                CVE_PAT,
+                MAC_PAT,
+                BTC_PAT,
+                ETH_PAT,
             ]);
 
         if let Err(ref e) = result {
@@ -129,6 +133,7 @@ static IPV6_REGEX: std::sync::LazyLock<RegexSimple> =
 /// IOC type mapping from `build_many` pattern index → string label.
 /// IPv6 was removed from build_many due to regex-automata NFA size limits;
 /// it is handled separately via `IPV6_REGEX` in `extract_one_simd`.
+/// Issue #4: Extended with MAC (7), BTC (8), ETH (9).
 fn pattern_to_ioc_type(pattern_id: usize) -> &'static str {
     match pattern_id {
         0 => "ipv4",
@@ -138,6 +143,9 @@ fn pattern_to_ioc_type(pattern_id: usize) -> &'static str {
         4 => "sha256",
         5 => "email",
         6 => "cve",
+        7 => "mac",
+        8 => "btc",
+        9 => "eth",
         // DEFENSIVE: _ => "unknown" instead of unreachable!().
         // If a new IOC_META_REGEX variant is added without updating this match,
         // we return "unknown" rather than panicking. A new variant without a
@@ -173,10 +181,12 @@ fn extract_one_simd(text: &str) -> Vec<(String, String)> {
         let raw_value = &text[m.start()..m.end()];
 
         // Validate hex hashes to prevent false positives (SHA1/SHA256/MD5 without true \b)
+        // Issue #4: ETH also requires 0x prefix validation
         let value = match ioc_type {
             "md5" if !is_hex_hash(raw_value, 32) => continue,
             "sha1" if !is_hex_hash(raw_value, 40) => continue,
             "sha256" if !is_hex_hash(raw_value, 64) => continue,
+            "eth" if !raw_value.starts_with("0x") || !is_hex_hash(&raw_value[2..], 40) => continue,
             _ => raw_value.to_lowercase(),
         };
 

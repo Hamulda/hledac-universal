@@ -16,7 +16,7 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 import httpx
 from hledac.universal.transport.circuit_breaker import checked_httpx_get as checked_aiohttp_get
-from hledac.universal.utils.async_helpers import safe_gather_shielded
+from hledac.universal.utils.async_helpers import parallel, safe_gather_shielded
 logger = logging.getLogger(__name__)
 _SECRET_REDACT_LEN = 4
 
@@ -165,8 +165,9 @@ async def _scan_fork_network(repo_full_name: str, session: httpx.AsyncClient) ->
     return findings
 
 async def _scan_commit_diffs(repo_full_name: str, session: httpx.AsyncClient) -> AsyncGenerator[SecretFinding]:
-    """Scan recent commits for secrets in added lines (one at a time).
+    """Scan recent commits for secrets in added lines (parallelized).
 
+    ISSUE-003: Replaced sequential `for commit_info in commits_data` with parallel().
     Yields SecretFinding objects for secrets found in commit diffs.
     Only scans 'added' lines (starting with '+').
     """
@@ -174,12 +175,28 @@ async def _scan_commit_diffs(repo_full_name: str, session: httpx.AsyncClient) ->
     commits_data = await _gh_get(commits_url, session, params={'per_page': 30})
     if not commits_data or not isinstance(commits_data, list):
         return
+
+    # Build list of commit fetch coroutines
+    commit_coros = []
     for commit_info in commits_data:
         sha = commit_info.get('sha', '')
         if not sha:
             continue
         commit_url = f'{_GITHUB_API}/repos/{repo_full_name}/commits/{sha}'
-        commit_data = await _gh_get(commit_url, session)
+        commit_coros.append(_gh_get(commit_url, session))
+
+    if not commit_coros:
+        return
+
+    # Execute all commit fetches in parallel (bounded concurrency=5 for rate limit safety)
+    result = await parallel(
+        commit_coros,
+        concurrency=min(5, len(commit_coros)),
+        policy="collect",
+        ctx="github_commit_scan",
+    )
+
+    for commit_data in result.ok:
         if not commit_data:
             continue
         files = commit_data.get('files', [])
@@ -203,7 +220,7 @@ async def _scan_commit_diffs(repo_full_name: str, session: httpx.AsyncClient) ->
                                 continue
                         masked_line = _mask_secret(scan_line.strip())
                         yield SecretFinding(pattern=pattern_label, file_path=file_path, line=line_no, context=masked_line)
-                        logger.debug(f'GitHub secret in {repo_full_name} commit {sha[:7]}/{file_path}:{line_no} pattern={pattern_label}')
+                        logger.debug(f'GitHub secret in {repo_full_name} commit {file_path}:{line_no} pattern={pattern_label}')
 
 async def scan_repo(repo_full_name: str) -> list[SecretFinding]:
     """Scan veřejný GitHub repozitář pro potenciální secrets.
@@ -253,6 +270,8 @@ async def search_org_secrets(org: str) -> list[SecretFinding]:
 
     Org může být název organizace nebo uživatele na GitHubu.
     Omezený počet repozitářů (prvních 30 dle relevance, max 10 skenovaných).
+
+    ISSUE-003: Parallelized with bounded concurrency (max 3 for GitHub rate limit safety).
     """
     findings: list[SecretFinding] = []
     _sess = await httpx.AsyncClient()
@@ -265,11 +284,18 @@ async def search_org_secrets(org: str) -> list[SecretFinding]:
                 repos = await resp.json()
         except Exception:
             return []
-    for repo in repos[:10]:
-        repo_name: str = repo.get('full_name', '')
-        if not repo_name:
-            continue
-        repo_findings = await scan_repo(repo_name)
+    repo_names = [repo.get('full_name', '') for repo in repos[:10] if repo.get('full_name')]
+    if not repo_names:
+        return findings
+    # ISSUE-003: Parallelize repo scanning (max 3 concurrent for GitHub rate limit safety)
+    result = await parallel(
+        [scan_repo(name) for name in repo_names],
+        concurrency=min(3, len(repo_names)),
+        policy="collect",
+        ctx="github_org_scan",
+    )
+    for repo_findings in result.ok:
         findings.extend(repo_findings)
-        await asyncio.sleep(_RATELIMIT_S)
+    for exc in result.errors:
+        logger.debug(f'GitHub org scan error: {exc}')
     return findings

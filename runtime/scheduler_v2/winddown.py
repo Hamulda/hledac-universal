@@ -15,9 +15,25 @@ Design:
 """
 import asyncio
 import time as _time
-from hledac.universal.utils.async_helpers import safe_create_task
 from dataclasses import dataclass, field
 from typing import Any
+from hledac.universal.utils.async_helpers import safe_create_task
+
+
+def _maybe_call_pressure_relief(ctx: Any) -> None:
+    """F273G: Call malloc_zone_pressure_relief if governor recommends.
+
+    Standalone function (originally SprintScheduler method) for winddown use.
+    Safe to call at any point - no-op if unavailable.
+    """
+    try:
+        import resource  # macOS/Unix malloc zone pressure relief
+        from hledac.universal.core.resource_governor import M1ResourceGovernor
+        _gov = getattr(ctx, '_resource_governor', None)
+        if _gov and hasattr(_gov, 'maybe_pressure_relief'):
+            _gov.maybe_pressure_relief()
+    except Exception:
+        pass
 
 @dataclass(slots=True)
 class WinddownPhaseResult:
@@ -59,50 +75,81 @@ class WinddownOrchestrator:
         pass
 
     async def run(self, ctx: Any, lifecycle: Any, query: str) -> WinddownPhaseResult:
-        """Run the complete winddown sequence.
-
-        Returns WinddownPhaseResult with export paths and telemetry.
-        """
-        from runtime.scheduler_v2.protocol import WinddownPhaseResult
         _t_winddown_start = _time.monotonic()
         _result = ctx.result
         _config = ctx.config
         export_paths: list[str] = []
         export_errors: list[str] = []
         synthesis_success = False
+
+        # Phase 0: Serial sync operations (required first, cannot parallelize)
+        _maybe_call_pressure_relief(ctx)
+        if ctx.runner:
+            ctx.runner.teardown()
+
+        # Phase 1: Parallel I/O-bound winddown using TaskGroup
+        # NOTE: _graceful_sidecar_shutdown runs AFTER the parallel phase due to
+        # its 15s timeout - we don't want it blocking other I/O operations.
+        _parallel_errors: list[str] = []
         try:
-            self._maybe_call_pressure_relief(ctx)
-            if ctx.runner:
-                ctx.runner.teardown()
-            await self._shutdown_entity_signal_extractor()
-            await self._teardown_browser_pool(ctx)
-            _exp_result = await self._run_export(ctx, lifecycle, query)
-            export_paths = _exp_result.get('paths', [])
-            export_errors = _exp_result.get('errors', [])
-            _synth_success = await self._await_synthesis(ctx)
-            synthesis_success = _synth_success
-            await self._run_vacuum(ctx)
-            await self._close_dedup(ctx)
-            await self._close_graph(ctx)
-            await self._close_enrichment(ctx)
-            await self._close_privacy_layer(ctx)
-            await self._run_sidecars(ctx)
-            await self._run_ane_semantic_dedup_advisory(ctx)
-            self._maybe_launch_enhanced_research(ctx)
-            await self._unload_hermes_at_teardown(ctx)
-            self._unload_lazy_models(ctx)
-            await self._cancel_bg_tasks(ctx)
-            await self._graceful_sidecar_shutdown(ctx)
-            await self._close_duckdb(ctx)
-            ctx._sidecar_tasks = None
-            ctx._acquisition_plan = None
-            ctx._lifecycle = None
-            _result.final_phase = ctx.runner.current_phase if ctx.runner else 'WINDDOWN'
-        except Exception as exc:
-            _result.aborted = True
-            _result.abort_reason = f'winddown_exception:{type(exc).__name__}'
-            return WinddownPhaseResult(export_paths=export_paths, synthesis_success=synthesis_success, teardown_duration_s=_time.monotonic() - _t_winddown_start, export_errors=export_errors, error=f'{type(exc).__name__}:{exc}')
-        return WinddownPhaseResult(export_paths=export_paths, synthesis_success=synthesis_success, teardown_duration_s=_time.monotonic() - _t_winddown_start, export_errors=export_errors)
+            async with asyncio.TaskGroup() as _tg:
+                _tg.create_task(self._shutdown_entity_signal_extractor())
+                _tg.create_task(self._teardown_browser_pool(ctx))
+                _tg.create_task(self._run_export_as_task(ctx, lifecycle, query))
+                _tg.create_task(self._run_vacuum(ctx))
+                _tg.create_task(self._close_dedup(ctx))
+                _tg.create_task(self._close_graph(ctx))
+                _tg.create_task(self._close_enrichment(ctx))
+                _tg.create_task(self._close_privacy_layer(ctx))
+                _tg.create_task(self._run_sidecars(ctx))
+                _tg.create_task(self._run_ane_semantic_dedup_advisory(ctx))
+                _tg.create_task(self._cancel_bg_tasks(ctx))
+        except BaseExceptionGroup as _eg:
+            # TaskGroup captures all exceptions; we log and continue for winddown
+            for _exc in _eg.exceptions:
+                _parallel_errors.append(f'WINDDOWN_PARALLEL:{type(_exc).__name__}:{_exc}')
+
+        # Extract export results (set by _run_export_as_task via ctx.result)
+        _exp_result = getattr(ctx, '_export_result', None) or {}
+        export_paths = _exp_result.get('paths', [])
+        export_errors = _parallel_errors + _exp_result.get('errors', [])
+
+        # Phase 2: Serial barrier - synthesis must complete before hermes unload
+        _synth_success = await self._await_synthesis(ctx)
+        synthesis_success = _synth_success
+
+        # Phase 3: Hermes unload (depends on synthesis complete) + lazy models
+        await self._unload_hermes_at_teardown(ctx)
+        self._unload_lazy_models(ctx)
+
+        # Phase 4: Sidecar shutdown with dedicated timeout (after parallel phase)
+        await self._graceful_sidecar_shutdown(ctx)
+
+        # Phase 5: DuckDB close - MUST be last
+        await self._close_duckdb(ctx)
+
+        # Final cleanup
+        self._maybe_launch_enhanced_research(ctx)
+        ctx._sidecar_tasks = None
+        ctx._acquisition_plan = None
+        ctx._lifecycle = None
+        _result.final_phase = ctx.runner.current_phase if ctx.runner else 'WINDDOWN'
+
+        return WinddownPhaseResult(
+            export_paths=export_paths,
+            synthesis_success=synthesis_success,
+            teardown_duration_s=_time.monotonic() - _t_winddown_start,
+            export_errors=export_errors,
+        )
+
+    async def _run_export_as_task(self, ctx: Any, lifecycle: Any, query: str) -> None:
+        """Run export and store results in ctx._export_result for parallel retrieval.
+
+        This wraps _run_export for use in TaskGroup - stores results in ctx
+        so the calling code can retrieve them after the TaskGroup completes.
+        """
+        _result = await self._run_export(ctx, lifecycle, query)
+        ctx._export_result = _result
 
     async def _run_export(self, ctx: Any, lifecycle: Any, query: str) -> dict[str, Any]:
         """Run all four exporters + CTI + hypothesis. Returns {paths, errors}."""
@@ -359,5 +406,4 @@ def _import_exporters() -> tuple:
     """Lazy import all four exporters + CTI collector."""
     from hledac.universal.export.report_render import render_markdown as rend_md, render_jsonld as rend_jsonld, render_stix as rend_stix, render_cti_stix as rend_cti_stix, collect_cti_inputs
     return (rend_md, rend_jsonld, rend_stix, rend_cti_stix, collect_cti_inputs)
-from runtime.scheduler_v2.protocol import WinddownPhaseResult
 __all__ = ['WinddownOrchestrator', 'WinddownPhaseResult']

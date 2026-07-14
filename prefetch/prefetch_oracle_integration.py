@@ -64,6 +64,20 @@ def _get_rust_aggregate_signals():
         except Exception:
             _rust_aggregate_signals = None
     return _rust_aggregate_signals
+_rust_federated_qtable: Any = None
+
+def _get_rust_federated_qtable():
+    """Lazy access to RustFederatedQTable — ISSUE #009: Rust Q-table guided prefetch."""
+    global _rust_federated_qtable
+    if _rust_federated_qtable is None:
+        try:
+            from hledac_rust_extensions import RustFederatedQTable
+            # Singleton Q-table: alpha=0.1, gamma=0.9, max_entries=1024 per lane
+            # Persists via FederatedBridge LMDB path; here we use in-memory only.
+            _rust_federated_qtable = RustFederatedQTable(alpha=0.1, gamma=0.9, max_entries=1024)
+        except Exception:
+            _rust_federated_qtable = None
+    return _rust_federated_qtable
 MAX_CANDIDATES = 100
 MAX_SOURCE_HISTORY = 200
 MAX_URL_SEEN = 50000
@@ -459,16 +473,21 @@ class PrefetchOracleIntegration:
             logger.debug(f'[P3-1] predict_next_iocs failed: {e}')
             return []
 
-    def record_prefetch_outcome(self, ioc_value: str, _success: bool=True, _bytes_downloaded: int=0) -> None:
+    def record_prefetch_outcome(self, ioc_value: str, success: bool=True, _bytes_downloaded: int=0, lane: str='surface', state_key: str='prelude', next_state_key: str='prelude') -> None:
         """
         P3-1: Record the outcome of a prefetch attempt.
 
-        Called by ContinuousPrefetchPipeline._prefetch_item() after fetch.
+        ISSUE #009: Also updates Rust FederatedQTable for Q-guided prefetch.
+        Rust Q-table learn() from prefetch success/failure — improves future
+        prefetch ordering via rayon's DashMap-backed parallel updates.
 
         Args:
             ioc_value: The IOC that was prefetched.
             success: True if fetch succeeded and data was cached.
-            bytes_downloaded: Bytes downloaded (for bandwidth accounting).
+            _bytes_downloaded: Bytes downloaded (reserved for future bandwidth accounting).
+            lane: Q-table lane ('surface', 'dark', etc.)
+            state_key: Current state key for Q-learning.
+            next_state_key: Next state key for Q-learning.
         """
         try:
             self._prefetched_iocs[ioc_value] = time.time()
@@ -476,6 +495,67 @@ class PrefetchOracleIntegration:
                 self._prefetched_iocs.popitem(last=False)
         except Exception:
             pass
+        # ISSUE #009: Rust Q-table update — reward = +1 on success, -0.1 on failure
+        try:
+            qtable = _get_rust_federated_qtable()
+            if qtable is not None:
+                reward = 1.0 if success else -0.1
+                action = f'prefetch:{ioc_value[:32]}'
+                # update() is lock-free via DashMap — no global lock contention
+                qtable.update(lane, state_key, action, reward, next_state_key)
+        except Exception:
+            pass
+
+    def get_best_prefetch_actions(self, candidates: list[str], lane: str='surface', state_key: str='prelude', top_k: int=5) -> list[str]:
+        """
+        ISSUE #009 + ISSUE A fix: Return top-K prefetch actions guided by Rust FederatedQTable.
+
+        Uses RustFederatedQTable.get_best_action() which is lock-free (DashMap)
+        for reading Q-values and rayon-parallel for batch updates.
+
+        Args:
+            candidates: List of IOC values to rank.
+            lane: Q-table lane.
+            state_key: Current state key for Q-learning.
+            top_k: Number of top actions to return.
+
+        Returns:
+            List of top-K IOC values sorted by Q-value descending.
+            Returns candidates as-is if Rust Q-table unavailable (fail-soft).
+
+        ISSUE A fix:
+            - Deduplication uses exact match (==) instead of startswith.
+              With 32-char hex strings of equal length, startswith was accidentally
+              correct by coincidence — == is semantically correct.
+            - Empty candidates returns state_key as single best (degrades gracefully).
+        """
+        try:
+            qtable = _get_rust_federated_qtable()
+            if qtable is None:
+                return candidates[:top_k]
+            # Empty candidates: return state_key as placeholder best action
+            if not candidates:
+                return [state_key] if top_k >= 1 else []
+            # Build action list: 'prefetch:{ioc_value}' for each candidate
+            actions = [f'prefetch:{c}' for c in candidates[:20]]
+            if not actions:
+                return []
+            # get_best_action is lock-free — DashMap per-shard read lock
+            best = qtable.get_best_action(lane, state_key, actions)
+            # Extract IOC value from action name: 'prefetch:{ioc_value}'
+            if best.startswith('prefetch:'):
+                ioc_value = best[len('prefetch:'):]
+                # Deduplication: exact match (IOC values are full strings, not prefixes)
+                seen = {ioc_value}
+                ranked = [ioc_value]
+                for c in candidates[:top_k]:
+                    if c not in seen:
+                        seen.add(c)
+                        ranked.append(c)
+                return ranked[:top_k]
+            return candidates[:top_k]
+        except Exception:
+            return candidates[:top_k]
 
     async def _query_historical_yield_async(self, feed_url: str, cycles_back: int=20) -> float:
         """

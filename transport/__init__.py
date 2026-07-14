@@ -38,6 +38,8 @@ from .unified_transport import (  # noqa: E402
     get_transport_client,
     close_all_transports,
     fetch_via_unified,
+    prefetch_dns,
+    dns_cache_status,
 )
 
 __all__ = [
@@ -73,4 +75,7 @@ __all__ = [
     'get_transport_client',
     'close_all_transports',
     'fetch_via_unified',
+    # Issue #010: DNS prefetch
+    'prefetch_dns',
+    'dns_cache_status',
 ]

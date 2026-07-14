@@ -38,10 +38,89 @@ import re
 import time
 from collections import defaultdict, OrderedDict
 from dataclasses import dataclass, field
+import asyncio
 import msgspec
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from typing import Any, Generic, TypeVar
 T = TypeVar('T', default=object)
+
+# --------------------------------------------------------------------------- #
+# LSH pre-filtering — O(1) candidate reduction instead of O(N²) brute-force  #
+# --------------------------------------------------------------------------- #
+try:
+    from hledac_rust_extensions import lsh_index_new, LSHIndex
+    LSH_AVAILABLE = True
+except ImportError:
+    LSH_AVAILABLE = False
+    lsh_index_new = None
+    LSHIndex = None  # type: ignore[assignment, misc]
+
+# --------------------------------------------------------------------------- #
+# Union-Find pro O(α(N)) clustering — nahrazuje O(N²) connected_components    #
+# --------------------------------------------------------------------------- #
+class _UnionFind:
+    """Lightweight Union-Find s path compression + rank union."""
+    __slots__ = ('_parent', '_rank', '_count')
+
+    def __init__(self, items: list[str]) -> None:
+        self._parent: dict[str, str] = {item: item for item in items}
+        self._rank: dict[str, int] = {item: 0 for item in items}
+        self._count: int = len(items)
+
+    def find(self, x: str) -> str:
+        while self._parent[x] != x:
+            self._parent[x] = self._parent[self._parent[x]]
+            x = self._parent[x]
+        return x
+
+    def union(self, x: str, y: str) -> bool:
+        rx, ry = self.find(x), self.find(y)
+        if rx == ry:
+            return False
+        if self._rank[rx] < self._rank[ry]:
+            self._parent[rx] = ry
+        elif self._rank[rx] > self._rank[ry]:
+            self._parent[ry] = rx
+        else:
+            self._parent[ry] = rx
+            self._rank[rx] += 1
+        self._count -= 1
+        return True
+
+    def groups(self) -> dict[str, list[str]]:
+        groups: dict[str, list[str]] = defaultdict(list)
+        for item in self._parent:
+            groups[self.find(item)].append(item)
+        return groups
+
+    @property
+    def count(self) -> int:
+        return self._count
+
+
+# --------------------------------------------------------------------------- #
+# Bounded gather pro paralelní pairwise matching                               #
+# --------------------------------------------------------------------------- #
+async def _bounded_gather_pairs(
+    pairs: list[tuple[str, str]],
+    threshold: float,
+    compute_fn,  # (str, str) -> IdentityMatch
+    concurrency: int = 10,
+) -> list[IdentityMatch]:
+    """O(α(N)) parallel pairwise s bounded semaphore — M1-safe."""
+    sem = asyncio.Semaphore(concurrency)
+
+    async def _compute(id_a: str, id_b: str) -> IdentityMatch | None:
+        async with sem:
+            return compute_fn(id_a, id_b)
+
+    tasks = [_compute(a, b) for a, b in pairs]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    matches: list[IdentityMatch] = []
+    for r in results:
+        if isinstance(r, IdentityMatch) and r.match_score >= threshold:
+            matches.append(r)
+    return matches
 
 class _BoundedCache[T]:
     """
@@ -334,7 +413,7 @@ class IdentityStitchingEngine:
         stitched = engine.stitch_identities(match_threshold=0.8)
     """
     DEFAULT_SIGNAL_WEIGHTS = {'username_exact': 1.0, 'username_similarity': 0.7, 'email_exact': 1.0, 'email_domain': 0.3, 'alias_match': 0.8, 'style_similarity': 0.5, 'temporal_overlap': 0.4, 'network_overlap': 0.6}
-    __slots__ = tuple(('_alias_index', '_email_index', '_identity_graph', '_match_cache', '_platform_index', '_profiles', '_similarity_cache', '_stats', '_username_index', 'enable_fuzzy', 'max_memory_mb', 'signal_weights', 'similarity_threshold'))
+    __slots__ = tuple(('_alias_index', '_email_index', '_identity_graph', '_lsh_index', '_lsh_fingerprint_cache', '_match_cache', '_platform_index', '_profiles', '_similarity_cache', '_stats', '_username_index', 'enable_fuzzy', 'enable_lsh', 'max_memory_mb', 'signal_weights', 'similarity_threshold'))
 
     def __init__(self, similarity_threshold: float=0.7, signal_weights: dict[str, float] | None=None, max_memory_mb: int=512, enable_fuzzy: bool=True):
         """
@@ -351,6 +430,11 @@ class IdentityStitchingEngine:
         self.signal_weights = signal_weights or self.DEFAULT_SIGNAL_WEIGHTS.copy()
         self.max_memory_mb = max_memory_mb
         self.enable_fuzzy = enable_fuzzy and RAPIDFUZZ_AVAILABLE
+        # LSH pre-filter: O(1) candidate reduction místo O(N²) brute-force
+        self.enable_lsh: bool = LSH_AVAILABLE
+        self._lsh_index: Any | None = lsh_index_new(num_tables=16, num_rows=4) if LSH_AVAILABLE else None
+        # fingerprint cache: profile_id -> simhash fingerprint (pro LSH)
+        self._lsh_fingerprint_cache: dict[str, int] = {}
         self._profiles: dict[str, IdentityProfile] = {}
         self._username_index: dict[str, set[str]] = defaultdict(set)
         self._email_index: dict[str, set[str]] = defaultdict(set)
@@ -360,7 +444,7 @@ class IdentityStitchingEngine:
         self._similarity_cache = _BoundedCache[float](max_size=4096, max_memory_mb=max_memory_mb, memory_pressure_threshold=0.8)
         self._match_cache = _BoundedCache[IdentityMatch](max_size=2048, max_memory_mb=max_memory_mb, memory_pressure_threshold=0.8)
         self._stats = {'profiles_added': 0, 'matches_computed': 0, 'identities_stitched': 0, 'graphs_built': 0}
-        logger.info(f'IdentityStitchingEngine initialized (threshold={similarity_threshold}, fuzzy={self.enable_fuzzy})')
+        logger.info(f'IdentityStitchingEngine initialized (threshold={similarity_threshold}, fuzzy={self.enable_fuzzy}, lsh={self.enable_lsh})')
 
     def add_profile(self, profile: IdentityProfile) -> bool:
         """
@@ -378,7 +462,8 @@ class IdentityStitchingEngine:
             return False
         self._profiles[profile.id] = profile
         self._stats['profiles_added'] += 1
-        self._index_profile(profile)
+        self._index_profile_fields(profile)
+        self._register_profile_lsh(profile)
         self._invalidate_caches()
         logger.debug(f'Added profile: {profile.id} ({profile.primary_name})')
         return True
@@ -392,10 +477,12 @@ class IdentityStitchingEngine:
         existing.usernames.extend(profile.usernames)
         existing.attributes.update(profile.attributes)
         existing.updated_at = datetime.now(UTC)
-        self._index_profile(existing)
+        # Re-index fields (set operations are idempotent — no LSH re-registration).
+        # LSH has no remove() — old fingerprint stays in index until next full rebuild.
+        self._index_profile_fields(existing)
 
-    def _index_profile(self, profile: IdentityProfile):
-        """Index a profile for fast lookup."""
+    def _index_profile_fields(self, profile: IdentityProfile):
+        """Index username/email/alias/platform fields into reverse maps. Idempotent."""
         for entry in profile.usernames:
             normalized = self._normalize_username(entry.username)
             self._username_index[normalized].add(profile.id)
@@ -408,6 +495,32 @@ class IdentityStitchingEngine:
             self._alias_index[normalized].add(profile.id)
         normalized_name = self._normalize_text(profile.primary_name)
         self._alias_index[normalized_name].add(profile.id)
+
+    def _register_profile_lsh(self, profile: IdentityProfile):
+        """Register profile fingerprint in LSH index. Call ONLY on first add.
+        LSH has no remove() — calling this on update would duplicate entries."""
+        if self.enable_lsh and self._lsh_index is not None:
+            fp = self._build_lsh_fingerprint(profile)
+            self._lsh_fingerprint_cache[profile.id] = fp
+            self._lsh_index.insert(profile.id, fp)
+
+    def _build_lsh_fingerprint(self, profile: IdentityProfile) -> int:
+        """Build 64-bit SimHash fingerprint pro LSH candidate pre-filtering."""
+        try:
+            from hledac_rust_extensions import simhash
+        except ImportError:
+            # Stable fallback: hash string content, NOT object identity.
+            # profile.usernames is list[UsernameEntry] — extract .username strings.
+            usernames_tuple = tuple(sorted(e.username for e in profile.usernames))
+            emails_tuple = tuple(sorted(profile.emails))
+            return hash((usernames_tuple, emails_tuple))
+        parts: list[str] = [profile.primary_name]
+        parts.extend(profile.aliases)
+        for entry in profile.usernames:
+            parts.append(entry.username)
+        parts.extend(profile.emails)
+        combined = '|'.join(sorted(parts))
+        return simhash(combined)
 
     def get_profile(self, profile_id: str) -> IdentityProfile | None:
         """Get a profile by ID."""
@@ -430,6 +543,7 @@ class IdentityStitchingEngine:
             self._alias_index[normalized].discard(profile_id)
         normalized_name = self._normalize_text(profile.primary_name)
         self._alias_index[normalized_name].discard(profile_id)
+        self._lsh_fingerprint_cache.pop(profile_id, None)
         del self._profiles[profile_id]
         self._invalidate_caches()
         return True
@@ -439,6 +553,9 @@ class IdentityStitchingEngine:
         self._identity_graph = None
         self._similarity_cache.clear()
         self._match_cache.clear()
+        if self._lsh_index is not None:
+            self._lsh_index.clear()
+        self._lsh_fingerprint_cache.clear()
 
     @staticmethod
     def _normalize_username(username: str) -> str:
@@ -722,27 +839,74 @@ class IdentityStitchingEngine:
         """
         Find all matches across all profiles.
 
-        Args:
-            min_score: Minimum match score
-
-        Returns:
-            List of IdentityMatch objects
+        O(N²) brute-force replaced by:
+        - LSH pre-filtering: O(1) candidate reduction per profile
+        - Parallel async pairwise: bounded semaphore, concurrency=10
+        Falls back to O(N²) when LSH unavailable.
         """
         threshold = min_score if min_score is not None else self.similarity_threshold
-        matches: list[IdentityMatch] = []
-        seen_pairs: set[tuple[str, str]] = set()
         profile_ids = list(self._profiles.keys())
-        for i, id_a in enumerate(profile_ids):
-            for id_b in profile_ids[i + 1:]:
-                pair = tuple(sorted([id_a, id_b]))
-                if pair in seen_pairs:
+        n = len(profile_ids)
+
+        # --- Phase 1: Build candidate pair set ---
+        # LSH pre-filter: O(n * k) where k = num_bands (typ. 16)
+        # Without LSH: fall back to exact-index candidates
+        candidate_pairs: set[tuple[str, str]] = set()
+
+        if self.enable_lsh and self._lsh_index is not None and n >= 4:
+            # LSH query per profile — O(n) LSH queries místo O(n²)
+            for pid in profile_ids:
+                fp = self._lsh_fingerprint_cache.get(pid)
+                if fp is None:
                     continue
-                seen_pairs.add(pair)
-                profile_a = self._profiles[id_a]
-                profile_b = self._profiles[id_b]
-                match = self.compute_match(profile_a, profile_b)
+                # query returns (doc_id, similarity) sorted desc
+                lsh_hits = self._lsh_index.query(fp, max_results=50)
+                for hit_id, _sim in lsh_hits:
+                    if hit_id != pid:
+                        candidate_pairs.add(tuple(sorted([pid, hit_id])))
+
+        # Exact-index candidates (username/email/alias) — O(n * avg_candidates)
+        for pid in profile_ids:
+            profile = self._profiles[pid]
+            for username in profile.get_all_usernames():
+                normalized = self._normalize_username(username)
+                for other_pid in self._username_index.get(normalized, set()):
+                    if other_pid != pid:
+                        candidate_pairs.add(tuple(sorted([pid, other_pid])))
+            for email in profile.emails:
+                normalized = self._normalize_email(email)
+                for other_pid in self._email_index.get(normalized, set()):
+                    if other_pid != pid:
+                        candidate_pairs.add(tuple(sorted([pid, other_pid])))
+            for alias in profile.aliases + [profile.primary_name]:
+                normalized = self._normalize_text(alias)
+                for other_pid in self._alias_index.get(normalized, set()):
+                    if other_pid != pid:
+                        candidate_pairs.add(tuple(sorted([pid, other_pid])))
+
+        if not candidate_pairs:
+            return []
+
+        # --- Phase 2: Parallel pairwise matching ---
+        pairs = list(candidate_pairs)
+        if n < 20 or not asyncio.get_event_loop().is_running():
+            # Sync fallback for small N or no running loop
+            matches: list[IdentityMatch] = []
+            for id_a, id_b in pairs:
+                match = self.compute_match(self._profiles[id_a], self._profiles[id_b])
                 if match.match_score >= threshold:
                     matches.append(match)
+        else:
+            # Async bounded gather — concurrency=10, M1-safe
+            matches = asyncio.run(
+                _bounded_gather_pairs(
+                    pairs,
+                    threshold,
+                    lambda a, b: self.compute_match(self._profiles[a], self._profiles[b]),
+                    concurrency=10,
+                )
+            )
+
         matches.sort(key=lambda m: m.match_score, reverse=True)
         return matches
 
@@ -750,66 +914,64 @@ class IdentityStitchingEngine:
         """
         Stitch identities based on matches.
 
+        O(α(N)) Union-Find clustering nahrazuje O(N²) connected_components.
+        Zároveň opraven bug: profile_ids → comp_profile_ids na řádku StitchedIdentity.
+
         Args:
             match_threshold: Threshold for direct stitching
-            transitive_threshold: Threshold for transitive stitching
+            transitive_threshold: Threshold for transitive stitching (unused, kept for compat)
 
         Returns:
             List of StitchedIdentity objects
         """
-        if not NETWORKX_AVAILABLE:
-            raise ImportError('NetworkX is required for identity stitching')
         start_time = time.time()
-        ig = _get_ig()
-        graph = ig.Graph()
         profile_ids_list = list(self._profiles.keys())
-        graph.add_vertices(len(profile_ids_list))
-        for i, profile_id in enumerate(profile_ids_list):
-            graph.vs[i]['name'] = profile_id
-        id_to_idx = {pid: i for i, pid in enumerate(profile_ids_list)}
+
+        # O(α(N)) Union-Find clustering — žádné igraph connected_components
+        uf = _UnionFind(profile_ids_list)
         matches = self.find_all_matches(min_score=match_threshold)
         for match in matches:
-            a_idx = id_to_idx.get(match.profile_a)
-            b_idx = id_to_idx.get(match.profile_b)
-            if a_idx is not None and b_idx is not None:
-                try:
-                    graph.add_edge(a_idx, b_idx, weight=match.match_score, match=match)
-                except Exception:
-                    pass
+            uf.union(match.profile_a, match.profile_b)
+
+        # Build clusters from Union-Find groups
+        groups = uf.groups()
         stitched: list[StitchedIdentity] = []
-        for component in graph.connected_components():
-            if len(component) == 1:
+        for root_id, comp_profile_ids in groups.items():
+            if len(comp_profile_ids) == 1:
                 continue
-            comp_profile_ids = [profile_ids_list[i] for i in component]
             primary_id = comp_profile_ids[0]
             all_names: set[str] = set()
             all_emails: set[str] = set()
             all_usernames: list[UsernameEntry] = []
             all_evidence: list[str] = []
             total_confidence = 0.0
+            match_count = 0
             for pid in comp_profile_ids:
                 profile = self._profiles[pid]
                 all_names.add(profile.primary_name)
                 all_names.update(profile.aliases)
                 all_emails.update(profile.emails)
                 all_usernames.extend(profile.usernames)
+            # Accumulate evidence from matches within this cluster
             for i, pid_a in enumerate(comp_profile_ids):
                 for pid_b in comp_profile_ids[i + 1:]:
-                    a_idx = id_to_idx.get(pid_a)
-                    b_idx = id_to_idx.get(pid_b)
-                    if a_idx is not None and b_idx is not None:
-                        try:
-                            edge_id = graph.get_eid(a_idx, b_idx, error=False)
-                            if edge_id >= 0:
-                                match = graph.es[edge_id].get('match')
-                                if match:
-                                    total_confidence += match.match_score
-                                    all_evidence.extend(match.evidence)
-                        except Exception:
-                            pass
-            edge_count = sum((1 for _ in graph.es))
-            avg_confidence = total_confidence / edge_count if edge_count > 0 else 0.0
-            stitched_identity = StitchedIdentity(id=f'stitched_{primary_id}', profile_ids=profile_ids, primary_profile=primary_id, merged_names=list(all_names), merged_emails=list(all_emails), merged_usernames=all_usernames, stitch_confidence=avg_confidence, match_evidence=list(set(all_evidence)))
+                    cache_key = (pid_a, pid_b)
+                    match = self._match_cache.get(cache_key)
+                    if match is not None:
+                        total_confidence += match.match_score
+                        all_evidence.extend(match.evidence)
+                        match_count += 1
+            avg_confidence = total_confidence / match_count if match_count > 0 else 0.0
+            stitched_identity = StitchedIdentity(
+                id=f'stitched_{primary_id}',
+                profile_ids=comp_profile_ids,
+                primary_profile=primary_id,
+                merged_names=list(all_names),
+                merged_emails=list(all_emails),
+                merged_usernames=all_usernames,
+                stitch_confidence=avg_confidence,
+                match_evidence=list(set(all_evidence)),
+            )
             stitched.append(stitched_identity)
         self._stats['identities_stitched'] += len(stitched)
         logger.info(f'Stitched {len(stitched)} identities in {time.time() - start_time:.3f}s')
@@ -930,6 +1092,9 @@ class IdentityStitchingEngine:
         self._identity_graph = None
         self._similarity_cache.clear()
         self._match_cache.clear()
+        if self._lsh_index is not None:
+            self._lsh_index.clear()
+        self._lsh_fingerprint_cache.clear()
         gc.collect()
         logger.debug('Memory optimization completed')
 

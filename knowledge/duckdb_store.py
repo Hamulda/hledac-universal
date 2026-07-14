@@ -250,6 +250,7 @@ def _get_rust_batch_ioc_extract_python():
 _IOC_EXTRACT_BATCH_AVAILABLE = _rust_batch_ioc_extract_opt.available
 _IOC_EXTRACT_PYTHON_ZERO_COPY_AVAILABLE = _rust_batch_ioc_extract_python_opt.available
 _parquet_get_metadata_opt = optional("hledac_rust_extensions:parquet_get_metadata")
+_parquet_row_group_stats_opt = optional("hledac_rust_extensions:parquet_row_group_stats")
 _parquet_read_row_group_ipc_opt = optional("hledac_rust_extensions:parquet_read_row_group_ipc")
 _parquet_iter_all_row_groups_opt = optional("hledac_rust_extensions:parquet_iter_all_row_groups")
 _parquet_read_table_opt = optional("hledac_rust_extensions:parquet_read_table")
@@ -257,6 +258,10 @@ _parquet_read_table_opt = optional("hledac_rust_extensions:parquet_read_table")
 
 def _get_parquet_get_metadata():
     return _parquet_get_metadata_opt()
+
+
+def _get_parquet_row_group_stats():
+    return _parquet_row_group_stats_opt()
 
 
 def _get_parquet_read_row_group_ipc():
@@ -335,16 +340,32 @@ class ParquetHistoryReader:
     M1 8GB safe: reads one row-group at a time (max 100_000 rows per batch).
     Zero-copy: Arrow IPC bytes → pa.ipc.open_record_batch() → Polars zero-copy.
 
+    F320+: Filter pushdown via row-group statistics (ts min/max per RG).
+    F320+: Polars LazyFrame integration for efficient filtering.
+
     Usage:
         reader = ParquetHistoryReader("/path/to/history.parquet")
+
+        # Filter pushdown by time range (skips irrelevant row-groups)
+        reader.filter_time_range(min_ts=1700000000.0, max_ts=1701000000.0)
+        reader.filter_source_types(["dark_web", "leak"])
+
+        # Streaming iteration
         for batch in reader.iter_batches(batch_size=50_000):
             df = pl.from_arrow(batch)  # zero-copy
             process(df)
 
+        # Or as Polars LazyFrame (full filter pipeline)
+        lf = reader.to_polars_lazy()
+        filtered = lf.filter(pl.col("source_type") == "dark_web").collect()
+
     Fallback: if Rust parquet_reader unavailable, falls back to pure PyArrow.
     """
 
-    __slots__ = tuple(("_current_rg", "_num_rg", "_total_rows", "batch_size", "columns", "path"))
+    __slots__ = tuple((
+        "_current_rg", "_num_rg", "_total_rows", "batch_size", "columns", "path",
+        "_ts_min", "_ts_max", "_source_types", "_rg_stats_cached"
+    ))
 
     def __init__(self, path: str, columns: list[str] | None = None, batch_size: int = 50000) -> None:
         self.path = path
@@ -353,6 +374,78 @@ class ParquetHistoryReader:
         self._num_rg: int | None = None
         self._total_rows: int | None = None
         self._current_rg: int = 0
+        # Filter pushdown state
+        self._ts_min: float | None = None
+        self._ts_max: float | None = None
+        self._source_types: set[str] | None = None
+        self._rg_stats_cached: list[tuple[int, float, float, int]] | None = None
+
+    def filter_time_range(self, min_ts: float | None = None, max_ts: float | None = None) -> "ParquetHistoryReader":
+        """Set time filter for row-group pruning. Returns self for chaining."""
+        self._ts_min = min_ts
+        self._ts_max = max_ts
+        self._rg_stats_cached = None  # Invalidate cache
+        return self
+
+    def filter_source_types(self, source_types: list[str] | None) -> "ParquetHistoryReader":
+        """Set source_type filter. None = no filter. Returns self for chaining."""
+        self._source_types = set(source_types) if source_types else None
+        return self
+
+    def _get_row_group_stats(self) -> list[tuple[int, float, float, int]]:
+        """Get row-group statistics for filter pushdown."""
+        if self._rg_stats_cached is not None:
+            return self._rg_stats_cached
+        if _RUST_PARQUET_AVAILABLE and _get_parquet_row_group_stats() is not None:
+            try:
+                result = _get_parquet_row_group_stats()(self.path)
+                if result is not None:
+                    self._rg_stats_cached = result
+                    return result
+            except Exception:
+                pass
+        # Fallback: compute from data (expensive but correct)
+        self._rg_stats_cached = self._compute_rg_stats_fallback()
+        return self._rg_stats_cached
+
+    def _compute_rg_stats_fallback(self) -> list[tuple[int, float, float, int]]:
+        """Compute row-group stats using PyArrow (fallback)."""
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        try:
+            pf = pq.ParquetFile(self.path)
+            stats: list[tuple[int, float, float, int]] = []
+            for rg_idx in range(pf.num_row_groups):
+                # iter_batches signature: (self, batch_size=65536, row_groups=None, columns=None, ...)
+                batches = list(pf.iter_batches(batch_size=10000, row_groups=[rg_idx], columns=["ts"]))
+                if batches:
+                    table = pa.Table.from_batches(batches)
+                    col = table.column("ts")
+                    ts_list = col.to_pylist()
+                    min_ts = min(ts_list) if ts_list else 0.0
+                    max_ts = max(ts_list) if ts_list else 0.0
+                    stats.append((rg_idx, min_ts, max_ts, len(col)))
+                else:
+                    stats.append((rg_idx, 0.0, 0.0, 0))
+            return stats
+        except Exception:
+            return []
+
+    def _filter_row_groups(self) -> list[int]:
+        """Apply filters to get list of row-groups to read."""
+        stats = self._get_row_group_stats()
+        filtered_rgs: list[int] = []
+        for rg_idx, min_ts, max_ts, count in stats:
+            if count == 0:
+                continue
+            # Time filter
+            if self._ts_min is not None and max_ts < self._ts_min:
+                continue
+            if self._ts_max is not None and min_ts > self._ts_max:
+                continue
+            filtered_rgs.append(rg_idx)
+        return filtered_rgs
 
     @property
     def num_row_groups(self) -> int:
@@ -388,51 +481,124 @@ class ParquetHistoryReader:
 
     def iter_batches(self) -> Iterator:
         """
-        Iterate over all row-groups as Arrow RecordBatch objects.
+        Iterate over filtered row-groups as Arrow RecordBatch objects.
 
         Yields:
             pyarrow.RecordBatch — zero-copy view of one row-group.
             Caller converts to Polars via pl.from_arrow(batch) for zero-copy.
         """
+        # Apply filter pushdown
+        rg_indices = self._filter_row_groups() if (self._ts_min or self._ts_max) else range(self.num_row_groups)
         if _RUST_PARQUET_AVAILABLE and _get_parquet_read_row_group_ipc() is not None:
-            yield from self._iter_rust()
+            yield from self._iter_rust_filtered(rg_indices)
         else:
-            yield from self._iter_pyarrow()
+            yield from self._iter_pyarrow_filtered(rg_indices)
 
-    def _iter_rust(self):
-        """Rust-accelerated row-group iteration via IPC bytes."""
-        n_rg = self.num_row_groups
-        for rg_idx in range(n_rg):
+    def _iter_rust_filtered(self, rg_indices: list[int] | range):
+        """Rust-accelerated row-group iteration via IPC bytes with filter."""
+        for rg_idx in rg_indices:
             try:
                 ipc_bytes = _get_parquet_read_row_group_ipc()(self.path, rg_idx, None, self.batch_size)
                 if ipc_bytes is None:
-                    break
+                    continue
                 if isinstance(ipc_bytes, memoryview):
                     ipc_bytes = bytes(ipc_bytes)
                 if len(ipc_bytes) == 0:
-                    break
+                    continue
                 import pyarrow as pa
 
                 reader = pa.ipc.open_record_batch(ipc_bytes)
                 batch = reader.read_next_batch()
-                yield batch
-            except Exception:
-                break
-
-    def _iter_pyarrow(self):
-        """Pure PyArrow fallback for row-group iteration."""
-        try:
-            import pyarrow.parquet as pq
-
-            pf = pq.ParquetFile(self.path)
-            for rg_idx in range(pf.num_row_groups):
-                try:
-                    batch = next(pf.iter_batches(rg_idx, self.batch_size))
+                # Apply source_type filter in-memory if set (row-level)
+                if self._source_types:
+                    batch = self._filter_batch_source_types(batch)
+                if batch.num_rows > 0:
                     yield batch
+            except Exception:
+                continue
+
+    def _iter_pyarrow_filtered(self, rg_indices: list[int] | range):
+        """Pure PyArrow fallback with filter."""
+        import pyarrow.parquet as pq
+
+        try:
+            pf = pq.ParquetFile(self.path)
+            for rg_idx in rg_indices:
+                try:
+                    # PyArrow iter_batches signature: iter_batches(batch_size, row_groups=None, columns=None)
+                    batch = next(pf.iter_batches(batch_size=self.batch_size, row_groups=[rg_idx], columns=self.columns))
+                    if self._source_types:
+                        batch = self._filter_batch_source_types(batch)
+                    if batch.num_rows > 0:
+                        yield batch
                 except StopIteration:
-                    break
+                    continue
         except Exception:
             return
+
+    def _filter_batch_source_types(self, batch):
+        """Filter batch by source_type in-memory (post row-group filter)."""
+        import pyarrow as pa
+
+        if not self._source_types:
+            return batch
+        try:
+            schema = batch.schema
+            type_idx = schema.get_field_index("source_type")
+            if type_idx < 0:
+                return batch
+            type_col = batch.column(type_idx)
+            # Use filter directly on the column
+            mask = pa.compute.is_in(type_col, value_set=self._source_types)
+            return batch.filter(mask)
+        except Exception:
+            return batch
+
+    def to_polars_lazy(self):
+        """
+        Convert parquet file to Polars LazyFrame with filter pushdown.
+
+        This enables full Polars query optimization including:
+        - Column pruning
+        - Predicate pushdown
+        - Parallel execution
+
+        Returns:
+            polars.LazyFrame — collect() when ready to execute.
+        """
+        try:
+            import polars as pl
+            import pyarrow.parquet as pq
+
+            # Build Polars LazyFrame from PyArrow (zero-copy path)
+            table = pq.read_table(self.path, columns=self.columns)
+            df = pl.from_arrow(table)
+            lf = df.lazy()
+
+            # Apply filters if set
+            if self._ts_min is not None:
+                lf = lf.filter(pl.col("ts") >= self._ts_min)
+            if self._ts_max is not None:
+                lf = lf.filter(pl.col("ts") <= self._ts_max)
+            if self._source_types:
+                lf = lf.filter(pl.col("source_type").is_in(self._source_types))
+
+            return lf
+        except ImportError:
+            raise ImportError("Polars not installed: pip install polars")
+
+    def iter_batches_async(self):
+        """
+        Async iterator for use in async contexts.
+
+        Yields batches on a thread pool to avoid blocking event loop.
+        """
+        async def _aiter():
+            loop = asyncio.get_running_loop()
+            for batch in self.iter_batches():
+                yield await loop.run_in_executor(None, lambda b=batch: b)
+
+        return _aiter()
 
     def read_table(self):
         """
@@ -458,7 +624,13 @@ class ParquetHistoryReader:
         return self.num_row_groups
 
     def __repr__(self) -> str:
-        return f"ParquetHistoryReader(path={self.path!r}, row_groups={self.num_row_groups}, total_rows={self.total_rows}, batch_size={self.batch_size})"
+        filters = []
+        if self._ts_min or self._ts_max:
+            filters.append(f"ts=[{self._ts_min},{self._ts_max}]")
+        if self._source_types:
+            filters.append(f"types={self._source_types}")
+        filter_str = f", filters=[{'; '.join(filters)}]" if filters else ""
+        return f"ParquetHistoryReader(path={self.path!r}, row_groups={self.num_row_groups}, total_rows={self.total_rows}, batch_size={self.batch_size}{filter_str})"
 
 
 def export_findings_to_parquet(

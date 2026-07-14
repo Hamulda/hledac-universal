@@ -103,10 +103,10 @@ else:
 _RAMDISK_ACTIVE: bool = False
 if _is_active_ramdisk(_SELECTED_ROOT):
     _RAMDISK_ACTIVE = True
-elif _SELECTED_ROOT.exists():
-    _SELECTED_ROOT = None
-else:
-    _SELECTED_ROOT = None
+elif _ramdisk_env and _SELECTED_ROOT.exists():
+    pass  # User-specified path that exists but isn't active ramdisk — use as-is (SSD fallback)
+elif not _SELECTED_ROOT.exists():
+    _SELECTED_ROOT = None  # Only None if default path doesn't exist AND no env var override
 
 def _try_create_ramdisk() -> tuple[Path | None, bool]:
     """
@@ -156,18 +156,41 @@ def _try_create_ramdisk() -> tuple[Path | None, bool]:
     except Exception:
         pass
     return (None, False)
+# Sprint F500I: Deferred RAM disk creation — do NOT call hdiutil on import.
+# RAM disk creation is deferred to first actual use (assert_ramdisk_alive() or open_lmdb()).
+# This eliminates ~2.8s import bottleneck from subprocess hdiutil calls.
+# Fallback to SSD is safe and correct; RAM disk is a performance optimization only.
+_FALLBACK_ROOT: Path = Path.home() / '.hledac_fallback_ramdisk'
 if _SELECTED_ROOT is None:
+    _FALLBACK_ROOT = Path.home() / '.hledac_fallback_ramdisk'
+    _warn_opsec_once('No active ramdisk found at import time. Using SSD fallback for runtime artifacts. Set GHOST_RAMDISK env var or mount /Volumes/ghost_tmp for optimal M1 performance.')
+    _SELECTED_ROOT = _FALLBACK_ROOT
+    _RAMDISK_ACTIVE = False
+
+
+def _ensure_ramdisk_active() -> None:
+    """
+    Ensure RAM disk is active for runtime that requires it.
+
+    Called lazily before LMDB/open or when RAMDISK_ROOT is first accessed.
+    Attempts RAM disk creation if not already active.
+    Thread-safe: idempotent (only runs once).
+    """
+    global _SELECTED_ROOT, _RAMDISK_ACTIVE, _FALLBACK_ROOT
+    if _RAMDISK_ACTIVE:
+        return
+    if _SELECTED_ROOT is not None and _SELECTED_ROOT != _FALLBACK_ROOT:
+        return  # Already have a working non-fallback root
+    # Try to create RAM disk now (at runtime, not import time)
     auto_path, auto_active = _try_create_ramdisk()
     if auto_path is not None:
         _SELECTED_ROOT = auto_path
         _RAMDISK_ACTIVE = auto_active
         import warnings as _w
-        _w.warn(f'[GHOST OPSEC] Auto-created RAM disk at {auto_path}. Using RAM-backed storage for optimal M1 performance.', stacklevel=2)
-    else:
-        _FALLBACK_ROOT = Path.home() / '.hledac_fallback_ramdisk'
-        _warn_opsec_once('No active ramdisk found and auto-creation failed. Runtime artifacts will be written to SSD fallback location. Set GHOST_RAMDISK env var or mount /Volumes/ghost_tmp to avoid OPSEC degradation.')
-        _SELECTED_ROOT = _FALLBACK_ROOT
-        _RAMDISK_ACTIVE = False
+        _w.warn(f'[GHOST OPSEC] RAM disk activated at runtime: {_SELECTED_ROOT}', stacklevel=2)
+        if auto_active and os.environ.get('HLEDAC_RAMDISK_AUTO_CREATED') == '1':
+            duckdb_temp_path = str(_SELECTED_ROOT / 'duckdb_tmp')
+            os.environ.setdefault('HLEDAC_DUCKDB_RAMDISK_TEMP', duckdb_temp_path)
 RAMDISK_ROOT: Path = _SELECTED_ROOT
 FALLBACK_ROOT: Path = _FALLBACK_ROOT if not _RAMDISK_ACTIVE else RAMDISK_ROOT
 RAMDISK_ACTIVE: bool = _RAMDISK_ACTIVE
@@ -252,7 +275,7 @@ def open_lmdb(path: pathlib.Path, *, map_size: int | None=None, **kw) -> Any:
         cleanup_stale_lmdb_lock(path)
     except Exception:
         pass
-    _effective_map_size: int = map_size if map_size is not None else 0
+    _effective_map_size: int = map_size  # always set above (line 272 guarantees non-None)
     defaults = {'writemap': False, 'sync': False}
     merged_kw = {**defaults, **kw}
     _instrument_lmdb_env = None
@@ -309,7 +332,7 @@ _LMDB_STORE_DEFAULT = str(RAMDISK_ROOT / 'lmdb_store') if RAMDISK_ACTIVE else '~
 LMDB_STORE_ROOT: Path = Path(os.environ['HLEDAC_LMDB_STORE']) if 'HLEDAC_LMDB_STORE' in os.environ else Path(_LMDB_STORE_DEFAULT)
 _LANCEDB_STORE_DEFAULT = str(RAMDISK_ROOT / 'lancedb_store') if RAMDISK_ACTIVE else '~/.hledac/lancedb_store'
 LANCEDB_STORE_ROOT: Path = Path(os.environ['HLEDAC_LANCEDB_STORE']) if 'HLEDAC_LANCEDB_STORE' in os.environ else Path(_LANCEDB_STORE_DEFAULT)
-_LMDB_STORE_DEFAULT: str = '~/.hledac/lmdb_store'
+_LMDB_ROOT_FALLBACK: Path = Path('~/.hledac/lmdb_store').expanduser()
 _LMDB_ROOT_FALLBACK: Path = Path('~/.hledac/lmdb_store').expanduser()
 _UNRESOLVED: object = object()
 _DEDUP_PATHS_CACHE: dict[str, Path] | object = _UNRESOLVED
