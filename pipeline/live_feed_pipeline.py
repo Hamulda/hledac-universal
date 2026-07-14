@@ -22,7 +22,7 @@ Invariants:
 - Per-entry dedup by (label, pattern, value) preserve-first
 - Per-run dedup by entry_url
 - HTML->text: strip script/style first, tag→space, then unescape
-- Pattern scan offloaded via asyncio.to_thread + bounded_gather concurrency cap
+- Pattern scan offloaded via asyncio.to_thread + parallel() concurrency cap
 - PatternMatcher case-insensitive (matcher handles .lower() internally)
 - entry_hash in FeedEntryHit for future dedup
 -UMA emergency -> fail-soft abort
@@ -1339,7 +1339,7 @@ def _make_feed_finding_id(
 # ---------------------------------------------------------------------------
 
 # Import here so that absence of pattern_matcher is a hard fail at import time
-from hledac.universal.utils.async_helpers import bounded_gather  # noqa: E402
+from hledac.universal.utils.async_helpers import parallel  # noqa: E402
 from hledac.universal.utils.patterns.pattern_matcher import match_text  # noqa: E402
 from hledac.universal.utils.patterns.feed_pipeline_wrapper import (  # noqa: E402
     feed_entry_pipeline_fast,
@@ -1405,9 +1405,9 @@ async def _async_scan_feed_text(text: str) -> list:
     if not text:
         return []
 
-    # NOTE: semaphore removed — bounded_gather (line ~2114) controls entry-level
+    # NOTE: semaphore removed — parallel() (line ~2114) controls entry-level
     # concurrency. Each entry's _entry_to_pattern_findings runs inside
-    # bounded_gather(concurrency=_MAX_FEED_PATTERN_TASKS), so pattern scans are
+    # parallel(concurrency=_MAX_FEED_PATTERN_TASKS), so pattern scans are
     # bounded there. The per-call semaphore was redundant and caused 3-slot
     # serialization inside the already-bounded gather (Issue #5 fix).
     hits: list = await _ASYNC_PATTERN_OFFLOAD(match_text, text)
@@ -2479,10 +2479,10 @@ async def async_run_live_feed_pipeline(
     _zero_hit_reasons_acc: dict[str, int] = {}
     _zero_hit_title_samples_acc: list[tuple[str, str]] = []
 
-    # P1-17: Parallelize entry processing via bounded_gather.
+    # P1-17: Parallelize entry processing via parallel().
     # Stage 1 — prefetch: URL dedup decisions + start all _entry_to_pattern_findings in parallel.
     # Stage 2 — sequential accumulator updates preserve all existing semantics.
-    # Speedup: 50 entries × 200ms HTTP → bounded_gather(concurrency=10) ≈ 1-2s total.
+    # Speedup: 50 entries × 200ms HTTP → parallel(concurrency=10) ≈ 1-2s total.
 
     async def _process_entry(idx: int, entry: Any, entry_url: str) -> tuple[int, str, Any, Exception | None]:
         """Wrapper: runs _entry_to_pattern_findings, returns (idx, entry_url, result_or_None, exc)."""
@@ -2514,9 +2514,10 @@ async def async_run_live_feed_pipeline(
     if prefilted:
         # Stage 1: bounded parallel fetch + pattern scan for all non-skipped entries
         entry_tasks = [_process_entry(idx, entry, entry_url) for idx, entry, entry_url in prefilted]
-        results_raw, _gather_errors = await bounded_gather(
-            entry_tasks, concurrency=_MAX_FEED_PATTERN_TASKS, ctx="live_feed_pipeline:entry_processing"
+        build = await parallel(
+            entry_tasks, concurrency=_MAX_FEED_PATTERN_TASKS, policy="collect", ctx="live_feed_pipeline:entry_processing"
         )
+        results_raw = build.ok
 
         # Sort by original index to preserve deterministic order in accumulators
         results_raw.sort(key=lambda x: x[0])
@@ -3352,17 +3353,19 @@ async def async_run_feed_source_batch(
 
     results: list[FeedSourceRunResult] = []
 
-    # ISSUE #31 FIX: Replace sequential batch loop with true parallel bounded_gather.
+    # ISSUE #31 FIX: Replace sequential batch loop with true parallel processing.
     # All feed sources are independent — run them all in parallel with concurrency cap.
     all_tasks = [_run_single(url, lbl, org, pri) for url, lbl, org, pri in normalized]
 
     try:
         async with asyncio.timeout(batch_timeout_s):
-            ok_results, err_results = await bounded_gather(
+            _build = await parallel(
                 all_tasks,
                 concurrency=effective_concurrency,
+                policy="collect",
                 ctx="live_feed_pipeline:3071",
             )
+            ok_results, err_results = _build.ok, list(_build.errors)
             for res in ok_results:
                 results.append(res)
             for exc in err_results:

@@ -42,42 +42,39 @@ def _get_duckdb():
         import duckdb as _dd
         _dduckdb = _dd
     return _dduckdb
-_rust_batch_scores: Any = None
+# ISSUE-025: Use core.rust_backend for consistency (fail-soft, single import point)
+# Previously: direct hledac_rust_extensions imports with individual try/except blocks.
+_rust_signal_domain: Any = None
 
-def _get_rust_batch_scores():
-    global _rust_batch_scores
-    if _rust_batch_scores is None:
+def _get_rust_signal_domain():
+    """Lazy access to Rust signal domain — batch_compute_scores, batch_aggregate_signals."""
+    global _rust_signal_domain
+    if _rust_signal_domain is None:
         try:
-            from hledac_rust_extensions import batch_compute_scores
-            _rust_batch_scores = batch_compute_scores
+            from core.rust_backend import rust
+            _rust_signal_domain = rust.signal if rust.is_available else None
         except Exception:
-            _rust_batch_scores = None
-    return _rust_batch_scores
-_rust_aggregate_signals: Any = None
+            _rust_signal_domain = None
+    return _rust_signal_domain
 
-def _get_rust_aggregate_signals():
-    global _rust_aggregate_signals
-    if _rust_aggregate_signals is None:
-        try:
-            from hledac_rust_extensions import batch_aggregate_signals
-            _rust_aggregate_signals = batch_aggregate_signals
-        except Exception:
-            _rust_aggregate_signals = None
-    return _rust_aggregate_signals
-_rust_federated_qtable: Any = None
+_rust_federated_domain: Any = None
 
-def _get_rust_federated_qtable():
-    """Lazy access to RustFederatedQTable — ISSUE #009: Rust Q-table guided prefetch."""
-    global _rust_federated_qtable
-    if _rust_federated_qtable is None:
+def _get_rust_federated_domain():
+    """Lazy access to Rust federated domain — RustFederatedQTable."""
+    global _rust_federated_domain
+    if _rust_federated_domain is None:
         try:
-            from hledac_rust_extensions import RustFederatedQTable
-            # Singleton Q-table: alpha=0.1, gamma=0.9, max_entries=1024 per lane
-            # Persists via FederatedBridge LMDB path; here we use in-memory only.
-            _rust_federated_qtable = RustFederatedQTable(alpha=0.1, gamma=0.9, max_entries=1024)
+            from core.rust_backend import rust
+            _rust_federated_domain = rust.federated if rust.is_available else None
         except Exception:
-            _rust_federated_qtable = None
-    return _rust_federated_qtable
+            _rust_federated_domain = None
+    return _rust_federated_domain
+# NOTE: batch_graph_traverse (standalone) is imported directly from hledac_rust_extensions
+# at line ~405 because it has different signature than rust.graph.batch_graph_traverse domain method.
+# The standalone function: (db_path, values, max_hops) → dict[str, list[dict]]
+# The domain method: (root_ids, graph_path, max_depth, direction) → list[dict]
+# These are NOT interchangeable - they have completely different APIs.
+
 MAX_CANDIDATES = 100
 MAX_SOURCE_HISTORY = 200
 MAX_URL_SEEN = 50000
@@ -497,8 +494,10 @@ class PrefetchOracleIntegration:
             pass
         # ISSUE #009: Rust Q-table update — reward = +1 on success, -0.1 on failure
         try:
-            qtable = _get_rust_federated_qtable()
-            if qtable is not None:
+            domain = _get_rust_federated_domain()
+            if domain is not None:
+                # ISSUE-025: Use rust.federated domain (singleton qtable cached in domain)
+                qtable = domain.RustFederatedQTable(alpha=0.1, gamma=0.9, max_entries=1024)
                 reward = 1.0 if success else -0.1
                 action = f'prefetch:{ioc_value[:32]}'
                 # update() is lock-free via DashMap — no global lock contention
@@ -530,8 +529,8 @@ class PrefetchOracleIntegration:
             - Empty candidates returns state_key as single best (degrades gracefully).
         """
         try:
-            qtable = _get_rust_federated_qtable()
-            if qtable is None:
+            domain = _get_rust_federated_domain()
+            if domain is None:
                 return candidates[:top_k]
             # Empty candidates: return state_key as placeholder best action
             if not candidates:
@@ -541,6 +540,7 @@ class PrefetchOracleIntegration:
             if not actions:
                 return []
             # get_best_action is lock-free — DashMap per-shard read lock
+            qtable = domain.RustFederatedQTable(alpha=0.1, gamma=0.9, max_entries=1024)
             best = qtable.get_best_action(lane, state_key, actions)
             # Extract IOC value from action name: 'prefetch:{ioc_value}'
             if best.startswith('prefetch:'):
@@ -683,8 +683,8 @@ class PrefetchOracleIntegration:
             {feed_url: score} for all feed_urls with known signals;
             unknown URLs use SCORE_UNKNOWN.
         """
-        rust_fn = _get_rust_batch_scores()
-        if rust_fn is not None:
+        domain = _get_rust_signal_domain()
+        if domain is not None:
             url_order: list[str] = []
             stats_list: list[dict[str, object]] = []
             for feed_url in feed_urls:
@@ -696,7 +696,7 @@ class PrefetchOracleIntegration:
             if not stats_list:
                 return dict.fromkeys(feed_urls, SCORE_UNKNOWN)
             try:
-                raw_weights: list[float] = rust_fn(stats_list)
+                raw_weights: list[float] = domain.batch_compute_scores(stats_list)
                 result: dict[str, float] = {}
                 for i, feed_url in enumerate(url_order):
                     delta = raw_weights[i]

@@ -52,11 +52,13 @@ async def execute_parallel_bounded(
     if not tasks:
         return []
     results = []
+    # ISSUE-02 fix: use get_running_loop() instead of deprecated get_event_loop()
+    loop = asyncio.get_running_loop()
     for i in range(0, len(tasks), max_pending):
         chunk = tasks[i:i + max_pending]
         chunk_results = await asyncio.gather(
             *[t() if inspect.iscoroutinefunction(t) else
-              asyncio.get_event_loop().run_in_executor(thread_pool, t)
+              loop.run_in_executor(thread_pool, t)
               for t in chunk],
             return_exceptions=True
         )
@@ -141,8 +143,9 @@ async def probe_memory_pressure():
         if use_bounded:
             await execute_parallel_bounded(tasks, max_pending, thread_pool)
         else:
+            loop = asyncio.get_running_loop()
             await asyncio.gather(*[t() if inspect.iscoroutinefunction(t) else
-                                              asyncio.get_event_loop().run_in_executor(thread_pool, t)
+                                              loop.run_in_executor(thread_pool, t)
                                               for t in tasks], return_exceptions=True)
 
         elapsed = time.time() - start
@@ -192,8 +195,9 @@ async def probe_exception_behavior():
         tasks.append(t)
 
     thread_pool = ThreadPoolExecutor(max_workers=4)
+    loop = asyncio.get_running_loop()
     results = await asyncio.gather(*[t() if inspect.iscoroutinefunction(t) else
-                                      asyncio.get_event_loop().run_in_executor(thread_pool, t)
+                                      loop.run_in_executor(thread_pool, t)
                                       for t in tasks], return_exceptions=True)
 
     print(f"  Tasks: {len(tasks)}")

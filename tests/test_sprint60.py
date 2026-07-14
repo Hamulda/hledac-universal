@@ -442,10 +442,8 @@ class TestSLMDecomposer:
             import asyncio
 
             try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    pass
-            except Exception:  # noqa: BLE001
+                asyncio.get_running_loop()
+            except RuntimeError:
                 pass
 
     def test_decomposer_init(self, decomposer):

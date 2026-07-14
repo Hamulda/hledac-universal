@@ -377,8 +377,9 @@ def session_duckdb_store():
         # Teardown — use the session event loop so we don't create an extra
         # loop that pytest-asyncio may not know about.  If no session loop is
         # available, fall back to a transient loop (will be closed below).
+        # ISSUE-02 fix: use new_event_loop() pattern instead of deprecated get_event_loop()
         try:
-            _loop = asyncio.get_event_loop()
+            _loop = asyncio.get_running_loop()
         except RuntimeError:
             _loop = asyncio.new_event_loop()
             asyncio.set_event_loop(_loop)

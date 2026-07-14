@@ -349,21 +349,20 @@ class TestLoopCleanup:
     @pytest.mark.asyncio
     async def test_bounded_gather_prevents_task_accumulation(self) -> None:
         """
-        F320: bounded_gather limits concurrent tasks.
+        F320: parallel() limits concurrent tasks.
 
-        bounded_gather (from utils/async_helpers) uses semaphore
-        to cap concurrent tasks, preventing resource exhaustion.
+        parallel() with semaphore caps concurrent tasks,
+        preventing resource exhaustion.
         """
-        from utils.async_helpers import bounded_gather
+        from utils.async_helpers import parallel
 
         async def work(i: int) -> int:
             await asyncio.sleep(0.01)
             return i * 2
 
-        results = await bounded_gather([work(i) for i in range(20)], concurrency=5)
-
-        assert len(results[0]) == 20
-        assert sum(results[0]) == sum(i * 2 for i in range(20))
+        results = await parallel([work(i) for i in range(20)], concurrency=5, policy="collect")
+        assert len(results.ok) == 20
+        assert sum(results.ok) == sum(i * 2 for i in range(20))
 
 
 class TestPipelinePatterns:

@@ -43,9 +43,9 @@ __all__ = [
     "_check_gathered",
     "async_getaddrinfo",
     "bounded_parallel_map",  # ISSUE-005: parallel map with bounded concurrency
-    "bounded_gather",  # → parallel(); DEPRECATED wrapper
+    # bounded_gather: removed in v3.0 — use parallel(coros, policy="collect")
+    # gather_taskgroup: removed in v3.0 — use parallel(coros, taskgroup=True, policy="collect")
     "chunked_taskgroup",
-    "gather_taskgroup",  # → parallel(taskgroup=True); DEPRECATED wrapper
     "monotonic_ms",
     "parallel",  # ISSUE-006: single canonical parallel runner
     "safe_gather",
@@ -67,6 +67,8 @@ __all__ = [
     "race_first_success",  # F350M-R: parallel profile fallback race
     "RaceFirstSuccessResult",
     "ExceptionPolicy",  # ISSUE-006: Literal["raise", "first", "collect", "log"]
+    "parallel_close",  # ISSUE-04: parallel teardown helper
+    "parallel_close_async",  # ISSUE-04: parallel async close callables
 ]
 
 logger = logging.getLogger(__name__)
@@ -1180,13 +1182,6 @@ async def bounded_gather[T](
         asyncio.CancelledError: if the caller's task is cancelled.
         BaseException (not Exception): KeyboardInterrupt, SystemExit, etc.
     """
-    import warnings
-
-    warnings.warn(
-        "bounded_gather is deprecated, use parallel(coros, concurrency=N, policy='collect')",
-        DeprecationWarning,
-        stacklevel=2,
-    )
     result = await parallel(
         coros,
         policy="collect",
@@ -1686,13 +1681,6 @@ async def gather_taskgroup[T](
 
     Drop-in replacement for bounded_gather with TaskGroup (PEP 654, 3.11+).
     """
-    import warnings
-
-    warnings.warn(
-        "gather_taskgroup is deprecated, use parallel(coros, concurrency=N, taskgroup=True, policy='collect')",
-        DeprecationWarning,
-        stacklevel=2,
-    )
     result = await parallel(
         coros,
         policy="collect",
@@ -1758,19 +1746,34 @@ async def chunked_taskgroup[T, R](
                 _log.debug("[GHOST] chunked_taskgroup[%s] item[%d] exception: %s", ctx, idx, type(e).__name__)
                 return idx, None
 
+    class _BatchCapture:
+        """Closure-free result capture for a single batch.
+
+        ISSUE-008: Replaces nested _run_with_capture + nonlocal closure cell.
+        Using __slots__ eliminates per-task closure allocation and reduces GC pressure
+        in tight loops (batch_size=20 × thousands of batches = significant savings).
+
+        __slots__ ensures:
+        - No __dict__ per instance (~48 bytes saved/instance)
+        - No closure cell objects for nonlocal variables
+        - Faster attribute access on M1 (direct offset indexing)
+        """
+        __slots__ = ("results",)
+
+        def __init__(self, n: int) -> None:
+            self.results: list[tuple[int, R | None] | None] = [None] * n
+
+        async def __call__(self, local_idx: int, item: T) -> None:
+            self.results[local_idx] = await _run(local_idx, item)
+
     for batch_start in range(0, len(items), batch_size):
         batch = items[batch_start : batch_start + batch_size]
-        # Shared list to capture results from TaskGroup tasks
-        batch_results: list[Any | None] = [None] * len(batch)
-
-        async def _run_with_capture(local_idx: int, item: T) -> None:  # noqa: B023
-            nonlocal batch_results
-            batch_results[local_idx] = await _run(local_idx, item)  # noqa: B023
+        capture = _BatchCapture(len(batch))
 
         try:
             async with asyncio.TaskGroup() as tg:
                 for local_idx, item in enumerate(batch):
-                    tg.create_task(_run_with_capture(local_idx, item), name=f"chunk[{batch_start + local_idx}]")
+                    tg.create_task(capture(local_idx, item), name=f"chunk[{batch_start + local_idx}]")
         except BaseExceptionGroup as eg:
             for exc in eg.exceptions:
                 if isinstance(exc, asyncio.CancelledError):
@@ -1788,10 +1791,13 @@ async def chunked_taskgroup[T, R](
             raise
 
         # Collect non-None results from this batch
-        for r in batch_results:
-            if r is not None and not isinstance(r, BaseException):
+        # _run returns tuple[int, R | None] — BaseException is never stored here
+        for r in capture.results:
+            if r is not None:
+                # val may still be None from _run exception path
                 _, val = r
-                all_results.append(val)
+                if val is not None:
+                    all_results.append(val)
 
     return all_results
 
@@ -1812,32 +1818,30 @@ class BoundedPerHostGate:
     - Telemetry: evicted / hits / misses counters
     """
 
-    __slots__ = ("_max_hosts", "_per_host_limit", "_gates", "_last_used", "_stats")
+    __slots__ = ("_max_hosts", "_per_host_limit", "_gates", "_stats")
 
     def __init__(self, max_hosts: int = 512, per_host_limit: int = 4) -> None:
         self._max_hosts = max_hosts
         self._per_host_limit = per_host_limit
         self._gates: OrderedDict[str, asyncio.Semaphore] = OrderedDict()
-        self._last_used: dict[str, float] = {}
         self._stats: dict[str, int] = {"evicted": 0, "hits": 0, "misses": 0}
 
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
     def _evict_idle(self) -> None:
-        """Evict LRU hosts when over capacity (called lazily on miss)."""
+        """Evict LRU hosts when over capacity (called lazily on miss).
+
+        Uses OrderedDict LRU ordering: move_to_end() marks recent access,
+        popitem(last=False) evicts oldest — both O(1) C-implemented.
+        """
         if len(self._gates) < self._max_hosts:
             return
-        # Sort by last_used ascending — evict oldest first
-        sorted_by_age = sorted(
-            self._gates.keys(),
-            key=lambda h: self._last_used.get(h, 0.0),
-        )
-        # Evict exactly the overage — no headroom padding
+        # Evict exactly the overage — OrderedDict maintains LRU order
+        # via move_to_end() in acquire(), so oldest = first = popitem(last=False)
         evict_count = max(1, len(self._gates) - self._max_hosts)
-        for host in sorted_by_age[:evict_count]:
-            del self._gates[host]
-            self._last_used.pop(host, None)
+        for _ in range(evict_count):
+            self._gates.popitem(last=False)  # O(1) LRU evict
         self._stats["evicted"] += evict_count
 
     # ------------------------------------------------------------------
@@ -1851,19 +1855,15 @@ class BoundedPerHostGate:
         The caller MUST pass the returned semaphore to ``release()`` —
         NOT self._gates[host], which may have been evicted and replaced.
         """
-        # Monotonic timestamp via time.monotonic (available in asyncio context)
-        now = time.monotonic()
         if host in self._gates:
             sem = self._gates[host]
-            self._gates.move_to_end(host)
-            self._last_used[host] = now
+            self._gates.move_to_end(host)  # O(1) LRU: mark as most-recently-used
             self._stats["hits"] += 1
             op_id = "hit"
         else:
             self._evict_idle()
             sem = asyncio.Semaphore(self._per_host_limit)
             self._gates[host] = sem
-            self._last_used[host] = now
             self._stats["misses"] += 1
             op_id = "miss"
 
@@ -1921,3 +1921,172 @@ async def stop_task(coro: asyncio.Task[Any] | None) -> None:
     coro.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await coro
+
+
+# ---------------------------------------------------------------------------
+# ISSUE-04: parallel_close — parallel resource teardown helper
+# ---------------------------------------------------------------------------
+
+
+async def _safe_aclose(
+    resource: Any,
+    *,
+    ctx: str,
+    logger_instance: logging.Logger,
+) -> Exception | None:
+    """Close a single resource (aclose/close), returning None on success or the exception."""
+    try:
+        # Try aclose() first (async resources), then close() (sync resources)
+        close_fn = getattr(resource, "aclose", None) or getattr(resource, "close", None)
+        if close_fn is None:
+            logger_instance.debug("[%s] resource %s has no close/aclose method", ctx, type(resource).__name__)
+            return None
+        result = close_fn()
+        if asyncio.iscoroutine(result):
+            await result
+        return None
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        logger_instance.debug("[%s] failed to close %s: %s", ctx, type(resource).__name__, e)
+        return e
+
+
+async def parallel_close(
+    resources: list[Any],
+    *,
+    concurrency: int = 4,
+    ctx: str = "parallel_close",
+    logger_instance: logging.Logger | None = None,
+) -> list[Exception | None]:
+    """ISSUE-04: Close multiple resources in parallel with bounded concurrency.
+
+    Fail-safe: exceptions are collected and returned, never propagated.
+    CancelledError is re-raised (teardown must not swallow cancellation).
+
+    Use for independent resources that can be closed concurrently (HTTP clients,
+    transport layers, session pools). For dependent resources (LIFO ordering
+    required), close them sequentially before calling this for the rest.
+
+    Args:
+        resources: List of objects with .aclose() or .close() method.
+        concurrency: Max simultaneous close operations (default 4, M1 8GB friendly).
+        ctx: Context label for log messages (e.g. "teardown.transports").
+        logger_instance: Optional logger override.
+
+    Returns:
+        List of Exception | None per resource (None = success, Exception = failure).
+
+    Example:
+        # Close HTTP clients in parallel (independent):
+        errors = await parallel_close(
+            [httpx_client, curl_cffi_client, public_fetcher, aiohttp_session],
+            concurrency=4,
+            ctx="teardown.transports",
+        )
+        failed = [e for e in errors if e is not None]
+        if failed:
+            logger.debug("teardown: %d/%d transport close failures", len(failed), len(errors))
+    """
+    _log = logger_instance or logger
+    if not resources:
+        return []
+
+    coros: list[Awaitable[Exception | None]] = [
+        _safe_aclose(r, ctx=ctx, logger_instance=_log)
+        for r in resources
+    ]
+
+    result = await parallel(
+        coros,
+        policy="collect",  # Collect exceptions, never propagate
+        concurrency=concurrency,
+        taskgroup=True,
+        ctx=ctx,
+        logger_instance=_log,
+    )
+
+    return result.ok  # ok contains the return values of _safe_aclose (Exception | None)
+
+
+async def _safe_close_async(
+    close_fn: Callable[[], Awaitable[Any]],
+    name: str,
+    *,
+    ctx: str,
+    logger_instance: logging.Logger,
+) -> tuple[str, Exception | None]:
+    """Close a resource via async callable, returning (name, exception)."""
+    try:
+        await close_fn()
+        return (name, None)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        logger_instance.debug("[%s] failed to close %s: %s", ctx, name, e)
+        return (name, e)
+
+
+async def parallel_close_async(
+    close_funcs: list[tuple[str, Callable[[], Awaitable[Any]]]],
+    *,
+    concurrency: int = 4,
+    ctx: str = "parallel_close_async",
+    logger_instance: logging.Logger | None = None,
+) -> dict[str, Exception | None]:
+    """ISSUE-04: Close multiple async resources in parallel via async callables.
+
+    Unlike ``parallel_close`` which works on objects with .aclose()/.close() methods,
+    this variant accepts named async callables — useful for module-level close functions
+    like ``close_httpx_client_async()`` that don't belong to an object.
+
+    Fail-safe: exceptions are collected into the result dict, never propagated.
+    CancelledError is re-raised (teardown must not swallow cancellation).
+
+    Args:
+        close_funcs: List of (name, async_close_fn) tuples. Each fn must be
+                     a zero-argument async callable (e.g. ``close_httpx_client_async``).
+        concurrency: Max simultaneous close operations (default 4, M1 8GB friendly).
+        ctx: Context label for log messages.
+        logger_instance: Optional logger override.
+
+    Returns:
+        Dict mapping name → None (success) or Exception (failure).
+
+    Example:
+        errors = await parallel_close_async([
+            ("httpx", close_httpx_client_async),
+            ("curl_cffi", close_curl_cffi_sessions_async),
+            ("public_fetcher", close_public_fetcher_sessions_async),
+            ("aiohttp", close_aiohttp_session_async),
+        ], concurrency=4, ctx="teardown.transports")
+        failed = [name for name, e in errors.items() if e is not None]
+        if failed:
+            logger.debug("teardown: %d transport close failures: %s", len(failed), failed)
+    """
+    _log = logger_instance or logger
+    if not close_funcs:
+        return {}
+
+    coros: list[Awaitable[tuple[str, Exception | None]]] = [
+        _safe_close_async(fn, name, ctx=ctx, logger_instance=_log)
+        for name, fn in close_funcs
+    ]
+
+    result = await parallel(
+        coros,
+        policy="collect",
+        concurrency=concurrency,
+        taskgroup=True,
+        ctx=ctx,
+        logger_instance=_log,
+    )
+
+    # Build result dict preserving names
+    out: dict[str, Exception | None] = {}
+    for item in result.ok:
+        if isinstance(item, tuple) and len(item) == 2:
+            out[item[0]] = item[1]
+        else:
+            out[str(item)] = None  # fallback
+    return out

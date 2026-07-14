@@ -1127,7 +1127,7 @@ class DocumentIntelligenceEngine:
     async def batch_analyze_async(self, file_paths: list[str]) -> dict[str, DocumentAnalysis]:
         """Analyze multiple documents in parallel (M1-safe, concurrency=8).
 
-        Uses bounded_gather with policy='collect' — all documents processed,
+        Uses parallel() with policy='collect' — all documents processed,
         individual failures return None for that document without aborting others.
         """
         from hledac.universal.utils.async_helpers import parallel

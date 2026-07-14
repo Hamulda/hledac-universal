@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from runtime.scheduler_v2.protocol import InitResult, SprintContext
+from hledac.universal.utils.async_helpers import parallel
 
 
 # Issue #047 fix: @dataclass(slots=True) eliminates __slots__/__init__ duplication.
@@ -460,7 +461,6 @@ class SprintSchedulerV2:
         import time as _t
 
         from runtime.scheduler_v2.prelude import (
-            gather_taskgroup,
             run_public_prelude_lane,
             run_ct_prelude_lane,
             run_wayback_prelude_lane,
@@ -491,7 +491,8 @@ class SprintSchedulerV2:
             ),
         ]
 
-        _lane_results = await gather_taskgroup(_coros, concurrency=5, ctx="prelude_v2")
+        _build = await parallel(_coros, concurrency=5, policy="collect", taskgroup=True, ctx="prelude_v2")
+        _lane_results = _build.ok
         _lanes_attempted = [r.lane for r in _lane_results if r.attempted]
         _lanes_skipped = {r.lane: r.skip_reason for r in _lane_results if r.skipped}
         _lanes_accepted = {r.lane: r.accepted_count for r in _lane_results if r.accepted_count > 0}

@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 import msgspec
 from enum import Enum, StrEnum
 from typing import Any
-from hledac.universal.utils.msgspec_json import loads as _msgspec_loads
+from hledac.universal.utils.msgspec_json import dumps_str, loads as _msgspec_loads
 from hledac.universal.utils.uuid7 import new_runtime_id
 from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_fire_and_forget
 
@@ -912,9 +912,9 @@ async def example_usage():
     print(f'Operation status: {status}')
     if status and status['status'] == 'completed':
         results = await intelligence_system.get_operation_results(operation_id)
-        print(f'Results: {_msgspec_dumps_str(results, indent=2)}')
+        print(f'Results: {dumps_str(results, indent=2)}')
     metrics = intelligence_system.get_system_metrics()
-    print(f'System metrics: {_msgspec_dumps_str(metrics, indent=2)}')
+    print(f'System metrics: {dumps_str(metrics, indent=2)}')
     await intelligence_system.cleanup()
 if __name__ == '__main__':
     import json

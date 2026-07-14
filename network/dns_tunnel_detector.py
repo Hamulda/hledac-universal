@@ -24,7 +24,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 import numpy as np
-from hledac.universal.utils.async_helpers import bounded_gather
+from hledac.universal.utils.async_helpers import parallel
 HAS_SCAPY = False
 HAS_PYWAVELETS = False
 HAS_MLX = False
@@ -529,7 +529,7 @@ class DNSTunnelDetector:
     async def analyze_queries(self, queries: list[str]) -> list[TunnelingFinding]:
         """Analyze a batch of DNS queries for tunneling.
 
-        Uses bounded_gather for parallel processing — 5-10× speedup vs sequential.
+        Uses parallel() for parallel processing — 5-10× speedup vs sequential.
 
         Args:
             queries: List of DNS query strings to analyze
@@ -549,8 +549,8 @@ class DNSTunnelDetector:
         else:
             concurrency = min(6, max(2, num_queries // 150))
         coros = [self._analyze_single_query(q) for q in queries]
-        ok_results, _errors = await bounded_gather(coros, concurrency=concurrency, ctx='dns_tunnel.analyze_queries')
-        return list(ok_results)
+        build = await parallel(coros, concurrency=concurrency, policy="collect", ctx='dns_tunnel.analyze_queries')
+        return list(build.ok)
 
     async def _analyze_single_query(self, query: str) -> TunnelingFinding:
         """Analyze a single DNS query through all detection layers.
@@ -619,7 +619,7 @@ class DNSTunnelDetector:
         """Stream-analyze a PCAP file for DNS tunneling.
 
         ISSUE-17 FIX: PCAP parsing runs in executor to avoid blocking event loop.
-        Uses bounded_gather for parallel query analysis.
+        Uses parallel() for parallel query analysis.
 
         Args:
             pcap_path: Path to PCAP file

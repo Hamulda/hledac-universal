@@ -36,7 +36,7 @@ import gc
 import logging
 import re
 import time
-from collections import defaultdict, OrderedDict
+from collections import defaultdict
 from dataclasses import dataclass, field
 import asyncio
 import msgspec
@@ -107,66 +107,66 @@ async def _bounded_gather_pairs(
     compute_fn,  # (str, str) -> IdentityMatch
     concurrency: int = 10,
 ) -> list[IdentityMatch]:
-    """O(α(N)) parallel pairwise s bounded semaphore — M1-safe."""
-    sem = asyncio.Semaphore(concurrency)
+    """O(α(N)) parallel pairwise — ISSUE-005: bounded_parallel_map refactor.
 
-    async def _compute(id_a: str, id_b: str) -> IdentityMatch | None:
-        async with sem:
-            return compute_fn(id_a, id_b)
+    Replaces asyncio.gather + _check_gathered with bounded_parallel_map
+    for cleaner API and proper GHOST I6/I7 exception routing.
+    """
+    from utils.async_helpers import bounded_parallel_map
 
-    tasks = [_compute(a, b) for a, b in pairs]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    async def _compute_pair(pair: tuple[str, str]) -> IdentityMatch:
+        return compute_fn(pair[0], pair[1])
+
+    raw = await bounded_parallel_map(
+        pairs,
+        _compute_pair,
+        concurrency=concurrency,
+        ctx="identity_stitching_pairwise",
+    )
     matches: list[IdentityMatch] = []
-    for r in results:
+    for r in raw:
         if isinstance(r, IdentityMatch) and r.match_score >= threshold:
             matches.append(r)
     return matches
 
-class _BoundedCache[T]:
+class _IdentityCache[T]:
     """
-    Bounded LRU cache with O(1) eviction and optional memory-pressure trigger.
+    Symmetric-key LRU cache backed by PyCacheDict.
 
-    Features:
-    - OrderedDict-based LRU with O(1) access/eviction
+    Wraps PyCacheDict to add:
     - Symmetric key normalization: (A,B) and (B,A) map to same slot
-    - Optional memory-pressure auto-eviction (configurable threshold)
-    - Explicit max_size enforcement on every put
-    - Thread-safe for single-threaded use (no locks)
+    - Memory-pressure eviction: psutil-based 50% eviction when RSS exceeds threshold
 
-    M1 8GB: Uses psutil to monitor RSS and evicts when pressure exceeds
-    memory_pressure_threshold (default 0.8 = 80% of max_memory_mb).
+    PyCacheDict provides: TTL, thread-safe RLock, hit/miss/eviction stats.
     """
-    __slots__ = tuple(('_cache', '_max_memory_bytes', '_max_size', '_memory_pressure_threshold', '_process'))
+    __slots__ = ('_inner', '_max_memory_bytes', '_memory_pressure_threshold', '_process')
 
-    def __init__(self, max_size: int, max_memory_mb: float=512.0, memory_pressure_threshold: float=0.8):
-        self._max_size = max_size
+    def __init__(
+        self,
+        max_size: int,
+        ttl_s: float = 3600.0,
+        max_memory_mb: float = 512.0,
+        memory_pressure_threshold: float = 0.8,
+    ) -> None:
+        from utils.cache import PyCacheDict
+        self._inner = PyCacheDict[object, T](maxsize=max_size, ttl_s=ttl_s)
         self._max_memory_bytes = max_memory_mb * 1024 * 1024
         self._memory_pressure_threshold = memory_pressure_threshold
-        self._cache: OrderedDict[str, T] = OrderedDict()
         self._process: Any = None
 
-    def _normalize_key(self, key: tuple[str, str]) -> str:
+    def _normalize_key(self, key: tuple[str, str]) -> tuple[str, str]:
         """Normalize key so (A,B) and (B,A) map to same slot."""
         return tuple(sorted(key))
 
     def get(self, key: tuple[str, str]) -> T | None:
-        """Get item, moving it to end (most recently used). Returns None if not found."""
+        """Get item. Returns None on miss or expired."""
         norm = self._normalize_key(key)
-        if norm not in self._cache:
-            return None
-        self._cache.move_to_end(norm)
-        return self._cache[norm]
+        return self._inner.get(norm)
 
     def put(self, key: tuple[str, str], value: T) -> None:
-        """Put item, evicting oldest if at capacity. Also checks memory pressure."""
+        """Put item. Evicts on TTL expiry or memory pressure."""
         norm = self._normalize_key(key)
-        if norm in self._cache:
-            self._cache.move_to_end(norm)
-            self._cache[norm] = value
-            return
-        while len(self._cache) >= self._max_size:
-            self._cache.popitem(last=False)
-        self._cache[norm] = value
+        self._inner.set(norm, value)
         self._maybe_evict_on_pressure()
 
     def _maybe_evict_on_pressure(self) -> None:
@@ -177,24 +177,39 @@ class _BoundedCache[T]:
                 self._process = psutil.Process()
             rss = self._process.memory_info().rss
             if rss > self._max_memory_bytes * self._memory_pressure_threshold:
-                evict_count = max(1, len(self._cache) // 2)
+                # Purge oldest 50% of entries
+                evict_count = max(1, self._inner.size // 2)
                 for _ in range(evict_count):
-                    if self._cache:
-                        self._cache.popitem(last=False)
-                logger.debug(f'Cache pressure eviction: evicted {evict_count} entries (RSS={rss / 1024 / 1024:.1f}MB)')
+                    # popitem(last=False) = oldest (LRU)
+                    try:
+                        self._inner._data.popitem(last=False)  # noqa: SLF001
+                    except KeyError:
+                        break
+                logger.debug(
+                    f'Cache pressure eviction: evicted {evict_count} entries '
+                    f'(RSS={rss / 1024 / 1024:.1f}MB)'
+                )
         except Exception:
             pass
 
     def clear(self) -> None:
         """Clear all entries."""
-        self._cache.clear()
+        self._inner.clear()
 
     def __len__(self) -> int:
-        return len(self._cache)
+        return self._inner.size
 
     def stats(self) -> dict[str, Any]:
-        """Return cache statistics."""
-        return {'entries': len(self._cache), 'max_size': self._max_size, 'utilization': len(self._cache) / self._max_size if self._max_size > 0 else 0}
+        """Return cache statistics compatible with _BoundedCache API."""
+        inner_stats = self._inner.stats
+        return {
+            'entries': inner_stats.get('size', 0),
+            'max_size': self._inner.capacity,
+            'utilization': (
+                inner_stats.get('size', 0) / self._inner.capacity
+                if self._inner.capacity > 0 else 0
+            ),
+        }
 import numpy as np
 NETWORKX_AVAILABLE = True
 _nx = None
@@ -284,13 +299,13 @@ class IdentityProfile:
 
     def __post_init__(self) -> None:
         if self.updated_at is None:
-            self.updated_at = datetime.now(UTC)
+            object.__setattr__(self, 'updated_at', datetime.now(UTC))
 
     def add_username(self, platform: str, username: str, **kwargs) -> UsernameEntry:
         """Add a username entry for a platform."""
         entry = UsernameEntry(platform=platform, username=username, **kwargs)
         self.usernames.append(entry)
-        self.updated_at = datetime.now(UTC)
+        object.__setattr__(self, 'updated_at', datetime.now(UTC))
         return entry
 
     def get_username(self, platform: str) -> str | None:
@@ -334,11 +349,11 @@ class IdentityMatch:
 
     def __post_init__(self) -> None:
         if self.match_score >= 0.85:
-            self.confidence = 0.85
+            object.__setattr__(self, 'confidence', 0.85)
         elif self.match_score >= 0.6:
-            self.confidence = 0.6
+            object.__setattr__(self, 'confidence', 0.6)
         else:
-            self.confidence = 0.35
+            object.__setattr__(self, 'confidence', 0.35)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert match to dictionary."""
@@ -441,8 +456,8 @@ class IdentityStitchingEngine:
         self._alias_index: dict[str, set[str]] = defaultdict(set)
         self._platform_index: dict[str, set[str]] = defaultdict(set)
         self._identity_graph: Any | None = None
-        self._similarity_cache = _BoundedCache[float](max_size=4096, max_memory_mb=max_memory_mb, memory_pressure_threshold=0.8)
-        self._match_cache = _BoundedCache[IdentityMatch](max_size=2048, max_memory_mb=max_memory_mb, memory_pressure_threshold=0.8)
+        self._similarity_cache = _IdentityCache[float](max_size=4096, ttl_s=3600, max_memory_mb=max_memory_mb, memory_pressure_threshold=0.8)
+        self._match_cache = _IdentityCache[IdentityMatch](max_size=2048, ttl_s=3600, max_memory_mb=max_memory_mb, memory_pressure_threshold=0.8)
         self._stats = {'profiles_added': 0, 'matches_computed': 0, 'identities_stitched': 0, 'graphs_built': 0}
         logger.info(f'IdentityStitchingEngine initialized (threshold={similarity_threshold}, fuzzy={self.enable_fuzzy}, lsh={self.enable_lsh})')
 
@@ -469,14 +484,14 @@ class IdentityStitchingEngine:
         return True
 
     def _update_profile(self, profile: IdentityProfile):
-        """Update an existing profile."""
+        """Update an existing profile (frozen dataclass — uses object.__setattr__)."""
         existing = self._profiles[profile.id]
-        existing.primary_name = profile.primary_name
-        existing.aliases = list(set(existing.aliases + profile.aliases))
-        existing.emails = list(set(existing.emails + profile.emails))
-        existing.usernames.extend(profile.usernames)
-        existing.attributes.update(profile.attributes)
-        existing.updated_at = datetime.now(UTC)
+        object.__setattr__(existing, 'primary_name', profile.primary_name)
+        object.__setattr__(existing, 'aliases', list(set(existing.aliases + profile.aliases)))
+        object.__setattr__(existing, 'emails', list(set(existing.emails + profile.emails)))
+        object.__setattr__(existing, 'usernames', existing.usernames + profile.usernames)
+        object.__setattr__(existing, 'attributes', {**existing.attributes, **profile.attributes})
+        object.__setattr__(existing, 'updated_at', datetime.now(UTC))
         # Re-index fields (set operations are idempotent — no LSH re-registration).
         # LSH has no remove() — old fingerprint stays in index until next full rebuild.
         self._index_profile_fields(existing)
@@ -835,9 +850,9 @@ class IdentityStitchingEngine:
         matches.sort(key=lambda m: m.match_score, reverse=True)
         return matches
 
-    def find_all_matches(self, min_score: float | None=None) -> list[IdentityMatch]:
+    async def find_all_matches_async(self, min_score: float | None=None) -> list[IdentityMatch]:
         """
-        Find all matches across all profiles.
+        Find all matches across all profiles — MUST be called from async context.
 
         O(N²) brute-force replaced by:
         - LSH pre-filtering: O(1) candidate reduction per profile
@@ -889,8 +904,8 @@ class IdentityStitchingEngine:
 
         # --- Phase 2: Parallel pairwise matching ---
         pairs = list(candidate_pairs)
-        if n < 20 or not asyncio.get_event_loop().is_running():
-            # Sync fallback for small N or no running loop
+        if n < 20:
+            # Sync fallback for small N
             matches: list[IdentityMatch] = []
             for id_a, id_b in pairs:
                 match = self.compute_match(self._profiles[id_a], self._profiles[id_b])
@@ -898,17 +913,44 @@ class IdentityStitchingEngine:
                     matches.append(match)
         else:
             # Async bounded gather — concurrency=10, M1-safe
-            matches = asyncio.run(
-                _bounded_gather_pairs(
-                    pairs,
-                    threshold,
-                    lambda a, b: self.compute_match(self._profiles[a], self._profiles[b]),
-                    concurrency=10,
-                )
+            matches = await _bounded_gather_pairs(
+                pairs,
+                threshold,
+                lambda a, b: self.compute_match(self._profiles[a], self._profiles[b]),
+                concurrency=10,
             )
 
         matches.sort(key=lambda m: m.match_score, reverse=True)
         return matches
+
+    def find_all_matches(self, min_score: float | None=None) -> list[IdentityMatch]:
+        """
+        Find all matches across all profiles — sync wrapper for CLI entry points.
+
+        ISSUE-005 FIX: Replaces asyncio.run() with asyncio.get_running_loop().run_until_complete()
+        which is safe on Python 3.14+ when called from a non-running-loop async context.
+        The try/except RuntimeError pattern above is retained for explicit error messaging
+        when called incorrectly from an active event loop.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop — safe to call async version directly via run_until_complete
+            loop = None
+
+        if loop is not None:
+            # Running loop exists — cannot use run_until_complete either.
+            # Require explicit async call.
+            raise RuntimeError(
+                "find_all_matches() called from running event loop with n>=20. "
+                "Use 'await engine.find_all_matches_async()' instead. "
+                f"Current profile count: {len(self._profiles)}"
+            )
+
+        # No running loop — use run_until_complete (Python 3.14+ safe)
+        return asyncio.get_running_loop().run_until_complete(
+            self.find_all_matches_async(min_score)
+        )
 
     def stitch_identities(self, match_threshold: float=0.8, transitive_threshold: float=0.6) -> list[StitchedIdentity]:
         """

@@ -231,8 +231,9 @@ async def run_doh_prelude_lane(query: str, result: Any, duckdb_store: Any, time_
 
 async def gather_taskgroup(coros: list, concurrency: int, ctx: str) -> tuple[list, list]:
     """Wrapper around utils.async_helpers.gather_taskgroup for prelude lanes."""
-    from hledac.universal.utils.async_helpers import gather_taskgroup as _gt
-    return await _gt(coros, concurrency=concurrency, ctx=ctx)
+    from hledac.universal.utils.async_helpers import parallel
+    result = await parallel(coros, concurrency=concurrency, policy="collect", taskgroup=True, ctx=ctx)
+    return result.ok, list(result.errors)
 
 def _build_lane_query(query: str, lane: Any, seed_context: Any=None) -> Any:
     from hledac.universal.runtime.acquisition_strategy import build_lane_query as _blq

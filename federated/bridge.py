@@ -17,10 +17,12 @@ PROBLEM (without this bridge)
     def __init__(self, hypothesis_engine: Any, graph: Any, ...):
   The constructor REQUIRES a live HypothesisEngine and a KnowledgeGraph.
   These cannot be cheaply mocked for a federated per-lane RL slice.
-- `loops.research_loop._load_qtable()` uses `asyncio.get_event_loop().run_until_complete()`
-  synchronously, which is an M1 crash vector inside other event loops.
-- `loops.research_loop.QTable.from_dict()` uses `eval()` on state-key strings —
-  a security smell and a portability hazard.
+  (NOTE: `loops.research_loop` was planned but never implemented.)
+- If it were implemented, `loops.research_loop._load_qtable()` would likely use
+  `asyncio.get_event_loop().run_until_complete()` synchronously — an M1 crash
+  vector inside other event loops.
+- If it were implemented, `loops.research_loop.QTable.from_dict()` might use
+  `eval()` on state-key strings — a security smell and portability hazard.
 - The federated coordinator already has a lighter, in-memory FederatedQTable
   (1024-entry hard cap, no eval, fail-soft throughout) — but it loses
   RL state across sprints.

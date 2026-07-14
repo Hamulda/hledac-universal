@@ -22,7 +22,7 @@ from collections import deque
 from dataclasses import dataclass, field
 import msgspec
 from typing import Any, Awaitable
-from hledac.universal.utils.async_helpers import bounded_gather, safe_create_task, safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel, safe_create_task
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
 logger = logging.getLogger(__name__)
 
@@ -92,7 +92,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
     - Dynamic task count based on decision.confidence
     - Priority based on confidence threshold
     """
-    __slots__ = tuple(('_action_history', '_completed_tasks', '_ghost_available', '_ghost_director', '_ghost_executions', '_ghost_max_steps', '_max_completed_history', '_max_history', '_parallel_available', '_parallel_executions', '_parallel_executor', '_parallel_max_tasks', '_pending_tasks', '_ray_available', '_ray_cluster', '_ray_executions', '_ray_max_tasks'))
+    __slots__ = tuple(('_action_history', '_completed_tasks', '_ghost_available', '_ghost_director', '_ghost_executions', '_ghost_max_steps', '_load_factor', '_max_completed_history', '_max_history', '_parallel_available', '_parallel_executions', '_parallel_executor', '_parallel_max_tasks', '_pending_tasks', '_ray_available', '_ray_cluster', '_ray_executions', '_ray_max_tasks', '_worker_pool'))
 
     def __init__(self, max_concurrent: int=10):
         super().__init__(name='universal_execution_coordinator', max_concurrent=max_concurrent, memory_aware=True)
@@ -113,6 +113,13 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
         self._ray_executions = 0
         self._action_history: deque[dict[str, Any]] = deque()
         self._max_history = 100
+        self._load_factor: float = 0.0
+        # ISSUE-011: AdaptiveWorkerPool injected via DI for memory-aware concurrency
+        self._worker_pool: Any | None = None
+
+    def inject_worker_pool(self, pool: Any) -> None:
+        """ISSUE-011: Inject AdaptiveWorkerPool for memory-aware concurrency."""
+        self._worker_pool = pool
 
     async def _do_initialize(self) -> bool:
         """Initialize execution subsystems with graceful degradation."""
@@ -364,20 +371,39 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
         """
         Execute batch of tasks with controlled parallelism.
 
+        Uses parallel() with AdaptiveWorkerPool for memory-aware concurrency.
+        Falls back to max_parallel if pool unavailable (backward compat).
+
+        ISSUE-011: Replaced custom Semaphore with canonical parallel() API
+        backed by AtomicAdaptiveSemaphore via AdaptiveWorkerPool.
+
         Args:
             tasks: List of tasks to execute
-            max_parallel: Maximum concurrent executions
+            max_parallel: Maximum concurrent executions (cap only)
 
         Returns:
             List of execution results
         """
-        semaphore = asyncio.Semaphore(max_parallel)
+        # ISSUE-011: Use AdaptiveWorkerPool for memory-aware concurrency
+        # ISSUE-011-FIX: Guard against pool returning 0 (emergency/ io_only state → deadlock)
+        concurrency_limit = max_parallel
+        if self._worker_pool is not None:
+            try:
+                pool_limit = self._worker_pool.get_max_workers()
+                if pool_limit > 0:
+                    concurrency_limit = min(max_parallel, pool_limit)
+            except Exception:
+                pass  # Fall back to max_parallel
 
-        async def execute_with_limit(task: ExecutionTask) -> ExecutionResult:
-            async with semaphore:
-                decision = DecisionResponse(decision_id=task.task_id, chosen_option=task.executor, confidence=0.7 if task.priority == 'high' else 0.5, reasoning=task.description, estimated_duration=task.timeout)
-                return await self._execute_decision(decision)
-        return await safe_gather_ok(*[execute_with_limit(task) for task in tasks], label='execution_coordinator.execute_tasks')
+        async def execute_task(task: ExecutionTask) -> ExecutionResult:
+            decision = DecisionResponse(decision_id=task.task_id, chosen_option=task.executor, confidence=0.7 if task.priority == 'high' else 0.5, reasoning=task.description, estimated_duration=task.timeout)
+            return await self._execute_decision(decision)
+
+        if concurrency_limit < 1:
+            concurrency_limit = 1
+
+        result = await parallel([execute_task(task) for task in tasks], concurrency=concurrency_limit, policy="log", ctx='execution_coordinator.execute_batch')
+        return result.ok
 
     def register_task(self, task: ExecutionTask) -> str:
         """Register task for tracking."""
@@ -584,7 +610,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
         """
         Execute a plan of actions (from Hermes3).
 
-        Uses bounded_gather for parallel execution of plan steps (max 3 concurrent).
+        Uses parallel() for concurrent execution of plan steps (max 3 concurrent).
         Serial bottleneck removed: 10 steps × 200ms = 2s serial → ~700ms parallel.
 
         Args:
@@ -596,6 +622,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
         if not plan:
             return {'success': True, 'steps_executed': 0, 'successful_steps': 0, 'failed_steps': 0, 'results': []}
         step_coros = [self.execute_action(s.get('action', 'search'), s.get('payload', {})) for s in plan]
-        results, _ = await bounded_gather(step_coros, concurrency=3, ctx='execution_coordinator.execute_plan')
+        result = await parallel(step_coros, concurrency=3, policy="collect", ctx='execution_coordinator.execute_plan')
+        results = result.ok
         self._load_factor = min(1.0, len(results) / 10)
         return {'success': all((r.get('success', False) for r in results)), 'steps_executed': len(results), 'successful_steps': sum((1 for r in results if r.get('success'))), 'failed_steps': sum((1 for r in results if not r.get('success'))), 'results': results}

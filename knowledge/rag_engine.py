@@ -642,7 +642,7 @@ class RAGEngine:
         """
         if not self._spr_compressor:
             return chunks
-        from utils.async_helpers import bounded_gather, safe_wait_for
+        from utils.async_helpers import parallel, safe_wait_for
         _CHUNK_TIMEOUT_S = 5.0
 
         async def _compress_one(chunk: str) -> str:
@@ -663,8 +663,8 @@ class RAGEngine:
         else:
             concurrency = 3
         coros = [_compress_one(chunk) for chunk in chunks]
-        ok_results, _errors = await bounded_gather(coros, concurrency=concurrency, ctx='rag:compress', logger_instance=logger)
-        return ok_results
+        _build = await parallel(coros, concurrency=concurrency, policy="collect", ctx='rag:compress', logger_instance=logger)
+        return _build.ok
 
     async def _secure_process(self, chunks: list[str]) -> list[str]:
         """
@@ -845,10 +845,10 @@ class RAGEngine:
         if embeddings is None:
             logger.info('Generating embeddings for HNSW index...')
             try:
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    future = pool.submit(asyncio.run, self._generate_embeddings([d.content for d in documents]))
-                    embeddings_list = future.result(timeout=300)
+                # ISSUE-006-BIRDSEYE: asyncio.run() directly instead of ThreadPoolExecutor overhead.
+                # _generate_embeddings is async but its internals (MLX embedder) are sync-safe.
+                # asyncio.run() creates its own event loop — no conflict with any caller's loop.
+                embeddings_list = asyncio.run(self._generate_embeddings([d.content for d in documents]))
                 embeddings = {doc.id: emb for doc, emb in zip(documents, embeddings_list)}
             except Exception as e:
                 logger.error(f'Failed to generate embeddings: {e}')

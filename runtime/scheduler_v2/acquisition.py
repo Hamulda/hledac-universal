@@ -1024,15 +1024,14 @@ class AcquisitionOrchestrator:
         if not _coros:
             return  # no probe lanes available — fail-soft
 
-        # ISSUE #011 FIX: parallel dispatch via gather_taskgroup (taskgroup=True)
+        # ISSUE #011 FIX: parallel dispatch via parallel(taskgroup=True, policy="collect")
         try:
-            from hledac.universal.utils.async_helpers import gather_taskgroup
+            from hledac.universal.utils.async_helpers import parallel
 
-            async def _run_all() -> tuple[list, list]:
-                _inner_coros = [coro for _, coro in _coros]
-                return await gather_taskgroup(_inner_coros, concurrency=_concurrency, ctx="probe_lanes")
-
-            _ok_results, _error_results = await _run_all()
+            _inner_coros = [coro for _, coro in _coros]
+            _build = await parallel(_inner_coros, concurrency=_concurrency, policy="collect", taskgroup=True, ctx="probe_lanes")
+            _ok_results: list = _build.ok
+            _error_results: list = list(_build.errors) if _build.errors else []
             for _r in _ok_results:
                 if isinstance(_r, tuple) and len(_r) == 3:
                     _name, _attempted, _count = _r

@@ -339,13 +339,26 @@ def set_httpx_cache_transport(_transport: Any) -> None:
 def get_aiohttp_session() -> httpx.AsyncClient:
     """F4XX: alias for async_get_httpx_session(). Provided for backward compatibility."""
     import asyncio
+
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
-        # No running loop — return a new session synchronously
-        # This is only safe in sync contexts (tests), not production async code
-        raise RuntimeError("get_aiohttp_session() called in non-async context. Use async_get_httpx_session() instead.") from None
-    return loop.run_until_complete(async_get_httpx_session())
+        raise RuntimeError(
+            "get_aiohttp_session() called in non-async context. "
+            "Use async_get_httpx_session() instead."
+        ) from None
+    # Run in a separate thread so the caller (which may be a sync thread
+    # with its own loop) doesn't nest event loops — eliminates M1 crash vector.
+    # run_in_executor with None uses the default ThreadPoolExecutor (bounded 8 threads on M1).
+    future = loop.run_in_executor(None, _get_httpx_session_blocking)
+    return future.result()
+
+def _get_httpx_session_blocking() -> httpx.AsyncClient:
+    """
+    Synchronous blocking wrapper for async_get_httpx_session().
+    Called inside run_in_executor — runs in a thread with its own loop.
+    """
+    return asyncio.run(async_get_httpx_session())
 
 
 def close_httpx_session() -> None:
@@ -365,19 +378,27 @@ def close_httpx_session() -> None:
     # ISSUE-010: Delegate to canonical session_pool
     from transport.session_pool import close_httpx as _close_httpx
 
-    # Run sync close wrapper (close_httpx is async, wrap in sync for BC)
+    # Run in a separate thread to avoid nested event loop — eliminates M1 crash vector.
     import asyncio
 
     try:
         loop = asyncio.get_running_loop()
-        loop.run_until_complete(_close_httpx())
+        loop.run_in_executor(None, _close_httpx_blocking).result()
     except RuntimeError:
-        # No running loop — create new loop for sync context
+        # No running loop — create new loop for sync context (tests)
         loop = asyncio.new_event_loop()
         try:
             loop.run_until_complete(_close_httpx())
         finally:
             loop.close()
+
+def _close_httpx_blocking() -> None:
+    """
+    Synchronous blocking wrapper for close_httpx().
+    Called inside run_in_executor — runs in a thread with its own loop.
+    """
+    from transport.session_pool import close_httpx as _close_httpx
+    asyncio.run(_close_httpx())
 
 
 # Alias for backward compatibility
@@ -458,13 +479,13 @@ def _reset_session_runtime_for_tests() -> None:
     # ISSUE-010: Delegate to session_pool for actual session close
     from transport.session_pool import close_httpx as _close_httpx
 
-    loop = asyncio.new_event_loop()
+    # Test-only: asyncio.run() creates and tears down its own loop safely.
+    # This is correct here because this function is ONLY called from test
+    # fixtures where no other async code is running concurrently.
     try:
-        loop.run_until_complete(_close_httpx())
+        asyncio.run(_close_httpx())
     except Exception:  # noqa: BLE001
         pass
-    finally:
-        loop.close()
 
     # Clear bandits
     clear_bandits()

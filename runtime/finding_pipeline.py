@@ -249,7 +249,12 @@ class FindingPipeline:
 
         if self._mpsc is None:
             # Must spawn async task for direct ingest
-            asyncio.get_event_loop().run_in_executor(
+            # ISSUE-02 fix: use new_event_loop() pattern for sync context (not get_event_loop which is deprecated in 3.14)
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+            loop.run_in_executor(
                 None,
                 self._sync_ingest_wrapper,
                 findings,

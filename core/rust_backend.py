@@ -579,7 +579,7 @@ class _PythonRollingHashEngine:
 
 # --- xxHash fallback ---
 def _python_batch_url_fingerprints(urls: list[str]) -> list[str]:
-    return [_python_url_fingerprint_b2b(u) for u in urls]
+    return [_python_url_fingerprint(u) for u in urls]
 
 
 # --- IOC extract fallback ---
@@ -676,6 +676,16 @@ def _python_nfc_normalize(text: str) -> str:
     except ImportError:
         return text
 
+
+def _python_strip_diacritics(text: str) -> str:
+    """Strip diacritical marks from text (NFD decomposition + filter non-spacing marks)."""
+    try:
+        import unicodedata
+
+        return "".join(c for c in unicodedata.normalize("NFD", text) if not unicodedata.combining(c))
+    except ImportError:
+        return text
+
     def __init__(self, max_edges: int = 10_000):
         self._counts: dict[tuple[int, int], int] = {}
         self._max_edges = max_edges
@@ -705,42 +715,6 @@ def _python_nfc_normalize(text: str) -> str:
 
     def snapshot(self) -> dict[tuple[int, int], int]:
         return dict(self._counts)
-
-        # --- Compress fallback ---
-        def __init__(self) -> None:
-            super().__init__()
-            self._in_title = False
-
-        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-            nonlocal title
-            if tag == "a":
-                for attr, val in attrs:
-                    if attr == "href" and val:
-                        links.append(val)
-            if tag == "title":
-                self._in_title = True
-
-        def handle_endtag(self, tag: str) -> None:
-            if tag == "title":
-                self._in_title = False
-
-        def handle_data(self, data: str) -> None:
-            nonlocal title
-            if self._in_title:
-                title = data.strip()
-
-    try:
-        parser = LinkEmailExtractor()
-        parser.feed(html)
-    except Exception:  # noqa: BLE001
-        pass
-
-    # Emails
-    email_pattern = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
-    for match in email_pattern.finditer(html):
-        emails.append(match.group())
-
-    return {"links": links[:100], "emails": emails[:50], "title": title[:500]}
 
     def __init__(self, sprint_id: int = 0) -> None:
         self._sprint_id = sprint_id
@@ -1402,6 +1376,46 @@ class RustBackend:
     def mlx(self) -> Any:
         """MLX bridge domain -- adaptive token streaming + memory pressure feedback."""
         return self._get_domain("mlx", _RustMLXDomain, _PythonMLXDomain)
+
+    @property
+    def pool(self) -> Any:
+        """Rayon thread pool runners -- cpu_pool_run, io_pool_run, mixed_pool_run."""
+        return self._get_domain("pool", _RustPoolDomain, _PythonPoolDomain)
+
+    @property
+    def federated(self) -> Any:
+        """Federated Q-table with Rust batch update."""
+        return self._get_domain("federated", _RustFederatedDomain, _PythonFederatedDomain)
+
+    @property
+    def parquet(self) -> Any:
+        """Parquet reader -- paginated Arrow IPC for large IOC history."""
+        return self._get_domain("parquet", _RustParquetDomain, _PythonParquetDomain)
+
+    @property
+    def pipeline(self) -> Any:
+        """Feed pipeline -- Rust-based parse + scan + dedup."""
+        return self._get_domain("pipeline", _RustPipelineDomain, _PythonPipelineDomain)
+
+    @property
+    def cooccurrence(self) -> Any:
+        """IOC cooccurrence graph edge computation."""
+        return self._get_domain("cooccurrence", _RustCooccurrenceDomain, _PythonCooccurrenceDomain)
+
+    @property
+    def signal(self) -> Any:
+        """Signal aggregation -- batch_compute_scores, batch_aggregate_signals."""
+        return self._get_domain("signal", _RustSignalDomain, _PythonSignalDomain)
+
+    @property
+    def nvd(self) -> Any:
+        """NVD rate limiter -- create_nvd_limiter."""
+        return self._get_domain("nvd", _RustNvdDomain, _PythonNvdDomain)
+
+    @property
+    def similarity(self) -> Any:
+        """Similarity detection -- hamming_dist, near-duplicates."""
+        return self._get_domain("similarity", _RustSimilarityDomain, _PythonSimilarityDomain)
 
 
 # F285: Domain delegation framework
@@ -2676,6 +2690,522 @@ class _PythonMLXDomain:
                 ids = ids.tolist()
             results.append(list(ids) if isinstance(ids, (list, tuple)) else ids)
         return results
+
+
+# ---------------------------------------------------------------------------
+# ISSUE-10: New domains for raw Rust imports consolidation
+# ---------------------------------------------------------------------------
+
+
+class _RustPoolDomain:
+    """Rust-backed rayon thread pool runners — cpu_pool_run, io_pool_run, mixed_pool_run."""
+
+    __slots__ = ("_ext",)
+
+    def __init__(self, ext: Any) -> None:
+        self._ext = ext
+
+    def cpu_pool_run(self, func: Any, args: tuple) -> Any:
+        """Run CPU-bound work in rayon CPU pool (4 P-cores)."""
+        return self._ext.cpu_pool_run(func, args)
+
+    def io_pool_run(self, func: Any, args: tuple) -> Any:
+        """Run I/O-bound work in rayon I/O pool (2 threads)."""
+        return self._ext.io_pool_run(func, args)
+
+    def mixed_pool_run(self, func: Any, args: tuple) -> Any:
+        """Run work in rayon mixed pool (adaptive CPU/IO threshold)."""
+        return self._ext.mixed_pool_run(func, args)
+
+    def rayon_submit(self, func: Any) -> None:
+        """Submit work to rayon global pool."""
+        self._ext.rayon_submit(func)
+
+    def rayon_join(self, func1: Any, func2: Any) -> tuple[Any, Any]:
+        """Fork-join in rayon."""
+        return self._ext.rayon_join(func1, func2)
+
+    def rayon_abort(self) -> None:
+        """Abort all rayon workers."""
+        self._ext.rayon_abort()
+
+
+class _PythonPoolDomain:
+    """Python fallback for rayon pool runners — uses concurrent.futures."""
+
+    __slots__ = ()
+
+    def cpu_pool_run(self, func: Any, args: tuple) -> Any:
+        """Fallback: run in ProcessPoolExecutor (bypasses GIL for CPU-bound)."""
+        from concurrent.futures import ProcessPoolExecutor
+
+        with ProcessPoolExecutor(max_workers=2) as ex:
+            return ex.submit(func, *args).result()
+
+    def io_pool_run(self, func: Any, args: tuple) -> Any:
+        """Fallback: run in ThreadPoolExecutor for I/O-bound work."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=2) as ex:
+            return ex.submit(func, *args).result()
+
+    def mixed_pool_run(self, func: Any, args: tuple) -> Any:
+        """Fallback: same as io_pool_run."""
+        return self.io_pool_run(func, args)
+
+    def rayon_submit(self, func: Any) -> None:
+        """No-op fallback."""
+        func()
+
+    def rayon_join(self, func1: Any, func2: Any) -> tuple[Any, Any]:
+        """Fallback: run sequentially."""
+        return func1(), func2()
+
+    def rayon_abort(self) -> None:
+        """No-op fallback."""
+        pass
+
+
+class _RustFederatedDomain:
+    """Rust-backed Federated Q-table with batch update."""
+
+    __slots__ = ("_ext",)
+
+    def __init__(self, ext: Any) -> None:
+        self._ext = ext
+
+    def rust_federated_qtable_batch_update(
+        self,
+        qtable: Any,
+        state_indices: list[int],
+        actions: list[int],
+        rewards: list[float],
+        learning_rate: float = 0.1,
+    ) -> None:
+        """Batch update federated Q-table."""
+        self._ext.rust_federated_qtable_batch_update(
+            qtable, state_indices, actions, rewards, learning_rate
+        )
+
+    def RustFederatedQTable(self, n_states: int, n_actions: int) -> Any:
+        """Create Rust FederatedQTable instance."""
+        return self._ext.RustFederatedQTable(n_states, n_actions)
+
+
+class _PythonFederatedDomain:
+    """Python fallback for federated Q-table."""
+
+    __slots__ = ()
+
+    def rust_federated_qtable_batch_update(
+        self,
+        qtable: Any,
+        state_indices: list[int],
+        actions: list[int],
+        rewards: list[float],
+        learning_rate: float = 0.1,
+    ) -> None:
+        """Fallback: update Q-table entries serially."""
+        for s, a, r in zip(state_indices, actions, rewards, strict=True):
+            qtable[s][a] += learning_rate * (r - qtable[s][a])
+
+    def RustFederatedQTable(self, n_states: int, n_actions: int) -> Any:
+        """Fallback: return dict of dicts."""
+        return [[0.0] * n_actions for _ in range(n_states)]
+
+
+class _RustParquetDomain:
+    """Rust-backed parquet reader — paginated Arrow IPC."""
+
+    __slots__ = ("_ext",)
+
+    def __init__(self, ext: Any) -> None:
+        self._ext = ext
+
+    def parquet_get_metadata(self, path: str) -> dict[str, Any]:
+        """Get parquet file metadata."""
+        return self._ext.parquet_get_metadata(path)
+
+    def parquet_row_group_stats(self, path: str, row_group_idx: int) -> dict[str, Any]:
+        """Get row group statistics."""
+        return self._ext.parquet_row_group_stats(path, row_group_idx)
+
+    def parquet_read_row_group_ipc(self, path: str, row_group_idx: int) -> Any:
+        """Read row group as Arrow IPC."""
+        return self._ext.parquet_read_row_group_ipc(path, row_group_idx)
+
+    def parquet_iter_all_row_groups(self, path: str) -> list[Any]:
+        """Iterate all row groups as Arrow IPC batches."""
+        return self._ext.parquet_iter_all_row_groups(path)
+
+    def parquet_read_table(self, path: str) -> Any:
+        """Read entire parquet file as Arrow table."""
+        return self._ext.parquet_read_table(path)
+
+
+class _PythonParquetDomain:
+    """Python fallback for parquet reader using pyarrow."""
+
+    __slots__ = ()
+
+    def parquet_get_metadata(self, path: str) -> dict[str, Any]:
+        """Fallback: use pyarrow.parquet.read_metadata."""
+        import pyarrow.parquet as pq
+
+        metadata = pq.read_metadata(path)
+        return {
+            "num_rows": metadata.num_rows,
+            "num_columns": metadata.num_columns,
+            "num_row_groups": metadata.num_row_groups,
+        }
+
+    def parquet_row_group_stats(self, path: str, row_group_idx: int) -> dict[str, Any]:
+        """Fallback: read row group stats."""
+        import pyarrow.parquet as pq
+
+        metadata = pq.read_metadata(path)
+        rg = metadata.row_group(row_group_idx)
+        return {"num_rows": rg.num_rows, "num_columns": rg.num_columns}
+
+    def parquet_read_row_group_ipc(self, path: str, row_group_idx: int) -> Any:
+        """Fallback: read row group as pyarrow table."""
+        import pyarrow.parquet as pq
+
+        table = pq.read_table(path, row_groups=[row_group_idx])
+        return table
+
+    def parquet_iter_all_row_groups(self, path: str) -> list[Any]:
+        """Fallback: iterate all row groups."""
+        import pyarrow.parquet as pq
+
+        metadata = pq.read_metadata(path)
+        return [pq.read_table(path, row_groups=[i]) for i in range(metadata.num_row_groups)]
+
+    def parquet_read_table(self, path: str) -> Any:
+        """Fallback: read entire table."""
+        import pyarrow.parquet as pq
+
+        return pq.read_table(path)
+
+
+class _RustPipelineDomain:
+    """Rust-backed feed pipeline — parse + scan + dedup."""
+
+    __slots__ = ("_ext",)
+
+    def __init__(self, ext: Any) -> None:
+        self._ext = ext
+
+    def pipeline_map(self, items: list[Any], func: Any) -> list[Any]:
+        """Map function over items in rayon."""
+        return self._ext.pipeline_map(items, func)
+
+    def pipeline_filter(self, items: list[Any], pred: Any) -> list[Any]:
+        """Filter items in rayon."""
+        return self._ext.pipeline_filter(items, pred)
+
+    def pipeline_filter_map(self, items: list[Any], func: Any) -> list[Any]:
+        """Filter + map in rayon."""
+        return self._ext.pipeline_filter_map(items, func)
+
+    def pipeline_fold(self, items: list[Any], init: Any, func: Any) -> Any:
+        """Fold over items in rayon."""
+        return self._ext.pipeline_fold(items, init, func)
+
+    def pipeline_count(self, items: list[Any], pred: Any) -> int:
+        """Count matching items in rayon."""
+        return self._ext.pipeline_count(items, pred)
+
+    def pipeline_compose_two(self, func1: Any, func2: Any) -> Any:
+        """Compose two pipeline functions."""
+        return self._ext.pipeline_compose_two(func1, func2)
+
+    def feed_decision_classify(self, url: str, content: str) -> str:
+        """Classify feed decision (accept/reject/bucket)."""
+        return self._ext.feed_decision_classify(url, content)
+
+
+class _PythonPipelineDomain:
+    """Python fallback for feed pipeline."""
+
+    __slots__ = ()
+
+    def pipeline_map(self, items: list[Any], func: Any) -> list[Any]:
+        """Fallback: serial map."""
+        return [func(item) for item in items]
+
+    def pipeline_filter(self, items: list[Any], pred: Any) -> list[Any]:
+        """Fallback: serial filter."""
+        return [item for item in items if pred(item)]
+
+    def pipeline_filter_map(self, items: list[Any], func: Any) -> list[Any]:
+        """Fallback: serial filter + map."""
+        return [func(item) for item in items if pred(item)]
+
+    def pipeline_fold(self, items: list[Any], init: Any, func: Any) -> Any:
+        """Fallback: serial fold."""
+        result = init
+        for item in items:
+            result = func(result, item)
+        return result
+
+    def pipeline_count(self, items: list[Any], pred: Any) -> int:
+        """Fallback: serial count."""
+        return sum(1 for item in items if pred(item))
+
+    def pipeline_compose_two(self, func1: Any, func2: Any) -> Any:
+        """Fallback: compose two functions."""
+        return lambda x: func2(func1(x))
+
+    def feed_decision_classify(self, url: str, content: str) -> str:
+        """Fallback: simple heuristics."""
+        if not content or len(content) < 100:
+            return "reject"
+        if "error" in content.lower() or "not found" in content.lower():
+            return "reject"
+        return "accept"
+
+
+class _RustCooccurrenceDomain:
+    """Rust-backed IOC cooccurrence graph edge computation."""
+
+    __slots__ = ("_ext",)
+
+    def __init__(self, ext: Any) -> None:
+        self._ext = ext
+
+    def compute_cooccurrence_edges_py(
+        self, iocs: list[tuple[str, str]], min_confidence: float = 0.5
+    ) -> list[tuple[str, str, float]]:
+        """Compute cooccurrence edges between IOCs."""
+        return self._ext.compute_cooccurrence_edges_py(iocs, min_confidence)
+
+    def batch_cooccurrence_edges_py(
+        self, ioc_groups: list[list[tuple[str, str]]], min_confidence: float = 0.5
+    ) -> list[list[tuple[str, str, float]]]:
+        """Batch compute cooccurrence edges."""
+        return self._ext.batch_cooccurrence_edges_py(ioc_groups, min_confidence)
+
+
+class _PythonCooccurrenceDomain:
+    """Python fallback for IOC cooccurrence."""
+
+    __slots__ = ()
+
+    def compute_cooccurrence_edges_py(
+        self, iocs: list[tuple[str, str]], min_confidence: float = 0.5
+    ) -> list[tuple[str, str, float]]:
+        """Fallback: compute cooccurrence from IOC list."""
+        if len(iocs) < 2:
+            return []
+        from collections import Counter
+
+        ioc_values = [v for v, t in iocs]
+        pair_counts = Counter()
+        for i in range(len(ioc_values)):
+            for j in range(i + 1, len(ioc_values)):
+                pair = tuple(sorted([ioc_values[i], ioc_values[j]]))
+                pair_counts[pair] += 1
+        total = sum(pair_counts.values())
+        edges = []
+        for (a, b), count in pair_counts.items():
+            confidence = count / total if total > 0 else 0
+            if confidence >= min_confidence:
+                edges.append((a, b, confidence))
+        return edges
+
+    def batch_cooccurrence_edges_py(
+        self, ioc_groups: list[list[tuple[str, str]]], min_confidence: float = 0.5
+    ) -> list[list[tuple[str, str, float]]]:
+        """Fallback: process each group serially."""
+        return [self.compute_cooccurrence_edges_py(group, min_confidence) for group in ioc_groups]
+
+
+class _RustSignalDomain:
+    """Rust-backed signal aggregation."""
+
+    __slots__ = ("_ext",)
+
+    def __init__(self, ext: Any) -> None:
+        self._ext = ext
+
+    def batch_compute_scores(self, signals: list[dict[str, float]]) -> list[float]:
+        """Compute aggregated scores from signals."""
+        return self._ext.batch_compute_scores(signals)
+
+    def batch_aggregate_signals(
+        self, signal_batches: list[list[dict[str, float]]]
+    ) -> list[dict[str, float]]:
+        """Aggregate multiple signal batches."""
+        return self._ext.batch_aggregate_signals(signal_batches)
+
+    def create_telemetry_aggregator(self, window_size: int) -> Any:
+        """Create telemetry aggregator."""
+        return self._ext.create_telemetry_aggregator(window_size)
+
+
+class _PythonSignalDomain:
+    """Python fallback for signal aggregation."""
+
+    __slots__ = ()
+
+    def batch_compute_scores(self, signals: list[dict[str, float]]) -> list[float]:
+        """Fallback: simple weighted sum."""
+        weights = {"reliability": 0.3, "freshness": 0.2, "relevance": 0.5}
+        return [
+            sum(signals[i].get(k, 0) * weights.get(k, 0.1) for k in signals[i])
+            for i in range(len(signals))
+        ]
+
+    def batch_aggregate_signals(
+        self, signal_batches: list[list[dict[str, float]]]
+    ) -> list[dict[str, float]]:
+        """Fallback: average signals across batches."""
+        if not signal_batches:
+            return []
+        result = []
+        for batch in signal_batches:
+            if not batch:
+                result.append({})
+                continue
+            aggregated = {}
+            for sig in batch:
+                for k, v in sig.items():
+                    aggregated[k] = aggregated.get(k, 0) + v / len(batch)
+            result.append(aggregated)
+        return result
+
+    def create_telemetry_aggregator(self, window_size: int) -> Any:
+        """Fallback: return simple dict-based aggregator."""
+        return {"window_size": window_size, "data": []}
+
+
+class _RustNvdDomain:
+    """Rust-backed NVD rate limiter."""
+
+    __slots__ = ("_ext",)
+
+    def __init__(self, ext: Any) -> None:
+        self._ext = ext
+
+    def create_nvd_limiter(self, rate: float, burst: int) -> Any:
+        """Create NVD rate limiter."""
+        return self._ext.create_nvd_limiter(rate, burst)
+
+    def get_adaptive_cpu_threads(self) -> int:
+        """Get adaptive CPU thread count based on workload."""
+        return self._ext.get_adaptive_cpu_threads()
+
+    def get_adaptive_io_threads(self) -> int:
+        """Get adaptive I/O thread count based on workload."""
+        return self._ext.get_adaptive_io_threads()
+
+    def get_adaptive_mixed_threshold(self) -> float:
+        """Get adaptive mixed pool threshold."""
+        return self._ext.get_adaptive_mixed_threshold()
+
+
+class _PythonNvdDomain:
+    """Python fallback for NVD rate limiter."""
+
+    __slots__ = ()
+
+    def create_nvd_limiter(self, rate: float, burst: int) -> Any:
+        """Fallback: return simple token bucket."""
+        import time
+
+        class TokenBucket:
+            def __init__(self, rate: float, burst: int):
+                self.rate = rate
+                self.burst = burst
+                self.tokens = float(burst)
+                self.last_update = time.monotonic()
+
+            def acquire(self) -> bool:
+                now = time.monotonic()
+                elapsed = now - self.last_update
+                self.tokens = min(self.burst, self.tokens + elapsed * self.rate)
+                self.last_update = now
+                if self.tokens >= 1:
+                    self.tokens -= 1
+                    return True
+                return False
+
+        return TokenBucket(rate, burst)
+
+    def get_adaptive_cpu_threads(self) -> int:
+        """Fallback: 2 threads."""
+        return 2
+
+    def get_adaptive_io_threads(self) -> int:
+        """Fallback: 4 threads."""
+        return 4
+
+    def get_adaptive_mixed_threshold(self) -> float:
+        """Fallback: 50% CPU threshold."""
+        return 0.5
+
+
+class _RustSimilarityDomain:
+    """Rust-backed similarity detection."""
+
+    __slots__ = ("_ext",)
+
+    def __init__(self, ext: Any) -> None:
+        self._ext = ext
+
+    def hamming_dist(self, hash1: int, hash2: int) -> int:
+        """Compute Hamming distance between two integer hashes."""
+        return self._ext.hamming_dist(hash1, hash2)
+
+    def lsh_estimate_recall(
+        self, num_tables: int, num_rows: int, num_hashes: int, threshold: float
+    ) -> float:
+        """Estimate LSH recall for given parameters."""
+        return self._ext.lsh_estimate_recall(num_tables, num_rows, num_hashes, threshold)
+
+    def is_near_duplicate(
+        self, hash1: int, hash2: int, threshold: float = 0.9
+    ) -> bool:
+        """Check if two hashes are near-duplicates."""
+        if threshold >= 1.0:
+            return hash1 == hash2
+        distance = self._ext.hamming_dist(hash1, hash2)
+        similarity = 1.0 - (distance / 64.0)
+        return similarity >= threshold
+
+
+class _PythonSimilarityDomain:
+    """Python fallback for similarity detection."""
+
+    __slots__ = ()
+
+    def hamming_dist(self, hash1: int, hash2: int) -> int:
+        """Fallback: compute Hamming distance via XOR and bit_count."""
+        return (hash1 ^ hash2).bit_count()
+
+    def lsh_estimate_recall(
+        self, num_tables: int, num_rows: int, num_hashes: int, threshold: float
+    ) -> float:
+        """Fallback: simple analytical estimate."""
+        import math
+
+        if threshold <= 0 or threshold >= 1:
+            return 0.0
+        s = threshold
+        k = num_hashes
+        approx_recall = 1.0 - math.pow(1.0 - s ** k, num_tables * num_rows)
+        return max(0.0, min(1.0, approx_recall))
+
+    def is_near_duplicate(
+        self, hash1: int, hash2: int, threshold: float = 0.9
+    ) -> bool:
+        """Fallback: check similarity threshold."""
+        if threshold >= 1.0:
+            return hash1 == hash2
+        distance = self.hamming_dist(hash1, hash2)
+        similarity = 1.0 - (distance / 64.0)
+        return similarity >= threshold
 
 
 def check_metal_availability() -> dict[str, Any]:

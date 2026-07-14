@@ -29,7 +29,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 from hledac.universal.discovery.base import DiscoveryBatchResult
 from hledac.universal.discovery.provider_stats import PROVIDER_CAPABILITIES, PROVIDER_COST_ESTIMATE, PROVIDER_NAMES, ProviderStatsRegistry, get_provider_stats_registry
-from hledac.universal.utils.async_helpers import bounded_gather, safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel, safe_gather_ok
 _MIN_RELIABILITY = 0.05
 _EXPLORATION_PROB = 0.1
 _COST_MULTIPLIER = 1.5
@@ -316,8 +316,9 @@ class DiscoveryPlanner:
                 task = runner(query, p.max_results, p.timeout_s)
             tasks.append((p.provider, task))
         results: list[DiscoveryBatchResult] = []
-        ok_results, _err_results = await bounded_gather([t[1] for t in tasks], concurrency=4, ctx='discovery_planner:617')
-        assert len(ok_results) == len(tasks), f'bounded_gather result count mismatch: got {len(ok_results)}, expected {len(tasks)}'
+        _build = await parallel([t[1] for t in tasks], concurrency=4, policy="collect", ctx='discovery_planner:617')
+        ok_results = _build.ok
+        assert len(ok_results) == len(tasks), f'parallel result count mismatch: got {len(ok_results)}, expected {len(tasks)}'
         for (provider, _), result in zip(tasks, ok_results, strict=True):
             if hasattr(result, 'hits') and hasattr(result, 'elapsed_s'):
                 unique_hosts = len({hit.url for hit in result.hits})
@@ -345,7 +346,7 @@ class DiscoveryPlanner:
         """
         Plan and execute discovery for multiple queries in parallel.
 
-        ISSUE #30 FIX: Uses bounded_gather(concurrency=5) to cap concurrent queries,
+        ISSUE #30 FIX: Uses parallel(concurrency=5) to cap concurrent queries,
         preventing network saturation while achieving ~4-5× speedup vs sequential.
 
         Parameters
@@ -370,7 +371,8 @@ class DiscoveryPlanner:
             await self.execute(q, plan)
             return plan
         plans: list[DiscoveryPlan] = []
-        ok_results, _err_results = await bounded_gather([_plan_and_execute(q) for q in queries], concurrency=5, ctx='discovery_planner:multi_search')
+        _build = await parallel([_plan_and_execute(q) for q in queries], concurrency=5, policy="collect", ctx='discovery_planner:multi_search')
+        ok_results = _build.ok
         for r in ok_results:
             if isinstance(r, DiscoveryPlan):
                 plans.append(r)

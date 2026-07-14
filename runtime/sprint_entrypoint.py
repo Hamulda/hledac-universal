@@ -3438,6 +3438,8 @@ async def run_sprint(
         # F285 LIFO cleanup: scheduler (Metal, LMDB, Hermes, transports) closes FIRST,
         # then store (DuckDB WAL drains). This prevents the race where scheduler
         # continues writing to DuckDB after close.
+        # EvidenceLog and DuckDBStore are INDEPENDENT — close them in parallel
+        # after scheduler shutdown to maximize teardown throughput.
         # CancelledError propagates; all other exceptions are fail-safe logged.
         try:
             await scheduler.aclose(timeout_s=10.0)
@@ -3445,56 +3447,61 @@ async def run_sprint(
             raise
         except Exception as e:
             logger.debug(f"[F285] scheduler.aclose() in finally block failed: {e}")  # fail-safe
-        # F285-RESOURCE: Close EvidenceLog async resources (_flush_task, _db, _arrow_writer)
+
+        # ISSUE-D-1: Close EvidenceLog + DuckDBStore in parallel (independent resources).
+        # F285 constraint respected: scheduler already closed, no WAL write race.
+        _core_close_errors: list[Exception | None] = []
+        _core_close_targets: list[Any] = []
         if _elog is not None:
-            try:
-                await _elog.aclose()
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                logger.debug(f"[F285] _elog.aclose() in finally block failed: {e}")  # fail-safe
+            _core_close_targets.append(_elog)
+        _core_close_targets.append(store)
         try:
-            await store.aclose(timeout_s=10.0)
+            from hledac.universal.utils.async_helpers import parallel_close
+            _core_close_errors = await parallel_close(
+                _core_close_targets,
+                concurrency=2,
+                ctx="teardown.core",
+            )
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.debug(f"[ISSUE-2] store.aclose() in finally block failed: {e}")  # fail-safe
-        # Sprint F206K: Close HTTPX client if it was lazily instantiated
+            logger.debug(f"[TEARDOWN] parallel_close core resources failed: {e}")  # fail-soft
+        else:
+            if _elog is not None:
+                _elog_err = _core_close_errors[0]
+                if _elog_err is not None:
+                    logger.debug(f"[F285] _elog.aclose() failed: {_elog_err}")  # fail-safe
+            _store_err = _core_close_errors[-1]
+            if _store_err is not None:
+                logger.debug(f"[ISSUE-2] store.aclose() failed: {_store_err}")  # fail-safe
+        # ISSUE-04: Close HTTP clients in parallel (independent, 200-500ms savings)
+        from hledac.universal.utils.async_helpers import parallel_close_async
+
+        _transport_close_errors: dict[str, Exception | None] = {}
         try:
             from hledac.universal.transport.httpx_client import close_httpx_client_async
-
-            await close_httpx_client_async()
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.debug(f"[TEARDOWN] HTTPX client close failed: {e}")  # fail-soft
-        # Sprint F206L: Close curl_cffi sessions if they were lazily instantiated
-        try:
             from hledac.universal.transport.curl_cffi_runtime import close_curl_cffi_sessions_async
-
-            await close_curl_cffi_sessions_async()
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.debug(f"[TEARDOWN] curl_cffi sessions close failed: {e}")  # fail-soft
-        # Sprint F219K: Close public_fetcher local Tor/I2P sessions
-        try:
             from hledac.universal.fetching.public_fetcher import close_public_fetcher_sessions_async
-
-            await close_public_fetcher_sessions_async()
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.debug(f"[TEARDOWN] public_fetcher sessions close failed: {e}")  # fail-soft
-        # Sprint F216A: Close aiohttp session used by public_fetcher
-        try:
             from hledac.universal.network.session_runtime import close_aiohttp_session_async
 
-            await close_aiohttp_session_async()
+            _transport_close_errors = await parallel_close_async(
+                [
+                    ("httpx", close_httpx_client_async),
+                    ("curl_cffi", close_curl_cffi_sessions_async),
+                    ("public_fetcher", close_public_fetcher_sessions_async),
+                    ("aiohttp", close_aiohttp_session_async),
+                ],
+                concurrency=4,
+                ctx="teardown.transports",
+            )
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.debug(f"[TEARDOWN] aiohttp session close failed: {e}")  # fail-soft
+            logger.debug(f"[TEARDOWN] parallel_close_async failed: {e}")  # fail-soft
+        else:
+            failed_transports = [name for name, exc in _transport_close_errors.items() if exc is not None]
+            if failed_transports:
+                logger.debug(f"[TEARDOWN] transport close failures: {failed_transports}")
 
         # F266-U2/U3: Finalize memory hygiene hooks. The cycle maintain
         # call re-pins the surviving long-lived set into the permanent
