@@ -1,0 +1,226 @@
+"""
+P2-3: Enrich Stage — AIMD-paralelní enrichment s před-předanými hits
+======================================================================
+
+Role: Enrich stage přijímá (PageResult, hits) z MatchStage, provádí text
+enrichment a construction CanonicalFinding, posílá je do StoreStage.
+
+MatchStage už provedla pattern matching a předává hits → EnrichStage NEVOLÁ
+match_text() znovu (duplikace opravena).
+
+AIMD řídí worker count — ceiling=16 na M1 8GB. Worker count je využit
+pro paralelní zpracování stranek přes asyncio.Semaphore.
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+from typing import TYPE_CHECKING, Any
+
+from ._stage_protocol import BoundedStageQueue, Stage, StageContext
+
+if TYPE_CHECKING:
+    pass
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_ENRICH_QUEUE_IN = 64
+DEFAULT_ENRICH_QUEUE_OUT = 128
+
+
+class EnrichStage:
+    """
+    Enrich stage: AsyncIterator[tuple[PageResult, list[PatternHit]]]
+                  → AsyncIterator[CanonicalFinding].
+
+    MatchStage už matchuje patterny a předává hits. EnrichStage pouze
+    staví CanonicalFinding z před-matchovaných hits.
+
+    AIMD řídí worker count pro paralelní zpracování — ceiling=16 workers.
+
+    Memory: ~64 × ~2 MB = ~128 MB max.
+    """
+
+    name: str = "enrich"
+
+    __slots__ = (
+        "_aimd",
+        "_uma_state",
+        "_query",
+        "_effective_workers",
+        "_running",
+        "_sem",
+    )
+
+    def __init__(
+        self,
+        *,
+        aimd_controller: Any | None = None,
+        query: str = "",
+        uma_state: str = "ok",
+    ):
+        from coordinators.aimd_controllers import make_enrich_aimd
+
+        self._aimd = aimd_controller or make_enrich_aimd()
+        self._query = query
+        self._uma_state = uma_state
+        self._effective_workers = max(1, int(self._aimd.window))
+        self._running = False
+        self._sem: asyncio.Semaphore = asyncio.Semaphore(self._effective_workers)
+
+    @property
+    def aimd_window(self) -> float:
+        return self._aimd.window
+
+    async def run(
+        self,
+        input_queue: BoundedStageQueue[Any] | None,
+        output_queue: BoundedStageQueue[Any],
+        ctx: StageContext,
+    ) -> None:
+        """
+        Zpracuje (PageResult, hits) z input_queue, enrichuje je, posílá do output_queue.
+
+        AIMD feedback po každém batchy (ne po každé stranice) — stabilnější.
+
+        Args:
+            input_queue: BoundedStageQueue[tuple[PageResult, list[PatternHit]]]
+            output_queue: BoundedStageQueue[CanonicalFinding]
+            ctx: StageContext
+        """
+        self._running = True
+        metrics = ctx.get_metrics(self.name)
+        start_time = time.monotonic()
+
+        success_count = 0
+        fail_count = 0
+
+        try:
+            while self._running:
+                # Drain available items up to effective worker count
+                batch: list[tuple[Any, Any]] = []
+                max_batch = self._effective_workers
+
+                while len(batch) < max_batch:
+                    try:
+                        if input_queue is None:
+                            break
+                        item = await asyncio.wait_for(input_queue.get(), timeout=0.1)
+                        batch.append(item)
+                    except asyncio.TimeoutError:
+                        break
+                    except asyncio.CancelledError:
+                        return
+
+                if not batch:
+                    # No items available — check if upstream is done
+                    if input_queue is not None and input_queue.is_empty():
+                        break
+                    continue
+
+                # Process batch concurrently with AIMD-gated semaphore
+                async with self._sem:
+                    tasks = [
+                        self._enrich_one(pr, hits, ctx)
+                        for pr, hits in batch
+                    ]
+                    results: list[Any] = await asyncio.gather(*tasks, return_exceptions=True)
+
+                # AIMD feedback + output
+                batch_success = 0
+                batch_fail = 0
+                for result in results:
+                    if isinstance(result, Exception):
+                        batch_fail += 1
+                        metrics.record_error()
+                        continue
+                    findings: list[Any] = result
+                    if findings:
+                        batch_success += 1
+                        for finding in findings:
+                            await output_queue.put(finding)
+                    metrics.record_processed()
+
+                success_count += batch_success
+                fail_count += batch_fail
+
+                # AIMD feedback per batch (not per item — smoother)
+                if batch_success > 0:
+                    new_window, _ = await self._aimd.on_success()
+                else:
+                    new_window, _ = await self._aimd.on_failure(self._uma_state)
+
+                # Update semaphore if worker count changed
+                new_workers = max(1, min(int(new_window), 16))
+                if new_workers != self._effective_workers:
+                    self._effective_workers = new_workers
+                    self._sem = asyncio.Semaphore(new_workers)
+                    metrics.update_aimd_window(new_window)
+
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            metrics.record_error()
+            logger.exception("EnrichStage.run() error")
+        finally:
+            self._running = False
+            metrics.update_latency((time.monotonic() - start_time) * 1000)
+            logger.debug(
+                "EnrichStage: processed=%d, success=%d, fail=%d",
+                success_count + fail_count,
+                success_count,
+                fail_count,
+            )
+
+    async def _enrich_one(
+        self, page_result: Any, hits: list[Any], ctx: StageContext
+    ) -> list[Any]:
+        """
+        Build CanonicalFinding from pre-matched hits.
+
+        MatchStage uz matchovala patterny — tady uz jen stavime findings.
+        ŽÁDNÉ volání match_text() zde (duplikace opravena).
+        """
+        from .live_public_pipeline import _extract_live_public_findings_from_page
+
+        findings: list[Any] = []
+
+        try:
+            page_text = getattr(page_result, "text", "") or ""
+            url = getattr(page_result, "url", "") or ""
+
+            if not page_text or not hits:
+                return []
+
+            for hit in hits:
+                try:
+                    result = await _extract_live_public_findings_from_page(
+                        query=self._query or ctx.query,
+                        url=url,
+                        hit_label=getattr(hit, "label", "") or "",
+                        hit_pattern=getattr(hit, "pattern", "") or "",
+                        hit_value=getattr(hit, "value", "") or "",
+                        hit_start=getattr(hit, "start", 0) or 0,
+                        hit_end=getattr(hit, "end", 0) or 0,
+                        page_text=page_text,
+                        discovery_score=getattr(page_result, "discovery_score", None),
+                    )
+                    if result and len(result) > 0:
+                        findings.append(result[0])
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    continue
+
+            return findings
+
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.debug("EnrichStage._enrich_one error")
+            return []
+
+    async def aclose(self) -> None:
+        """Graceful shutdown."""
+        self._running = False

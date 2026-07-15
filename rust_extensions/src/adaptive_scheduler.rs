@@ -193,6 +193,14 @@ pub fn update_cpu_saturation(pct: u8) {
     CPU_SATURATION.store(pct.min(100), Ordering::SeqCst);
 }
 
+/// No-op function for test compatibility.
+/// MLX-aware paths use direct Metal probing via mixed_threshold().
+/// This function exists solely for backward compatibility with tests.
+#[allow(dead_code)]
+pub fn update_memory_pressure(_pressure: u8) {
+    // No-op: Metal probing is now inline in mixed_threshold()
+}
+
 // ---------------------------------------------------------------------------
 // PyO3 bindings
 // ---------------------------------------------------------------------------

@@ -29,6 +29,8 @@
 //! - PyO3 GIL: all methods hold the GIL, safe for Python threading model
 
 use pyo3::prelude::*;
+use pyo3::types::PyList;
+use pyo3::{Py, PyObject};
 use std::collections::VecDeque;
 
 /// Maximum recent IOCs to retain for hypothesis feedback.
@@ -59,16 +61,10 @@ impl RingBuffer {
 
 #[pymethods]
 impl RingBuffer {
-    /// Create a new ring buffer with default capacity (200).
-    #[new]
-    fn new_default() -> Self {
-        Self::new(RECENT_IOC_RING_CAPACITY)
-    }
-
-    /// Create a new ring buffer with explicit capacity.
+    /// Create a new ring buffer.
     ///
     /// Args:
-    ///     capacity: maximum number of entries before oldest are evicted
+    ///     capacity: maximum number of entries before oldest are evicted (default: 200)
     ///
     /// Returns:
     ///     A new RingBuffer instance
@@ -107,7 +103,7 @@ impl RingBuffer {
     /// Returns:
     ///     List[dict] of all entries currently in the buffer
     fn get_all(&self, py: Python<'_>) -> Py<PyList> {
-        let list = PyList::new_bound(py, &[]);
+        let list: Bound<'_, PyList> = PyList::new_bound(py, &[] as &[Py<PyObject>]);
         for obj in &self.ring {
             // Steal a reference from the ring — list takes ownership
             let _ = list.append(obj);
@@ -123,7 +119,7 @@ impl RingBuffer {
     /// Returns:
     ///     List[dict] of the N most recent entries (newest first)
     fn get_recent(&self, py: Python<'_>, n: usize) -> Py<PyList> {
-        let list = PyList::new_bound(py, &[]);
+        let list: Bound<'_, PyList> = PyList::new_bound(py, &[] as &[Py<PyObject>]);
         let take = n.min(self.ring.len());
         // Iterate from back (newest) to front (oldest), take `take` items
         for obj in self.ring.iter().rev().take(take) {

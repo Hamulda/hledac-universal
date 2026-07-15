@@ -16,11 +16,18 @@ from runtime.context.bounded_dicts import (
     DEFAULT_SEEN_HASHES_MAXSIZE,
     DEFAULT_SOURCE_WEIGHTS_MAXSIZE,
 )
-from runtime.sprint_scheduler import (
-    SprintRunContext,
-    get_sprint_ctx,
-    reset_sprint_ctx,
-)
+
+
+def __getattr__(name: str):
+    # SprintRunContext and context helpers live in sprint_scheduler_v1_archived.
+    # Import from the archived module directly to avoid circular import:
+    # sprint_scheduler (stub) → sprint_scheduler_v1_archived → runtime.context → sprint_scheduler (stub)
+    if name in ("SprintRunContext", "get_sprint_ctx", "reset_sprint_ctx"):
+        from runtime import sprint_scheduler_v1_archived as _v1
+
+        return getattr(_v1, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "BoundedLRUDict",

@@ -185,6 +185,14 @@ class _CycleState:
     'Int counter layout for Rust IPC. May be None.'
     rel_discovery_engine: Any = None
     'Relationship discovery engine. May be None.'
+    temporal_predictor: Any = None
+    'TemporalIOCPredictor. May be None.'
+    pivot_planner: Any = None
+    'Pivot planner. May be None.'
+    analyst_workbench: Any = None
+    'Analyst workbench. May be None.'
+    forensics_enricher: Any = None
+    'Forensics enricher. May be None.'
 
 @dataclass(frozen=True, slots=True)
 class SprintContext:

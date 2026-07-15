@@ -2917,26 +2917,13 @@ class _DrainRegistry:
         """Return diagnostic snapshot."""
         return {'registry_size': len(self._registry), 'registry_capacity': self._registry.maxlen, 'total_scheduled': self._scheduled, 'total_completed': self._completed, 'in_flight': self._scheduled - self._completed}
 _drain_registry = _DrainRegistry(max_size=512)
-_HTML_EXECUTOR: 'concurrent.futures.ThreadPoolExecutor | None' = None
-_HTML_EXECUTOR_LOCK = threading.Lock()
-
 def _get_html_executor() -> 'concurrent.futures.ThreadPoolExecutor':
     """Get or create bounded HTML processing executor.
 
-    Thread-safe via double-checked locking:
-    - Fast path: outer check without lock
-    - Slow path: inner check with lock (only first caller blocks)
+    Now uses the centralized domain_executors registry (P1-4).
     """
-    import concurrent.futures
-    import os
-    global _HTML_EXECUTOR
-    if _HTML_EXECUTOR is not None:
-        return _HTML_EXECUTOR
-    with _HTML_EXECUTOR_LOCK:
-        if _HTML_EXECUTOR is None:
-            workers = int(os.environ.get('HLEDAC_HTML_EXTRACTOR_WORKERS', '4'))
-            _HTML_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=workers, thread_name_prefix='html-extract')
-    return _HTML_EXECUTOR
+    from utils.domain_executors import get_html_executor
+    return get_html_executor()
 
 def schedule_html_extraction(html: str, url: str='') -> asyncio.Future:
     """Submit HTML processing to CPU_EXECUTOR and register for drain.

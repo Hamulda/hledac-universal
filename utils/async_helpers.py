@@ -106,9 +106,23 @@ _EAGER_START_SUPPORTED: bool = _PY_312_PLUS and not _UVLOOP_INSTALLED
 
 # E4: OTel context propagation — delegates to the canonical implementation in
 # otel/_instrumentation_asyncio.py which handles task context, done callbacks,
-# and cache eviction. Import here to keep safe_create_task as the single
-# canonical entry point for all callers.
-from otel._instrumentation_asyncio import current_otel_context  # noqa: E402, F401
+# and cache eviction. Lazy import so that HLEDAC without OTel installed
+# (opentelemetry-api, opentelemetry-sdk absent) still boots cleanly.
+# External callers get a no-op stub that returns None instead of ImportError.
+
+from collections.abc import Callable
+
+# Type alias for the OTel context function signature used across the module.
+# Defined at module level so that external importers get a stable type.
+_OTelContextFn = Callable[[], dict[str, Any] | None]
+
+_noop_current_otel_context: _OTelContextFn = lambda: None
+
+
+try:
+    from otel._instrumentation_asyncio import current_otel_context  # noqa: E402, F401
+except ImportError:
+    current_otel_context: _OTelContextFn = _noop_current_otel_context
 
 
 def safe_create_task(
@@ -149,14 +163,21 @@ def safe_create_task(
     the safe path. OTel context capture is also fail-safe — any error is
     swallowed and the task runs without trace context.
     """
-    from otel._instrumentation_asyncio import create_task_with_context  # noqa: E402
-
-    return create_task_with_context(
-        coro,
-        name=name,
-        eager_start=eager_start,
-        otel_trace=otel_trace,
-    )
+    try:
+        from otel._instrumentation_asyncio import create_task_with_context  # noqa: E402
+        return create_task_with_context(
+            coro,
+            name=name,
+            eager_start=eager_start,
+            otel_trace=otel_trace,
+        )
+    except ImportError:
+        # OTel not installed — fall back to bare asyncio.create_task
+        import sys
+        if sys.version_info >= (3, 12):
+            return asyncio.create_task(coro, name=name, eager_start=eager_start)
+        else:
+            return asyncio.create_task(coro, name=name)  # type: ignore[arg-type]
 
 
 _T = TypeVar("_T", default=Any)

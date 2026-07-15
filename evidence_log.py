@@ -196,12 +196,19 @@ class EvidenceEvent(msgspec.Struct, frozen=False):
         return cls(*decoded)
 
 def _normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """Normalize payload for consistent hashing."""
+    """Normalize payload for consistent hashing.
+
+    P3-4: Handles msgspec.Struct nested in payload dicts — converts via
+    msgspec.to_builtins() for consistent dict representation before hashing.
+    """
     normalized = {}
     for key in sorted(payload.keys()):
         value = payload[key]
         if isinstance(value, datetime):
             normalized[key] = value.isoformat()
+        elif isinstance(value, msgspec.Struct):
+            # P3-4: msgspec.Struct → dict via to_builtins() (bytes→base64)
+            normalized[key] = _normalize_value(value)
         elif isinstance(value, (list, tuple)):
             normalized[key] = [_normalize_value(v) for v in value]
         elif isinstance(value, dict):
@@ -211,13 +218,20 @@ def _normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 def _normalize_value(value: Any) -> Any:
-    """Normalize individual value."""
+    """Normalize individual value.
+
+    P3-4: msgspec.Struct instances are converted via msgspec.to_builtins()
+    for consistent representation in payload hashing.
+    """
     if isinstance(value, float):
         return round(value, 6)
     elif isinstance(value, (set, frozenset)):
         return sorted(value)
     elif isinstance(value, bytes):
         return value.decode('utf-8', errors='replace')
+    elif isinstance(value, msgspec.Struct):
+        # P3-4: msgspec.Struct → dict for hashing (e.g. CycleResult in payload)
+        return msgspec.to_builtins(value)
     return value
 
 class _RustMPSCBytes:

@@ -950,8 +950,50 @@ class RelationshipDiscoveryEngine:
             except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 logger.warning(f'[PREDICT] Failed to add edge: {e}')
 
-    async def predict_hidden_connections(self, max_predictions: int=10):
-        """Predict hidden connections using Adamic/Adar with LinUCB weighting."""
+    async def predict_hidden_connections(
+        self, max_predictions: int = 10, method: str = 'auto'
+    ) -> list[tuple[str, str, float]]:
+        """
+        Predict hidden connections using best available method.
+
+        Method routing (auto):
+            - V < 50:           brute-force 'slow' (baseline, no LSH overhead)
+            - 50 <= V < 500:    LSH 'fast' (datasketch MinHash)
+            - V >= 500 AND trained GNN available: 'gnn'
+            - else:             LSH 'fast'
+
+        Args:
+            max_predictions: Maximum number of predictions to return
+            method: Routing method ('auto', 'slow', 'fast', 'gnn')
+
+        Returns:
+            List of (source_id, target_id, score) tuples sorted by score desc.
+        """
+        n = len(self._entities)
+        if method == 'auto':
+            if n < 50:
+                method = 'slow'
+            elif n >= 500 and self.gnn_predictor and self.gnn_predictor.predictor and self.gnn_predictor.predictor.trained:
+                method = 'gnn'
+            else:
+                method = 'fast'
+
+        if method == 'slow':
+            return await self._predict_hidden_brute_force(max_predictions)
+        if method == 'fast':
+            return await self._predict_hidden_lsh(max_predictions)
+        if method == 'gnn':
+            return await self.predict_with_gnn(max_predictions)
+        raise ValueError(f'Unknown method: {method}')
+
+    async def _predict_hidden_brute_force(
+        self, max_predictions: int
+    ) -> list[tuple[str, str, float]]:
+        """
+        O(V²) Adamic/Adar brute-force. Only for n < 50.
+
+        Note: slow path — uses Python-set intersection, no LSH.
+        """
         graph = self._build_igraph_graph()
         if not graph:
             return []
@@ -959,25 +1001,36 @@ class RelationshipDiscoveryEngine:
         if IGRAPH_AVAILABLE and isinstance(graph, ig.Graph):
             for u in range(graph.vcount()):
                 for v in range(u + 1, graph.vcount()):
-                    if not graph.are_connected(u, v):
+                    if not graph.are_adjacent(u, v):
                         score = self._adamic_adar(graph, u, v)
                         if score > 0.7:
-                            source_u = graph.vs[u].get('source', 'unknown')
-                            source_v = graph.vs[v].get('source', 'unknown')
+                            source_u = graph.vs[u]['source'] if 'source' in graph.vs[u].attribute_names() else 'unknown'
+                            source_v = graph.vs[v]['source'] if 'source' in graph.vs[v].attribute_names() else 'unknown'
                             cred_u = self.get_source_credibility(source_u)
                             cred_v = self.get_source_credibility(source_v)
                             final_score = score * (cred_u + cred_v) / 2
-                            predictions.append((u, v, final_score))
+                            entity_a = self._idx_to_entity_id.get(u, str(u))
+                            entity_b = self._idx_to_entity_id.get(v, str(v))
+                            predictions.append((entity_a, entity_b, final_score))
         predictions.sort(key=lambda x: x[2], reverse=True)
-        for u, v, score in predictions[:max_predictions]:
-            self._add_predicted_edge(u, v, score)
+        for entity_a, entity_b, score in predictions[:max_predictions]:
+            u = self._entity_id_to_idx.get(entity_a)
+            v = self._entity_id_to_idx.get(entity_b)
+            if u is not None and v is not None:
+                self._add_predicted_edge(u, v, score)
         return predictions[:max_predictions]
 
-    async def predict_hidden_connections_fast(self, max_predictions: int=10):
-        """Predict hidden connections using LSH for fast candidate generation."""
+    async def _predict_hidden_lsh(
+        self, max_predictions: int
+    ) -> list[tuple[str, str, float]]:
+        """
+        O(V×K) LSH pre-filter + full rerank. For n >= 50.
+
+        Uses datasketch MinHash LSH for fast candidate generation.
+        """
         if not LSH_AVAILABLE:
             logger.warning('[LSH] datasketch not available, falling back to O(N²)')
-            return await self.predict_hidden_connections(max_predictions)
+            return await self._predict_hidden_brute_force(max_predictions)
         graph = self._build_igraph_graph()
         if not graph:
             return []
@@ -992,19 +1045,43 @@ class RelationshipDiscoveryEngine:
                 if u >= v or (u, v) in processed:
                     continue
                 processed.add((u, v))
-                if not graph.are_connected(u, v):
+                if not graph.are_adjacent(u, v):
                     score = self._adamic_adar(graph, u, v)
                     if score > 0.7:
-                        source_u = graph.vs[u].get('source', 'unknown')
-                        source_v = graph.vs[v].get('source', 'unknown')
+                        source_u = graph.vs[u]['source'] if 'source' in graph.vs[u].attribute_names() else 'unknown'
+                        source_v = graph.vs[v]['source'] if 'source' in graph.vs[v].attribute_names() else 'unknown'
                         cred_u = self.get_source_credibility(source_u)
                         cred_v = self.get_source_credibility(source_v)
                         final_score = score * (cred_u + cred_v) / 2
-                        predictions.append((u, v, final_score))
+                        entity_a = self._idx_to_entity_id.get(u, str(u))
+                        entity_b = self._idx_to_entity_id.get(v, str(v))
+                        predictions.append((entity_a, entity_b, final_score))
         predictions.sort(key=lambda x: x[2], reverse=True)
-        for u, v, score in predictions[:max_predictions]:
-            self._add_predicted_edge(u, v, score)
+        for entity_a, entity_b, score in predictions[:max_predictions]:
+            u = self._entity_id_to_idx.get(entity_a)
+            v = self._entity_id_to_idx.get(entity_b)
+            if u is not None and v is not None:
+                self._add_predicted_edge(u, v, score)
         return predictions[:max_predictions]
+
+    async def predict_hidden_connections_fast(self, max_predictions: int = 10):
+        """
+        DEPRECATED: Use predict_hidden_connections(method='fast') instead.
+
+        Args:
+            max_predictions: Maximum number of predictions to return
+
+        Returns:
+            List of (source_id, target_id, score) tuples sorted by score desc.
+        """
+        import warnings
+        warnings.warn(
+            "predict_hidden_connections_fast deprecated — "
+            "use predict_hidden_connections(method='fast') instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return await self._predict_hidden_lsh(max_predictions)
 
     def _build_adjacency_matrix(self) -> np.ndarray | csr_matrix:
         """Build adjacency matrix (sparse or dense)."""

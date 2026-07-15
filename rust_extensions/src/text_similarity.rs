@@ -20,6 +20,8 @@
 //! TS.T3  GIL-free: rayon ThreadPool, no Python objects in parallel path
 //! TS.T4  Deterministic: results stable across runs (sort order preserved)
 
+use pyo3::prelude::*;
+use pyo3::types::PyList;
 use rayon::prelude::*;
 use std::collections::HashSet;
 

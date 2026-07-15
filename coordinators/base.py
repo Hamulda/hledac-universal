@@ -87,6 +87,15 @@ class UniversalCoordinator(ABC):
     coupling is confined to one class (UniversalCoordinator).
     """
 
+    __slots__ = (
+        '_name', '_max_concurrent', '_memory_aware',
+        '_active_operations', '_operation_counter', '_operation_history',
+        '_max_history', '_initialized', '_available', '_initialization_error',
+        '_current_memory_pressure', '_memory_thresholds',
+        '_total_operations', '_successful_operations', '_failed_operations',
+        '_total_execution_time',
+    )
+
     def __init__(self, name: str, max_concurrent: int=10, memory_aware: bool=True):
         self._name = name
         self._max_concurrent = max_concurrent

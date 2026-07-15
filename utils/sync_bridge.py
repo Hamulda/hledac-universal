@@ -10,7 +10,7 @@ asyncio.run() cannot be called from a running event loop → RuntimeError.
 This module provides two safe patterns:
 
   1. run_sync_async(coro) — Run coroutine from sync code
-     - If no running loop: asyncio.run(coro) [new loop]
+     - If no running loop: asyncio.Runner().run(coro) [new loop, PEP 654]
      - If running loop: asyncio.run_coroutine_threadsafe(coro, running_loop).result()
 
   2. to_thread(sync_fn, *args) — Run sync function in dedicated thread
@@ -27,51 +27,17 @@ M1 CRASH VECTORS (CLAUDE.md invariants)
 SOLUTION: Domain-specific bounded executors (see domain_executors.py)
 """
 import asyncio
-import contextlib
 import functools
-import inspect
-import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Awaitable, Callable, Coroutine, TypeVar, cast
 T = TypeVar('T')
-_BRIDGE_THREAD: threading.Thread | None = None
-_BRIDGE_LOOP: asyncio.AbstractEventLoop | None = None
-_BRIDGE_LOCK = threading.Lock()
-
-def _get_bridge_loop() -> asyncio.AbstractEventLoop:
-    """Get or create the dedicated bridge loop."""
-    global _BRIDGE_THREAD, _BRIDGE_LOOP
-    with _BRIDGE_LOCK:
-        if _BRIDGE_LOOP is not None and _BRIDGE_LOOP.is_running():
-            return _BRIDGE_LOOP
-        if _BRIDGE_THREAD is not None and _BRIDGE_THREAD.is_alive():
-            if _BRIDGE_LOOP is not None:
-                try:
-                    _BRIDGE_LOOP.close()
-                except Exception:
-                    pass
-        _BRIDGE_LOOP = asyncio.new_event_loop()
-        _BRIDGE_THREAD = threading.Thread(target=_bridge_loop_runner, args=(_BRIDGE_LOOP,), daemon=True, name='sync-bridge')
-        _BRIDGE_THREAD.start()
-        return _BRIDGE_LOOP
-
-def _bridge_loop_runner(loop: asyncio.AbstractEventLoop) -> None:
-    """Run the bridge event loop (blocking, runs until shutdown)."""
-    asyncio.set_event_loop(loop)
-    try:
-        loop.run_forever()
-    finally:
-        try:
-            loop.close()
-        except Exception:
-            pass
 
 def run_sync_async(coro: Awaitable[T]) -> T:
     """
     Safely run a coroutine from synchronous code.
 
     Handles the tricky cases:
-    - No running loop → asyncio.run(coro) [new loop]
+    - No running loop → asyncio.Runner().run(coro) [PEP 654, Python 3.11+]
     - Running loop → asyncio.run_coroutine_threadsafe(coro, running_loop).result()
 
     Args:
@@ -94,7 +60,11 @@ def run_sync_async(coro: Awaitable[T]) -> T:
     try:
         running_loop = asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(coro)
+        # No running loop — use asyncio.Runner (PEP 654, Python 3.11+).
+        # Runner manages loop lifecycle internally and ensures cleanup.
+        with asyncio.Runner() as runner:
+            return runner.run(coro)
+    # Running loop: delegate to it via threadsafe submission.
     future = asyncio.run_coroutine_threadsafe(cast(Coroutine, coro), running_loop)
     return future.result()
 
@@ -146,30 +116,3 @@ def run_in_executor_safe(executor: ThreadPoolExecutor | None, func: Callable[...
     future = executor.submit(func, *args)
     return future.result()
 
-class SyncBridgeContext:
-    """
-    Context manager for safe sync→async bridging with lifecycle management.
-
-    Usage:
-        bridge = SyncBridgeContext()
-        with bridge:
-            result = bridge.run(my_async_function, arg1, arg2)
-    """
-    __slots__ = tuple(('_max_workers', '_pool'))
-
-    def __init__(self, max_workers: int=4):
-        self._pool: ThreadPoolExecutor | None = None
-        self._max_workers = max_workers
-
-    def __enter__(self) -> 'SyncBridgeContext':
-        self._pool = ThreadPoolExecutor(max_workers=self._max_workers, thread_name_prefix='sync-bridge-ctx')
-        return self
-
-    def __exit__(self, _exc_type: Any, _exc_val: Any, _exc_tb: Any) -> None:
-        if self._pool is not None:
-            self._pool.shutdown(wait=False)
-            self._pool = None
-
-    def run(self, coro: Awaitable[T]) -> T:
-        """Run coroutine within this context."""
-        return run_sync_async(coro)

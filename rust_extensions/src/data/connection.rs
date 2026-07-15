@@ -5,30 +5,11 @@
 //! per call) to ~5 MB (reused conn, no WAL, read_only).
 
 use pyo3::prelude::*;
-use std::cell::RefCell;
 use std::path::Path;
 
-/// Thread-local DuckDB connection — reused across all operations in a thread.
-/// This eliminates the 50-80 MB cost of opening a new connection each call.
-thread_local! {
-    static THREAD_CONN: RefCell<Option<duckdb::Connection>> = const { RefCell::new(None) };
-}
-
-/// Open or reuse a thread-local DuckDB connection.
-/// Connection is opened read-only with PRAGMA threads=1 for M1 8GB safety.
+/// Open a DuckDB connection with M1 8GB optimizations.
+/// Connection is opened read-only with PRAGMA threads=1.
 pub fn get_thread_connection(db_path: &Path) -> PyResult<duckdb::Connection> {
-    // First: check if we already have a connection (narrow borrow)
-    let already_connected = THREAD_CONN.with(|cell| cell.borrow().is_some());
-    if already_connected {
-        return THREAD_CONN.with(|cell| {
-            // take() leaves None behind — will be restored by return_connection()
-            cell.borrow_mut()
-                .take()
-                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                    "Thread-local connection was None — return_connection() not called".to_string()))
-        });
-    }
-
     // Open new connection
     let conn = duckdb::Connection::open(db_path)
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
@@ -40,17 +21,7 @@ pub fn get_thread_connection(db_path: &Path) -> PyResult<duckdb::Connection> {
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
             format!("PRAGMA setup failed: {}", e)))?;
 
-    // Store before taking — so return_connection() can restore it
-    THREAD_CONN.with(|cell| *cell.borrow_mut() = Some(conn.clone()));
-
     Ok(conn)
-}
-
-/// Return a connection to the thread-local cache after use.
-pub fn return_connection(conn: duckdb::Connection) {
-    THREAD_CONN.with(|cell| {
-        *cell.borrow_mut() = Some(conn);
-    });
 }
 
 /// Execute a query and return results as a vector of rows (each row is Vec<String>).
@@ -80,7 +51,6 @@ pub fn execute_query(conn: duckdb::Connection, sql: &str) -> PyResult<Vec<Vec<St
         rows.push(row_values);
     }
 
-    return_connection(conn);
     Ok(rows)
 }
 
@@ -130,19 +100,10 @@ pub fn duckdb_health_check(db_path: String) -> PyResult<String> {
     Ok(version)
 }
 
-#[pyfunction]
-pub fn duckdb_close_connection() -> PyResult<()> {
-    THREAD_CONN.with(|cell| {
-        *cell.borrow_mut() = None;
-    });
-    Ok(())
-}
-
 /// Register connection functions with Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(duckdb_open_connection, m)?)?;
     m.add_function(wrap_pyfunction!(duckdb_health_check, m)?)?;
-    m.add_function(wrap_pyfunction!(duckdb_close_connection, m)?)?;
     Ok(())
 }
 

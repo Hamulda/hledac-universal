@@ -351,7 +351,7 @@ pub fn batch_extract_links_with_text(items: Vec<(String, String)>) -> Vec<Vec<(S
     }
     let n = items.len();
 
-    Python::attach(|py| {
+    Python::with_gil(|py| {
         release_gil(py, || {
             crate::mixed_pool(n).install(|| {
                 items
@@ -472,7 +472,7 @@ pub fn batch_extract_html_text(items: Vec<String>) -> Vec<String> {
         return Vec::new();
     }
 
-    Python::attach(|py| {
+    Python::with_gil(|py| {
         release_gil(py, || {
             crate::cpu_pool().install(|| {
                 items
@@ -526,7 +526,7 @@ pub fn batch_extract_emails(items: Vec<String>) -> Vec<Vec<String>> {
     }
     let n = items.len();
 
-    Python::attach(|py| {
+    Python::with_gil(|py| {
         release_gil(py, || {
             crate::mixed_pool(n).install(|| {
                 items
@@ -556,7 +556,7 @@ pub fn batch_extract_titles(items: Vec<String>) -> Vec<Option<String>> {
     }
     let n = items.len();
 
-    Python::attach(|py| {
+    Python::with_gil(|py| {
         release_gil(py, || {
             crate::mixed_pool(n).install(|| {
                 items
@@ -648,7 +648,7 @@ pub fn batch_extract_links(items: Vec<(String, String)>) -> Vec<Vec<String>> {
     }
     let n = items.len();
 
-    Python::attach(|py| {
+    Python::with_gil(|py| {
         release_gil(py, || {
             crate::mixed_pool(n).install(|| {
                 items
@@ -848,7 +848,7 @@ pub fn batch_extract_microdata(items: Vec<String>) -> Vec<Vec<MicrodataItem>> {
     }
     let n = items.len();
 
-    Python::attach(|py| {
+    Python::with_gil(|py| {
         release_gil(py, || {
             crate::mixed_pool(n).install(|| {
                 items

@@ -1,0 +1,696 @@
+{
+  "generated": "2026-07-14T16:38:39.802631+00:00",
+  "repo": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal",
+  "total_unbounded_queues": 36,
+  "total_unbounded_lru": 77,
+  "queues_by_category": {
+    "unknown": 4,
+    "test_only": 9,
+    "external": 23
+  },
+  "lru_by_category": {
+    "external": 77
+  },
+  "unbounded_queues": [
+    {
+      "file": "tools/bounded_queue_audit.py",
+      "line": 5,
+      "category": "unknown",
+      "code": "1. asyncio.Queue() without maxsize  (unbounded queue \u2192 memory leak)"
+    },
+    {
+      "file": "tools/bounded_queue_audit.py",
+      "line": 57,
+      "category": "unknown",
+      "code": "\"\"\"Find all asyncio.Queue() without maxsize.\"\"\""
+    },
+    {
+      "file": "tools/bounded_queue_audit.py",
+      "line": 69,
+      "category": "unknown",
+      "code": "# Match asyncio.Queue() with no maxsize argument"
+    },
+    {
+      "file": "tools/bounded_queue_audit.py",
+      "line": 131,
+      "category": "unknown",
+      "code": "\"## 1. Unbounded asyncio.Queue()\","
+    },
+    {
+      "file": "tests/test_issue24_lancedb_write_queue.py",
+      "line": 38,
+      "category": "test_only",
+      "code": "queue: asyncio.Queue[tuple[list | None, float]] = asyncio.Queue()"
+    },
+    {
+      "file": "tests/test_lazy_singleton.py",
+      "line": 192,
+      "category": "test_only",
+      "code": "return asyncio.Queue()"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/uvicorn/lifespan/on.py",
+      "line": 40,
+      "category": "external",
+      "code": "self.receive_queue: Queue[LifespanReceiveMessage] = asyncio.Queue()"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/uvicorn/protocols/websockets/websockets_sansio_impl.py",
+      "line": 74,
+      "category": "external",
+      "code": "self.queue: asyncio.Queue[ASGIReceiveEvent] = asyncio.Queue()"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/uvicorn/protocols/websockets/wsproto_impl.py",
+      "line": 99,
+      "category": "external",
+      "code": "self.queue: asyncio.Queue[WebSocketEvent] = asyncio.Queue()"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/curl_cffi/requests/websockets.py",
+      "line": 764,
+      "category": "external",
+      "code": "self._receive_queue: asyncio.Queue[RECV_QUEUE_ITEM] = asyncio.Queue("
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/curl_cffi/requests/websockets.py",
+      "line": 767,
+      "category": "external",
+      "code": "self._send_queue: asyncio.Queue[SEND_QUEUE_ITEM] = asyncio.Queue("
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/transformers/generation/streamers.py",
+      "line": 281,
+      "category": "external",
+      "code": "self.text_queue = asyncio.Queue()"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/transformers/cli/serving/transcription.py",
+      "line": 171,
+      "category": "external",
+      "code": "queue: asyncio.Queue = asyncio.Queue()"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/transformers/cli/serving/model_manager.py",
+      "line": 337,
+      "category": "external",
+      "code": "queue: asyncio.Queue[str | None] = asyncio.Queue()"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/transformers/cli/serving/utils.py",
+      "line": 786,
+      "category": "external",
+      "code": "queue: asyncio.Queue = asyncio.Queue()"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/transformers/cli/serving/utils.py",
+      "line": 907,
+      "category": "external",
+      "code": "text_queue: asyncio.Queue = asyncio.Queue()"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_audio/sts/voice_pipeline.py",
+      "line": 592,
+      "category": "external",
+      "code": "self.input_audio_queue: asyncio.Queue[np.ndarray] = asyncio.Queue("
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_audio/sts/voice_pipeline.py",
+      "line": 595,
+      "category": "external",
+      "code": "self.transcript_queue: asyncio.Queue[str] = asyncio.Queue()"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_audio/sts/voice_pipeline.py",
+      "line": 596,
+      "category": "external",
+      "code": "self.output_audio_queue: asyncio.Queue[np.ndarray] = asyncio.Queue("
+    },
+    {
+      "file": "tests/archive/probes/probe_8c0/test_bench_event_loop.py",
+      "line": 55,
+      "category": "test_only",
+      "code": "queue: asyncio.Queue = asyncio.Queue()"
+    },
+    {
+      "file": "tests/archive/probes/probe_8c0/test_bench_event_loop.py",
+      "line": 224,
+      "category": "test_only",
+      "code": "q: asyncio.Queue = asyncio.Queue()"
+    },
+    {
+      "file": "tests/archive/probes/probe_f207n_bounded_queue/test_bounded_queue.py",
+      "line": 19,
+      "category": "test_only",
+      "code": "\"\"\"Audit detects asyncio.Queue() without maxsize in sample code.\"\"\""
+    },
+    {
+      "file": "tests/archive/probes/probe_f207n_bounded_queue/test_bounded_queue.py",
+      "line": 180,
+      "category": "test_only",
+      "code": "and \"asyncio.Queue()\" in r[\"code\"]"
+    },
+    {
+      "file": "tests/archive/probes/probe_f207n_bounded_queue/test_bounded_queue.py",
+      "line": 182,
+      "category": "test_only",
+      "code": "# The old-style unbounded check finds asyncio.Queue() without maxsize in comments"
+    },
+    {
+      "file": "tests/archive/probes/probe_8c/test_lifecycle_convergence.py",
+      "line": 172,
+      "category": "test_only",
+      "code": "engine._batch_queue = asyncio.Queue()"
+    },
+    {
+      "file": "tests/archive/probes/probe_8c/test_lifecycle_convergence.py",
+      "line": 245,
+      "category": "test_only",
+      "code": "engine._batch_queue = asyncio.Queue()"
+    },
+    {
+      "file": ".venv-test/lib/python3.14/site-packages/litellm/constants.py",
+      "line": 299,
+      "category": "external",
+      "code": "# Bounds asyncio.Queue() instances (log queues, spend update queues, etc.) to prevent unbounded memory growth"
+    },
+    {
+      "file": ".venv-test/lib/python3.14/site-packages/litellm/integrations/gcs_bucket/gcs_bucket.py",
+      "line": 50,
+      "category": "external",
+      "code": "self.log_queue: asyncio.Queue[GCSLogQueueItem] = asyncio.Queue(  # type: ignore[assignment]"
+    },
+    {
+      "file": ".venv-test/lib/python3.14/site-packages/litellm/proxy/db/db_transaction_queue/spend_update_queue.py",
+      "line": 25,
+      "category": "external",
+      "code": "self.update_queue: asyncio.Queue[SpendUpdateQueueItem] = asyncio.Queue("
+    },
+    {
+      "file": ".venv-test/lib/python3.14/site-packages/curl_cffi/requests/websockets.py",
+      "line": 763,
+      "category": "external",
+      "code": "self._receive_queue: asyncio.Queue[RECV_QUEUE_ITEM] = asyncio.Queue("
+    },
+    {
+      "file": ".venv-test/lib/python3.14/site-packages/curl_cffi/requests/websockets.py",
+      "line": 766,
+      "category": "external",
+      "code": "self._send_queue: asyncio.Queue[SEND_QUEUE_ITEM] = asyncio.Queue("
+    },
+    {
+      "file": ".venv-test/lib/python3.14/site-packages/transformers/generation/streamers.py",
+      "line": 297,
+      "category": "external",
+      "code": "self.text_queue = asyncio.Queue()"
+    },
+    {
+      "file": ".venv-test/lib/python3.14/site-packages/transformers/cli/serving/transcription.py",
+      "line": 171,
+      "category": "external",
+      "code": "queue: asyncio.Queue = asyncio.Queue()"
+    },
+    {
+      "file": ".venv-test/lib/python3.14/site-packages/transformers/cli/serving/model_manager.py",
+      "line": 309,
+      "category": "external",
+      "code": "queue: asyncio.Queue[str | None] = asyncio.Queue()"
+    },
+    {
+      "file": ".venv-test/lib/python3.14/site-packages/transformers/cli/serving/utils.py",
+      "line": 763,
+      "category": "external",
+      "code": "queue: asyncio.Queue = asyncio.Queue()"
+    },
+    {
+      "file": ".venv-test/lib/python3.14/site-packages/transformers/cli/serving/utils.py",
+      "line": 884,
+      "category": "external",
+      "code": "text_queue: asyncio.Queue = asyncio.Queue()"
+    }
+  ],
+  "unbounded_lru": [
+    {
+      "file": ".venv/lib/python3.14/site-packages/pip_requirements_parser.py",
+      "line": 1919,
+      "category": "external",
+      "code": "@functools.lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_audio/dsp.py",
+      "line": 39,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_audio/dsp.py",
+      "line": 53,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_audio/dsp.py",
+      "line": 67,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_audio/dsp.py",
+      "line": 81,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_audio/dsp.py",
+      "line": 499,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/charset_normalizer/md.py",
+      "line": 217,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/tomli/_re.py",
+      "line": 98,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 20,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 73,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 168,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 212,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 244,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 296,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 372,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 428,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 539,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 617,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 811,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 886,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 974,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 1536,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 1587,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 1732,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 1801,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 1866,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 2019,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 2301,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 2436,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 2540,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 2694,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 2819,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 2987,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 3139,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 3352,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 3537,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 3555,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 3560,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 3598,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 3625,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/turboquant.py",
+      "line": 3677,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/pyright/utils.py",
+      "line": 62,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/pyright/node.py",
+      "line": 192,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/asttokens/util.py",
+      "line": 421,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/lancedb/dependencies.py",
+      "line": 187,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/pip_api/_vendor/tomli/_re.py",
+      "line": 87,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/setuptools/_vendor/tomli/_re.py",
+      "line": 98,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/hypothesis/internal/scrutineer.py",
+      "line": 21,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/hypothesis/strategies/_internal/datetime.py",
+      "line": 342,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/models/rope_utils.py",
+      "line": 74,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/models/rope_utils.py",
+      "line": 186,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/models/rope_utils.py",
+      "line": 336,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/models/rope_utils.py",
+      "line": 361,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/models/qwen3_5/language.py",
+      "line": 436,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/models/qwen3_5/language.py",
+      "line": 451,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/models/qwen3_5/language.py",
+      "line": 1148,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/models/qwen3_5/language.py",
+      "line": 1160,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/models/qwen3_5/language.py",
+      "line": 1174,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_vlm/models/bonsai/klein_fast/blocks.py",
+      "line": 494,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/pip/_vendor/tomli/_re.py",
+      "line": 95,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/pip/_vendor/pkg_resources/__init__.py",
+      "line": 433,
+      "category": "external",
+      "code": "@functools.lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/pip/_vendor/pkg_resources/__init__.py",
+      "line": 2629,
+      "category": "external",
+      "code": "@functools.lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/torch/fx/experimental/symbolic_shapes.py",
+      "line": 8768,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/torch/onnx/_internal/torchscript_exporter/registration.py",
+      "line": 144,
+      "category": "external",
+      "code": "# TODO(justinchuby): Add @functools.lru_cache(maxsize=None) if lookup time becomes"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/tvm_ffi/cpp/dtype.py",
+      "line": 62,
+      "category": "external",
+      "code": "@functools.lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/tvm_ffi/stub/lib_state.py",
+      "line": 33,
+      "category": "external",
+      "code": "@functools.lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/tvm_ffi/stub/lib_state.py",
+      "line": 111,
+      "category": "external",
+      "code": "@functools.lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/huggingface_hub/inference/_providers/hf_inference.py",
+      "line": 165,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/huggingface_hub/inference/_providers/_common.py",
+      "line": 337,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv/lib/python3.14/site-packages/mlx_audio/tts/models/kokoro/pipeline.py",
+      "line": 27,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv-test/lib/python3.14/site-packages/lancedb/dependencies.py",
+      "line": 186,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv-test/lib/python3.14/site-packages/openai/_base_client.py",
+      "line": 2140,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv-test/lib/python3.14/site-packages/setuptools/_vendor/tomli/_re.py",
+      "line": 97,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv-test/lib/python3.14/site-packages/torch/fx/experimental/symbolic_shapes.py",
+      "line": 8506,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv-test/lib/python3.14/site-packages/torch/onnx/_internal/torchscript_exporter/registration.py",
+      "line": 144,
+      "category": "external",
+      "code": "# TODO(justinchuby): Add @functools.lru_cache(maxsize=None) if lookup time becomes"
+    },
+    {
+      "file": ".venv-test/lib/python3.14/site-packages/huggingface_hub/inference/_providers/hf_inference.py",
+      "line": 165,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    },
+    {
+      "file": ".venv-test/lib/python3.14/site-packages/huggingface_hub/inference/_providers/_common.py",
+      "line": 342,
+      "category": "external",
+      "code": "@lru_cache(maxsize=None)"
+    }
+  ]
+}

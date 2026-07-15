@@ -17,6 +17,7 @@ Note: Per-image analysis time varies by hardware and image size.
 Streaming mode and size limits protect M1 8GB RAM.
 """
 from __future__ import annotations
+import asyncio
 import gc
 import logging
 import math
@@ -25,7 +26,7 @@ import msgspec
 from pathlib import Path
 from typing import Any
 import numpy as np
-from utils.domain_executors import run_in_vision
+from utils.domain_executors import get_vision_executor
 logger = logging.getLogger(__name__)
 MPS_AVAILABLE = False
 _MPS_CHECKED = False
@@ -206,7 +207,8 @@ class StatisticalStegoDetector:
 
     async def _detect_mps(self, image_bytes: bytes) -> dict[str, Any]:
         """MPS-accelerated detection — uses shared vision domain executor."""
-        return await run_in_vision(self._detect_mps_sync, image_bytes)
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(get_vision_executor(), self._detect_mps_sync, image_bytes)
 
     def _detect_mps_sync(self, image_bytes: bytes) -> dict[str, Any]:
         """Synchronous MPS implementation of steganography detection."""
@@ -248,7 +250,8 @@ class StatisticalStegoDetector:
 
     async def _detect_cpu(self, image_bytes: bytes) -> dict[str, Any]:
         """CPU-based detection — uses shared vision domain executor."""
-        return await run_in_vision(self._detect_cpu_sync, image_bytes)
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(get_vision_executor(), self._detect_cpu_sync, image_bytes)
 
     def _detect_cpu_sync(self, image_bytes: bytes) -> dict[str, Any]:
         """Synchronous CPU implementation of steganography detection."""

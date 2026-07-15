@@ -47,6 +47,7 @@
 
 use dashmap::DashSet;
 use pyo3::prelude::*;
+use pyo3::types::PyList;
 use rayon::prelude::*;
 use std::sync::Arc;
 
@@ -393,41 +394,46 @@ pub fn pipeline_map(
         )));
     }
 
+    // Extract Python strings BEFORE pool.install() — Python<'_> is not Send
+    let items_str: Vec<String> = items
+        .iter()
+        .filter_map(|py_item| py_item.str().ok().map(|s| s.to_string()))
+        .collect();
+
+    let fn_name = fn_name.to_string();
     let pool = mixed_pool(n);
-    let results: Vec<Py<PyAny>> = pool.install(|| {
-        items
+    let mapped_strs: Vec<String> = pool.install(|| {
+        items_str
             .iter()
-            .map(|py_item| {
-                let item_str = py_item.str().map_err(|_| {
-                    pyo3::exceptions::PyTypeError::new_err(
-                        "pipeline_map: all items must be str",
-                    )
-                })?;
-                let s = item_str.to_string();
-                let mapped: Py<PyAny> = match fn_name {
-                    "len" => s.len().into_py(_py),
-                    "lower" => s.to_lowercase().into_py(_py),
-                    "upper" => s.to_uppercase().into_py(_py),
-                    "strip" => s.trim().into_py(_py),
-                    "hash_xxh3" => {
-                        use xxhash_rust::xxh3::xxh3_64;
-                        xxh3_64(s.as_bytes()).into_py(_py)
-                    }
-                    "hash_xxh3_hex" => {
-                        use xxhash_rust::xxh3::xxh3_64;
-                        format!("{:016x}", xxh3_64(s.as_bytes())).into_py(_py)
-                    }
-                    _ => {
-                        return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                            "pipeline_map: unknown fn_name '{fn_name}'. Valid: len, lower, upper, strip, hash_xxh3, hash_xxh3_hex"
-                        )));
-                    }
-                };
-                Ok(mapped)
+            .map(|s| match fn_name.as_str() {
+                "len" => s.len().to_string(),
+                "lower" => s.to_lowercase(),
+                "upper" => s.to_uppercase(),
+                "strip" => s.trim().to_string(),
+                "hash_xxh3" => {
+                    use xxhash_rust::xxh3::xxh3_64;
+                    xxh3_64(s.as_bytes()).to_string()
+                }
+                "hash_xxh3_hex" => {
+                    use xxhash_rust::xxh3::xxh3_64;
+                    format!("{:016x}", xxh3_64(s.as_bytes()))
+                }
+                _ => s.clone(),
             })
-            .collect::<PyResult<Vec<_>>>()
-            .unwrap_or_default()
+            .collect()
     });
+
+    // Convert to Py<PyAny> AFTER pool.install()
+    let results: Vec<Py<PyAny>> = mapped_strs
+        .into_iter()
+        .map(|s| {
+            if fn_name == "len" {
+                s.parse::<usize>().map(|v| v.into_py(_py)).unwrap_or_else(|_| s.into_py(_py))
+            } else {
+                s.into_py(_py)
+            }
+        })
+        .collect();
     Ok(results)
 }
 
@@ -456,27 +462,35 @@ pub fn pipeline_filter(
         )));
     }
 
+    // Extract Python strings BEFORE pool.install() — Python<'_> is not Send
+    let items_str: Vec<String> = items
+        .iter()
+        .filter_map(|py_item| py_item.str().ok().map(|s| s.to_string()))
+        .collect();
+
+    let fn_name = fn_name.to_string();
     let pool = mixed_pool(n);
-    let results: Vec<Py<PyAny>> = pool.install(|| {
-        items
+    let filtered: Vec<bool> = pool.install(|| {
+        items_str
             .iter()
-            .filter(|py_item| {
-                let Ok(item_str) = py_item.str() else {
-                    return false;
-                };
-                let s = item_str.to_string();
-                match fn_name {
-                    "not_empty" | "len_gt_0" => !s.is_empty(),
-                    "has_at" => s.contains('@'),
-                    "has_scheme" => s.starts_with("http://") || s.starts_with("https://") || s.starts_with("ftp://"),
-                    "is_ascii" => s.is_ascii(),
-                    "len_lt_2048" => s.len() < 2048,
-                    _ => false,
-                }
+            .map(|s| match fn_name.as_str() {
+                "not_empty" | "len_gt_0" => !s.is_empty(),
+                "has_at" => s.contains('@'),
+                "has_scheme" => s.starts_with("http://") || s.starts_with("https://") || s.starts_with("ftp://"),
+                "is_ascii" => s.is_ascii(),
+                "len_lt_2048" => s.len() < 2048,
+                _ => false,
             })
-            .map(|py_item| py_item.clone().unbind())
             .collect()
     });
+
+    // Clone PyItems AFTER pool.install() using original items list
+    let results: Vec<Py<PyAny>> = items
+        .iter()
+        .zip(filtered.into_iter())
+        .filter(|(_, keep)| *keep)
+        .map(|(py_item, _)| py_item.clone().unbind())
+        .collect();
     Ok(results)
 }
 
@@ -505,18 +519,23 @@ pub fn pipeline_filter_map(
         )));
     }
 
-    let pool = mixed_pool(n);
-    let results: Vec<Py<PyAny>> = pool.install(|| {
-        items
-            .iter()
-            .filter_map(|py_item| {
-                let Ok(item_str) = py_item.str() else {
-                    return None;
-                };
-                let s = item_str.to_string();
+    // Extract Python strings BEFORE pool.install() — Python<'_> is not Send
+    let items_str: Vec<String> = items
+        .iter()
+        .filter_map(|py_item| py_item.str().ok().map(|s| s.to_string()))
+        .collect();
 
+    let filter_fn = filter_fn.to_string();
+    let map_fn = map_fn.to_string();
+    let pool = mixed_pool(n);
+
+    // Filter + map in rayon
+    let mapped_strs: Vec<String> = pool.install(|| {
+        items_str
+            .iter()
+            .filter_map(|s| {
                 // Apply filter
-                let passes = match filter_fn {
+                let passes = match filter_fn.as_str() {
                     "not_empty" | "len_gt_0" => !s.is_empty(),
                     "has_at" => s.contains('@'),
                     "has_scheme" => s.starts_with("http://") || s.starts_with("https://") || s.starts_with("ftp://"),
@@ -529,25 +548,36 @@ pub fn pipeline_filter_map(
                 }
 
                 // Apply map
-                let mapped: Py<PyAny> = match map_fn {
-                    "len" => s.len().into_py(_py),
-                    "lower" => s.to_lowercase().into_py(_py),
-                    "upper" => s.to_uppercase().into_py(_py),
-                    "strip" => s.trim().into_py(_py),
+                Some(match map_fn.as_str() {
+                    "len" => s.len().to_string(),
+                    "lower" => s.to_lowercase(),
+                    "upper" => s.to_uppercase(),
+                    "strip" => s.trim().to_string(),
                     "hash_xxh3" => {
                         use xxhash_rust::xxh3::xxh3_64;
-                        xxh3_64(s.as_bytes()).into_py(_py)
+                        xxh3_64(s.as_bytes()).to_string()
                     }
                     "hash_xxh3_hex" => {
                         use xxhash_rust::xxh3::xxh3_64;
-                        format!("{:016x}", xxh3_64(s.as_bytes())).into_py(_py)
+                        format!("{:016x}", xxh3_64(s.as_bytes()))
                     }
                     _ => return None,
-                };
-                Some(mapped)
+                })
             })
             .collect()
     });
+
+    // Convert to Py<PyAny> AFTER pool.install()
+    let results: Vec<Py<PyAny>> = mapped_strs
+        .into_iter()
+        .map(|s| {
+            if map_fn == "len" {
+                s.parse::<usize>().map(|v| v.into_py(_py)).unwrap_or_else(|_| s.into_py(_py))
+            } else {
+                s.into_py(_py)
+            }
+        })
+        .collect();
     Ok(results)
 }
 
@@ -578,16 +608,20 @@ pub fn pipeline_fold(
 
     let pool = mixed_pool(n);
 
-    // Try numeric fold first
+    // Extract initial value BEFORE pool.install() — &Bound is not Send
+    let initial_str = initial.extract::<String>().unwrap_or_default();
+
+    // Try numeric fold first — extract i64 values before pool
     if let (Ok(initial_num), Ok(items_numeric)) =
         (initial.extract::<i64>(), items.iter().map(|x| x.extract::<i64>()).collect::<Result<Vec<_>, _>>())
     {
+        let fold_fn = fold_fn.to_string();
         let result: i64 = pool.install(|| {
             items_numeric
                 .par_iter()
                 .fold(
                     || initial_num,
-                    |acc, &x| match fold_fn {
+                    |acc, &x| match fold_fn.as_str() {
                         "count" => acc + 1,
                         "sum" | "sum_len" => acc + x,
                         "min" => acc.min(x),
@@ -600,7 +634,7 @@ pub fn pipeline_fold(
         return Ok(result.into_py(_py));
     }
 
-    // Fallback to string fold
+    // Fallback to string fold — extract strings before pool
     let items_str: Vec<String> = items
         .iter()
         .filter_map(|x| x.str().ok().map(|s| s.to_string()))
@@ -608,6 +642,7 @@ pub fn pipeline_fold(
 
     // Numeric-result folds (count, sum_len) must return i64, not String.
     // Handle them specially before the generic String fold path.
+    let fold_fn_str = fold_fn.to_string();
     if fold_fn == "count" {
         let result: i64 = pool.install(|| {
             items_str
@@ -634,17 +669,18 @@ pub fn pipeline_fold(
         return Ok(result.into_py(_py));
     }
 
+    // String fold — initial_str already extracted
     let result: String = pool.install(|| {
         items_str
             .par_iter()
             .fold(
-                || initial.extract::<String>().unwrap_or_default(),
-                |acc, s| match fold_fn {
+                || initial_str.clone(),
+                |acc, s| match fold_fn_str.as_str() {
                     "concat_comma" => {
                         if acc.is_empty() {
                             s.clone()
                         } else {
-                            acc + "," + &s
+                            acc + "," + s
                         }
                     }
                     "first" => {
@@ -658,7 +694,7 @@ pub fn pipeline_fold(
                     _ => acc,
                 },
             )
-            .sum()
+            .collect() // Use collect() not sum() for String
     });
     Ok(result.into_py(_py))
 }
@@ -683,16 +719,19 @@ pub fn pipeline_count(
         )));
     }
 
+    // Extract Python strings BEFORE pool.install() — &Bound is not Send
+    let items_str: Vec<String> = items
+        .iter()
+        .filter_map(|py_item| py_item.str().ok().map(|s| s.to_string()))
+        .collect();
+
+    let predicate_fn = predicate_fn.to_string();
     let pool = mixed_pool(n);
     let count: usize = pool.install(|| {
-        items
+        items_str
             .par_iter()
-            .filter(|py_item| {
-                let Ok(item_str) = py_item.str() else {
-                    return false;
-                };
-                let s = item_str.to_string();
-                match predicate_fn {
+            .filter(|s| {
+                match predicate_fn.as_str() {
                     "not_empty" | "len_gt_0" => !s.is_empty(),
                     "has_at" => s.contains('@'),
                     "has_scheme" => {
@@ -733,58 +772,69 @@ pub fn pipeline_compose_two(
         )));
     }
 
-    fn apply_str_transform(py: Python<'_>, s: &str, fn_name: &str) -> Option<Py<PyAny>> {
-        let mapped: Py<PyAny> = match fn_name {
-            "len" => s.len().into_py(py),
-            "lower" => s.to_lowercase().into_py(py),
-            "upper" => s.to_uppercase().into_py(py),
-            "strip" => s.trim().into_py(py),
+    // Helper for string transform (pure Rust, no Python needed)
+    fn apply_str_transform_str(s: &str, fn_name: &str) -> Option<String> {
+        match fn_name {
+            "len" => Some(s.len().to_string()),
+            "lower" => Some(s.to_lowercase()),
+            "upper" => Some(s.to_uppercase()),
+            "strip" => Some(s.trim().to_string()),
             "hash_xxh3" => {
                 use xxhash_rust::xxh3::xxh3_64;
-                xxh3_64(s.as_bytes()).into_py(py)
+                Some(xxh3_64(s.as_bytes()).to_string())
             }
             "hash_xxh3_hex" => {
                 use xxhash_rust::xxh3::xxh3_64;
-                format!("{:016x}", xxh3_64(s.as_bytes())).into_py(py)
+                Some(format!("{:016x}", xxh3_64(s.as_bytes())))
             }
-            _ => return None,
-        };
-        Some(mapped)
+            _ => None,
+        }
     }
 
-    let pool = mixed_pool(n);
-    let results: Vec<Py<PyAny>> = pool.install(|| {
-        items
-            .iter()
-            .filter_map(|py_item| {
-                let Ok(item_str) = py_item.str() else {
-                    return None;
-                };
-                let s = item_str.to_string();
+    // Extract Python strings BEFORE pool.install() — &Bound is not Send
+    let items_str: Vec<String> = items
+        .iter()
+        .filter_map(|py_item| py_item.str().ok().map(|s| s.to_string()))
+        .collect();
 
-                // Stage 1: passthrough means no-op, otherwise apply transform
+    let stage1 = stage1.to_string();
+    let stage2 = stage2.to_string();
+    let pool = mixed_pool(n);
+
+    // Two-stage transform in rayon (pure Rust strings, no Python inside pool)
+    let transformed: Vec<String> = pool.install(|| {
+        items_str
+            .iter()
+            .filter_map(|s| {
+                // Stage 1
                 let s1_str = if stage1 == "passthrough" {
                     s.clone()
                 } else {
-                    // Apply stage1 transform
-                    let stage1_out = apply_str_transform(_py, &s, stage1)?;
-                    // Stage 1 output must be str for composition with stage2
-                    stage1_out
-                        .extract::<String>(_py)
-                        .ok()?
+                    apply_str_transform_str(s, &stage1)?
                 };
 
-                // Stage 2: passthrough means just return the string as-is
+                // Stage 2
                 if stage2 == "passthrough" {
-                    return Some(s1_str.into_py(_py));
+                    return Some(s1_str);
                 }
 
-                // Apply stage2 transform
-                let stage2_out = apply_str_transform(_py, &s1_str, stage2)?;
-                Some(stage2_out)
+                apply_str_transform_str(&s1_str, &stage2)
             })
             .collect()
     });
+
+    // Convert to Py<PyAny> AFTER pool.install()
+    let results: Vec<Py<PyAny>> = transformed
+        .into_iter()
+        .map(|s| {
+            // If stage1 was "len", it's a number string to convert back
+            if stage1 == "len" {
+                s.parse::<usize>().map(|v| v.into_py(_py)).unwrap_or_else(|_| s.into_py(_py))
+            } else {
+                s.into_py(_py)
+            }
+        })
+        .collect();
     Ok(results)
 }
 
@@ -807,25 +857,26 @@ pub fn pipeline_batch_stats(
         )));
     }
 
-    let pool = mixed_pool(n);
+    // Extract Python strings BEFORE pool.install() — &Bound<PyList> is not Send
+    let items_str: Vec<String> = items
+        .iter()
+        .filter_map(|py_item| py_item.str().ok().map(|s| s.to_string()))
+        .collect();
 
-    // Single parallel pass: compute (length, hash) for each item, filtering bad str items.
-    // This avoids double iteration and keeps n consistent with sum_len.
-    let item_data: Vec<(usize, u64)> = pool.install(|| {
-        items
-            .par_iter()
-            .filter_map(|py_item| {
-                let Ok(s) = py_item.str() else { return None; };
-                let s_str = s.to_string();
-                use xxhash_rust::xxh3::xxh3_64;
-                Some((s_str.len(), xxh3_64(s_str.as_bytes())))
-            })
-            .collect()
-    });
-
-    if item_data.is_empty() {
+    if items_str.is_empty() {
         return Ok((0, 0, 0, 0, 0));
     }
+
+    let pool = mixed_pool(items_str.len());
+
+    // Single parallel pass: compute (length, hash) for each item.
+    use xxhash_rust::xxh3::xxh3_64;
+    let item_data: Vec<(usize, u64)> = pool.install(|| {
+        items_str
+            .par_iter()
+            .map(|s_str| (s_str.len(), xxh3_64(s_str.as_bytes())))
+            .collect()
+    });
 
     let n = item_data.len();
     let sum_len: usize = item_data.iter().map(|(l, _)| l).sum();
@@ -840,7 +891,7 @@ pub fn pipeline_batch_stats(
         .filter(|(_, h)| seen.insert(*h))
         .count();
 
-    Ok((n, sum_len, min_len, max_len, unique_count))
+    Ok((n, sum_len, *min_len, *max_len, unique_count))
 }
 
 // ---------------------------------------------------------------------------
@@ -871,7 +922,7 @@ mod tests {
         // Exercise via PyO3 bindings
         // Real test: compose_two_map
         let inputs = vec!["hello", "world", "rust"];
-        let result = compose_two_map(&inputs, |s: &str| s.len(), |&len: &usize| len * 2);
+        let result = compose_two_map(&inputs, |s: &&str| s.len(), |&len: &usize| len * 2);
         assert_eq!(result, vec![10, 10, 8]);
     }
 
@@ -880,14 +931,14 @@ mod tests {
         let inputs = vec!["http://a.com", "ftp://b.com", "https://c.com", "not_a_url"];
         let result = compose_filter_map_map(
             &inputs,
-            |s: &str| {
+            |s: &&str| {
                 if s.starts_with("http") || s.starts_with("https") {
                     Some(s.to_string())
                 } else {
                     None
                 }
             },
-            |s: &str| s.len(),
+            |s: &String| s.len(),
         );
         assert_eq!(result, vec![15, 15, 16]); // "http://a.com"=15, "https://c.com"=16
     }
@@ -938,8 +989,8 @@ mod tests {
         // stage2: len -> 5, 2, 5
         let result = compose_two_map(
             &inputs,
-            |s: &str| s.to_uppercase(),
-            |s: &str| s.len(),
+            |s: &&str| s.to_uppercase(),
+            |s: &String| s.len(),
         );
         assert_eq!(result, vec![5, 2, 5]);
     }
@@ -950,8 +1001,8 @@ mod tests {
         let inputs = vec!["hello", "world"];
         let result = compose_two_map(
             &inputs,
-            |s: &str| s.to_string(), // passthrough (no-op clone)
-            |s: &str| s.len(),
+            |s: &&str| s.to_string(), // passthrough (no-op clone)
+            |s: &String| s.len(),
         );
         assert_eq!(result, vec![5, 5]);
     }
@@ -959,7 +1010,7 @@ mod tests {
     #[test]
     fn test_empty_input() {
         let inputs: Vec<String> = vec![];
-        let result: Vec<usize> = compose_two_map(&inputs, |s: &str| s.len(), |&l: &usize| l * 2);
+        let result: Vec<usize> = compose_two_map(&inputs, |s: &String| s.len(), |&l: &usize| l * 2);
         assert!(result.is_empty());
     }
 }

@@ -430,7 +430,7 @@ mod tests {
     #[test]
     fn test_sync_query() {
         let pool = StdConnectionPool::new(":memory:".to_string(), 1);
-        let result = pool.execute_query_sync("SELECT 42 as num".to_string());
+        let result = pool.execute_query_sync("SELECT 42 as num");
         assert!(result.is_ok());
         assert_eq!(result.unwrap().len(), 1);
     }
@@ -440,8 +440,8 @@ mod tests {
     #[test]
     fn test_pool_sequential_queries() {
         let pool = StdConnectionPool::new(":memory:".to_string(), 1);
-        let r1 = pool.execute_query_sync("SELECT 1 as n".to_string());
-        let r2 = pool.execute_query_sync("SELECT 2 as n".to_string());
+        let r1 = pool.execute_query_sync("SELECT 1 as n");
+        let r2 = pool.execute_query_sync("SELECT 2 as n");
         // Both queries should succeed — connection reuse means we keep same connection
         assert!(r1.is_ok());
         assert!(r2.is_ok());
@@ -470,7 +470,7 @@ mod tests {
         let pool = StdConnectionPool::new(":memory:".to_string(), 1);
         let params = vec!["hello".to_string(), "world".to_string()];
         let result = pool.execute_query_sync_with_params(
-            "SELECT ?1 as a, ?2 as b".to_string(),
+            "SELECT ?1 as a, ?2 as b",
             &params,
         );
         assert!(result.is_ok());

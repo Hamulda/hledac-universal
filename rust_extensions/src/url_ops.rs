@@ -150,15 +150,14 @@ pub fn xxh3_url_hash(url: &str) -> u64 {
 pub fn batch_classify(urls: &Bound<'_, pyo3::types::PyList>) -> Vec<(String, String)> {
     let n = urls.len();
     if n < get_adaptive_mixed_threshold() {
-        // Small batch: serial path — zero-copy borrow from Python.
-        // urls.iter() yields &PyAny; extract::<&str>() borrows the Python string.
+        // Small batch: serial path — copy to owned String for compatibility.
         urls.iter()
             .map(|item| {
-                let s: &str = match item.extract() {
+                let s: String = match item.extract() {
                     Ok(s) => s,
                     Err(_) => return (UrlKind::Malformed.as_str().to_string(), String::new()),
                 };
-                classify_url(s)
+                classify_url(&s)
             })
             .collect()
     } else {
@@ -952,14 +951,14 @@ pub fn canonical_url_batch(urls: &Bound<'_, pyo3::types::PyList>) -> Vec<String>
     }
 
     if n < get_adaptive_mixed_threshold() {
-        // Small batch: serial path — zero-copy borrow from Python.
+        // Small batch: serial path — copy to owned String.
         urls.iter()
             .map(|item| {
-                let s: &str = match item.extract() {
+                let s: String = match item.extract() {
                     Ok(s) => s,
                     Err(_) => return String::new(),
                 };
-                canonical_url(s)
+                canonical_url(&s)
             })
             .collect()
     } else {

@@ -46,6 +46,9 @@ try:
     from hledac_rust_extensions import (
         strip_tracking_params as _rust_strip_tracking_params,
     )
+    from hledac_rust_extensions import (
+        batch_nfc_normalize as _rust_batch_nfc_normalize,
+    )
     _RUST_AVAILABLE = True
 except ImportError:
     _RUST_AVAILABLE = False
@@ -61,6 +64,7 @@ except ImportError:
     fast_ioc_extract = None
     url_normalize = None
     batch_dedup_urls = None
+    _rust_batch_nfc_normalize = None
 
 
 # --- Pure-Python ref implementations (fallbacks when Rust unavailable) ---
@@ -714,4 +718,49 @@ class TestSimhash:
         h2 = compute_simhash("malware executable virus infected file dropper")
         # Likely Hamming distance > 3
         assert isinstance(is_near_duplicate(h1, h2, 3), bool)
+
+
+# =============================================================================
+# Tests: batch_nfc_normalize (Unicode NFC text normalization)
+# =============================================================================
+class TestBatchNfcNormalize:
+    """Test Rust batch_nfc_normalize for Unicode text normalization.
+
+    ISSUE #022 FIX: Previously streaming_embedder used pipeline_compose_two
+    with "nfc_normalize" stage name which was never registered — all items
+    were silently dropped. batch_nfc_normalize is the correct direct entry point.
+    """
+
+    @pytest.mark.skipif(_rust_batch_nfc_normalize is None, reason="Rust not available")
+    def test_batch_nfc_normalize_preserves_ascii(self):
+        texts = ["hello", "world", "test"]
+        result = _rust_batch_nfc_normalize(texts)
+        assert result == ["hello", "world", "test"]
+        assert len(result) == len(texts)
+
+    @pytest.mark.skipif(_rust_batch_nfc_normalize is None, reason="Rust not available")
+    def test_batch_nfc_normalize_nfc_composition(self):
+        # "é" can be composed as single codepoint U+00E9 or
+        # as e + combining acute (e + U+0301). NFC normalizes to single.
+        # "café" = c-a-f-é where é may be precomposed or decomposed.
+        texts = ["café", "naïve", "résumé"]
+        result = _rust_batch_nfc_normalize(texts)
+        assert len(result) == 3
+        assert result[0] == "café"
+        assert result[1] == "naïve"
+        assert result[2] == "résumé"
+
+    @pytest.mark.skipif(_rust_batch_nfc_normalize is None, reason="Rust not available")
+    def test_batch_nfc_normalize_empty_list(self):
+        result = _rust_batch_nfc_normalize([])
+        assert result == []
+
+    @pytest.mark.skipif(_rust_batch_nfc_normalize is None, reason="Rust not available")
+    def test_batch_nfc_normalize_unicode_sameness(self):
+        # NFC of NFC is NFC — idempotent
+        texts = ["ℌ𝔱𝔪𝔩", "Ǆ", "Å"]
+        result = _rust_batch_nfc_normalize(texts)
+        # Re-applying should give the same result
+        result2 = _rust_batch_nfc_normalize(result)
+        assert result == result2
 

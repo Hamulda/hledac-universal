@@ -356,9 +356,16 @@ def get_aiohttp_session() -> httpx.AsyncClient:
 def _get_httpx_session_blocking() -> httpx.AsyncClient:
     """
     Synchronous blocking wrapper for async_get_httpx_session().
-    Called inside run_in_executor — runs in a thread with its own loop.
+
+    P1-1 FIX: Replaced asyncio.run() with run_sync_async() from sync_bridge.
+    asyncio.run() inside run_in_executor thread is an M1 Metal crash vector.
+
+    The bridge loop handles both running and non-running loop cases correctly:
+      - No running loop → new loop via asyncio.run() inside bridge
+      - Running loop   → run_coroutine_threadsafe to bridge loop
     """
-    return asyncio.run(async_get_httpx_session())
+    from utils.sync_bridge import run_sync_async
+    return run_sync_async(async_get_httpx_session())
 
 
 def close_httpx_session() -> None:
@@ -377,28 +384,9 @@ def close_httpx_session() -> None:
     """
     # ISSUE-010: Delegate to canonical session_pool
     from transport.session_pool import close_httpx as _close_httpx
-
-    # Run in a separate thread to avoid nested event loop — eliminates M1 crash vector.
-    import asyncio
-
-    try:
-        loop = asyncio.get_running_loop()
-        loop.run_in_executor(None, _close_httpx_blocking).result()
-    except RuntimeError:
-        # No running loop — create new loop for sync context (tests)
-        loop = asyncio.new_event_loop()
-        try:
-            loop.run_until_complete(_close_httpx())
-        finally:
-            loop.close()
-
-def _close_httpx_blocking() -> None:
-    """
-    Synchronous blocking wrapper for close_httpx().
-    Called inside run_in_executor — runs in a thread with its own loop.
-    """
-    from transport.session_pool import close_httpx as _close_httpx
-    asyncio.run(_close_httpx())
+    # P1-1: run_sync_async handles both running and non-running loop cases.
+    from utils.sync_bridge import run_sync_async
+    run_sync_async(_close_httpx())
 
 
 # Alias for backward compatibility

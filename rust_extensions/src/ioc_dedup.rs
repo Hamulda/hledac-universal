@@ -156,9 +156,12 @@ impl MmapIocDedupStore {
         // memmap2::Mmap — zero-copy mmap(2) of the entire file.
         // OS demand-paging handles RAM bringing pages in; we only pay
         // for the page faults, not a full vec allocation + copy.
-        let file_ref = Arc::get_mut(&mut self.file)
-            .map(|f| f as &File)
-            .unwrap_or_else(|| self.file.as_ref());
+        // Use raw pointer to avoid borrow checker conflict between Arc::get_mut and as_ref
+        let file_raw: *const File = match Arc::get_mut(&mut self.file) {
+            Some(f) => f as *const File,
+            None => self.file.as_ref() as *const File,
+        };
+        let file_ref = unsafe { &*file_raw };
 
         let mmap = unsafe {
             Mmap::map(file_ref)

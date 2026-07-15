@@ -510,23 +510,21 @@ def _maybe_sign_jsonld(obj: dict[str, Any]) -> dict[str, Any]:
     Add ML-DSA-65 PQ signature to JSON-LD dict if backend available.
 
     GHOST_INVARIANTS: no asyncio.run() in async context.
+    P1-1: run_sync_async handles both running and non-running loop cases.
     """
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(_maybe_sign_jsonld_async(obj))
-    else:
-        pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pq_sign")
-        future = loop.run_in_executor(pool, _sync_pq_sign_jsonld, obj)
-        try:
-            return future.result()
-        finally:
-            pool.shutdown(wait=True)
+    from utils.sync_bridge import run_sync_async
+    return run_sync_async(_maybe_sign_jsonld_async(obj))
 
 
 def _sync_pq_sign_jsonld(obj: dict[str, Any]) -> dict[str, Any]:
-    """to_thread target — runs event loop in a separate thread."""
-    return asyncio.run(_maybe_sign_jsonld_async(obj))
+    """
+    to_thread target — runs async PQ sign in a separate thread.
+
+    P1-1 FIX: Replaced asyncio.run() with run_sync_async().
+    asyncio.run() inside run_in_executor thread is M1 Metal crash vector.
+    """
+    from utils.sync_bridge import run_sync_async
+    return run_sync_async(_maybe_sign_jsonld_async(obj))
 
 
 async def _maybe_sign_jsonld_async(obj: dict[str, Any]) -> dict[str, Any]:

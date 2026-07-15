@@ -6,8 +6,8 @@ build-backend = "maturin"
 # UNderscore: Python packages use underscores, NOT hyphens
 name = "hledac_rust_extensions"
 version = "0.1.0"
-# abi3-py314: PyO3 0.23+ builds stable ABI wheel for Python 3.14+
-requires-python = ">=3.14"
+# PyO3 0.29 builds stable ABI wheel
+requires-python = ">=3.10"
 
 [tool.maturin]
 # PyO3 extension-module: cdylib for Python import

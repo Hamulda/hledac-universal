@@ -11,9 +11,8 @@ All CoreML/ANE inference routes through CoreMLClient HTTP → microservice.
 Model conversion (torch→CoreML) stays in py3.12 subprocess via CoreMLServiceManager.
 """
 import asyncio
-import concurrent.futures
 import logging
-from concurrent.futures import ThreadPoolExecutor
+import threading
 from pathlib import Path
 from typing import Any
 import numpy as np
@@ -37,9 +36,9 @@ _MODELS_DIR = Path.home() / '.hledac' / 'models'
 _MODELS_DIR.mkdir(parents=True, exist_ok=True)
 _MLPACKAGE_PATH = _MODELS_DIR / 'bge-small-ane.mlpackage'
 _ONNX_FALLBACK_PATH = _MODELS_DIR / 'bge-small-ort.onnx'
-_INFERENCE_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix='coreml_infer')
 _coreml_embedder_instance: CoreMLEmbedder | None = None
 _coreml_embedder_lock = asyncio.Lock()
+_thread_local = threading.local()
 
 async def get_coreml_embedder() -> CoreMLEmbedder:
     """Get or create the CoreMLEmbedder singleton (async DCLP).
@@ -150,7 +149,7 @@ class CoreMLEmbedder:
         Uses py3.12 FastAPI service on :8765.
         """
         try:
-            CoreMLServiceManager.ensure_running()
+            await CoreMLServiceManager.get_instance().start_async()
             self._client = CoreMLClient()
             if _MLPACKAGE_PATH.exists():
                 loaded = await self._client.load_model(_COREML_MODEL_NAME, str(_MLPACKAGE_PATH))
@@ -213,29 +212,15 @@ class CoreMLEmbedder:
         """Release model memory and close HTTP client."""
         if self._client is not None:
             client = self._client
-
-            def _close_client_sync() -> None:
-                """Sync wrapper — called in thread pool to close async HTTP client."""
-                asyncio.run(client.close())
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                try:
-                    asyncio.to_thread(_close_client_sync)
-                except Exception:
-                    try:
-                        client.close()
-                    except Exception:
-                        pass
-            else:
-                try:
-                    asyncio.to_thread(_close_client_sync)
-                except Exception:
-                    try:
-                        client.close()
-                    except Exception:
-                        pass
             self._client = None
+
+            # CoreMLClient.close() is async — must use run_sync_async() bridge.
+            # run_sync_async handles both cases (running loop / no loop) internally.
+            from utils.sync_bridge import run_sync_async
+            try:
+                run_sync_async(client.close())
+            except Exception:
+                pass
         self._backend = None
         self._is_loaded = False
         logger.debug('[CoreML] Embedder unloaded')
@@ -337,7 +322,8 @@ class CoreMLEmbedder:
             except Exception as e:
                 logger.warning('[CoreML] ONNX inference failed: %s', e)
                 return self._encode_hash_fallback(texts)
-        return await loop.run_in_executor(_INFERENCE_EXECUTOR, _sync_encode)
+        from utils.domain_executors import get_infer_executor
+        return await loop.run_in_executor(get_infer_executor(), _sync_encode)
 
     def _encode_hash_fallback(self, texts: list[str]) -> np.ndarray:
         """Deterministic hash embeddings s plnou entropií — SHAKE256 stretch na 384 dims."""
@@ -346,46 +332,37 @@ class CoreMLEmbedder:
         for t in texts:
             h = hashlib.shake_256(t[:_MAX_TEXT_LEN].encode()).digest(length=_EMBED_DIM * 4)
             vec = np.frombuffer(h, dtype=np.float32).copy()
-            vec = vec / (np.max(np.abs(vec)) + 1e-08)
+            max_val = np.max(np.abs(vec))
+            if max_val == 0 or np.isnan(max_val):
+                vec = np.zeros(_EMBED_DIM, dtype=np.float32)
+            else:
+                vec = vec / max_val
             results.append(vec[:_EMBED_DIM])
         return np.vstack(results)
 
     def embed(self, texts: str | list[str], **kwargs) -> np.ndarray:
         """Sync alias — runs encode_batch (matches FastEmbed .embed()).
 
-        Uses a dedicated ThreadPoolExecutor with a fresh event loop per call.
-        This is the M1-SAFE pattern (GHOST_INVARIANTS: loop.run_until_complete()
-        with a new loop in the worker thread — NEVER asyncio.run() inside
-        a ThreadPoolExecutor on Apple Silicon).
-        """
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            try:
-                return asyncio.run(self.encode_batch(texts, **kwargs))
-            except Exception:
-                n = len(texts) if isinstance(texts, list) else 1
-                return np.zeros((n, _EMBED_DIM), dtype=np.float32)
-        else:
-            try:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _ex:
+        M1-SAFE pattern: per-thread persistent event loop via threading.local(),
+        reused across calls. No gc.collect() per call — loop is closed when the
+        thread dies (at process exit), not after every encode.
 
-                    def _run_encode():
-                        new_loop = asyncio.new_event_loop()
-                        try:
-                            return new_loop.run_until_complete(self.encode_batch(texts, **kwargs))
-                        finally:
-                            new_loop.close()
-                            # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
-                            try:
-                                gc.collect()
-                            except Exception:
-                                pass
-                    future = _ex.submit(_run_encode)
-                    return future.result(timeout=30)
-            except Exception:
-                n = len(texts) if isinstance(texts, list) else 1
-                return np.zeros((n, _EMBED_DIM), dtype=np.float32)
+        ThreadPoolExecutor is shared (cached by module-level pool), not created
+        per-call, eliminating thread-spawn overhead on repeated embeddings.
+        """
+        # Per-thread persistent event loop — zero allocation on reuse.
+        # threading.local() instance ensures each thread its own loop (M1-safe:
+        # loop.run_until_complete() in worker thread, never asyncio.run()).
+        loop: asyncio.AbstractEventLoop | None = getattr(_thread_local, 'loop', None)
+        if loop is None or loop.is_closed():
+            loop = asyncio.new_event_loop()
+            _thread_local.loop = loop  # type: ignore[attr-defined]
+        try:
+            return loop.run_until_complete(self.encode_batch(texts, **kwargs))
+        except Exception as e:
+            n = len(texts) if isinstance(texts, list) else 1
+            logger.warning('[CoreML] embed() fallback to zeros after encode failure: %s', e)
+            return np.zeros((n, _EMBED_DIM), dtype=np.float32)
 _ANE_EMBEDDER: CoreMLEmbedder | None = None
 _GLOBAL_TOKENIZER = None
 

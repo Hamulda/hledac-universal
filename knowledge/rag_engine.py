@@ -845,10 +845,10 @@ class RAGEngine:
         if embeddings is None:
             logger.info('Generating embeddings for HNSW index...')
             try:
-                # ISSUE-006-BIRDSEYE: asyncio.run() directly instead of ThreadPoolExecutor overhead.
-                # _generate_embeddings is async but its internals (MLX embedder) are sync-safe.
-                # asyncio.run() creates its own event loop — no conflict with any caller's loop.
-                embeddings_list = asyncio.run(self._generate_embeddings([d.content for d in documents]))
+                # P1-1: asyncio.run() inside sync method is M1 Metal crash vector.
+                # _generate_embeddings is async but its internals are sync MLX — use bridge.
+                from utils.sync_bridge import run_sync_async
+                embeddings_list = run_sync_async(self._generate_embeddings([d.content for d in documents]))
                 embeddings = {doc.id: emb for doc, emb in zip(documents, embeddings_list)}
             except Exception as e:
                 logger.error(f'Failed to generate embeddings: {e}')

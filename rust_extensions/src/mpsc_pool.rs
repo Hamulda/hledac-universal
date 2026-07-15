@@ -43,6 +43,7 @@
 
 use crossbeam_channel::{bounded, Receiver, Sender};
 use pyo3::prelude::*;
+use pyo3::types::{PyBytes, PyList};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Default queue depth — 2× evidence_log asyncio.Queue maxsize=500 for headroom.
@@ -258,27 +259,32 @@ impl MPSCPool {
     ///
     /// Args:
     ///     handle_ptr: opaque usize from add_sender()
-    ///     payloads: slice of byte buffers — caller serializes with msgspec first
+    ///     payloads: list of byte buffers — caller serializes with msgspec first
     ///
     /// Returns:
     ///     Number of items successfully sent (0 to len(payloads)).
     ///     Partial success is possible (queue full mid-batch).
-    fn send_batch(&self, handle_ptr: usize, payloads: &[&[u8]]) -> usize {
+    fn send_batch(&self, handle_ptr: usize, payloads: &Bound<'_, PyList>) -> usize {
         if handle_ptr == 0 || payloads.is_empty() {
             return 0;
         }
         // SAFETY: handle_ptr is a Box<SenderHandle> we created.
         let handle = unsafe { &*(handle_ptr as *const SenderHandle) };
         let mut sent = 0;
-        for payload in payloads {
-            // Each send() still does to_vec() internally (crossbeam requirement),
-            // but we save: 1× the GIL acquisition + Python call overhead per item,
-            // vs 1× Python call for the entire batch + N× native Rust fn calls.
-            if handle.send(payload) {
-                sent += 1;
-            } else {
-                // Queue full — stop sending, return partial count.
-                break;
+        for i in 0..payloads.len() {
+            if let Ok(item) = payloads.get_item(i) {
+                if let Ok(bytes) = item.downcast::<PyBytes>() {
+                    let payload = bytes.as_bytes();
+                    // Each send() still does to_vec() internally (crossbeam requirement),
+                    // but we save: 1× the GIL acquisition + Python call overhead per item,
+                    // vs 1× Python call for the entire batch + N× native Rust fn calls.
+                    if handle.send(payload) {
+                        sent += 1;
+                    } else {
+                        // Queue full — stop sending, return partial count.
+                        break;
+                    }
+                }
             }
         }
         sent

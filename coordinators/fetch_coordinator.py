@@ -44,7 +44,7 @@ SESSION_AVAILABLE = CAPS.is_available('session')
 HINTS_AVAILABLE = CAPS.is_available('deep_web_hints')
 from hledac.universal.runtime.privacy_budget import PrivacyBudgetAllocator, make_privacy_allocator
 from hledac.universal.tools.zstd_compressor import ZstdCompressor
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel, safe_create_task
 from ..tools.url_dedup import DeduplicationStrategy
 from .base import UniversalCoordinator
 _zero_attr_cls = CAPS.require(ZERO_ATTR)
@@ -354,7 +354,7 @@ class FetchCoordinator(UniversalCoordinator):
     - Create evidence packets
     - Return bounded outputs (IDs, counts, stop signals)
     """
-    __slots__ = tuple(('_adaptive_priority_provider', '_aimd_slot', '_aimd_window', '_base_retry_delay', '_batch_cp_result', '_captcha_detections', '_captcha_detector', '_concurrency', '_concurrency_provider', '_config', '_cooldown_seconds', '_cover_count', '_ctx', '_current_geo_context', '_darknet_connector', '_dedup_lock', '_enqueue_pivot_provider', '_evidence_ids', '_frontier', '_geo_proxies', '_gopher_transport', '_gopher_transport_enabled', '_hints_extractor', '_host_ips_cache', '_http_cache_enabled', '_http_cache_transport', '_hypothesis_depth_provider', '_hypothesis_depth_setter', '_hypothesis_query_count_provider', '_hypothesis_query_count_setter', '_lightpanda_lock', '_lightpanda_pool', '_lightpanda_pool_started', '_max_backoff_delay', '_max_retries', '_orchestrator', '_paywall_bypass', '_per_host_gate', '_per_host_limit', '_pivot_queue_provider', '_pivot_stats_provider', '_privacy_allocator', '_privacy_lock', '_processed_urls', '_running', '_session_checkpoint_task', '_session_lmdb_env', '_session_manager', '_sprint_config_provider', '_sprint_remaining_provider', '_stop_reason', '_telemetry', '_tor_transport', '_tor_transport_enabled', '_urls_fetched_count', '_zstd'))
+    __slots__ = tuple(('_adaptive_priority_provider', '_aimd_slot', '_aimd_window', '_base_retry_delay', '_batch_cp_result', '_capacity', '_captcha_detections', '_captcha_detector', '_concurrency', '_concurrency_provider', '_config', '_cooldown_seconds', '_cover_count', '_ctx', '_current_geo_context', '_darknet_connector', '_dedup_lock', '_enqueue_pivot_provider', '_evidence_ids', '_frontier', '_geo_proxies', '_gopher_transport', '_gopher_transport_enabled', '_hints_extractor', '_host_ips_cache', '_http_cache_enabled', '_http_cache_transport', '_hypothesis_depth_provider', '_hypothesis_depth_setter', '_hypothesis_query_count_provider', '_hypothesis_query_count_setter', '_lightpanda_lock', '_lightpanda_pool', '_lightpanda_pool_started', '_max_backoff_delay', '_max_retries', '_orchestrator', '_paywall_bypass', '_per_host_gate', '_per_host_limit', '_pivot_queue_provider', '_pivot_stats_provider', '_privacy_allocator', '_privacy_lock', '_processed_urls', '_running', '_session_checkpoint_task', '_session_lmdb_env', '_session_manager', '_sprint_config_provider', '_sprint_remaining_provider', '_stop_reason', '_telemetry', '_tor_transport', '_tor_transport_enabled', '_urls_fetched_count', '_zstd'))
 
     def __init__(self, config: FetchCoordinatorConfig | None=None, max_concurrent: int=3, pivot_queue_provider: Callable[[], Any]=lambda: None, pivot_stats_provider: Callable[[], dict] | None=None, hypothesis_query_count_provider: Callable[[], int]=lambda: 0, hypothesis_query_count_setter: Callable[[int], None]=lambda v: None, hypothesis_depth_provider: Callable[[], int]=lambda: 0, hypothesis_depth_setter: Callable[[int], None]=lambda v: None, sprint_config_provider: Callable[[], Any]=lambda: None, adaptive_priority_provider: Callable[[str, float], float]=lambda tt, base: base, enqueue_pivot_provider: Callable[..., Any]=lambda **kw: None, concurrency_provider: Callable[[], tuple[int, int, str, bool] | None] | None=None, sprint_remaining_provider: Callable[[], float | None]=lambda: None):
         super().__init__(name='FetchCoordinator', max_concurrent=max_concurrent)
@@ -1098,7 +1098,13 @@ class FetchCoordinator(UniversalCoordinator):
             trace_counter('fetch.active', self._telemetry['active_fetches'])
             trace_counter('fetch.batch_size', batch_size)
         batch_start = time.time()
-        results = await safe_gather_ok(*[self._fetch_url(url) for url in urls_to_fetch], label='fetch_coordinator:1110')
+        _parallel_result = await parallel(
+            [self._fetch_url(url) for url in urls_to_fetch],
+            concurrency=batch_size,
+            policy="log",
+            ctx="fetch_coordinator.batch",
+        )
+        results = _parallel_result.ok
         batch_elapsed = time.time() - batch_start
         evidence_ids = []
         for url, result in zip(urls_to_fetch, results, strict=False):
@@ -1119,6 +1125,35 @@ class FetchCoordinator(UniversalCoordinator):
                         break
         effective_parallelism = min(len(urls_to_fetch), int(self._aimd_concurrency))
         return self._get_step_result(evidence_ids, batch_size=batch_size, effective_parallelism=effective_parallelism, batch_elapsed_ms=round(batch_elapsed * 1000, 2))
+
+    async def _check_dns_and_circuit(self, url: str, domain: str) -> tuple[bool, dict[str, Any], bool, str, float]:
+        """Parallel DNS + circuit-breaker check (used in validation + retry loop).
+
+        Runs DNS validation and circuit-breaker check concurrently via TaskGroup.
+        Returns (dns_safe, dns_meta, cb_allowed, cb_reason, cb_retry_after).
+
+        Handles .onion/.i2p domains: DNS check short-circuits to (True, {}).
+        """
+        async def _dns_check() -> tuple[bool, dict[str, Any]]:
+            """DNS validation — cached after first call."""
+            if url.endswith('.onion') or url.endswith('.i2p'):
+                return (True, {})
+            return await self._validate_fetch_target(url)
+
+        async def _circuit_breaker_check() -> tuple[bool, str, float]:
+            """Circuit breaker — sync in-memory, ~1-2ms."""
+            return self._check_circuit(domain)
+
+        try:
+            async with asyncio.TaskGroup() as tg:
+                dns_task = tg.create_task(_dns_check(), name='dns_check')
+                cb_task = tg.create_task(_circuit_breaker_check(), name='circuit_breaker')
+            dns_safe, dns_meta = dns_task.result()
+            cb_allowed, cb_reason, cb_retry_after = cb_task.result()
+        except Exception:  # noqa: BLE001 — best-effort; domain_breaker unavailable; non-critical
+            dns_safe, dns_meta = (True, {})
+            cb_allowed, cb_reason, cb_retry_after = (True, '', 0.0)
+        return (dns_safe, dns_meta, cb_allowed, cb_reason, cb_retry_after)
 
     def _get_step_result(self, new_evidence_ids: list[str] | None=None, batch_size: int=0, effective_parallelism: int=0, batch_elapsed_ms: float=0.0) -> dict[str, Any]:
         """Get bounded step result with Sprint 5B batch telemetry."""
@@ -1180,25 +1215,7 @@ class FetchCoordinator(UniversalCoordinator):
                 pass
             _concurrency, _aimd_sem = await self._aimd_acquire()
         domain = httpx.URL(url).host
-
-        async def _dns_check() -> tuple[bool, dict[str, Any]]:
-            """DNS validation — cached after first call."""
-            if url.endswith('.onion') or url.endswith('.i2p'):
-                return (True, {})
-            return await self._validate_fetch_target(url)
-
-        async def _circuit_breaker_check() -> tuple[bool, str, float]:
-            """Circuit breaker — sync in-memory, ~1-2ms."""
-            return self._check_circuit(domain)
-        try:
-            async with asyncio.TaskGroup() as tg:
-                dns_task = tg.create_task(_dns_check(), name='dns_check')
-                cb_task = tg.create_task(_circuit_breaker_check(), name='circuit_breaker')
-            dns_safe, dns_meta = dns_task.result()
-            canonical_allowed, canonical_reason, canonical_retry_after = cb_task.result()
-        except Exception:  # noqa: BLE001 — best-effort; domain_breaker unavailable; non-critical
-            dns_safe, dns_meta = (True, {})
-            canonical_allowed, canonical_reason, canonical_retry_after = (True, '', 0.0)
+        dns_safe, dns_meta, canonical_allowed, canonical_reason, canonical_retry_after = await self._check_dns_and_circuit(url, domain)
         if not dns_safe:
             _ev0 = dns_meta.get('blocked_reason')
             logger.warning("DNS rebinding defense blocked: {dns_meta.get('blocked_reason')} for {domain}", domain=domain, _ev0=dns_meta.get('blocked_reason'))
@@ -1223,15 +1240,6 @@ class FetchCoordinator(UniversalCoordinator):
         result = None
         try:
             while attempt <= max_retries:
-                try:
-                    async with asyncio.TaskGroup() as tg:
-                        dns_task = tg.create_task(_dns_check(), name='dns_check')
-                        cb_task = tg.create_task(_circuit_breaker_check(), name='circuit_breaker')
-                    dns_safe, dns_meta = dns_task.result()
-                    canonical_allowed, canonical_reason, canonical_retry_after = cb_task.result()
-                except Exception:  # noqa: BLE001 — best-effort; lock acquisition failure; non-critical
-                    dns_safe, dns_meta = (True, {})
-                    canonical_allowed, canonical_reason, canonical_retry_after = (True, '', 0.0)
                 if not dns_safe:
                     _blocked_reason = dns_meta.get('blocked_reason')
                     logger.warning('DNS rebinding defense blocked: {blocked_reason} for {domain}', domain=domain, blocked_reason=_blocked_reason)
@@ -1448,11 +1456,13 @@ class FetchCoordinator(UniversalCoordinator):
             from ..tools.ddgs_client import search_news_sync, search_text_sync
             from ..tools.deep_research_sources import urlscan_search, wayback_cdx_lookup
             from ..tools.search_fusion import top_k
-            ddgs_task = asyncio.to_thread(search_text_sync, query)
-            news_task = asyncio.to_thread(search_news_sync, query)
-            wayback_task = wayback_cdx_lookup(query, limit=8)
-            urlscan_task = urlscan_search(query, size=8)
-            ddgs_rows, news_rows, wayback_rows, urlscan_rows = await safe_gather_ok(ddgs_task, news_task, wayback_task, urlscan_task, label='fetch_coordinator:1524')
+            deep_result = await parallel(
+                [asyncio.to_thread(search_text_sync, query), asyncio.to_thread(search_news_sync, query), wayback_cdx_lookup(query, limit=8), urlscan_search(query, size=8)],
+                concurrency=4,
+                policy="log",
+                ctx="fetch_coordinator.deep_research",
+            )
+            ddgs_rows, news_rows, wayback_rows, urlscan_rows = deep_result.ok[0], deep_result.ok[1], deep_result.ok[2], deep_result.ok[3]
             rows: list[dict[str, Any]] = []
             for part, label in [(ddgs_rows, 'ddgs'), (news_rows, 'news'), (wayback_rows, 'wayback'), (urlscan_rows, 'urlscan')]:
                 if isinstance(part, list):

@@ -29,7 +29,9 @@ Extended from evidence_network_analyzer.py comments:
     - Key path analysis
 """
 import asyncio
+import threading
 from utils.async_helpers import safe_create_task, safe_gather_ok
+from utils.sync_bridge import run_sync_async
 import logging
 import re
 from collections import deque
@@ -368,16 +370,21 @@ class GraphRAGOrchestrator:
         """
         Safely run an async coroutine synchronously.
 
-        M1-SAFE: When a loop is already running, use run_until_complete on the
-        existing loop from the worker thread. This avoids creating a nested event
-        loop (asyncio.run) in the worker thread, which crashes Metal on M1.
+        Delegates to run_sync_async() which uses asyncio.Runner (Python 3.11+)
+        for the no-loop case. For worker threads with a running loop,
+        run_until_complete is safe to use directly.
         """
+        # Worker thread with running loop — run_until_complete is safe
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            return asyncio.run(coro)
-        loop = asyncio.get_running_loop()
-        return loop.run_until_complete(coro)
+            return run_sync_async(coro)
+        # Running loop: if in a worker thread, run_until_complete is safe
+        if threading.get_ident() != threading.main_thread().ident:
+            loop = asyncio.get_running_loop()
+            return loop.run_until_complete(coro)
+        # Main thread with running loop — delegate to run_sync_async
+        return run_sync_async(coro)
 
     def multi_hop_search_sync(self, query: str, hops: int=2, max_nodes: int=20, timeline: bool=False, time_min: str | None=None, time_max: str | None=None, prefer_recent: bool=True, bucket: str='month', max_timeline_points: int=12) -> dict[str, Any]:
         """

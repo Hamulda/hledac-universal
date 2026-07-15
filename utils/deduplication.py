@@ -189,7 +189,8 @@ class SemanticDeduplicator(BaseDeduplicator):
         self.max_cache_size_mb = 256
         self._embedding_model = None
         self._model_loaded = False
-        self.executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='semantic-embed')
+        from utils.domain_executors import get_semantic_executor
+        self.executor = get_semantic_executor()
         self._simhash = SimHash(hashbits=64)
         # ISSUE-008: Rust LSH index — O(1) near-duplicate detection (<50ms for 10k sigs)
         self._lsh_index: Any = None
@@ -434,7 +435,8 @@ class ContentDeduplicator(BaseDeduplicator):
         self.content_cache: dict[str, dict[str, Any]] = {}
         self.cache_size = 0
         self.max_cache_size_mb = 128
-        self.executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix='content-hash')
+        from utils.domain_executors import get_content_executor
+        self.executor = get_content_executor()
         self._simhash = SimHash(hashbits=64)
 
     def _cluster_by_simhash(self, items: list[QueryItem], simhash_bits: int=16) -> dict[int, list[QueryItem]]:
@@ -605,7 +607,8 @@ class MetadataDeduplicator(BaseDeduplicator):
         self.field_weights = {'title': 0.4, 'url': 0.3, 'source': 0.1, 'timestamp': 0.1, 'author': 0.1}
         self.stop_words = self._get_stop_words()
         self.normalization_cache: dict[str, str] = {}
-        self.executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix='metadata-process')
+        from utils.domain_executors import get_metadata_executor
+        self.executor = get_metadata_executor()
 
     async def find_duplicates(self, item: QueryItem, candidates: list[QueryItem]) -> list[DeduplicationMatch]:
         """Find metadata-based duplicates."""

@@ -43,7 +43,7 @@ const CANONICAL_COLUMNS: [&str; 6] = [
 /// Enables O(1) row-group pruning before reading data.
 #[pyfunction]
 pub fn parquet_row_group_stats(path: &str) -> PyResult<Option<Vec<(usize, f64, f64, usize)>>> {
-    Python::attach(|py| {
+    Python::with_gil(|py| {
         let pa = match py.import("pyarrow") {
             Ok(m) => m,
             Err(_) => return Ok(None),
@@ -95,13 +95,13 @@ pub fn parquet_row_group_stats(path: &str) -> PyResult<Option<Vec<(usize, f64, f
             let mut max_ts: Option<f64> = None;
             let mut count: usize = 0;
 
-            // Iterate batches within row-group
-            let iter = batches.into_iter();
-            for batch_result in iter {
-                if batch_result.is_err() {
-                    break;
-                }
-                let batch = batch_result.unwrap();
+            // Iterate batches within row-group using try_iter for error handling
+            let mut iter = batches.try_iter()?;
+            while let Some(batch_result) = iter.next() {
+                let batch = match batch_result {
+                    Ok(b) => b,
+                    Err(_) => break,
+                };
                 let table = match batch.call_method0("to_table") {
                     Ok(t) => t,
                     Err(_) => break,
@@ -115,7 +115,7 @@ pub fn parquet_row_group_stats(path: &str) -> PyResult<Option<Vec<(usize, f64, f
                     Err(_) => break,
                 };
 
-                for val in arr {
+                for val in arr.iter() {
                     count += 1;
                     if let Some(ts_val) = val.extract::<f64>().ok() {
                         min_ts = Some(min_ts.map_or(ts_val, |m| m.min(ts_val)));
@@ -125,9 +125,9 @@ pub fn parquet_row_group_stats(path: &str) -> PyResult<Option<Vec<(usize, f64, f
             }
 
             if count > 0 {
-                results.push((row_group, min_ts.unwrap_or(0.0), max_ts.unwrap_or(0.0), count));
+                results.push((rg_idx, min_ts.unwrap_or(0.0), max_ts.unwrap_or(0.0), count));
             } else {
-                results.push((row_group, 0.0, 0.0, 0));
+                results.push((rg_idx, 0.0, 0.0, 0));
             }
         }
 
@@ -148,7 +148,7 @@ pub fn parquet_row_group_stats(path: &str) -> PyResult<Option<Vec<(usize, f64, f
 ///     (num_row_groups, total_rows) or None on error.
 #[pyfunction]
 pub fn parquet_get_metadata(path: &str) -> PyResult<Option<(usize, usize)>> {
-    Python::attach(|py| {
+    Python::with_gil(|py| {
         let pa = match py.import("pyarrow") {
             Ok(m) => m,
             Err(_) => return Ok(None),
@@ -193,7 +193,7 @@ pub fn parquet_read_row_group_ipc(
     columns: Option<&Bound<'_, PyList>>,
     batch_size: Option<usize>,
 ) -> PyResult<Option<Py<PyBytes>>> {
-    Python::attach(|py| {
+    Python::with_gil(|py| {
         let pa = match py.import("pyarrow") {
             Ok(m) => m,
             Err(_) => return Ok(None),
@@ -244,7 +244,7 @@ pub fn parquet_read_row_group_ipc(
             Ok(b) => b,
             Err(_) => return Ok(None),
         };
-        let batches: &Bound<'_, PyList> = match py_batches.cast::<PyList>() {
+        let batches: &Bound<'_, PyList> = match py_batches.downcast::<PyList>() {
             Ok(b) => b,
             Err(_) => return Ok(None),
         };
@@ -287,7 +287,7 @@ pub fn parquet_read_row_group_ipc(
         };
 
         // Extract bytes from PyObject — use as_bytes() on PyBytes
-        if let Ok(bytes_obj) = result.cast::<PyBytes>() {
+        if let Ok(bytes_obj) = result.downcast::<PyBytes>() {
             let bytes = bytes_obj.as_bytes();
             let py_bytes: Py<PyBytes> = PyBytes::new(py, bytes).into_pyobject(py).unwrap().unbind();
             Ok(Some(py_bytes))
@@ -345,7 +345,7 @@ pub fn parquet_read_table(
     columns: Option<&Bound<'_, PyList>>,
     batch_size: Option<usize>,
 ) -> PyResult<Option<Py<PyAny>>> {
-    Python::attach(|py| {
+    Python::with_gil(|py| {
         let pa = match py.import("pyarrow") {
             Ok(m) => m,
             Err(_) => return Ok(None),

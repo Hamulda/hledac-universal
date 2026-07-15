@@ -520,7 +520,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(
         rust_federated_qtable_batch_update,
         m
-    ))?;
+    )?)?;
     Ok(())
 }
 
@@ -650,7 +650,7 @@ mod tests {
         let surf_q = qtable.get("surface::s|fetch").unwrap();
         let dark_q = qtable.get("dark::s|scan").unwrap();
         assert_ne!(
-            surf_q, dark_q,
+            *surf_q, *dark_q,
             "Lane isolation violated — same state must have different Q-values"
         );
     }

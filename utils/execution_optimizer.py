@@ -274,7 +274,8 @@ class ParallelExecutionOptimizer:
 
     def _init_execution_pools(self):
         """Initialize execution pools"""
-        self.thread_pool = ThreadPoolExecutor(max_workers=self.config['execution']['thread_pool_size'], thread_name_prefix='parallel_thread')
+        from utils.domain_executors import get_parallel_executor
+        self.thread_pool = get_parallel_executor()
         t_max = getattr(self.thread_pool, '_max_workers', '?')
         logger.info(f'Initialized execution pools - Threads: {t_max}, CPU-bound: rayon(cpu_pool_run/io_pool_run)')
 

@@ -178,47 +178,32 @@ dependencies = [
     # ── Monitorování / debug ──────────────────────────────────────────────────
     "psutil>=5.9.0",
     "debugpy>=1.8.21",
-    # ── OpenTelemetry (Sprint T1) — always-on tracing, M1 8GB safe ──────────
-    # Manual spans via otel.span() — M1 8GB safe. httpx auto-instr via
-    # HLEDAC_OTEL_PROFILE=1. Default exporter: JSON-Lines to stdout.
-    # OTLP/HTTP exporter via [otel-otlp] extra.
-    "opentelemetry-api>=1.27.0,<2.0.0",
-    "opentelemetry-sdk>=1.27.0,<2.0.0",
-    # httpx auto-instrumentation via HLEDAC_OTEL_PROFILE=1 (~1MB, M1-safe).
-    # aiohttp instrumentation removed — aiohttp is now [aiohttp-fallback] extra only
-    "opentelemetry-instrumentation-httpx>=0.47b0",
-    # Issue 10.2: structlog (optional — stdlib fallback when unavailable)
-    "structlog>=24.0.0,<25.0.0",
-    # Issue 10.2: OTLP HTTP exporter (for otel collector)
-    "opentelemetry-exporter-otlp-proto-http>=1.27.0",
-    # Issue 10.2: Logfire for local dev observability (M1 8GB safe)
-    "logfire[observability]>=2.0.0",
-    # Issue 10.2: OTel instrumentation for async libraries
-    # Optional instrumentation — enable via pip install separately if needed
-    "opentelemetry-instrumentation-aio-pika[observability]>=0.47b0",
-    "opentelemetry-instrumentation-asyncpg[observability]>=0.47b0",
-    "cachetools>=7.1.4",
     "pydantic-settings>=2.14.2",
-    "roampal>=0.5.7",
 ]
 
 [project.optional-dependencies]
+# P0-3: OpenTelemetry instrumentation (Sprint T1).
+# Manual spans via otel.span() — M1 8GB safe. httpx auto-instr via
+# HLEDAC_OTEL_PROFILE=1. Default exporter: JSON-Lines to stdout.
+# Install with: uv sync --extra otel
+otel = [
+    "opentelemetry-api>=1.27.0,<2.0.0",
+    "opentelemetry-sdk>=1.27.0,<2.0.0",
+    "opentelemetry-instrumentation-httpx>=0.47b0",
+    "opentelemetry-exporter-otlp-proto-http>=1.27.0",
+    "opentelemetry-instrumentation-aio-pika[observability]>=0.47b0",
+    "opentelemetry-instrumentation-asyncpg[observability]>=0.47b0",
+    "logfire[observability]>=2.0.0",
+    "structlog>=24.0.0,<25.0.0",
+    "cachetools>=7.1.4",
+    "roampal>=0.5.7",
+]
 # Issue 10: observability extras — OTLP + profiling
 observability = [
-    "structlog>=24.0.0,<25.0.0",
-    # asyncio instrumentation NOT included — 5-15% event-loop overhead on M1
-    # httpx instrumentation ENABLED via HLEDAC_OTEL_PROFILE=1
-    # aiohttp removed — aiohttp is now in [aiohttp-fallback] extra only
-    "opentelemetry-instrumentation-aio-pika>=0.47b0",
-    "opentelemetry-exporter-otlp-proto-http>=1.27.0",
     # Memory profiling (dev)
     "memray>=1.14.0",
     # CPU profiling (dev)
     "py-spy>=0.3.14",
-]
-# Issue 10.2: logfire for local dev observability
-logfire-local = [
-    "logfire>=2.0.0",
 ]
 # F4XX: Legacy aiohttp fallback — NOT installed by default.
 # Only for development/testing when explicit aiohttp is required.
@@ -339,6 +324,9 @@ target-version = "py314"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "DTZ", "T10", "ISC", "BLE001"]
 ignore = ["E501", "F821", "B027"]  # BLE001: P1-01 audit in progress — see Issue #32
+# E911: P1-1 custom — forbid asyncio.run() outside allowed entry points.
+# Allowed: __main__, tools/, tests/. Use: grep -rn 'asyncio\.run(' ... | grep -v __main__ | grep -v 'tools/' | grep -v 'tests/'
+# CI: run `grep -rn 'asyncio\.run(' runtime intelligence brain knowledge prefetch cli layers transport network export report rendering coordinators/ 2>/dev/null | grep -v __main__ | grep -v tools/ | grep -v tests/` — expect 0 matches.
 
 [tool.ruff.lint.per-file-ignores]
 # stubs/ – Apple/CoreML framework .pyi binding files; preserve original names

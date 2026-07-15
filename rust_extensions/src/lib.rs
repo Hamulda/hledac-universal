@@ -57,6 +57,7 @@ pub mod lsh_index; // F320+: LSH index for O(1) near-duplicate detection at scal
 pub mod text_norm;
 pub mod feed_decision;
 pub mod feed_pipeline;
+pub mod pipeline_compose; // Multi-stage pipeline operators via rayon
 pub mod xml_sanitize;
 pub mod url_engine;
 pub mod url_ops;

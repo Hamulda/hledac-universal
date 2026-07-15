@@ -41,6 +41,26 @@ class SprintSchedulerV2:
     __init__ auto-generated, no duplication between __slots__ tuple and __init__ body.
     """
 
+    # ── Safe repr for __new__ test fixtures ────────────────────────────────
+    # When tests use SprintScheduler.__new__(cls) without calling __init__,
+    # slots are uninitialized and the dataclass-generated __repr__ raises
+    # AttributeError on the first slot it accesses. Override with a safe repr.
+    def __repr__(self) -> str:
+        try:
+            return f"SprintSchedulerV2(config={getattr(self, '_config', None)!r})"
+        except Exception:
+            return f"SprintSchedulerV2(id={hex(id(self))})"
+
+    # ── __new__ for test fixtures ──────────────────────────────────────────
+    # Tests use SprintScheduler.__new__(cls) to bypass __init__ (avoids heavy deps).
+    # This initializes all slots to None so inject_* methods work without a full run().
+    def __new__(cls, *args: Any, **kwargs: Any) -> "SprintSchedulerV2":
+        obj = super().__new__(cls)
+        # Initialize all slots to None — required for inject_* methods that access slots
+        for slot in cls.__slots__:  # type: ignore[attr-defined]
+            object.__setattr__(obj, slot, None)
+        return obj
+
     # ── Constructor params ───────────────────────────────────────────────────
     _config: Any = field(default=None)
     _result: Any = field(default=None)
@@ -211,7 +231,7 @@ class SprintSchedulerV2:
         import logging as _logging
         import time as _time
 
-        from runtime.scheduler_lifecycle_manager import SprintLifecycleManager
+        from runtime.sprint_lifecycle import SprintLifecycleManager
         from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok
 
         _lifecycle_mgr = SprintLifecycleManager(
@@ -764,8 +784,7 @@ class SprintSchedulerV2:
 
     def inject_policy_manager(self, policy_manager: Any) -> None:
         object.__setattr__(self, '_policy_manager', policy_manager)
-        if self._ctx:
-            object.__setattr__(self, '_ctx', self._ctx.with_services(governor=policy_manager))
+        # PolicyManager is not a SprintContext service; no ctx update needed
 
     def inject_communication_layer(self, layer: Any) -> None:
         object.__setattr__(self, '_communication_layer', layer)
@@ -784,8 +803,7 @@ class SprintSchedulerV2:
 
     def inject_security_coordinator(self, coordinator: Any) -> None:
         object.__setattr__(self, '_security_coordinator', coordinator)
-        if self._ctx:
-            object.__setattr__(self, '_ctx', self._ctx.with_services(governor=coordinator))
+        # SecurityCoordinator is not a governor; no ctx update needed
 
     def inject_prefetch_oracle(self, oracle: Any) -> None:
         object.__setattr__(self, '_prefetch_oracle', oracle)
@@ -806,15 +824,23 @@ class SprintSchedulerV2:
 
     def inject_temporal_predictor(self, predictor: Any) -> None:
         object.__setattr__(self, '_temporal_predictor', predictor)
+        if self._ctx:
+            object.__setattr__(self, '_ctx', self._ctx.with_cycle(temporal_predictor=predictor))
 
     def inject_pivot_planner(self, planner: Any) -> None:
         object.__setattr__(self, '_pivot_planner', planner)
+        if self._ctx:
+            object.__setattr__(self, '_ctx', self._ctx.with_cycle(pivot_planner=planner))
 
     def inject_analyst_workbench(self, workbench: Any) -> None:
         object.__setattr__(self, '_analyst_workbench', workbench)
+        if self._ctx:
+            object.__setattr__(self, '_ctx', self._ctx.with_cycle(analyst_workbench=workbench))
 
     def inject_forensics_enricher(self, enricher: Any) -> None:
         object.__setattr__(self, '_forensics_enricher', enricher)
+        if self._ctx:
+            object.__setattr__(self, '_ctx', self._ctx.with_cycle(forensics_enricher=enricher))
 
     def inject_multimodal_enricher(self, enricher: Any) -> None:
         object.__setattr__(self, '_multimodal_enricher', enricher)
@@ -836,6 +862,62 @@ class SprintSchedulerV2:
         object.__setattr__(self, '_ioc_graph', ioc_graph)
         if self._ctx:
             object.__setattr__(self, '_ctx', self._ctx.with_services(graph_service=ioc_graph))
+
+    # ── Hypothesis feedback (F203G) ─────────────────────────────────────────────
+
+    async def record_hypothesis_feedback(
+        self,
+        pivot_type: str,
+        ioc_type: str,
+        produced_count: int,
+        accepted_count: int,
+        signal_value: float,
+    ) -> None:
+        """
+        F203G: Record hypothesis feedback to DuckDB for future pivot planning.
+
+        Persists a HypothesisFeedbackRecord to the duckdb_store for aggregation
+        and use by PivotPlanner to penalize low-yield pivot types.
+
+        Silently fails if duckdb_store is unavailable (fail-safe pattern).
+
+        Args:
+            pivot_type: domain/identity/leak/archive/graph
+            ioc_type: The IOC type operated on
+            produced_count: Number of findings produced by this pivot
+            accepted_count: Number of findings accepted (stored)
+            signal_value: reward signal [0.0, 1.0]
+        """
+        # v2: _duckdb_store is InitResult-wrapped; extract .value
+        _store = getattr(self, "_duckdb_store", None)
+        if _store is None:
+            return
+        # isinstance check distinguishes InitResult from MagicMock/test mocks
+        if isinstance(_store, InitResult):
+            _duckdb = _store.value if _store.ok else None
+        else:
+            _duckdb = _store  # direct store injection (tests, etc.)
+        if _duckdb is None:
+            return
+        try:
+            import time as _time
+            import uuid
+
+            from hledac.universal.runtime.hypothesis_feedback import HypothesisFeedbackRecord
+
+            record = HypothesisFeedbackRecord(
+                id=str(uuid.uuid4()),
+                target_id=getattr(self, "_sprint_id", "") or "default",
+                pivot_type=pivot_type,
+                ioc_type=ioc_type,
+                produced_count=produced_count,
+                accepted_count=accepted_count,
+                signal_value=signal_value,
+                ts=_time.time(),
+            )
+            await _duckdb.async_record_hypothesis_feedback(record)
+        except Exception:  # noqa: BLE001 — best-effort; non-critical path
+            pass
 
     async def health_check(self) -> Any:
         """Stub health check — returns None (pass)."""

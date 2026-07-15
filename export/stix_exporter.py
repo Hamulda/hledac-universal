@@ -913,24 +913,20 @@ def _maybe_sign_bundle(bundle: dict[str, Any]) -> dict[str, Any]:
     Add ML-DSA-65 PQ signature to STIX bundle if backend available.
 
     GHOST_INVARIANTS: no asyncio.run() in async context.
-    Runs async PQ sign via asyncio.to_thread when called from sync render path.
+    P1-1: run_sync_async handles both running and non-running loop cases.
     """
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(_maybe_sign_bundle_async(bundle))
-    else:
-        from concurrent.futures import ThreadPoolExecutor
-        pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='pq_sign')
-        future = loop.run_in_executor(pool, _sync_pq_sign, bundle)
-        try:
-            return future.result()
-        finally:
-            pool.shutdown(wait=True)
+    from utils.sync_bridge import run_sync_async
+    return run_sync_async(_maybe_sign_bundle_async(bundle))
 
 def _sync_pq_sign(bundle: dict[str, Any]) -> dict[str, Any]:
-    """to_thread target — runs event loop in a separate thread."""
-    return asyncio.run(_maybe_sign_bundle_async(bundle))
+    """
+    to_thread target — runs async PQ sign in a separate thread.
+
+    P1-1 FIX: Replaced asyncio.run() with run_sync_async().
+    asyncio.run() inside run_in_executor thread is M1 Metal crash vector.
+    """
+    from utils.sync_bridge import run_sync_async
+    return run_sync_async(_maybe_sign_bundle_async(bundle))
 
 async def _maybe_sign_bundle_async(bundle: dict[str, Any]) -> dict[str, Any]:
     """

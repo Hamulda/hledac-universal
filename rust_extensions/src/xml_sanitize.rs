@@ -268,14 +268,14 @@ mod tests {
     #[test]
     fn test_sanitize_xml_fast_path() {
         let input = "<rss><channel><item><title>Test</title></item></channel></rss>";
-        let result = sanitize_xml(input);
+        let result = sanitize_xml_helper(input);
         assert_eq!(result, input);
     }
 
     #[test]
     fn test_sanitize_xml_doctype_removed() {
         let input = "<!DOCTYPE rss [<!ENTITY foo \"bar\">]><rss><channel><item><title>Test</title></item></channel></rss>";
-        let result = sanitize_xml(input);
+        let result = sanitize_xml_helper(input);
         assert!(!result.contains("<!DOCTYPE"));
         assert!(!result.contains("<!ENTITY"));
         assert!(result.contains("<rss>"));
@@ -284,7 +284,7 @@ mod tests {
     #[test]
     fn test_sanitize_xml_entity_only() {
         let input = "<?xml version=\"1.0\"?><!DOCTYPE foo [<!ENTITY bar \"baz\">]><foo/>";
-        let result = sanitize_xml(input);
+        let result = sanitize_xml_helper(input);
         assert!(result.contains("<?xml"));
         assert!(result.contains("<!DOCTYPE"));
         assert!(!result.contains("<!ENTITY bar"));
@@ -292,13 +292,13 @@ mod tests {
 
     #[test]
     fn test_sanitize_xml_empty() {
-        assert_eq!(sanitize_xml(""), "");
+        assert_eq!(sanitize_xml_helper(""), "");
     }
 
     #[test]
     fn test_sanitize_xml_oversized() {
         let input = "x".repeat(2 * MAX_INPUT_LEN);
-        let result = sanitize_xml(&input);
+        let result = sanitize_xml_helper(&input);
         assert!(result.is_empty());
     }
 
@@ -308,7 +308,7 @@ mod tests {
             "<rss><item><title>A</title></item></rss>".to_string(),
             "<!DOCTYPE rss><rss><item><title>B</title></item></rss>".to_string(),
         ];
-        let results = batch_sanitize_xml(items);
+        let results = items.iter().map(|s| sanitize_xml_helper(s)).collect::<Vec<_>>();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0], "<rss><item><title>A</title></item></rss>");
         assert!(!results[1].contains("<!DOCTYPE"));
@@ -330,7 +330,7 @@ mod tests {
     fn test_entity_internal_subset() {
         // Issue #1: ENTITY inside DOCTYPE internal subset — depth tracking required
         let input = "<!DOCTYPE rss [<!ENTITY foo \"bar\">]><rss><item>test</item></rss>";
-        let result = sanitize_xml(input);
+        let result = sanitize_xml_helper(input);
         // ENTITY must be stripped; DOCTYPE stripped; <rss> preserved
         assert!(!result.contains("<!ENTITY"), "ENTITY inside subset must be removed");
         assert!(!result.contains("<!DOCTYPE"), "DOCTYPE must be removed");
@@ -341,7 +341,7 @@ mod tests {
     fn test_entity_standalone_internal_subset() {
         // ENTITY with internal subset but no DOCTYPE wrapper
         let input = "<!ENTITY foo \"bar\"><foo/>";
-        let result = sanitize_xml(input);
+        let result = sanitize_xml_helper(input);
         assert!(!result.contains("<!ENTITY"), "ENTITY must be removed");
         assert!(result.contains("<foo/>"), "foo element must be preserved");
     }
@@ -350,7 +350,7 @@ mod tests {
     fn test_strip_entity_nested_brackets() {
         // Multiple nested brackets inside ENTITY
         let input = "<!ENTITY foo \"a[b[c]d]e\"><foo/>";
-        let result = sanitize_xml(input);
+        let result = sanitize_xml_helper(input);
         assert!(!result.contains("<!ENTITY"), "ENTITY must be removed");
         assert!(result.contains("<foo/>"), "foo element must be preserved");
     }

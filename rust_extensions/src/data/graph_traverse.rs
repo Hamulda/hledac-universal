@@ -17,7 +17,7 @@
 //!   G.T4  Parallel across values, NOT within a single traversal
 //!   G.T5  M1 8GB safe: thread-local connections, read_only, PRAGMA threads=1
 
-use crate::data::connection::{get_thread_connection, return_connection};
+use crate::data::connection::get_thread_connection;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyFloat, PyList, PyTuple, PyString};
 use rayon::iter::IntoParallelIterator;
@@ -82,7 +82,6 @@ fn traverse_single(db_path: &Path, root_value: &str, max_hops: usize) -> Vec<Tra
         Ok(s) => s,
         Err(e) => {
             eprintln!("[data/graph_traverse] prepare failed for root {}: {}", root_value, e);
-            return_connection(conn);
             return Vec::new();
         }
     };
@@ -100,12 +99,10 @@ fn traverse_single(db_path: &Path, root_value: &str, max_hops: usize) -> Vec<Tra
         Ok(m) => m.filter_map(|r| r.ok()).collect(),
         Err(e) => {
             eprintln!("[data/graph_traverse] query failed for root {}: {}", root_value, e);
-            return_connection(conn);
             return Vec::new()
         }
     };
 
-    return_connection(conn);
     mapped
 }
 
@@ -198,7 +195,6 @@ pub fn graph_stats(py: Python<'_>, db_path: String) -> PyResult<Py<PyDict>> {
         py_dict.set_item("duckdb_version", version)?;
     }
 
-    return_connection(conn);
     Ok(py_dict.into())
 }
 

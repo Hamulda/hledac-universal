@@ -68,7 +68,7 @@ from collections import OrderedDict
 from typing import Any
 from hledac.universal.core.resource_governor import ResourceGovernor
 from hledac.universal.dht.local_graph import LocalGraphStore
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok, safe_gather_fire_and_forget
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok, safe_gather_fire_and_forget, safe_wait_for
 logger = logging.getLogger(__name__)
 MAX_ITEM_BYTES = 256 * 1024
 MAX_PENDING_RPCS = 5000
@@ -76,10 +76,6 @@ MAX_PENDING_RPC_TTL_S = 60.0
 MAXCRAWLDEPTH = 3
 DHT_SNAPSHOT_EVERY_N = 50
 DHT_SNAPSHOT_KEY = b'routing_table_v1'
-logger = logging.getLogger(__name__)
-MAX_ITEM_BYTES = 256 * 1024
-MAX_PENDING_RPCS = 5000
-MAX_PENDING_RPC_TTL_S = 60.0
 DHT_REAL_UDP = os.getenv('HLEDAC_ENABLE_DHT', '').lower() in ('1', 'true', 'yes', 'on')
 MAX_DHT_PROBE_DURATION_S = 120
 DHT_BOOTSTRAP_TIMEOUT_S = 8.0
@@ -158,10 +154,7 @@ class _DHTBootstrapProtocol(asyncio.DatagramProtocol):
     @staticmethod
     def _bdecode(data: bytes) -> dict[str, Any] | None:
         """Minimal bencode decoder for DHT responses."""
-        try:
-            return _bdecode_fixed(data)
-        except Exception:
-            return None
+        return safe_bdecode(data)
 
 class BEP5UDPProtocol(asyncio.DatagramProtocol):
     """
@@ -286,52 +279,24 @@ def bdecode(data: bytes) -> Any:
     result, _ = _rec(data, 0)
     return result
 
-def _bdecode_fixed(data: bytes) -> dict[str, Any] | None:
+def safe_bdecode(data: bytes) -> dict[str, Any] | None:
     """
-    Module-level bencode decoder for use in _DHTBootstrapProtocol.
-    Mirrors KademliaNode._bdecode logic.
+    Single safe bencode decoder — wraps bdecode for protocol loop safety.
+
+    Replaces the former _bdecode_fixed. Used in datagram_received paths
+    where one malformed packet must never crash the protocol loop.
+
+    Returns None on any decoding error (ValueError, IndexError, KeyError).
+    Only returns a dict; lists/scalars are filtered out as invalid for
+    DHT message payloads.
     """
     try:
-
-        def _dec_rec(d: bytes, p: int) -> tuple[Any, int]:
-            if p >= len(d):
-                return (None, p)
-            ch = d[p:p + 1]
-            if ch == b'd':
-                res: dict[str, Any] = {}
-                p += 1
-                while p < len(d) and d[p:p + 1] != b'e':
-                    kk, p = _dec_rec(d, p)
-                    if kk is None:
-                        break
-                    vv, p = _dec_rec(d, p)
-                    res[str(kk)] = vv
-                return (res, p + 1 if p < len(d) else p)
-            elif ch == b'l':
-                lst: list[Any] = []
-                p += 1
-                while p < len(d) and d[p:p + 1] != b'e':
-                    itm, p = _dec_rec(d, p)
-                    if itm is None:
-                        break
-                    lst.append(itm)
-                return (lst, p + 1 if p < len(d) else p)
-            elif ch == b'i':
-                p += 1
-                end = d.index(b'e', p)
-                return (int(d[p:end]), end + 1)
-            elif ch.isdigit():
-                colon = d.index(b':', p)
-                ln = int(d[p:colon])
-                start = colon + 1
-                return (d[start:start + ln], start + ln)
-            return (None, p + 1)
-        result, _ = _dec_rec(data, 0)
+        result = bdecode(data)
         return result if isinstance(result, dict) else None
-    except Exception:
+    except (ValueError, IndexError, KeyError):
         return None
 
-async def crawl_dht_for_keyword(keyword: str, duration_s: int=120, max_results: int=100, store_results: bool=True) -> list[dict]:
+async def crawl_dht_for_keyword(keyword: str, duration_s: int=120, max_results: int=100) -> list[dict]:
     """
     Pasivní DHT crawl — zachytí info_hashes cirkulující sítí.
 
@@ -986,7 +951,6 @@ class KademliaNode:
                         resp, _src = result
                     else:
                         loop = asyncio.get_running_loop()
-                        sock = None
                         try:
                             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                             sock.settimeout(DHT_REQUEST_TIMEOUT_S)
@@ -1105,7 +1069,7 @@ class KademliaNode:
         results: list[dict] = []
         start_time = time.monotonic()
         seen_hashes: set[str] = set()
-        sock = None
+        sock: socket.socket | None = None  # type: ignore[assignment]
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.settimeout(2.0)

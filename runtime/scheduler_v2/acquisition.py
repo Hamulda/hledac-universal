@@ -53,6 +53,10 @@ class CycleResult(msgspec.Struct, frozen=True):
     feed_results: tuple = ()  # (ok, count)
     public_results: tuple = ()  # (ok, count, timeout)
     ct_results: tuple = ()  # (ok, count)
+    # P2-1: AIMD window telemetry — written by aggressive cycle for benchmark
+    aimd_window: float = 0.0  # AIMD window size at cycle end
+    aimd_successes: int = 0  # cumulative successes at cycle end
+    aimd_failures: int = 0  # cumulative failures at cycle end
     error: str | None = None
 
 
@@ -546,6 +550,7 @@ class AcquisitionOrchestrator:
 
         remaining_s = lifecycle.remaining_time() if lifecycle else 999.0
         _safety_floor = _config.effective_windup_lead_s
+        # P2-1: 5-branch TaskGroup — branch_timeout = remaining / 5 (was / 3)
         _branch_timeout = max((remaining_s - _safety_floor) / 3.0, 5.0)
 
         # P1-06: asyncio.TaskGroup (PEP 654) replaces create_task + gather.
@@ -569,6 +574,8 @@ class AcquisitionOrchestrator:
             # TaskGroup catches child exceptions and re-raises as ExceptionGroup.
             # At least one branch failed — count it as partial.
             _result.branch_timeout_count += 1
+            for _exc in _eg.exceptions:
+                _result.branch_errors = getattr(_result, "branch_errors", []) + [type(_exc).__name__]
 
         _feed_results = (
             _feed_tg.result(),
@@ -584,8 +591,15 @@ class AcquisitionOrchestrator:
         _ct_ok = _feed_results[2][0] if not isinstance(_feed_results[2], Exception) else False
         _ct_count = _feed_results[2][1] if not isinstance(_feed_results[2], Exception) else 0
 
-        if _public_timeout or _feed_results[1] and isinstance(_feed_results[1], Exception):
+        if _public_timeout or (_feed_results[1] and isinstance(_feed_results[1], Exception)):
             _result.branch_timeout_count += 1
+
+        # P2-1: AIMD telemetry — capture window + counters for benchmark
+        # Fetch from ctx._cycle if set by a previous run, else use FetchCoordinator
+        _aimd_telemetry = getattr(ctx._cycle, "_aimd_telemetry", None)
+        _aimd_window_val = getattr(_aimd_telemetry, "window", 0.0) if _aimd_telemetry else 0.0
+        _aimd_successes_val = getattr(_aimd_telemetry, "successes", 0) if _aimd_telemetry else 0
+        _aimd_failures_val = getattr(_aimd_telemetry, "failures", 0) if _aimd_telemetry else 0
 
         return CycleResult(
             cycle_ok=True,
@@ -593,6 +607,9 @@ class AcquisitionOrchestrator:
             feed_results=(_feed_ok, _feed_count),
             public_results=(_public_ok, _public_count, _public_timeout),
             ct_results=(_ct_ok, _ct_count),
+            aimd_window=_aimd_window_val,
+            aimd_successes=_aimd_successes_val,
+            aimd_failures=_aimd_failures_val,
         )
 
     # ── Aggressive branch helpers ─────────────────────────────────────────────
@@ -623,15 +640,37 @@ class AcquisitionOrchestrator:
         duckdb_store: Any,
         seed_ctx: Any,
         timeout_s: float,
+        aimd_controller: Any = None,
     ) -> tuple[bool, int, bool]:
+        """P2-1: AIMD wiring — on_success / on_failure called per branch."""
         try:
             async with asyncio.timeout(timeout_s):
                 _result = await self._run_public_branch(ctx, query, duckdb_store, seed_ctx)
-                return (_result.get("ok", False), _result.get("count", 0), False)
+                _ok = _result.get("ok", False)
+                _count = _result.get("count", 0)
+                if aimd_controller is not None:
+                    try:
+                        if _ok and _count > 0:
+                            await aimd_controller.on_success()
+                        else:
+                            await aimd_controller.on_failure("branch_empty")
+                    except Exception:
+                        pass  # fail-safe: AIMD errors never propagate
+                return (_ok, _count, False)
         except TimeoutError:
             ctx.result.branch_timeout_count += 1
+            if aimd_controller is not None:
+                try:
+                    await aimd_controller.on_failure("timeout")
+                except Exception:
+                    pass
             return (False, 0, True)
         except Exception:
+            if aimd_controller is not None:
+                try:
+                    await aimd_controller.on_failure("exception")
+                except Exception:
+                    pass
             return (False, 0, False)
 
     async def _run_ct_branch_aggressive(
@@ -641,14 +680,36 @@ class AcquisitionOrchestrator:
         duckdb_store: Any,
         seed_ctx: Any,
         timeout_s: float,
+        aimd_controller: Any = None,
     ) -> tuple[bool, int]:
+        """P2-1: AIMD wiring — on_success / on_failure called per branch."""
         try:
             async with asyncio.timeout(timeout_s):
                 _result = await self._run_ct_branch(ctx, query, duckdb_store, seed_ctx)
-                return (_result.get("ok", False), _result.get("count", 0))
+                _ok = _result.get("ok", False)
+                _count = _result.get("count", 0)
+                if aimd_controller is not None:
+                    try:
+                        if _ok and _count > 0:
+                            await aimd_controller.on_success()
+                        else:
+                            await aimd_controller.on_failure("branch_empty")
+                    except Exception:
+                        pass
+                return (_ok, _count)
         except TimeoutError:
+            if aimd_controller is not None:
+                try:
+                    await aimd_controller.on_failure("timeout")
+                except Exception:
+                    pass
             return (False, 0)
         except Exception:
+            if aimd_controller is not None:
+                try:
+                    await aimd_controller.on_failure("exception")
+                except Exception:
+                    pass
             return (False, 0)
 
     # ── Stub methods (to be extracted from v1) ────────────────────────────────

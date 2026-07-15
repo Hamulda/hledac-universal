@@ -126,7 +126,7 @@ fn fast_ioc_extract(text: &str) -> Vec<(String, String)> {
     // Release GIL for CPU-intensive regex scanning — allows Python threads to run.
     // Uses gil::release_gil() which probes allow_threads availability once
     // and caches the result (zero overhead in hot paths).
-    Python::attach(|py| release_gil(py, || scan_iocs(&text_owned)))
+    Python::with_gil(|py| release_gil(py, || scan_iocs(&text_owned)))
 }
 
 /// Alias for backwards compatibility.
@@ -165,7 +165,7 @@ pub fn batch_ioc_extract_fast<'py>(
         // Parallel path — mixed_pool (1-2 threads, P-core ceiling)
         // Issue #6: GIL released via `release_gil` to enable true rayon parallelism.
         let pool = crate::mixed_pool(n);
-        Ok(Python::attach(|py| {
+        Ok(Python::with_gil(|py| {
             release_gil(py, || {
                 pool.install(|| {
                     owned

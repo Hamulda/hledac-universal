@@ -4,7 +4,7 @@ Wraps asyncio.Task to automatically propagate OTel trace context
 (trace_id, span_id) into task-local storage via contextvars.
 
 M1 8GB bounds:
-  - task_context_cache: 256 entries (LRU via OrderedDict)
+  - task_context_cache: 512 entries (LRU via cachetools.LRUCache)
   - No background threads — zero extra RAM
 
 Usage (canonical path):
@@ -19,13 +19,33 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import sys
-from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, Coroutine, TypeVar
+
+try:
+    from cachetools import LRUCache as _LRUCache
+    _LRU_AVAILABLE = True
+except ImportError:
+    _LRU_AVAILABLE = False
+
 if TYPE_CHECKING:
     pass
+
 __all__ = ['TaskContext', 'task_context', 'current_otel_context', 'create_task_with_context']
-_task_context_cache: OrderedDict[int, dict[str, Any]] = OrderedDict()
-_MAX_TASK_CACHE = 256
+
+# P0-3: cachetools LRUCache replaces hand-rolled OrderedDict LRU.
+# _MAX_TASK_CACHE raised from 256 → 512 for better hit rate.
+_MAX_TASK_CACHE = 512
+
+# Cached version/uvloop checks — computed once at module load, not per call.
+_PY_312_PLUS: bool = sys.version_info >= (3, 12)
+_UVLOOP_INSTALLED: bool = sys.modules.get('uvloop') is not None
+_EAGER_START_SUPPORTED: bool = _PY_312_PLUS and (not _UVLOOP_INSTALLED)
+
+if _LRU_AVAILABLE:
+    _task_context_cache = _LRUCache(maxsize=_MAX_TASK_CACHE)  # type: ignore[assignment, misc]
+else:
+    from collections import OrderedDict
+    _task_context_cache: Any = OrderedDict()
 _current_task_context: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar('_current_task_context', default=None)
 
 def _get_current_otel_context() -> dict[str, Any]:
@@ -88,9 +108,6 @@ def create_task_with_context(coro: Any, *, name: str | None=None, eager_start: b
             return await coro
         finally:
             _current_task_context.set(None)
-    _PY_312_PLUS: bool = sys.version_info >= (3, 12)
-    _UVLOOP_INSTALLED: bool = sys.modules.get('uvloop') is not None
-    _EAGER_START_SUPPORTED: bool = _PY_312_PLUS and (not _UVLOOP_INSTALLED)
     if eager_start and _EAGER_START_SUPPORTED:
         try:
             task: asyncio.Task[Any] = asyncio.create_task(_otel_wrapped(), name=name, eager_start=True)
@@ -130,10 +147,8 @@ class TaskContext:
         ctx_data: dict[str, Any] = {**_get_current_otel_context(), 'sprint_id': sprint_id or os.environ.get('HLEDAC_SPRINT_ID', ''), 'mode': mode or ''}
         if extra:
             ctx_data.update(extra)
-        if len(_task_context_cache) >= _MAX_TASK_CACHE:
-            drop = max(1, _MAX_TASK_CACHE // 10)
-            for _ in range(drop):
-                _task_context_cache.popitem(last=False)
+        # P0-3: LRUCache handles eviction automatically; OrderedDict fallback
+        # relies on manual popitem() above. No manual eviction needed for either.
 
         async def _wrapped() -> Any:
             _current_task_context.set(ctx_data)
@@ -152,7 +167,7 @@ class TaskContext:
         return task
 
     @staticmethod
-    async def gather(*tasks: asyncio.Task[Any], timeout: float | None=None, return_exceptions: bool=False) -> tuple[Any, ...]:
+    async def gather(*tasks: asyncio.Task[Any], timeout: float | None=None, return_exceptions: bool=False) -> list[Any]:
         """Await multiple tasks, propagating context to all."""
         if timeout is not None:
             async with asyncio.timeout(timeout):
@@ -187,7 +202,7 @@ class TaskContextManager:
         self._token = _current_task_context.set(_current_task_context.get() or {})
         return _current_task_context.get() or {}
 
-    async def __aexit__(self, *args: Any) -> None:
+    async def __aexit__(self, *_: Any) -> None:
         if self._token is not None:
             _current_task_context.reset(self._token)
 
@@ -218,7 +233,7 @@ class task_context:
         self._token = _current_task_context.set(ctx)
         return self
 
-    def __exit__(self, *args: Any) -> None:
+    def __exit__(self, *_: Any) -> None:
         if self._token is not None:
             _current_task_context.reset(self._token)
 

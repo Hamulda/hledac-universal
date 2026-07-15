@@ -156,10 +156,22 @@ class PrefetchOracleIntegration:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            return asyncio.run(self.suggest_scores_async(work_items, current_cycle))
+            # No running loop — bridge to async via run_sync_async (M1 Metal safe).
+            from utils.sync_bridge import run_sync_async
+            return run_sync_async(self.suggest_scores_async(work_items, current_cycle))
         except Exception:
             return self._suggest_scores_sequential(work_items, current_cycle)
-        raise RuntimeError('suggest_scores() called from running event loop — use suggest_scores_async() directly instead')
+        # Running loop detected — delegate to async version via run_coroutine_threadsafe.
+        # This avoids M1 Metal crash that asyncio.run() would cause inside an existing loop.
+        try:
+            loop = asyncio.get_running_loop()
+            import asyncio as _asyncio
+            future = _asyncio.run_coroutine_threadsafe(
+                self.suggest_scores_async(work_items, current_cycle), loop
+            )
+            return future.result()
+        except Exception:
+            return self._suggest_scores_sequential(work_items, current_cycle)
 
     async def suggest_scores_async(self, work_items: list[Any], current_cycle: int=0) -> dict[str, float]:
         """
@@ -571,7 +583,8 @@ class PrefetchOracleIntegration:
             if conn is None:
                 return -1.0
             if self._duckdb_executor is None:
-                self._duckdb_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='oracle_duckdb')
+                from utils.domain_executors import get_duckdb_executor
+                self._duckdb_executor = get_duckdb_executor()
 
             def _query_sync() -> float:
                 """Blocking DuckDB query — runs in thread pool."""
@@ -608,7 +621,8 @@ class PrefetchOracleIntegration:
             if conn is None:
                 return {}
             if self._duckdb_executor is None:
-                self._duckdb_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='oracle_duckdb')
+                from utils.domain_executors import get_duckdb_executor
+                self._duckdb_executor = get_duckdb_executor()
 
             def _query_sync() -> dict[str, float]:
                 """Single blocking DuckDB query for all sources — runs in thread pool."""

@@ -320,7 +320,7 @@ impl AdaptiveChunkSizer {
 ///
 /// MBridge.1: mlx_lm is imported lazily inside Python, not in Rust
 #[pyclass(name = "MLXBridge")]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct MLXBridge {
     /// Engine reference (PyObject, stored as opaque reference).
     engine: Py<PyAny>,
@@ -336,9 +336,25 @@ pub struct MLXBridge {
     cancelled: bool,
 }
 
+// Manual Clone implementation because Py<PyAny> doesn't implement Clone automatically
+// Use Py::clone_ref which increments the underlying PyObject refcount
+impl Clone for MLXBridge {
+    fn clone(&self) -> Self {
+        Python::with_gil(|py| Self {
+            engine: Py::clone_ref(&self.engine, py),
+            tokenizer: Py::clone_ref(&self.tokenizer, py),
+            config: self.config.clone(),
+            sizer: self.sizer.clone(),
+            total_tokens: self.total_tokens,
+            cancelled: self.cancelled,
+        })
+    }
+}
+
 #[pymethods]
 impl MLXBridge {
     #[new]
+    #[pyo3(signature = (engine, tokenizer, config=None))]
     fn new(
         engine: Py<PyAny>,
         tokenizer: Py<PyAny>,
@@ -348,7 +364,7 @@ impl MLXBridge {
         Self {
             engine,
             tokenizer,
-            config: cfg,
+            config: cfg.clone(),
             sizer: AdaptiveChunkSizer::new(cfg.pressure_warning, cfg.pressure_critical),
             total_tokens: 0,
             cancelled: false,
@@ -410,22 +426,28 @@ impl MLXBridge {
         self.total_tokens += count;
     }
 
-    /// Get configuration.
-    fn get_config(&self) -> &MLXBridgeConfig {
-        &self.config
+    /// Get configuration as a dict.
+    fn get_config(&self, py: Python<'_>) -> Py<PyDict> {
+        let stats = PyDict::new(py);
+        stats.set_item("max_tokens", self.config.max_tokens).unwrap();
+        stats.set_item("temperature", self.config.temperature).unwrap();
+        stats.set_item("chunk_size", self.get_chunk_size()).unwrap();
+        stats.set_item("adaptive_chunk", self.config.adaptive_chunk).unwrap();
+        stats.set_item("stream_buffer_size", self.config.stream_buffer_size).unwrap();
+        stats.set_item("pressure_warning", self.config.pressure_warning).unwrap();
+        stats.set_item("pressure_critical", self.config.pressure_critical).unwrap();
+        stats.into()
     }
 
     /// Get streaming statistics as dict.
-    fn get_stats(&self) -> Py<PyDict> {
-        Python::with_gil(|py| {
-            let stats = PyDict::new(py);
-            stats.set_item("total_tokens", self.total_tokens).unwrap();
-            stats.set_item("cancelled", self.cancelled).unwrap();
-            stats.set_item("chunk_size", self.get_chunk_size()).unwrap();
-            stats.set_item("pressure", self.get_pressure()).unwrap();
-            stats.set_item("max_tokens", self.config.max_tokens).unwrap();
-            Py::new(py, stats).unwrap()
-        })
+    fn get_stats(&self, py: Python<'_>) -> Py<PyDict> {
+        let stats = PyDict::new(py);
+        stats.set_item("total_tokens", self.total_tokens).unwrap();
+        stats.set_item("cancelled", self.cancelled).unwrap();
+        stats.set_item("chunk_size", self.get_chunk_size()).unwrap();
+        stats.set_item("pressure", self.get_pressure()).unwrap();
+        stats.set_item("max_tokens", self.config.max_tokens).unwrap();
+        stats.into()
     }
 
     fn __repr__(&self) -> String {
@@ -455,7 +477,7 @@ pub fn batch_tokenize_(
     tokenizers: Vec<Py<PyAny>>,
     prompts: Vec<String>,
     add_special_tokens: bool,
-) -> PyResult<Py<PyList>> {
+) -> PyResult<Bound<'_, PyList>> {
     use rayon::prelude::*;
 
     if tokenizers.is_empty() || prompts.is_empty() {
@@ -467,52 +489,35 @@ pub fn batch_tokenize_(
         ));
     }
 
-    // Small batch: serialize to avoid overhead
-    if prompts.len() < 4 {
-        let results: PyResult<Vec<Py<PyList>>> = tokenizers
-            .iter()
-            .zip(prompts.iter())
-            .map(|(tok, p)| {
-                Python::with_gil(|py| {
-                    let tok_ref = tok.as_ref(py);
-                    let result = tok_ref.call_method1("encode", (p,))?;
-                    let ids: Vec<u32> = if result.is_instance_of::<PyList>() {
-                        result
-                            .extract::<Vec<u32>>()
-                            .unwrap_or_default()
-                    } else if result.is_instance_of::<PyTuple>() {
-                        result.extract::<Vec<u32>>().unwrap_or_default()
-                    } else {
-                        vec![]
-                    };
-                    PyList::new(py, &ids)
-                })
-            })
-            .collect();
-        return Ok(results?);
+    // Collect results into a Vec of Vec<u32> first, then create PyList
+    let mut results: Vec<Vec<u32>> = Vec::with_capacity(tokenizers.len());
+    for i in 0..tokenizers.len() {
+        let p = &prompts[i];
+        let ids: Vec<u32> = Python::with_gil(|py| {
+            // Clone the Py pointer so we can call into_bound without moving
+            let tok = Py::clone_ref(&tokenizers[i], py);
+            let tok_bound: Bound<'_, PyAny> = tok.into_bound(py);
+            let result = match tok_bound.call_method1("encode", (p,)) {
+                Ok(r) => r,
+                Err(_) => {
+                    return vec![];
+                }
+            };
+            let ids: Vec<u32> = if result.is_instance_of::<PyList>() {
+                result.extract::<Vec<u32>>().unwrap_or_default()
+            } else if result.is_instance_of::<PyTuple>() {
+                result.extract::<Vec<u32>>().unwrap_or_default()
+            } else {
+                vec![]
+            };
+            ids
+        });
+        results.push(ids);
     }
 
-    // Large batch: rayon parallel (CPU-bound)
-    let results: Vec<Py<PyList>> = (0..tokenizers.len())
-        .into_par_iter()
-        .map(|i| {
-            Python::with_gil(|py| {
-                let tok = tokenizers[i].as_ref(py);
-                let p = &prompts[i];
-                let result = tok.call_method1("encode", (p,)).unwrap();
-                let ids: Vec<u32> = if result.is_instance_of::<PyList>() {
-                    result.extract::<Vec<u32>>().unwrap_or_default()
-                } else if result.is_instance_of::<PyTuple>() {
-                    result.extract::<Vec<u32>>().unwrap_or_default()
-                } else {
-                    vec![]
-                };
-                PyList::new(py, &ids)
-            })
-        })
-        .collect();
-
-    Ok(PyList::new(py, &results))
+    // Build PyList from results
+    let py_list = PyList::new(py, &results)?;
+    Ok(py_list)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

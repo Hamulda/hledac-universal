@@ -139,28 +139,19 @@ mod neon_simd {
         if len < 4 || len % 4 != 0 {
             return Err(EmbeddingError::dimension_mismatch(4, len));
         }
-        // NOTE: alignment check removed — vld1q/vst1q on Apple Silicon support
-        // unaligned access. Caller routes to scalar fallback for unaligned data.
 
+        // Scalar implementation — 4 floats at a time
+        // SIMD vpaddq intrinsics have compatibility issues across Rust versions
         let chunks = len / 4;
         let mut dot: f32 = 0.0;
 
-        unsafe {
-            // ISSUE-FIX: vdotq_f32 requires dotprod target feature which may not be
-            // enabled by default on all aarch64 platforms. Use vmulq + vpaddq instead
-            // for equivalent fused multiply-add behavior.
-            for chunk in 0..chunks {
-                let idx = chunk * 4;
-                let va = core::arch::aarch64::vld1q_f32(a.as_ptr().add(idx));
-                let vb = core::arch::aarch64::vld1q_f32(b.as_ptr().add(idx));
-                // vmulq_f32 = element-wise multiply
-                // vpaddq_f32 = pairwise add (reduces 4 floats to 2)
-                // Two vpaddq gives us the full dot product
-                let mul = core::arch::aarch64::vmulq_f32(va, vb);
-                let sum1 = core::arch::aarch64::vpaddq_f32(mul);
-                let sum2 = core::arch::aarch64::vpaddq_f32(sum1);
-                dot += core::arch::aarch64::vgetq_lane_f32(sum2, 0);
+        for chunk in 0..chunks {
+            let idx = chunk * 4;
+            let mut chunk_dot: f32 = 0.0;
+            for i in 0..4 {
+                chunk_dot += a[idx + i] * b[idx + i];
             }
+            dot += chunk_dot;
         }
 
         Ok(dot)
@@ -724,7 +715,7 @@ mod tests {
         index.insert(1, vec![0.5_f32, 0.5, 0.5, 0.5]).unwrap();
         let result = index.insert(2, vec![0.9_f32, 0.1, 0.1]); // 3D vs 4D
         assert!(result.is_err());
-        let err = result.unwrap_err();
+        let err = result.as_ref().unwrap_err();
         assert_eq!(err.expected, 4);
         assert_eq!(err.actual, 3);
     }
@@ -736,7 +727,7 @@ mod tests {
         index.insert(1, vec![0.5_f32, 0.5, 0.5, 0.5]).unwrap();
         let result = index.search(&[0.9_f32, 0.1, 0.1], 2); // 3D query vs 4D index
         assert!(result.is_err());
-        let err = result.unwrap_err();
+        let err = result.as_ref().unwrap_err();
         assert_eq!(err.expected, 4);
         assert_eq!(err.actual, 3);
     }
@@ -756,8 +747,9 @@ mod tests {
         let mut vec = vec![1.0_f32, 2.0]; // len=2, too short for NEON
         let result = neon_simd::normalize_neon(&mut vec);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().expected, 4);
-        assert_eq!(result.unwrap_err().actual, 2);
+        let err = result.as_ref().unwrap_err();
+        assert_eq!(err.expected, 4);
+        assert_eq!(err.actual, 2);
     }
 
     // ISSUE-007: cosine_neon preconditions validated
@@ -767,8 +759,9 @@ mod tests {
         let b = vec![1.0_f32, 0.0, 0.0];
         let result = neon_simd::cosine_neon(&a, &b);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().expected, 4);
-        assert_eq!(result.unwrap_err().actual, 3);
+        let err = result.as_ref().unwrap_err();
+        assert_eq!(err.expected, 4);
+        assert_eq!(err.actual, 3);
     }
 
     #[test]

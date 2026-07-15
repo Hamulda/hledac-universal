@@ -129,6 +129,7 @@ archive/exports/*.json
 **/target/**
 **/.venv/**
 **/__pycache__/**
+!uv.lock
 **/*.lock
 **/*.pyc
 **/*.so

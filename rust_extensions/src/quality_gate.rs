@@ -29,6 +29,7 @@
 use blake2::digest::{Update, VariableOutput};
 use blake2::Blake2bVar;
 use pyo3::prelude::*;
+use pyo3::types::PyList;
 use regex::Regex;
 use std::fmt::Write as _;
 
@@ -333,8 +334,9 @@ fn blake2b_128_to_hex(result: &[u8]) -> String {
 // ---------------------------------------------------------------------------
 
 /// ISSUE-002: Input struct for batch quality assessment.
-///mirrors Python CanonicalFinding fields used by _assess_finding_quality_batch.
+/// mirrors Python CanonicalFinding fields used by _assess_finding_quality_batch.
 #[derive(Debug, Clone)]
+#[pyclass(get_all, set_all)]
 pub struct PyFindingInput {
     pub finding_id: String,
     pub source_type: String,
@@ -346,6 +348,7 @@ pub struct PyFindingInput {
 /// ISSUE-002: Output struct for batch quality assessment.
 /// Mirrors Python FindingQualityDecision.
 #[derive(Debug, Clone)]
+#[pyclass(get_all, set_all)]
 pub struct PyQualityDecision {
     pub accepted: bool,
     pub reason: Option<String>,
@@ -494,7 +497,7 @@ fn assess_single_finding(f: &PyFindingInput) -> PyQualityDecision {
     }
 
     // Short string check
-    if normalized_hash.len() < _QUALITY_MIN_ENTROPY_LEN && !is_high_conf_ioc {
+    if normalized_hash.len() < QUALITY_MIN_ENTROPY_LEN && !is_high_conf_ioc {
         return PyQualityDecision::short_string(entropy, normalized_hash, false);
     }
 
@@ -511,22 +514,27 @@ fn assess_single_finding(f: &PyFindingInput) -> PyQualityDecision {
 /// CPU-bound hot path: all computation (URL fp, entropy, dedup fp, normalization)
 /// is parallelized via Rayon across the shared cpu_pool.
 ///
-/// Returns Vec<PyQualityDecision> in same order as inputs.
+/// Returns PyList of PyQualityDecision in same order as inputs.
 ///
 /// Note: This function computes quality decisions WITHOUT accessing hot_cache or
 /// persistent dedup state (those are stateful and live on Python side).
 /// Python is responsible for deduplication checks after getting decisions from Rust.
 #[pyfunction]
-pub fn assess_findings_quality_batch(findings: Vec<PyFindingInput>) -> Vec<PyQualityDecision> {
+pub fn assess_findings_quality_batch(
+    py: Python<'_>,
+    findings: Vec<PyFindingInput>,
+) -> PyResult<Bound<'_, PyList>> {
     use rayon::prelude::*;
     let n = findings.len();
     if n == 0 {
-        return vec![];
+        return Ok(PyList::empty(py));
     }
     // cpu_pool: 4 threads for BLAKE2b SIMD-bound work
-    crate::cpu_pool().install(|| {
+    let results: Vec<PyQualityDecision> = crate::cpu_pool().install(|| {
         findings.par_iter().map(assess_single_finding).collect()
-    })
+    });
+    let list = PyList::new(py, results)?;
+    Ok(list)
 }
 
 // ---------------------------------------------------------------------------

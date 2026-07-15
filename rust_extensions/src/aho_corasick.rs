@@ -111,7 +111,7 @@ impl AhoCorasickMatcher {
         use crate::gil::release_gil;
         let n = texts.len();
         let pool = crate::mixed_pool(n);
-        Python::attach(|py| {
+        Python::with_gil(|py| {
             release_gil(py, || {
                 pool.install(|| {
                     texts.into_iter().map(|text| self.scan(&text)).collect()

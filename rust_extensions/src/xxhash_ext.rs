@@ -171,12 +171,16 @@ pub fn batch_xxh3_64_bytes<'py>(
 ) -> PyResult<Bound<'py, pyo3::types::PyList>> {
     let _n = validate_bytes_batch(&items, py)?;
 
-    // Collect bytes borrowed from Python heap — zero-copy access via PyBytes::as_bytes()
-    let bytes_slice: Vec<&[u8]> = items
-        .iter()
-        .filter_map(|item| item.cast::<PyBytes>().ok())
-        .map(|pb| pb.as_bytes())
-        .collect();
+    // Collect bytes owned by Rust - copy from Python heap since PyBytes references
+    // don't live long enough for rayon parallelism
+    let mut bytes_slice: Vec<Vec<u8>> = Vec::new();
+    for i in 0..items.len() {
+        if let Ok(item) = items.get_item(i) {
+            if let Ok(pb) = item.downcast::<PyBytes>() {
+                bytes_slice.push(pb.as_bytes().to_vec());
+            }
+        }
+    }
 
     let n = bytes_slice.len();
     let results: Vec<u64> = if n < XXHASH_ZC_PARALLEL_THRESHOLD {

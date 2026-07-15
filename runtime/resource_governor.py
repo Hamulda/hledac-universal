@@ -176,7 +176,7 @@ class M1ResourceGovernor:
         self._uma_state = 'ok'
         self._ema_branch_timeouts: float = 0.0
         self._branch_concurrency: int = 4
-        self._worker_adjust_queue: asyncio.Queue[int] = asyncio.Queue()
+        self._worker_adjust_queue: asyncio.Queue[int] = asyncio.Queue(maxsize=64)
         self._worker_adjust_task: asyncio.Task[None] | None = None
         self._current_workers: int = DEFAULT_FETCH_LIMIT
 
@@ -270,6 +270,26 @@ class M1ResourceGovernor:
         except Exception as exc:
             logger.debug('[Governor] adjust_fetch_workers failed: %s', exc)
 
+    def _try_enqueue_adjust(self, fetch_limit: int) -> None:
+        """
+        Enqueue fetch_limit adjustment with back-pressure on overflow.
+
+        P1-2 fix: asyncio.Queue(maxsize=64) replaces unbounded Queue().
+        On overflow put_nowait drops the message and logs a warning — the
+        governor's AIMD loop will eventually converge via the next evaluate()
+        call. This prevents unbounded queue growth during degraded/emergency
+        mode where evaluate() is called every 5s but _worker_adjust_consumer
+        may fall behind.
+        """
+        try:
+            self._worker_adjust_queue.put_nowait(fetch_limit)
+        except asyncio.QueueFull:
+            logger.warning(
+                '[Governor] adjust queue overflow (maxsize=64) — dropping '
+                'fetch_limit=%d. Consumer may lag; AIMD convergence via next cycle.',
+                fetch_limit,
+            )
+
     async def evaluate(self) -> GovernorDecision:
         """
         Evaluate governor decisions for the current cycle.
@@ -294,7 +314,7 @@ class M1ResourceGovernor:
         async with self._lock:
             decision = self._evaluate_locked()
         self._ensure_consumer_running()
-        self._worker_adjust_queue.put_nowait(decision.fetch_limit)
+        self._try_enqueue_adjust(decision.fetch_limit)
         return decision
 
     def _evaluate_locked(self) -> GovernorDecision:
@@ -410,7 +430,7 @@ class M1ResourceGovernor:
             decision = GovernorDecision(fetch_limit=base.fetch_limit, allow_renderer=base.allow_renderer, allow_model_load=base.allow_model_load, branch_concurrency=branch_concurrency, reason=reason, uma_state=base.uma_state, model_loaded=base.model_loaded, renderer_denied_count=base.renderer_denied_count, model_denied_count=base.model_denied_count, free_uma_gib=base.free_uma_gib, system_used_gib=base.system_used_gib, swap_detected=base.swap_detected)
             self._branch_concurrency = branch_concurrency
         self._ensure_consumer_running()
-        self._worker_adjust_queue.put_nowait(decision.fetch_limit)
+        self._try_enqueue_adjust(decision.fetch_limit)
         return decision
 
     def sidecar_admission(self, sidecar_name: str, estimated_mb: int=SIDECAR_DEFAULT_ESTIMATE_MB) -> SidecarAdmission:
@@ -656,7 +676,7 @@ class M1ResourceGovernor:
             if not decision.allow_model_load:
                 self._model_denied_count += 1
         self._ensure_consumer_running()
-        self._worker_adjust_queue.put_nowait(decision.fetch_limit)
+        self._try_enqueue_adjust(decision.fetch_limit)
 _governor: M1ResourceGovernor | None = None
 
 def get_governor() -> M1ResourceGovernor:

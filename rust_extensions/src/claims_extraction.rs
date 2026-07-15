@@ -267,7 +267,7 @@ pub fn batch_extract_claims_inner(
         // Parallel path via mixed_pool
         // Issue #6: GIL released so rayon workers can truly run in parallel.
         let pool = mixed_pool(n);
-        let results: Vec<Vec<Claim>> = Python::attach(|py| {
+        let results: Vec<Vec<Claim>> = Python::with_gil(|py| {
             release_gil(py, || {
                 pool.install(|| {
                     packets

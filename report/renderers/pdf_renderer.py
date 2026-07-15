@@ -76,7 +76,9 @@ class PDFRenderer:
                 f.write(html_content)
                 temp_path = f.name
             try:
-                result = asyncio.run(fetch_with_macos_webkit(f'file://{temp_path}', timeout_s=30.0))
+                # P1-1: asyncio.run() replaced with run_sync_async() — M1 Metal safe.
+                from utils.sync_bridge import run_sync_async
+                result = run_sync_async(fetch_with_macos_webkit(f'file://{temp_path}', timeout_s=30.0))
                 if result and result.content:
                     return result.content
             finally:

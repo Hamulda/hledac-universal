@@ -104,21 +104,69 @@ class NEREngine:
             logger.debug(f'mlx-gliner2 load failed: {e}')
             return False
 
-    def _mlx_gliner2_extract(self, text: str, labels: list[str]) -> list[dict]:
-        """Synchronní mlx-gliner2 inference na Metal GPU."""
+    def _mlx_gliner2_extract(self, text: str, labels: list[str], threshold: float=0.5) -> list[dict]:
+        """
+        Synchronní mlx-gliner2 inference na Metal GPU.
+
+        API SPRINT F320: mlx_gliner2.extract_entities vrací
+        List[Dict[str,Any]] s keys: text, label, score, start, end.
+        Starý dict-of-lists format (result.items()) je zastaralý.
+        """
         if self._mlx_gliner2_extractor is None:
             return []
         try:
-            result = self._mlx_gliner2_extractor.extract_entities(text, labels)
+            # SPRINT F320: správný API — List[Dict] s text/label/score/start/end
+            result: list[dict] = self._mlx_gliner2_extractor.extract_entities(
+                text, labels, threshold=threshold, include_confidence=True, include_spans=True
+            )
             entities = []
-            for label_name, entity_texts in result.items():
-                if isinstance(entity_texts, list):
-                    for entity_text in entity_texts:
-                        entities.append({'entity': entity_text, 'label': label_name, 'span': (0, 0), 'score': 0.9})
+            for item in result:
+                if isinstance(item, dict):
+                    entities.append({
+                        'entity': item.get('text', ''),
+                        'label': item.get('label', ''),
+                        'span': (item.get('start', 0), item.get('end', 0)),
+                        'score': item.get('score', 0.9),
+                    })
             return entities
         except Exception as e:
             logger.warning(f'mlx-gliner2 extraction failed: {e}')
             return []
+
+    def _mlx_gliner2_extract_batch(
+        self, texts: list[str], labels: list[str], threshold: float=0.5, batch_size: int=8
+    ) -> list[list[dict]]:
+        """
+        Batch mlx-gliner2 inference na Metal GPU.
+
+        SPRINT F320: používá batch_extract_entities místo per-text loop.
+        Výrazně rychlejší na M1 unified memory (paralelizace přes Metal).
+        """
+        if self._mlx_gliner2_extractor is None:
+            return [[] for _ in texts]
+        try:
+            # SPRINT F320: batch API — jeden Metal kernel pro celý batch
+            results: list[list[dict]] = self._mlx_gliner2_extractor.batch_extract_entities(
+                texts, labels, threshold=threshold, batch_size=batch_size,
+                include_confidence=True, include_spans=True
+            )
+            # Normalizace na stejný formát jako _mlx_gliner2_extract
+            normalized: list[list[dict]] = []
+            for batch_result in results:
+                batch_entities: list[dict] = []
+                for item in batch_result:
+                    if isinstance(item, dict):
+                        batch_entities.append({
+                            'entity': item.get('text', ''),
+                            'label': item.get('label', ''),
+                            'span': (item.get('start', 0), item.get('end', 0)),
+                            'score': item.get('score', 0.9),
+                        })
+                normalized.append(batch_entities)
+            return normalized
+        except Exception as e:
+            logger.warning(f'mlx-gliner2 batch extraction failed: {e}')
+            return [[] for _ in texts]
 
     async def _load_coreml_model(self):
         """Lazy load CoreML NER model (běží na ANE)."""
@@ -293,7 +341,7 @@ n        Pokud je model již načten, nic nedělá.
         if self._mlx_gliner2_extractor is None:
             await self._load_mlx_gliner2()
         if self._mlx_gliner2_available and self._mlx_gliner2_extractor is not None:
-            return await asyncio.to_thread(self._mlx_gliner2_extract, text, labels)
+            return await asyncio.to_thread(self._mlx_gliner2_extract, text, labels, threshold)
         if self._nl_available:
             return await asyncio.to_thread(self._nl_process_sync, text)
         if self._coreml_ner_model is None:
@@ -352,7 +400,7 @@ n        Pokud je model již načten, nic nedělá.
         if not texts:
             return []
         if not labels:
-            raise ValueError('Musí být zadán alespoň jeden label')
+            return [[] for _ in texts]
         results = []
         for text in texts:
             try:
@@ -365,17 +413,28 @@ n        Pokud je model již načten, nic nedělá.
 
     async def predict_batch_async(self, texts: list[str], labels: list[str], threshold: float=0.5, batch_size: int=8) -> list[list[dict[str, Any]]]:
         """
-        Asynchronní batch predikce.
+        Asynchronní batch predikce — MLX batch-first.
+
+        Sprint F320: pokud je mlx_gliner2 dostupný, použije batch_extract_entities
+        (paralelizace přes Metal). Jinak fallback na serial predict_batch.
 
         Args:
             texts: Seznam vstupních textů
             labels: Seznam labelů pro extrakci
             threshold: Minimální confidence score
-            batch_size: Velikost batch
+            batch_size: Velikost batch pro MLX
 
         Returns:
             list[list[dict]]: Seznam výsledků pro každý text
         """
+        if self._mlx_gliner2_extractor is None:
+            await self._load_mlx_gliner2()
+        if self._mlx_gliner2_available and self._mlx_gliner2_extractor is not None:
+            # SPRINT F320: MLX batch path — paralelní Metal inference
+            return await asyncio.to_thread(
+                self._mlx_gliner2_extract_batch, texts, labels, threshold, batch_size
+            )
+        # Fallback: serial per-text inference
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, partial(self.predict_batch, texts, labels, threshold, batch_size))
 

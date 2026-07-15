@@ -1409,7 +1409,6 @@ dependencies = [
     { name = "aiosqlite" },
     { name = "beautifulsoup4" },
     { name = "brotlicffi" },
-    { name = "cachetools" },
     { name = "cloudscraper" },
     { name = "coremltools" },
     { name = "cryptography" },
@@ -1433,7 +1432,6 @@ dependencies = [
     { name = "liboqs-python", marker = "platform_machine == 'arm64'" },
     { name = "lightgbm" },
     { name = "lmdb" },
-    { name = "logfire" },
     { name = "lxml" },
     { name = "lz4" },
     { name = "markdown-it-py" },
@@ -1448,12 +1446,6 @@ dependencies = [
     { name = "numpy" },
     { name = "ocrmac", marker = "sys_platform == 'darwin'" },
     { name = "onnxscript" },
-    { name = "opentelemetry-api" },
-    { name = "opentelemetry-exporter-otlp-proto-http" },
-    { name = "opentelemetry-instrumentation-aio-pika" },
-    { name = "opentelemetry-instrumentation-asyncpg" },
-    { name = "opentelemetry-instrumentation-httpx" },
-    { name = "opentelemetry-sdk" },
     { name = "orjson" },
     { name = "piexif" },
     { name = "pillow" },
@@ -1484,7 +1476,6 @@ dependencies = [
     { name = "pyzipper" },
     { name = "rank-bm25" },
     { name = "rapidfuzz" },
-    { name = "roampal" },
     { name = "rustworkx" },
     { name = "scapy" },
     { name = "scikit-learn" },
@@ -1494,7 +1485,6 @@ dependencies = [
     { name = "sqlite-vec" },
     { name = "stem" },
     { name = "stix2" },
-    { name = "structlog" },
     { name = "tenacity" },
     { name = "transformers" },
     { name = "usearch" },
@@ -1515,9 +1505,6 @@ http3 = [
     { name = "aioquic" },
     { name = "cryptography" },
 ]
-logfire-local = [
-    { name = "logfire" },
-]
 ml = [
     { name = "dspy" },
     { name = "flashrank" },
@@ -1530,9 +1517,18 @@ mlx-embed = [
 ]
 observability = [
     { name = "memray" },
+    { name = "py-spy" },
+]
+otel = [
+    { name = "cachetools" },
+    { name = "logfire" },
+    { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-instrumentation-aio-pika" },
-    { name = "py-spy" },
+    { name = "opentelemetry-instrumentation-asyncpg" },
+    { name = "opentelemetry-instrumentation-httpx" },
+    { name = "opentelemetry-sdk" },
+    { name = "roampal" },
     { name = "structlog" },
 ]
 
@@ -1573,7 +1569,7 @@ requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20.0" },
     { name = "beautifulsoup4", specifier = ">=4.14.3" },
     { name = "brotlicffi", specifier = ">=1.2.0.1" },
-    { name = "cachetools", specifier = ">=7.1.4" },
+    { name = "cachetools", marker = "extra == 'otel'", specifier = ">=7.1.4" },
     { name = "cloudscraper", specifier = ">=1.2.71" },
     { name = "coremltools", specifier = ">=8.0,<10.0" },
     { name = "cryptography", specifier = ">=48.0.0" },
@@ -1600,8 +1596,7 @@ requires-dist = [
     { name = "liboqs-python", marker = "platform_machine == 'arm64'", specifier = ">=0.15.0" },
     { name = "lightgbm", specifier = ">=4.6.0" },
     { name = "lmdb", specifier = ">=2.2.0" },
-    { name = "logfire", marker = "extra == 'logfire-local'", specifier = ">=2.0.0" },
-    { name = "logfire", extras = ["observability"], specifier = ">=2.0.0" },
+    { name = "logfire", extras = ["observability"], marker = "extra == 'otel'", specifier = ">=2.0.0" },
     { name = "lxml", specifier = ">=6.1.1" },
     { name = "lz4" },
     { name = "markdown-it-py", specifier = ">=3.0.0" },
@@ -1619,14 +1614,12 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.4.6" },
     { name = "ocrmac", marker = "sys_platform == 'darwin'", specifier = ">=1.0.1" },
     { name = "onnxscript", specifier = ">=0.7.0" },
-    { name = "opentelemetry-api", specifier = ">=1.27.0,<2.0.0" },
-    { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.27.0" },
-    { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'observability'", specifier = ">=1.27.0" },
-    { name = "opentelemetry-instrumentation-aio-pika", marker = "extra == 'observability'", specifier = ">=0.47b0" },
-    { name = "opentelemetry-instrumentation-aio-pika", extras = ["observability"], specifier = ">=0.47b0" },
-    { name = "opentelemetry-instrumentation-asyncpg", extras = ["observability"], specifier = ">=0.47b0" },
-    { name = "opentelemetry-instrumentation-httpx", specifier = ">=0.47b0" },
-    { name = "opentelemetry-sdk", specifier = ">=1.27.0,<2.0.0" },
+    { name = "opentelemetry-api", marker = "extra == 'otel'", specifier = ">=1.27.0,<2.0.0" },
+    { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'otel'", specifier = ">=1.27.0" },
+    { name = "opentelemetry-instrumentation-aio-pika", extras = ["observability"], marker = "extra == 'otel'", specifier = ">=0.47b0" },
+    { name = "opentelemetry-instrumentation-asyncpg", extras = ["observability"], marker = "extra == 'otel'", specifier = ">=0.47b0" },
+    { name = "opentelemetry-instrumentation-httpx", marker = "extra == 'otel'", specifier = ">=0.47b0" },
+    { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.27.0,<2.0.0" },
     { name = "orjson", specifier = ">=3.10.0" },
     { name = "outlines", marker = "extra == 'ml'", specifier = ">=1.3.0" },
     { name = "piexif" },
@@ -1659,7 +1652,7 @@ requires-dist = [
     { name = "pyzipper", specifier = ">=0.3.6" },
     { name = "rank-bm25", specifier = ">=0.2.2" },
     { name = "rapidfuzz", specifier = ">=3.0.0" },
-    { name = "roampal", specifier = ">=0.5.7" },
+    { name = "roampal", marker = "extra == 'otel'", specifier = ">=0.5.7" },
     { name = "rustworkx", specifier = ">=0.17.1,<0.20.0" },
     { name = "scapy", specifier = ">=2.5.0" },
     { name = "scikit-learn", specifier = ">=1.9.0" },
@@ -1669,8 +1662,7 @@ requires-dist = [
     { name = "sqlite-vec", specifier = ">=0.1.0" },
     { name = "stem", specifier = ">=1.8.0" },
     { name = "stix2", specifier = ">=3.0.1" },
-    { name = "structlog", specifier = ">=24.0.0,<25.0.0" },
-    { name = "structlog", marker = "extra == 'observability'", specifier = ">=24.0.0,<25.0.0" },
+    { name = "structlog", marker = "extra == 'otel'", specifier = ">=24.0.0,<25.0.0" },
     { name = "tenacity", specifier = ">=9.0.0" },
     { name = "transformers", specifier = ">=4.30" },
     { name = "transformers", marker = "extra == 'ml'", specifier = ">=5.10.2" },
@@ -1683,7 +1675,7 @@ requires-dist = [
     { name = "zeroconf" },
     { name = "zstandard", specifier = ">=0.25.0" },
 ]
-provides-extras = ["observability", "logfire-local", "aiohttp-fallback", "ml", "mlx-embed", "http3", "m1-local", "nogil"]
+provides-extras = ["otel", "observability", "aiohttp-fallback", "ml", "mlx-embed", "http3", "m1-local", "nogil"]
 
 [package.metadata.requires-dev]
 dev = [

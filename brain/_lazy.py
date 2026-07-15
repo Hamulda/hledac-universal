@@ -32,9 +32,9 @@ this module — use ModelManager instead.
 """
 
 from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.cache import PyCacheDict
 
 import asyncio
-import functools
 import gc
 import logging
 import threading
@@ -385,16 +385,34 @@ def _make_lazy_registry() -> dict[str, LazyModel]:
     }
 
 
-@functools.lru_cache(maxsize=None)
-def _get_registry() -> dict[str, LazyModel]:
-    """Thread-safe registry via lru_cache — init-once, cached forever.
+# P1-2: Replace unbounded lru_cache(maxsize=None) with bounded PyCacheDict.
+# PyCacheDict provides: bounded LRU + TTL (600s) + thread-safe OrderedDict.
+# Thread-safety: PyCacheDict holds threading.RLock internally.
+# Registry is small (7 entries), TTL of 600s matches longest model TTL (ane:600s).
+# lru_cache(maxsize=None) would grow unbounded over 24h sprint → M1 swap.
+_registry_lock = threading.Lock()
+_registry_cache: "PyCacheDict[None, dict[str, LazyModel]]" = PyCacheDict(2, 600.0)
 
-    lru_cache guarantees:
-    - Called exactly once (first call populates cache)
-    - Subsequent calls return cached result (no re-init)
-    - Thread-safe: CPython's lru_cache uses a lock internally
+
+def _get_registry() -> dict[str, LazyModel]:
+    """Thread-safe registry via PyCacheDict — init-once, cached 600s.
+
+    Double-checked locking pattern:
+    - Fast path: cache hit (no lock acquired)
+    - Slow path: cache miss → lock → double-check → init → cache
+    Thread-safe: PyCacheDict holds threading.RLock; DCLP prevents re-init.
     """
-    return _make_lazy_registry()
+    cached = _registry_cache.get(None)
+    if cached is not None:
+        return cached
+    with _registry_lock:
+        # DCLP: another thread may have populated while we waited for the lock
+        cached = _registry_cache.get(None)
+        if cached is not None:
+            return cached
+        registry = _make_lazy_registry()
+        _registry_cache.set(None, registry)
+        return registry
 
 
 async def get(name: str, *, findings_count: int = 0) -> Any:

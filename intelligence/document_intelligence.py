@@ -20,6 +20,7 @@ M1 Optimized: Streaming processing, MLX-accelerated where possible
 """
 import asyncio
 import concurrent.futures
+from utils.domain_executors import get_parallel_executor
 import hashlib
 import io
 import logging
@@ -772,7 +773,7 @@ class DeepForensicsAnalyzer:
         self._stegdetect_path = Path.home() / '.hledac' / 'bin' / 'stegdetect'
         self._stegdetect_server = StegdetectServer()
         # ThreadPool for short-lived sync CPU work (not CPU-bound image analysis)
-        self._thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix='forensics_short')
+        self._thread_pool = get_parallel_executor()  # noqa: F811 — reused pool, intentional
 
     async def _ensure_stegdetect(self):
         """Compile and install stegdetect if missing."""

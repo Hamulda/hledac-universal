@@ -524,13 +524,13 @@ pub fn build_findings_from_iocs<'py>(
             continue;
         }
 
-        // Python sends (ioc_value, ioc_type) — index 0 is VALUE, index 1 is TYPE
-        let value = match tuple[0].str() {
+        // Python sends (ioc_value, ioc_type) — use get_item instead of indexing
+        let value = match tuple.get_item(0)?.str() {
             Ok(s) => s.to_string_lossy().into_owned(),
             Err(_) => continue,
         };
 
-        let ioc_type = match tuple[1].str() {
+        let ioc_type = match tuple.get_item(1)?.str() {
             Ok(s) => s.to_string_lossy().into_owned(),
             Err(_) => continue,
         };

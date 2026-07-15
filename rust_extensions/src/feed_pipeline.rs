@@ -8,9 +8,6 @@ use std::collections::HashSet;
 use xml::reader::{EventReader, XmlEvent};
 use xxhash_rust::xxh3::xxh3_64;
 
-#[cfg(test)]
-use xxhash_rust::xxh3::xxh3_64;
-
 #[derive(Debug, Clone)]
 struct FeedEntryRaw {
     title: String,
@@ -131,9 +128,6 @@ fn scan_text(automaton: &AhoCorasick, patterns: &[String], text: &str, labels: &
     }
     hits
 }
-
-#[cfg(test)]
-use xxhash_rust::xxh3::xxh3_64;
 
 fn simple_hash(s: &str) -> u64 {
     xxh3_64(s.as_bytes())

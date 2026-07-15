@@ -399,7 +399,8 @@ class DNSTunnelDetector:
             Confidence score (0-1, higher = more likely tunneling)
         """
         if self._mlx_executor is None:
-            self._mlx_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix='dns_mlx')
+            from utils.domain_executors import get_dns_executor
+            self._mlx_executor = get_dns_executor()
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self._mlx_executor, self._lstm_validate_sync, query)
 

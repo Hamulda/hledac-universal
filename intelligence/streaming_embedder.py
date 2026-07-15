@@ -1,6 +1,8 @@
 """
 Sprint F203I — Streaming Embedder for M1 8GB Memory Safety
 ISSUE #022: Pipeline parallelization — concurrent batch embedding.
+ISSUE #016: Replace raw asyncio.create_task + asyncio.wait with safe_create_task
+            + asyncio.wait_for timeout for OTel trace propagation.
 
 ROLE: Chunked async embedding pipeline that yields batches incrementally,
 reducing peak RSS during embedding phases. Designed for M1 8GB UMA.
@@ -15,6 +17,13 @@ ISSUE #022 FIXES:
 3. RAYON TEXT NORM: Optional bulk text normalization via pipeline_compose
    (Rust rayon, nlp pool) for pre-processing before embed.
 
+ISSUE #016 FIXES:
+4. SAFE CREATE_TASK: safe_create_task propagates OTel trace context (trace_id,
+   span_id) into child tasks via contextvars — distributed tracing works.
+5. WAIT_TIMEOUT: asyncio.wait_for(pending.wait(), timeout=300.0) hard-caps
+   each batch wait at 5 min — prevents Metal pipeline stalls from growing
+   the pending set indefinitely on M1 8GB.
+
 API:
     class StreamingEmbedder:
         async def embed_findings(
@@ -27,6 +36,7 @@ BOUNDS:
     MAX_EMBEDDING_BATCH = 16       # batch_size ceiling
     MAX_TEXT_BYTES_PER_FINDING = 4096  # text truncation before embed
     CONCURRENT_BATCHES = 2         # max concurrent GPU batches (M1 Metal safe)
+    _BATCH_WAIT_TIMEOUT = 300.0   # 5 min hard cap per batch wait (ISSUE #016)
 
 GUARDRAILS:
     - Model lifecycle via brain.model_lifecycle.get_model_lifecycle_status() only
@@ -57,6 +67,7 @@ from hledac.universal.runtime.worker_pool import run_in_pool
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+    from hledac.universal.utils.async_helpers import safe_create_task
 
 logger = logging.getLogger(__name__)
 
@@ -100,19 +111,19 @@ def _sync_extract_texts(
 
 def _try_rust_text_norm(texts: list[str]) -> list[str] | None:
     """
-    ISSUE #022: Try Rust rayon text normalization pipeline.
-
-    Uses pipeline_compose two-stage: NFC normalize + strip diacritics.
+    ISSUE #022 FIX: Use Rust batch_nfc_normalize directly.
+    Previously used pipeline_compose_two("nfc_normalize", "passthrough") which silently
+    dropped all items because "nfc_normalize" was never a registered stage name in
+    pipeline_compose_two (only "len", "lower", "upper", "strip", "hash_xxh3", "hash_xxh3_hex").
     Falls back to original texts on any error (fail-safe, always-on).
     Returns None if Rust pipeline unavailable.
     """
     try:
-        from hledac_rust_extensions import pipeline_compose_two
+        from hledac_rust_extensions import batch_nfc_normalize
 
-        # Stage1: NFC normalize (text normalization)
-        # Stage2: passthrough (no-op — diacritics strip as separate prepass if needed)
-        result = pipeline_compose_two(texts, "nfc_normalize", "passthrough")
-        # pipeline_compose_two returns list[str] or raises
+        # Direct NFC normalization via rayon — batch_nfc_normalize is the correct
+        # Rust entry point for Unicode NFC normalization (text_norm.rs).
+        result = batch_nfc_normalize(texts)
         if result and len(result) == len(texts):
             return result
         return None
@@ -370,8 +381,9 @@ class StreamingEmbedder:
                 chunk_ids = all_ids[start:end]
                 chunk_texts = norm_texts[start:end]
 
-                task = asyncio.create_task(
+                task = safe_create_task(
                     self._embed_single_batch(chunk_ids, chunk_texts),
+                    name=f"streaming_embed.batch_{chunk_idx}",
                 )
                 pending.add(task)
                 chunk_idx += 1
@@ -380,9 +392,32 @@ class StreamingEmbedder:
                 break
 
             # Wait for at least one to complete
-            done, pending = await asyncio.wait(
-                pending, return_when=asyncio.FIRST_COMPLETED
-            )
+            # ISSUE #016 (CRITICAL): asyncio.wait_for timeout prevents indefinite
+            # growth of pending set when a batch stalls (e.g. Metal pipeline stall
+            # on M1). However, when timeout fires, asyncio.wait() is cancelled and
+            # all its tracked tasks get CancelledError — they land in the done set
+            # returned by asyncio.wait() BUT our code never awaits them, causing
+            # a resource leak. We must explicitly await the done set on timeout.
+            # Uses asyncio.FIRST_COMPLETED — wait_for is the async timeout wrapper.
+            try:
+                done, pending = await asyncio.wait_for(
+                    asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED),
+                    timeout=300.0,  # 5 min hard cap per batch (ISSUE #016)
+                )
+            except asyncio.TimeoutError:
+                # ISSUE #016 CRITICAL FIX: timeout fired — awaiting the done set
+                # (cancelled tasks) is required to clean up Task callbacks and
+                # prevent resource leak. Then cancel any stragglers in pending.
+                for t in done:
+                    try:
+                        await t
+                    except asyncio.CancelledError:
+                        pass
+                for t in pending:
+                    t.cancel()
+                if pending:
+                    await asyncio.wait(pending, return_when=asyncio.ALL_COMPLETED)
+                raise
 
             for completed in done:
                 try:
@@ -451,21 +486,62 @@ class StreamingEmbedder:
         if norm_texts is None:
             norm_texts = all_texts
 
-        # Chunk and yield
+        # ISSUE #016 (HIGH): Fallback uses serial loop — refactor to concurrent
+        # pattern for consistency with _embed_concurrent. Safe to use
+        # safe_create_task here too for trace context.
+        chunks: list[tuple[int, int]] = []
         for i in range(0, len(norm_texts), batch_size):
-            if self._abort:
-                break
-            chunk_ids = all_ids[i:i + batch_size]
-            chunk_texts = norm_texts[i:i + batch_size]
+            chunks.append((i, min(i + batch_size, len(norm_texts))))
 
-            embeddings = await run_in_pool(
-                "cpu",
-                _sync_embed_batch,
-                chunk_texts,
-                len(chunk_texts),
-            )
-            if embeddings and len(chunk_ids) == len(embeddings):
-                yield (chunk_ids, embeddings)
+        pending: set[asyncio.Task[tuple[list[str], np.ndarray]]] = set()
+        chunk_idx: int = 0
+
+        while chunk_idx < len(chunks) or pending:
+            if self._abort:
+                for t in pending:
+                    t.cancel()
+                break
+
+            while len(pending) < CONCURRENT_BATCHES and chunk_idx < len(chunks):
+                start, end = chunks[chunk_idx]
+                chunk_ids = all_ids[start:end]
+                chunk_texts = norm_texts[start:end]
+
+                from hledac.universal.utils.async_helpers import safe_create_task
+                task = safe_create_task(
+                    self._embed_single_batch(chunk_ids, chunk_texts),
+                    name=f"streaming_embed.fallback_batch_{chunk_idx}",
+                )
+                pending.add(task)
+                chunk_idx += 1
+
+            if not pending:
+                break
+
+            try:
+                done, pending = await asyncio.wait_for(
+                    asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED),
+                    timeout=300.0,
+                )
+            except asyncio.TimeoutError:
+                for t in done:
+                    try:
+                        await t
+                    except asyncio.CancelledError:
+                        pass
+                for t in pending:
+                    t.cancel()
+                if pending:
+                    await asyncio.wait(pending, return_when=asyncio.ALL_COMPLETED)
+                raise
+
+            for completed in done:
+                try:
+                    ids, embs = await completed
+                    if ids and embs is not None and len(embs) == len(ids):
+                        yield (ids, embs)
+                except Exception as e:
+                    logger.debug(f"[StreamingEmbed] fallback batch error: {e}")
 
     # -------------------------------------------------------------------------
     # Backward-compat: serial path (used by _embed_fallback above)
@@ -479,51 +555,18 @@ class StreamingEmbedder:
         """
         Serial chunked embedder — DEPRECATED, use _embed_concurrent.
 
-        Kept for backward compatibility with callers that pass pre-extracted
-        chunks directly. Prefer _embed_concurrent for new code.
+        ISSUE #016 CLEANUP: Kept for backward compatibility only.
         """
-        for i in range(0, len(findings), batch_size):
-            if self._abort:
-                logger.debug("[StreamingEmbed] aborting due to prior memory pressure")
-                break
-            chunk = findings[i:i + batch_size]
-            try:
-                ids, embs = await self._embed_batch(chunk)
-                if ids and embs is not None and len(embs) == len(ids):
-                    yield (ids, embs)
-            except Exception as e:
-                logger.debug(f"[StreamingEmbed] batch error at offset {i}: {e}")
-                continue
-
-            self._sample_counter += 1
-            if self._sample_counter >= _SAMPLE_INTERVAL:
-                self._sample_counter = 0
-                self._abort = not self._ram_guard_ok()
-                if self._abort:
-                    logger.warning(
-                        "[StreamingEmbed] memory pressure detected, will abort after remaining batches"
-                    )
-
-    async def _embed_batch(
-        self,
-        findings: list[CanonicalFinding],
-    ) -> tuple[list[str], np.ndarray]:
-        """Embed a single batch of findings in thread executor."""
-        texts: list[str] = []
-        ids: list[str] = []
-
-        for f in findings:
-            text = self._extract_text(f)
-            texts.append(text)
-            ids.append(f.finding_id)
-
-        loop = asyncio.get_running_loop()
-        from utils.domain_executors import get_domain_executors
-        domain_executors = get_domain_executors()
-        embeddings = await loop.run_in_executor(
-            domain_executors.embed, _sync_embed_batch, texts, len(texts)
+        import warnings
+        warnings.warn(
+            "_embed_chunked is deprecated and will be removed. "
+            "Use _embed_concurrent instead.",
+            DeprecationWarning,
+            stacklevel=2,
         )
-        return (ids, embeddings)
+        # Delegate to the current implementation
+        async for batch in self._embed_concurrent(findings, batch_size):
+            yield batch
 
     # -------------------------------------------------------------------------
     # Text extraction

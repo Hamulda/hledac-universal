@@ -541,7 +541,7 @@ pub fn batch_topk_indices(
     // ISSUE-063: release GIL during rayon parallel top-K — rayon workers block
     // the GIL without this, defeating Q-way parallelism.
     let chunk_size = num_candidates;
-    let results: Vec<(Vec<usize>, Vec<f32>)> = Python::attach(|py| {
+    let results: Vec<(Vec<usize>, Vec<f32>)> = Python::with_gil(|py| {
         release_gil(py, || {
             (0..num_queries)
                 .into_par_iter()
@@ -884,7 +884,7 @@ pub fn batch_cosine_scores_npy(
     // ISSUE-063: release GIL during rayon par_chunks normalization so rayon
     // workers don't block the GIL. The closure is Send + FnOnce (normalize
     // is pure), safe to run without GIL.
-    Python::attach(|py| {
+    Python::with_gil(|py| {
         release_gil(py, || {
             c_norm.par_chunks_mut(dim)
                 .into_par_iter()
