@@ -96,7 +96,6 @@ class SecurityLayer:
         self._string_obfuscator = None
         self._research_obfuscator = None
         self._secure_destructor = None
-        self._file_destroy_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix='security_destroy')
         self._mission_audit: MissionAudit | None = None
         self._privacy_audit: Any | None = None
         self._audit_mode: str = 'forensic'
@@ -513,8 +512,7 @@ class SecurityLayer:
                 self.log_action('file_destruction', file_path.encode(), {'standard': standard.value, 'passes': result.passes if hasattr(result, 'passes') else 1})
                 return DestructionResult(file_path=file_path, standard=standard, passes_completed=result.passes if hasattr(result, 'passes') else 1, bytes_overwritten=result.bytes if hasattr(result, 'bytes') else 0, verification_passed=result.verified if hasattr(result, 'verified') else True, timestamp=__import__('time').time())
             else:
-                loop = asyncio.get_running_loop()
-                result = await loop.run_in_executor(self._file_destroy_executor, self._destroy_file_fallback_sync, file_path, standard)
+                result = await asyncio.to_thread(self._destroy_file_fallback_sync, file_path, standard)
                 self.log_action('file_destruction', file_path.encode(), {'standard': standard.value, 'fallback': True})
                 return result
         except Exception as e:
@@ -536,7 +534,6 @@ class SecurityLayer:
         results = []
         try:
             import os
-            loop = asyncio.get_running_loop()
             if recursive:
 
                 def _walk_sync():
@@ -546,7 +543,7 @@ class SecurityLayer:
                         for file in files:
                             file_paths.append(str(root_p / file))
                     return file_paths
-                all_files = await loop.run_in_executor(self._file_destroy_executor, _walk_sync)
+                all_files = await asyncio.to_thread(_walk_sync)
                 for file_path in all_files:
                     result = await self.destroy_file(file_path)
                     results.append(result)
@@ -558,13 +555,13 @@ class SecurityLayer:
                             (root_p / d).rmdir()
                     if Path(dir_path).exists():
                         Path(dir_path).rmdir()
-                await loop.run_in_executor(self._file_destroy_executor, _remove_dirs_sync)
+                await asyncio.to_thread(_remove_dirs_sync)
             else:
 
                 def _glob_sync():
                     import glob
                     return [f for f in glob.glob(str(Path(dir_path) / '*')) if Path(f).is_file()]
-                files = await loop.run_in_executor(self._file_destroy_executor, _glob_sync)
+                files = await asyncio.to_thread(_glob_sync)
                 for file_path in files:
                     result = await self.destroy_file(file_path)
                     results.append(result)
@@ -580,9 +577,7 @@ class SecurityLayer:
     async def cleanup(self) -> None:
         """Cleanup resources - idempotent shutdown of all components."""
         logger.info('🧹 Cleaning up SecurityLayer...')
-        if self._file_destroy_executor is not None:
-            self._file_destroy_executor.shutdown(wait=False)
-            self._file_destroy_executor = None
+        pass  # asyncio.to_thread uses shared pool, no cleanup needed
         if self._secure_destructor and hasattr(self._secure_destructor, 'cleanup'):
             try:
                 await self._secure_destructor.cleanup()
@@ -594,7 +589,6 @@ class SecurityLayer:
             except Exception as e:
                 logger.warning(f'⚠️ MissionAudit cleanup error: {e}')
         logger.info('✅ SecurityLayer cleanup complete')
-import json
 import time
 from dataclasses import dataclass, field
 

@@ -22,6 +22,11 @@
 use pyo3::prelude::*;
 use std::ptr::null_mut;
 
+/// MADV_DONTNEED — value 4 on Darwin.
+/// Immediately discards pages — best for CRITICAL emergency relief.
+/// Unlike MADV_FREE_REUSABLE, pages are NOT reusable; they are dropped.
+const MADV_DONTNEED: i32 = 4;
+
 /// MADV_FREE_REUSABLE — value 7 on Darwin.
 /// Tells kernel pages are clean/reusable, can be reclaimed immediately.
 const MADV_FREE_REUSABLE: i32 = 7;
@@ -446,6 +451,32 @@ pub fn munmap_hugepage(addr: usize, size: usize) -> bool {
     result == 0
 }
 
+/// ISSUE-16: madvise(MADV_FREE_REUSABLE) on an arbitrary memory region.
+///
+/// On M1 8GB, calling this after mx.eval([]) + gc.collect() at CRITICAL
+/// memory pressure tells the kernel that process heap pages are clean and
+/// reclaimable — reducing the working set without OOM.
+///
+/// MADV_DONTNEED on Darwin: immediately discards pages (not reusable).
+/// MADV_FREE_REUSABLE (value 7): pages are clean, kernel can reclaim when needed.
+///
+/// # Arguments
+/// * `addr` - Memory address as Python int
+/// * `length` - Length of the region in bytes
+/// * `advice` - 0=MADV_FREE_REUSABLE (default), 1=MADV_DONTNEED
+///
+/// # Returns
+/// 0 on success, -1 on failure
+#[pyfunction]
+pub fn madvise_free_reusable(addr: usize, length: usize, advice: i32) -> i32 {
+    if length == 0 || addr == 0 {
+        return 0;
+    }
+    let ptr = addr as *mut libc::c_void;
+    let madv_advice = if advice == 0 { MADV_FREE_REUSABLE } else { MADV_DONTNEED };
+    unsafe { libc::madvise(ptr, length, madv_advice) }
+}
+
 /// Get system huge page size in bytes.
 ///
 /// Returns the configured huge page size (2MB on Apple Silicon M1).
@@ -477,5 +508,6 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(mmap_hugepage, m)?)?;
     m.add_function(wrap_pyfunction!(munmap_hugepage, m)?)?;
     m.add_function(wrap_pyfunction!(get_hugepage_size, m)?)?;
+    m.add_function(wrap_pyfunction!(madvise_free_reusable, m)?)?;
     Ok(())
 }

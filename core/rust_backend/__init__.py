@@ -404,8 +404,10 @@ class _RustCompatShim:
 
     @property
     def html(self) -> Any:
-        # Route to ioc domain (has HTML extract functions in Rust via raw)
-        return self._accel.ioc
+        # Route to the actual HTML domain from misc.py
+        from . import misc as _misc_mod
+        probe = self._accel._ensure_probe()
+        return _misc_mod.get_html_domain(probe.ext)
 
     @property
     def batch_extract_emails(self) -> Any:

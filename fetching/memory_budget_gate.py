@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import threading
+import time
 from typing import Literal
 
 import msgspec
@@ -37,16 +39,37 @@ class BrowserDecision(msgspec.Struct, frozen=True):
     reason: str
 
 
-_rss_lock = asyncio.Lock()
+# ISSUE-014 FIX: asyncio.Lock() removed — was unused, caused "no running event loop" on macOS import
+# ISSUE-018: RSS cache — 5s TTL to avoid psutil call on every request in hot path
+_RSS_CACHE_TTL_S: float = 5.0
+_RSS_CACHE: tuple[float, float] | None = None  # (timestamp, rss_gib)
+_RSS_CACHE_LOCK: threading.Lock = threading.Lock()
 
 
 def _rss_gib() -> float:
     """
-    RSS in GiB. Priority:
+    RSS in GiB with 5s TTL cache (thread-safe).
+
+    ISSUE-018: Cached to avoid psutil call on every request in hot path.
+    Cache is process-global (module-level), refreshed every 5s.
+
+    Priority:
       0. Rust extension (sysinfo) — cross-platform, no subprocess.
          Returns 0.0 when the sysinfo feature is not built.
       1. psutil — darwin-arm64 primary path.
     """
+    global _RSS_CACHE
+
+    now = time.monotonic()
+    with _RSS_CACHE_LOCK:
+        if _RSS_CACHE is not None:
+            ts, val = _RSS_CACHE
+            if now - ts < _RSS_CACHE_TTL_S:
+                return val
+
+    # Cache miss or expired — measure
+    rss: float = 0.0
+
     # Priority 0: Rust extension via sysinfo (no subprocess, cross-platform).
     # F265C: Use centralized rust backend
     try:
@@ -55,17 +78,21 @@ def _rss_gib() -> float:
         if _rust_backend.is_available and _rust_backend.memory is not None:
             val = _rust_backend.memory.get_process_rss_gib()
             if val > 0.0:
-                return val
+                rss = val
     except Exception:  # noqa: BLE001
         pass
 
     # Priority 1: psutil on darwin-arm64.
-    if psutil is not None:
+    if rss <= 0.0 and psutil is not None:
         try:
-            return psutil.Process(os.getpid()).memory_info().rss / (1024**3)
+            rss = psutil.Process(os.getpid()).memory_info().rss / (1024**3)
         except Exception:  # noqa: BLE001
             pass
-    return 0.0
+
+    with _RSS_CACHE_LOCK:
+        _RSS_CACHE = (now, rss)
+
+    return rss
 
 
 def decide(

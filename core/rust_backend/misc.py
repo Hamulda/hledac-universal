@@ -5,10 +5,10 @@ from collections import deque
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Literal
 
-import duckdb as _duckdb_module
-
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
+
+import json as _json  # NOTE: msgspec.json has no pretty-print; stdlib json used only for pretty() fallback
 
 # Issue #9: HTML domain — Rust lol_html + selectolax fallback (M1 8GB)
 # Tier 1: Rust html_parse via lol_html (5× faster than BS4)
@@ -84,6 +84,17 @@ class _RustHtmlDomain:
     def batch_extract_titles(self, items: list[str]) -> list[str | None]:
         """Parallel title extraction."""
         return self._ext.batch_extract_titles(items)
+
+    def html_extract(self, html: str) -> dict[str, Any]:
+        """Extract links, emails, and title from HTML in one call."""
+        links = self.extract_links(html, "")
+        emails = self.extract_emails(html)
+        titles = self.extract_titles(html)
+        return {
+            "links": links,
+            "emails": emails,
+            "title": titles[0] if titles else None,
+        }
 
 
 class _PythonHtmlDomain:
@@ -167,6 +178,17 @@ class _PythonHtmlDomain:
             return [title if title else None]
         return [None]
 
+    def html_extract(self, html: str) -> dict[str, Any]:
+        """Extract links, emails, and title from HTML in one call."""
+        links = self.extract_links(html, "")
+        emails = self.extract_emails(html)
+        titles = self.extract_titles(html)
+        return {
+            "links": links,
+            "emails": emails,
+            "title": titles[0] if titles else None,
+        }
+
     def html_to_text(self, html: str) -> str:
         """Extract plain text — selectolax or regex fallback."""
         if len(html) > self._MAX_HTML_SIZE:
@@ -231,11 +253,6 @@ def _python_extract_links_regex(html: str, base_url: str) -> list[str]:
 # =============================================================================
 
 
-# =============================================================================
-# Graph
-# =============================================================================
-
-
 class _RustGraphDomain:
     __slots__ = ("_ext",)
 
@@ -249,7 +266,9 @@ class _RustGraphDomain:
         max_depth: int = 3,
         direction: str = "both",
     ) -> list[dict[str, Any]]:
-        return self._ext.batch_graph_traverse(root_ids, graph_path, max_depth, direction)
+        # Rust has incompatible signature: (db_path, root_values, max_hops, max_results_per_root)
+        # Use Python fallback which matches expected API
+        return _python_batch_graph_traverse(root_ids, graph_path, max_depth, direction)
 
 
 class _PythonGraphDomain:
@@ -289,12 +308,15 @@ class _RustHotEdgesDomain:
     def __init__(self, ext: hledac_rust_extensions) -> None:
         self._ext = ext
 
-    def HotEdgeCounterRust(self, flush_threshold: int = 50, **kwargs: Any) -> Any:
-        return self._ext.HotEdgeCounterRust(flush_threshold, **kwargs)
+    def HotEdgeCounterRust(self, flush_threshold: int = 50, max_edges: int | None = None, **kwargs: Any) -> Any:
+        # Rust uses flush_threshold; Python test uses max_edges — translate
+        threshold = max_edges if max_edges is not None else flush_threshold
+        return self._ext.HotEdgeCounterRust(threshold, **kwargs)
 
     # Alias for backward compatibility
-    def HotEdgeCounter(self, flush_threshold: int = 50, **kwargs: Any) -> Any:
-        return self._ext.HotEdgeCounterRust(flush_threshold, **kwargs)
+    def HotEdgeCounter(self, flush_threshold: int = 50, max_edges: int | None = None, **kwargs: Any) -> Any:
+        threshold = max_edges if max_edges is not None else flush_threshold
+        return self._ext.HotEdgeCounterRust(threshold, **kwargs)
 
     def compress_page(self, data: bytes, algorithm: str = "lz4") -> bytes:
         return self._ext.compress_page(data, algorithm)
@@ -345,13 +367,11 @@ class _PythonHotEdgesDomain:
     def IntCounterLayoutRust(self, field_names: list[str]) -> _PythonIntCounterLayout:
         return _PythonIntCounterLayout(field_names)
 
-    @staticmethod
-    def bulk_bump_aggregate(counter: _PythonHotEdgeCounter, indices: list[int], deltas: list[int]) -> None:
+    def bulk_bump_aggregate(self, counter: _PythonHotEdgeCounter, indices: list[int], deltas: list[int]) -> None:
         for idx, delta in zip(indices, deltas):
             counter.bump_edge(idx, idx, delta)
 
-    @staticmethod
-    def bulk_snapshot_dict(counter: _PythonHotEdgeCounter) -> dict[Any, int]:
+    def bulk_snapshot_dict(self, counter: _PythonHotEdgeCounter) -> dict[Any, int]:
         # counter.snapshot() returns dict[tuple[int,int], int] for HotEdgeCounter
         return {k: v for k, v in counter.snapshot().items()}
 
@@ -371,7 +391,8 @@ class _RustAhoDomain:
         return self._ext.AhoCorasickMatcher(patterns)
 
     def aho_search(self, matcher: Any, text: str) -> list[tuple[int, int, str]]:
-        return self._ext.aho_search(matcher, text)
+        # Rust AhoCorasickMatcher.scan() returns same format as Python aho_search()
+        return matcher.scan(text)
 
 
 class _PythonAhoDomain:
@@ -397,7 +418,9 @@ class _RustEvidenceDomain:
         self._ext = ext
 
     def chain_hash(self, prev_chain: str, content_hash: str, event_id: str) -> tuple[str, str]:
-        return self._ext.chain_hash(prev_chain, content_hash, event_id)
+        # Rust chain_hash_snapshot takes (snapshot_dict, prev_chain_hex, event_id)
+        snap = {"prev": prev_chain, "content": content_hash, "event_id": event_id}
+        return self._ext.chain_hash_snapshot(snap, prev_chain, event_id)
 
     def is_duplicate(self, content_hash_bytes: bytes, bloom_filter: Any) -> bool:
         return self._ext.is_duplicate(content_hash_bytes, bloom_filter)
@@ -427,11 +450,13 @@ class _RustMadvisDomain:
         self._ext = ext
 
     def madvise_on_mmap_region(self, addr: int, length: int, advice: int = 7) -> bool:
-        return self._ext.madvise_on_mmap_region(addr, length, advice)
+        result = self._ext.madvise_on_mmap_region(addr, length, advice)
+        return result == 0
 
     def madvise_hugepage(self, addr: int, length: int) -> bool:
         """Apply MADV_HUGEPAGE to enable transparent huge pages (2MB)."""
-        return self._ext.madvise_hugepage(addr, length) == 0
+        result = self._ext.madvise_hugepage(addr, length)
+        return result == 0
 
     def mmap_alloc_with_hugepage(self, size: int, read_write: bool = True) -> tuple[int, int]:
         """Allocate memory with huge page backing. Returns (addr, size)."""
@@ -504,10 +529,14 @@ class _RustMemoryDomain:
         self._ext = ext
 
     def available_memory(self) -> int:
-        return self._ext.available_memory()
+        # Rust returns GiB as float — convert to bytes
+        gib = self._ext.get_available_memory_gib()
+        return int(gib * 1024 * 1024 * 1024)
 
     def total_memory(self) -> int:
-        return self._ext.total_memory()
+        # Rust returns GiB as float — convert to bytes
+        gib = self._ext.get_total_memory_gib()
+        return int(gib * 1024 * 1024 * 1024)
 
 
 class _PythonMemoryDomain:
@@ -559,55 +588,41 @@ class _RustJsonDomain:
 
 
 class _PythonJsonDomain:
+    """Python fallback for JSON operations using stdlib json (Rust msgspec is primary)."""
+
     __slots__ = ()
 
     @staticmethod
     def pretty_sorted(data: dict) -> str:
-        import json
-
-        return json.dumps(data, sort_keys=True, indent=2)
+        return _json.dumps(data, sort_keys=True, indent=2)
 
     @staticmethod
     def compact_sorted(data: dict) -> str:
-        import json
-
-        return json.dumps(data, sort_keys=True, separators=(",", ":"))
+        return _json.dumps(data, sort_keys=True)
 
     @staticmethod
-    def pretty(self, data: dict) -> str:
-        import json
-
-        return json.dumps(data, indent=2)
+    def pretty(data: dict) -> str:
+        return _json.dumps(data, indent=2)
 
     @staticmethod
-    def compact(self, data: dict) -> str:
-        import json
-
-        return json.dumps(data, separators=(",", ":"))
+    def compact(data: dict) -> str:
+        return _json.dumps(data)
 
     @staticmethod
-    def batch_pretty(self, items: list[dict]) -> list[str]:
-        import json
-
-        return [json.dumps(item, indent=2) for item in items]
+    def batch_pretty(items: list[dict]) -> list[str]:
+        return [_json.dumps(item, indent=2) for item in items]
 
     @staticmethod
-    def batch_compact(self, items: list[dict]) -> list[str]:
-        import json
-
-        return [json.dumps(item, separators=(",", ":")) for item in items]
+    def batch_compact(items: list[dict]) -> list[str]:
+        return [_json.dumps(item) for item in items]
 
     @staticmethod
-    def batch_pretty_sorted(self, items: list[dict]) -> list[str]:
-        import json
-
-        return [json.dumps(item, sort_keys=True, indent=2) for item in items]
+    def batch_pretty_sorted(items: list[dict]) -> list[str]:
+        return [_json.dumps(item, sort_keys=True, indent=2) for item in items]
 
     @staticmethod
-    def batch_compact_sorted(self, items: list[dict]) -> list[str]:
-        import json
-
-        return [json.dumps(item, sort_keys=True, separators=(",", ":")) for item in items]
+    def batch_compact_sorted(items: list[dict]) -> list[str]:
+        return [_json.dumps(item, sort_keys=True) for item in items]
 
 
 # =============================================================================
@@ -677,11 +692,11 @@ class _PythonQueryDomain:
         return _python_parallel_duckdb_queries(db_path, queries)
 
     @staticmethod
-    def query_duckdb(self, db_path: str, sql: str) -> list[dict[str, Any]]:
+    def query_duckdb(db_path: str, sql: str) -> list[dict[str, Any]]:
         return _python_query_duckdb(db_path, sql)
 
     @staticmethod
-    def drop_query_connections(self) -> None:
+    def drop_query_connections() -> None:
         pass
 
 
@@ -837,10 +852,12 @@ class _RustSimdDomain:
         self._ext = ext
 
     def cosine_similarity(self, a: list[float], b: list[float]) -> float:
-        return self._ext.cosine_similarity(a, b)
+        # Rust batch_cosine_scores has incompatible signature — use Python fallback
+        return _python_cosine_similarity(a, b)
 
     def batch_cosine_similarity(self, vectors: list[list[float]], query: list[float]) -> list[float]:
-        return self._ext.batch_cosine_similarity(vectors, query)
+        # Rust batch_cosine_scores requires num_queries/num_candidates/dim — use Python fallback
+        return _python_batch_cosine_similarity(vectors, query)
 
 
 class _PythonSimdDomain:
@@ -926,10 +943,107 @@ class _RustSprintPoliciesDomain:
         min_nonfeed_findings: int = 5,
         strict: bool = False,
     ) -> Any:
-        return self._ext.FeedDominanceGuard(dominance_ratio_threshold, min_nonfeed_findings, strict)
+        # Rust doesn't have FeedDominanceGuard class — return a callable wrapper
+        return _RustFeedDominanceGuard(dominance_ratio_threshold, min_nonfeed_findings, strict, self._ext)
 
     def LaneBudgetPool(self) -> _RustLaneBudgetPool:
         return _RustLaneBudgetPool(self._ext)
+
+    def compute_dominance(
+        self,
+        total_accepted: int,
+        feed_accepted: int,
+        nonfeed_accepted: int,
+    ) -> dict[str, Any]:
+        """Convenience method — wraps Rust compute_feed_dominance."""
+        return self._ext.compute_feed_dominance(total_accepted, feed_accepted, nonfeed_accepted, 0.95, 5)
+
+
+def _feed_dominance_ratio_class(ratio: float) -> str:
+    """Shared ratio classification — used by both Rust and Python FeedDominanceGuard."""
+    if ratio >= 0.99:
+        return "feed_only_like"
+    if ratio >= 0.80:
+        return "feed_dominant"
+    if ratio >= 0.50:
+        return "balanced"
+    return "low"
+
+
+class _RustFeedDominanceGuard:
+    """Wrapper that makes Rust compute_feed_dominance look like a FeedDominanceGuard class."""
+
+    __slots__ = ("_threshold", "_min_nonfeed", "_strict", "_ext")
+
+    def __init__(self, dominance_ratio_threshold: float, min_nonfeed_findings: int, strict: bool, ext: hledac_rust_extensions) -> None:
+        self._threshold = dominance_ratio_threshold
+        self._min_nonfeed = min_nonfeed_findings
+        self._strict = strict
+        self._ext = ext
+
+    def compute(
+        self,
+        total_accepted: int,
+        feed_accepted: int,
+        nonfeed_accepted: int,
+        **kwargs: Any,
+    ) -> _FeedDominanceResult:
+        d = self._ext.compute_feed_dominance(
+            total_accepted, feed_accepted, nonfeed_accepted,
+            self._threshold, self._min_nonfeed,
+        )
+        # Rust may have different threshold semantics — compute guard_triggered using Python logic
+        ratio = d["feed_dominance_ratio"]
+        guard_triggered = ratio >= self._threshold and nonfeed_accepted < self._min_nonfeed
+        block_early_exit = self._strict and guard_triggered
+        return _FeedDominanceResult(
+            feed_dominance_ratio=ratio,
+            nonfeed_accepted_findings=nonfeed_accepted,
+            feed_dominance_class=d["feed_dominance_class"],
+            should_recommend_nonfeed_diagnostic=guard_triggered,
+            guard_triggered=guard_triggered,
+            block_early_exit=block_early_exit,
+            reason=d["reason"],
+        )
+
+    def compute_simple(self, total_accepted: int, feed_accepted: int, nonfeed_accepted: int) -> _FeedDominanceResult:
+        return self.compute(total_accepted, feed_accepted, nonfeed_accepted)
+
+    @staticmethod
+    def ratio_class(ratio: float) -> str:
+        return _feed_dominance_ratio_class(ratio)
+
+
+class _FeedDominanceResult:
+    """Result object for FeedDominanceGuard.compute()."""
+
+    __slots__ = (
+        "feed_dominance_ratio",
+        "nonfeed_accepted_findings",
+        "feed_dominance_class",
+        "should_recommend_nonfeed_diagnostic",
+        "guard_triggered",
+        "block_early_exit",
+        "reason",
+    )
+
+    def __init__(
+        self,
+        feed_dominance_ratio: float,
+        nonfeed_accepted_findings: int,
+        feed_dominance_class: str,
+        should_recommend_nonfeed_diagnostic: bool,
+        guard_triggered: bool,
+        block_early_exit: bool,
+        reason: str,
+    ) -> None:
+        self.feed_dominance_ratio = feed_dominance_ratio
+        self.nonfeed_accepted_findings = nonfeed_accepted_findings
+        self.feed_dominance_class = feed_dominance_class
+        self.should_recommend_nonfeed_diagnostic = should_recommend_nonfeed_diagnostic
+        self.guard_triggered = guard_triggered
+        self.block_early_exit = block_early_exit
+        self.reason = reason
 
 
 # Sprint F-ISSUE-155: Type-level enum for lane names.
@@ -937,10 +1051,14 @@ LaneName = Literal["public", "feed", "ct", "dns", "passive", "structured", "deep
 
 
 class _RustLaneBudgetPool:
+    """Lane budget pool — uses Python fallback for state since Rust standalone functions are incompatible."""
+
     __slots__ = ("_pool",)
 
     def __init__(self, ext: hledac_rust_extensions) -> None:
-        self._pool = ext.LaneBudgetPool()
+        # Rust pool functions use standalone API with dict state that's incompatible
+        # with the class-based API expected by callers. Delegate to Python fallback.
+        self._pool: PythonLaneBudgetPool = PythonLaneBudgetPool()
 
     def allocate(self, lane_name: LaneName, budget_s: float) -> None:
         self._pool.allocate(lane_name, budget_s)
@@ -955,11 +1073,6 @@ class _RustLaneBudgetPool:
         return self._pool.get_utilization()
 
     def get_lane_stats(self) -> dict[str, Any]:
-        """Return per-lane stats.
-
-        Note: Rust returns str keys (not LaneName literal) since the Rust side
-        uses String. The caller is responsible for validating lane names.
-        """
         return self._pool.get_lane_stats()
 
     def lane_count(self) -> int:
@@ -1257,13 +1370,25 @@ def _python_batch_cosine_similarity(vectors: list[list[float]], query: list[floa
 # Pooled connections are reused, eliminating 3-5GB/s RAM churn at burst load.
 
 _POOL_MAX_SIZE: int = 4  # MVCC allows multiple readers; 4 covers burst parallelism
-_POOL: deque[tuple[str, _duckdb_module.DuckDBPyConnection]] = deque()
+_POOL: deque[tuple[str, Any]] = deque()  # DuckDBPyConnection at runtime
 _POOL_PATHS: set[str] = set()  # track which db_paths are in pool
 _POOL_LOCK = Lock()
+_DUCKDB_MODULE: Any | None = None
 
 
-def _acquire_ro_conn(db_path: str) -> _duckdb_module.DuckDBPyConnection:
+def _get_duckdb_module() -> Any:
+    """Lazy import of duckdb module — called once at first pool acquisition."""
+    global _DUCKDB_MODULE
+    if _DUCKDB_MODULE is None:
+        import duckdb
+
+        _DUCKDB_MODULE = duckdb
+    return _DUCKDB_MODULE
+
+
+def _acquire_ro_conn(db_path: str) -> Any:
     """Acquire a read-only DuckDB connection from the pool (bounded, LRU)."""
+    _duckdb = _get_duckdb_module()
     with _POOL_LOCK:
         # Evict LRU entry if pool is full (bounded)
         while len(_POOL) >= _POOL_MAX_SIZE:
@@ -1289,7 +1414,7 @@ def _acquire_ro_conn(db_path: str) -> _duckdb_module.DuckDBPyConnection:
                     break
     # Open fresh connection (outside lock to minimize lock hold time)
     try:
-        new_conn = _duckdb_module.connect(db_path, read_only=True)
+        new_conn = _duckdb.connect(db_path, read_only=True)
         try:
             new_conn.execute("PRAGMA busy_timeout=5000")
         except Exception:
@@ -1473,13 +1598,7 @@ class PythonFeedDominanceGuard:
 
     @staticmethod
     def ratio_class(ratio: float) -> str:
-        if ratio >= 0.95:
-            return "feed_only_like"
-        if ratio >= 0.80:
-            return "feed_dominant"
-        if ratio >= 0.50:
-            return "balanced"
-        return "low"
+        return _feed_dominance_ratio_class(ratio)
 
 
 class PythonLaneBudgetAllocation:

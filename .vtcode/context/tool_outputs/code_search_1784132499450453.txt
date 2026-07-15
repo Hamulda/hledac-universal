@@ -1,0 +1,2045 @@
+{
+  "view": "full",
+  "files": [
+    {
+      "path": "runtime/scheduler_v2/scheduler.py",
+      "lang": "Python",
+      "items": [
+        {
+          "role": "item",
+          "kind": "class",
+          "name": "SprintSchedulerV2",
+          "signature": "class SprintSchedulerV2:",
+          "astKind": "class_definition",
+          "isImport": false,
+          "isExported": true,
+          "range": {
+            "byteOffset": {
+              "start": 1231,
+              "end": 43777
+            },
+            "start": {
+              "line": 32,
+              "column": 0
+            },
+            "end": {
+              "line": 920,
+              "column": 19
+            }
+          },
+          "lineRange": {
+            "start": 33,
+            "end": 921
+          },
+          "members": [
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "__repr__",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 2124,
+                  "end": 2332
+                },
+                "start": {
+                  "line": 47,
+                  "column": 4
+                },
+                "end": {
+                  "line": 51,
+                  "column": 59
+                }
+              },
+              "lineRange": {
+                "start": 48,
+                "end": 52
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "__new__",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 2677,
+                  "end": 3002
+                },
+                "start": {
+                  "line": 56,
+                  "column": 4
+                },
+                "end": {
+                  "line": 61,
+                  "column": 18
+                }
+              },
+              "lineRange": {
+                "start": 57,
+                "end": 62
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_config",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 3194,
+                  "end": 3228
+                },
+                "start": {
+                  "line": 64,
+                  "column": 4
+                },
+                "end": {
+                  "line": 64,
+                  "column": 38
+                }
+              },
+              "lineRange": {
+                "start": 65,
+                "end": 65
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_result",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 3233,
+                  "end": 3267
+                },
+                "start": {
+                  "line": 65,
+                  "column": 4
+                },
+                "end": {
+                  "line": 65,
+                  "column": 38
+                }
+              },
+              "lineRange": {
+                "start": 66,
+                "end": 66
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_ct_log_client",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 3272,
+                  "end": 3313
+                },
+                "start": {
+                  "line": 66,
+                  "column": 4
+                },
+                "end": {
+                  "line": 66,
+                  "column": 45
+                }
+              },
+              "lineRange": {
+                "start": 67,
+                "end": 67
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_ioc_graph",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 3318,
+                  "end": 3355
+                },
+                "start": {
+                  "line": 67,
+                  "column": 4
+                },
+                "end": {
+                  "line": 67,
+                  "column": 41
+                }
+              },
+              "lineRange": {
+                "start": 68,
+                "end": 68
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_flags",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 3360,
+                  "end": 3393
+                },
+                "start": {
+                  "line": 68,
+                  "column": 4
+                },
+                "end": {
+                  "line": 68,
+                  "column": 37
+                }
+              },
+              "lineRange": {
+                "start": 69,
+                "end": 69
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_cancel_event",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 3511,
+                  "end": 3568
+                },
+                "start": {
+                  "line": 71,
+                  "column": 4
+                },
+                "end": {
+                  "line": 71,
+                  "column": 61
+                }
+              },
+              "lineRange": {
+                "start": 72,
+                "end": 72
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_ctx",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 3573,
+                  "end": 3621
+                },
+                "start": {
+                  "line": 72,
+                  "column": 4
+                },
+                "end": {
+                  "line": 72,
+                  "column": 52
+                }
+              },
+              "lineRange": {
+                "start": 73,
+                "end": 73
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_wall_clock_start",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 3626,
+                  "end": 3671
+                },
+                "start": {
+                  "line": 73,
+                  "column": 4
+                },
+                "end": {
+                  "line": 73,
+                  "column": 49
+                }
+              },
+              "lineRange": {
+                "start": 74,
+                "end": 74
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_lifecycle",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 3821,
+                  "end": 3858
+                },
+                "start": {
+                  "line": 76,
+                  "column": 4
+                },
+                "end": {
+                  "line": 76,
+                  "column": 41
+                }
+              },
+              "lineRange": {
+                "start": 77,
+                "end": 77
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_runner",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 3863,
+                  "end": 3897
+                },
+                "start": {
+                  "line": 77,
+                  "column": 4
+                },
+                "end": {
+                  "line": 77,
+                  "column": 38
+                }
+              },
+              "lineRange": {
+                "start": 78,
+                "end": 78
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_duckdb_store",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 3902,
+                  "end": 3942
+                },
+                "start": {
+                  "line": 78,
+                  "column": 4
+                },
+                "end": {
+                  "line": 78,
+                  "column": 44
+                }
+              },
+              "lineRange": {
+                "start": 79,
+                "end": 79
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_hermes_engine",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 3947,
+                  "end": 3988
+                },
+                "start": {
+                  "line": 79,
+                  "column": 4
+                },
+                "end": {
+                  "line": 79,
+                  "column": 45
+                }
+              },
+              "lineRange": {
+                "start": 80,
+                "end": 80
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_governor",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 3993,
+                  "end": 4029
+                },
+                "start": {
+                  "line": 80,
+                  "column": 4
+                },
+                "end": {
+                  "line": 80,
+                  "column": 40
+                }
+              },
+              "lineRange": {
+                "start": 81,
+                "end": 81
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_evidence_log",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 4034,
+                  "end": 4074
+                },
+                "start": {
+                  "line": 81,
+                  "column": 4
+                },
+                "end": {
+                  "line": 81,
+                  "column": 44
+                }
+              },
+              "lineRange": {
+                "start": 82,
+                "end": 82
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_sidecar_orchestrator",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 4079,
+                  "end": 4127
+                },
+                "start": {
+                  "line": 82,
+                  "column": 4
+                },
+                "end": {
+                  "line": 82,
+                  "column": 52
+                }
+              },
+              "lineRange": {
+                "start": 83,
+                "end": 83
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_sidecar_tasks",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 4132,
+                  "end": 4180
+                },
+                "start": {
+                  "line": 83,
+                  "column": 4
+                },
+                "end": {
+                  "line": 83,
+                  "column": 52
+                }
+              },
+              "lineRange": {
+                "start": 84,
+                "end": 84
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_acquisition_plan",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 4185,
+                  "end": 4229
+                },
+                "start": {
+                  "line": 84,
+                  "column": 4
+                },
+                "end": {
+                  "line": 84,
+                  "column": 48
+                }
+              },
+              "lineRange": {
+                "start": 85,
+                "end": 85
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_synth_windup_task",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 4400,
+                  "end": 4445
+                },
+                "start": {
+                  "line": 87,
+                  "column": 4
+                },
+                "end": {
+                  "line": 87,
+                  "column": 49
+                }
+              },
+              "lineRange": {
+                "start": 88,
+                "end": 88
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_privacy_layer",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 4450,
+                  "end": 4491
+                },
+                "start": {
+                  "line": 88,
+                  "column": 4
+                },
+                "end": {
+                  "line": 88,
+                  "column": 45
+                }
+              },
+              "lineRange": {
+                "start": 89,
+                "end": 89
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_privacy_context_id",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 4496,
+                  "end": 4542
+                },
+                "start": {
+                  "line": 89,
+                  "column": 4
+                },
+                "end": {
+                  "line": 89,
+                  "column": 50
+                }
+              },
+              "lineRange": {
+                "start": 90,
+                "end": 90
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_prev_chain_hash",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 4547,
+                  "end": 4590
+                },
+                "start": {
+                  "line": 90,
+                  "column": 4
+                },
+                "end": {
+                  "line": 90,
+                  "column": 47
+                }
+              },
+              "lineRange": {
+                "start": 91,
+                "end": 91
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_sprint_id",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 4595,
+                  "end": 4637
+                },
+                "start": {
+                  "line": 91,
+                  "column": 4
+                },
+                "end": {
+                  "line": 91,
+                  "column": 46
+                }
+              },
+              "lineRange": {
+                "start": 92,
+                "end": 92
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_rel_discovery_engine",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 4642,
+                  "end": 4690
+                },
+                "start": {
+                  "line": 92,
+                  "column": 4
+                },
+                "end": {
+                  "line": 92,
+                  "column": 52
+                }
+              },
+              "lineRange": {
+                "start": 93,
+                "end": 93
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_policy_manager",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 4805,
+                  "end": 4847
+                },
+                "start": {
+                  "line": 95,
+                  "column": 4
+                },
+                "end": {
+                  "line": 95,
+                  "column": 46
+                }
+              },
+              "lineRange": {
+                "start": 96,
+                "end": 96
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_prefetch_pipeline",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 4852,
+                  "end": 4897
+                },
+                "start": {
+                  "line": 96,
+                  "column": 4
+                },
+                "end": {
+                  "line": 96,
+                  "column": 49
+                }
+              },
+              "lineRange": {
+                "start": 97,
+                "end": 97
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_temporal_predictor",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 4902,
+                  "end": 4948
+                },
+                "start": {
+                  "line": 97,
+                  "column": 4
+                },
+                "end": {
+                  "line": 97,
+                  "column": 50
+                }
+              },
+              "lineRange": {
+                "start": 98,
+                "end": 98
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_pivot_planner",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 4953,
+                  "end": 4994
+                },
+                "start": {
+                  "line": 98,
+                  "column": 4
+                },
+                "end": {
+                  "line": 98,
+                  "column": 45
+                }
+              },
+              "lineRange": {
+                "start": 99,
+                "end": 99
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_analyst_workbench",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 4999,
+                  "end": 5044
+                },
+                "start": {
+                  "line": 99,
+                  "column": 4
+                },
+                "end": {
+                  "line": 99,
+                  "column": 49
+                }
+              },
+              "lineRange": {
+                "start": 100,
+                "end": 100
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_forensics_enricher",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 5049,
+                  "end": 5095
+                },
+                "start": {
+                  "line": 100,
+                  "column": 4
+                },
+                "end": {
+                  "line": 100,
+                  "column": 50
+                }
+              },
+              "lineRange": {
+                "start": 101,
+                "end": 101
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_multimodal_enricher",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 5100,
+                  "end": 5147
+                },
+                "start": {
+                  "line": 101,
+                  "column": 4
+                },
+                "end": {
+                  "line": 101,
+                  "column": 51
+                }
+              },
+              "lineRange": {
+                "start": 102,
+                "end": 102
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_enrichment_services",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 5152,
+                  "end": 5199
+                },
+                "start": {
+                  "line": 102,
+                  "column": 4
+                },
+                "end": {
+                  "line": 102,
+                  "column": 51
+                }
+              },
+              "lineRange": {
+                "start": 103,
+                "end": 103
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_source_economics",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 5204,
+                  "end": 5248
+                },
+                "start": {
+                  "line": 103,
+                  "column": 4
+                },
+                "end": {
+                  "line": 103,
+                  "column": 48
+                }
+              },
+              "lineRange": {
+                "start": 104,
+                "end": 104
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_communication_layer",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 5253,
+                  "end": 5300
+                },
+                "start": {
+                  "line": 104,
+                  "column": 4
+                },
+                "end": {
+                  "line": 104,
+                  "column": 51
+                }
+              },
+              "lineRange": {
+                "start": 105,
+                "end": 105
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_stealth_layer",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 5305,
+                  "end": 5346
+                },
+                "start": {
+                  "line": 105,
+                  "column": 4
+                },
+                "end": {
+                  "line": 105,
+                  "column": 45
+                }
+              },
+              "lineRange": {
+                "start": 106,
+                "end": 106
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_ghost_layer",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 5351,
+                  "end": 5390
+                },
+                "start": {
+                  "line": 106,
+                  "column": 4
+                },
+                "end": {
+                  "line": 106,
+                  "column": 43
+                }
+              },
+              "lineRange": {
+                "start": 107,
+                "end": 107
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_prefetch_oracle",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 5560,
+                  "end": 5603
+                },
+                "start": {
+                  "line": 109,
+                  "column": 4
+                },
+                "end": {
+                  "line": 109,
+                  "column": 47
+                }
+              },
+              "lineRange": {
+                "start": 110,
+                "end": 110
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_security_coordinator",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 5608,
+                  "end": 5656
+                },
+                "start": {
+                  "line": 110,
+                  "column": 4
+                },
+                "end": {
+                  "line": 110,
+                  "column": 52
+                }
+              },
+              "lineRange": {
+                "start": 111,
+                "end": 111
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "__init__",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 5662,
+                  "end": 6136
+                },
+                "start": {
+                  "line": 112,
+                  "column": 4
+                },
+                "end": {
+                  "line": 123,
+                  "column": 67
+                }
+              },
+              "lineRange": {
+                "start": 113,
+                "end": 124
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "__post_init__",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 6142,
+                  "end": 9107
+                },
+                "start": {
+                  "line": 125,
+                  "column": 4
+                },
+                "end": {
+                  "line": 180,
+                  "column": 63
+                }
+              },
+              "lineRange": {
+                "start": 126,
+                "end": 181
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "run",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 9642,
+                  "end": 10938
+                },
+                "start": {
+                  "line": 190,
+                  "column": 4
+                },
+                "end": {
+                  "line": 223,
+                  "column": 27
+                }
+              },
+              "lineRange": {
+                "start": 191,
+                "end": 224
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "_initialize_sprint_run",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 10944,
+                  "end": 14521
+                },
+                "start": {
+                  "line": 225,
+                  "column": 4
+                },
+                "end": {
+                  "line": 300,
+                  "column": 48
+                }
+              },
+              "lineRange": {
+                "start": 226,
+                "end": 301
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "_init_duckdb_store",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 14527,
+                  "end": 15383
+                },
+                "start": {
+                  "line": 302,
+                  "column": 4
+                },
+                "end": {
+                  "line": 320,
+                  "column": 55
+                }
+              },
+              "lineRange": {
+                "start": 303,
+                "end": 321
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "_init_governor",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 15389,
+                  "end": 16207
+                },
+                "start": {
+                  "line": 322,
+                  "column": 4
+                },
+                "end": {
+                  "line": 339,
+                  "column": 55
+                }
+              },
+              "lineRange": {
+                "start": 323,
+                "end": 340
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "_init_hermes_engine",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 16213,
+                  "end": 17029
+                },
+                "start": {
+                  "line": 341,
+                  "column": 4
+                },
+                "end": {
+                  "line": 358,
+                  "column": 55
+                }
+              },
+              "lineRange": {
+                "start": 342,
+                "end": 359
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "_init_evidence_log",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 17035,
+                  "end": 17820
+                },
+                "start": {
+                  "line": 360,
+                  "column": 4
+                },
+                "end": {
+                  "line": 377,
+                  "column": 55
+                }
+              },
+              "lineRange": {
+                "start": 361,
+                "end": 378
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "_init_sidecar_orchestrator",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 17826,
+                  "end": 18803
+                },
+                "start": {
+                  "line": 379,
+                  "column": 4
+                },
+                "end": {
+                  "line": 400,
+                  "column": 55
+                }
+              },
+              "lineRange": {
+                "start": 380,
+                "end": 401
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "_prewarm_hermes",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 18809,
+                  "end": 19095
+                },
+                "start": {
+                  "line": 402,
+                  "column": 4
+                },
+                "end": {
+                  "line": 409,
+                  "column": 16
+                }
+              },
+              "lineRange": {
+                "start": 403,
+                "end": 410
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "_run_prelude_and_first_cycle",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 19101,
+                  "end": 22361
+                },
+                "start": {
+                  "line": 411,
+                  "column": 4
+                },
+                "end": {
+                  "line": 476,
+                  "column": 91
+                }
+              },
+              "lineRange": {
+                "start": 412,
+                "end": 477
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "_run_prelude",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 22367,
+                  "end": 24696
+                },
+                "start": {
+                  "line": 478,
+                  "column": 4
+                },
+                "end": {
+                  "line": 529,
+                  "column": 28
+                }
+              },
+              "lineRange": {
+                "start": 479,
+                "end": 530
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "_prewarm_temporal_predictor",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 24702,
+                  "end": 31036
+                },
+                "start": {
+                  "line": 531,
+                  "column": 4
+                },
+                "end": {
+                  "line": 637,
+                  "column": 16
+                }
+              },
+              "lineRange": {
+                "start": 532,
+                "end": 638
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "_run_first_cycle",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 31042,
+                  "end": 31672
+                },
+                "start": {
+                  "line": 639,
+                  "column": 4
+                },
+                "end": {
+                  "line": 653,
+                  "column": 31
+                }
+              },
+              "lineRange": {
+                "start": 640,
+                "end": 654
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "_build_acquisition_plan",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 31678,
+                  "end": 33160
+                },
+                "start": {
+                  "line": 655,
+                  "column": 4
+                },
+                "end": {
+                  "line": 689,
+                  "column": 23
+                }
+              },
+              "lineRange": {
+                "start": 656,
+                "end": 690
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "_run_acquisition_loop",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 33166,
+                  "end": 34939
+                },
+                "start": {
+                  "line": 691,
+                  "column": 4
+                },
+                "end": {
+                  "line": 730,
+                  "column": 72
+                }
+              },
+              "lineRange": {
+                "start": 692,
+                "end": 731
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "_run_winddown",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 34945,
+                  "end": 36635
+                },
+                "start": {
+                  "line": 732,
+                  "column": 4
+                },
+                "end": {
+                  "line": 766,
+                  "column": 9
+                }
+              },
+              "lineRange": {
+                "start": 733,
+                "end": 767
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "sprint_id",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 36830,
+                  "end": 36969
+                },
+                "start": {
+                  "line": 771,
+                  "column": 4
+                },
+                "end": {
+                  "line": 773,
+                  "column": 53
+                }
+              },
+              "lineRange": {
+                "start": 772,
+                "end": 774
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "inject_evidence_log",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 37125,
+                  "end": 37524
+                },
+                "start": {
+                  "line": 777,
+                  "column": 4
+                },
+                "end": {
+                  "line": 782,
+                  "column": 85
+                }
+              },
+              "lineRange": {
+                "start": 778,
+                "end": 783
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "inject_policy_manager",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 37530,
+                  "end": 37736
+                },
+                "start": {
+                  "line": 784,
+                  "column": 4
+                },
+                "end": {
+                  "line": 786,
+                  "column": 76
+                }
+              },
+              "lineRange": {
+                "start": 785,
+                "end": 787
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "inject_communication_layer",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 37742,
+                  "end": 37953
+                },
+                "start": {
+                  "line": 788,
+                  "column": 4
+                },
+                "end": {
+                  "line": 790,
+                  "column": 63
+                }
+              },
+              "lineRange": {
+                "start": 789,
+                "end": 791
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "inject_stealth_layer",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 37959,
+                  "end": 38158
+                },
+                "start": {
+                  "line": 792,
+                  "column": 4
+                },
+                "end": {
+                  "line": 794,
+                  "column": 57
+                }
+              },
+              "lineRange": {
+                "start": 793,
+                "end": 795
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "inject_ghost_layer",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 38164,
+                  "end": 38359
+                },
+                "start": {
+                  "line": 796,
+                  "column": 4
+                },
+                "end": {
+                  "line": 798,
+                  "column": 55
+                }
+              },
+              "lineRange": {
+                "start": 797,
+                "end": 799
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "inject_security_coordinator",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 38365,
+                  "end": 38570
+                },
+                "start": {
+                  "line": 800,
+                  "column": 4
+                },
+                "end": {
+                  "line": 802,
+                  "column": 69
+                }
+              },
+              "lineRange": {
+                "start": 801,
+                "end": 803
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "inject_prefetch_oracle",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 38576,
+                  "end": 38808
+                },
+                "start": {
+                  "line": 804,
+                  "column": 4
+                },
+                "end": {
+                  "line": 807,
+                  "column": 94
+                }
+              },
+              "lineRange": {
+                "start": 805,
+                "end": 808
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "inject_duckdb_store",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 38814,
+                  "end": 39222
+                },
+                "start": {
+                  "line": 809,
+                  "column": 4
+                },
+                "end": {
+                  "line": 814,
+                  "column": 86
+                }
+              },
+              "lineRange": {
+                "start": 810,
+                "end": 815
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "inject_prefetch_pipeline",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 39228,
+                  "end": 39470
+                },
+                "start": {
+                  "line": 816,
+                  "column": 4
+                },
+                "end": {
+                  "line": 819,
+                  "column": 96
+                }
+              },
+              "lineRange": {
+                "start": 817,
+                "end": 820
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "inject_temporal_predictor",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 39476,
+                  "end": 39722
+                },
+                "start": {
+                  "line": 821,
+                  "column": 4
+                },
+                "end": {
+                  "line": 824,
+                  "column": 96
+                }
+              },
+              "lineRange": {
+                "start": 822,
+                "end": 825
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "inject_pivot_planner",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 39728,
+                  "end": 39953
+                },
+                "start": {
+                  "line": 826,
+                  "column": 4
+                },
+                "end": {
+                  "line": 829,
+                  "column": 89
+                }
+              },
+              "lineRange": {
+                "start": 827,
+                "end": 830
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "inject_analyst_workbench",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 39959,
+                  "end": 40202
+                },
+                "start": {
+                  "line": 831,
+                  "column": 4
+                },
+                "end": {
+                  "line": 834,
+                  "column": 95
+                }
+              },
+              "lineRange": {
+                "start": 832,
+                "end": 835
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "inject_forensics_enricher",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 40208,
+                  "end": 40451
+                },
+                "start": {
+                  "line": 836,
+                  "column": 4
+                },
+                "end": {
+                  "line": 839,
+                  "column": 95
+                }
+              },
+              "lineRange": {
+                "start": 837,
+                "end": 840
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "inject_multimodal_enricher",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 40457,
+                  "end": 40584
+                },
+                "start": {
+                  "line": 841,
+                  "column": 4
+                },
+                "end": {
+                  "line": 842,
+                  "column": 66
+                }
+              },
+              "lineRange": {
+                "start": 842,
+                "end": 843
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "inject_enrichment_services",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 40590,
+                  "end": 40836
+                },
+                "start": {
+                  "line": 844,
+                  "column": 4
+                },
+                "end": {
+                  "line": 847,
+                  "column": 96
+                }
+              },
+              "lineRange": {
+                "start": 845,
+                "end": 848
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "inject_source_economics",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 40842,
+                  "end": 40965
+                },
+                "start": {
+                  "line": 849,
+                  "column": 4
+                },
+                "end": {
+                  "line": 850,
+                  "column": 64
+                }
+              },
+              "lineRange": {
+                "start": 850,
+                "end": 851
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "inject_privacy_layer",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 40971,
+                  "end": 41190
+                },
+                "start": {
+                  "line": 852,
+                  "column": 4
+                },
+                "end": {
+                  "line": 855,
+                  "column": 87
+                }
+              },
+              "lineRange": {
+                "start": 853,
+                "end": 856
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "inject_ioc_graph",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 41196,
+                  "end": 41422
+                },
+                "start": {
+                  "line": 857,
+                  "column": 4
+                },
+                "end": {
+                  "line": 860,
+                  "column": 94
+                }
+              },
+              "lineRange": {
+                "start": 858,
+                "end": 861
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "record_hypothesis_feedback",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 41606,
+                  "end": 43658
+                },
+                "start": {
+                  "line": 864,
+                  "column": 4
+                },
+                "end": {
+                  "line": 916,
+                  "column": 16
+                }
+              },
+              "lineRange": {
+                "start": 865,
+                "end": 917
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "health_check",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 43664,
+                  "end": 43777
+                },
+                "start": {
+                  "line": 918,
+                  "column": 4
+                },
+                "end": {
+                  "line": 920,
+                  "column": 19
+                }
+              },
+              "lineRange": {
+                "start": 919,
+                "end": 921
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "hints": [
+    "Parameter `max_results` is not used by outline. It was ignored. Use `type` to filter symbol kinds or `match` to filter by name regex."
+  ]
+}

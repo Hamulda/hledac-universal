@@ -814,6 +814,14 @@ pub fn batch_hamming_scores_batched(
 // ---------------------------------------------------------------------------
 // Zero-copy NumPy path — ISSUE-001 fix.
 // ---------------------------------------------------------------------------
+// IMPORTANT: These are NOT duplicates — they serve different performance needs:
+// - batch_cosine_scores: Serial normalization, simpler, for small batches (N < 1000)
+// - batch_cosine_scores_npy: Parallel rayon normalization with GIL release, for large batches
+//   (N >= 1000). The _npy suffix refers to the array('f') zero-copy pattern, not numpy itself.
+//
+// Performance: _npy is 2-4× faster for large batches due to rayon parallel normalization.
+// Both functions take Vec<f32> (not numpy arrays directly) — the name is historical.
+// ---------------------------------------------------------------------------
 // Python passes array('f', q.flatten()) → Vec<f32> — no Python float objects.
 // GIL is released during rayon par_chunks normalization.
 /// Zero-copy batch cosine via array('f') — ISSUE-001 fix.

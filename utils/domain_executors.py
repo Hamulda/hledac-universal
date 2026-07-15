@@ -92,6 +92,7 @@ _DOMAIN_PRESETS: dict[str, int] = {
     "vision": 2,     # PyMuPDF, vision encoder
     "embed": 1,      # MLX embed sync bridge
     "storage": 2,   # DuckDB sync adapter
+    "exposure_db": 1,  # LMDB single-writer for exposure cache (ISSUE-027)
     "default": 2,    # unmapped fallback
 }
 
@@ -265,3 +266,8 @@ def get_parallel_executor() -> ThreadPoolExecutor:
 def get_vision_executor() -> ThreadPoolExecutor:
     """Vision processing pool (PyMuPDF, vision encoder)."""
     return get_or_create("vision")
+
+
+def get_exposure_db_executor() -> ThreadPoolExecutor:
+    """LMDB single-writer executor for exposure cache (ISSUE-027)."""
+    return get_or_create("exposure_db")

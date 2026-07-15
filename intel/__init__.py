@@ -1,83 +1,103 @@
 """
-Intel — OSINT Intelligence Lanes
-================================
+Intel — Backward-Compat Facade
+==============================
 
-Sprint 8.7: Naming overlap resolution
+F350M-R Phase 2 Migration:
 
-Canonical location for OSINT intelligence adapters previously in network/.
-Naming convention: *-lane.py (proven, readable).
+ARCHITECTURE (post-F350M-R Phase 2):
+  recon/           — Canonical OSINT namespace (capability forest + primitives)
+  intel/          — Pure backward-compat facade → recon/
 
-MIGRATED (2026-07-02):
-  network/bgp_monitor.py         → intel/bgp_monitor.py
-  network/ct_log_scanner.py     → intel/ct_log_scanner.py
-  network/dns_tunnel_detector.py → intel/dns_tunnel_detector.py
-  network/gemini_transport.py   → intel/gemini_transport.py
-  network/ipfs_client.py        → intel/ipfs_client.py (RE-EXPORTED, canonical: network/ipfs_client.py)
-  network/jarm_fingerprinter.py → intel/jarm_fingerprinter.py
-  network/passive_dns.py        → intel/passive_dns.py
-  network/passive_fingerprint.py → intel/passive_fingerprint.py
+RECON/ SUBSTRUCTURE:
+  recon/dns/          — passive_dns, dns_tunnel_detector
+  recon/cert/         — ct_log_scanner
+  recon/network/      — bgp_monitor, passive_fingerprint
+  recon/protocols/    — jarm_fingerprinter, gemini_transport
+  recon/              — intel_seed + 35+ capability forest modules
 
-EXISTING lanes (in intelligence/):
-  greynoise_lane.py, shodan_lane.py, doh_lane.py,
-  network_reconnaissance_lane.py, dark_web_lane.py,
-  wayback_cdx.py, academic_search.py, archive_discovery.py,
-  network_intelligence.py (in network/), exposed_service_hunter.py,
-  data_leak_hunter.py, github_secret_scanner.py, social_identity_miner.py,
-  temporal_archaeologist_adapter.py, bgp_advisor_adapter.py,
-  leak_sentinel.py, ct_log_client.py, commoncrawl_adapter.py,
-  onion_seed_manager.py, exposed_service_hunter.py, ...
+All production code should import from canonical paths (recon/*).
+This facade preserves backward compatibility for `from intel.X` imports.
+
+SIDE CAR ADAPTERS (recon/):
+  greynoise_lane, shodan_lane, doh_lane, dark_web_lane,
+  network_reconnaissance_lane, ct_lane, bgp_lane, ...
 """
 
 import importlib.util
+from importlib import import_module
 
 
-# Re-export from intelligence/ (existing lanes)
-from intelligence.greynoise_lane import *  # noqa: F401, E402, F403
-from intelligence.shodan_lane import *  # noqa: F401, E402, F403
-from intelligence.doh_lane import *  # noqa: F401, E402, F403
-from intelligence.network_reconnaissance_lane import *  # noqa: F401, E402, F403
-from intelligence.dark_web_lane import *  # noqa: F401, E402, F403
-from intelligence.wayback_cdx import *  # noqa: F401, E402, F403
-from intelligence.academic_search import *  # noqa: F401, E402, F403
-from intelligence.archive_discovery import *  # noqa: F401, E402, F403
-from intelligence.data_leak_hunter import *  # noqa: F401, E402, F403
-from intelligence.github_secret_scanner import *  # noqa: F401, E402, F403
-from intelligence.social_identity_miner import *  # noqa: F401, E402, F403
-from intelligence.temporal_archaeologist_adapter import *  # noqa: F401, E402, F403
-from intelligence.bgp_advisor_adapter import *  # noqa: F401, E402, F403
-from intelligence.leak_sentinel import *  # noqa: F401, E402, F403
-from intelligence.ct_log_client import *  # noqa: F401, E402, F403
-_COMMCRWL_SPEC = importlib.util.find_spec("intelligence.commcrawl_adapter")
-if _COMMCRWL_SPEC is not None:
-    from intelligence.commcrawl_adapter import *  # noqa: F401, E402, F403, E402
-from intelligence.onion_seed_manager import *  # noqa: F401, E402, F403, E402
-from intelligence.exposed_service_hunter import *  # noqa: F401, E402, F403, E402
-from intelligence.bgp_passive_dns_adapter import *  # noqa: F401, E402, F403, E402
-from intelligence.network_reconnaissance import *  # noqa: F401, E402, F403, E402
-from intelligence.temporal_analysis import *  # noqa: F401, E402, F403, E402
-from intelligence.timeline_synthesizer import *  # noqa: F401, E402, F403, E402
-from intelligence.academic_discovery import *  # noqa: F401, E402, F403, E402
-from intelligence.confidence_policy import *  # noqa: F401, E402, F403, E402
-from intelligence.entity_signal_extractor import *  # noqa: F401, E402, F403, E402
-from intelligence.attribution_scorer import *  # noqa: F401, E402, F403, E402
-from intelligence.kill_chain_tagger import *  # noqa: F401, E402, F403, E402
-from intelligence.identity_stitching_canonical import *  # noqa: F401, E402, F403, E402
-from intelligence.cryptographic_intelligence import *  # noqa: F401, E402, F403, E402
-from intelligence.wayback_diff_miner import *  # noqa: F401, E402, F403, E402
-from intelligence.wayback_cdx_deep_adapter import *  # noqa: F401, E402, F403, E402
-from intelligence.document_intelligence import *  # noqa: F401, E402, F403, E402
-from intelligence.advanced_image_osint import *  # noqa: F401, E402, F403, E402
-from intelligence.blockchain_analyzer import *  # noqa: F401, E402, F403, E402
-from intelligence.workflow_orchestrator import *  # noqa: F401, E402, F403, E402
-from intelligence.pattern_mining import *  # noqa: F401, E402, F403, E402
-from intelligence.exposure_correlator import *  # noqa: F401, E402, F403, E402
+# ── Module-level __getattr__ for lazy re-exports ─────────────────────────────────
+# Allows `from intel.bgp_monitor import X` to resolve via intel/__init__.py
+# when no physical intel/bgp_monitor.py exists.
 
-# Re-export from intel/ (migrated from network/)
-from intel.bgp_monitor import *  # noqa: F401, E402, F403, E402
-from intel.ct_log_scanner import *  # noqa: F401, E402, F403, E402
-from intel.dns_tunnel_detector import *  # noqa: F401, E402, F403, E402
-from intel.gemini_transport import *  # noqa: F401, E402, F403, E402
-from hledac.universal.network.ipfs_client import *  # noqa: F401, E402
-from intel.jarm_fingerprinter import *  # noqa: F401, E402, F403, E402
-from intel.passive_dns import *  # noqa: F401, E402, F403, E402
-from intel.passive_fingerprint import *  # noqa: F401, E402, F403, E402
+_RECON_MAP = {
+    # primitives (moved from intel/ to recon/ subdirs)
+    "bgp_monitor": "recon.network.bgp_monitor",
+    "passive_fingerprint": "recon.network.passive_fingerprint",
+    "passive_dns": "recon.dns.passive_dns",
+    "dns_tunnel_detector": "recon.dns.dns_tunnel_detector",
+    "ct_log_scanner": "recon.cert.ct_log_scanner",
+    "jarm_fingerprinter": "recon.protocols.jarm_fingerprinter",
+    "gemini_transport": "recon.protocols.gemini_transport",
+    "intel_seed": "recon.intel_seed",
+    # capability forest (moved from intelligence/ to recon/)
+    "greynoise_lane": "recon.greynoise_lane",
+    "shodan_lane": "recon.shodan_lane",
+    "doh_lane": "recon.doh_lane",
+    "network_reconnaissance_lane": "recon.network_reconnaissance_lane",
+    "dark_web_lane": "recon.dark_web_lane",
+    "wayback_cdx": "recon.wayback_cdx",
+    "academic_search": "recon.academic_search",
+    "archive_discovery": "recon.archive_discovery",
+    "data_leak_hunter": "recon.data_leak_hunter",
+    "github_secret_scanner": "recon.github_secret_scanner",
+    "social_identity_miner": "recon.social_identity_miner",
+    "temporal_archaeologist_adapter": "recon.temporal_archaeologist_adapter",
+    "bgp_advisor_adapter": "recon.bgp_advisor_adapter",
+    "leak_sentinel": "recon.leak_sentinel",
+    "ct_log_client": "recon.ct_log_client",
+    "onion_seed_manager": "recon.onion_seed_manager",
+    "exposed_service_hunter": "recon.exposed_service_hunter",
+    "bgp_passive_dns_adapter": "recon.bgp_passive_dns_adapter",
+    "network_reconnaissance": "recon.network_reconnaissance",
+    "temporal_analysis": "recon.temporal_analysis",
+    "timeline_synthesizer": "recon.timeline_synthesizer",
+    "academic_discovery": "recon.academic_discovery",
+    "confidence_policy": "recon.confidence_policy",
+    "entity_signal_extractor": "recon.entity_signal_extractor",
+    "attribution_scorer": "recon.attribution_scorer",
+    "kill_chain_tagger": "recon.kill_chain_tagger",
+    "identity_stitching_canonical": "recon.identity_stitching_canonical",
+    "cryptographic_intelligence": "recon.cryptographic_intelligence",
+    "wayback_diff_miner": "recon.wayback_diff_miner",
+    "wayback_cdx_deep_adapter": "recon.wayback_cdx_deep_adapter",
+    "document_intelligence": "recon.document_intelligence",
+    "advanced_image_osint": "recon.advanced_image_osint",
+    "blockchain_analyzer": "recon.blockchain_analyzer",
+    "workflow_orchestrator": "recon.workflow_orchestrator",
+    "pattern_mining": "recon.pattern_mining",
+    "exposure_correlator": "recon.exposure_correlator",
+    "dark_web_intelligence": "recon.dark_web_intelligence",
+    "stealth_crawler": "recon.stealth_crawler",
+    "web_intelligence": "recon.web_intelligence",
+    "browser_pool": "recon.browser_pool",
+    "relationship_discovery": "recon.relationship_discovery",
+    "pattern_mining_canonical": "recon.pattern_mining_canonical",
+    "blockchain_analyzer_lane": "recon.blockchain_analyzer_lane",
+    "input_detector": "recon.input_detector",
+    "censys_lane": "recon.censys_lane",
+    "commoncrawl_adapter": "recon.commoncrawl_adapter",
+    "pastebin_monitor": "recon.pastebin_monitor",
+    "identity_stitching": "recon.identity_stitching",
+    "exposure_clients": "recon.exposure_clients",
+    "lane": "recon.lane",
+    "ct_lane": "recon.ct_lane",
+    "bgp_lane": "recon.bgp_lane",
+}
+
+
+def __getattr__(name: str):
+    if name in _RECON_MAP:
+        return import_module(_RECON_MAP[name])
+    raise AttributeError(f"module 'intel' has no attribute {name!r}")

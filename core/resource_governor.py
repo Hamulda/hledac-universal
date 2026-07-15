@@ -25,6 +25,8 @@ import asyncio
 import contextlib
 import inspect
 import logging
+import os
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -738,6 +740,7 @@ class GovernorDecision(msgspec.Struct, frozen=True):
     io_only: bool
     fetch_limit: int
     block_model_load: bool = False
+    swap_detected: bool = False  # ISSUE-35: expose swap signal for backpressure decisions
 
 
 class M1ResourceGovernor:
@@ -846,6 +849,7 @@ class M1ResourceGovernor:
                 io_only=False,
                 fetch_limit=preset.fetch_limit,
                 block_model_load=preset.block_model_load,
+                swap_detected=False,
             )
         preset = ConcurrencyPreset.from_state(uma.state)
         now = time.monotonic()
@@ -870,6 +874,7 @@ class M1ResourceGovernor:
             io_only=uma.io_only,
             fetch_limit=scaled_fetch_limit,
             block_model_load=preset.block_model_load,
+            swap_detected=uma.swap_detected,
         )
 
     async def apply_decision(self, decision: GovernorDecision) -> None:
@@ -1216,15 +1221,40 @@ def sample_uma_status() -> UMAStatus:
         last_error = f"psutil.Process: {exc}"
     system_used_gib: float = 0.0
     system_available_gib: float = 0.0
-    try:
-        vm = _get_cached_psutil("virtual_memory", _read_virtual_memory_sync)
-        if vm is not None:
-            system_used_gib = (vm.total - vm.available) / 1024**3
-            system_available_gib = vm.available / 1024**3
-    except Exception as exc:
-        last_error = f"virtual_memory: {exc}"
-        system_used_gib = 0.0
-        system_available_gib = 0.0
+    # ISSUE-35: os.proc_available_memory() is more accurate than psutil on Apple Silicon.
+    # Available on macOS 13+ (Ventura and later). Falls back to psutil if unavailable.
+    # ISSUE-35: os.proc_available_memory() is more accurate than psutil on Apple Silicon.
+    # Available on macOS 13+ (Ventura and later). Falls back to psutil if unavailable.
+    if sys.platform == "darwin" and hasattr(os, "proc_available_memory"):
+        try:
+            proc_avail_bytes = os.proc_available_memory()
+            system_available_gib = proc_avail_bytes / 1024**3
+            # Derive system_used_gib from psutil total for consistency.
+            vm = _get_cached_psutil("virtual_memory", _read_virtual_memory_sync)
+            if vm is not None:
+                system_used_gib = (vm.total - vm.available) / 1024**3
+        except Exception as exc:
+            last_error = f"os.proc_available_memory: {exc}"
+            try:
+                vm = _get_cached_psutil("virtual_memory", _read_virtual_memory_sync)
+                if vm is not None:
+                    system_used_gib = (vm.total - vm.available) / 1024**3
+                    system_available_gib = vm.available / 1024**3
+            except Exception as exc2:
+                last_error = f"virtual_memory: {exc2}"
+                system_used_gib = 0.0
+                system_available_gib = 0.0
+    else:
+        # Fallback: psutil virtual_memory
+        try:
+            vm = _get_cached_psutil("virtual_memory", _read_virtual_memory_sync)
+            if vm is not None:
+                system_used_gib = (vm.total - vm.available) / 1024**3
+                system_available_gib = vm.available / 1024**3
+        except Exception as exc:
+            last_error = f"virtual_memory: {exc}"
+            system_used_gib = 0.0
+            system_available_gib = 0.0
     swap_used_gib: float = 0.0
     try:
         sm = _get_cached_psutil("swap_memory", _read_swap_memory_sync)

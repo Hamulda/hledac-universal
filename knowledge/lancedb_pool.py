@@ -25,6 +25,7 @@ POOL INVARIANTS (M1 8GB):
 
 
 import asyncio
+import contextvars
 import logging
 import threading
 from pathlib import Path
@@ -39,28 +40,50 @@ _POOL_WARM_UP = True  # Pre-warm default connections
 # Global registry: path -> (connection, refcount, lock)
 _registry: dict[str, tuple[Any, int, threading.Lock]] = {}
 _registry_lock = threading.Lock()
-_async_locks: dict[str, asyncio.Lock] = {}
-_async_locks_lock = threading.Lock()  # Use threading.Lock for sync access to _async_locks dict
+
+# ISSUE-003/ISSUE-014 fix: _async_locks moved to ContextVar.
+# This fixes:
+# 1. ISSUE-003: hidden coupling via module-level mutable state
+# 2. ISSUE-014: asyncio.Lock() created without event loop on macOS
+#    (asyncio.Lock captures the running loop at creation time)
+#
+# Each async context (test, request, sprint) gets its own lock map.
+# Sync functions (close_connection, release_connection) still work because
+# ContextVar.get() returns the current context's value — even from sync code
+# when called within an async context.
+_async_locks_var: contextvars.ContextVar[dict[str, asyncio.Lock]] = contextvars.ContextVar('_async_locks_var')
+_async_locks_lock = threading.Lock()  # Still needed for _registry access
+
+
+def _get_async_locks_dict() -> dict[str, asyncio.Lock]:
+    """Get the current async locks ContextVar dict, creating if needed."""
+    try:
+        return _async_locks_var.get()
+    except LookupError:
+        d: dict[str, asyncio.Lock] = {}
+        _async_locks_var.set(d)
+        return d
+
+
+def _get_async_lock(path: str) -> asyncio.Lock:
+    """Get or create async lock for a path (async-safe).
+
+    Fixes ISSUE-014: asyncio.Lock() created lazily inside ContextVar.get(),
+    guaranteeing an event loop exists at creation time.
+    """
+    locks = _get_async_locks_dict()
+    if path in locks:
+        return locks[path]
+    # Slow path: create new lock under sync lock protection for _registry
+    with _async_locks_lock:
+        if path not in locks:
+            locks[path] = asyncio.Lock()
+        return locks[path]
 
 
 class LanceDBPoolError(Exception):
     """Pool error — used for debugging, never raised to callers."""
     pass
-
-
-def _get_async_lock(path: str) -> asyncio.Lock:
-    """Get or create async lock for a path (async-safe)."""
-    # Fast path without locks for existing keys
-    if path in _async_locks:
-        return _async_locks[path]
-
-    # Slow path: create new lock
-    # Note: we can't hold _async_locks_lock while creating the lock
-    # because asyncio.Lock creation is async-unsafe. Use a temporary sync lock.
-    with _async_locks_lock:
-        if path not in _async_locks:
-            _async_locks[path] = asyncio.Lock()
-        return _async_locks[path]
 
 
 def get_connection(uri: str) -> Any:
@@ -203,7 +226,7 @@ def release_connection(uri: str) -> None:
                 pass
             del _registry[normalized]
             with _async_locks_lock:
-                _async_locks.pop(normalized, None)
+                _get_async_locks_dict().pop(normalized, None)
             logger.info(f"[LanceDB:POOL] Closed connection for {normalized} (total={len(_registry)})")
         else:
             _registry[normalized] = (conn, new_refcount, lock)
@@ -222,7 +245,7 @@ def close_connection(uri: str) -> None:
         if normalized not in _registry:
             return
 
-        conn, _, lock = _registry[normalized]
+        conn, _, _lock = _registry[normalized]
         try:
             conn.close()
         except Exception:  # noqa: BLE001
@@ -230,14 +253,14 @@ def close_connection(uri: str) -> None:
         del _registry[normalized]
 
     with _async_locks_lock:
-        _async_locks.pop(normalized, None)
+        _get_async_locks_dict().pop(normalized, None)
 
     logger.info(f"[LanceDB:POOL] Force-closed connection for {normalized} (total={len(_registry)})")
 
 
 def close_all_connections() -> None:
     """Close all pooled connections (process shutdown)."""
-    global _registry, _async_locks
+    global _registry
 
     with _registry_lock:
         paths = list(_registry.keys())
@@ -250,7 +273,7 @@ def close_all_connections() -> None:
         _registry.clear()
 
     with _async_locks_lock:
-        _async_locks.clear()
+        _get_async_locks_dict().clear()
 
     logger.info(f"[LanceDB:POOL] Closed all connections")
 

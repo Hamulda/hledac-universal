@@ -48,6 +48,7 @@ import weakref
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 import msgspec
 from typing import Any
 _MLX_CORE = None
@@ -742,11 +743,23 @@ import secrets
 import shutil
 import uuid
 from dataclasses import dataclass, field
-from pathlib import Path
+import msgspec
 
-@dataclass(slots=True)
-class RAMDiskConfig:
-    """Configuration for RAM disk creation"""
+
+class RAMDiskConfig(msgspec.Struct, frozen=True, kw_only=True):
+    """
+    Configuration for RAM disk creation (ISSUE-033: migrated from @dataclass to msgspec.Struct).
+
+    Attributes:
+        size_mb: RAM disk size in MB. Default: 512 MB (safe for M1 8GB).
+        volume_name: macOS volume name. Default: 'GhostVolume'.
+        filesystem: Filesystem type. Default: 'HFS+'.
+        min_memory_mb: Minimum free memory required to auto-create RAM disk.
+            Default: 1024 MB.
+        max_memory_usage_percent: Maximum fraction of free memory to use for RAM disk.
+            Default: 0.3 (30%).
+    """
+
     size_mb: int = 512
     volume_name: str = 'GhostVolume'
     filesystem: str = 'HFS+'

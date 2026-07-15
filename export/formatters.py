@@ -35,14 +35,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Re-export public API for backward compatibility
-from .sprint_exporter import export_partial_sprint, export_sprint  # noqa: E402
-
 __all__ = [
     "ExportFormatter",
     "JSONFormatter",
-    "export_sprint",
-    "export_partial_sprint",
     "render_investigation_packet_markdown",
 ]
 

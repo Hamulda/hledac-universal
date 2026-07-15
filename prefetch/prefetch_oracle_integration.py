@@ -27,7 +27,6 @@ import asyncio
 import logging
 import time
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import msgspec
 from typing import TYPE_CHECKING, Any
@@ -128,7 +127,6 @@ class PrefetchOracleIntegration:
         self._max_seen_urls = MAX_URL_SEEN
         self._score_cache: dict[str, float] = {}
         self._cache_cycle: int = -1
-        self._duckdb_executor: ThreadPoolExecutor | None = None
         self._duckdb_conn: Any = None
         self._ioc_graph: Any = None
         self._duckdb_store: Any = None
@@ -154,7 +152,7 @@ class PrefetchOracleIntegration:
             Empty dict on any error (scheduler falls back to default ordering).
         """
         try:
-            asyncio.get_running_loop()
+            loop = asyncio.get_running_loop()
         except RuntimeError:
             # No running loop — bridge to async via run_sync_async (M1 Metal safe).
             from utils.sync_bridge import run_sync_async
@@ -164,7 +162,7 @@ class PrefetchOracleIntegration:
         # Running loop detected — delegate to async version via run_coroutine_threadsafe.
         # This avoids M1 Metal crash that asyncio.run() would cause inside an existing loop.
         try:
-            loop = asyncio.get_running_loop()
+
             import asyncio as _asyncio
             future = _asyncio.run_coroutine_threadsafe(
                 self.suggest_scores_async(work_items, current_cycle), loop
@@ -315,7 +313,7 @@ class PrefetchOracleIntegration:
         """
         P1-2: Inject DuckDB connection for historical yield queries.
 
-        Runs DuckDB historical queries in a ThreadPoolExecutor to avoid
+        Runs DuckDB historical queries via asyncio.to_thread to avoid
         blocking the event loop. Connection must be thread-safe.
 
         Called by SprintScheduler during initialization.
@@ -573,7 +571,7 @@ class PrefetchOracleIntegration:
         """
         P1-2: Query DuckDB for historical yield patterns across sprints.
 
-        Runs DuckDB query in ThreadPoolExecutor to avoid blocking the event loop.
+        Runs DuckDB query via asyncio.to_thread to avoid blocking the event loop.
 
         Returns:
             float yield ratio in range [0.0, 1.0], or -1.0 if unavailable.
@@ -582,10 +580,6 @@ class PrefetchOracleIntegration:
             conn = getattr(self, '_duckdb_conn', None)
             if conn is None:
                 return -1.0
-            if self._duckdb_executor is None:
-                from utils.domain_executors import get_duckdb_executor
-                self._duckdb_executor = get_duckdb_executor()
-
             def _query_sync() -> float:
                 """Blocking DuckDB query — runs in thread pool."""
                 try:
@@ -597,8 +591,8 @@ class PrefetchOracleIntegration:
                     return float(result[0]) if result[0] is not None else -1.0
                 except Exception:
                     return -1.0
-            loop = asyncio.get_running_loop()
-            ratio = await loop.run_in_executor(self._duckdb_executor, _query_sync)
+
+            ratio = await asyncio.to_thread(_query_sync)
             self._stats['duckdb_historical_queries'] += 1
             return ratio
         except Exception:
@@ -634,8 +628,8 @@ class PrefetchOracleIntegration:
                     return {row[0]: float(row[1]) if row[1] is not None else -1.0 for row in rows}
                 except Exception:
                     return {}
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(self._duckdb_executor, _query_sync)
+
+            result = await asyncio.to_thread(_query_sync)
             self._stats['duckdb_historical_queries'] += 1
             return result
         except Exception:
@@ -687,7 +681,7 @@ class PrefetchOracleIntegration:
 
         Builds stats list for Rust batch_compute_scores (F199A NEON path) when
         Rust is available; falls back to pure-Python loop when not.
-        Single ThreadPoolExecutor call replaces N sequential _compute_source_score calls.
+        Uses asyncio.to_thread for non-blocking execution via DuckDB executor.
 
         Args:
             feed_urls: list of feed URLs to score

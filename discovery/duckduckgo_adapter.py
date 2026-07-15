@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 import httpx
 import msgspec
 
-from hledac.universal.network.session_runtime import async_get_aiohttp_session
+from hledac.universal.network.session_runtime import async_get_httpx_session
 from hledac.universal.tools.discovery_replay import (
     read_cassette,
     replay_enabled,
@@ -1226,7 +1226,7 @@ async def _scrape_mojeek(
     )
     results = []
     try:
-        s = await async_get_aiohttp_session()
+        s = await async_get_httpx_session()
         text, status, err = await checked_aiohttp_get(
             s,
             "https://www.mojeek.com/search",
@@ -1292,7 +1292,7 @@ async def _search_commoncrawl_cdx(
     import json as _json
     results = []
     try:
-        s = await async_get_aiohttp_session()
+        s = await async_get_httpx_session()
         text, status, err = await checked_aiohttp_get(
             s,
             "https://index.commoncrawl.org/CC-MAIN-2024-51-index",
@@ -1335,7 +1335,7 @@ async def _query_shodan_internetdb(ip: str) -> dict:
     AUTHORITY: registry/shodan_internetdb_lookup() je search-shaped canonical.
     REMOVAL CONDITION: po přechodu všech call-sites na registry/shodan_internetdb_lookup()."""
     try:
-        s = await async_get_aiohttp_session()
+        s = await async_get_httpx_session()
         data, status, err = await checked_aiohttp_get(
             s,
             f"https://internetdb.shodan.io/{ip}",
@@ -1396,8 +1396,8 @@ async def _search_commoncrawl_domain(
         class _MinimalStealth:
             """Minimal StealthManager-compatible wrapper for CommonCrawlAdapter."""
             async def get(self, url: str) -> str:
-                from hledac.universal.network.session_runtime import async_get_aiohttp_session
-                s = await async_get_aiohttp_session()
+                from hledac.universal.network.session_runtime import async_get_httpx_session
+                s = await async_get_httpx_session()
                 r = await s.get(url)
                 return r.text
 

@@ -30,7 +30,7 @@ except ImportError:
 _IMPERSONATE_PROFILES = ['chrome136', 'safari17_0']
 from hledac.universal.transport.http3_lane import _cache_get as _h3_cache_get
 from hledac.universal.transport.http3_lane import fetch_http3_aioquic, is_dark_web_url, record_h3_support
-from ..intelligence.stealth_crawler import HeaderConfig, HeaderSpoofer
+from ..recon.stealth_crawler import HeaderConfig, HeaderSpoofer
 from ..layers.stealth_layer import BrowserProfile, FingerprintConfig, FingerprintRandomizer
 from ..utils.rate_limiter import RateLimitConfig, RateLimiter, RateLimitExceeded
 logger = logging.getLogger(__name__)

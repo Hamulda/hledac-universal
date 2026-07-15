@@ -7,8 +7,8 @@ import pytest
 # Lazy import: httpx loaded only when tests run (skip entire module if unavailable)
 pytest.importorskip("httpx")
 
-from hledac.universal.intelligence._http_helpers import get_intelligence_session  # noqa: E402
-from hledac.universal.intelligence.exposure_clients import (  # noqa: E402
+from hledac.universal.recon._http_helpers import get_intelligence_session  # noqa: E402
+from hledac.universal.recon.exposure_clients import (  # noqa: E402
     CensysClient,
     CVIntelligenceClient,
     ShodanClient,
@@ -42,7 +42,7 @@ async def test_shodan_client_uses_shared_helper():
     async with httpx.AsyncClient() as fake_session:
         async with httpx.AsyncClient() as injected:
             with patch(
-                "hledac.universal.intelligence.exposure_clients.get_intelligence_session",
+                "hledac.universal.recon.exposure_clients.get_intelligence_session",
                 new=AsyncMock(return_value=fake_session),
             ):
                 # Case 1: no injected session -> helper called
@@ -62,7 +62,7 @@ async def test_censys_client_uses_shared_helper():
     async with httpx.AsyncClient() as fake_session:
         async with httpx.AsyncClient() as injected:
             with patch(
-                "hledac.universal.intelligence.exposure_clients.get_intelligence_session",
+                "hledac.universal.recon.exposure_clients.get_intelligence_session",
                 new=AsyncMock(return_value=fake_session),
             ):
                 # Case 1: no injected session -> helper called
@@ -81,7 +81,7 @@ async def test_cv_intelligence_client_uses_shared_helper():
     """CVIntelligenceClient._get_session is a pure passthrough to the helper."""
     async with httpx.AsyncClient() as fake_session:
         with patch(
-            "hledac.universal.intelligence.exposure_clients.get_intelligence_session",
+            "hledac.universal.recon.exposure_clients.get_intelligence_session",
             new=AsyncMock(return_value=fake_session),
         ):
             client = CVIntelligenceClient()
@@ -91,7 +91,7 @@ async def test_cv_intelligence_client_uses_shared_helper():
 
 def test_helper_module_exports_session_symbol():
     """_http_helpers exports get_intelligence_session."""
-    import hledac.universal.intelligence._http_helpers as helpers_mod
+    import hledac.universal.recon._http_helpers as helpers_mod
 
     assert hasattr(helpers_mod, "get_intelligence_session")
     assert not hasattr(helpers_mod, "async_get_aiohttp_session")

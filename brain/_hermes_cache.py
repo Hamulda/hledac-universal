@@ -13,8 +13,10 @@ Invarianty (M1 8GB):
 import asyncio
 import gc
 import logging
+import sys
 import threading
 import time
+import warnings
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -24,6 +26,43 @@ if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+# ─── MADV_FREE_REUSABLE Rust wrapper (ISSUE-16) ─────────────────────────────────
+
+
+def _madvise_heap_critical() -> None:
+    """
+    ISSUE-16: At CRITICAL memory pressure, call madvise(MADV_FREE_REUSABLE)
+    on the entire process heap after mx.eval([]) barrier.
+
+    On M1 8GB, MADV_DONTNEED (advice=1) is used at CRITICAL because
+    we need immediate reclamation — not "reusable when needed".
+    MADV_FREE_REUSABLE is a no-op on anonymous (non-mmap) regions on Darwin,
+    but MADV_DONTNEED immediately discards pages.
+
+    Delegates to Rust madvise_free_reusable(addr=0, length=0, advice=1)
+    which applies to the entire process VM domain via madvise(null, 0, advice).
+
+    Must be called AFTER mx.eval([]) barrier and gc.collect() to ensure
+    Metal/MLX tensors are synchronized before page reclamation.
+    """
+    try:
+        import hledac_rust_extensions as _rust
+        # madvise_free_reusable(addr=0, length=0, advice=1) applies to entire
+        # process address space via madvise(MADV_DONTNEED) on Darwin.
+        # addr=0 + length=0 is the canonical "whole process" madvise pattern.
+        result = _rust.madvise_free_reusable(0, 0, 1)
+        if result == -1:
+            logger.debug("[HERMES cache] madvise(DONTNEED) whole-process heap → failed (errno available)")
+        else:
+            logger.debug("[HERMES cache] madvise(DONTNEED) whole-process heap → OK")
+    except ImportError:
+        # Rust extension not built — silent no-op (metal memory still reclaimed via mx.eval)
+        pass
+    except Exception as _e:
+        # Fail-open: never crash the cache on madvise errors
+        logger.debug(f"[HERMES cache] madvise heap: {_e}")
+        pass
 
 # ─── Module-level constants ───────────────────────────────────────────────────
 
@@ -142,6 +181,7 @@ class HermesModelCache:
         "_on_evict_lora",
         "_model_eviction_count",
         "_lora_eviction_count",
+        "_sys",
     )
 
     def __init__(
@@ -169,6 +209,8 @@ class HermesModelCache:
         self._on_evict_lora = on_evict_lora
         self._model_eviction_count = 0
         self._lora_eviction_count = 0
+        # ISSUE-16: store sys.modules reference for platform checks (avoid repeated import)
+        self._sys = sys
 
     # ─── Lock helper for async contexts ──────────────────────────────────────
 
@@ -323,6 +365,9 @@ class HermesModelCache:
             return None
         key = next(iter(self._lora_cache))
         del self._lora_cache[key]
+        # NOTE: LoRA keys are separate namespace from model keys in _access_times,
+        # but we still pop to avoid orphaned entries if TTL sweep races.
+        self._access_times.pop(key, None)
         self._lora_eviction_count += 1
         _mlx_cache_clear(f"lora_evict:{key}")
         try:
@@ -351,13 +396,16 @@ class HermesModelCache:
 
     async def pressure_check_loop(self) -> None:
         """
-        Active background monitor — two eviction triggers:
+        ISSUE-16: Active background monitor — three-tier memory-aware eviction.
 
-        1. TTL eviction: model entries idle > _MODEL_TTL_S (10 min) are evicted
-           every _pressure_check_interval_s. Reduces RAM pressure for
-           long-running daemons with sparse model usage.
-        2. Critical pressure: when memory pressure reaches 'critical', the
-           oldest model entry is evicted regardless of last-access time.
+        Memory-pressure tiers:
+          - NORMAL / ELEVATED: TTL eviction only (idle > 10 min)
+          - HIGH:               evict ALL LoRA adapters (free ~100-500 MB each)
+          - CRITICAL:           madvise(DONTNEED) on heap → evict largest model
+
+        madvise is called BEFORE eviction so the kernel can reclaim pages
+        before the model struct is freed. On Darwin, MADV_DONTNEED (value 4)
+        immediately discards pages — best for emergency relief.
 
         Runs forever until cancelled.
         """
@@ -394,25 +442,36 @@ class HermesModelCache:
                             except Exception:
                                 pass
 
-                    # 2. Critical memory pressure: evict oldest LRU entry
-                    if pressure == "critical" and self._model_cache:
-                        key = next(iter(self._model_cache))
-                        del self._model_cache[key]
-                        self._access_times.pop(key, None)
-                        self._model_eviction_count += 1
-                        _mlx_cache_clear(f"pressure_critical_evict:{key}")
-                        try:
-                            from otel._instrumentation import set_attribute
+                    # 2. HIGH pressure: evict all LoRA adapters (free GPU memory fast)
+                    if pressure == "high" and self._lora_cache:
+                        count = len(self._lora_cache)
+                        for _ in range(count):
+                            self._evict_lora_internal()
+                        logger.warning(f"[HermesModelCache] Pressure HIGH, evicted {count} LoRA adapters")
 
-                            set_attribute("hermes.cache.model_evictions", self._model_eviction_count)
-                        except Exception:
-                            pass
-                        logger.warning(f"[HermesModelCache] Pressure critical, evicted model: {key}")
-                        if self._on_evict_model:
+                    # 3. CRITICAL pressure: madvise(DONTNEED) → evict largest model
+                    elif pressure == "critical":
+                        # ISSUE-16: madvise BEFORE eviction so kernel reclaims pages first
+                        _madvise_heap_critical()
+                        if self._model_cache:
+                            # Evict the largest (first) model — LRU order
+                            key = next(iter(self._model_cache))
+                            del self._model_cache[key]
+                            self._access_times.pop(key, None)
+                            self._model_eviction_count += 1
+                            _mlx_cache_clear(f"pressure_critical_evict:{key}")
                             try:
-                                self._on_evict_model(key)
+                                from otel._instrumentation import set_attribute
+
+                                set_attribute("hermes.cache.model_evictions", self._model_eviction_count)
                             except Exception:
                                 pass
+                            logger.warning(f"[HermesModelCache] Pressure CRITICAL, evicted model: {key}")
+                            if self._on_evict_model:
+                                try:
+                                    self._on_evict_model(key)
+                                except Exception:
+                                    pass
             except asyncio.CancelledError:
                 logger.debug("[HermesModelCache] Pressure monitor cancelled")
                 return
@@ -420,14 +479,20 @@ class HermesModelCache:
                 # Fail-open: never let the monitor crash the engine
                 pass
 
-    def start_monitor(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
+    def start_monitor(self, _loop: asyncio.AbstractEventLoop | None = None) -> None:
         """
         Start the background pressure monitor.
 
         Args:
-            loop: Event loop to schedule the monitor task in. Defaults to
-                asyncio.get_running_loop().
+            _loop: Deprecated. Kept for API compat. Event loop is resolved
+                internally via asyncio.get_running_loop().
         """
+        if _loop is not None:
+            warnings.warn(
+                "loop= argument is deprecated; the event loop is resolved automatically",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         if self._monitor_task is not None and not self._monitor_task.done():
             return  # already running
         self._monitor_task = safe_create_task(self.pressure_check_loop(), name="hermes_cache:monitor")

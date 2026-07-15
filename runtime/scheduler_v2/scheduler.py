@@ -109,6 +109,7 @@ class SprintSchedulerV2:
     # __slots__ in the original code — added here so inject methods work correctly.
     _prefetch_oracle: Any = field(default=None)
     _security_coordinator: Any = field(default=None)
+    _layer_manager: Any = field(default=None)
 
     def __init__(
         self,
@@ -773,6 +774,11 @@ class SprintSchedulerV2:
         """Read-only sprint_id from the result object."""
         return getattr(self._result, "sprint_id", "")
 
+    @sprint_id.setter
+    def sprint_id(self, value: str) -> None:
+        """Set sprint_id (backward compat for tests)."""
+        object.__setattr__(self, '_sprint_id', value)
+
     # ── Inject methods (v1 compat stubs) ──────────────────────────────────
 
     def inject_evidence_log(self, elog: Any) -> None:
@@ -787,19 +793,16 @@ class SprintSchedulerV2:
         # PolicyManager is not a SprintContext service; no ctx update needed
 
     def inject_communication_layer(self, layer: Any) -> None:
+        # v2: layer is a private scheduler attribute only; no SprintContext update needed
         object.__setattr__(self, '_communication_layer', layer)
-        if self._ctx:
-            object.__setattr__(self, '_ctx', self._ctx.with_cycle(privacy_layer=layer))
 
     def inject_stealth_layer(self, layer: Any) -> None:
+        # v2: layer is a private scheduler attribute only; no SprintContext update needed
         object.__setattr__(self, '_stealth_layer', layer)
-        if self._ctx:
-            object.__setattr__(self, '_ctx', self._ctx.with_cycle(privacy_layer=layer))
 
     def inject_ghost_layer(self, layer: Any) -> None:
+        # v2: layer is a private scheduler attribute only; no SprintContext update needed
         object.__setattr__(self, '_ghost_layer', layer)
-        if self._ctx:
-            object.__setattr__(self, '_ctx', self._ctx.with_cycle(privacy_layer=layer))
 
     def inject_security_coordinator(self, coordinator: Any) -> None:
         object.__setattr__(self, '_security_coordinator', coordinator)
@@ -918,6 +921,116 @@ class SprintSchedulerV2:
             await _duckdb.async_record_hypothesis_feedback(record)
         except Exception:  # noqa: BLE001 — best-effort; non-critical path
             pass
+
+    async def _run_synthesis_sidecar(self, query: str, duckdb_store: Any, lifecycle: Any) -> None:
+        """Sprint F259: Run SynthesisRunner in WINDUP phase.
+
+        Delegates to AcquisitionOrchestrator._run_synthesis_sidecar if available,
+        otherwise runs inline.
+        """
+        import logging
+        _log = logging.getLogger(__name__)
+
+        # Check env gate
+        from core.env_config import ENV
+        if not ENV.get_bool("HLEDAC_ENABLE_HERMES_SYNTHESIS"):
+            _log.debug("[F259] Synthesis skipped -- HLEDAC_ENABLE_HERMES_SYNTHESIS != '1'")
+            self._result.synthesis_success = False
+            # v1: returns early without setting synthesis_engine (leaves default)
+            return
+
+        # Use AcquisitionOrchestrator implementation if available
+        try:
+            from runtime.scheduler_v2.acquisition import AcquisitionOrchestrator
+            orch = AcquisitionOrchestrator()
+            # Build minimal ctx with result
+            class _MinimalCtx:
+                __slots__ = ('query', '_result')
+                def __init__(self, query, result):
+                    self.query = query
+                    self._result = result
+                @property
+                def result(self):
+                    return self._result
+            ctx = _MinimalCtx(query, self._result)
+            await orch._run_synthesis_sidecar(ctx, duckdb_store, lifecycle)
+            return
+        except Exception as e:
+            _log.debug("[F259] Delegation failed, using inline: %s", e)
+            pass
+
+        # Inline fallback implementation
+        import logging
+        import msgspec
+        _log = logging.getLogger(__name__)
+
+        if duckdb_store is None:
+            _log.debug("[F259] Synthesis skipped -- no duckdb_store")
+            return
+
+        if not self._result.accepted_findings:
+            _log.info("[F259-SYN] early-exit: no findings, skipping synthesis")
+            return
+
+        findings: list[dict] = []
+        try:
+            if hasattr(duckdb_store, "get_top_findings"):
+                findings = await duckdb_store.get_top_findings(limit=15)
+            elif hasattr(duckdb_store, "get_recent_findings"):
+                findings = await duckdb_store.get_recent_findings(limit=15)
+        except Exception as e:
+            _log.debug("[F259] Failed to get findings: %s", e)
+            return
+
+        if not findings:
+            _log.debug("[F259] Synthesis skipped -- no findings")
+            return
+
+        try:
+            from hledac.universal.brain.model_lifecycle import ModelLifecycle
+            from hledac.universal.brain.synthesis_runner import SynthesisRunner
+        except ImportError as e:
+            _log.debug("[F259] SynthesisRunner import failed: %s", e)
+            self._result.synthesis_engine = "import_failed"
+            return
+
+        try:
+            runner = SynthesisRunner(ModelLifecycle())
+            runner.set_compression_threshold(4000)
+            runner._duckdb_store = duckdb_store
+            if lifecycle is not None:
+                runner.inject_lifecycle_adapter(lifecycle)
+            report = await runner.synthesize_findings(query=query, findings=findings, force_synthesis=True)
+            self._result.synthesis_findings_count = len(findings)
+            self._result.synthesis_success = report is not None
+            self._result.synthesis_engine = getattr(runner, "_last_synthesis_engine", "synthesis_runner") or "synthesis_runner"
+            if report is not None:
+                try:
+                    self._result.synthesis_text = msgspec.json.encode(
+                        {
+                            "query": query,
+                            "ioc_entities": [
+                                {"type": e.ioc_type, "value": e.value}
+                                for e in getattr(report, "ioc_entities", None) or []
+                            ],
+                            "threat_summary": getattr(report, "threat_summary", ""),
+                            "threat_actors": list(getattr(report, "threat_actors", None) or []),
+                            "confidence": getattr(report, "confidence", 0.0),
+                            "sources_count": getattr(report, "sources_count", 0),
+                            "timestamp": getattr(report, "timestamp", 0.0),
+                        }
+                    ).decode("utf-8")
+                except Exception:
+                    self._result.synthesis_text = str(report)[:4096]
+                _log.info("[F259] Synthesis complete: success=%s, findings=%d", self._result.synthesis_success, self._result.synthesis_findings_count)
+            else:
+                self._result.synthesis_text = ""
+            await runner.close()
+        except Exception as e:
+            _log.debug("[F259] Synthesis failed: %s", e)
+            self._result.synthesis_success = False
+            self._result.synthesis_engine = "error"
+            self._result.synthesis_text = ""
 
     async def health_check(self) -> Any:
         """Stub health check — returns None (pass)."""

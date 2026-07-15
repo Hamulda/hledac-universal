@@ -34,8 +34,7 @@ try:
 except Exception:
     _mlx_embeddings_ok = False
 
-@dataclass(slots=True)
-class ModernBertConfig:
+class ModernBertConfig(msgspec.Struct):
     """Configuration for ModernBertEngine."""
     mlx_model: str = 'nomic-ai/modernbert-embed-base'
     summary_top_k: int = 5

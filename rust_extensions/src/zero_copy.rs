@@ -44,6 +44,9 @@ pub const ZERO_COPY_BATCH_MAX_ITEMS: usize = 10_000;
 pub const ZERO_COPY_BATCH_MAX_BYTES: usize = 100_000_000; // 100 MB
 
 /// Threshold for parallel processing (calibrated for 2 threads).
+/// NOTE: Differs from quality_gate::BATCH_PARALLEL_THRESHOLD (25) which uses
+/// cpu_pool (4 workers, GIL released). zero_copy uses mixed_pool (2 threads)
+/// with GIL held — higher threshold justified by GIL contention cost.
 pub const ZERO_COPY_PARALLEL_THRESHOLD: usize = 50;
 
 // ---------------------------------------------------------------------------
@@ -120,7 +123,7 @@ impl<'py> ExactSizeIterator for PyStrListIter<'py> {
 ///
 /// # Errors
 /// * `PyValueError` - Empty batch, too many items, or batch too large in bytes
-fn validate_batch<'py>(items: &Bound<'py, PyList>, _py: Python<'py>) -> PyResult<usize> {
+pub(crate) fn validate_batch<'py>(items: &Bound<'py, PyList>, _py: Python<'py>) -> PyResult<usize> {
     let n = items.len();
     if n == 0 {
         return Err(PyValueError::new_err("empty batch"));
@@ -133,12 +136,16 @@ fn validate_batch<'py>(items: &Bound<'py, PyList>, _py: Python<'py>) -> PyResult
     }
 
     // Sampled byte size check (1% sampling, max 100 items sampled)
+    // Use iter() instead of get_item() to avoid O(n²) PyList traversal.
+    // PyList::get_item(i) is O(i) — calling it n/step times = O(n²) worst case.
     let sample_size = ((n / 100) as usize).max(10).min(100);
     let step = (n / sample_size).max(1);
     let mut total_bytes = 0usize;
 
-    for i in (0..n).step_by(step) {
-        let item = items.get_item(i)?;
+    for (count, item) in items.iter().enumerate() {
+        if count % step != 0 {
+            continue;
+        }
         total_bytes = total_bytes.saturating_add(item.len()?);
         if total_bytes > ZERO_COPY_BATCH_MAX_BYTES {
             return Err(PyValueError::new_err(format!(

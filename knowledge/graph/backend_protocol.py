@@ -1,31 +1,37 @@
 """
-knowledge/graph/backend_protocol.py — F320: Unified Graph Backend Protocol + Factory
+knowledge/graph/backend_protocol.py — F320+: Unified Graph Backend Protocol + Factory
+ISSUE #14: Stratified backend architecture — 4 specialized backend types
 
 PROBLEM:
-  Dva graph backendy (DuckPGQGraph, IOCGraph) měly různé schopnosti:
-  - DuckPGQGraph: zero-copy SQL, bez buffer_ioc (původně)
-  - IOCGraph (Kuzu): buffer_ioc/flush_buffers, vlastní storage
+  knowledge/graph_service.py a knowledge/ioc_graph.py měly 4 backendy:
+  - DuckPGQ (SQL-based graph) — pro analytiku
+  - Kuzu (embedded graph DB) — pro IOC graph
+  - Rust rustworkx — pro rychlé algoritmy (NEEXISTUJE)
+  - LanceDB/HNSW — pro similarity search
 
-  F272 + F300 konsolidovaly DuckPGQGraph jako sole canonical backend
-  s nativními buffer_ioc/flush_buffers. _check_graph_capability hlídala
-  že DuckPGQGraph nemůže do truth-write slotu — to je nyní ZASTARALÉ.
+SOLUTION (ISSUE #14):
+  Rozšířený GraphBackend Protocol + 3 nové specializované protokoly:
+  1. GraphTraversalBackend — BFS/DFS, shortest path, pivot
+  2. GraphAnalyticsBackend — PageRank, community detection, top nodes by degree
+  3. SimilarityBackend — k-NN, ANN (USEARCH), LSH near-duplicate
 
-SOLUTION:
-  Unified GraphBackend Protocol — oba backendy implementují stejné API.
-  Factory choose_graph_backend() vybírá na základě:
-  - Kuzu availability (IOCGraph preferována pro truth-write sloty)
-  - DuckDB availability (DuckPGQGraph pro analytics)
-  - M1 8GB UMA budget
+  Factory choose_graph_backend() nyní podporuje for_operation parametr:
+  - "buffered_write" → Kuzu/DuckPGQ podle dostupnosti
+  - "traversal" → DuckPGQGraph (SQL MATCH)
+  - "analytics" → DuckPGQGraph + PageRank/community
+  - "similarity" → USEARCH + LSHIndex + LanceDB persistence
 
-CANONICAL CONSUMERS (nezměněno):
-  - DuckDBShadowStore: inject_graph(), inject_truth_write_graph(), inject_stix_graph()
-  - GraphAttachmentStore: 3 sloty (_ioc_graph, _stix_graph, _truth_write_graph)
-  - SprintScheduler: _graph_ingest_findings(), _accumulate_findings_to_graph()
+BACKENDS:
+  DuckPGQGraph: graph/quantum_pathfinder.py — traversal + analytics + buffered writes
+  IOCGraph: knowledge/ioc_graph.py — DEPRECATED (F300 konsolidace)
+  LSHIndex: rust.lsh.lsh_index_new() — near-duplicate detection
+  USEARCH: knowledge/ann_index.py (_ANNIndex) — ANN similarity
 
 INVARIANTS:
   - Always-on, fail-safe, bounded
   - Žádné nové feature flagy
-  - M1 8GB safe: Kuzu single-thread executor, DuckDB in-process
+  - M1 8GB safe: Kuzu single-thread, DuckDB in-process, USEARCH Metal SIMD
+  - LanceDB deprecated (surface_id=2644) — používá se pouze pro cross-session persistence
 """
 
 
@@ -35,6 +41,7 @@ from collections.abc import Iterator
 
 if TYPE_CHECKING:
     from pathlib import Path
+    import numpy as np
 
 
 logger = logging.getLogger(__name__)
@@ -93,11 +100,74 @@ class GraphBackend(Protocol):
 
 
 # ---------------------------------------------------------------------------
+# ISSUE #14: Stratified Backend Protocols
+# ---------------------------------------------------------------------------
+
+@runtime_checkable
+class GraphTraversalBackend(Protocol):
+    """
+    Graph traversal operations: BFS, DFS, shortest path, pivot.
+
+    Implemented by: DuckPGQGraph
+
+    M1 8GB: bounded fetch (2048 rows/batch), SQL:2023 MATCH or recursive CTE.
+    """
+
+    def find_connected(self, value: str, max_hops: int = 2) -> list[dict[str, Any]]: ...
+    def find_connected_batch(self, values: list[str], max_hops: int = 2) -> dict[str, list[dict[str, Any]]]: ...
+    def pivot(self, ioc_value: str, ioc_type: str, depth: int = 2) -> list[dict[str, Any]]: ...
+    def shortest_path(self, src: str, dst: str, max_hops: int = 10) -> list[str] | None: ...
+
+
+@runtime_checkable
+class GraphAnalyticsBackend(Protocol):
+    """
+    Graph analytics operations: PageRank, community detection, top nodes.
+
+    Implemented by: DuckPGQGraph
+
+    M1 8GB: DuckDB SQL analytics, bounded node limits, memory-mapped spill.
+    """
+
+    def get_top_nodes_by_degree(self, n: int = 20) -> list[dict[str, Any]]: ...
+    def pagerank(self, max_iter: int = 100, damping: float = 0.85) -> dict[str, float]: ...
+    def community_detection(self, method: str = "louvain") -> dict[int, list[str]]: ...
+    def graph_stats(self) -> dict[str, int]: ...
+    def export_edge_list(self) -> list[tuple[str, str, str, float]]: ...
+
+
+@runtime_checkable
+class SimilarityBackend(Protocol):
+    """
+    Similarity search operations: k-NN, ANN, LSH near-duplicate detection.
+
+    Implemented by:
+    - _ANNIndex (knowledge/ann_index.py) — USEARCH + LanceDB
+    - LSHIndex (rust.lsh) — near-duplicate detection
+
+    M1 8GB: USEARCH Metal SIMD (~10x faster than brute-force),
+    MLX cosine re-ranking on GPU, LSH O(1) lookup.
+    """
+
+    def ann_search(
+        self, embedding: "np.ndarray", top_k: int = 5
+    ) -> list[dict[str, Any]]: ...
+    def lsh_near_duplicate(
+        self, fingerprint: int, threshold: int = 3
+    ) -> list[tuple[str, float]]: ...
+    def upsert_similarity(
+        self, key: str, embedding: "np.ndarray", text_hash: str
+    ) -> bool: ...
+
+
+# ---------------------------------------------------------------------------
 # Backend availability flags (lazy, fail-soft)
 # ---------------------------------------------------------------------------
 
 _DUCKPGQ_AVAILABLE: bool | None = None
 _IOCGRAPH_AVAILABLE: bool | None = None
+_ANN_AVAILABLE: bool | None = None
+_LSH_AVAILABLE: bool | None = None
 
 
 def _check_duckpgq_available() -> bool:
@@ -105,7 +175,6 @@ def _check_duckpgq_available() -> bool:
     if _DUCKPGQ_AVAILABLE is None:
         try:
             from hledac.universal.graph.quantum_pathfinder import DuckPGQGraph
-
             _DUCKPGQ_AVAILABLE = True
         except ImportError:
             _DUCKPGQ_AVAILABLE = False
@@ -117,11 +186,40 @@ def _check_iocgraph_available() -> bool:
     if _IOCGRAPH_AVAILABLE is None:
         try:
             import kuzu
-
             _IOCGRAPH_AVAILABLE = True
         except ImportError:
             _IOCGRAPH_AVAILABLE = False
     return _IOCGRAPH_AVAILABLE
+
+
+def _check_ann_available() -> bool:
+    """Check if USEARCH + LanceDB ANN is available."""
+    global _ANN_AVAILABLE
+    if _ANN_AVAILABLE is None:
+        try:
+            from knowledge.ann_index import _ANNIndex
+            _ANN_AVAILABLE = True
+        except ImportError:
+            _ANN_AVAILABLE = False
+    return _ANN_AVAILABLE
+
+
+def _check_lsh_available() -> bool:
+    """Check if Rust LSH index is available."""
+    global _LSH_AVAILABLE
+    if _LSH_AVAILABLE is None:
+        try:
+            from core.rust_backend import get_accel
+            accel = get_accel()
+            if accel.is_available and accel.lsh is not None:
+                idx = accel.lsh.lsh_index_new(num_tables=16, num_rows=4)
+                if idx is not None:
+                    _LSH_AVAILABLE = True
+                    return True
+            _LSH_AVAILABLE = False
+        except Exception:
+            _LSH_AVAILABLE = False
+    return _LSH_AVAILABLE
 
 
 # ---------------------------------------------------------------------------
@@ -147,15 +245,24 @@ def _is_ioc_graph(graph: Any) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Factory
+# Factory (expanded for ISSUE #14)
 # ---------------------------------------------------------------------------
 
 class GraphBackendKind:
     """Enum-like for graph backend kinds."""
 
     DUCKPGQ = "duckpgq"   # DuckDB + DuckPGQ extension
-    KUZU = "kuzu"         # Kuzu embedded graph DB
+    KUZU = "kuzu"         # Kuzu embedded graph DB (DEPRECATED)
     NONE = "none"         # No backend available
+
+
+class GraphOperationKind:
+    """ISSUE #14: Operation kinds for stratified backend selection."""
+
+    BUFFERED_WRITE = "buffered_write"   # IOC accumulation → DuckPGQGraph/Kuzu
+    TRAVERSAL = "traversal"             # BFS/DFS/shortest_path → DuckPGQGraph
+    ANALYTICS = "analytics"              # PageRank/community → DuckPGQGraph
+    SIMILARITY = "similarity"           # ANN/LSH → USEARCH + LSHIndex
 
 
 def choose_graph_backend(

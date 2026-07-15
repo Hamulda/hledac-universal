@@ -238,7 +238,7 @@ class TestRustBackendHashFallback:
         """batch_content_hash returns list of ints."""
         from core.rust_backend import rust
 
-        items = [b"a", b"b", b"c"]  # Rust expects bytes
+        items = ["a", "b", "c"]  # Rust expects string items
         result = rust.hash.batch_content_hash(items)
         assert len(result) == 3
         assert all(isinstance(x, int) for x in result)
@@ -257,11 +257,11 @@ class TestRustBackendIocFallback:
         # Rust returns flat list[(value, ioc_type)], Python fallback returns dict
         if isinstance(result, dict):
             # Python fallback path
-            assert "ipv4" in result
-            assert "domain" in result
-            assert "email" in result
-            assert "1.2.3.4" in result["ipv4"]
-            assert "user@example.org" in result["email"]
+            assert "ipv4s" in result, f"Expected 'ipv4s' in result, got: {list(result.keys())}"
+            assert "domains" in result, f"Expected 'domains' in result, got: {list(result.keys())}"
+            assert "emails" in result, f"Expected 'emails' in result, got: {list(result.keys())}"
+            assert "1.2.3.4" in result["ipv4s"]
+            assert "user@example.org" in result["emails"]
         else:
             # Rust path: flat list of (value, ioc_type) tuples
             assert isinstance(result, list)

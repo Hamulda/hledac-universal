@@ -1,25 +1,42 @@
 name: Rust Extensions CI
 
 # Verifies the hledac-rust-extensions maturin build on every push and PR.
-# Runs ONLY on macos-latest because:
-#   - aarch64-apple-darwin is the production target (M1 8GB UMA)
-#   - .cargo/config.toml and build.rs emit macOS-specific link flags
-#     (`-undefined dynamic_lookup`) that would fail on Linux/Windows runners
-#   - the project's own verify_build.py and benchmark scripts are tuned
-#     for the same M1 target
 #
-# Pipeline:
-#   1. checkout (full history for change detection)
+# Architecture:
+#   - macOS jobs (aarch64 + x86_64): full maturin wheel build + smoke + benchmarks
+#   - Linux job: cargo check + clippy + fmt only — PyO3 cross-compile for
+#     wheel distribution is not viable from macOS; Linux validation is done
+#     via cargo check to guarantee multi-platform source compatibility.
+#
+# macOS-only wheel build is intentional — the M1 8GB production target runs
+# macOS, and maturin cannot cross-compile PyO3 bindings from macOS → Linux.
+# The Linux job provides source-level multi-platform coverage without
+# requiring a Linux runner for wheel builds.
+#
+# Pipeline (macOS):
+#   1. checkout
 #   2. install Rust stable (dtolnay/rust-toolchain) + Python 3.14 (uv)
-#   3. uv sync to materialize the project venv
-#   4. maturin develop --release into that venv
-#   5. verify_build.py smoke test (5/5 PASS required)
-#   6. benchmarks/bench_rust_vs_python.py (must finish under 30s budget)
-#   7. pytest tests/ -k "rust or extension" -x
+#   3. cache: cargo target/ + uv venv (keyed on Cargo.lock / pyproject.toml)
+#   4. maturin build --release → wheel artifact
+#   5. maturin develop --release → install into venv for local testing
+#   6. Stub guard — exactly 1 canonical hledac_rust_extensions.pyi (ISSUE-002)
+#   7. verify_build.py smoke test (5/5 PASS required)
+#   8. benchmarks/bench_rust_vs_python.py (must finish under 30s budget)
+#   9. pytest tests/ -k "rust or extension" -x
+#   10. Python fallback guard (extension removed → Python modules still work)
 #
-# Cache: cargo target/ keyed on Cargo.lock so incremental runs stay fast.
+# Pipeline (Linux):
+#   1. checkout
+#   2. install Rust stable + cross-compile target x86_64-unknown-linux-gnu
+#   3. cache: cargo target/ (keyed on Cargo.lock)
+#   4. cargo check --all-features (full compile without linking)
+#   5. cargo clippy --all-features (lint + warnings as errors)
+#   6. cargo fmt --check (format verification)
 
 on:
+  workflow_dispatch:
+    # Allows manual triggering from GitHub UI / API.
+    # Useful for debugging failures without pushing a commit.
   push:
     branches: [main]
     paths:
@@ -45,10 +62,11 @@ env:
   RUST_BACKTRACE: "1"
 
 jobs:
-  build-and-test:
-    name: maturin build · macos-arm64
-    runs-on: macos-latest
-    timeout-minutes: 20
+  # ── Linux: cargo check + clippy + fmt (no wheel — cross-compile not viable) ─
+  linux-check:
+    name: cargo check · linux-x86_64
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -58,7 +76,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          targets: aarch64-apple-darwin
+          targets: x86_64-unknown-linux-gnu
 
       - name: Cache cargo target
         uses: actions/cache@v4
@@ -67,14 +85,73 @@ jobs:
             rust_extensions/target
             ~/.cargo/registry
             ~/.cargo/git
-          key: ${{ runner.os }}-cargo-${{ hashFiles('rust_extensions/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          key: linux-cargo-${{ hashFiles('rust_extensions/Cargo.lock') }}
+          restore-keys: linux-cargo-
+
+      - name: Cargo check (all features)
+        working-directory: rust_extensions
+        run: cargo check --all-features
+
+      - name: Cargo clippy (all features, warnings as errors)
+        working-directory: rust_extensions
+        run: cargo clippy --all-features --all-targets -- -D warnings
+
+      - name: Cargo fmt check
+        working-directory: rust_extensions
+        run: cargo fmt --check
+
+  # ── macOS matrix: maturin wheel build + full test suite ─────────────────────
+  # NOTE: macos-latest = ARM64 (M1/M2), macos-13 = Intel x86_64.
+  # Explicit runner mapping is required — matrix platform name ≠ GitHub runner label.
+  build-and-test:
+    name: maturin build · ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-arm64, macos-x86_64]
+        runner:   [macos-latest,  macos-13]   # ← explicit arch mapping
+        include:
+          - platform: macos-arm64
+            target: aarch64-apple-darwin
+          - platform: macos-x86_64
+            target: x86_64-apple-darwin
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo target
+        uses: actions/cache@v4
+        with:
+          path: |
+            rust_extensions/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('rust_extensions/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-${{ matrix.target }}-cargo-
+
+      - name: Cache uv venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: uv-${{ runner.os }}-python3.14-${{ hashFiles('pyproject.toml', 'uv.lock') }}
+          restore-keys: uv-${{ runner.os }}-python3.14-
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v4
         with:
-          version: "0.5.x"
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
 
       - name: Set up Python
         run: uv python install 3.14
@@ -85,19 +162,41 @@ jobs:
         # Rust extension is intentionally NOT in pyproject deps — built below
         # via maturin so the build step is explicit and reproducible.
 
-      - name: Build & install Rust extension
+      - name: Build wheel + develop (maturin)
         uses: PyO3/maturin-action@v1
         with:
           working-directory: rust_extensions
-          command: develop
-          args: --release
-          # maturin-action auto-detects the active Python from PATH;
-          # `uv sync` above places .venv/bin first, so this lands in
-          # the project venv (not the runner's system Python).
+          # build: produces .whl artifact (uploaded below)
+          # develop: installs into venv for local smoke/benchmark tests
+          command: build develop
+          args: --release --out dist/wheels
         env:
-          # maturin's auto-detection prefers UV_PYTHON when set; we unset
-          # to fall back to the venv's Python.
           UV_PYTHON: ""
+          # MACOSX_DEPLOYMENT_TARGET: controlled by rust_extensions/Cargo.toml
+
+      - name: Stub guard — single hledac_rust_extensions.pyi
+        # ISSUE-002: Exactly 1 canonical stub must exist. Multiple stubs accumulate
+        # when maturin runs with different python-source configs. Fail CI if ≠ 1.
+        run: |
+          COUNT=$(find rust_extensions -name "hledac_rust_extensions.pyi" | wc -l | tr -d ' ')
+          if [ "$COUNT" != "1" ]; then
+            echo "ERROR: Found $COUNT hledac_rust_extensions.pyi files (expected 1)"
+            find rust_extensions -name "hledac_rust_extensions.pyi"
+            exit 1
+          fi
+          echo "OK: exactly 1 canonical stub present"
+
+      - name: Regenerate stub — maturin generate-stubs
+        # ISSUE-002: Canonical stub generation via maturin. Output to .stub/ temp dir,
+        # then copy to rust_extensions/ as the single canonical .pyi. Guard above
+        # ensures no duplication. This step is CI-only; local devs run it manually.
+        run: |
+          mkdir -p .stub
+          maturin generate-stubs -o .stub --bindings pyo3
+          # Copy generated stub to canonical location
+          cp .stub/hledac_rust_extensions/__init__.pyi rust_extensions/hledac_rust_extensions.pyi
+          rm -rf .stub
+          echo "OK: canonical stub regenerated from source"
 
       - name: Smoke test — verify_build.py
         working-directory: rust_extensions
@@ -159,3 +258,10 @@ jobs:
           assert eng.hash(b"hello world") != 0, "Python fallback must still work"
           print("OK Python fallback: RollingHashEngine.hash(b'hello world') =", eng.hash(b"hello world"))
           PY
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.platform }}
+          path: rust_extensions/dist/wheels/*.whl
+          retention-days: 5

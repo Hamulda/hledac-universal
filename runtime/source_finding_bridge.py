@@ -35,6 +35,44 @@ import re
 import time
 from typing import Any
 
+from runtime.source_finding_config import (
+    MAX_BRIDGE_OUTPUT,
+    MAX_CT_QUARANTINE_SAMPLES,
+    MAX_EXPANSION_CLUE_EXAMPLES,
+    MAX_PAYLOAD_TEXT_CHARS,
+    MAX_PROVENANCE_ITEMS,
+    MAX_SAMPLE_REJECTIONS,
+    PDNS_BRIDGE,
+    RDAP_BRIDGE,
+    REJECTION_CANDIDATE_BUILT_NOT_STORED,
+    REJECTION_DUPLICATE_CANDIDATE,
+    REJECTION_LOW_INFORMATION,
+    REJECTION_MISSING_DOMAIN,
+    REJECTION_MISSING_VALUE,
+    REJECTION_PRIVATE_OR_RESERVED_DOMAIN,
+    REJECTION_QUALITY_GATE,
+    REJECTION_STORAGE_UNAVAILABLE,
+    REJECTION_UNSUPPORTED_SHAPE,
+    REJECTION_WILDCARD_DOMAIN,
+    Rejection,
+    RejectionReason,
+    is_private_host,
+    CT_BRIDGE,
+    WAYBACK_BRIDGE,
+)
+from runtime.patterns.discovery import (
+    _IP_LIKE_RE,
+    _TRAILING_DOT_RE,
+    _URL_SCHEME_RE,
+    _URL_TRAILING_SLASH_RE,
+    _WILDCARD_RE,
+    is_ip_like as _is_ip_like_pattern,
+)
+from runtime.source_finding_config import (
+    is_private_hostname,
+    is_private_ip_prefix,
+)
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -76,49 +114,30 @@ __all__ = [
     "summarize_doh_conversion",
     "network_recon_result_to_findings",
     "summarize_network_recon_conversion",
+    # Re-exports from config for backward compatibility
+    "CT_BRIDGE",
+    "WAYBACK_BRIDGE",
+    "PDNS_BRIDGE",
+    "RDAP_BRIDGE",
+    "is_private_hostname",
+    "is_private_ip_prefix",
 ]
 
-# ---------------------------------------------------------------------------
-# Rejection reason constants
-# ---------------------------------------------------------------------------
 
-Rejection = str
-RejectionReason = Rejection
+def _normalize_domain(domain: str) -> str:
+    """
+    Normalize a domain extracted from CT data.
 
-REJECTION_MISSING_DOMAIN: RejectionReason = "missing_domain"
-REJECTION_MISSING_VALUE: RejectionReason = "missing_value"
-REJECTION_LOW_INFORMATION: RejectionReason = "low_information"
-REJECTION_DUPLICATE_CANDIDATE: RejectionReason = "duplicate_candidate"
-REJECTION_UNSUPPORTED_SHAPE: RejectionReason = "unsupported_shape"
-
-# Extended CT-specific rejection reasons
-REJECTION_WILDCARD_DOMAIN: RejectionReason = "wildcard_domain"
-REJECTION_PRIVATE_OR_RESERVED_DOMAIN: RejectionReason = "private_or_reserved_domain"
-# F214A: CT acceptance closure — storage/quality gate rejections
-REJECTION_STORAGE_UNAVAILABLE: RejectionReason = "storage_unavailable"
-REJECTION_QUALITY_GATE: RejectionReason = "quality_gate"
-REJECTION_CANDIDATE_BUILT_NOT_STORED: RejectionReason = "candidate_built_not_stored"
-
-# ---------------------------------------------------------------------------
-# Output bounds
-# ---------------------------------------------------------------------------
-
-MAX_BRIDGE_OUTPUT: int = 500
-MAX_PAYLOAD_TEXT_CHARS: int = 2000
-MAX_PROVENANCE_ITEMS: int = 20
-MAX_SAMPLE_REJECTIONS: int = 5
-MAX_CT_QUARANTINE_SAMPLES: int = 10
-MAX_EXPANSION_CLUE_EXAMPLES: int = 5
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-_URL_SCHEME_RE = re.compile(r"^https?://", re.IGNORECASE)
-_URL_TRAILING_SLASH_RE = re.compile(r"/+$")
-_WILDCARD_RE = re.compile(r"^\*\.")
-_TRAILING_DOT_RE = re.compile(r"\.$")
-_IP_LIKE_RE = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
+    Applies in order:
+      1. Strip wildcard prefix *.
+      2. Strip trailing dot
+      3. Lowercase
+    """
+    d = domain
+    d = _WILDCARD_RE.sub("", d)
+    d = _TRAILING_DOT_RE.sub("", d)
+    d = d.lower()
+    return d
 
 
 def _strip_url_scheme(url: str) -> str:
@@ -186,51 +205,6 @@ def _ts_from_wayback_timestamp(ts: str) -> float:
         return datetime.strptime(ts, "%Y%m%d%H%M%S").timestamp()  # noqa: DTZ007
     except Exception:
         return 0.0
-
-
-_PRIVATE_HOSTNAMES: frozenset[str] = frozenset({
-    "localhost",
-    "invalid",
-    "test",
-})
-
-_PRIVATE_IP_PREFIXES: tuple[str, ...] = (
-    "10.",
-    "172.16.",
-    "172.17.",
-    "172.18.",
-    "172.19.",
-    "172.20.",
-    "172.21.",
-    "172.22.",
-    "172.23.",
-    "172.24.",
-    "172.25.",
-    "172.26.",
-    "172.27.",
-    "172.28.",
-    "172.29.",
-    "172.30.",
-    "172.31.",
-    "192.168.",
-    "127.",
-    "0.",
-    "255.",
-    "169.254.",
-    "::1",
-    "fe80:",
-    "fc00:",
-    "fd00:",
-)
-
-
-def _is_ip_like(value: str) -> bool:
-    """Return True if value looks like an IP address (v4 or v6)."""
-    if _IP_LIKE_RE.match(value):
-        return True
-    if ":" in value:
-        return True
-    return False
 
 
 def _normalize_domain(domain: str) -> str:
@@ -315,16 +289,6 @@ def _extract_domains_from_ct_name_value(name_value: str) -> list[tuple[str, bool
             # Concrete domains: normalize to match URL-extracted candidates
             results.append((_normalize_domain(line), False))
     return results
-
-
-def _is_private_hostname(domain: str) -> bool:
-    """Check if domain matches a reserved/private hostname or is IP-like."""
-    domain_lower = domain.lower()
-    if domain_lower in _PRIVATE_HOSTNAMES:
-        return True
-    if _is_ip_like(domain_lower):
-        return True
-    return False
 
 
 def _classify_domain_shape(domain: str, url: str, ct_name_value: str) -> str:
@@ -692,7 +656,7 @@ def ct_results_to_findings(
                 continue
 
             # Private/reserved check FIRST — more specific than single-label
-            if _is_private_hostname(domain):
+            if is_private_host(domain):
                 rejections.append(REJECTION_PRIVATE_OR_RESERVED_DOMAIN)
                 entry = _make_ct_quarantine_entry(
                     domain=domain,
@@ -1049,35 +1013,6 @@ _PDNS_CONFIDENCE: float = 0.5
 _PDNS_SOURCE_TYPE: str = "passive_dns"
 _PDNS_SALT: str = "pdnsbridge"
 
-_PRIVATE_IP_PREFIXES: tuple[str, ...] = (
-    "10.",
-    "172.16.",
-    "172.17.",
-    "172.18.",
-    "172.19.",
-    "172.20.",
-    "172.21.",
-    "172.22.",
-    "172.23.",
-    "172.24.",
-    "172.25.",
-    "172.26.",
-    "172.27.",
-    "172.28.",
-    "172.29.",
-    "172.30.",
-    "172.31.",
-    "192.168.",
-    "127.",
-    "0.",
-    "255.",
-    "169.254.",
-    "::1",
-    "fe80:",
-    "fc00:",
-    "fd00:",
-)
-
 
 def passive_dns_results_to_findings(
     ips: list[str],
@@ -1174,7 +1109,7 @@ def passive_dns_results_to_findings(
             pdns_empty_rejected += 1
             continue
 
-        is_private = any(ip_stripped.startswith(p) for p in _PRIVATE_IP_PREFIXES)
+        is_private = is_private_ip_prefix(ip_stripped)
         if is_private:
             rejections.append(REJECTION_LOW_INFORMATION)
             pdns_private_rejected += 1

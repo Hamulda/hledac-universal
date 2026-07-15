@@ -28,6 +28,7 @@ import msgspec
 from typing import Any, Self
 from core.psutil_shim import virtual_memory as _virtual_memory, PSUTIL_AVAILABLE as _PSUTIL_AVAILABLE
 from hledac.universal.utils.uma_budget import M1_FETCH_SOFT_CEILING_GB
+from hledac.universal.utils.config_introspection import safe_attr_get
 logger = logging.getLogger(__name__)
 MLX_AVAILABLE = False
 _FALLBACK_RAM_ESTIMATE_MB: float = 500.0
@@ -69,7 +70,7 @@ class ResourceAllocator:
 
     def _extract_features(self, ctx: Any) -> list[float]:
         """Extract feature vector for RAM prediction."""
-        return [float(len(ctx.query)) if hasattr(ctx, 'query') else 100.0, float(ctx.depth) if hasattr(ctx, 'depth') else 1.0, float(len(getattr(ctx, 'selected_sources', []))), float(getattr(ctx, 'complexity_score', 0.5))]
+        return [float(len(safe_attr_get(ctx, 'query') or '')) or 100.0, float(safe_attr_get(ctx, 'depth') or 1.0), float(len(safe_attr_get(ctx, 'selected_sources', []))), float(safe_attr_get(ctx, 'complexity_score', 0.5))]
 
     def _update_model(self):
         """Update MLX linear regression model from history."""

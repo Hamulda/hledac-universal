@@ -157,10 +157,26 @@ class SessionManager:
         self._tor_session: aiohttp.ClientSession | None = None
         self._i2p_session: aiohttp.ClientSession | None = None
         self._tor_request_count: int = 0
-        self._tor_lock = asyncio.Lock()
-        self._i2p_lock = asyncio.Lock()
+        self._tor_lock: asyncio.Lock | None = None
+        self._i2p_lock: asyncio.Lock | None = None
         self._locally_created: dict[str, bool] = {"tor": False, "i2p": False}
         self._injected_provider: tuple[aiohttp.ClientSession | None, aiohttp.ClientSession | None] | None = None
+
+    # ---------------------------------------------------------------------------
+    # Lazy lock helpers (ISSUE-014: asyncio.Lock() at __init__ time fails on macOS)
+    # ---------------------------------------------------------------------------
+
+    def _get_tor_lock(self) -> asyncio.Lock:
+        """Lazily create Tor session lock in the current event loop."""
+        if self._tor_lock is None:
+            self._tor_lock = asyncio.Lock()
+        return self._tor_lock
+
+    def _get_i2p_lock(self) -> asyncio.Lock:
+        """Lazily create I2P session lock in the current event loop."""
+        if self._i2p_lock is None:
+            self._i2p_lock = asyncio.Lock()
+        return self._i2p_lock
 
     # ---------------------------------------------------------------------------
     # Provider injection
@@ -227,7 +243,7 @@ class SessionManager:
             pass
 
         # 3. Fallback: aiohttp_socks
-        async with self._tor_lock:
+        async with self._get_tor_lock():
             if self._tor_session is None or self._tor_session.closed:
                 from aiohttp_socks import ProxyConnector
 
@@ -269,7 +285,7 @@ class SessionManager:
             pass
 
         # 3. Fallback: aiohttp_socks
-        async with self._i2p_lock:
+        async with self._get_i2p_lock():
             if self._i2p_session is None or self._i2p_session.closed:
                 from aiohttp_socks import ProxyConnector
 

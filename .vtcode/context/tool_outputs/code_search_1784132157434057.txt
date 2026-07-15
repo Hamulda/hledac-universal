@@ -1,0 +1,3346 @@
+{
+  "view": "names",
+  "files": [
+    {
+      "path": "rust_extensions/src/data.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        },
+        {
+          "kind": "module",
+          "names": [
+            "connection",
+            "graph_traverse",
+            "cache"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/benchmarks/bench_new_modules.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "bench"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "test_bytes",
+            "url",
+            "rust_set",
+            "py_set",
+            "u",
+            "test_url",
+            "test_text",
+            "sample_text",
+            "urls",
+            "data",
+            "texts"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/metal_pattern_matcher.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "scan_keywords_batch",
+            "scan_ioc_batch",
+            "batch_keyword_scan",
+            "batch_ioc_scan",
+            "get_pattern_stats",
+            "check_metal_availability",
+            "register_functions"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "PatternStats"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/content_hasher.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "sha256_hex",
+            "blake3_64",
+            "xxh3_64_hex",
+            "blake3_hex",
+            "batch_xxh3_64_hex",
+            "batch_blake3_64"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "ContentHasher"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/regex_lz4.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "new",
+            "get_patterns",
+            "len",
+            "is_empty",
+            "compressed_size",
+            "decompressed_size",
+            "compression_ratio",
+            "save_to_file",
+            "load_from_file",
+            "register"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "RegexLz4Store",
+            "PyRegexLz4Store"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/build_ffi_manifest.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "constant",
+          "names": [
+            "_REPO_ROOT",
+            "REPO_ROOT",
+            "ABI_OUT",
+            "MANIFEST_PATH",
+            "LIB_RS_PATH"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "_extract_class_name",
+            "parse_lib_rs_symbols",
+            "get_git_rev",
+            "generate_manifest"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "parser",
+            "args"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/async_query.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "rust_async_query",
+            "rust_async_query_with_params",
+            "rust_async_query_batch",
+            "register"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "StdConnectionPool"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/ioc_extract_simd.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "extract_iocs_simd",
+            "batch_extract_iocs_simd",
+            "batch_extract_iocs_simd_indexed",
+            "batch_extract_iocs_simd_python",
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/mpsc_pool.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "constant",
+          "names": [
+            "MPSC_DEFAULT_CAPACITY",
+            "MPSC_SLOT_BYTES"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "register"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "QueueItem",
+            "MPSCPool"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/bloom.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "bloom_check_batch",
+            "register"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "BloomFilter",
+            "MmapBloomFilter",
+            "RotatingMmapBloomFilter"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/content_hasher.pyi",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "ContentHasher"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "__version__"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/sprint_policies.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "compute_feed_dominance",
+            "compute_feed_dominance_simple",
+            "create_lane_budget_pool",
+            "lane_pool_get",
+            "lane_pool_allocate",
+            "lane_pool_consume",
+            "lane_pool_release",
+            "lane_pool_get_utilization",
+            "lane_pool_get_stats",
+            "lane_pool_lane_count",
+            "register"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/lsh_index.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "new",
+            "get_num_tables",
+            "get_num_rows",
+            "len",
+            "is_empty",
+            "insert",
+            "query",
+            "batch_insert",
+            "batch_query",
+            "clear",
+            "cluster_size",
+            "lsh_index_new",
+            "lsh_get_bands",
+            "lsh_estimate_recall",
+            "register_functions"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "LSHIndex"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/verify_build.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "constant",
+          "names": [
+            "_RESULTS"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "_time_median",
+            "_report",
+            "ratio_or_none",
+            "test_aho_corasick",
+            "test_bloom_filter",
+            "test_rolling_hash",
+            "test_content_hash",
+            "main"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/madvise.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "madv_free_reusable",
+            "madv_free_reusable_on_path",
+            "madvise_lmdb_mmap",
+            "madvise_on_mmap_region",
+            "madvise_hugepage",
+            "mmap_alloc_with_hugepage",
+            "mmap_free_hugepage",
+            "mmap_hugepage",
+            "munmap_hugepage",
+            "get_hugepage_size",
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/text_norm.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "nfc_normalize",
+            "nfd_normalize",
+            "batch_nfc_normalize",
+            "strip_diacritics",
+            "batch_strip_diacritics",
+            "batch_nfc_normalize_fast",
+            "batch_strip_diacritics_fast",
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/pool_run.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "cpu_pool_run_",
+            "io_pool_run_",
+            "mixed_pool_run_",
+            "rayon_submit_",
+            "rayon_join_",
+            "rayon_abort_",
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/html_parse.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "extract_links_zero_copy",
+            "extract_links",
+            "extract_links_with_text",
+            "batch_extract_links_with_text",
+            "extract_emails",
+            "extract_html_text",
+            "batch_extract_html_text",
+            "batch_extract_emails",
+            "batch_extract_titles",
+            "extract_meta_description",
+            "extract_title",
+            "batch_extract_links",
+            "extract_microdata",
+            "batch_extract_microdata",
+            "register_functions"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "MicrodataItem"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/query_terms.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "scan_query_context",
+            "extract_payload_context"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/aho_corasick.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "struct",
+          "names": [
+            "AhoCorasickMatcher"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/simd_similarity.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "batch_cosine_scores",
+            "batch_topk_indices",
+            "batch_hamming_scores",
+            "batch_hamming_scores_batched",
+            "batch_cosine_scores_npy",
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/graph_traverse.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "batch_graph_traverse",
+            "graph_traverse_single",
+            "graph_stats",
+            "batch_graph_traverse_flat",
+            "drop_connections",
+            "register_functions"
+          ]
+        },
+        {
+          "kind": "module",
+          "names": [
+            "cache"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "TraversalResult"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/feed_pipeline.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "feed_entry_pipeline",
+            "feed_batch_pipeline",
+            "register"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/graph_cache.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "new",
+            "get_or_insert",
+            "len",
+            "is_empty",
+            "clear"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "GraphLRUCache",
+            "PyGraphLRUCache"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/telemetry_agg.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "enum",
+          "names": [
+            "TelemetryEvent"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "new",
+            "inc",
+            "add",
+            "add_bytes",
+            "get",
+            "reset",
+            "new",
+            "record_ns",
+            "record",
+            "percentile",
+            "percentiles",
+            "stats",
+            "reset",
+            "new",
+            "set",
+            "get",
+            "new",
+            "counter_inc",
+            "counter_add",
+            "histogram_record",
+            "histogram_record_ns",
+            "gauge_set",
+            "snapshot",
+            "register_functions",
+            "telemetry_snapshot"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "AtomicCounter",
+            "Histogram",
+            "HistogramStats",
+            "Gauge",
+            "TelemetryAggregator",
+            "TelemetrySnapshot",
+            "PyTelemetryAggregator"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/embedding_index.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "dimension_mismatch",
+            "new",
+            "insert",
+            "search"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "EmbeddingError",
+            "Node",
+            "HNSWIndex",
+            "PyHNSWIndex"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/parquet_reader.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "parquet_row_group_stats",
+            "parquet_get_metadata",
+            "parquet_read_row_group_ipc",
+            "parquet_iter_all_row_groups",
+            "parquet_read_table",
+            "register"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/xml_sanitize.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "sanitize_xml",
+            "batch_sanitize_xml"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/serde_json_rs.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "serde_json_reexport",
+            "serde_json_pretty",
+            "serde_json_compact",
+            "serde_json_pretty_sorted",
+            "serde_json_compact_sorted",
+            "serde_json_compact_bytes",
+            "serde_json_pretty_bytes",
+            "batch_serde_json",
+            "batch_serde_json_pretty",
+            "batch_serde_json_compact",
+            "batch_serde_json_pretty_sorted",
+            "batch_serde_json_compact_sorted",
+            "serde_json_parse",
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/lancedb_bridge.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "new_bridge",
+            "add_batch",
+            "search",
+            "search_batch",
+            "len",
+            "is_empty",
+            "clear",
+            "get_node_id",
+            "get_entity_id",
+            "__repr__"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "PyHNSWBridge"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/dedup_bloom.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "global_stats",
+            "add",
+            "contains",
+            "frequency",
+            "memory_bytes",
+            "save",
+            "load"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "DistributedBloomFilter",
+            "PyDistributedBloomFilter"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/url_ops.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "enum",
+          "names": [
+            "UrlKind"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "as_str",
+            "classify_url",
+            "classify_host",
+            "xxh3_url_hash",
+            "batch_classify",
+            "priority_classify_urls",
+            "extract_host",
+            "looks_like_feed_url",
+            "canonical_url",
+            "strip_tracking",
+            "url_dedup_key",
+            "url_dedup_hash",
+            "canonical_url_batch",
+            "register_functions"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "UrlClassifyCache",
+            "UrlClassifyCachePy"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/compress.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "compress_page",
+            "decompress_page",
+            "batch_compress_pages",
+            "batch_decompress_pages",
+            "lz4_compress_raw",
+            "lz4_decompress_raw",
+            "lz4_compress_jsonl_batch",
+            "lz4_decompress_jsonl_batch",
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/ioc_patterns_generated.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "variable",
+          "names": [
+            "IPV4_PAT",
+            "DOMAIN_PAT",
+            "MD5_PAT",
+            "SHA1_PAT",
+            "SHA256_PAT",
+            "EMAIL_PAT",
+            "CVE_PAT",
+            "MAC_PAT",
+            "BTC_PAT",
+            "ETH_PAT",
+            "IPV6_PAT"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/ioc_cooccurrence_rs.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "compute_cooccurrence_edges",
+            "compute_cooccurrence_edges_py",
+            "batch_cooccurrence_edges_py"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/memory.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "get_process_rss_gib",
+            "get_total_memory_gib",
+            "get_available_memory_gib",
+            "current_rss_bytes",
+            "peak_rss_bytes",
+            "memory_pressure_level",
+            "advise_free",
+            "get_metal_active_memory_bytes",
+            "get_metal_active_memory_gib",
+            "get_memory_snapshot",
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/ip_parse.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "enum",
+          "names": [
+            "IpClass"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "parse_ip_fast",
+            "is_private_ip",
+            "is_public_ip",
+            "batch_ip_classify",
+            "cidr_contains"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/tls_metadata.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "extract_tls_metadata",
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/ioc_extract_fast.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "enum",
+          "names": [
+            "IocType"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "extract_iocs_from_text",
+            "ioc_extract_unified",
+            "batch_ioc_extract_unified",
+            "batch_ioc_extract_unified_python"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/xxhash_ext.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "content_hash_64",
+            "content_hash_hex",
+            "batch_content_hash",
+            "batch_content_hash_parallel",
+            "batch_content_hash_hex",
+            "batch_content_hash_hex_parallel",
+            "batch_xxh3_64_bytes",
+            "double_hash_64",
+            "new",
+            "update",
+            "digest",
+            "hexdigest",
+            "reset",
+            "update_str"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "StreamHasher64"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/hot_edges_rs.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "new",
+            "bump_edge",
+            "should_flush",
+            "drain_dirty",
+            "pending_count",
+            "clear",
+            "flush_to_lmdb",
+            "register_functions"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "HotEdgeCounterRust"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/claims_extraction.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "batch_extract_claims_inner",
+            "extract_claims",
+            "batch_extract_claims",
+            "batch_extract_claims_python",
+            "register_functions"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "Claim",
+            "EvidencePacket"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/hledac_rust_extensions.pyi",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "AhoCorasickMatcher",
+            "BloomFilter",
+            "MmapBloomFilter",
+            "RotatingMmapBloomFilter",
+            "ContentHasher",
+            "IntCounterLayoutRust",
+            "IocDedupStore",
+            "MmapIocDedupStore",
+            "RollingHashEngine",
+            "StreamHasher64",
+            "MmapUrlSet",
+            "RustFederatedQTable",
+            "UrlSet",
+            "PyHNSWIndex",
+            "PyGraphLRUCache",
+            "PyDistributedBloomFilter",
+            "TelemetryAggregator",
+            "LSHIndex",
+            "PyQualityDecisionDict",
+            "MicrodataItem",
+            "NvdRateLimiter"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "rust_federated_qtable_batch_update",
+            "normalize",
+            "fingerprint",
+            "strip_tracking_params",
+            "canonicalize_batch",
+            "batch_fingerprint",
+            "is_valid_url",
+            "filter_valid_urls",
+            "extract_domain",
+            "classify_url",
+            "batch_classify",
+            "extract_host",
+            "looks_like_feed_url",
+            "canonical_url",
+            "canonical_url_batch",
+            "url_dedup_key",
+            "url_dedup_hash",
+            "get_process_rss_gib",
+            "get_available_memory_gib",
+            "current_rss_bytes",
+            "peak_rss_bytes",
+            "memory_pressure_level",
+            "advise_free",
+            "fast_ioc_extract",
+            "fast_ioc_extract_batch",
+            "extract_iocs_flat",
+            "batch_ioc_extract_unified",
+            "batch_ioc_extract_unified_python",
+            "extract_iocs_simd",
+            "batch_extract_iocs_simd",
+            "batch_extract_iocs_simd_indexed",
+            "url_normalize",
+            "url_normalize_batch",
+            "batch_dedup_urls",
+            "extract_iocs",
+            "chi_square",
+            "batch_sha256",
+            "detect_encoding_patterns",
+            "rust_calculate_entropy",
+            "rust_fast_entropy_screen",
+            "rust_ngram_analysis",
+            "rust_wavelet_preprocess",
+            "rust_entropy_ngram",
+            "rust_majority_vote",
+            "rust_batch_entropy_analysis",
+            "simhash",
+            "compute_simhash",
+            "batch_compute_simhash",
+            "hamming_dist",
+            "is_near_duplicate",
+            "lsh_index_new",
+            "lsh_get_bands",
+            "lsh_estimate_recall",
+            "content_hash_64",
+            "content_hash_hex",
+            "batch_content_hash",
+            "batch_content_hash_hex",
+            "double_hash_64",
+            "batch_content_hash_parallel",
+            "batch_content_hash_hex_parallel",
+            "normalize_quality_text",
+            "compute_entropy",
+            "compute_entropy_fast",
+            "entropy",
+            "dedup_fingerprint",
+            "url_fingerprint",
+            "batch_entropy",
+            "batch_dedup_fingerprints",
+            "batch_url_fingerprints",
+            "batch_normalize_quality_text",
+            "assess_findings_quality_batch",
+            "nfc_normalize",
+            "nfd_normalize",
+            "batch_nfc_normalize",
+            "strip_diacritics",
+            "batch_strip_diacritics",
+            "pipeline_map",
+            "pipeline_filter",
+            "pipeline_filter_map",
+            "pipeline_fold",
+            "pipeline_count",
+            "pipeline_compose_two",
+            "pipeline_batch_stats",
+            "ioc_dedup_from_bytes",
+            "bulk_bump_aggregate",
+            "bulk_snapshot_dict",
+            "build_layout",
+            "bloom_check_batch",
+            "batch_graph_traverse",
+            "graph_traverse_single",
+            "batch_graph_traverse_flat",
+            "graph_stats",
+            "batch_compute_scores",
+            "batch_aggregate_signals",
+            "chain_hash_snapshot",
+            "batch_cosine_scores",
+            "parse_ip_fast",
+            "is_private_ip",
+            "is_public_ip",
+            "batch_ip_classify",
+            "cidr_contains",
+            "extract_links",
+            "extract_links_with_text",
+            "extract_links_zero_copy",
+            "extract_emails",
+            "extract_meta_description",
+            "extract_title",
+            "batch_extract_links",
+            "batch_extract_links_with_text",
+            "batch_extract_emails",
+            "batch_extract_titles",
+            "extract_microdata",
+            "batch_extract_microdata",
+            "batch_keyword_scan",
+            "batch_ioc_scan",
+            "get_pattern_stats",
+            "check_metal_availability",
+            "get_adaptive_cpu_threads",
+            "get_adaptive_io_threads",
+            "get_adaptive_mixed_threshold",
+            "sync_adaptive_state",
+            "get_adaptive_mixed_threshold_via_metal",
+            "sync_metal_memory_pressure_py",
+            "get_metal_limit_bytes_py",
+            "create_nvd_limiter",
+            "cpu_pool_run",
+            "io_pool_run",
+            "mixed_pool_run",
+            "rayon_submit",
+            "rayon_join",
+            "rayon_abort",
+            "compress_page",
+            "decompress_page",
+            "batch_compress_pages",
+            "batch_decompress_pages",
+            "madv_free_reusable",
+            "madv_free_reusable_on_path",
+            "madvise_lmdb_mmap",
+            "madvise_on_mmap_region",
+            "madvise_hugepage",
+            "mmap_alloc_with_hugepage",
+            "mmap_free_hugepage",
+            "mmap_hugepage",
+            "munmap_hugepage",
+            "get_hugepage_size",
+            "get_memory_snapshot",
+            "batch_entropy_zc",
+            "batch_url_fingerprints_zc",
+            "batch_dedup_fingerprints_zc",
+            "serde_json_pretty",
+            "serde_json_compact",
+            "serde_json_pretty_sorted",
+            "serde_json_compact_sorted",
+            "serde_json_parse",
+            "serde_json_reexport",
+            "batch_serde_json",
+            "batch_serde_json_pretty",
+            "batch_serde_json_compact",
+            "batch_serde_json_pretty_sorted",
+            "batch_serde_json_compact_sorted",
+            "create_telemetry_aggregator",
+            "build_arrow_batch_from_findings",
+            "extract_claims",
+            "batch_extract_claims",
+            "batch_extract_claims_python",
+            "scan_query_context",
+            "extract_payload_context",
+            "extract_tls_metadata",
+            "feed_decision_classify",
+            "feed_stage_diagnose",
+            "feed_branch_hint",
+            "feed_economics_verdict",
+            "feed_branch_verdict"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/feed_decision.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "feed_decision_classify",
+            "feed_stage_diagnose",
+            "feed_branch_hint",
+            "feed_economics_verdict",
+            "feed_branch_verdict",
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/url_engine.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "normalize",
+            "fingerprint",
+            "url_fingerprint",
+            "strip_tracking_params",
+            "canonicalize_batch",
+            "batch_fingerprint",
+            "is_valid_url",
+            "filter_valid_urls",
+            "get_tracking_params",
+            "extract_domain",
+            "register_functions"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "TRACKING_PARAMS"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/text_similarity.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "group_similar_texts",
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/quality_gate.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "constant",
+          "names": [
+            "ENTROPY_NEON_THRESHOLD"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "normalize_quality_text",
+            "compute_histogram_neon",
+            "compute_histogram_neon",
+            "compute_entropy",
+            "compute_entropy_fast",
+            "entropy",
+            "entropy_from_histogram",
+            "dedup_fingerprint",
+            "url_fingerprint",
+            "accepted",
+            "rejected",
+            "duplicate_detected",
+            "low_entropy",
+            "short_string",
+            "assess_findings_quality_batch",
+            "batch_entropy",
+            "batch_dedup_fingerprints",
+            "batch_url_fingerprints",
+            "batch_normalize_quality_text",
+            "register_functions"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "PyFindingInput",
+            "PyQualityDecision"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/rate_limit.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_module"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/url_set.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "global_stats",
+            "new",
+            "add",
+            "contains",
+            "add_batch",
+            "len",
+            "total_seen",
+            "is_empty",
+            "clear",
+            "memory_bytes",
+            "msync",
+            "path",
+            "byte_size",
+            "new",
+            "add",
+            "contains",
+            "add_batch",
+            "len",
+            "total_seen",
+            "is_empty",
+            "clear",
+            "memory_bytes",
+            "__getstate__",
+            "__setstate__",
+            "to_list"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "MmapUrlSet",
+            "UrlSet"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/zero_copy.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "constant",
+          "names": [
+            "ZERO_COPY_BATCH_MAX_ITEMS",
+            "ZERO_COPY_BATCH_MAX_BYTES",
+            "ZERO_COPY_PARALLEL_THRESHOLD"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "new",
+            "buffer_entropy",
+            "batch_url_fingerprints_zc",
+            "batch_dedup_fingerprints_zc",
+            "batch_entropy_zc",
+            "batch_ioc_extract_into",
+            "sha256_buffer",
+            "blake3_buffer",
+            "blake2b_128_buffer",
+            "register_functions"
+          ]
+        },
+        {
+          "kind": "interface",
+          "names": [
+            "ZeroCopyBatch"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "PyStrListIter"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/arrow_batch_builder.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "build_arrow_batch_from_findings",
+            "build_compressed_arrow_batch_from_findings",
+            "register",
+            "build_findings_from_iocs"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/lmdb_dht.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "lmdb_dht_put_node",
+            "lmdb_dht_get_node",
+            "lmdb_dht_put_dht_node",
+            "lmdb_dht_get_dht_node",
+            "lmdb_dht_get_all_dht_nodes",
+            "lmdb_dht_count_dht_nodes",
+            "lmdb_dht_clear_dht_nodes",
+            "lmdb_dht_save_routing_snapshot",
+            "lmdb_dht_load_routing_snapshot",
+            "lmdb_dht_scan_all_nodes",
+            "lmdb_dht_bfs_traverse",
+            "lmdb_dht_close_env",
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/data/connection.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "get_thread_connection",
+            "execute_query",
+            "duckdb_open_connection",
+            "duckdb_health_check",
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/adaptive_scheduler.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "mixed_threshold",
+            "mixed_threshold_via_metal",
+            "recommended_cpu_threads",
+            "recommended_io_threads",
+            "update_cpu_saturation",
+            "update_memory_pressure",
+            "get_adaptive_cpu_threads",
+            "get_adaptive_io_threads",
+            "get_adaptive_mixed_threshold",
+            "get_adaptive_mixed_threshold_via_metal",
+            "get_metal_limit_bytes_py",
+            "sync_metal_memory_pressure_py",
+            "sync_adaptive_state",
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/data/graph_traverse.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "batch_graph_traverse",
+            "graph_stats",
+            "register_functions"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "TraversalResult"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/health.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "health_check",
+            "register"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "HealthInfo"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/data/cache.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "new",
+            "get",
+            "put",
+            "clear",
+            "stats",
+            "new",
+            "get",
+            "put",
+            "clear",
+            "stats",
+            "register_functions"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "GraphLRUCache",
+            "PyGraphLRUCache"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/int_counter_layout.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "new",
+            "bump",
+            "get",
+            "set",
+            "snapshot",
+            "reset",
+            "get_indices",
+            "is_active",
+            "get_stats",
+            "__len__",
+            "__repr__",
+            "bulk_bump_aggregate",
+            "bump_internal",
+            "bulk_snapshot_dict",
+            "build_layout",
+            "register_functions"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "IntCounterLayoutRust"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/dns_tunnel.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "enum",
+          "names": [
+            "Verdict"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "calculate_entropy",
+            "fast_entropy_screen",
+            "ngram_analysis",
+            "wavelet_preprocess",
+            "majority_vote",
+            "rust_calculate_entropy",
+            "rust_fast_entropy_screen",
+            "rust_ngram_analysis",
+            "rust_wavelet_preprocess",
+            "rust_entropy_ngram",
+            "rust_majority_vote",
+            "rust_batch_entropy_analysis",
+            "register_functions"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "NgramScore",
+            "MajorityVoteResult"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/graph_traverse/cache.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "get_or_insert",
+            "load_from_mmap",
+            "flush",
+            "get_cached_traversal",
+            "flush_cache",
+            "drop_cache"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "CacheKey",
+            "LRUCache"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/collections/mod.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        },
+        {
+          "kind": "module",
+          "names": [
+            "ring_buffer"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/lib.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "cpu_pool",
+            "io_pool",
+            "mixed_pool"
+          ]
+        },
+        {
+          "kind": "module",
+          "names": [
+            "aho_corasick",
+            "query_terms",
+            "bloom",
+            "compress",
+            "regex_lz4",
+            "content_hasher",
+            "crypto_accelerate",
+            "adaptive_scheduler",
+            "async_query",
+            "graph_traverse",
+            "hot_edges_rs",
+            "html_parse",
+            "int_counter_layout",
+            "ioc_dedup",
+            "ioc_patterns",
+            "ioc_patterns_generated",
+            "dns_tunnel",
+            "ioc_extract",
+            "ioc_extract_fast",
+            "ioc_extract_simd",
+            "ioc_cooccurrence_rs",
+            "lmdb_dht",
+            "madvise",
+            "metal_compute",
+            "metal_pattern_matcher",
+            "memory",
+            "ip_parse",
+            "quality_gate",
+            "rolling_hash",
+            "signal_batch",
+            "simd_similarity",
+            "simhash_ext",
+            "lsh_index",
+            "text_norm",
+            "feed_decision",
+            "feed_pipeline",
+            "pipeline_compose",
+            "xml_sanitize",
+            "url_engine",
+            "url_ops",
+            "url_set",
+            "xxhash_ext",
+            "zero_copy",
+            "serde_json_rs",
+            "arrow_batch_builder",
+            "parquet_reader",
+            "spsc_queue",
+            "mpsc_pool",
+            "federated_qtable",
+            "embedding_index",
+            "lancedb_bridge",
+            "graph_cache",
+            "dedup_bloom",
+            "rate_limit",
+            "telemetry_agg",
+            "health",
+            "claims_extraction",
+            "sprint_policies",
+            "tls_metadata",
+            "gil",
+            "pool_run",
+            "mlx_bridge",
+            "collections",
+            "data",
+            "text_similarity"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/rolling_hash.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "struct",
+          "names": [
+            "RollingHashEngine"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/spsc_queue.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "constant",
+          "names": [
+            "SPSC_QUEUE_DEPTH",
+            "SPSC_SLOT_BYTES"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "spsc_recv_blocking",
+            "spsc_try_recv",
+            "spsc_item_data",
+            "spsc_item_data_len",
+            "spsc_item_free",
+            "register"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "SPSCQueuePair",
+            "QueueItem",
+            "SPSCQueueSender"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/collections/ring_buffer.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "constant",
+          "names": [
+            "RECENT_IOC_RING_CAPACITY"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "new"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "RingBuffer"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/gil.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "is_gil_enabled",
+            "release_gil",
+            "is_free_threaded_python",
+            "recommended_rayon_workers",
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/ioc_patterns.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "variable",
+          "names": [
+            "IPV4_PAT",
+            "IPV6_PAT",
+            "DOMAIN_PAT",
+            "MD5_PAT",
+            "SHA1_PAT",
+            "SHA256_PAT",
+            "EMAIL_PAT",
+            "CVE_PAT",
+            "URL_PAT",
+            "HASH_PAT",
+            "ENCODING_BASE32_PAT",
+            "ENCODING_BASE64_PAT",
+            "ENCODING_HEX_PAT",
+            "ENCODING_HIGH_ENTROPY_PAT",
+            "MAC_PAT",
+            "BTC_PAT",
+            "ETH_PAT"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/federated_qtable.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "new",
+            "get_q",
+            "get_best_action",
+            "update",
+            "update_batch",
+            "to_dict",
+            "len",
+            "is_empty",
+            "evict_lowest_q",
+            "persist_to_file",
+            "load_from_file",
+            "rust_federated_qtable_batch_update",
+            "register"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "RustFederatedQTable"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/metal_compute.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "new",
+            "scan_keywords",
+            "get_gpu_device",
+            "is_gpu_available",
+            "gpu_scan_keywords",
+            "cpu_scan_keywords",
+            "gpu_scan_keywords",
+            "is_gpu_available"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "GpuKeywordResult",
+            "GpuDevice"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/signal_batch.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "batch_compute_scores",
+            "batch_aggregate_signals",
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/crypto_accelerate.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "sha256_hw",
+            "sha256_hw_hex",
+            "batch_sha256_hw",
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/ioc_extract.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions",
+            "batch_ioc_extract_fast",
+            "extract_iocs",
+            "extract_iocs_flat",
+            "chi_square",
+            "batch_sha256",
+            "detect_encoding_patterns",
+            "has_url",
+            "has_domain",
+            "has_email",
+            "has_ipv4",
+            "has_any_ioc"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/mlx_bridge.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "constant",
+          "names": [
+            "MLX_BRIDGE_QUEUE_DEPTH",
+            "MLX_BRIDGE_SLOT_BYTES"
+          ]
+        },
+        {
+          "kind": "enum",
+          "names": [
+            "MemoryPressure"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "from_ratio",
+            "chunk_size",
+            "new",
+            "batch_tokenize_",
+            "register"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "MLXBridgeConfig",
+            "TokenChunk",
+            "AdaptiveChunkSizer",
+            "MLXBridge"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/pipeline_compose.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "enum",
+          "names": [
+            "PipelineStage"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "pipeline_map_arc",
+            "pipeline_filter_map_arc",
+            "pipeline_fold_arc",
+            "pipeline_count_arc",
+            "compose_two_map",
+            "compose_filter_map_map",
+            "bulk_map_arc",
+            "bulk_filter_map_arc",
+            "bulk_fold_arc",
+            "pipeline_map",
+            "pipeline_filter",
+            "pipeline_filter_map",
+            "pipeline_fold",
+            "pipeline_count",
+            "pipeline_compose_two",
+            "pipeline_batch_stats",
+            "register"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/simhash_ext.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "compute_simhash",
+            "batch_compute_simhash",
+            "hamming_distance",
+            "simhash",
+            "hamming_dist",
+            "is_near_duplicate",
+            "new",
+            "get_threshold",
+            "get_ngram_size",
+            "add_document",
+            "fingerprint_for",
+            "len",
+            "__len__",
+            "__getstate__",
+            "__setstate__",
+            "register_functions"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "SimHashStore"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/ioc_dedup.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "enum",
+          "names": [
+            "IocType"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "new",
+            "add",
+            "add_batch",
+            "batch_insert",
+            "contains",
+            "contains_batch",
+            "advance_sprint",
+            "len",
+            "is_empty",
+            "stats",
+            "stats_dict",
+            "get_by_type",
+            "get_entries_by_type",
+            "msync",
+            "close",
+            "clear",
+            "get_sprint",
+            "path",
+            "byte_size",
+            "new",
+            "add",
+            "add_batch",
+            "batch_insert",
+            "contains",
+            "contains_batch",
+            "advance_sprint",
+            "len",
+            "is_empty",
+            "stats",
+            "stats_dict",
+            "get_by_type",
+            "get_entries_by_type",
+            "get_state_bytes",
+            "set_state_from_bytes",
+            "__getstate__",
+            "__setstate__",
+            "clear",
+            "get_sprint",
+            "to_bytes",
+            "ioc_dedup_from_bytes",
+            "register_class"
+          ]
+        },
+        {
+          "kind": "struct",
+          "names": [
+            "MmapIocDedupStore",
+            "IocDedupStore"
+          ]
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "path": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/rust_extensions",
+    "is_directory": true,
+    "file_count": 76,
+    "total_symbols": 977,
+    "by_lang": {
+      "Python": 5,
+      "Rust": 71
+    },
+    "by_kind": {
+      "class": 22,
+      "constant": 17,
+      "enum": 8,
+      "function": 751,
+      "interface": 1,
+      "module": 70,
+      "struct": 65,
+      "variable": 43
+    },
+    "all_symbols": [
+      {
+        "path": "rust_extensions/src/data.rs",
+        "lang": "Rust",
+        "kind": "module",
+        "name": "connection"
+      },
+      {
+        "path": "rust_extensions/src/data.rs",
+        "lang": "Rust",
+        "kind": "module",
+        "name": "graph_traverse"
+      },
+      {
+        "path": "rust_extensions/src/data.rs",
+        "lang": "Rust",
+        "kind": "module",
+        "name": "cache"
+      },
+      {
+        "path": "rust_extensions/src/data.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/benchmarks/bench_new_modules.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "bench"
+      },
+      {
+        "path": "rust_extensions/benchmarks/bench_new_modules.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "test_bytes"
+      },
+      {
+        "path": "rust_extensions/benchmarks/bench_new_modules.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "url"
+      },
+      {
+        "path": "rust_extensions/benchmarks/bench_new_modules.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "rust_set"
+      },
+      {
+        "path": "rust_extensions/benchmarks/bench_new_modules.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "py_set"
+      },
+      {
+        "path": "rust_extensions/benchmarks/bench_new_modules.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "u"
+      },
+      {
+        "path": "rust_extensions/benchmarks/bench_new_modules.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "test_url"
+      },
+      {
+        "path": "rust_extensions/benchmarks/bench_new_modules.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "test_text"
+      },
+      {
+        "path": "rust_extensions/benchmarks/bench_new_modules.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "sample_text"
+      },
+      {
+        "path": "rust_extensions/benchmarks/bench_new_modules.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "urls"
+      },
+      {
+        "path": "rust_extensions/benchmarks/bench_new_modules.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "data"
+      },
+      {
+        "path": "rust_extensions/benchmarks/bench_new_modules.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "texts"
+      },
+      {
+        "path": "rust_extensions/src/metal_pattern_matcher.rs",
+        "lang": "Rust",
+        "kind": "struct",
+        "name": "PatternStats"
+      },
+      {
+        "path": "rust_extensions/src/metal_pattern_matcher.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "scan_keywords_batch"
+      },
+      {
+        "path": "rust_extensions/src/metal_pattern_matcher.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "scan_ioc_batch"
+      },
+      {
+        "path": "rust_extensions/src/metal_pattern_matcher.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "batch_keyword_scan"
+      },
+      {
+        "path": "rust_extensions/src/metal_pattern_matcher.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "batch_ioc_scan"
+      },
+      {
+        "path": "rust_extensions/src/metal_pattern_matcher.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "get_pattern_stats"
+      },
+      {
+        "path": "rust_extensions/src/metal_pattern_matcher.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "check_metal_availability"
+      },
+      {
+        "path": "rust_extensions/src/metal_pattern_matcher.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/content_hasher.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "sha256_hex"
+      },
+      {
+        "path": "rust_extensions/src/content_hasher.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "blake3_64"
+      },
+      {
+        "path": "rust_extensions/src/content_hasher.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "xxh3_64_hex"
+      },
+      {
+        "path": "rust_extensions/src/content_hasher.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "blake3_hex"
+      },
+      {
+        "path": "rust_extensions/src/content_hasher.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "batch_xxh3_64_hex"
+      },
+      {
+        "path": "rust_extensions/src/content_hasher.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "batch_blake3_64"
+      },
+      {
+        "path": "rust_extensions/src/content_hasher.rs",
+        "lang": "Rust",
+        "kind": "struct",
+        "name": "ContentHasher"
+      },
+      {
+        "path": "rust_extensions/src/regex_lz4.rs",
+        "lang": "Rust",
+        "kind": "struct",
+        "name": "RegexLz4Store"
+      },
+      {
+        "path": "rust_extensions/src/regex_lz4.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "new"
+      },
+      {
+        "path": "rust_extensions/src/regex_lz4.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "get_patterns"
+      },
+      {
+        "path": "rust_extensions/src/regex_lz4.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "len"
+      },
+      {
+        "path": "rust_extensions/src/regex_lz4.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "is_empty"
+      },
+      {
+        "path": "rust_extensions/src/regex_lz4.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "compressed_size"
+      },
+      {
+        "path": "rust_extensions/src/regex_lz4.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "decompressed_size"
+      },
+      {
+        "path": "rust_extensions/src/regex_lz4.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "compression_ratio"
+      },
+      {
+        "path": "rust_extensions/src/regex_lz4.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "save_to_file"
+      },
+      {
+        "path": "rust_extensions/src/regex_lz4.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "load_from_file"
+      },
+      {
+        "path": "rust_extensions/src/regex_lz4.rs",
+        "lang": "Rust",
+        "kind": "struct",
+        "name": "PyRegexLz4Store"
+      },
+      {
+        "path": "rust_extensions/src/regex_lz4.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register"
+      },
+      {
+        "path": "rust_extensions/build_ffi_manifest.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "_REPO_ROOT"
+      },
+      {
+        "path": "rust_extensions/build_ffi_manifest.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "REPO_ROOT"
+      },
+      {
+        "path": "rust_extensions/build_ffi_manifest.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "ABI_OUT"
+      },
+      {
+        "path": "rust_extensions/build_ffi_manifest.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "MANIFEST_PATH"
+      },
+      {
+        "path": "rust_extensions/build_ffi_manifest.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "LIB_RS_PATH"
+      },
+      {
+        "path": "rust_extensions/build_ffi_manifest.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_extract_class_name"
+      },
+      {
+        "path": "rust_extensions/build_ffi_manifest.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "parse_lib_rs_symbols"
+      },
+      {
+        "path": "rust_extensions/build_ffi_manifest.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "get_git_rev"
+      },
+      {
+        "path": "rust_extensions/build_ffi_manifest.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "generate_manifest"
+      },
+      {
+        "path": "rust_extensions/build_ffi_manifest.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "parser"
+      },
+      {
+        "path": "rust_extensions/build_ffi_manifest.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "args"
+      },
+      {
+        "path": "rust_extensions/src/async_query.rs",
+        "lang": "Rust",
+        "kind": "struct",
+        "name": "StdConnectionPool"
+      },
+      {
+        "path": "rust_extensions/src/async_query.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "rust_async_query"
+      },
+      {
+        "path": "rust_extensions/src/async_query.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "rust_async_query_with_params"
+      },
+      {
+        "path": "rust_extensions/src/async_query.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "rust_async_query_batch"
+      },
+      {
+        "path": "rust_extensions/src/async_query.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register"
+      },
+      {
+        "path": "rust_extensions/src/ioc_extract_simd.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "extract_iocs_simd"
+      },
+      {
+        "path": "rust_extensions/src/ioc_extract_simd.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "batch_extract_iocs_simd"
+      },
+      {
+        "path": "rust_extensions/src/ioc_extract_simd.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "batch_extract_iocs_simd_indexed"
+      },
+      {
+        "path": "rust_extensions/src/ioc_extract_simd.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "batch_extract_iocs_simd_python"
+      },
+      {
+        "path": "rust_extensions/src/ioc_extract_simd.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/mpsc_pool.rs",
+        "lang": "Rust",
+        "kind": "constant",
+        "name": "MPSC_DEFAULT_CAPACITY"
+      },
+      {
+        "path": "rust_extensions/src/mpsc_pool.rs",
+        "lang": "Rust",
+        "kind": "constant",
+        "name": "MPSC_SLOT_BYTES"
+      },
+      {
+        "path": "rust_extensions/src/mpsc_pool.rs",
+        "lang": "Rust",
+        "kind": "struct",
+        "name": "QueueItem"
+      },
+      {
+        "path": "rust_extensions/src/mpsc_pool.rs",
+        "lang": "Rust",
+        "kind": "struct",
+        "name": "MPSCPool"
+      },
+      {
+        "path": "rust_extensions/src/mpsc_pool.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register"
+      },
+      {
+        "path": "rust_extensions/src/bloom.rs",
+        "lang": "Rust",
+        "kind": "struct",
+        "name": "BloomFilter"
+      },
+      {
+        "path": "rust_extensions/src/bloom.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "bloom_check_batch"
+      },
+      {
+        "path": "rust_extensions/src/bloom.rs",
+        "lang": "Rust",
+        "kind": "struct",
+        "name": "MmapBloomFilter"
+      },
+      {
+        "path": "rust_extensions/src/bloom.rs",
+        "lang": "Rust",
+        "kind": "struct",
+        "name": "RotatingMmapBloomFilter"
+      },
+      {
+        "path": "rust_extensions/src/bloom.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register"
+      },
+      {
+        "path": "rust_extensions/src/content_hasher.pyi",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "__version__"
+      },
+      {
+        "path": "rust_extensions/src/content_hasher.pyi",
+        "lang": "Python",
+        "kind": "class",
+        "name": "ContentHasher"
+      },
+      {
+        "path": "rust_extensions/src/sprint_policies.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "compute_feed_dominance"
+      },
+      {
+        "path": "rust_extensions/src/sprint_policies.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "compute_feed_dominance_simple"
+      },
+      {
+        "path": "rust_extensions/src/sprint_policies.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "create_lane_budget_pool"
+      },
+      {
+        "path": "rust_extensions/src/sprint_policies.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "lane_pool_get"
+      },
+      {
+        "path": "rust_extensions/src/sprint_policies.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "lane_pool_allocate"
+      },
+      {
+        "path": "rust_extensions/src/sprint_policies.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "lane_pool_consume"
+      },
+      {
+        "path": "rust_extensions/src/sprint_policies.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "lane_pool_release"
+      },
+      {
+        "path": "rust_extensions/src/sprint_policies.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "lane_pool_get_utilization"
+      },
+      {
+        "path": "rust_extensions/src/sprint_policies.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "lane_pool_get_stats"
+      },
+      {
+        "path": "rust_extensions/src/sprint_policies.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "lane_pool_lane_count"
+      },
+      {
+        "path": "rust_extensions/src/sprint_policies.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register"
+      },
+      {
+        "path": "rust_extensions/src/lsh_index.rs",
+        "lang": "Rust",
+        "kind": "struct",
+        "name": "LSHIndex"
+      },
+      {
+        "path": "rust_extensions/src/lsh_index.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "new"
+      },
+      {
+        "path": "rust_extensions/src/lsh_index.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "get_num_tables"
+      },
+      {
+        "path": "rust_extensions/src/lsh_index.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "get_num_rows"
+      },
+      {
+        "path": "rust_extensions/src/lsh_index.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "len"
+      },
+      {
+        "path": "rust_extensions/src/lsh_index.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "is_empty"
+      },
+      {
+        "path": "rust_extensions/src/lsh_index.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "insert"
+      },
+      {
+        "path": "rust_extensions/src/lsh_index.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "query"
+      },
+      {
+        "path": "rust_extensions/src/lsh_index.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "batch_insert"
+      },
+      {
+        "path": "rust_extensions/src/lsh_index.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "batch_query"
+      },
+      {
+        "path": "rust_extensions/src/lsh_index.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "clear"
+      },
+      {
+        "path": "rust_extensions/src/lsh_index.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "cluster_size"
+      },
+      {
+        "path": "rust_extensions/src/lsh_index.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "lsh_index_new"
+      },
+      {
+        "path": "rust_extensions/src/lsh_index.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "lsh_get_bands"
+      },
+      {
+        "path": "rust_extensions/src/lsh_index.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "lsh_estimate_recall"
+      },
+      {
+        "path": "rust_extensions/src/lsh_index.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/verify_build.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "_RESULTS"
+      },
+      {
+        "path": "rust_extensions/verify_build.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_time_median"
+      },
+      {
+        "path": "rust_extensions/verify_build.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_report"
+      },
+      {
+        "path": "rust_extensions/verify_build.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "ratio_or_none"
+      },
+      {
+        "path": "rust_extensions/verify_build.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "test_aho_corasick"
+      },
+      {
+        "path": "rust_extensions/verify_build.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "test_bloom_filter"
+      },
+      {
+        "path": "rust_extensions/verify_build.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "test_rolling_hash"
+      },
+      {
+        "path": "rust_extensions/verify_build.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "test_content_hash"
+      },
+      {
+        "path": "rust_extensions/verify_build.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "main"
+      },
+      {
+        "path": "rust_extensions/src/madvise.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "madv_free_reusable"
+      },
+      {
+        "path": "rust_extensions/src/madvise.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "madv_free_reusable_on_path"
+      },
+      {
+        "path": "rust_extensions/src/madvise.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "madvise_lmdb_mmap"
+      },
+      {
+        "path": "rust_extensions/src/madvise.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "madvise_on_mmap_region"
+      },
+      {
+        "path": "rust_extensions/src/madvise.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "madvise_hugepage"
+      },
+      {
+        "path": "rust_extensions/src/madvise.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "mmap_alloc_with_hugepage"
+      },
+      {
+        "path": "rust_extensions/src/madvise.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "mmap_free_hugepage"
+      },
+      {
+        "path": "rust_extensions/src/madvise.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "mmap_hugepage"
+      },
+      {
+        "path": "rust_extensions/src/madvise.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "munmap_hugepage"
+      },
+      {
+        "path": "rust_extensions/src/madvise.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "get_hugepage_size"
+      },
+      {
+        "path": "rust_extensions/src/madvise.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/text_norm.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "nfc_normalize"
+      },
+      {
+        "path": "rust_extensions/src/text_norm.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "nfd_normalize"
+      },
+      {
+        "path": "rust_extensions/src/text_norm.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "batch_nfc_normalize"
+      },
+      {
+        "path": "rust_extensions/src/text_norm.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "strip_diacritics"
+      },
+      {
+        "path": "rust_extensions/src/text_norm.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "batch_strip_diacritics"
+      },
+      {
+        "path": "rust_extensions/src/text_norm.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "batch_nfc_normalize_fast"
+      },
+      {
+        "path": "rust_extensions/src/text_norm.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "batch_strip_diacritics_fast"
+      },
+      {
+        "path": "rust_extensions/src/text_norm.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/pool_run.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "cpu_pool_run_"
+      },
+      {
+        "path": "rust_extensions/src/pool_run.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "io_pool_run_"
+      },
+      {
+        "path": "rust_extensions/src/pool_run.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "mixed_pool_run_"
+      },
+      {
+        "path": "rust_extensions/src/pool_run.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "rayon_submit_"
+      },
+      {
+        "path": "rust_extensions/src/pool_run.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "rayon_join_"
+      },
+      {
+        "path": "rust_extensions/src/pool_run.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "rayon_abort_"
+      },
+      {
+        "path": "rust_extensions/src/pool_run.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/html_parse.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "extract_links_zero_copy"
+      },
+      {
+        "path": "rust_extensions/src/html_parse.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "extract_links"
+      },
+      {
+        "path": "rust_extensions/src/html_parse.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "extract_links_with_text"
+      },
+      {
+        "path": "rust_extensions/src/html_parse.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "batch_extract_links_with_text"
+      },
+      {
+        "path": "rust_extensions/src/html_parse.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "extract_emails"
+      },
+      {
+        "path": "rust_extensions/src/html_parse.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "extract_html_text"
+      },
+      {
+        "path": "rust_extensions/src/html_parse.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "batch_extract_html_text"
+      },
+      {
+        "path": "rust_extensions/src/html_parse.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "batch_extract_emails"
+      },
+      {
+        "path": "rust_extensions/src/html_parse.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "batch_extract_titles"
+      },
+      {
+        "path": "rust_extensions/src/html_parse.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "extract_meta_description"
+      },
+      {
+        "path": "rust_extensions/src/html_parse.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "extract_title"
+      },
+      {
+        "path": "rust_extensions/src/html_parse.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "batch_extract_links"
+      },
+      {
+        "path": "rust_extensions/src/html_parse.rs",
+        "lang": "Rust",
+        "kind": "struct",
+        "name": "MicrodataItem"
+      },
+      {
+        "path": "rust_extensions/src/html_parse.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "extract_microdata"
+      },
+      {
+        "path": "rust_extensions/src/html_parse.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "batch_extract_microdata"
+      },
+      {
+        "path": "rust_extensions/src/html_parse.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/query_terms.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "scan_query_context"
+      },
+      {
+        "path": "rust_extensions/src/query_terms.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "extract_payload_context"
+      },
+      {
+        "path": "rust_extensions/src/aho_corasick.rs",
+        "lang": "Rust",
+        "kind": "struct",
+        "name": "AhoCorasickMatcher"
+      },
+      {
+        "path": "rust_extensions/src/simd_similarity.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "batch_cosine_scores"
+      },
+      {
+        "path": "rust_extensions/src/simd_similarity.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "batch_topk_indices"
+      },
+      {
+        "path": "rust_extensions/src/simd_similarity.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "batch_hamming_scores"
+      },
+      {
+        "path": "rust_extensions/src/simd_similarity.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "batch_hamming_scores_batched"
+      },
+      {
+        "path": "rust_extensions/src/simd_similarity.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "batch_cosine_scores_npy"
+      },
+      {
+        "path": "rust_extensions/src/simd_similarity.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/graph_traverse.rs",
+        "lang": "Rust",
+        "kind": "module",
+        "name": "cache"
+      },
+      {
+        "path": "rust_extensions/src/graph_traverse.rs",
+        "lang": "Rust",
+        "kind": "struct",
+        "name": "TraversalResult"
+      },
+      {
+        "path": "rust_extensions/src/graph_traverse.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "batch_graph_traverse"
+      },
+      {
+        "path": "rust_extensions/src/graph_traverse.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "graph_traverse_single"
+      },
+      {
+        "path": "rust_extensions/src/graph_traverse.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "graph_stats"
+      },
+      {
+        "path": "rust_extensions/src/graph_traverse.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "batch_graph_traverse_flat"
+      },
+      {
+        "path": "rust_extensions/src/graph_traverse.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "drop_connections"
+      },
+      {
+        "path": "rust_extensions/src/graph_traverse.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/feed_pipeline.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "feed_entry_pipeline"
+      },
+      {
+        "path": "rust_extensions/src/feed_pipeline.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "feed_batch_pipeline"
+      },
+      {
+        "path": "rust_extensions/src/feed_pipeline.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register"
+      },
+      {
+        "path": "rust_extensions/src/graph_cache.rs",
+        "lang": "Rust",
+        "kind": "struct",
+        "name": "GraphLRUCache"
+      },
+      {
+        "path": "rust_extensions/src/graph_cache.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "new"
+      },
+      {
+        "path": "rust_extensions/src/graph_cache.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "get_or_insert"
+      },
+      {
+        "path": "rust_extensions/src/graph_cache.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "len"
+      },
+      {
+        "path": "rust_extensions/src/graph_cache.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "is_empty"
+      },
+      {
+        "path": "rust_extensions/src/graph_cache.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "clear"
+      },
+      {
+        "path": "rust_extensions/src/graph_cache.rs",
+        "lang": "Rust",
+        "kind": "struct",
+        "name": "PyGraphLRUCache"
+      },
+      {
+        "path": "rust_extensions/src/telemetry_agg.rs",
+        "lang": "Rust",
+        "kind": "struct",
+        "name": "AtomicCounter"
+      },
+      {
+        "path": "rust_extensions/src/telemetry_agg.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "new"
+      },
+      {
+        "path": "rust_extensions/src/telemetry_agg.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "inc"
+      },
+      {
+        "path": "rust_extensions/src/telemetry_agg.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "add"
+      },
+      {
+        "path": "rust_extensions/src/telemetry_agg.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "add_bytes"
+      },
+      {
+        "path": "rust_extensions/src/telemetry_agg.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "get"
+      },
+      {
+        "path": "rust_extensions/src/telemetry_agg.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "reset"
+      },
+      {
+        "path": "rust_extensions/src/telemetry_agg.rs",
+        "lang": "Rust",
+        "kind": "struct",
+        "name": "Histogram"
+      },
+      {
+        "path": "rust_extensions/src/telemetry_agg.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "new"
+      },
+      {
+        "path": "rust_extensions/src/telemetry_agg.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "record_ns"
+      },
+      {
+        "path": "rust_extensions/src/telemetry_agg.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "record"
+      },
+      {
+        "path": "rust_extensions/src/telemetry_agg.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "percentile"
+      },
+      {
+        "path": "rust_extensions/src/telemetry_agg.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "percentiles"
+      },
+      {
+        "path": "rust_extensions/src/telemetry_agg.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "stats"
+      },
+      {
+        "path": "rust_extensions/src/telemetry_agg.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "reset"
+      },
+      {
+        "path": "rust_extensions/src/telemetry_agg.rs",
+        "lang": "Rust",
+        "kind": "struct",
+        "name": "HistogramStats"
+      },
+      {
+        "path": "rust_extensions/src/telemetry_agg.rs",
+        "lang": "Rust",
+        "kind": "struct",
+        "name": "Gauge"
+      },
+      {
+        "path": "rust_extensions/src/telemetry_agg.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "new"
+      },
+      {
+        "path": "rust_extensions/src/telemetry_agg.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "set"
+      }
+    ],
+    "next_action": "The directory has 977 symbols but only the first 200 are shown in `summary.all_symbols` (cap: 200). Narrow with `type` to filter symbol kinds or `match` to filter by name, or outline a specific file/sub-directory. Synthesize your final answer from the `summary` counts and the `files` arrays above.",
+    "truncated": true,
+    "visible_symbols": 200
+  },
+  "hints": [
+    "Parameter `max_results` is not used by outline. It was ignored. Use `type` to filter symbol kinds or `match` to filter by name regex."
+  ]
+}

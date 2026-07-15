@@ -28,8 +28,7 @@ logger = logging.getLogger(__name__)
 # DiscoveryResult — canonical output type
 # -----------------------------------------------------------------------
 
-@dataclass(frozen=True, slots=True)
-class DiscoveryResult:
+class DiscoveryResult(msgspec.Struct, frozen=True):
     """
     Canonical output type for all discovery adapters.
 

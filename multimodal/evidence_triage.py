@@ -129,13 +129,19 @@ class EvidenceTriageCoordinator:
         """
         self._governor = governor
         self._initialized = False
-        self._lock = asyncio.Lock()
+        self._lock: asyncio.Lock | None = None
         self._metadata_extractor: Any | None = None
         self._ocr = VisionOCR()
 
+    def _get_lock(self) -> asyncio.Lock:
+        """ISSUE-014 FIX: Lazily create lock in the current event loop."""
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
+
     async def initialize(self) -> None:
         """Lazily initialize metadata extractor on first use."""
-        async with self._lock:
+        async with self._get_lock():
             if self._initialized:
                 return
             try:
@@ -149,7 +155,7 @@ class EvidenceTriageCoordinator:
 
     async def close(self) -> None:
         """Cleanup resources."""
-        async with self._lock:
+        async with self._get_lock():
             if self._metadata_extractor is not None:
                 try:
                     await self._metadata_extractor.close()

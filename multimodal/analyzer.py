@@ -135,11 +135,11 @@ def _build_document_envelope(text_content: str | None, triage_facets: dict[str, 
     try:
         import json
         envelope = {'audit_reason': f'document_triage:{file_type}', 'evidence_pointers': [file_path], 'signal_facets': {'file_type': file_type, 'has_text': bool(text_content), 'text_len': len(text_content) if text_content else 0, 'triage_complete': triage_facets.get('triage_complete', False)}, 'suggested_pivots': [{'type': 'document_metadata', 'query': 'document author/title'}, {'type': 'image_geolocation', 'query': 'GPS coordinates'}, {'type': 'embedded_iocs', 'query': 'URLs/domains in document'}], 'triage': {'title': triage_facets.get('title'), 'author': triage_facets.get('author'), 'exif': triage_facets.get('exif', {}), 'gps': triage_facets.get('gps', {}), 'ocr_snippets': triage_facets.get('ocr_snippets', []), 'file_hashes': triage_facets.get('file_hashes', {}), 'embedded_urls': triage_facets.get('embedded_urls', []), 'embedded_domains': triage_facets.get('embedded_domains', [])}, 'content_preview': text_content[:1000] + '...' if text_content and len(text_content) > 1000 else text_content or ''}
-        json_text = json.dumps(envelope, separators=(',', ':'))
+        json_text = json.dumps(envelope)
         if len(json_text) > _MAX_ENVELOPE_SIZE:
             envelope['triage']['ocr_snippets'] = envelope['triage']['ocr_snippets'][:5]
             envelope['content_preview'] = envelope['content_preview'][:500]
-            json_text = json.dumps(envelope, separators=(',', ':'))
+            json_text = json.dumps(envelope)
         return json_text
     except Exception:
         return text_content or ''
@@ -159,9 +159,9 @@ class MultimodalEnricher:
     M1 8GB: RAM guard via governor.reserve(). Heavy path is a no-op
     when the governor denies reservation (e.g., near-OOM condition).
     """
-    __slots__ = tuple(('_batch_size', '_embedding_dim', '_fusion_model', '_governor', '_initialized', '_lock', '_vision_encoder'))
+    __slots__ = tuple(('_batch_size', '_embedding_dim', '_fusion_model', '_governor', '_initialized', '_lock', '_vision_encoder', '_pool'))
 
-    def __init__(self, governor: Any, embedding_dim: int=1024, batch_size: int=4):
+    def __init__(self, governor: Any, embedding_dim: int=1024, batch_size: int=4, pool: Any=None):
         """
         Initialize enricher.
 
@@ -169,6 +169,7 @@ class MultimodalEnricher:
             governor: ResourceGovernor instance for RAM guard.
             embedding_dim: Embedding dimension for VisionEncoder.
             batch_size: Max batch size for encode_batch.
+            pool: MLXModelPool instance for model sharing (Issue #32).
         """
         self._governor = governor
         self._embedding_dim = embedding_dim
@@ -176,13 +177,20 @@ class MultimodalEnricher:
         self._vision_encoder: Any | None = None
         self._fusion_model: Any | None = None
         self._initialized = False
-        self._lock = asyncio.Lock()
+        self._lock: asyncio.Lock | None = None
+        self._pool = pool
+
+    def _get_lock(self) -> asyncio.Lock:
+        """ISSUE-014 FIX: Lazily create lock in the current event loop."""
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
 
     async def _ensure_initialized(self) -> None:
         """Ensure models are initialized (idempotent)."""
         if self._initialized:
             return
-        async with self._lock:
+        async with self._get_lock():
             if self._initialized:
                 return
             _lazy_load_modules()
@@ -192,8 +200,10 @@ class MultimodalEnricher:
                 log.info('MultimodalEnricher: VisionEncoder loaded')
             if _MambaFusion is not None:
                 try:
-                    self._fusion_model = _MambaFusion(vision_dim=self._embedding_dim, text_dim=768, graph_dim=64, hidden=256, output_dim=128)
-                    log.info('MultimodalEnricher: MambaFusion loaded')
+                    # Issue #32: Pool integration for MambaFusion
+                    self._fusion_model = _MambaFusion(pool=self._pool)
+                    await self._fusion_model.initialize()
+                    log.info('MultimodalEnricher: MambaFusion loaded (pooled)')
                 except Exception as exc:
                     log.warning('MultimodalEnricher: MambaFusion init failed: %s', exc)
                     self._fusion_model = None
@@ -205,9 +215,14 @@ class MultimodalEnricher:
 
     async def close(self) -> None:
         """Close enricher and cleanup resources."""
-        async with self._lock:
+        async with self._get_lock():
+            if self._fusion_model is not None:
+                try:
+                    await self._fusion_model.release()
+                except Exception:
+                    pass
+                self._fusion_model = None
             self._vision_encoder = None
-            self._fusion_model = None
             self._initialized = False
 
     async def enrich(self, finding: Any) -> dict[str, Any] | None:

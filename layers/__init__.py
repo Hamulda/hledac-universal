@@ -116,6 +116,11 @@ from .ua_rotator import (
     get_random_accept_language,
     get_random_accept_encoding,
 )
+from .examples.demos import (
+    demo_connected_coordination,
+    demo_smart_spawned_integration,
+    run_all_demos,
+)
 
 __all__ = [
     "GhostLayer",
@@ -207,6 +212,10 @@ __all__ = [
     "get_random_accept_language",
     "get_random_accept_encoding",
     "build_randomized_headers",
+    # Examples & Demos (moved from coordination modules)
+    "demo_connected_coordination",
+    "demo_smart_spawned_integration",
+    "run_all_demos",
 ]
 
 # Layer factory getters — lazy singletons for fetch pipeline injection

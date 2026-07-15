@@ -15,7 +15,6 @@ Použití:
     embeddings = manager.encode(["text 1", "text 2"])
 """
 import asyncio
-import json
 import logging
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str, loads as _msgspec_loads
 import threading

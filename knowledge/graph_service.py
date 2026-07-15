@@ -719,6 +719,54 @@ class GraphService:
                 "skipped_reason": str(e),
             }
 
+    def pagerank(self, max_iter: int = 100, damping: float = 0.85) -> dict[str, float]:
+        """
+        ISSUE #14: PageRank via DuckPGQGraph.pagerank().
+
+        Returns:
+            Dict mapping IOC value → PageRank score. Empty dict if graph unavailable.
+        """
+        graph = _get_graph()
+        if graph is None:
+            return {}
+        try:
+            return graph.pagerank(max_iter=max_iter, damping=damping)
+        except Exception as e:
+            logger.warning(f"[GraphService] pagerank failed: {e}")
+            return {}
+
+    def shortest_path(self, src: str, dst: str, max_hops: int = 10) -> list[str] | None:
+        """
+        ISSUE #14: Shortest path via DuckPGQGraph.shortest_path().
+
+        Returns:
+            List of IOC values forming the path, or None if no path exists.
+        """
+        graph = _get_graph()
+        if graph is None:
+            return None
+        try:
+            return graph.shortest_path(src=src, dst=dst, max_hops=max_hops)
+        except Exception as e:
+            logger.warning(f"[GraphService] shortest_path failed: {e}")
+            return None
+
+    def community_detection(self) -> dict[int, list[str]]:
+        """
+        ISSUE #14: Community detection via DuckPGQGraph.community_detection().
+
+        Returns:
+            Dict mapping community_id → list of IOC values in that community.
+        """
+        graph = _get_graph()
+        if graph is None:
+            return {}
+        try:
+            return graph.community_detection(method="louvain")
+        except Exception as e:
+            logger.warning(f"[GraphService] community_detection failed: {e}")
+            return {}
+
 
 # ── Module-level singleton facade ──────────────────────────────────────────────
 # Default instance — preserves backward compatibility for code that imports
@@ -791,41 +839,17 @@ def graph_analytics_summary(top_k: int = MAX_GRAPH_ANALYTICS_TOP_K) -> dict:
 
 def _estimate_community_count(graph: DuckPGQGraph) -> int:
     """
-    Estimate community count via simple label propagation on sampled edges.
+    Estimate community count via DuckPGQGraph.community_detection().
 
-    Bounded: samples at most MAX_GRAPH_ANALYTICS_NODES edges.
+    ISSUE #14: Delegates to the proper community_detection() method
+    which uses iterative label propagation in DuckDB SQL.
     Returns 0 on error.
     """
     try:
-        limit_n: int = MAX_GRAPH_ANALYTICS_NODES
-        rows = graph.con.execute(
-            "SELECT COUNT(DISTINCT src_id) + COUNT(DISTINCT dst_id) as node_count FROM ioc_edges LIMIT ?",
-            (limit_n,),
-        ).fetchone()
-        node_count = rows[0] if rows else 0
-        if node_count < 3:
-            return 1
-
-        labels: dict[int, int] = {}
-        edges = graph.con.execute(
-            "SELECT src_id, dst_id FROM ioc_edges LIMIT ?",
-            (limit_n,),
-        ).fetchall()
-
-        nodes: set[int] = set()
-        for src, dst in edges:
-            nodes.add(src)
-            nodes.add(dst)
-        for i, node in enumerate(sorted(nodes)):
-            labels[node] = i % 10
-
-        for _ in range(5):
-            for src, dst in edges:
-                if src in labels and dst in labels:
-                    pass  # Simplified: just count unique labels at end
-
-        unique_labels = len({labels.get(n, 0) for n in nodes})
-        return max(1, unique_labels)
+        communities = graph.community_detection(method="louvain")
+        if not communities:
+            return 0
+        return len(communities)
     except Exception:
         return 0
 

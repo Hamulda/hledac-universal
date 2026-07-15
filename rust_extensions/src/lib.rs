@@ -36,7 +36,6 @@ pub mod int_counter_layout;
 pub mod ioc_dedup;
 pub mod ioc_patterns;
 pub mod ioc_patterns_generated; // Issue #031: generated from ioc_patterns.rs (codegen)
-// ISSUE-008: ioc_core DEPRECATED — ioc_extract now provides has_* functions using ioc_patterns.rs
 pub mod dns_tunnel; // ISSUE #33: DNS tunneling detection (entropy, n-gram, wavelet)
 pub mod ioc_extract;
 pub mod ioc_extract_fast;
@@ -70,8 +69,8 @@ pub mod parquet_reader; // F320+: Lazy parquet reader — paginated Arrow, 100GB
 pub mod spsc_queue;
 pub mod mpsc_pool; // Bounded MPSC pool — replaces asyncio.Queue in evidence_log
 pub mod federated_qtable; // ISSUE-23: Rust Q-table with rayon parallel batch updates
-pub mod embedding_index; // ANN HNSW index v Rust (M1 8GB safe)
-pub mod lancedb_bridge; // F320+: Rust HNSW bridge → LanceDB Python API (ANN only, zero-copy)
+pub mod simd; // ISSUE-023: Modular SIMD — NEON on M1, scalar fallback
+pub mod hnsw; // ISSUE-023: Unified HNSW module — index.rs + py_api.rs
 pub mod graph_cache;    // TinyLFU LRU cache pro graph operations
 pub mod dedup_bloom;    // Distribuovaný BloomFilter s Count-Min Sketch
 pub mod rate_limit;     // ISSUE #016: NVD API rate limiter — token bucket + MPSC
@@ -705,13 +704,11 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Falls back to Rust NEON Aho-Corasick when Metal unavailable.
     metal_pattern_matcher::register_functions(m)?;
 
-    // F320+: Rust HNSW ANN bridge for LanceDB — pure vector insert + search without
-    // LanceDB Python API overhead. Hybrid LanceDB remains for FTS/metadata/persistence.
-    m.add_class::<lancedb_bridge::PyHNSWBridge>()?;
-
-    // R4.3: ANN HNSW index for MLX embeddings re-ranking (M1 8GB safe).
-    // 200k nodes × 384d × 4B = ~307 MB max.
-    m.add_class::<embedding_index::PyHNSWIndex>()?;
+    // ISSUE-023: Rust HNSW ANN bridge for LanceDB — unified hnsw module.
+    // PyHNSWBridge: entity ID → node ID mapping for LanceDBIdentityStore
+    // PyHNSWIndex: low-level ANN index with save/load for MLX embeddings re-ranking
+    m.add_class::<hnsw::py_api::PyHNSWBridge>()?;
+    m.add_class::<hnsw::py_api::PyHNSWIndex>()?;
 
     // R4.4: TinyLFU LRU cache for cross-worker graph results.
     m.add_class::<graph_cache::PyGraphLRUCache>()?;

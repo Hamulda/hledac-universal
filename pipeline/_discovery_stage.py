@@ -12,6 +12,8 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
+from hledac.universal.utils.config_introspection import safe_attr_get
+
 from ._stage_protocol import BoundedStageQueue, StageContext
 
 if TYPE_CHECKING:
@@ -81,7 +83,7 @@ class DiscoveryStage:
 
         try:
             async for hit in self._run_discovery_streaming(ctx):
-                url: Any = getattr(hit, "url", None) if hasattr(hit, "url") else hit
+                url: Any = safe_attr_get(hit, "url", hit)
                 if not url:
                     continue
                 if not isinstance(url, str):
@@ -109,10 +111,7 @@ class DiscoveryStage:
 
         Runs sync discovery in background thread and yields hits incrementally.
         """
-        from concurrent.futures import ThreadPoolExecutor
         from .live_public_pipeline import generate_bootstrap_urls, generate_rescue_urls
-
-        loop = asyncio.get_running_loop()
 
         def _sync_discovery() -> list[Any]:
             hits: list[Any] = []
@@ -136,9 +135,7 @@ class DiscoveryStage:
             return hits
 
         try:
-            hits = await loop.run_in_executor(
-                ThreadPoolExecutor(max_workers=1), _sync_discovery
-            )
+            hits = await asyncio.to_thread(_sync_discovery)
             for hit in hits or []:
                 if not self._running:
                     break

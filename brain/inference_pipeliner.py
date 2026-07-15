@@ -29,8 +29,7 @@ SUBMIT_TIMEOUT_S = 120.0
 PREPROCESS_WORKERS = 2
 _DEEP_THINKING_PREFIX: Final[str] = ' <|im_start|>reasoning\nFor this query, I need to think step by step about the evidence and derive conclusions.<|im_end|>\n'
 
-@dataclass(slots=True)
-class PendingRequest:
+class PendingRequest(msgspec.Struct):
     """A pending inference request with its resolving future."""
     future: asyncio.Future[str]
     prompt: str
@@ -86,8 +85,6 @@ class InferencePipeliner:
         self._inflight: PendingRequest | None = None
         self._inflight_done = asyncio.Event()
         self._new_request = asyncio.Event()
-        import concurrent.futures
-        self._preprocess_executor = concurrent.futures.ThreadPoolExecutor(max_workers=PREPROCESS_WORKERS, thread_name_prefix='preprocess')
         self._stats: dict[str, Any] = {'submitted': 0, 'completed': 0, 'failed': 0, 'preprocess_overlap_ms': 0.0, 'queue_depth': 0}
         self._started = False
 
@@ -161,7 +158,6 @@ class InferencePipeliner:
                 req.future.set_result('Error: pipeliner shutdown')
         if self._inflight is not None and (not self._inflight.future.done()):
             self._inflight.future.set_result('Error: pipeliner shutdown')
-        self._preprocess_executor.shutdown(wait=False)
 
     async def _dispatch_loop(self) -> None:
         """
@@ -262,8 +258,7 @@ class InferencePipeliner:
 
         This runs in thread pool to overlap with previous inference.
         """
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(self._preprocess_executor, self._sync_preprocess, prompt, system_msg, thinking)
+        return await asyncio.to_thread(self._sync_preprocess, prompt, system_msg, thinking)
 
     def _sync_preprocess(self, prompt: str, system_msg: str | None, thinking: bool) -> str:
         """

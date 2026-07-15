@@ -70,6 +70,7 @@ from ._types import (
     TestResult,
     TestType,
     _DarkQueryListResponse,
+    _to_operator_shortlist,
 )
 
 from .adversarial import (
@@ -196,6 +197,8 @@ __all__ = [
     "HypothesisPack",
     "CausalReasoner",
     "InferenceEngineProtocol",
+    # Utilities
+    "_to_operator_shortlist",
     # Lazy exports
     "HypothesisEngine",
     "Hypothesis",

@@ -1,0 +1,4208 @@
+{
+  "backend": "ast-grep",
+  "path": ".",
+  "matches": [
+    {
+      "file": "resource_allocator.py",
+      "line_number": 24,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 24,
+          "column": 0
+        },
+        "end": {
+          "line": 24,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1073,
+          "end": 1084
+        }
+      }
+    },
+    {
+      "file": "captcha_solver_local.py",
+      "line_number": 21,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 21,
+          "column": 0
+        },
+        "end": {
+          "line": 21,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 627,
+          "end": 638
+        }
+      }
+    },
+    {
+      "file": "coordinators/execution_coordinator.py",
+      "line_number": 19,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 19,
+          "column": 0
+        },
+        "end": {
+          "line": 19,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 607,
+          "end": 618
+        }
+      }
+    },
+    {
+      "file": "coordinators/monitoring_coordinator.py",
+      "line_number": 22,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 22,
+          "column": 0
+        },
+        "end": {
+          "line": 22,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 727,
+          "end": 738
+        }
+      }
+    },
+    {
+      "file": "layers/ghost_layer.py",
+      "line_number": 373,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 373,
+          "column": 0
+        },
+        "end": {
+          "line": 373,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 16755,
+          "end": 16766
+        }
+      }
+    },
+    {
+      "file": "cache/adaptive_cache.py",
+      "line_number": 181,
+      "text": "import time",
+      "lines": "        import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 181,
+          "column": 8
+        },
+        "end": {
+          "line": 181,
+          "column": 19
+        },
+        "byteOffset": {
+          "start": 5855,
+          "end": 5866
+        }
+      }
+    },
+    {
+      "file": "coordinators/base.py",
+      "line_number": 18,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 18,
+          "column": 0
+        },
+        "end": {
+          "line": 18,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 669,
+          "end": 680
+        }
+      }
+    },
+    {
+      "file": "intelligence/leak_sentinel.py",
+      "line_number": 32,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 32,
+          "column": 0
+        },
+        "end": {
+          "line": 32,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1212,
+          "end": 1223
+        }
+      }
+    },
+    {
+      "file": "layers/temporal_signal_runtime.py",
+      "line_number": 18,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 18,
+          "column": 0
+        },
+        "end": {
+          "line": 18,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 742,
+          "end": 753
+        }
+      }
+    },
+    {
+      "file": "coordinators/cache_policy.py",
+      "line_number": 29,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 29,
+          "column": 0
+        },
+        "end": {
+          "line": 29,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 967,
+          "end": 978
+        }
+      }
+    },
+    {
+      "file": "intelligence/relationship_discovery.py",
+      "line_number": 36,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 36,
+          "column": 0
+        },
+        "end": {
+          "line": 36,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1358,
+          "end": 1369
+        }
+      }
+    },
+    {
+      "file": "fetching/public_fetcher.py",
+      "line_number": 28,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 28,
+          "column": 0
+        },
+        "end": {
+          "line": 28,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1169,
+          "end": 1180
+        }
+      }
+    },
+    {
+      "file": "coordinators/meta_reasoning_coordinator.py",
+      "line_number": 19,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 19,
+          "column": 0
+        },
+        "end": {
+          "line": 19,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 490,
+          "end": 501
+        }
+      }
+    },
+    {
+      "file": "tools/rl_training_dryrun.py",
+      "line_number": 23,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 23,
+          "column": 0
+        },
+        "end": {
+          "line": 23,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 695,
+          "end": 706
+        }
+      }
+    },
+    {
+      "file": "layers/memory_layer.py",
+      "line_number": 45,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 45,
+          "column": 0
+        },
+        "end": {
+          "line": 45,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 2209,
+          "end": 2220
+        }
+      }
+    },
+    {
+      "file": "fetching/alternative_protocol_fetcher.py",
+      "line_number": 21,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 21,
+          "column": 0
+        },
+        "end": {
+          "line": 21,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 576,
+          "end": 587
+        }
+      }
+    },
+    {
+      "file": "intelligence/document_intelligence.py",
+      "line_number": 1578,
+      "text": "import time",
+      "lines": "        import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 1578,
+          "column": 8
+        },
+        "end": {
+          "line": 1578,
+          "column": 19
+        },
+        "byteOffset": {
+          "start": 68327,
+          "end": 68338
+        }
+      }
+    },
+    {
+      "file": "tools/executor.py",
+      "line_number": 426,
+      "text": "import time",
+      "lines": "    import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 426,
+          "column": 4
+        },
+        "end": {
+          "line": 426,
+          "column": 15
+        },
+        "byteOffset": {
+          "start": 16327,
+          "end": 16338
+        }
+      }
+    },
+    {
+      "file": "coordinators/swarm_coordinator.py",
+      "line_number": 17,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 17,
+          "column": 0
+        },
+        "end": {
+          "line": 17,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 477,
+          "end": 488
+        }
+      }
+    },
+    {
+      "file": "layers/security_layer.py",
+      "line_number": 597,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 597,
+          "column": 0
+        },
+        "end": {
+          "line": 597,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 28581,
+          "end": 28592
+        }
+      }
+    },
+    {
+      "file": "intelligence/identity_stitching_canonical.py",
+      "line_number": 24,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 24,
+          "column": 0
+        },
+        "end": {
+          "line": 24,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 994,
+          "end": 1005
+        }
+      }
+    },
+    {
+      "file": "rust_extensions/benchmarks/bench_new_modules.py",
+      "line_number": 3,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 3,
+          "column": 0
+        },
+        "end": {
+          "line": 3,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 84,
+          "end": 95
+        }
+      }
+    },
+    {
+      "file": "core/mlx_embeddings.py",
+      "line_number": 21,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 21,
+          "column": 0
+        },
+        "end": {
+          "line": 21,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 604,
+          "end": 615
+        }
+      }
+    },
+    {
+      "file": "coordinators/agent_coordination_engine.py",
+      "line_number": 18,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 18,
+          "column": 0
+        },
+        "end": {
+          "line": 18,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 486,
+          "end": 497
+        }
+      }
+    },
+    {
+      "file": "rust_extensions/verify_build.py",
+      "line_number": 23,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 23,
+          "column": 0
+        },
+        "end": {
+          "line": 23,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 758,
+          "end": 769
+        }
+      }
+    },
+    {
+      "file": "core/memory_cycle.py",
+      "line_number": 44,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 44,
+          "column": 0
+        },
+        "end": {
+          "line": 44,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 2088,
+          "end": 2099
+        }
+      }
+    },
+    {
+      "file": "memory/memory_manager.py",
+      "line_number": 33,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 33,
+          "column": 0
+        },
+        "end": {
+          "line": 33,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1473,
+          "end": 1484
+        }
+      }
+    },
+    {
+      "file": "layers/stealth_layer.py",
+      "line_number": 30,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 30,
+          "column": 0
+        },
+        "end": {
+          "line": 30,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1332,
+          "end": 1343
+        }
+      }
+    },
+    {
+      "file": "layers/stealth_layer.py",
+      "line_number": 144,
+      "text": "import time",
+      "lines": "        import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 144,
+          "column": 8
+        },
+        "end": {
+          "line": 144,
+          "column": 19
+        },
+        "byteOffset": {
+          "start": 6336,
+          "end": 6347
+        }
+      }
+    },
+    {
+      "file": "layers/stealth_layer.py",
+      "line_number": 760,
+      "text": "import time",
+      "lines": "            import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 760,
+          "column": 12
+        },
+        "end": {
+          "line": 760,
+          "column": 23
+        },
+        "byteOffset": {
+          "start": 52309,
+          "end": 52320
+        }
+      }
+    },
+    {
+      "file": "intelligence/ct_log_client.py",
+      "line_number": 16,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 16,
+          "column": 0
+        },
+        "end": {
+          "line": 16,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 672,
+          "end": 683
+        }
+      }
+    },
+    {
+      "file": "coordinators/multimodal_coordinator.py",
+      "line_number": 16,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 16,
+          "column": 0
+        },
+        "end": {
+          "line": 16,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 410,
+          "end": 421
+        }
+      }
+    },
+    {
+      "file": "intelligence/shodan_wrapper.py",
+      "line_number": 5,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 5,
+          "column": 0
+        },
+        "end": {
+          "line": 5,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 55,
+          "end": 66
+        }
+      }
+    },
+    {
+      "file": "layers/communication_layer.py",
+      "line_number": 15,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 15,
+          "column": 0
+        },
+        "end": {
+          "line": 15,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 419,
+          "end": 430
+        }
+      }
+    },
+    {
+      "file": "intelligence/dark_web_lane.py",
+      "line_number": 14,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 14,
+          "column": 0
+        },
+        "end": {
+          "line": 14,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 413,
+          "end": 424
+        }
+      }
+    },
+    {
+      "file": "intelligence/temporal_archaeologist_adapter.py",
+      "line_number": 21,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 21,
+          "column": 0
+        },
+        "end": {
+          "line": 21,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 763,
+          "end": 774
+        }
+      }
+    },
+    {
+      "file": "intelligence/wayback_cdx.py",
+      "line_number": 27,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 27,
+          "column": 0
+        },
+        "end": {
+          "line": 27,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 927,
+          "end": 938
+        }
+      }
+    },
+    {
+      "file": "hledac_hypothesis/causal.py",
+      "line_number": 57,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 57,
+          "column": 0
+        },
+        "end": {
+          "line": 57,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 3077,
+          "end": 3088
+        }
+      }
+    },
+    {
+      "file": "hledac_hypothesis/causal.py",
+      "line_number": 104,
+      "text": "import time",
+      "lines": "        import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 104,
+          "column": 8
+        },
+        "end": {
+          "line": 104,
+          "column": 19
+        },
+        "byteOffset": {
+          "start": 5212,
+          "end": 5223
+        }
+      }
+    },
+    {
+      "file": "intelligence/github_secret_scanner.py",
+      "line_number": 50,
+      "text": "import time",
+      "lines": "        import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 50,
+          "column": 8
+        },
+        "end": {
+          "line": 50,
+          "column": 19
+        },
+        "byteOffset": {
+          "start": 3034,
+          "end": 3045
+        }
+      }
+    },
+    {
+      "file": "intelligence/github_secret_scanner.py",
+      "line_number": 95,
+      "text": "import time",
+      "lines": "        import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 95,
+          "column": 8
+        },
+        "end": {
+          "line": 95,
+          "column": 19
+        },
+        "byteOffset": {
+          "start": 4916,
+          "end": 4927
+        }
+      }
+    },
+    {
+      "file": "tools/live_memory_preflight.py",
+      "line_number": 29,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 29,
+          "column": 0
+        },
+        "end": {
+          "line": 29,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1001,
+          "end": 1012
+        }
+      }
+    },
+    {
+      "file": "tools/probe_r0_nonfeed_reality_lock.py",
+      "line_number": 42,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 42,
+          "column": 0
+        },
+        "end": {
+          "line": 42,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1572,
+          "end": 1583
+        }
+      }
+    },
+    {
+      "file": "intelligence/data_leak_hunter.py",
+      "line_number": 17,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 17,
+          "column": 0
+        },
+        "end": {
+          "line": 17,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 591,
+          "end": 602
+        }
+      }
+    },
+    {
+      "file": "coordinators/research_coordinator.py",
+      "line_number": 22,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 22,
+          "column": 0
+        },
+        "end": {
+          "line": 22,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 637,
+          "end": 648
+        }
+      }
+    },
+    {
+      "file": "hledac_hypothesis/adversarial.py",
+      "line_number": 95,
+      "text": "import time",
+      "lines": "        import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 95,
+          "column": 8
+        },
+        "end": {
+          "line": 95,
+          "column": 19
+        },
+        "byteOffset": {
+          "start": 5302,
+          "end": 5313
+        }
+      }
+    },
+    {
+      "file": "intelligence/passive_fingerprint.py",
+      "line_number": 37,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 37,
+          "column": 0
+        },
+        "end": {
+          "line": 37,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1366,
+          "end": 1377
+        }
+      }
+    },
+    {
+      "file": "intelligence/workflow_orchestrator.py",
+      "line_number": 9,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 9,
+          "column": 0
+        },
+        "end": {
+          "line": 9,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 256,
+          "end": 267
+        }
+      }
+    },
+    {
+      "file": "coordinators/render_coordinator.py",
+      "line_number": 7,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 7,
+          "column": 0
+        },
+        "end": {
+          "line": 7,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 197,
+          "end": 208
+        }
+      }
+    },
+    {
+      "file": "intelligence/censys_lane.py",
+      "line_number": 21,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 21,
+          "column": 0
+        },
+        "end": {
+          "line": 21,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 826,
+          "end": 837
+        }
+      }
+    },
+    {
+      "file": "intelligence/greynoise_lane.py",
+      "line_number": 20,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 20,
+          "column": 0
+        },
+        "end": {
+          "line": 20,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 820,
+          "end": 831
+        }
+      }
+    },
+    {
+      "file": "tools/probe_f214opt314_runtime_optimizations.py",
+      "line_number": 18,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 18,
+          "column": 0
+        },
+        "end": {
+          "line": 18,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 451,
+          "end": 462
+        }
+      }
+    },
+    {
+      "file": "intelligence/ct_lane.py",
+      "line_number": 23,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 23,
+          "column": 0
+        },
+        "end": {
+          "line": 23,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 731,
+          "end": 742
+        }
+      }
+    },
+    {
+      "file": "intelligence/wayback_diff_miner.py",
+      "line_number": 31,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 31,
+          "column": 0
+        },
+        "end": {
+          "line": 31,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1295,
+          "end": 1306
+        }
+      }
+    },
+    {
+      "file": "intelligence/cryptographic_intelligence.py",
+      "line_number": 207,
+      "text": "import time",
+      "lines": "        import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 207,
+          "column": 8
+        },
+        "end": {
+          "line": 207,
+          "column": 19
+        },
+        "byteOffset": {
+          "start": 6799,
+          "end": 6810
+        }
+      }
+    },
+    {
+      "file": "intelligence/cryptographic_intelligence.py",
+      "line_number": 238,
+      "text": "import time",
+      "lines": "        import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 238,
+          "column": 8
+        },
+        "end": {
+          "line": 238,
+          "column": 19
+        },
+        "byteOffset": {
+          "start": 8228,
+          "end": 8239
+        }
+      }
+    },
+    {
+      "file": "intelligence/cryptographic_intelligence.py",
+      "line_number": 291,
+      "text": "import time",
+      "lines": "        import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 291,
+          "column": 8
+        },
+        "end": {
+          "line": 291,
+          "column": 19
+        },
+        "byteOffset": {
+          "start": 10445,
+          "end": 10456
+        }
+      }
+    },
+    {
+      "file": "intelligence/cryptographic_intelligence.py",
+      "line_number": 376,
+      "text": "import time",
+      "lines": "        import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 376,
+          "column": 8
+        },
+        "end": {
+          "line": 376,
+          "column": 19
+        },
+        "byteOffset": {
+          "start": 14166,
+          "end": 14177
+        }
+      }
+    },
+    {
+      "file": "probe/probe_f224c_discovery_provider_gap/test_discovery_provider_gap.py",
+      "line_number": 19,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 19,
+          "column": 0
+        },
+        "end": {
+          "line": 19,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 765,
+          "end": 776
+        }
+      }
+    },
+    {
+      "file": "coordinators/performance_coordinator.py",
+      "line_number": 17,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 17,
+          "column": 0
+        },
+        "end": {
+          "line": 17,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 510,
+          "end": 521
+        }
+      }
+    },
+    {
+      "file": "intelligence/dark_web_intelligence.py",
+      "line_number": 24,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 24,
+          "column": 0
+        },
+        "end": {
+          "line": 24,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 597,
+          "end": 608
+        }
+      }
+    },
+    {
+      "file": "intelligence/network_reconnaissance_lane.py",
+      "line_number": 14,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 14,
+          "column": 0
+        },
+        "end": {
+          "line": 14,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 407,
+          "end": 418
+        }
+      }
+    },
+    {
+      "file": "core/constants.py",
+      "line_number": 33,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 33,
+          "column": 0
+        },
+        "end": {
+          "line": 33,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1448,
+          "end": 1459
+        }
+      }
+    },
+    {
+      "file": "intelligence/pattern_mining.py",
+      "line_number": 91,
+      "text": "import time",
+      "lines": "    import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 91,
+          "column": 4
+        },
+        "end": {
+          "line": 91,
+          "column": 15
+        },
+        "byteOffset": {
+          "start": 2997,
+          "end": 3008
+        }
+      }
+    },
+    {
+      "file": "intelligence/exposure_correlator.py",
+      "line_number": 28,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 28,
+          "column": 0
+        },
+        "end": {
+          "line": 28,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1194,
+          "end": 1205
+        }
+      }
+    },
+    {
+      "file": "intelligence/pastebin_monitor.py",
+      "line_number": 25,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 25,
+          "column": 0
+        },
+        "end": {
+          "line": 25,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 835,
+          "end": 846
+        }
+      }
+    },
+    {
+      "file": "intelligence/lane.py",
+      "line_number": 29,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 29,
+          "column": 0
+        },
+        "end": {
+          "line": 29,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1049,
+          "end": 1060
+        }
+      }
+    },
+    {
+      "file": "advanced_rag/rag_orchestrator.py",
+      "line_number": 28,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 28,
+          "column": 0
+        },
+        "end": {
+          "line": 28,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1376,
+          "end": 1387
+        }
+      }
+    },
+    {
+      "file": "intelligence/blockchain_analyzer.py",
+      "line_number": 49,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 49,
+          "column": 0
+        },
+        "end": {
+          "line": 49,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 2247,
+          "end": 2258
+        }
+      }
+    },
+    {
+      "file": "intelligence/shodan_lane.py",
+      "line_number": 20,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 20,
+          "column": 0
+        },
+        "end": {
+          "line": 20,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 770,
+          "end": 781
+        }
+      }
+    },
+    {
+      "file": "intelligence/doh_lane.py",
+      "line_number": 12,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 12,
+          "column": 0
+        },
+        "end": {
+          "line": 12,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 363,
+          "end": 374
+        }
+      }
+    },
+    {
+      "file": "core/resource_governor.py",
+      "line_number": 28,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 28,
+          "column": 0
+        },
+        "end": {
+          "line": 28,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 994,
+          "end": 1005
+        }
+      }
+    },
+    {
+      "file": "tools/bench_m1_runtime_gates.py",
+      "line_number": 44,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 44,
+          "column": 0
+        },
+        "end": {
+          "line": 44,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1268,
+          "end": 1279
+        }
+      }
+    },
+    {
+      "file": "intelligence/onion_seed_manager.py",
+      "line_number": 6,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 6,
+          "column": 0
+        },
+        "end": {
+          "line": 6,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 121,
+          "end": 132
+        }
+      }
+    },
+    {
+      "file": "intelligence/bgp_passive_dns_adapter.py",
+      "line_number": 31,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 31,
+          "column": 0
+        },
+        "end": {
+          "line": 31,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1062,
+          "end": 1073
+        }
+      }
+    },
+    {
+      "file": "intelligence/web_intelligence.py",
+      "line_number": 13,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 13,
+          "column": 0
+        },
+        "end": {
+          "line": 13,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 415,
+          "end": 426
+        }
+      }
+    },
+    {
+      "file": "core/embeddings/manager.py",
+      "line_number": 13,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 13,
+          "column": 0
+        },
+        "end": {
+          "line": 13,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 454,
+          "end": 465
+        }
+      }
+    },
+    {
+      "file": "intelligence/temporal_analysis.py",
+      "line_number": 143,
+      "text": "import time",
+      "lines": "        import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 143,
+          "column": 8
+        },
+        "end": {
+          "line": 143,
+          "column": 19
+        },
+        "byteOffset": {
+          "start": 4055,
+          "end": 4066
+        }
+      }
+    },
+    {
+      "file": "intelligence/pattern_mining_canonical.py",
+      "line_number": 31,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 31,
+          "column": 0
+        },
+        "end": {
+          "line": 31,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1109,
+          "end": 1120
+        }
+      }
+    },
+    {
+      "file": "core/embeddings/_shared.py",
+      "line_number": 17,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 17,
+          "column": 0
+        },
+        "end": {
+          "line": 17,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 564,
+          "end": 575
+        }
+      }
+    },
+    {
+      "file": "intelligence/timeline_synthesizer.py",
+      "line_number": 19,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 19,
+          "column": 0
+        },
+        "end": {
+          "line": 19,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 649,
+          "end": 660
+        }
+      }
+    },
+    {
+      "file": "coordinators/fetch_coordinator.py",
+      "line_number": 19,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 19,
+          "column": 0
+        },
+        "end": {
+          "line": 19,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 525,
+          "end": 536
+        }
+      }
+    },
+    {
+      "file": "intelligence/bgp_lane.py",
+      "line_number": 23,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 23,
+          "column": 0
+        },
+        "end": {
+          "line": 23,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 866,
+          "end": 877
+        }
+      }
+    },
+    {
+      "file": "intelligence/blockchain_analyzer_lane.py",
+      "line_number": 14,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 14,
+          "column": 0
+        },
+        "end": {
+          "line": 14,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 381,
+          "end": 392
+        }
+      }
+    },
+    {
+      "file": "intelligence/open_source_collectors.py",
+      "line_number": 37,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 37,
+          "column": 0
+        },
+        "end": {
+          "line": 37,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1157,
+          "end": 1168
+        }
+      }
+    },
+    {
+      "file": "intelligence/exposure_clients.py",
+      "line_number": 26,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 26,
+          "column": 0
+        },
+        "end": {
+          "line": 26,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1020,
+          "end": 1031
+        }
+      }
+    },
+    {
+      "file": "intelligence/whois_service.py",
+      "line_number": 38,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 38,
+          "column": 0
+        },
+        "end": {
+          "line": 38,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1566,
+          "end": 1577
+        }
+      }
+    },
+    {
+      "file": "intelligence/identity_stitching.py",
+      "line_number": 37,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 37,
+          "column": 0
+        },
+        "end": {
+          "line": 37,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1526,
+          "end": 1537
+        }
+      }
+    },
+    {
+      "file": "intelligence/browser_pool.py",
+      "line_number": 18,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 18,
+          "column": 0
+        },
+        "end": {
+          "line": 18,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 630,
+          "end": 641
+        }
+      }
+    },
+    {
+      "file": "coordinators/privacy_enhanced_research.py",
+      "line_number": 14,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 14,
+          "column": 0
+        },
+        "end": {
+          "line": 14,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 325,
+          "end": 336
+        }
+      }
+    },
+    {
+      "file": "probe/probe_f214opt_selectolax/benchmark_selectolax.py",
+      "line_number": 20,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 20,
+          "column": 0
+        },
+        "end": {
+          "line": 20,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 430,
+          "end": 441
+        }
+      }
+    },
+    {
+      "file": "transport/curl_cffi_fetch.py",
+      "line_number": 18,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 18,
+          "column": 0
+        },
+        "end": {
+          "line": 18,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 548,
+          "end": 559
+        }
+      }
+    },
+    {
+      "file": "discovery/cascade.py",
+      "line_number": 24,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 24,
+          "column": 0
+        },
+        "end": {
+          "line": 24,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 696,
+          "end": 707
+        }
+      }
+    },
+    {
+      "file": "multimodal/vision_encoder.py",
+      "line_number": 2,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 2,
+          "column": 0
+        },
+        "end": {
+          "line": 2,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 30,
+          "end": 41
+        }
+      }
+    },
+    {
+      "file": "intelligence/exposed_service_hunter.py",
+      "line_number": 861,
+      "text": "import time",
+      "lines": "        import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 861,
+          "column": 8
+        },
+        "end": {
+          "line": 861,
+          "column": 19
+        },
+        "byteOffset": {
+          "start": 39995,
+          "end": 40006
+        }
+      }
+    },
+    {
+      "file": "intelligence/exposed_service_hunter.py",
+      "line_number": 881,
+      "text": "import time",
+      "lines": "        import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 881,
+          "column": 8
+        },
+        "end": {
+          "line": 881,
+          "column": 19
+        },
+        "byteOffset": {
+          "start": 40635,
+          "end": 40646
+        }
+      }
+    },
+    {
+      "file": "discovery/base.py",
+      "line_number": 15,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 15,
+          "column": 0
+        },
+        "end": {
+          "line": 15,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 432,
+          "end": 443
+        }
+      }
+    },
+    {
+      "file": "coordinators/security_coordinator.py",
+      "line_number": 20,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 20,
+          "column": 0
+        },
+        "end": {
+          "line": 20,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 629,
+          "end": 640
+        }
+      }
+    },
+    {
+      "file": "coordinators/security_coordinator.py",
+      "line_number": 835,
+      "text": "import time",
+      "lines": "        import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 835,
+          "column": 8
+        },
+        "end": {
+          "line": 835,
+          "column": 19
+        },
+        "byteOffset": {
+          "start": 43366,
+          "end": 43377
+        }
+      }
+    },
+    {
+      "file": "benchmarks_shadow/m1_embedding_batch_benchmark.py",
+      "line_number": 31,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 31,
+          "column": 0
+        },
+        "end": {
+          "line": 31,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 863,
+          "end": 874
+        }
+      }
+    },
+    {
+      "file": "transport/http3_lane.py",
+      "line_number": 56,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 56,
+          "column": 0
+        },
+        "end": {
+          "line": 56,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 2687,
+          "end": 2698
+        }
+      }
+    },
+    {
+      "file": "coordinators/research_optimizer.py",
+      "line_number": 15,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 15,
+          "column": 0
+        },
+        "end": {
+          "line": 15,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 405,
+          "end": 416
+        }
+      }
+    },
+    {
+      "file": "transport/darknet_session_provider.py",
+      "line_number": 25,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 25,
+          "column": 0
+        },
+        "end": {
+          "line": 25,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 982,
+          "end": 993
+        }
+      }
+    },
+    {
+      "file": "probe/probe_f207j_nonfeed_finding_bridge/nonfeed_finding_bridge.py",
+      "line_number": 31,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 31,
+          "column": 0
+        },
+        "end": {
+          "line": 31,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1060,
+          "end": 1071
+        }
+      }
+    },
+    {
+      "file": "transport/tor_manager.py",
+      "line_number": 4,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 4,
+          "column": 0
+        },
+        "end": {
+          "line": 4,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 132,
+          "end": 143
+        }
+      }
+    },
+    {
+      "file": "benchmark_url_set.py",
+      "line_number": 10,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 10,
+          "column": 0
+        },
+        "end": {
+          "line": 10,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 208,
+          "end": 219
+        }
+      }
+    },
+    {
+      "file": "intelligence/academic_search.py",
+      "line_number": 19,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 19,
+          "column": 0
+        },
+        "end": {
+          "line": 19,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 579,
+          "end": 590
+        }
+      }
+    },
+    {
+      "file": "tools/probe_f214h_content_miner_backpressure/probe_f214h.py",
+      "line_number": 21,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 21,
+          "column": 0
+        },
+        "end": {
+          "line": 21,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 869,
+          "end": 880
+        }
+      }
+    },
+    {
+      "file": "discovery/ti_feed_adapter.py",
+      "line_number": 18,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 18,
+          "column": 0
+        },
+        "end": {
+          "line": 18,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 514,
+          "end": 525
+        }
+      }
+    },
+    {
+      "file": "tools/searxng_client.py",
+      "line_number": 3,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 3,
+          "column": 0
+        },
+        "end": {
+          "line": 3,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 121,
+          "end": 132
+        }
+      }
+    },
+    {
+      "file": "transport/transport_resolver.py",
+      "line_number": 352,
+      "text": "import time",
+      "lines": "    import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 352,
+          "column": 4
+        },
+        "end": {
+          "line": 352,
+          "column": 15
+        },
+        "byteOffset": {
+          "start": 12999,
+          "end": 13010
+        }
+      }
+    },
+    {
+      "file": "discovery/tvnews_adapter.py",
+      "line_number": 22,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 22,
+          "column": 0
+        },
+        "end": {
+          "line": 22,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 540,
+          "end": 551
+        }
+      }
+    },
+    {
+      "file": "benchmarks_shadow/live_sprint_measurement.py",
+      "line_number": 40,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 40,
+          "column": 0
+        },
+        "end": {
+          "line": 40,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1354,
+          "end": 1365
+        }
+      }
+    },
+    {
+      "file": "discovery/matrix_adapter.py",
+      "line_number": 11,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 11,
+          "column": 0
+        },
+        "end": {
+          "line": 11,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 265,
+          "end": 276
+        }
+      }
+    },
+    {
+      "file": "benchmarks_shadow/ranking_dedup_hotspot_benchmark.py",
+      "line_number": 9,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 9,
+          "column": 0
+        },
+        "end": {
+          "line": 9,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 257,
+          "end": 268
+        }
+      }
+    },
+    {
+      "file": "coordinators/memory_coordinator.py",
+      "line_number": 65,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 65,
+          "column": 0
+        },
+        "end": {
+          "line": 65,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 3065,
+          "end": 3076
+        }
+      }
+    },
+    {
+      "file": "discovery/dht_adapter.py",
+      "line_number": 17,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 17,
+          "column": 0
+        },
+        "end": {
+          "line": 17,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 319,
+          "end": 330
+        }
+      }
+    },
+    {
+      "file": "benchmarks_shadow/bench_8c0/common_stats.py",
+      "line_number": 12,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 12,
+          "column": 0
+        },
+        "end": {
+          "line": 12,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 208,
+          "end": 219
+        }
+      }
+    },
+    {
+      "file": "discovery/historical_frontier.py",
+      "line_number": 17,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 17,
+          "column": 0
+        },
+        "end": {
+          "line": 17,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 264,
+          "end": 275
+        }
+      }
+    },
+    {
+      "file": "intelligence/archive_discovery.py",
+      "line_number": 24,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 24,
+          "column": 0
+        },
+        "end": {
+          "line": 24,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 584,
+          "end": 595
+        }
+      }
+    },
+    {
+      "file": "transport/circuit_breaker.py",
+      "line_number": 47,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 47,
+          "column": 0
+        },
+        "end": {
+          "line": 47,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1923,
+          "end": 1934
+        }
+      }
+    },
+    {
+      "file": "coordinators/backpressure.py",
+      "line_number": 33,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 33,
+          "column": 0
+        },
+        "end": {
+          "line": 33,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1355,
+          "end": 1366
+        }
+      }
+    },
+    {
+      "file": "discovery/fediverse_adapter.py",
+      "line_number": 11,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 11,
+          "column": 0
+        },
+        "end": {
+          "line": 11,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 282,
+          "end": 293
+        }
+      }
+    },
+    {
+      "file": "discovery/wayback_cdx_adapter.py",
+      "line_number": 16,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 16,
+          "column": 0
+        },
+        "end": {
+          "line": 16,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 307,
+          "end": 318
+        }
+      }
+    },
+    {
+      "file": "transport/nym_transport.py",
+      "line_number": 5,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 5,
+          "column": 0
+        },
+        "end": {
+          "line": 5,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 120,
+          "end": 131
+        }
+      }
+    },
+    {
+      "file": "discovery/provider_stats.py",
+      "line_number": 17,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 17,
+          "column": 0
+        },
+        "end": {
+          "line": 17,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 417,
+          "end": 428
+        }
+      }
+    },
+    {
+      "file": "discovery/duckdb_fts_store.py",
+      "line_number": 24,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 24,
+          "column": 0
+        },
+        "end": {
+          "line": 24,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 713,
+          "end": 724
+        }
+      }
+    },
+    {
+      "file": "pipeline/_dedup_stage.py",
+      "line_number": 11,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 11,
+          "column": 0
+        },
+        "end": {
+          "line": 11,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 329,
+          "end": 340
+        }
+      }
+    },
+    {
+      "file": "discovery/fusion_ranker.py",
+      "line_number": 21,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 21,
+          "column": 0
+        },
+        "end": {
+          "line": 21,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 577,
+          "end": 588
+        }
+      }
+    },
+    {
+      "file": "discovery/wayback_sitemap_adapter.py",
+      "line_number": 27,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 27,
+          "column": 0
+        },
+        "end": {
+          "line": 27,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 812,
+          "end": 823
+        }
+      }
+    },
+    {
+      "file": "pipeline/finding_pipeline.py",
+      "line_number": 44,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 44,
+          "column": 0
+        },
+        "end": {
+          "line": 44,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 2422,
+          "end": 2433
+        }
+      }
+    },
+    {
+      "file": "forensics/metadata_extractor.py",
+      "line_number": 631,
+      "text": "import time",
+      "lines": "        import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 631,
+          "column": 8
+        },
+        "end": {
+          "line": 631,
+          "column": 19
+        },
+        "byteOffset": {
+          "start": 29422,
+          "end": 29433
+        }
+      }
+    },
+    {
+      "file": "transport/i2p_client.py",
+      "line_number": 21,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 21,
+          "column": 0
+        },
+        "end": {
+          "line": 21,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 570,
+          "end": 581
+        }
+      }
+    },
+    {
+      "file": "discovery/academic/unpaywall_adapter.py",
+      "line_number": 16,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 16,
+          "column": 0
+        },
+        "end": {
+          "line": 16,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 441,
+          "end": 452
+        }
+      }
+    },
+    {
+      "file": "benchmarks_shadow/rust_vs_python_benchmark.py",
+      "line_number": 19,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 19,
+          "column": 0
+        },
+        "end": {
+          "line": 19,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 541,
+          "end": 552
+        }
+      }
+    },
+    {
+      "file": "discovery/academic/arxiv_adapter.py",
+      "line_number": 15,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 15,
+          "column": 0
+        },
+        "end": {
+          "line": 15,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 498,
+          "end": 509
+        }
+      }
+    },
+    {
+      "file": "pipeline/ioc_cooccurrence_miner.py",
+      "line_number": 33,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 33,
+          "column": 0
+        },
+        "end": {
+          "line": 33,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1324,
+          "end": 1335
+        }
+      }
+    },
+    {
+      "file": "benchmarks_shadow/benchmark_sprint_probe.py",
+      "line_number": 21,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 21,
+          "column": 0
+        },
+        "end": {
+          "line": 21,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 484,
+          "end": 495
+        }
+      }
+    },
+    {
+      "file": "forensics/ioc_extractor.py",
+      "line_number": 176,
+      "text": "import time",
+      "lines": "    import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 176,
+          "column": 4
+        },
+        "end": {
+          "line": 176,
+          "column": 15
+        },
+        "byteOffset": {
+          "start": 6572,
+          "end": 6583
+        }
+      }
+    },
+    {
+      "file": "forensics/ioc_extractor.py",
+      "line_number": 316,
+      "text": "import time",
+      "lines": "                import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 316,
+          "column": 16
+        },
+        "end": {
+          "line": 316,
+          "column": 27
+        },
+        "byteOffset": {
+          "start": 11361,
+          "end": 11372
+        }
+      }
+    },
+    {
+      "file": "forensics/ioc_extractor.py",
+      "line_number": 368,
+      "text": "import time",
+      "lines": "        import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 368,
+          "column": 8
+        },
+        "end": {
+          "line": 368,
+          "column": 19
+        },
+        "byteOffset": {
+          "start": 14108,
+          "end": 14119
+        }
+      }
+    },
+    {
+      "file": "rl/sprint_policy_manager.py",
+      "line_number": 620,
+      "text": "import time",
+      "lines": "        import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 620,
+          "column": 8
+        },
+        "end": {
+          "line": 620,
+          "column": 19
+        },
+        "byteOffset": {
+          "start": 30804,
+          "end": 30815
+        }
+      }
+    },
+    {
+      "file": "discovery/academic/core_adapter.py",
+      "line_number": 17,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 17,
+          "column": 0
+        },
+        "end": {
+          "line": 17,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 513,
+          "end": 524
+        }
+      }
+    },
+    {
+      "file": "transport/conditional_cache.py",
+      "line_number": 67,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 67,
+          "column": 0
+        },
+        "end": {
+          "line": 67,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 2850,
+          "end": 2861
+        }
+      }
+    },
+    {
+      "file": "tools/test.py",
+      "line_number": 21,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 21,
+          "column": 0
+        },
+        "end": {
+          "line": 21,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 680,
+          "end": 691
+        }
+      }
+    },
+    {
+      "file": "pipeline/public_fetch.py",
+      "line_number": 21,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 21,
+          "column": 0
+        },
+        "end": {
+          "line": 21,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 814,
+          "end": 825
+        }
+      }
+    },
+    {
+      "file": "discovery/academic/openalex_adapter.py",
+      "line_number": 15,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 15,
+          "column": 0
+        },
+        "end": {
+          "line": 15,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 465,
+          "end": 476
+        }
+      }
+    },
+    {
+      "file": "transport/base_fetcher.py",
+      "line_number": 17,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 17,
+          "column": 0
+        },
+        "end": {
+          "line": 17,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 683,
+          "end": 694
+        }
+      }
+    },
+    {
+      "file": "discovery/academic/s2orc_adapter.py",
+      "line_number": 15,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 15,
+          "column": 0
+        },
+        "end": {
+          "line": 15,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 514,
+          "end": 525
+        }
+      }
+    },
+    {
+      "file": "pipeline/public_discovery.py",
+      "line_number": 14,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 14,
+          "column": 0
+        },
+        "end": {
+          "line": 14,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 473,
+          "end": 484
+        }
+      }
+    },
+    {
+      "file": "discovery/gopher_crawler.py",
+      "line_number": 20,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 20,
+          "column": 0
+        },
+        "end": {
+          "line": 20,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 649,
+          "end": 660
+        }
+      }
+    },
+    {
+      "file": "pipeline/_pipeline_orchestrator.py",
+      "line_number": 22,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 22,
+          "column": 0
+        },
+        "end": {
+          "line": 22,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 722,
+          "end": 733
+        }
+      }
+    },
+    {
+      "file": "benchmarks_shadow/benchmark_pipeline.py",
+      "line_number": 21,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 21,
+          "column": 0
+        },
+        "end": {
+          "line": 21,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 543,
+          "end": 554
+        }
+      }
+    },
+    {
+      "file": "tools/probe_f214int_interpreter_pool.py",
+      "line_number": 38,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 38,
+          "column": 0
+        },
+        "end": {
+          "line": 38,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 805,
+          "end": 816
+        }
+      }
+    },
+    {
+      "file": "runtime/pivot_executor.py",
+      "line_number": 26,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 26,
+          "column": 0
+        },
+        "end": {
+          "line": 26,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1011,
+          "end": 1022
+        }
+      }
+    },
+    {
+      "file": "benchmarks_shadow/bench_rust_vs_python.py",
+      "line_number": 31,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 31,
+          "column": 0
+        },
+        "end": {
+          "line": 31,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1190,
+          "end": 1201
+        }
+      }
+    },
+    {
+      "file": "pipeline/_stage_protocol.py",
+      "line_number": 21,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 21,
+          "column": 0
+        },
+        "end": {
+          "line": 21,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 842,
+          "end": 853
+        }
+      }
+    },
+    {
+      "file": "discovery/rss_atom_adapter.py",
+      "line_number": 33,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 33,
+          "column": 0
+        },
+        "end": {
+          "line": 33,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1150,
+          "end": 1161
+        }
+      }
+    },
+    {
+      "file": "pipeline/_match_stage.py",
+      "line_number": 11,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 11,
+          "column": 0
+        },
+        "end": {
+          "line": 11,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 295,
+          "end": 306
+        }
+      }
+    },
+    {
+      "file": "transport/prewarm_pool.py",
+      "line_number": 39,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 39,
+          "column": 0
+        },
+        "end": {
+          "line": 39,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1742,
+          "end": 1753
+        }
+      }
+    },
+    {
+      "file": "pipeline/_fetch_stage.py",
+      "line_number": 13,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 13,
+          "column": 0
+        },
+        "end": {
+          "line": 13,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 391,
+          "end": 402
+        }
+      }
+    },
+    {
+      "file": "benchmarks_shadow/e2e_signal_fixture.py",
+      "line_number": 24,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 24,
+          "column": 0
+        },
+        "end": {
+          "line": 24,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 633,
+          "end": 644
+        }
+      }
+    },
+    {
+      "file": "__main__.py",
+      "line_number": 28,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 28,
+          "column": 0
+        },
+        "end": {
+          "line": 28,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 686,
+          "end": 697
+        }
+      }
+    },
+    {
+      "file": "pipeline/_enrich_stage.py",
+      "line_number": 17,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 17,
+          "column": 0
+        },
+        "end": {
+          "line": 17,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 633,
+          "end": 644
+        }
+      }
+    },
+    {
+      "file": "discovery/duckduckgo_adapter.py",
+      "line_number": 23,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 23,
+          "column": 0
+        },
+        "end": {
+          "line": 23,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 676,
+          "end": 687
+        }
+      }
+    },
+    {
+      "file": "transport/gopher_transport.py",
+      "line_number": 30,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 30,
+          "column": 0
+        },
+        "end": {
+          "line": 30,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 895,
+          "end": 906
+        }
+      }
+    },
+    {
+      "file": "federated/bridge.py",
+      "line_number": 88,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 88,
+          "column": 0
+        },
+        "end": {
+          "line": 88,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 3870,
+          "end": 3881
+        }
+      }
+    },
+    {
+      "file": "federated/transports/lane_dispatch.py",
+      "line_number": 58,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 58,
+          "column": 0
+        },
+        "end": {
+          "line": 58,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 2131,
+          "end": 2142
+        }
+      }
+    },
+    {
+      "file": "federated/transports/inmemory_peer.py",
+      "line_number": 53,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 53,
+          "column": 0
+        },
+        "end": {
+          "line": 53,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1859,
+          "end": 1870
+        }
+      }
+    },
+    {
+      "file": "discovery/crtsh_adapter.py",
+      "line_number": 16,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 16,
+          "column": 0
+        },
+        "end": {
+          "line": 16,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 561,
+          "end": 572
+        }
+      }
+    },
+    {
+      "file": "transport/unified_transport.py",
+      "line_number": 28,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 28,
+          "column": 0
+        },
+        "end": {
+          "line": 28,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1074,
+          "end": 1085
+        }
+      }
+    },
+    {
+      "file": "tools/probe_f214r_annotationlib_introspection.py",
+      "line_number": 16,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 16,
+          "column": 0
+        },
+        "end": {
+          "line": 16,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 579,
+          "end": 590
+        }
+      }
+    },
+    {
+      "file": "benchmarks_shadow/m1_sustained_sprint.py",
+      "line_number": 27,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 27,
+          "column": 0
+        },
+        "end": {
+          "line": 27,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 968,
+          "end": 979
+        }
+      }
+    },
+    {
+      "file": "transport/transport_supervisor.py",
+      "line_number": 35,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 35,
+          "column": 0
+        },
+        "end": {
+          "line": 35,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1357,
+          "end": 1368
+        }
+      }
+    },
+    {
+      "file": "utils/execution_optimizer.py",
+      "line_number": 10,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 10,
+          "column": 0
+        },
+        "end": {
+          "line": 10,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 204,
+          "end": 215
+        }
+      }
+    },
+    {
+      "file": "tools/dump_asyncio_tasks.py",
+      "line_number": 19,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 19,
+          "column": 0
+        },
+        "end": {
+          "line": 19,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 519,
+          "end": 530
+        }
+      }
+    },
+    {
+      "file": "federated/transports/peer_node.py",
+      "line_number": 101,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 101,
+          "column": 0
+        },
+        "end": {
+          "line": 101,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 3495,
+          "end": 3506
+        }
+      }
+    },
+    {
+      "file": "discovery/deep_source_registry.py",
+      "line_number": 39,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 39,
+          "column": 0
+        },
+        "end": {
+          "line": 39,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1852,
+          "end": 1863
+        }
+      }
+    },
+    {
+      "file": "federated/sidecar_adapter.py",
+      "line_number": 45,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 45,
+          "column": 0
+        },
+        "end": {
+          "line": 45,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1614,
+          "end": 1625
+        }
+      }
+    },
+    {
+      "file": "benchmarks_shadow/m1_phase4_budget.py",
+      "line_number": 29,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 29,
+          "column": 0
+        },
+        "end": {
+          "line": 29,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 933,
+          "end": 944
+        }
+      }
+    },
+    {
+      "file": "discovery/circl_pdns_adapter.py",
+      "line_number": 18,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 18,
+          "column": 0
+        },
+        "end": {
+          "line": 18,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 617,
+          "end": 628
+        }
+      }
+    },
+    {
+      "file": "federated/coordinator.py",
+      "line_number": 53,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 53,
+          "column": 0
+        },
+        "end": {
+          "line": 53,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 2418,
+          "end": 2429
+        }
+      }
+    },
+    {
+      "file": "benchmarks_shadow/harness.py",
+      "line_number": 9,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 9,
+          "column": 0
+        },
+        "end": {
+          "line": 9,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 247,
+          "end": 258
+        }
+      }
+    },
+    {
+      "file": "pipeline/live_public_pipeline.py",
+      "line_number": 25,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 25,
+          "column": 0
+        },
+        "end": {
+          "line": 25,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 644,
+          "end": 655
+        }
+      }
+    },
+    {
+      "file": "pipeline/live_public_pipeline.py",
+      "line_number": 2456,
+      "text": "import time",
+      "lines": "    import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 2456,
+          "column": 4
+        },
+        "end": {
+          "line": 2456,
+          "column": 15
+        },
+        "byteOffset": {
+          "start": 100368,
+          "end": 100379
+        }
+      }
+    },
+    {
+      "file": "pipeline/live_public_pipeline.py",
+      "line_number": 2466,
+      "text": "import time",
+      "lines": "    import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 2466,
+          "column": 4
+        },
+        "end": {
+          "line": 2466,
+          "column": 15
+        },
+        "byteOffset": {
+          "start": 100682,
+          "end": 100693
+        }
+      }
+    },
+    {
+      "file": "planning/search.py",
+      "line_number": 4,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 4,
+          "column": 0
+        },
+        "end": {
+          "line": 4,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 88,
+          "end": 99
+        }
+      }
+    },
+    {
+      "file": "infrastructure/plugin_manager.py",
+      "line_number": 30,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 30,
+          "column": 0
+        },
+        "end": {
+          "line": 30,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 883,
+          "end": 894
+        }
+      }
+    },
+    {
+      "file": "benchmarks_shadow/e2e_sprint_probe.py",
+      "line_number": 25,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 25,
+          "column": 0
+        },
+        "end": {
+          "line": 25,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 460,
+          "end": 471
+        }
+      }
+    },
+    {
+      "file": "planning/htn_planner.py",
+      "line_number": 8,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 8,
+          "column": 0
+        },
+        "end": {
+          "line": 8,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 200,
+          "end": 211
+        }
+      }
+    },
+    {
+      "file": "monitoring/sprint_dashboard.py",
+      "line_number": 14,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 14,
+          "column": 0
+        },
+        "end": {
+          "line": 14,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 444,
+          "end": 455
+        }
+      }
+    },
+    {
+      "file": "benchmarks_shadow/dedup_determinism_benchmark.py",
+      "line_number": 29,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 29,
+          "column": 0
+        },
+        "end": {
+          "line": 29,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 757,
+          "end": 768
+        }
+      }
+    },
+    {
+      "file": "pipeline/public_acceptance.py",
+      "line_number": 14,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 14,
+          "column": 0
+        },
+        "end": {
+          "line": 14,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 434,
+          "end": 445
+        }
+      }
+    },
+    {
+      "file": "monitoring/alert_manager.py",
+      "line_number": 14,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 14,
+          "column": 0
+        },
+        "end": {
+          "line": 14,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 334,
+          "end": 345
+        }
+      }
+    },
+    {
+      "file": "runtime/nonfeed_candidate_ledger.py",
+      "line_number": 43,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 43,
+          "column": 0
+        },
+        "end": {
+          "line": 43,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 2114,
+          "end": 2125
+        }
+      }
+    },
+    {
+      "file": "tools/session_manager.py",
+      "line_number": 13,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 13,
+          "column": 0
+        },
+        "end": {
+          "line": 13,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 359,
+          "end": 370
+        }
+      }
+    },
+    {
+      "file": "tests/test_discovery_base.py",
+      "line_number": 6,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 6,
+          "column": 0
+        },
+        "end": {
+          "line": 6,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 147,
+          "end": 158
+        }
+      }
+    },
+    {
+      "file": "tools/flag_smoke_runner.py",
+      "line_number": 33,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 33,
+          "column": 0
+        },
+        "end": {
+          "line": 33,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 1180,
+          "end": 1191
+        }
+      }
+    },
+    {
+      "file": "deep_probe.py",
+      "line_number": 18,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 18,
+          "column": 0
+        },
+        "end": {
+          "line": 18,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 626,
+          "end": 637
+        }
+      }
+    },
+    {
+      "file": "runtime/sprint_timer.py",
+      "line_number": 21,
+      "text": "import time",
+      "lines": "import time",
+      "language": "Python",
+      "range": {
+        "start": {
+          "line": 21,
+          "column": 0
+        },
+        "end": {
+          "line": 21,
+          "column": 11
+        },
+        "byteOffset": {
+          "start": 606,
+          "end": 617
+        }
+      }
+    }
+  ],
+  "truncated": true,
+  "pattern": "import time"
+}

@@ -12,18 +12,25 @@ Features:
 - Audio/Video codec information
 - Archive structure analysis
 - Scrubbing detection
-- SQLite caching
+- DuckDB caching (ISSUE-001 Phase 2)
 - Batch processing
 
 M1 8GB Optimized:
 - Streaming for files >100MB
 - Memory limit: 500MB per extraction
 - Lazy loading of heavy dependencies
+- DuckDB caching for M1 performance
+
+ISSUE-001 Phase 2: SQLite3 → DuckDB Migration
+- MetadataCache now uses DuckDB via ForensicsMetadataStore
+- Falls back to SQLite for backward compatibility if DuckDB unavailable
 """
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import json
-import msgspec.json as _json
+import logging
 import math
 import os
 import re
@@ -32,9 +39,37 @@ import zipfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+import msgspec.json as _json
+
 from hledac.universal.utils.async_helpers import safe_gather_ok
 from core.capabilities import CAPS, OLEVBA
+
+logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from knowledge.duckdb_forensics_store import ForensicsMetadataStore
+
+# ISSUE-001 Phase 2: SQLite3 → DuckDB Migration
+# ForensicsMetadataStore replaces local SQLite cache with DuckDB for better M1 performance.
+_DUCKDB_STORE: "ForensicsMetadataStore | None" = None
+
+
+async def _get_duckdb_store() -> "ForensicsMetadataStore | None":
+    """Get or create singleton DuckDB forensics metadata store."""
+    global _DUCKDB_STORE
+    if _DUCKDB_STORE is None:
+        try:
+            from knowledge.duckdb_forensics_store import ForensicsMetadataStore
+
+            store = ForensicsMetadataStore()
+            await store.initialize()
+            _DUCKDB_STORE = store
+        except ImportError:
+            logger.warning("[FORENSICS] ForensicsMetadataStore unavailable, using SQLite fallback")
+            return None
+    return _DUCKDB_STORE
 
 def _exif_to_float(val):
     """Handle EXIF rational (num, denom) tuples and plain numeric values."""
@@ -406,34 +441,53 @@ class MetadataResult:
         return _json.encode(self.to_dict()).decode('utf-8')
 
 class MetadataCache:
-    """SQLite cache for extracted metadata."""
+    """
+    DuckDB-backed metadata cache with SQLite fallback.
+
+    ISSUE-001 Phase 2: SQLite3 → DuckDB Migration
+    Uses DuckDB via ForensicsMetadataStore for M1 optimization.
+    Falls back to SQLite if DuckDB unavailable.
+    """
     MAX_ENTRIES = 10000
-    __slots__ = tuple(('_conn', '_lock', 'db_path'))
+    __slots__ = tuple(('_duckdb_store', '_conn', '_lock', 'db_path'))
 
     def __init__(self, db_path: str | None=None):
         """Initialize cache.
 
         Args:
-            db_path: Path to SQLite database. If None, uses in-memory cache.
+            db_path: Path to SQLite database (fallback only). If None, uses in-memory.
         """
         self.db_path = db_path or ':memory:'
+        self._duckdb_store: "ForensicsMetadataStore | None" = None
         self._conn: sqlite3.Connection | None = None
         self._lock = asyncio.Lock()
 
     async def initialize(self) -> None:
-        """Initialize database tables (idempotent: safe to call multiple times)."""
+        """Initialize DuckDB store and SQLite fallback (idempotent)."""
         async with self._lock:
-            if self._conn is not None:
-                return
-            from hledac.universal.runtime.worker_pool import io_bound
-            self._conn = await io_bound(lambda: sqlite3.connect(self.db_path, check_same_thread=False))
-            from hledac.universal.runtime.worker_pool import io_bound
-            await io_bound(lambda: self._conn.execute('\n                CREATE TABLE IF NOT EXISTS metadata_cache (\n                    file_hash TEXT PRIMARY KEY,\n                    mod_time REAL,\n                    file_size INTEGER,\n                    metadata TEXT,\n                    extracted_at REAL\n                )\n            '))
-            await io_bound(lambda: self._conn.execute('\n                CREATE INDEX IF NOT EXISTS idx_extracted_at ON metadata_cache(extracted_at)\n            '))
-            await io_bound(lambda: self._conn.commit())
+            # Try DuckDB first
+            self._duckdb_store = await _get_duckdb_store()
+
+            # Initialize SQLite fallback
+            if self._conn is None:
+                from hledac.universal.runtime.worker_pool import io_bound
+                self._conn = await io_bound(lambda: sqlite3.connect(self.db_path, check_same_thread=False))
+                await io_bound(lambda: self._conn.execute("""
+                    CREATE TABLE IF NOT EXISTS metadata_cache (
+                        file_hash TEXT PRIMARY KEY,
+                        mod_time REAL,
+                        file_size INTEGER,
+                        metadata TEXT,
+                        extracted_at REAL
+                    )
+                """))
+                await io_bound(lambda: self._conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_extracted_at ON metadata_cache(extracted_at)"
+                ))
+                await io_bound(lambda: self._conn.commit())
 
     async def get(self, file_hash: str, mod_time: float, file_size: int) -> dict[str, Any] | None:
-        """Get cached metadata if valid.
+        """Get cached metadata if valid (DuckDB primary, SQLite fallback).
 
         Args:
             file_hash: Hash of file content
@@ -443,27 +497,52 @@ class MetadataCache:
         Returns:
             Cached metadata dict or None
         """
-        async with self._lock:
-            if not self._conn:
-                return None
+        # Try DuckDB first
+        if self._duckdb_store is not None:
+            result = await self._duckdb_store.get(file_hash, mod_time, file_size)
+            if result is not None:
+                logger.debug(f"[FORENSICS] DuckDB cache hit for {file_hash[:16]}...")
+                return result
+
+        # SQLite fallback
+        if self._conn:
             from hledac.universal.runtime.worker_pool import io_bound
-            cursor = await io_bound(lambda: self._conn.execute('SELECT metadata FROM metadata_cache WHERE file_hash = ? AND mod_time = ? AND file_size = ?', (file_hash, mod_time, file_size)))
+            cursor = await io_bound(lambda: self._conn.execute(
+                'SELECT metadata FROM metadata_cache WHERE file_hash = ? AND mod_time = ? AND file_size = ?',
+                (file_hash, mod_time, file_size)
+            ))
             row = await io_bound(lambda: cursor.fetchone())
             if row:
                 return _json.decode(row[0])
-            return None
+        return None
 
     async def set(self, file_hash: str, mod_time: float, file_size: int, metadata: dict[str, Any]) -> None:
-        from hledac.universal.runtime.worker_pool import io_bound
-        'Cache metadata.\n\n        Args:\n            file_hash: Hash of file content\n            mod_time: File modification time\n            file_size: File size in bytes\n            metadata: Metadata dict to cache\n        '
-        async with self._lock:
-            if not self._conn:
-                return
+        """Cache metadata (DuckDB primary, SQLite fallback).
+
+        Args:
+            file_hash: Hash of file content
+            mod_time: File modification time
+            file_size: File size in bytes
+            metadata: Metadata dict to cache
+        """
+        # DuckDB primary
+        if self._duckdb_store is not None:
+            await self._duckdb_store.set(file_hash, mod_time, file_size, "generic", metadata)
+
+        # SQLite fallback
+        if self._conn:
+            from hledac.universal.runtime.worker_pool import io_bound
             cursor = await io_bound(lambda: self._conn.execute('SELECT COUNT(*) FROM metadata_cache'))
             count = (await io_bound(lambda: cursor.fetchone()))[0]
             if count >= self.MAX_ENTRIES:
-                await io_bound(lambda: self._conn.execute('DELETE FROM metadata_cache WHERE file_hash IN (SELECT file_hash FROM metadata_cache ORDER BY extracted_at ASC LIMIT ?)', (self.MAX_ENTRIES // 10,)))
-            await io_bound(lambda: self._conn.execute('INSERT OR REPLACE INTO metadata_cache\n                   (file_hash, mod_time, file_size, metadata, extracted_at)\n                   VALUES (?, ?, ?, ?, ?)', (file_hash, mod_time, file_size, json.dumps(metadata), datetime.now(UTC).timestamp())))
+                await io_bound(lambda: self._conn.execute(
+                    'DELETE FROM metadata_cache WHERE file_hash IN (SELECT file_hash FROM metadata_cache ORDER BY extracted_at ASC LIMIT ?)',
+                    (self.MAX_ENTRIES // 10,)
+                ))
+            await io_bound(lambda: self._conn.execute(
+                'INSERT OR REPLACE INTO metadata_cache (file_hash, mod_time, file_size, metadata, extracted_at) VALUES (?, ?, ?, ?, ?)',
+                (file_hash, mod_time, file_size, json.dumps(metadata), datetime.now(UTC).timestamp())
+            ))
             await io_bound(lambda: self._conn.commit())
 
     async def clear(self) -> None:
@@ -474,8 +553,11 @@ class MetadataCache:
                 await asyncio.to_thread(lambda: self._conn.commit())
 
     async def close(self) -> None:
-        """Close database connection."""
+        """Close database connections."""
         async with self._lock:
+            if self._duckdb_store:
+                await self._duckdb_store.close()
+                self._duckdb_store = None
             if self._conn:
                 await asyncio.to_thread(lambda: self._conn.close())
                 self._conn = None

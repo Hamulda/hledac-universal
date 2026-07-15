@@ -2,8 +2,8 @@
 Continuous Prefetch Pipeline – P3-3
 
 Producer → Queue → Executor pattern for speculative IOC prefetching:
-1. Producer: IOC Graph traversal (background thread via predict_next_iocs)
-2. Queue: asyncio.Queue with bounded depth
+1. Producer: IOC Graph traversal via asyncio.to_thread (non-blocking, async-native)
+2. Queue: asyncio.PriorityQueue with bounded depth (no ThreadPoolExecutor)
 3. Executor: Fetch with pre-warmed curl_cffi connections
 
 Integration:
@@ -19,11 +19,12 @@ Integration:
     await pipeline.stop()
 
 M1 8GB invariants:
-- Producer runs in ThreadPoolExecutor (not async, non-blocking)
-- Queue bounded to 50 items max
+- Producer uses asyncio.to_thread (not ThreadPoolExecutor) — async-native, no GIL contention
+- Queue bounded to 50 items max (backpressure via asyncio.QueueFull)
 - Executor uses pre-warmed sessions from transport/prewarm_pool.py
 - Fail-safe: operational errors logged (network, cache), critical errors raise RuntimeError
 - Pattern: raise on critical failures (broken oracle, pool unavailable), fail-soft on transient errors
+- Rust SPSC lock-free queue (spsc_queue.rs) used for MLX worker coordination, not for this pipeline
 """
 import asyncio
 from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
@@ -42,6 +43,7 @@ PREFETCH_TIMEOUT_S = 30.0
 MAX_CONCURRENT_PREFETCHES = 3
 IDLE_PREFETCH_INTERVAL_S = 5.0
 IDLE_PREFETCH_THRESHOLD = 3
+PREFETCH_PREWARMED_HOSTS_MAX = 50
 
 @dataclass(order=False, slots=True)
 class PrefetchItem:
@@ -85,7 +87,7 @@ class ContinuousPrefetchPipeline:
     - Fail-safe: all errors caught, logged, never propagate
     - M1 8GB safe: thread-based producer, bounded concurrency
     """
-    __slots__ = tuple(('_cache', '_concurrent', '_executor_tasks', '_fetch_timeout', '_oracle', '_poll_interval', '_producer_task', '_queue', '_queue_depth', '_running', '_stats', '_stop_event', '_thread_pool'))
+    __slots__ = tuple(('_cache', '_concurrent', '_executor_tasks', '_fetch_timeout', '_oracle', '_poll_interval', '_producer_task', '_queue', '_queue_depth', '_running', '_stats', '_stop_event', '_last_prewarm_at'))
 
     def __init__(self, prefetch_oracle: Any, prefetch_cache: Any | None=None, queue_depth: int=PREFETCH_QUEUE_DEPTH, concurrent_fetches: int=MAX_CONCURRENT_PREFETCHES, fetch_timeout_s: float=PREFETCH_TIMEOUT_S, poll_interval_s: float=PREFETCH_INTERVAL_S):
         self._oracle = prefetch_oracle
@@ -100,7 +102,7 @@ class ContinuousPrefetchPipeline:
         self._running = False
         self._stop_event = asyncio.Event()
         self._stats = {'items_enqueued': 0, 'items_fetched': 0, 'cache_hits': 0, 'fetch_errors': 0, 'queue_overflow': 0}
-        self._thread_pool: asyncio.AbstractEventLoop | None = None
+        self._last_prewarm_at = 0.0
 
     async def start(self) -> None:
         """Start the pipeline (producer + executor tasks)."""
@@ -172,6 +174,12 @@ class ContinuousPrefetchPipeline:
                     break
             except Exception as e:
                 logger.debug(f'[P3-3] Failed to enqueue prediction: {e}')
+        # Eager prewarm: fire immediately after enqueue, rate-limited to every 10s
+        if enqueued > 0:
+            now = time.time()
+            if now - self._last_prewarm_at >= 10.0:
+                self._last_prewarm_at = now
+                safe_create_task(self._prewarm_once())
         return enqueued
 
     async def enqueue_ioc(self, ioc_value: str, ioc_type: str='domain', confidence: float=0.5) -> bool:
@@ -243,7 +251,6 @@ class ContinuousPrefetchPipeline:
         prewarmed_hosts: set[str] = set()
         try:
             while not self._stop_event.is_set():
-                item: PrefetchItem | None = None
                 try:
                     item = await safe_wait_for(self._queue.get(), timeout=IDLE_PREFETCH_INTERVAL_S, label='queue_get')
                 except TimeoutError:
@@ -296,30 +303,40 @@ class ContinuousPrefetchPipeline:
                 ioc_value = pred.get('ioc_value', '')
                 if ioc_type == 'domain' and ioc_value:
                     if ioc_value not in prewarmed_hosts:
+                        if len(prewarmed_hosts) >= PREFETCH_PREWARMED_HOSTS_MAX:
+                            # Evict oldest (first-in set iteration order)
+                            for old_host in prewarmed_hosts:
+                                prewarmed_hosts.discard(old_host)
+                                break
                         hosts_to_prewarm.append(ioc_value)
                         prewarmed_hosts.add(ioc_value)
             if not hosts_to_prewarm:
                 return
 
             async def _prewarm_async() -> None:
-                """Pre-warm curl_cffi sessions for hosts."""
+                """Pre-warm curl_cffi session for ja3_fingerprint profile."""
                 try:
                     from transport.prewarm_pool import acquire_session
-                    for _host in hosts_to_prewarm[:5]:
-                        try:
-                            await acquire_session('ja3_fingerprint')
-                        except Exception as e:
-                            logger.debug(f'[P3-3] Pre-warm session failed: {e}')
+                    await acquire_session('ja3_fingerprint')
                 except ImportError:
                     import warnings
                     warnings.warn('[P3-3] transport.prewarm_pool not available; prefetch will use direct httpx (higher latency)', RuntimeWarning, stacklevel=2)
-            loop = asyncio.get_running_loop()
-            await asyncio.to_thread(loop.run_until_complete, _prewarm_async())
+            await _prewarm_async()
             logger.debug(f'[P3-3] Pre-warmed connections for {len(hosts_to_prewarm)} hosts')
         except TimeoutError:
             logger.debug('[P3-3] Pre-warm predictions timed out')
         except Exception as e:
             logger.debug(f'[P3-3] Pre-warm failed: {e}')
+
+    async def _prewarm_once(self) -> None:
+        """Single eager pre-warm of ja3_fingerprint profile (fire-and-forget)."""
+        try:
+            from transport.prewarm_pool import acquire_session
+            await acquire_session('ja3_fingerprint')
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.debug(f'[P3-3] Eager prewarm failed: {e}')
 
     async def _prefetch_item(self, item: PrefetchItem) -> bool:
         """
@@ -335,7 +352,7 @@ class ContinuousPrefetchPipeline:
                     self._stats['cache_hits'] += 1
                     try:
                         if hasattr(self._oracle, 'record_prefetch_outcome'):
-                            self._oracle.record_prefetch_outcome(item.ioc_value, True, 0)
+                            await self._oracle.record_prefetch_outcome(item.ioc_value, True, 0)
                     except Exception:
                         pass
                     return True
@@ -361,7 +378,7 @@ class ContinuousPrefetchPipeline:
             logger.debug(f'[P3-3] Prefetch failed for {item.ioc_value}: {e}')
         try:
             if hasattr(self._oracle, 'record_prefetch_outcome'):
-                self._oracle.record_prefetch_outcome(item.ioc_value, success, bytes_downloaded)
+                await self._oracle.record_prefetch_outcome(item.ioc_value, success, bytes_downloaded)
         except Exception:
             pass
         return success
@@ -386,7 +403,8 @@ class ContinuousPrefetchPipeline:
             success, session, _profile = await acquire_session('ja3_fingerprint')
             if success and session is not None:
                 try:
-                    resp = session.get(url, timeout=self._fetch_timeout)
+                    # session.get() is synchronous — run in thread pool to avoid blocking event loop
+                    resp = await asyncio.to_thread(session.get, url, timeout=self._fetch_timeout)
                     if resp.status_code == 200:
                         return {'url': url, 'content': resp.text, 'status': resp.status_code, 'fetched_at': time.time()}
                 except Exception:

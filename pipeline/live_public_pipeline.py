@@ -47,6 +47,7 @@ from hledac.universal.fetching.public_fetcher import (  # noqa: E402
 )
 from hledac.universal.utils.executors import CPU_EXECUTOR  # noqa: E402
 from hledac.universal.utils.async_helpers import parallel, safe_create_task  # noqa: E402, safe_wait_for
+from hledac.universal.utils.config_introspection import safe_attr_get  # noqa: E402
 
 # -----------------------------------------------------------------------------
 # Constants
@@ -2063,7 +2064,7 @@ async def _generate_and_store_report(
 
     # FÁZE P14: Build routing context and determine best model
     route_context: dict = {
-        "urls": [getattr(p, 'url', '') for p in top_pages if hasattr(p, 'url')],
+        "urls": [safe_attr_get(p, 'url', '') for p in top_pages],
         "content_type": "html",  # Default content type
     }
 
@@ -2303,11 +2304,11 @@ async def _inject_ct_subdomain_hits(
 
     base_domain = _extract_base_domain(query)
 
-    # Sprint F188B: use shared aiohttp session for connection pooling
+    # F4XX: use shared httpx session for connection pooling
     shared_session = None
     try:
-        from hledac.universal.network.session_runtime import async_get_aiohttp_session
-        shared_session = await async_get_aiohttp_session()
+        from hledac.universal.network.session_runtime import async_get_httpx_session
+        shared_session = await async_get_httpx_session()
     except Exception:  # noqa: BLE001
         pass
 
@@ -2395,8 +2396,8 @@ async def _inject_commoncrawl_hits(
 
             class _MinimalStealth:
                 async def get(self, url: str) -> str:
-                    from hledac.universal.network.session_runtime import async_get_aiohttp_session
-                    s = await async_get_aiohttp_session()
+                    from hledac.universal.network.session_runtime import async_get_httpx_session
+                    s = await async_get_httpx_session()
                     async with s.get(url) as r:
                         return await r.text()
 
@@ -2917,7 +2918,7 @@ async def async_run_live_public_pipeline(
                 )
                 discovery_elapsed_s = time.monotonic() - _discovery_start
 
-                cache_hit = getattr(discovery_result, "cache_hit", False) if hasattr(discovery_result, "cache_hit") else False  # noqa: E501
+                cache_hit = safe_attr_get(discovery_result, "cache_hit", False)
                 public_discovery_cache_hit += int(cache_hit)
                 public_discovery_query_count += 1
 

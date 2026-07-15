@@ -491,7 +491,7 @@ async def call_lookup_passive_dns(domain: str, session_provider: aiohttp.ClientS
                     return ([], outcome)
                 text = await resp.text()
         else:
-            session = await async_get_aiohttp_session()
+            session = await async_get_httpx_session()
             http_timeout = aiohttp.ClientTimeout(total=15)
             text, status, err = await checked_aiohttp_get(session, url, headers={'User-Agent': 'Hledac/1.0 (research bot)'}, timeout=http_timeout, failure_kind='circl_pdns')
             if err:
@@ -508,7 +508,7 @@ async def call_lookup_passive_dns(domain: str, session_provider: aiohttp.ClientS
             if status != 200:
                 elapsed = time.monotonic() - start
                 if status == 401:
-                    session = await async_get_aiohttp_session()
+                    session = await async_get_httpx_session()
                     ips, outcome = await _fallback_hackertarget_pdns(domain_stripped, session)
                     if not outcome.error:
                         await asyncio.sleep(CIRCL_RATE_LIMIT_SLEEP)

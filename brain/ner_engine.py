@@ -22,7 +22,6 @@ Features:
 """
 from __future__ import annotations
 import asyncio
-import json
 import logging
 import os
 import subprocess
@@ -32,6 +31,7 @@ import threading
 from collections import deque
 from dataclasses import dataclass, field
 from functools import partial
+from hledac.universal.utils.msgspec_json import encode as _msgspec_encode, decode as _msgspec_decode
 from pathlib import Path
 from typing import Any
 _TORCH_AVAILABLE = False
@@ -285,13 +285,20 @@ n        Pokud je model již načten, nic nedělá.
             raise RuntimeError(f'NER predikce selhala: {e}') from e
     _MLX_AVAILABLE = False
     _MLX_EXTRACTOR = None
-    _MLX_LOAD_LOCK = threading.Lock()
+    _MLX_LOAD_LOCK: asyncio.Lock | None = None
+
+    @staticmethod
+    def _get_mlx_lock() -> asyncio.Lock:
+        """Lazy asyncio lock for MLX loader — ISSUE-014 pattern."""
+        if NEREngine._MLX_LOAD_LOCK is None:
+            NEREngine._MLX_LOAD_LOCK = asyncio.Lock()
+        return NEREngine._MLX_LOAD_LOCK
 
     async def _load_mlx_extractor(self):
-        """Lazy load MLX outlines extractor (thread-safe DCLP)."""
+        """Lazy load MLX outlines extractor (async-safe DCLP)."""
         if NEREngine._MLX_AVAILABLE:
             return
-        with NEREngine._MLX_LOAD_LOCK:
+        async with NEREngine._get_mlx_lock():
             if NEREngine._MLX_AVAILABLE:
                 return
             try:
@@ -350,8 +357,7 @@ n        Pokud je model již načten, nic nedělá.
             result = await asyncio.to_thread(self._coreml_ner_model.predict, {'text': text[:512]})
             self._ane_predictions += 1
             return result.get('entities', [])
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, partial(self.predict, text, labels, threshold))
+        return await asyncio.to_thread(self.predict, text, labels, threshold)
 
     def predict_with_relations(self, text: str, labels: list[str], relations: list[dict[str, Any]] | None=None, threshold: float=0.5) -> dict[str, Any]:
         """
@@ -435,8 +441,7 @@ n        Pokud je model již načten, nic nedělá.
                 self._mlx_gliner2_extract_batch, texts, labels, threshold, batch_size
             )
         # Fallback: serial per-text inference
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, partial(self.predict_batch, texts, labels, threshold, batch_size))
+        return await asyncio.to_thread(self.predict_batch, texts, labels, threshold, batch_size)
 
     def unload(self) -> None:
         """
@@ -551,11 +556,11 @@ n        Pokud je model již načten, nic nedělá.
         try:
             proc = await asyncio.create_subprocess_exec(sys.executable, temp_script, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env={**os.environ, 'TOKENIZERS_PARALLELISM': 'false'})
             async with asyncio.timeout(timeout):
-                stdout, stderr = await proc.communicate(input=json.dumps(input_data).encode())
+                stdout, stderr = await proc.communicate(input=_msgspec_encode(input_data))
             if proc.returncode != 0:
                 error_msg = stderr.decode() if stderr else 'Unknown error'
                 raise RuntimeError(f'Subprocess failed: {error_msg}')
-            result = json.loads(stdout.decode())
+            result = _msgspec_decode(stdout)
             if not result.get('success'):
                 raise RuntimeError(result.get('error', 'Unknown error'))
             results = result['results']

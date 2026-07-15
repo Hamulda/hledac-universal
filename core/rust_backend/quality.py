@@ -37,9 +37,21 @@ class _RustQualityDomain:
         return self._ext.batch_url_fingerprints(urls)
 
     def batch_entropy_zc(self, texts: list[str]) -> list[float]:
+        """Zero-copy batch entropy — GIL held during rayon scope.
+
+        NOTE: These _zc variants are intentionally NOT wired in duckdb_store.py.
+        zero_copy.rs holds GIL for the entire rayon scope (mixed_pool, 2 threads),
+        while quality_gate.rs releases GIL during rayon work (cpu_pool, 4 threads).
+        For duckdb_store batch operations, the non-zc (owned-data) variants from
+        quality_gate.rs are preferred — GIL release allows better M1 concurrency.
+        """
         return self._ext.batch_entropy_zc(texts)
 
     def batch_dedup_fingerprints_zc(self, texts: list[str]) -> list[str]:
+        """Zero-copy batch dedup fingerprints — GIL held during rayon scope.
+
+        See batch_entropy_zc docstring for design rationale.
+        """
         return self._ext.batch_dedup_fingerprints_zc(texts)
 
     def assess_findings_quality_batch(self, findings: list[dict]) -> list[dict]:

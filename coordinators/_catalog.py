@@ -25,11 +25,83 @@ Domain Groups:
     - optimization: Performance, Benchmark, Resource, ResearchOptimizer
     - infrastructure: Base, Registry, Mixins
     - specialized: Fetch, Graph, Archive, Claims, Multimodal, Render, AgentCoordination
+    - resource: (F320) Unified GC, backpressure, AIMD, M1 capacity (from resource_allocator/gc_policy/backpressure)
+    - memory: (F320) ContextOptimization, MultiLevelCache (extracted from memory_coordinator)
 """
 import importlib
 from typing import Any, Self
-_DOMAIN_MODULES: dict[str, dict[str, str]] = {'core': {'UniversalResearchCoordinator': '.research_coordinator', 'UniversalExecutionCoordinator': '.execution_coordinator', 'UniversalSecurityCoordinator': '.security_coordinator', 'UniversalMonitoringCoordinator': '.monitoring_coordinator', 'UniversalMemoryCoordinator': '.memory_coordinator', 'UniversalValidationCoordinator': '.validation_coordinator'}, 'advanced': {'UniversalSwarmCoordinator': '.swarm_coordinator', 'UniversalMetaReasoningCoordinator': '.meta_reasoning_coordinator', 'PrivacyEnhancedResearch': '.privacy_enhanced_research'}, 'optimization': {'AgentPerformanceOptimizer': '.performance_coordinator', 'IntelligentResourceAllocator': '.resource_allocator', 'ResearchOptimizer': '.research_optimizer'}, 'infrastructure': {'UniversalCoordinator': '.base', 'OperationTrackingMixin': '.base', 'MemoryPressureLevel': '.enums'}, 'specialized': {'FetchCoordinator': '.fetch_coordinator', 'GraphCoordinator': '.graph_coordinator', 'ArchiveCoordinator': '.archive_coordinator', 'ClaimsCoordinator': '.claims_coordinator', 'MultimodalCoordinator': '.multimodal_coordinator', 'RenderCoordinator': '.render_coordinator', 'AgentCoordinationEngine': '.agent_coordination_engine'}}
-_COORDINATOR_EXPORTS: dict[str, list[str]] = {'UniversalMemoryCoordinator': ['MemoryAllocation', 'MemoryStatistics', 'MemoryZone'], 'UniversalValidationCoordinator': ['ValidationSeverity', 'OutputFormat', 'ValidationResult', 'CleaningResult'], 'UniversalResearchCoordinator': ['ExcavationConfig', 'ExcavationStrategy', 'ResearchPaper', 'ResearchThread', 'MetaPattern', 'ResearchTheory', 'ResearchDepth', 'HierarchicalPlan'], 'UniversalSwarmCoordinator': ['SwarmState', 'SwarmMetrics', 'AdaptiveStrategy', 'SwarmAgent'], 'UniversalMetaReasoningCoordinator': ['ReasoningStrategy', 'ReasoningStep', 'ReasoningChain', 'ThoughtNode'], 'AgentPerformanceOptimizer': ['AgentPool', 'IntelligentLoadBalancer', 'AsyncExecutionOptimizer', 'LoadBalancingConfig', 'OptimizationReport', 'AgentMetrics'], 'IntelligentResourceAllocator': ['ResourceRequest', 'ResourceAllocation', 'ResourceType', 'Priority'], 'AgentCoordinationEngine': ['AgentType', 'TaskPriority', 'AgentCapability', 'AgentPerformance', 'TaskRequest', 'TaskResult', 'CoordinationStrategy', 'coordinated_search'], 'PrivacyEnhancedResearch': ['PrivacyConfig', 'DataRetention', 'AuditRecord', 'AnonymizedRequest', 'SanitizedResult', 'private_research'], 'ResearchOptimizer': ['OptimizationConfig', 'OptimizationStrategy', 'CachePolicy', 'QueryMetrics', 'OptimizedResult', 'optimized_research', 'create_optimized_pipeline']}
+_DOMAIN_MODULES: dict[str, dict[str, str]] = {
+    'core': {
+        'UniversalResearchCoordinator': '.research_coordinator',
+        'UniversalExecutionCoordinator': '.execution_coordinator',
+        'UniversalSecurityCoordinator': '.security_coordinator',
+        'UniversalMonitoringCoordinator': '.monitoring_coordinator',
+        'UniversalMemoryCoordinator': '.memory_coordinator',
+        'UniversalValidationCoordinator': '.validation_coordinator',
+    },
+    'advanced': {
+        'UniversalSwarmCoordinator': '.swarm_coordinator',
+        'UniversalMetaReasoningCoordinator': '.meta_reasoning_coordinator',
+        'PrivacyEnhancedResearch': '.privacy_enhanced_research',
+    },
+    'optimization': {
+        'AgentPerformanceOptimizer': '.performance_coordinator',
+        'IntelligentResourceAllocator': '.resource_allocator',
+        'ResearchOptimizer': '.research_optimizer',
+    },
+    'infrastructure': {
+        'UniversalCoordinator': '.base',
+        'OperationTrackingMixin': '.base',
+        'MemoryPressureLevel': '.enums',
+    },
+    'specialized': {
+        'FetchCoordinator': '.fetch_coordinator',
+        'GraphCoordinator': '.graph_coordinator',
+        'ArchiveCoordinator': '.archive_coordinator',
+        'ClaimsCoordinator': '.claims_coordinator',
+        'MultimodalCoordinator': '.multimodal_coordinator',
+        'RenderCoordinator': '.render_coordinator',
+        'AgentCoordinationEngine': '.agent_coordination_engine',
+    },
+    # F320: Consolidated resource management layer
+    'resource': {
+        'M1ResourceCoordinator': '.resource.resource_coordinator',
+        'BackpressureMonitor': '.resource.resource_coordinator',
+        'AIMDController': '.resource.resource_coordinator',
+        'gc_collect': '.resource.resource_coordinator',
+        'gc_collect_aggressive': '.resource.resource_coordinator',
+        'gc_collect_async': '.resource.resource_coordinator',
+        'get_gc_stats': '.resource.resource_coordinator',
+    },
+    # F320: Memory sub-package (extracted from memory_coordinator.py)
+    'memory': {
+        'ContextOptimizationManager': '.memory.context_optimizer',
+        'MultiLevelContextCache': '.memory.multi_level_cache',
+        'ContextPriority': '.memory.context_optimizer',
+        'ResearchPhase': '.memory.context_optimizer',
+        'ContextItem': '.memory.context_optimizer',
+        'CompressedContext': '.memory.context_optimizer',
+        'CacheType': '.memory.multi_level_cache',
+        'CacheLocation': '.memory.multi_level_cache',
+        'CacheEntry': '.memory.multi_level_cache',
+    },
+}
+_COORDINATOR_EXPORTS: dict[str, list[str]] = {
+    'UniversalMemoryCoordinator': ['MemoryAllocation', 'MemoryStatistics', 'MemoryZone'],
+    'UniversalValidationCoordinator': ['ValidationSeverity', 'OutputFormat', 'ValidationResult', 'CleaningResult'],
+    'UniversalResearchCoordinator': ['ExcavationConfig', 'ExcavationStrategy', 'ResearchPaper', 'ResearchThread', 'MetaPattern', 'ResearchTheory', 'ResearchDepth', 'HierarchicalPlan'],
+    'UniversalSwarmCoordinator': ['SwarmState', 'SwarmMetrics', 'AdaptiveStrategy', 'SwarmAgent'],
+    'UniversalMetaReasoningCoordinator': ['ReasoningStrategy', 'ReasoningStep', 'ReasoningChain', 'ThoughtNode'],
+    'AgentPerformanceOptimizer': ['AgentPool', 'IntelligentLoadBalancer', 'AsyncExecutionOptimizer', 'LoadBalancingConfig', 'OptimizationReport', 'AgentMetrics'],
+    'IntelligentResourceAllocator': ['ResourceRequest', 'ResourceAllocation', 'ResourceType', 'Priority'],
+    'AgentCoordinationEngine': ['AgentType', 'TaskPriority', 'AgentCapability', 'AgentPerformance', 'TaskRequest', 'TaskResult', 'CoordinationStrategy', 'coordinated_search'],
+    'PrivacyEnhancedResearch': ['PrivacyConfig', 'DataRetention', 'AuditRecord', 'AnonymizedRequest', 'SanitizedResult', 'private_research'],
+    'ResearchOptimizer': ['OptimizationConfig', 'OptimizationStrategy', 'CachePolicy', 'QueryMetrics', 'OptimizedResult', 'optimized_research', 'create_optimized_pipeline'],
+    # F320: Resource layer exports
+    'M1ResourceCoordinator': ['CapacitySnapshot', 'M1ResourceCoordinator', 'gc_collect', 'gc_collect_aggressive', 'gc_collect_async', 'get_gc_stats'],
+    'BackpressureMonitor': ['BackpressureDecision', 'BackpressureMonitor'],
+    'AIMDController': ['AIMDController', 'AIMD_FETCH_ADDITIVE_INCREMENT', 'AIMD_FETCH_DECREASE_FACTOR', 'AIMD_FETCH_MIN', 'AIMD_FETCH_MAX', 'AIMD_ENRICHMENT_MAX', 'AIMD_EXTRACTION_MAX'],
+}
 
 class CoordinatorCatalog:
     """

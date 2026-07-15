@@ -31,7 +31,6 @@ from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str,
 from polars import DataFrame
 from rank_bm25 import BM25Okapi
 if TYPE_CHECKING:
-    import duckdb
     from collections.abc import AsyncIterator
 logger = logging.getLogger(__name__)
 DEFAULT_FTS_DB = 'discovery_fts.duckdb'
@@ -96,7 +95,7 @@ class DuckDBFTSStore:
         self._db_path = Path(db_path)
         self._max_batch_size = max_batch_size
         self._readonly = readonly
-        self._conn: 'duckdb.DuckDBPyConnection | None' = None
+        self._conn: 'Any' = None  # DuckDBPyConnection at runtime
         self._lock = asyncio.Lock()
         self._initialized = False
         self._bm25_index: dict[str, BM25Okapi | None] = {}
@@ -146,7 +145,7 @@ class DuckDBFTSStore:
         if self._wal_path is None:
             return
         try:
-            entry = _msgspec_dumps_str({'op': op, 'doc': {'doc_id': doc.doc_id, 'title': doc.title, 'body': doc.body, 'source': doc.source, 'url': doc.url or '', 'fetched_at': doc.fetched_at, 'metadata_json': doc.metadata_json}}, separators=(',', ':'))
+            entry = _msgspec_dumps_str({'op': op, 'doc': {'doc_id': doc.doc_id, 'title': doc.title, 'body': doc.body, 'source': doc.source, 'url': doc.url or '', 'fetched_at': doc.fetched_at, 'metadata_json': doc.metadata_json}})
             with open(self._wal_path, 'a', encoding='utf-8') as fh:
                 fh.write(entry + '\n')
             self._wal_dirty = True
@@ -454,12 +453,19 @@ class DuckDBFTSStore:
                     yield FTSDocument(doc_id=str(row[0]), title=str(row[1]), body=str(row[2]), source=str(row[3]), url=str(row[4]) if row[4] else None, fetched_at=float(row[5]), metadata_json=str(row[6]))
                 offset += batch_size
 _fts_store: DuckDBFTSStore | None = None
-_fts_lock = asyncio.Lock()
+_fts_lock: asyncio.Lock | None = None  # ISSUE-014 fix: None sentinel, lazy creation
+
+def _get_fts_lock() -> asyncio.Lock:
+    """Lazily create FTS store lock — ISSUE-014 fix avoids asyncio.Lock() at module import."""
+    global _fts_lock
+    if _fts_lock is None:
+        _fts_lock = asyncio.Lock()
+    return _fts_lock
 
 async def get_fts_store(db_path: str | Path | None=None) -> DuckDBFTSStore:
     """Lazy singleton — bezpecne pro async context."""
     global _fts_store
-    async with _fts_lock:
+    async with _get_fts_lock():
         if _fts_store is None:
             _fts_store = DuckDBFTSStore(db_path=db_path)
             await _fts_store.initialize()

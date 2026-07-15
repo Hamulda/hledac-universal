@@ -1,9 +1,9 @@
+import asyncio
 import atexit
 import logging
 import os
 import tempfile
 import zipfile
-from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -11,18 +11,27 @@ from typing import TYPE_CHECKING
 def _get_tempdir() -> str:
     """Return tempfile.gettempdir() - reads current value at call time."""
     return tempfile.gettempdir()
-_cryptokit_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='cryptokit_')
 _atexit_executor_registered = False
+_cryptokit_checked: bool = False
+_cryptokit_available: bool = False
+_cryptokit_lock: asyncio.Lock | None = None
 
-def _cryptokit_executor_atexit_shutdown() -> None:
-    """Shutdown the cryptokit executor at interpreter exit."""
-    _cryptokit_executor.shutdown(wait=True)
+def _get_cryptokit_lock() -> asyncio.Lock:
+    """Get or create the asyncio.Lock for cryptokit check (lazy init)."""
+    global _cryptokit_lock
+    if _cryptokit_lock is None:
+        _cryptokit_lock = asyncio.Lock()
+    return _cryptokit_lock
+
+def _shutdown_cryptokit_at_exit() -> None:
+    """Cleanup handler called at interpreter exit (no-op for asyncio)."""
+    pass
 
 def _register_cryptokit_executor_atexit() -> None:
-    """Register atexit handler for executor shutdown; registers on first call."""
+    """Register atexit handler for cryptokit cleanup; registers on first call."""
     global _atexit_executor_registered
     if not _atexit_executor_registered:
-        atexit.register(_cryptokit_executor_atexit_shutdown)
+        atexit.register(_shutdown_cryptokit_at_exit)
         _atexit_executor_registered = True
 _register_cryptokit_executor_atexit()
 try:
@@ -46,13 +55,14 @@ def _check_cryptokit() -> bool:
     """
     Check if CryptoKit AES-GCM is available via Swift helper.
 
-    RC-4 fix: runs in _cryptokit_executor to avoid:
+    F350M-R: Uses asyncio.to_thread (via run_in_executor) instead of ThreadPoolExecutor
+    to avoid:
     1. Interpreter startup block (direct subprocess.run at module import time)
     2. Swift helper zombie on timeout (Future.cancel + kill via executor interrupt)
     3. M1 UMA fork()+exec() deadlock under memory pressure
 
-    Timeout order: Python 6s (outer Future.get) > Swift 10s alarm (inner).
-    If Python fires first, executor terminates the Swift process.
+    Timeout order: Python 6s (outer run_in_executor.get) > Swift 10s alarm (inner).
+    If Python fires first, run_in_executor terminates the Swift process.
     Swift alarm is defense-in-depth for the non-Timeout path.
     """
     try:
@@ -62,8 +72,22 @@ def _check_cryptokit() -> bool:
         helper_path = repo_root / 'tools' / 'secure_enclave_helper' / '.build' / 'release' / 'secure-enclave-helper'
         if not helper_path.exists():
             return False
-        future = _cryptokit_executor.submit(subprocess.run, [str(helper_path), 'cryptokit-status'], capture_output=True, text=True, timeout=5)
-        result = future.result(timeout=6)
+
+        async def _check() -> subprocess.CompletedProcess:
+            return await asyncio.to_thread(
+                subprocess.run,
+                [str(helper_path), 'cryptokit-status'],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(_check())
+        finally:
+            loop.close()
+
         if result.returncode == 0:
             import msgspec.json as _json
             data = _json.decode(result.stdout)
@@ -77,6 +101,9 @@ logger = logging.getLogger(__name__)
 class LootManager:
     """
     Encrypted vault export manager.
+
+    DEPRECATED (F350M-R): Use ``secrets.vault.SecretVault`` instead.
+    This module is kept for backward compatibility only.
 
     Canonical name: VaultManager (alias below).
     LootManager is preserved for compat only; VaultManager is the authoritative name.
@@ -191,7 +218,16 @@ class LootManager:
             repo_root = Path(__file__).parent.parent
             helper_path = repo_root / 'tools' / 'secure_enclave_helper' / '.build' / 'release' / 'secure-enclave-helper'
             cmd = [str(helper_path), 'cryptokit-encrypt', '--password', password, '--output', str(output_path)]
-            result = _cryptokit_executor.submit(subprocess.run, cmd, input=zip_data, capture_output=True, timeout=30).result()
+
+            async def _run_encrypt() -> subprocess.CompletedProcess:
+                return await asyncio.to_thread(subprocess.run, cmd, input=zip_data, capture_output=True, timeout=30)
+
+            loop = asyncio.new_event_loop()
+            try:
+                result = loop.run_until_complete(_run_encrypt())
+            finally:
+                loop.close()
+
             os.unlink(temp_path)
             if result.returncode != 0:
                 logger.error(f'CryptoKit encryption failed: {result.stderr}')
@@ -399,7 +435,16 @@ class LootManager:
             helper_path = repo_root / 'tools' / 'secure_enclave_helper' / '.build' / 'release' / 'secure-enclave-helper'
             decrypt_output = output_path / 'decrypted.zip'
             cmd = [str(helper_path), 'cryptokit-decrypt', '--password', password, '--input', str(temp_path), '--output', str(decrypt_output)]
-            result = _cryptokit_executor.submit(subprocess.run, cmd, capture_output=True, timeout=30).result()
+
+            async def _run_decrypt() -> subprocess.CompletedProcess:
+                return await asyncio.to_thread(subprocess.run, cmd, capture_output=True, timeout=30)
+
+            loop = asyncio.new_event_loop()
+            try:
+                result = loop.run_until_complete(_run_decrypt())
+            finally:
+                loop.close()
+
             os.unlink(temp_path)
             if result.returncode != 0:
                 logger.error(f'CryptoKit decryption failed: {result.stderr}')

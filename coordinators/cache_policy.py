@@ -60,8 +60,7 @@ class CacheLevel(Enum):
     L2_DISK = 'l2_disk'
     L3_ARCHIVE = 'l3_archive'
 
-@dataclass(slots=True)
-class CacheMetrics:
+class CacheMetrics(msgspec.Struct):
     """Telemetry for cache operations."""
     hits: int = 0
     misses: int = 0
@@ -376,7 +375,6 @@ class ByteBoundedLRU[K, V]:
                 pass
             self._lmdb_env = None
 
-@dataclass(slots=True)
 class _CacheEntry[V]:
     """Internal cache entry with byte-size tracking."""
     value: V

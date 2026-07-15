@@ -1,0 +1,955 @@
+{
+  "view": "names",
+  "files": [
+    {
+      "path": "runtime/acquisition/threat_dictionary.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "constant",
+          "names": [
+            "_THREAT_DICTIONARY"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "lookup_threat_entity"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "runtime/acquisition/lane_constants.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "AcquisitionLane",
+            "RiskLevel"
+          ]
+        },
+        {
+          "kind": "constant",
+          "names": [
+            "TERMINAL_STATES",
+            "NON_TERMINAL_STATES"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "runtime/acquisition/profile.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "AcquisitionProfile"
+          ]
+        },
+        {
+          "kind": "constant",
+          "names": [
+            "_ACADEMIC_PROFILES",
+            "_DEEP_OSINT_M1_PROFILES",
+            "_MISSION_PROFILES"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "normalize_acquisition_profile",
+            "is_academic_profile",
+            "is_deep_osint_m1_profile",
+            "is_mission_profile"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "runtime/acquisition/lane_plan.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "LaneSpec",
+            "LaneRule",
+            "AcquisitionContext"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "_lc",
+            "_lane_rule",
+            "_disabled_reason"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "logger"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "runtime/acquisition/acquisition_lanes.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "_get_original",
+            "run_enabled_acquisition_lanes",
+            "run_enabled_acquisition_lanes_streaming"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "_acquisition_strategy"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "runtime/acquisition/cid_detection.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "constant",
+          "names": [
+            "_CIDV0_RE",
+            "_CIDV1_BASE32_RE"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "_has_explicit_cid",
+            "_extract_cids_from_text"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "runtime/acquisition/__init__.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "variable",
+          "names": [
+            "__all__"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "runtime/acquisition/domain_expansion.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "constant",
+          "names": [
+            "_TTP_PATTERN",
+            "DOMAIN_EXPANSIONS",
+            "_NER_ENGINE"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "_get_ner_engine",
+            "_expand_keyword_query",
+            "_get_keyword_domain_expansion"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "runtime/acquisition/nonfeed_outcomes.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "NonfeedPlanDebug",
+            "NonfeedSeedContext",
+            "AcquisitionLaneOutcome",
+            "SourceFamilyOutcome",
+            "MandatoryLaneTerminality",
+            "AcquisitionStrategySnapshot",
+            "AcquisitionLanePlan"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "runtime/acquisition/budget.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "FeedDominanceBudget"
+          ]
+        },
+        {
+          "kind": "constant",
+          "names": [
+            "_MISSION_FEED_CAP_THRESHOLDS",
+            "_NONFEED_PROFILE_FEED_CAP_THRESHOLDS"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "feed_budget_to_dict",
+            "_load_feed_budget_from_env"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "runtime/acquisition/mission.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "MissionIntent",
+            "MissionTargetKind",
+            "NonfeedMissionController",
+            "NonfeedMissionSnapshot",
+            "NonfeedMissionExitReason"
+          ]
+        },
+        {
+          "kind": "constant",
+          "names": [
+            "_NONFEED_LANE_FAMILY_MAP",
+            "_INFER_RE"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "infer_mission_intent",
+            "_mission_target_kind",
+            "_mission_lanes"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "runtime/acquisition/nonfeed_eligibility.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "MandatoryLaneTerminality"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "_has_domain_or_ip",
+            "_has_url",
+            "_has_crypto_wallet",
+            "_has_crypto_hash",
+            "_has_crypto_indicator",
+            "_has_threat_indicator",
+            "_build_nonfeed_lane_eligibility",
+            "required_terminal_lanes",
+            "lane_is_terminal",
+            "normalize_terminal_state",
+            "terminality_report"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "runtime/acquisition/report_builder.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "build_acquisition_report",
+            "_plan_to_dict",
+            "_debug_to_dict",
+            "reconcile_lane_detail_fields",
+            "complete_source_family_outcomes_from_lane_details"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "runtime/acquisition/plan_builder.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "constant",
+          "names": [
+            "ACQUISITION_REPORT_SCHEMA_VERSION"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "_looks_like_ip",
+            "_looks_like_domain",
+            "_extract_ips_from_query",
+            "_extract_crypto_from_query",
+            "_base_concurrency",
+            "_lane_concurrency",
+            "build_acquisition_plan",
+            "_build_plan_impl",
+            "_make_lane_plan",
+            "_lane_max_items",
+            "_lane_timeout",
+            "_lane_risk",
+            "build_lane_query",
+            "normalize_passive_dns_query",
+            "select_ct_domains_for_passivedns_pivot",
+            "_extract_domain_from_ct_finding",
+            "is_lane_enabled",
+            "get_lane_plan",
+            "lane_skip_reason",
+            "normalize_source_family_name",
+            "_pick_best_terminal",
+            "canonicalize_source_family_outcomes",
+            "normalize_source_family_outcome",
+            "normalize_terminal_state"
+          ]
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "path": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/acquisition",
+    "is_directory": true,
+    "file_count": 14,
+    "total_symbols": 100,
+    "by_lang": {
+      "Python": 14
+    },
+    "by_kind": {
+      "class": 20,
+      "constant": 16,
+      "function": 61,
+      "variable": 3
+    },
+    "all_symbols": [
+      {
+        "path": "runtime/acquisition/threat_dictionary.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "_THREAT_DICTIONARY"
+      },
+      {
+        "path": "runtime/acquisition/threat_dictionary.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "lookup_threat_entity"
+      },
+      {
+        "path": "runtime/acquisition/lane_constants.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "AcquisitionLane"
+      },
+      {
+        "path": "runtime/acquisition/lane_constants.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "RiskLevel"
+      },
+      {
+        "path": "runtime/acquisition/lane_constants.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "TERMINAL_STATES"
+      },
+      {
+        "path": "runtime/acquisition/lane_constants.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "NON_TERMINAL_STATES"
+      },
+      {
+        "path": "runtime/acquisition/profile.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "_ACADEMIC_PROFILES"
+      },
+      {
+        "path": "runtime/acquisition/profile.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "_DEEP_OSINT_M1_PROFILES"
+      },
+      {
+        "path": "runtime/acquisition/profile.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "_MISSION_PROFILES"
+      },
+      {
+        "path": "runtime/acquisition/profile.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "AcquisitionProfile"
+      },
+      {
+        "path": "runtime/acquisition/profile.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "normalize_acquisition_profile"
+      },
+      {
+        "path": "runtime/acquisition/profile.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "is_academic_profile"
+      },
+      {
+        "path": "runtime/acquisition/profile.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "is_deep_osint_m1_profile"
+      },
+      {
+        "path": "runtime/acquisition/profile.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "is_mission_profile"
+      },
+      {
+        "path": "runtime/acquisition/lane_plan.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "logger"
+      },
+      {
+        "path": "runtime/acquisition/lane_plan.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "LaneSpec"
+      },
+      {
+        "path": "runtime/acquisition/lane_plan.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "LaneRule"
+      },
+      {
+        "path": "runtime/acquisition/lane_plan.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "AcquisitionContext"
+      },
+      {
+        "path": "runtime/acquisition/lane_plan.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_lc"
+      },
+      {
+        "path": "runtime/acquisition/lane_plan.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_lane_rule"
+      },
+      {
+        "path": "runtime/acquisition/lane_plan.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_disabled_reason"
+      },
+      {
+        "path": "runtime/acquisition/acquisition_lanes.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "_acquisition_strategy"
+      },
+      {
+        "path": "runtime/acquisition/acquisition_lanes.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_get_original"
+      },
+      {
+        "path": "runtime/acquisition/acquisition_lanes.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "run_enabled_acquisition_lanes"
+      },
+      {
+        "path": "runtime/acquisition/acquisition_lanes.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "run_enabled_acquisition_lanes_streaming"
+      },
+      {
+        "path": "runtime/acquisition/cid_detection.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "_CIDV0_RE"
+      },
+      {
+        "path": "runtime/acquisition/cid_detection.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "_CIDV1_BASE32_RE"
+      },
+      {
+        "path": "runtime/acquisition/cid_detection.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_has_explicit_cid"
+      },
+      {
+        "path": "runtime/acquisition/cid_detection.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_extract_cids_from_text"
+      },
+      {
+        "path": "runtime/acquisition/__init__.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "__all__"
+      },
+      {
+        "path": "runtime/acquisition/domain_expansion.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "_TTP_PATTERN"
+      },
+      {
+        "path": "runtime/acquisition/domain_expansion.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "DOMAIN_EXPANSIONS"
+      },
+      {
+        "path": "runtime/acquisition/domain_expansion.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "_NER_ENGINE"
+      },
+      {
+        "path": "runtime/acquisition/domain_expansion.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_get_ner_engine"
+      },
+      {
+        "path": "runtime/acquisition/domain_expansion.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_expand_keyword_query"
+      },
+      {
+        "path": "runtime/acquisition/domain_expansion.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_get_keyword_domain_expansion"
+      },
+      {
+        "path": "runtime/acquisition/nonfeed_outcomes.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "NonfeedPlanDebug"
+      },
+      {
+        "path": "runtime/acquisition/nonfeed_outcomes.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "NonfeedSeedContext"
+      },
+      {
+        "path": "runtime/acquisition/nonfeed_outcomes.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "AcquisitionLaneOutcome"
+      },
+      {
+        "path": "runtime/acquisition/nonfeed_outcomes.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "SourceFamilyOutcome"
+      },
+      {
+        "path": "runtime/acquisition/nonfeed_outcomes.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "MandatoryLaneTerminality"
+      },
+      {
+        "path": "runtime/acquisition/nonfeed_outcomes.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "AcquisitionStrategySnapshot"
+      },
+      {
+        "path": "runtime/acquisition/nonfeed_outcomes.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "AcquisitionLanePlan"
+      },
+      {
+        "path": "runtime/acquisition/budget.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "_MISSION_FEED_CAP_THRESHOLDS"
+      },
+      {
+        "path": "runtime/acquisition/budget.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "_NONFEED_PROFILE_FEED_CAP_THRESHOLDS"
+      },
+      {
+        "path": "runtime/acquisition/budget.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "FeedDominanceBudget"
+      },
+      {
+        "path": "runtime/acquisition/budget.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "feed_budget_to_dict"
+      },
+      {
+        "path": "runtime/acquisition/budget.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_load_feed_budget_from_env"
+      },
+      {
+        "path": "runtime/acquisition/mission.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "_NONFEED_LANE_FAMILY_MAP"
+      },
+      {
+        "path": "runtime/acquisition/mission.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "MissionIntent"
+      },
+      {
+        "path": "runtime/acquisition/mission.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "MissionTargetKind"
+      },
+      {
+        "path": "runtime/acquisition/mission.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "NonfeedMissionController"
+      },
+      {
+        "path": "runtime/acquisition/mission.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "NonfeedMissionSnapshot"
+      },
+      {
+        "path": "runtime/acquisition/mission.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "_INFER_RE"
+      },
+      {
+        "path": "runtime/acquisition/mission.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "infer_mission_intent"
+      },
+      {
+        "path": "runtime/acquisition/mission.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_mission_target_kind"
+      },
+      {
+        "path": "runtime/acquisition/mission.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_mission_lanes"
+      },
+      {
+        "path": "runtime/acquisition/mission.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "NonfeedMissionExitReason"
+      },
+      {
+        "path": "runtime/acquisition/nonfeed_eligibility.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "MandatoryLaneTerminality"
+      },
+      {
+        "path": "runtime/acquisition/nonfeed_eligibility.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_has_domain_or_ip"
+      },
+      {
+        "path": "runtime/acquisition/nonfeed_eligibility.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_has_url"
+      },
+      {
+        "path": "runtime/acquisition/nonfeed_eligibility.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_has_crypto_wallet"
+      },
+      {
+        "path": "runtime/acquisition/nonfeed_eligibility.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_has_crypto_hash"
+      },
+      {
+        "path": "runtime/acquisition/nonfeed_eligibility.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_has_crypto_indicator"
+      },
+      {
+        "path": "runtime/acquisition/nonfeed_eligibility.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_has_threat_indicator"
+      },
+      {
+        "path": "runtime/acquisition/nonfeed_eligibility.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_build_nonfeed_lane_eligibility"
+      },
+      {
+        "path": "runtime/acquisition/nonfeed_eligibility.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "required_terminal_lanes"
+      },
+      {
+        "path": "runtime/acquisition/nonfeed_eligibility.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "lane_is_terminal"
+      },
+      {
+        "path": "runtime/acquisition/nonfeed_eligibility.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "normalize_terminal_state"
+      },
+      {
+        "path": "runtime/acquisition/nonfeed_eligibility.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "terminality_report"
+      },
+      {
+        "path": "runtime/acquisition/report_builder.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "build_acquisition_report"
+      },
+      {
+        "path": "runtime/acquisition/report_builder.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_plan_to_dict"
+      },
+      {
+        "path": "runtime/acquisition/report_builder.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_debug_to_dict"
+      },
+      {
+        "path": "runtime/acquisition/report_builder.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "reconcile_lane_detail_fields"
+      },
+      {
+        "path": "runtime/acquisition/report_builder.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "complete_source_family_outcomes_from_lane_details"
+      },
+      {
+        "path": "runtime/acquisition/plan_builder.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "ACQUISITION_REPORT_SCHEMA_VERSION"
+      },
+      {
+        "path": "runtime/acquisition/plan_builder.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_looks_like_ip"
+      },
+      {
+        "path": "runtime/acquisition/plan_builder.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_looks_like_domain"
+      },
+      {
+        "path": "runtime/acquisition/plan_builder.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_extract_ips_from_query"
+      },
+      {
+        "path": "runtime/acquisition/plan_builder.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_extract_crypto_from_query"
+      },
+      {
+        "path": "runtime/acquisition/plan_builder.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_base_concurrency"
+      },
+      {
+        "path": "runtime/acquisition/plan_builder.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_lane_concurrency"
+      },
+      {
+        "path": "runtime/acquisition/plan_builder.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "build_acquisition_plan"
+      },
+      {
+        "path": "runtime/acquisition/plan_builder.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_build_plan_impl"
+      },
+      {
+        "path": "runtime/acquisition/plan_builder.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_make_lane_plan"
+      },
+      {
+        "path": "runtime/acquisition/plan_builder.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_lane_max_items"
+      },
+      {
+        "path": "runtime/acquisition/plan_builder.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_lane_timeout"
+      },
+      {
+        "path": "runtime/acquisition/plan_builder.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_lane_risk"
+      },
+      {
+        "path": "runtime/acquisition/plan_builder.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "build_lane_query"
+      },
+      {
+        "path": "runtime/acquisition/plan_builder.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "normalize_passive_dns_query"
+      },
+      {
+        "path": "runtime/acquisition/plan_builder.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "select_ct_domains_for_passivedns_pivot"
+      },
+      {
+        "path": "runtime/acquisition/plan_builder.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_extract_domain_from_ct_finding"
+      },
+      {
+        "path": "runtime/acquisition/plan_builder.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "is_lane_enabled"
+      },
+      {
+        "path": "runtime/acquisition/plan_builder.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "get_lane_plan"
+      },
+      {
+        "path": "runtime/acquisition/plan_builder.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "lane_skip_reason"
+      },
+      {
+        "path": "runtime/acquisition/plan_builder.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "normalize_source_family_name"
+      },
+      {
+        "path": "runtime/acquisition/plan_builder.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_pick_best_terminal"
+      },
+      {
+        "path": "runtime/acquisition/plan_builder.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "canonicalize_source_family_outcomes"
+      },
+      {
+        "path": "runtime/acquisition/plan_builder.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "normalize_source_family_outcome"
+      },
+      {
+        "path": "runtime/acquisition/plan_builder.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "normalize_terminal_state"
+      }
+    ],
+    "next_action": "The directory outline is complete. Synthesize your final answer from the `summary.all_symbols` and `files` arrays above — no further tool calls needed for an overview."
+  },
+  "hints": [
+    "Parameter `max_results` is not used by outline. It was ignored. Use `type` to filter symbol kinds or `match` to filter by name regex."
+  ]
+}

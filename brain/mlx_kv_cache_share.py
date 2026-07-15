@@ -27,8 +27,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 _MAX_CACHED_PROMPTS: int = 8
 
-@dataclass(slots=True)
-class TokenizedPromptEntry:
+class TokenizedPromptEntry(msgspec.Struct):
     """Cached tokenized prompt array."""
     key: str
     tokens: list[int]
@@ -38,8 +37,7 @@ class TokenizedPromptEntry:
     last_used: float = 0.0
     tokenize_time_ms: float = 0.0
 
-@dataclass(slots=True)
-class PromptCacheStats:
+class PromptCacheStats(msgspec.Struct):
     """Statistics for tokenized prompt cache."""
     cache_hits: int = 0
     cache_misses: int = 0
@@ -106,8 +104,7 @@ class TokenizedPromptCache:
             return
         t0 = time_module.time()
         try:
-            loop = asyncio.get_running_loop()
-            tokens = await loop.run_in_executor(None, self._tokenize_sync, prompt)
+            tokens = await asyncio.to_thread(self._tokenize_sync, prompt)
             if tokens is None or not tokens:
                 logger.debug('PromptCache: tokenization returned empty')
                 return

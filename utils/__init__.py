@@ -58,6 +58,7 @@ _SUBMODULE_REGISTRY: dict[str, tuple[str, tuple[str, ...]]] = {
     "semantic": (".semantic", ("FilterResult", "KeywordFilter", "LightweightTokenizer", "Model2VecEmbedding", "SemanticFilter", "SimpleEmbedding")),
     "tech_detection": (".tech_detection", ("TechStackResult", "TechStackSignature")),
     "validation": (".validation", ("DataValidator", "ValidationError", "ValidationSeverity", "create_sample_schema")),
+    "config_introspection": (".config_introspection", ("safe_attr_get",)),
     "workflow_engine": (".workflow_engine", ("Task", "TaskStatus", "TaskType", "Workflow", "WorkflowEngine")),
 }
 
@@ -88,6 +89,7 @@ if TYPE_CHECKING:
     from .semantic import FilterResult, KeywordFilter, LightweightTokenizer, Model2VecEmbedding, SemanticFilter, SimpleEmbedding
     from .tech_detection import TechStackResult, TechStackSignature
     from .validation import DataValidator, ValidationError, ValidationSeverity, create_sample_schema
+    from .config_introspection import safe_attr_get
     from .workflow_engine import Task, TaskStatus, TaskType, Workflow, WorkflowEngine
 
 
@@ -320,6 +322,8 @@ __all__ = [
     "Rule",
     "TechStackSignature",
     "TechStackResult",
+    # Config introspection
+    "safe_attr_get",
     # Encryption
     "DataEncryption",
     "EncryptionResult",

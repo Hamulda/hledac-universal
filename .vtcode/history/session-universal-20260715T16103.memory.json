@@ -1,0 +1,39 @@
+{
+  "session_id": "session-universal-20260715T161038Z_338960-81450",
+  "schema_version": 2,
+  "summary": "Latest assistant action: Pokračuji v identifikaci dalších kritických issues. --- ### **ISSUE #10: Více pool executorů a absence centralizovaného resource manageme....",
+  "objective": null,
+  "task_summary": null,
+  "spec_summary": null,
+  "evaluation_summary": null,
+  "verification_summary": null,
+  "constraints": [],
+  "grounded_facts": [
+    {
+      "fact": "{\"view\":\"full\",\"spool_path\":\".vtcode/context/tool_outputs/code_search_1784132499512964.txt\",\"hints\":[\"Parameter `max_results` is not used by outline. It was ignored. Use `type` ...",
+      "source": "tool:code_search"
+    },
+    {
+      "fact": "{\"view\":\"names\",\"files\":[{\"path\":\"runtime/scheduler_v2/scheduler.py\",\"lang\":\"Python\",\"groups\":[{\"kind\":\"class\",\"names\":[\"SprintSchedulerV2\"]}]}],\"hints\":[\"Parameter `max_results...",
+      "source": "tool:code_search"
+    },
+    {
+      "fact": "{\"view\":\"names\",\"files\":[{\"path\":\"rust_extensions/src/lancedb_bridge.rs\",\"lang\":\"Rust\",\"groups\":[{\"kind\":\"constant\",\"names\":[\"MAX_DIM\",\"MAX_BATCH_SIZE\"]},{\"kind\":\"object\",\"names...",
+      "source": "tool:code_search"
+    },
+    {
+      "fact": "{\"view\":\"names\",\"files\":[{\"path\":\"rust_extensions/src/metal_compute.rs\",\"lang\":\"Rust\",\"groups\":[{\"kind\":\"constant\",\"names\":[\"GPU_MAX_BATCH\",\"GPU_MIN_BATCH\",\"GPU_SINGLE_TEXT_THRE...",
+      "source": "tool:code_search"
+    },
+    {
+      "fact": "{\"view\":\"names\",\"files\":[{\"path\":\"rust_extensions/src/embedding_index.rs\",\"lang\":\"Rust\",\"groups\":[{\"kind\":\"constant\",\"names\":[\"MAX_DIM\",\"MAX_NODES\",\"MAX_M\",\"MAX_EF_CONSTRUCTION\"...",
+      "source": "tool:code_search"
+    }
+  ],
+  "touched_files": [],
+  "open_questions": [],
+  "verification_todo": [],
+  "delegation_notes": [],
+  "history_artifact_path": null,
+  "generated_at": "2026-07-15T16:31:22.233606+00:00"
+}

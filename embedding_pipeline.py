@@ -548,7 +548,14 @@ _embed_max_rss_gb: float = 5.5
 _embedding_depth: int = 0
 _embedding_depth_lock = threading.Lock()
 _embed_refcount: int = 0
-_embed_refcount_lock = asyncio.Lock()
+_embed_refcount_lock: asyncio.Lock | None = None
+
+def _get_embed_refcount_lock() -> asyncio.Lock:
+    """ISSUE-014 FIX: Lazily create embed refcount lock in the current event loop."""
+    global _embed_refcount_lock
+    if _embed_refcount_lock is None:
+        _embed_refcount_lock = asyncio.Lock()
+    return _embed_refcount_lock
 
 class embedding_session:
     """
@@ -568,7 +575,7 @@ class embedding_session:
 
     async def __aenter__(self) -> None:
         global _embed_refcount
-        async with _embed_refcount_lock:
+        async with _get_embed_refcount_lock():
             _embed_refcount += 1
             first_entry = _embed_refcount == 1
         if first_entry:
@@ -577,7 +584,7 @@ class embedding_session:
     async def __aexit__(self, _exc_type, _exc_val, _exc_tb) -> None:
         global _embed_refcount
         should_unload = False
-        async with _embed_refcount_lock:
+        async with _get_embed_refcount_lock():
             _embed_refcount -= 1
             if _embed_refcount <= 0:
                 _embed_refcount = 0

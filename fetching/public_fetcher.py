@@ -197,48 +197,9 @@ _RUST_CONTENT_HASHER: bool = False
 _CONTENTHASHER_LOCK = threading.Lock()
 MAX_BODY_HASHES: Final[int] = 10000
 
-class _BodyHashStore:
-    """Thread-safe bounded URL→hash store using FIFO eviction.
-
-    F-GLOBAL: Encapsulates _body_hashes dict and _body_hashes_lock.
-    Eliminates module-level globals for body hash tracking.
-
-    Bounded: MAX_BODY_HASHES entries, FIFO eviction on overflow.
-    Thread-safe: uses threading.Lock for compound operations.
-    """
-    __slots__ = ('_hashes', '_lock', '_max_size')
-
-    def __init__(self, max_size: int=MAX_BODY_HASHES) -> None:
-        self._hashes: dict[str, str] = {}
-        self._lock = threading.Lock()
-        self._max_size = max_size
-
-    def store(self, url: str, hash_hex: str) -> None:
-        """Store url→hash mapping with FIFO eviction on overflow."""
-        if not url or not hash_hex:
-            return
-        try:
-            with self._lock:
-                self._hashes[url] = hash_hex
-                if len(self._hashes) > self._max_size:
-                    oldest = next(iter(self._hashes))
-                    del self._hashes[oldest]
-        except Exception:  # noqa: BLE001 — best-effort store; hash failure is non-fatal
-            pass
-
-    def get(self, url: str) -> str | None:
-        """Get hash for URL, or None if not found."""
-        try:
-            with self._lock:
-                return self._hashes.get(url)
-        except Exception:  # noqa: BLE001 — best-effort get; lock/lookup failure returns None
-            return None
-
-    def clear(self) -> None:
-        """Clear all stored hashes."""
-        with self._lock:
-            self._hashes.clear()
-_body_hash_store = _BodyHashStore(max_size=MAX_BODY_HASHES)
+# ISSUE-018: Deduplicated — canonical BodyHashStore lives in fetching/_body_hash.py
+from fetching._body_hash import BodyHashStore as _BodyHashStore
+from fetching._body_hash import body_hash_store as _body_hash_store
 
 def _get_content_hasher() -> object | None:
     """Lazy-load Rust backend hash domain.
@@ -320,7 +281,7 @@ def _altsvc_extract_host(url: str, preclassified_host: str='') -> str:
     if preclassified_host:
         return preclassified_host
     try:
-        _uops = url_ops
+        _uops = _rust_backend.url
         if _uops is not None:
             return _uops.extract_host(url)
         _, host = _classify_url_cached(url)
@@ -383,6 +344,11 @@ class _SessionManager:
     references are detected via session.closed=True and automatically re-created.
 
     F272: Tor circuit renewal + F206AT injected provider seam unified here.
+
+    ISSUE-014 FIX: asyncio.Lock instances are lazily created on first async access,
+    not at module import time. This avoids "no running event loop" errors on macOS
+    where asyncio.Lock() captures the main thread's loop at import time (which may
+    be None or a different loop than the one used at runtime).
     """
     __slots__ = ('_tor_session', '_i2p_session', '_tor_request_count', '_tor_session_lock', '_i2p_session_lock', '_tor_session_locally_created', '_i2p_session_locally_created', '_injected_session_provider', '_session_source_telemetry', '_tor_circuit_renewal_count')
 
@@ -390,13 +356,25 @@ class _SessionManager:
         self._tor_session: httpx.AsyncClient | None = None
         self._i2p_session: httpx.AsyncClient | None = None
         self._tor_request_count: int = 0
-        self._tor_session_lock: asyncio.Lock = asyncio.Lock()
-        self._i2p_session_lock: asyncio.Lock = asyncio.Lock()
+        self._tor_session_lock: asyncio.Lock | None = None
+        self._i2p_session_lock: asyncio.Lock | None = None
         self._tor_session_locally_created: bool = False
         self._i2p_session_locally_created: bool = False
         self._injected_session_provider: tuple[httpx.AsyncClient | None, httpx.AsyncClient | None] | None = None
         self._session_source_telemetry: dict[str, str] = {'tor': 'unavailable', 'i2p': 'unavailable'}
         self._tor_circuit_renewal_count: int = 0
+
+    def _get_tor_lock(self) -> asyncio.Lock:
+        """Lazily create Tor session lock in the current event loop."""
+        if self._tor_session_lock is None:
+            self._tor_session_lock = asyncio.Lock()
+        return self._tor_session_lock
+
+    def _get_i2p_lock(self) -> asyncio.Lock:
+        """Lazily create I2P session lock in the current event loop."""
+        if self._i2p_session_lock is None:
+            self._i2p_session_lock = asyncio.Lock()
+        return self._i2p_session_lock
 
     def tor_is_healthy(self) -> bool:
         """Return True if Tor session exists and is not closed."""
@@ -532,7 +510,21 @@ def get_session_source_telemetry() -> dict[str, str]:
     result['transport_policy_bypassed'] = 'true' if _SESSION_MGR._injected_session_provider is None else 'false'
     result['fallback_reason'] = 'injected_provider_available' if _SESSION_MGR._injected_session_provider is not None else 'local_pool_until_transport_unified'
     return result
-_CAMOUFOX_LOCK: asyncio.Lock = asyncio.Lock()
+_CAMOUFOX_LOCK: asyncio.Lock | None = None
+_CAMOUFOX_LOCK_INIT: bool = False
+
+def _get_camoufox_lock() -> asyncio.Lock:
+    """Lazily create camoufox lock in the current event loop.
+
+    ISSUE-014 FIX: asyncio.Lock() at module import time causes "no running event loop"
+    errors on macOS. This function creates the lock lazily on first async access.
+    """
+    global _CAMOUFOX_LOCK, _CAMOUFOX_LOCK_INIT
+    if _CAMOUFOX_LOCK is None or not _CAMOUFOX_LOCK_INIT:
+        _CAMOUFOX_LOCK = asyncio.Lock()
+        _CAMOUFOX_LOCK_INIT = True
+    return _CAMOUFOX_LOCK
+
 DEFAULT_UA: Final[str] = 'Mozilla/5.0 (compatible; research-bot/1.0; +passive-public-fetch)'
 _BROWSER_UA_POOL: tuple[str, ...] = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.210 Mobile Safari/537.36', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/133.0', 'Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15', 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0')
 _ACCEPT_LANGUAGE_POOL: tuple[str, ...] = ('en-US,en;q=0.9', 'en-GB,en;q=0.8', 'en-US,en;q=0.9,de;q=0.8', 'en-US,en;q=0.9,fr;q=0.8', 'en-US,en;q=0.9,es;q=0.8', 'en-US,en;q=0.9,ja;q=0.8', 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7', 'de-DE,de;q=0.9,en;q=0.8', 'fr-FR,fr;q=0.9,en;q=0.8', 'ja-JP,ja;q=0.9,en;q=0.8', 'en-US,en;q=0.9', 'en-AU,en;q=0.9', 'en-CA,en;q=0.9', 'en-IE,en;q=0.9', 'en-NZ,en;q=0.9')
@@ -653,7 +645,7 @@ def _validate_url(url: str) -> str | None:
     url = url.strip()
     if not url:
         return 'url_empty'
-    _uops = url_ops
+    _uops = _rust_backend.url
     if _uops is not None:
         try:
             kind, host = _classify_url_cached(url)
@@ -1066,7 +1058,7 @@ async def _get_tor_session():
     if _cc_available:
         _SESSION_MGR.record_tor_source('curl_cffi')
         return _TorCurlCffiWrapper()
-    async with _SESSION_MGR._tor_session_lock:
+    async with _SESSION_MGR._get_tor_lock():
         if not _SESSION_MGR.tor_is_healthy():
             _SESSION_MGR._tor_session = await httpx_socks_client(TOR_SOCKS_PROXY, rdns=True)
             _SESSION_MGR._tor_session_locally_created = True
@@ -1090,7 +1082,7 @@ async def _get_i2p_session():
     if _cc_available:
         _SESSION_MGR.record_i2p_source('curl_cffi')
         return _I2pCurlCffiWrapper()
-    async with _SESSION_MGR._i2p_session_lock:
+    async with _SESSION_MGR._get_i2p_lock():
         if not _SESSION_MGR.i2p_is_healthy():
             _SESSION_MGR._i2p_session = await httpx_socks_client(I2P_SOCKS_PROXY, rdns=True)
             _SESSION_MGR._i2p_session_locally_created = True
@@ -1254,7 +1246,7 @@ async def _renew_tor_circuit() -> bool:
 
 async def _maybe_renew_tor_circuit() -> None:
     """Renew Tor circuit if request count threshold reached."""
-    async with _SESSION_MGR._tor_session_lock:
+    async with _SESSION_MGR._get_tor_lock():
         _SESSION_MGR._tor_request_count += 1
         if _SESSION_MGR._tor_request_count >= TOR_CIRCUIT_RENEWAL_REQUEST_COUNT:
             _SESSION_MGR._tor_request_count = 0
@@ -1599,7 +1591,7 @@ def _looks_like_feed_url(url: str) -> bool:
     falls through to the unchanged Python branch.
     """
     try:
-        _uops = url_ops
+        _uops = _rust_backend.url
         if _uops is not None:
             return _uops.looks_like_feed_url(url)
     except Exception:  # noqa: BLE001 — best-effort; feed URL detection failure returns False
@@ -1853,7 +1845,7 @@ async def _camoufox_locked(url: str, timeout: float) -> str:
         from camoufox.async_api import AsyncCamoufox
     except ImportError:
         return ''
-    async with _CAMOUFOX_LOCK:
+    async with _get_camoufox_lock():
         last_error = ''
         for attempt in range(_CAMOUFOX_MAX_RETRIES):
             os_choice = _CAMOUFOX_OS_ROTATION[attempt % len(_CAMOUFOX_OS_ROTATION)]
@@ -2368,7 +2360,7 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
                 if _curl_h3_text:
                     _store_body_hash(url, _compute_body_hash(_curl_h3_text.encode('utf-8', errors='replace')))
                 return FetchResult(url=url, final_url=_curl_h3_final_url, status_code=_curl_h3_result.get('status_code', 0), content_type=_curl_h3_result.get('content_type', ''), text=_curl_h3_text, fetched_bytes=len(_curl_h3_bytes), declared_length=-1, elapsed_ms=_curl_h3_elapsed_ms, error=_curl_h3_result.get('error', None), decode_replaced=_curl_h3_decode_replaced, decode_replacement_count=_curl_h3_decode_replacement_count, redirected=_curl_h3_redirected, redirect_target=_curl_h3_redirect_target, failure_stage=_curl_h3_result.get('failure_stage', None), network_error_kind=_curl_h3_result.get('network_error_kind', None), selected_transport='curl_cffi', http_version='h3', transport_policy_reason='h3_clearnet', transport_counters=_tc)
-        session = tor_session if use_tor else i2p_session if use_i2p else await async_get_aiohttp_session()
+        session = tor_session if use_tor else i2p_session if use_i2p else await async_get_httpx_session()
         _semaphore = get_tor_semaphore() if use_tor or use_i2p else get_clearnet_semaphore()
         if stealth_session is not None:
             headers = {'User-Agent': stealth_session.rotate_ua()}
@@ -2397,7 +2389,7 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
                             pass
                     async with session.get(url, **request_kwargs) as resp:
                         final_url = str(resp.url)
-                        last_status_code = resp.status
+                        last_status_code = resp.status_code
                         content_type = resp.headers.get('Content-Type', '') or ''
                         raw_content_type = content_type.split(';')[0].strip().lower()
                         _escalated_to_curl = False
@@ -2696,7 +2688,112 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
         reset_request_id()
     except Exception:  # noqa: BLE001 — best-effort; telemetry teardown failure is non-fatal
         pass
-__all__ = ['async_fetch_public_text', 'process_html_payload', 'DEFAULT_UA', 'MAX_BYTES_DEFAULT', 'MAX_BYTES_HARD', 'MAX_RETRIES', 'FetchResult', '_is_retryable_status', '_extract_retry_after', '_compute_backoff_seconds', '_try_decode', '_looks_xmlish', '_is_onion_url', '_get_tor_session', '_renew_tor_circuit', '_jitter_delay', '_close_tor_session', 'TOR_SOCKS_PROXY', 'TOR_CIRCUIT_RENEWAL_REQUEST_COUNT', 'I2P_SOCKS_PROXY', '_is_i2p_url', '_is_freenet_url', '_get_i2p_session', '_close_i2p_session', '_needs_js_fetch', '_fetch_with_nodriver', '_fetch_with_camoufox', '_fetch_with_playwright', '_get_js_renderer_capability', '_all_js_renderers_unavailable', 'reset_js_renderer_capability_cache', 'refresh_js_renderer_capability', 'PUBLIC_FETCHER_POOL_AUTHORITY', 'inject_session_provider', 'get_session_source_telemetry', 'close_public_fetcher_sessions_async', 'get_public_fetcher_session_status']
+
+
+async def async_fetch_public_text_batch(
+    urls: list[str],
+    timeout_s: float = 35.0,
+    max_bytes: int = MAX_BYTES_DEFAULT,
+    use_stealth: bool = False,
+    use_js: bool = False,
+    use_doh: bool = False,
+    js_confidence: float = 0.8,
+    priority: int = 5,
+    concurrency: int = 10,
+) -> list[FetchResult]:
+    """
+    Batch URL fetching via asyncio.gather — concurrent, bounded, fail-safe.
+
+    Wraps async_fetch_public_text() for N URLs concurrently, using a
+    semaphore to bound parallel in-flight requests. Results preserve
+    input order. Failures return FetchResult with error set.
+
+    ISSUE-018 Problem 1 fix: provides explicit bulk async API.
+
+    Args:
+        urls: List of URLs to fetch (http/https only).
+        timeout_s: Per-request timeout in seconds (default 35 s).
+        max_bytes: Max bytes to read per response (default MAX_BYTES_DEFAULT).
+        use_stealth: Enable stealth/Tor transport (default False).
+        use_js: Enable JS rendering via camoufox/nodriver (default False).
+        use_doh: Enable DNS-over-HTTPS (default False).
+        js_confidence: Confidence that JS is needed (0.0–1.0, default 0.8).
+        priority: Request priority 1–10 (default 5, lower = higher priority).
+        concurrency: Max concurrent in-flight requests (default 10, M1 8GB safe).
+
+    Returns:
+        List of FetchResult in same order as input urls.
+        Length matches len(urls) — errors produce FetchResult with error field set.
+        Never raises; always returns a list of the same length as input.
+
+    Always-on, bounded (concurrency semaphore), fail-safe. No new feature flags.
+    """
+    if not urls:
+        return []
+
+    _sem = asyncio.Semaphore(concurrency)
+
+    async def _fetch_one(url: str) -> FetchResult:
+        try:
+            return await async_fetch_public_text(
+                url,
+                timeout_s=timeout_s,
+                max_bytes=max_bytes,
+                use_stealth=use_stealth,
+                use_js=use_js,
+                use_doh=use_doh,
+                js_confidence=js_confidence,
+                priority=priority,
+            )
+        except Exception as _e:  # noqa: BLE001 — fail-safe; never propagate
+            _now = time.monotonic()
+            return FetchResult(
+                url=url,
+                final_url=url,
+                status_code=0,
+                content_type='',
+                text=None,
+                fetched_bytes=0,
+                declared_length=-1,
+                elapsed_ms=0.0,
+                error=f'batch_exception:{type(_e).__name__}:{_e}',
+                failure_stage='batch_dispatch',
+            )
+
+    # Bounded gather: semaphore acquired per-task, released after completion.
+    # Each _fetch_one call waits on sem.acquire() before starting, releasing when done.
+    # This achieves concurrency=concurrency without a semaphore per call.
+    async def _fetch_one_sem(url: str) -> FetchResult:
+        await _sem.acquire()
+        try:
+            return await _fetch_one(url)
+        finally:
+            _sem.release()
+
+    gathered = await asyncio.gather(
+        *[_fetch_one_sem(url) for url in urls],
+        return_exceptions=True,
+    )
+    # Defensive: _fetch_one is fail-safe, but gather itself can also raise.
+    results = [
+        r if isinstance(r, FetchResult) else FetchResult(
+            url=getattr(r, 'args', ('',))[0] if hasattr(r, 'args') else '',
+            final_url='',
+            status_code=0,
+            content_type='',
+            text=None,
+            fetched_bytes=0,
+            declared_length=-1,
+            elapsed_ms=0.0,
+            error=f'gather_exception:{type(r).__name__}:{r}',
+            failure_stage='gather',
+        )
+        for r in gathered
+    ]
+    return results
+
+
+__all__ = ['async_fetch_public_text', 'async_fetch_public_text_batch', 'process_html_payload', 'DEFAULT_UA', 'MAX_BYTES_DEFAULT', 'MAX_BYTES_HARD', 'MAX_RETRIES', 'FetchResult', '_is_retryable_status', '_extract_retry_after', '_compute_backoff_seconds', '_try_decode', '_looks_xmlish', '_is_onion_url', '_get_tor_session', '_renew_tor_circuit', '_jitter_delay', '_close_tor_session', 'TOR_SOCKS_PROXY', 'TOR_CIRCUIT_RENEWAL_REQUEST_COUNT', 'I2P_SOCKS_PROXY', '_is_i2p_url', '_is_freenet_url', '_get_i2p_session', '_close_i2p_session', '_needs_js_fetch', '_fetch_with_nodriver', '_fetch_with_camoufox', '_fetch_with_playwright', '_get_js_renderer_capability', '_all_js_renderers_unavailable', 'reset_js_renderer_capability_cache', 'refresh_js_renderer_capability', 'PUBLIC_FETCHER_POOL_AUTHORITY', 'inject_session_provider', 'get_session_source_telemetry', 'close_public_fetcher_sessions_async', 'get_public_fetcher_session_status']
 from hledac.universal.utils.html_text_fast import extract_html_metadata, html_to_text_fast
 
 def _sync_process_html(html: str, url: str='') -> tuple[str, list, dict]:

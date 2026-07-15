@@ -1264,11 +1264,11 @@ class FetchCoordinator(UniversalCoordinator):
                         from ..transport.base import TransportConfig
                         tor_config = TransportConfig(url=url, timeout_s=TIMEOUT_TOR, max_bytes=10 * 1024 * 1024)
                         result = await self._tor_transport.fetch(tor_config)
-                        if not result.err:
+                        if not result.error:
                             result = {'success': True, 'status': result.status_code, 'content': b'', 'url': url, 'final_url': result.final_url or url, 'content_type': result.content_type or 'text/html'}
                             trace_fetch_end(url, 'tor_transport', 'ok', 0.0)
                             break
-                        logger.debug('TorTransport fetch failed: {result.err}', err=result.err)
+                        logger.debug('TorTransport fetch failed: {result.error}', result_error=result.error)
                     result = await self._fetch_with_tor(url, session=_pre_acquired_tor_session)
                     if result:
                         result['success'] = True
@@ -1301,11 +1301,11 @@ class FetchCoordinator(UniversalCoordinator):
                         trace_fetch_start(url, 'gopher', {'attempt': attempt, 'timeout': TIMEOUT_GOPHER})
                         try:
                             gopher_res = await self._gopher_transport.fetch(url, timeout_s=TIMEOUT_GOPHER)
-                            if not gopher_res.err:
+                            if not gopher_res.error:
                                 result = {'success': True, 'status': 200, 'content': gopher_res.content, 'url': url, 'final_url': url, 'content_type': 'text/plain'}
                                 trace_fetch_end(url, 'gopher_transport', 'ok', 0.0)
                                 break
-                            logger.debug('GopherTransport fetch failed: {gopher_res.err}', err=gopher_res.err)
+                            logger.debug('GopherTransport fetch failed: {gopher_res.error}', gopher_res_error=gopher_res.error)
                         except Exception as e:  # noqa: BLE001 — best-effort; telemetry flush failure; non-critical
                             logger.debug('GopherTransport error: {e}', e=e)
                             trace_fetch_end(url, 'gopher_transport', 'error', 0.0)

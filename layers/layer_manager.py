@@ -99,12 +99,14 @@ class M1MemoryOptimizer:
     async def _unload_layer(self, layer_name: str) -> None:
         """Unload a layer to free memory."""
         logger.debug(f'📤 Unloading layer: {layer_name}')
-        await asyncio.sleep(0.05)
+        # ISSUE-018 fix: Removed unnecessary asyncio.sleep(0.05) polling
+        # No async I/O or external event waiting needed - unload is synchronous
 
     async def _load_layer(self, layer_name: str) -> None:
         """Load a layer."""
         logger.debug(f'📥 Loading layer: {layer_name}')
-        await asyncio.sleep(0.05)
+        # ISSUE-018 fix: Removed unnecessary asyncio.sleep(0.05) polling
+        # No async I/O or external event waiting needed - load is synchronous
 
     def get_stats(self) -> dict[str, Any]:
         """Get optimizer statistics."""

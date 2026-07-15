@@ -93,7 +93,13 @@ class _ConcurrencyController:
         from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
         self._available = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
         self._monitor_task: asyncio.Task | None = None
-        self._lock = asyncio.Lock()
+        self._lock: asyncio.Lock | None = None
+
+    def _get_lock(self) -> asyncio.Lock:
+        """ISSUE-014 FIX: Lazily create lock in the current event loop."""
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
 
     async def start_monitoring(self):
         """Start the background memory monitor."""
@@ -124,7 +130,7 @@ class _ConcurrencyController:
                 mem_available = psutil.virtual_memory().available / (1024 * 1024)
             except Exception:
                 mem_available = 2048
-            async with self._lock:
+            async with self._get_lock():
                 old_limit = self._limit
                 new_limit = 1 if mem_available < self._max_memory_threshold else 2
                 if new_limit != old_limit:

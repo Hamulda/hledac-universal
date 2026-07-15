@@ -4,7 +4,7 @@ discovery/circl_pdns_adapter.py — CIRCL Passive DNS Discovery Adapter
 Sprint F229: CIRCL PDNS adapter aligned with discovery/source_registry tier-1.
 
 Mirrors crtsh_adapter.py pattern:
-  - async_get_aiohttp_session() from network.session_runtime
+  - async_get_httpx_session() from network.session_runtime
   - checked_aiohttp_get() from transport.circuit_breaker
   - DiscoveryBatchResult + DiscoveryHit from duckduckgo_adapter
 
@@ -20,7 +20,7 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 import httpx
-from hledac.universal.network.session_runtime import async_get_aiohttp_session
+from hledac.universal.network.session_runtime import async_get_httpx_session
 from hledac.universal.security.passive_dns import parse_circl_pdns_text
 from hledac.universal.tools.discovery_replay import read_cassette, replay_enabled, replay_strict_enabled, write_cassette
 from hledac.universal.transport.circuit_breaker import checked_aiohttp_get
@@ -160,7 +160,7 @@ async def async_search_circl_pdns(domain: str, max_results: int=50, timeout_s: f
     await asyncio.sleep(_RATE_LIMIT_SLEEP_S)
     session: httpx.AsyncClient | None = None
     try:
-        session = await async_get_aiohttp_session()
+        session = await async_get_httpx_session()
         timeout = httpx.Timeout(min(timeout_s, _HTTP_TIMEOUT_S))
         url = f'{_CIRCL_PDNS_URL}/{domain_norm}'
         try:
@@ -251,7 +251,7 @@ async def call_circl_pdns(domain: str, timeout_s: float=5.0) -> tuple[DiscoveryB
     session: httpx.AsyncClient | None = None
     raw_count = 0
     try:
-        session = await async_get_aiohttp_session()
+        session = await async_get_httpx_session()
         timeout = httpx.Timeout(min(timeout_s, _HTTP_TIMEOUT_S))
         url = f'{_CIRCL_PDNS_URL}/{domain_norm}'
         try:

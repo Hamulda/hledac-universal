@@ -1,0 +1,2106 @@
+{
+  "view": "names",
+  "files": [
+    {
+      "path": "coordinators/query_router.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "QueryRouter"
+          ]
+        },
+        {
+          "kind": "constant",
+          "names": [
+            "DHT",
+            "DDG",
+            "WAYBACK",
+            "CRT",
+            "ALL_SOURCES"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "SourceMask"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "coordinators/archive_coordinator.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "ArchiveCoordinatorConfig",
+            "ArchiveCoordinator"
+          ]
+        },
+        {
+          "kind": "constant",
+          "names": [
+            "MAX_ARCHIVE_RESULTS",
+            "MAX_PENDING_URLS"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "logger"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "coordinators/privacy_enhanced_research.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "DataRetention",
+            "PrivacyConfig",
+            "AuditRecord",
+            "AnonymizedRequest",
+            "SanitizedResult",
+            "PrivacyEnhancedResearch"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "private_research"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "logger"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "coordinators/validation_coordinator.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "ValidationSeverity",
+            "OutputFormat",
+            "ValidationResult",
+            "CleaningResult",
+            "UniversalValidationCoordinator"
+          ]
+        },
+        {
+          "kind": "constant",
+          "names": [
+            "HTML_TEXT_FAST_AVAILABLE",
+            "HTML_TEXT_FAST_AVAILABLE"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "logger",
+            "html_to_text_fast"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "coordinators/research_optimizer.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "OptimizationStrategy",
+            "CachePolicy",
+            "OptimizationConfig",
+            "QueryMetrics",
+            "OptimizedResult",
+            "ResearchOptimizer"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "optimized_research",
+            "create_optimized_pipeline"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "logger"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "coordinators/graph_coordinator.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "GraphCoordinatorConfig",
+            "GraphCoordinator"
+          ]
+        },
+        {
+          "kind": "constant",
+          "names": [
+            "MAX_RETURNED_PATHS",
+            "MAX_PENDING_QUERIES",
+            "FINGERPRINT_EDGE_TYPES"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "logger"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "coordinators/multimodal_coordinator.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "ModalityType",
+            "ModalityInput",
+            "ModalityOutput",
+            "FusedRepresentation",
+            "ContrastiveExample",
+            "MLXMultimodalEncoder",
+            "ContrastiveLearning",
+            "UniversalMultimodalCoordinator"
+          ]
+        },
+        {
+          "kind": "constant",
+          "names": [
+            "HAS_NUMPY",
+            "HAS_NUMPY",
+            "MLX_AVAILABLE",
+            "MLX_AVAILABLE"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "np",
+            "NDArray",
+            "mx",
+            "nn",
+            "logger"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "coordinators/execution_coordinator.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "ExecutionTask",
+            "ExecutionResult",
+            "UniversalExecutionCoordinator"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "logger"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "coordinators/gc_policy.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "constant",
+          "names": [
+            "_GC_THRESHOLD",
+            "_GC_FREEZE_ENABLED"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "_ensure_configured",
+            "_apply_gc_config",
+            "gc_collect",
+            "gc_collect_aggressive",
+            "gc_collect_async",
+            "get_stats"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "logger",
+            "_configured",
+            "_configure_lock",
+            "__all__"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "coordinators/meta_reasoning_coordinator.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "ReasoningStrategy",
+            "ReasoningStep",
+            "ReasoningChain",
+            "ThoughtNode",
+            "UniversalMetaReasoningCoordinator"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "logger"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "coordinators/performance_coordinator.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "AgentExecutionError",
+            "CircuitBreakerOpenError",
+            "AgentMetrics",
+            "LoadBalancingConfig",
+            "OptimizationReport",
+            "AgentPool",
+            "IntelligentLoadBalancer",
+            "AsyncExecutionOptimizer",
+            "AgentPerformanceOptimizer"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "CircuitBreakerOpen",
+            "logger"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "coordinators/aimd_controllers.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "AIMDController"
+          ]
+        },
+        {
+          "kind": "constant",
+          "names": [
+            "AIMD_ENRICH_ADDITIVE_INCREMENT",
+            "AIMD_ENRICH_DECREASE_FACTOR",
+            "AIMD_ENRICH_MIN",
+            "AIMD_ENRICH_MAX",
+            "AIMD_ENRICH_SUCCESS_THRESHOLD",
+            "AIMD_EXTRACT_ADDITIVE_INCREMENT",
+            "AIMD_EXTRACT_DECREASE_FACTOR",
+            "AIMD_EXTRACT_MIN",
+            "AIMD_EXTRACT_MAX",
+            "AIMD_EXTRACT_SUCCESS_THRESHOLD",
+            "AIMD_FETCH_ADDITIVE_INCREMENT",
+            "AIMD_FETCH_DECREASE_FACTOR",
+            "AIMD_FETCH_MIN",
+            "AIMD_FETCH_MAX",
+            "AIMD_FETCH_SUCCESS_THRESHOLD"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "make_enrich_aimd",
+            "make_extract_aimd",
+            "make_fetch_aimd"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "logger"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "coordinators/render_coordinator.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "RenderResult",
+            "RenderBackend",
+            "PyObjCWKWebViewRenderer",
+            "CDPRenderer",
+            "RenderCoordinator"
+          ]
+        },
+        {
+          "kind": "constant",
+          "names": [
+            "CAPTCHA_PATTERNS"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "logger"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "coordinators/__init__.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "variable",
+          "names": [
+            "__all__"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "coordinators/research_coordinator.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "ResearchDepth",
+            "ExcavationStrategy",
+            "ResearchContext",
+            "ResearchResult",
+            "ExcavationConfig",
+            "ResearchPaper",
+            "ResearchThread",
+            "MetaPattern",
+            "ResearchTheory",
+            "HierarchicalPlan",
+            "UniversalResearchCoordinator"
+          ]
+        },
+        {
+          "kind": "constant",
+          "names": [
+            "MAX_PAPERS",
+            "MAX_CITATION_LINKS"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "_level_stats_factory",
+            "logger"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "coordinators/monitoring_coordinator.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "MetricType",
+            "SystemMetrics",
+            "MonitoringResult",
+            "AlertThreshold",
+            "UniversalMonitoringCoordinator"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "logger"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "coordinators/base.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "OperationType",
+            "DecisionResponse",
+            "OperationResult",
+            "CoordinatorCapabilities",
+            "UniversalCoordinator"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "logger"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "coordinators/swarm_coordinator.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "SwarmState",
+            "SwarmMetrics",
+            "AdaptiveStrategy",
+            "SwarmAgent",
+            "SwarmNode",
+            "SwarmTask",
+            "ConsensusProposal",
+            "UniversalSwarmCoordinator"
+          ]
+        },
+        {
+          "kind": "constant",
+          "names": [
+            "HAS_NUMPY",
+            "HAS_NUMPY"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "np",
+            "NDArray",
+            "logger"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "coordinators/agent_coordination_engine.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "AgentType",
+            "TaskPriority",
+            "AgentCapability",
+            "AgentPerformance",
+            "TaskRequest",
+            "TaskResult",
+            "CoordinationStrategy",
+            "AgentCoordinationEngine"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "coordinated_search"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "logger"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "coordinators/security_coordinator.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "SecurityLevel",
+            "SecurityContext",
+            "SecurityResult",
+            "UniversalSecurityCoordinator"
+          ]
+        },
+        {
+          "kind": "constant",
+          "names": [
+            "_SECURITY_SUBSYSTEMS"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "logger"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "coordinators/resource_allocator.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "CapacitySnapshot",
+            "_ResourceCapacitySampler",
+            "ResourceType",
+            "Priority",
+            "ResourceRequest",
+            "ResourceCapacity",
+            "ResourceAllocation",
+            "IntelligentResourceAllocator",
+            "ResourceAwareScheduler"
+          ]
+        },
+        {
+          "kind": "constant",
+          "names": [
+            "SKLEARN_AVAILABLE",
+            "MAX_PENDING_RESOURCE_REQUESTS"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "main"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "logger"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "coordinators/backpressure.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "BackpressureDecision",
+            "BackpressureMonitor"
+          ]
+        },
+        {
+          "kind": "constant",
+          "names": [
+            "_DEFAULT_CLEARNET_MAX",
+            "_DEFAULT_STEALTH_MAX",
+            "_MIN_CLEARNET",
+            "_MAX_CLEARNET_FROM_GOVERNOR"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "logger"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "coordinators/enums.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "MemoryPressureLevel"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "coordinators/_catalog.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "CoordinatorCatalog"
+          ]
+        },
+        {
+          "kind": "constant",
+          "names": [
+            "_DOMAIN_MODULES",
+            "_COORDINATOR_EXPORTS"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "catalog"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "coordinators/claims_coordinator.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "ClaimsCoordinatorConfig",
+            "ClaimsCoordinator"
+          ]
+        },
+        {
+          "kind": "constant",
+          "names": [
+            "MAX_UNCERTAIN_CLUSTERS",
+            "MAX_PENDING_EVIDENCE_IDS",
+            "MAX_CLAIMS_PER_EVIDENCE",
+            "MAX_SENTENCE_LENGTH",
+            "BASE_CONFIDENCE",
+            "URL_BONUS",
+            "PROVENANCE_BONUS",
+            "TITLE_AGREEMENT_BONUS",
+            "MAX_CONFIDENCE"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "logger"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "coordinators/cache_policy.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "CacheLevel",
+            "CacheMetrics",
+            "ByteBoundedLRU",
+            "_CacheEntry",
+            "ByteBoundedARC"
+          ]
+        },
+        {
+          "kind": "constant",
+          "names": [
+            "K",
+            "V"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "_obj_size",
+            "_obj_size"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "logger",
+            "lmdb"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "coordinators/fetch_coordinator.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "TokenBucketController",
+            "AIMDWindow",
+            "_AIMDSlotController",
+            "FetchCoordinatorConfig",
+            "FetchCoordinator"
+          ]
+        },
+        {
+          "kind": "constant",
+          "names": [
+            "ZSTD_AVAILABLE",
+            "AIOHTTP_AVAILABLE",
+            "LIGHTPANDA_AVAILABLE",
+            "SESSION_AVAILABLE",
+            "HINTS_AVAILABLE",
+            "_ZERO_ATTR_ENGINE",
+            "_COVER_RATE",
+            "_COVER_RATE",
+            "_COVER_MAX",
+            "_CP_NOT_CALLED",
+            "_CP_RETURNED_NONE",
+            "TIMEOUT_CLEARNET_API",
+            "TIMEOUT_CLEARNET_HTML",
+            "TIMEOUT_TOR",
+            "TIMEOUT_I2P",
+            "TIMEOUT_GOPHER",
+            "CONCURRENCY_TOR",
+            "CONCURRENCY_CLEARNET",
+            "CONCURRENCY_API",
+            "CONCURRENCY_GLOBAL_MAX",
+            "AIMD_ADDITIVE_INCREMENT",
+            "AIMD_DECREASE_FACTOR",
+            "AIMD_MIN_CONCURRENCY",
+            "AIMD_MAX_CONCURRENCY",
+            "AIMD_SUCCESS_THRESHOLD",
+            "AIMD_DECREASE_BY_STATE",
+            "_PRIORITY_API",
+            "_PRIORITY_JSON",
+            "_PRIORITY_CLEARNET_HTML",
+            "_PRIORITY_TOR",
+            "_PRIORITY_I2P",
+            "_PRIORITY_OTHER",
+            "MAX_EVIDENCE_IDS_PER_STEP",
+            "NOCACHE_THRESHOLD_BYTES",
+            "F_NOCACHE"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "_create_dedup_strategy",
+            "apply_fcntl_nocache"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "_otel_mod",
+            "_otel_instrumented",
+            "_zstd_mod",
+            "_aiomod",
+            "_lp_manager_cls",
+            "_session_mgr_cls",
+            "_hints_extractor_cls",
+            "_zero_attr_cls",
+            "_stealth_tbc",
+            "TokenBucketController",
+            "logger",
+            "_nw"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "coordinators/memory_coordinator.py",
+      "lang": "Python",
+      "groups": [
+        {
+          "kind": "class",
+          "names": [
+            "ThermalState",
+            "MemoryZone",
+            "MemoryAllocation",
+            "MemoryStatistics",
+            "ZoneStatistics",
+            "UniversalMemoryCoordinator",
+            "ContextPriority",
+            "ResearchPhase",
+            "ContextItem",
+            "CompressedContext",
+            "ContextOptimizationManager",
+            "CacheType",
+            "CacheLocation",
+            "CacheEntry",
+            "MultiLevelContextCache",
+            "MemoryPressurePoller"
+          ]
+        },
+        {
+          "kind": "constant",
+          "names": [
+            "HAS_NUMPY",
+            "HAS_NUMPY",
+            "USEARCH_AVAILABLE",
+            "USEARCH_AVAILABLE",
+            "MAX_SIMILARITIES",
+            "MAX_PATTERNS"
+          ]
+        },
+        {
+          "kind": "function",
+          "names": [
+            "_serialize_to_json",
+            "_deserialize_from_json",
+            "_get_np"
+          ]
+        },
+        {
+          "kind": "variable",
+          "names": [
+            "np",
+            "NDArray",
+            "usearch",
+            "logger",
+            "MemoryPressureLevel"
+          ]
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "path": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/coordinators",
+    "is_directory": true,
+    "file_count": 28,
+    "total_symbols": 310,
+    "by_lang": {
+      "Python": 28
+    },
+    "by_kind": {
+      "class": 135,
+      "constant": 99,
+      "function": 21,
+      "variable": 55
+    },
+    "all_symbols": [
+      {
+        "path": "coordinators/query_router.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "DHT"
+      },
+      {
+        "path": "coordinators/query_router.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "DDG"
+      },
+      {
+        "path": "coordinators/query_router.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "WAYBACK"
+      },
+      {
+        "path": "coordinators/query_router.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "CRT"
+      },
+      {
+        "path": "coordinators/query_router.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "ALL_SOURCES"
+      },
+      {
+        "path": "coordinators/query_router.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "SourceMask"
+      },
+      {
+        "path": "coordinators/query_router.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "QueryRouter"
+      },
+      {
+        "path": "coordinators/archive_coordinator.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "logger"
+      },
+      {
+        "path": "coordinators/archive_coordinator.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "MAX_ARCHIVE_RESULTS"
+      },
+      {
+        "path": "coordinators/archive_coordinator.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "MAX_PENDING_URLS"
+      },
+      {
+        "path": "coordinators/archive_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "ArchiveCoordinatorConfig"
+      },
+      {
+        "path": "coordinators/archive_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "ArchiveCoordinator"
+      },
+      {
+        "path": "coordinators/privacy_enhanced_research.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "logger"
+      },
+      {
+        "path": "coordinators/privacy_enhanced_research.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "DataRetention"
+      },
+      {
+        "path": "coordinators/privacy_enhanced_research.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "PrivacyConfig"
+      },
+      {
+        "path": "coordinators/privacy_enhanced_research.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "AuditRecord"
+      },
+      {
+        "path": "coordinators/privacy_enhanced_research.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "AnonymizedRequest"
+      },
+      {
+        "path": "coordinators/privacy_enhanced_research.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "SanitizedResult"
+      },
+      {
+        "path": "coordinators/privacy_enhanced_research.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "PrivacyEnhancedResearch"
+      },
+      {
+        "path": "coordinators/privacy_enhanced_research.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "private_research"
+      },
+      {
+        "path": "coordinators/validation_coordinator.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "logger"
+      },
+      {
+        "path": "coordinators/validation_coordinator.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "HTML_TEXT_FAST_AVAILABLE"
+      },
+      {
+        "path": "coordinators/validation_coordinator.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "HTML_TEXT_FAST_AVAILABLE"
+      },
+      {
+        "path": "coordinators/validation_coordinator.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "html_to_text_fast"
+      },
+      {
+        "path": "coordinators/validation_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "ValidationSeverity"
+      },
+      {
+        "path": "coordinators/validation_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "OutputFormat"
+      },
+      {
+        "path": "coordinators/validation_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "ValidationResult"
+      },
+      {
+        "path": "coordinators/validation_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "CleaningResult"
+      },
+      {
+        "path": "coordinators/validation_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "UniversalValidationCoordinator"
+      },
+      {
+        "path": "coordinators/research_optimizer.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "logger"
+      },
+      {
+        "path": "coordinators/research_optimizer.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "OptimizationStrategy"
+      },
+      {
+        "path": "coordinators/research_optimizer.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "CachePolicy"
+      },
+      {
+        "path": "coordinators/research_optimizer.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "OptimizationConfig"
+      },
+      {
+        "path": "coordinators/research_optimizer.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "QueryMetrics"
+      },
+      {
+        "path": "coordinators/research_optimizer.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "OptimizedResult"
+      },
+      {
+        "path": "coordinators/research_optimizer.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "ResearchOptimizer"
+      },
+      {
+        "path": "coordinators/research_optimizer.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "optimized_research"
+      },
+      {
+        "path": "coordinators/research_optimizer.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "create_optimized_pipeline"
+      },
+      {
+        "path": "coordinators/graph_coordinator.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "logger"
+      },
+      {
+        "path": "coordinators/graph_coordinator.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "MAX_RETURNED_PATHS"
+      },
+      {
+        "path": "coordinators/graph_coordinator.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "MAX_PENDING_QUERIES"
+      },
+      {
+        "path": "coordinators/graph_coordinator.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "FINGERPRINT_EDGE_TYPES"
+      },
+      {
+        "path": "coordinators/graph_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "GraphCoordinatorConfig"
+      },
+      {
+        "path": "coordinators/graph_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "GraphCoordinator"
+      },
+      {
+        "path": "coordinators/multimodal_coordinator.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "HAS_NUMPY"
+      },
+      {
+        "path": "coordinators/multimodal_coordinator.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "np"
+      },
+      {
+        "path": "coordinators/multimodal_coordinator.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "NDArray"
+      },
+      {
+        "path": "coordinators/multimodal_coordinator.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "HAS_NUMPY"
+      },
+      {
+        "path": "coordinators/multimodal_coordinator.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "MLX_AVAILABLE"
+      },
+      {
+        "path": "coordinators/multimodal_coordinator.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "MLX_AVAILABLE"
+      },
+      {
+        "path": "coordinators/multimodal_coordinator.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "mx"
+      },
+      {
+        "path": "coordinators/multimodal_coordinator.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "nn"
+      },
+      {
+        "path": "coordinators/multimodal_coordinator.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "logger"
+      },
+      {
+        "path": "coordinators/multimodal_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "ModalityType"
+      },
+      {
+        "path": "coordinators/multimodal_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "ModalityInput"
+      },
+      {
+        "path": "coordinators/multimodal_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "ModalityOutput"
+      },
+      {
+        "path": "coordinators/multimodal_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "FusedRepresentation"
+      },
+      {
+        "path": "coordinators/multimodal_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "ContrastiveExample"
+      },
+      {
+        "path": "coordinators/multimodal_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "MLXMultimodalEncoder"
+      },
+      {
+        "path": "coordinators/multimodal_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "ContrastiveLearning"
+      },
+      {
+        "path": "coordinators/multimodal_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "UniversalMultimodalCoordinator"
+      },
+      {
+        "path": "coordinators/execution_coordinator.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "logger"
+      },
+      {
+        "path": "coordinators/execution_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "ExecutionTask"
+      },
+      {
+        "path": "coordinators/execution_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "ExecutionResult"
+      },
+      {
+        "path": "coordinators/execution_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "UniversalExecutionCoordinator"
+      },
+      {
+        "path": "coordinators/gc_policy.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "logger"
+      },
+      {
+        "path": "coordinators/gc_policy.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "_GC_THRESHOLD"
+      },
+      {
+        "path": "coordinators/gc_policy.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "_GC_FREEZE_ENABLED"
+      },
+      {
+        "path": "coordinators/gc_policy.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "_configured"
+      },
+      {
+        "path": "coordinators/gc_policy.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "_configure_lock"
+      },
+      {
+        "path": "coordinators/gc_policy.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_ensure_configured"
+      },
+      {
+        "path": "coordinators/gc_policy.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "_apply_gc_config"
+      },
+      {
+        "path": "coordinators/gc_policy.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "gc_collect"
+      },
+      {
+        "path": "coordinators/gc_policy.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "gc_collect_aggressive"
+      },
+      {
+        "path": "coordinators/gc_policy.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "gc_collect_async"
+      },
+      {
+        "path": "coordinators/gc_policy.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "get_stats"
+      },
+      {
+        "path": "coordinators/gc_policy.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "__all__"
+      },
+      {
+        "path": "coordinators/meta_reasoning_coordinator.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "logger"
+      },
+      {
+        "path": "coordinators/meta_reasoning_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "ReasoningStrategy"
+      },
+      {
+        "path": "coordinators/meta_reasoning_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "ReasoningStep"
+      },
+      {
+        "path": "coordinators/meta_reasoning_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "ReasoningChain"
+      },
+      {
+        "path": "coordinators/meta_reasoning_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "ThoughtNode"
+      },
+      {
+        "path": "coordinators/meta_reasoning_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "UniversalMetaReasoningCoordinator"
+      },
+      {
+        "path": "coordinators/performance_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "AgentExecutionError"
+      },
+      {
+        "path": "coordinators/performance_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "CircuitBreakerOpenError"
+      },
+      {
+        "path": "coordinators/performance_coordinator.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "CircuitBreakerOpen"
+      },
+      {
+        "path": "coordinators/performance_coordinator.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "logger"
+      },
+      {
+        "path": "coordinators/performance_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "AgentMetrics"
+      },
+      {
+        "path": "coordinators/performance_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "LoadBalancingConfig"
+      },
+      {
+        "path": "coordinators/performance_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "OptimizationReport"
+      },
+      {
+        "path": "coordinators/performance_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "AgentPool"
+      },
+      {
+        "path": "coordinators/performance_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "IntelligentLoadBalancer"
+      },
+      {
+        "path": "coordinators/performance_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "AsyncExecutionOptimizer"
+      },
+      {
+        "path": "coordinators/performance_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "AgentPerformanceOptimizer"
+      },
+      {
+        "path": "coordinators/aimd_controllers.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "logger"
+      },
+      {
+        "path": "coordinators/aimd_controllers.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "AIMD_ENRICH_ADDITIVE_INCREMENT"
+      },
+      {
+        "path": "coordinators/aimd_controllers.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "AIMD_ENRICH_DECREASE_FACTOR"
+      },
+      {
+        "path": "coordinators/aimd_controllers.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "AIMD_ENRICH_MIN"
+      },
+      {
+        "path": "coordinators/aimd_controllers.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "AIMD_ENRICH_MAX"
+      },
+      {
+        "path": "coordinators/aimd_controllers.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "AIMD_ENRICH_SUCCESS_THRESHOLD"
+      },
+      {
+        "path": "coordinators/aimd_controllers.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "AIMD_EXTRACT_ADDITIVE_INCREMENT"
+      },
+      {
+        "path": "coordinators/aimd_controllers.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "AIMD_EXTRACT_DECREASE_FACTOR"
+      },
+      {
+        "path": "coordinators/aimd_controllers.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "AIMD_EXTRACT_MIN"
+      },
+      {
+        "path": "coordinators/aimd_controllers.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "AIMD_EXTRACT_MAX"
+      },
+      {
+        "path": "coordinators/aimd_controllers.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "AIMD_EXTRACT_SUCCESS_THRESHOLD"
+      },
+      {
+        "path": "coordinators/aimd_controllers.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "AIMD_FETCH_ADDITIVE_INCREMENT"
+      },
+      {
+        "path": "coordinators/aimd_controllers.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "AIMD_FETCH_DECREASE_FACTOR"
+      },
+      {
+        "path": "coordinators/aimd_controllers.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "AIMD_FETCH_MIN"
+      },
+      {
+        "path": "coordinators/aimd_controllers.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "AIMD_FETCH_MAX"
+      },
+      {
+        "path": "coordinators/aimd_controllers.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "AIMD_FETCH_SUCCESS_THRESHOLD"
+      },
+      {
+        "path": "coordinators/aimd_controllers.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "AIMDController"
+      },
+      {
+        "path": "coordinators/aimd_controllers.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "make_enrich_aimd"
+      },
+      {
+        "path": "coordinators/aimd_controllers.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "make_extract_aimd"
+      },
+      {
+        "path": "coordinators/aimd_controllers.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "make_fetch_aimd"
+      },
+      {
+        "path": "coordinators/render_coordinator.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "logger"
+      },
+      {
+        "path": "coordinators/render_coordinator.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "CAPTCHA_PATTERNS"
+      },
+      {
+        "path": "coordinators/render_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "RenderResult"
+      },
+      {
+        "path": "coordinators/render_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "RenderBackend"
+      },
+      {
+        "path": "coordinators/render_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "PyObjCWKWebViewRenderer"
+      },
+      {
+        "path": "coordinators/render_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "CDPRenderer"
+      },
+      {
+        "path": "coordinators/render_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "RenderCoordinator"
+      },
+      {
+        "path": "coordinators/__init__.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "__all__"
+      },
+      {
+        "path": "coordinators/research_coordinator.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "_level_stats_factory"
+      },
+      {
+        "path": "coordinators/research_coordinator.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "logger"
+      },
+      {
+        "path": "coordinators/research_coordinator.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "MAX_PAPERS"
+      },
+      {
+        "path": "coordinators/research_coordinator.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "MAX_CITATION_LINKS"
+      },
+      {
+        "path": "coordinators/research_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "ResearchDepth"
+      },
+      {
+        "path": "coordinators/research_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "ExcavationStrategy"
+      },
+      {
+        "path": "coordinators/research_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "ResearchContext"
+      },
+      {
+        "path": "coordinators/research_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "ResearchResult"
+      },
+      {
+        "path": "coordinators/research_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "ExcavationConfig"
+      },
+      {
+        "path": "coordinators/research_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "ResearchPaper"
+      },
+      {
+        "path": "coordinators/research_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "ResearchThread"
+      },
+      {
+        "path": "coordinators/research_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "MetaPattern"
+      },
+      {
+        "path": "coordinators/research_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "ResearchTheory"
+      },
+      {
+        "path": "coordinators/research_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "HierarchicalPlan"
+      },
+      {
+        "path": "coordinators/research_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "UniversalResearchCoordinator"
+      },
+      {
+        "path": "coordinators/monitoring_coordinator.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "logger"
+      },
+      {
+        "path": "coordinators/monitoring_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "MetricType"
+      },
+      {
+        "path": "coordinators/monitoring_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "SystemMetrics"
+      },
+      {
+        "path": "coordinators/monitoring_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "MonitoringResult"
+      },
+      {
+        "path": "coordinators/monitoring_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "AlertThreshold"
+      },
+      {
+        "path": "coordinators/monitoring_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "UniversalMonitoringCoordinator"
+      },
+      {
+        "path": "coordinators/base.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "logger"
+      },
+      {
+        "path": "coordinators/base.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "OperationType"
+      },
+      {
+        "path": "coordinators/base.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "DecisionResponse"
+      },
+      {
+        "path": "coordinators/base.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "OperationResult"
+      },
+      {
+        "path": "coordinators/base.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "CoordinatorCapabilities"
+      },
+      {
+        "path": "coordinators/base.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "UniversalCoordinator"
+      },
+      {
+        "path": "coordinators/swarm_coordinator.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "HAS_NUMPY"
+      },
+      {
+        "path": "coordinators/swarm_coordinator.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "np"
+      },
+      {
+        "path": "coordinators/swarm_coordinator.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "NDArray"
+      },
+      {
+        "path": "coordinators/swarm_coordinator.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "HAS_NUMPY"
+      },
+      {
+        "path": "coordinators/swarm_coordinator.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "logger"
+      },
+      {
+        "path": "coordinators/swarm_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "SwarmState"
+      },
+      {
+        "path": "coordinators/swarm_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "SwarmMetrics"
+      },
+      {
+        "path": "coordinators/swarm_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "AdaptiveStrategy"
+      },
+      {
+        "path": "coordinators/swarm_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "SwarmAgent"
+      },
+      {
+        "path": "coordinators/swarm_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "SwarmNode"
+      },
+      {
+        "path": "coordinators/swarm_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "SwarmTask"
+      },
+      {
+        "path": "coordinators/swarm_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "ConsensusProposal"
+      },
+      {
+        "path": "coordinators/swarm_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "UniversalSwarmCoordinator"
+      },
+      {
+        "path": "coordinators/agent_coordination_engine.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "logger"
+      },
+      {
+        "path": "coordinators/agent_coordination_engine.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "AgentType"
+      },
+      {
+        "path": "coordinators/agent_coordination_engine.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "TaskPriority"
+      },
+      {
+        "path": "coordinators/agent_coordination_engine.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "AgentCapability"
+      },
+      {
+        "path": "coordinators/agent_coordination_engine.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "AgentPerformance"
+      },
+      {
+        "path": "coordinators/agent_coordination_engine.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "TaskRequest"
+      },
+      {
+        "path": "coordinators/agent_coordination_engine.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "TaskResult"
+      },
+      {
+        "path": "coordinators/agent_coordination_engine.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "CoordinationStrategy"
+      },
+      {
+        "path": "coordinators/agent_coordination_engine.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "AgentCoordinationEngine"
+      },
+      {
+        "path": "coordinators/agent_coordination_engine.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "coordinated_search"
+      },
+      {
+        "path": "coordinators/security_coordinator.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "logger"
+      },
+      {
+        "path": "coordinators/security_coordinator.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "_SECURITY_SUBSYSTEMS"
+      },
+      {
+        "path": "coordinators/security_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "SecurityLevel"
+      },
+      {
+        "path": "coordinators/security_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "SecurityContext"
+      },
+      {
+        "path": "coordinators/security_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "SecurityResult"
+      },
+      {
+        "path": "coordinators/security_coordinator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "UniversalSecurityCoordinator"
+      },
+      {
+        "path": "coordinators/resource_allocator.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "SKLEARN_AVAILABLE"
+      },
+      {
+        "path": "coordinators/resource_allocator.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "logger"
+      },
+      {
+        "path": "coordinators/resource_allocator.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "MAX_PENDING_RESOURCE_REQUESTS"
+      },
+      {
+        "path": "coordinators/resource_allocator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "CapacitySnapshot"
+      },
+      {
+        "path": "coordinators/resource_allocator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "_ResourceCapacitySampler"
+      },
+      {
+        "path": "coordinators/resource_allocator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "ResourceType"
+      },
+      {
+        "path": "coordinators/resource_allocator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "Priority"
+      },
+      {
+        "path": "coordinators/resource_allocator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "ResourceRequest"
+      },
+      {
+        "path": "coordinators/resource_allocator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "ResourceCapacity"
+      },
+      {
+        "path": "coordinators/resource_allocator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "ResourceAllocation"
+      },
+      {
+        "path": "coordinators/resource_allocator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "IntelligentResourceAllocator"
+      },
+      {
+        "path": "coordinators/resource_allocator.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "ResourceAwareScheduler"
+      },
+      {
+        "path": "coordinators/resource_allocator.py",
+        "lang": "Python",
+        "kind": "function",
+        "name": "main"
+      },
+      {
+        "path": "coordinators/backpressure.py",
+        "lang": "Python",
+        "kind": "variable",
+        "name": "logger"
+      },
+      {
+        "path": "coordinators/backpressure.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "_DEFAULT_CLEARNET_MAX"
+      },
+      {
+        "path": "coordinators/backpressure.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "_DEFAULT_STEALTH_MAX"
+      },
+      {
+        "path": "coordinators/backpressure.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "_MIN_CLEARNET"
+      },
+      {
+        "path": "coordinators/backpressure.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "_MAX_CLEARNET_FROM_GOVERNOR"
+      },
+      {
+        "path": "coordinators/backpressure.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "BackpressureDecision"
+      },
+      {
+        "path": "coordinators/backpressure.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "BackpressureMonitor"
+      },
+      {
+        "path": "coordinators/enums.py",
+        "lang": "Python",
+        "kind": "class",
+        "name": "MemoryPressureLevel"
+      },
+      {
+        "path": "coordinators/_catalog.py",
+        "lang": "Python",
+        "kind": "constant",
+        "name": "_DOMAIN_MODULES"
+      }
+    ],
+    "next_action": "The directory has 310 symbols but only the first 200 are shown in `summary.all_symbols` (cap: 200). Narrow with `type` to filter symbol kinds or `match` to filter by name, or outline a specific file/sub-directory. Synthesize your final answer from the `summary` counts and the `files` arrays above.",
+    "truncated": true,
+    "visible_symbols": 200
+  },
+  "hints": [
+    "Parameter `max_results` is not used by outline. It was ignored. Use `type` to filter symbol kinds or `match` to filter by name regex."
+  ]
+}

@@ -4,7 +4,7 @@ Result type — explicit error handling without silent exceptions.
 Pattern: Ok[T] | Err where Err carries the exception, never silently swallowed.
 
 Usage:
-    from core.result import try_op, Result
+    from hledac.universal.core.result import try_op, Ok, Err, Result
 
     # Sync
     result: Result[int] = try_op(lambda: int("42"))
@@ -329,6 +329,81 @@ def map_result(
 
 
 # ---------------------------------------------------------------------------
+# Async hot-path helpers — ZERO allocation on the happy path.
+# Use these in async I/O-bound loops where GC pressure matters.
+# ---------------------------------------------------------------------------
+
+async def try_or_async(
+    fn: Callable[[], Awaitable[T]],
+    default: T,
+) -> T:
+    """
+    Async hot-path variant: awaits and returns value or default on exception.
+
+    Zero allocations on the Ok path. No Result object created.
+
+    Equivalent to:
+        try:
+            return await fn()
+        except Exception:
+            return default
+
+    Example (async I/O loop):
+        for url in urls:
+            body = await try_or_async(lambda: fetch(url).text, default="")
+            process(body)
+    """
+    try:
+        return await fn()
+    except Exception:  # noqa: BLE001
+        return default
+
+
+async def try_or_none_async(
+    fn: Callable[[], Awaitable[T]],
+) -> T | None:
+    """
+    Async hot-path variant: awaits and returns value or None on exception.
+
+    Zero allocations. No Result object created.
+
+    Use when None is a valid sentinel for failure (most async I/O cases).
+
+    Example:
+        url = await try_or_none_async(lambda: resolve_host_async(host))
+        if url is None:
+            log.debug("resolve failed")
+    """
+    try:
+        return await fn()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+async def try_or_raise_async(
+    fn: Callable[[], Awaitable[T]],
+    exc_type: type[BaseException] = RuntimeError,
+    *,
+    label: str = "",
+) -> T:
+    """
+    Async hot-path variant: returns value or raises a custom exception.
+
+    Zero allocations on the Ok path. No Result object created.
+
+    Use when callers want explicit exception raising rather than
+    Result-based control flow.
+
+    Example:
+        value = await try_or_raise_async(lambda: risky_op_async(), ValueError, label="risky_op")
+    """
+    try:
+        return await fn()
+    except Exception as e:  # noqa: BLE001
+        raise exc_type(f"{label}: {e}") from e
+
+
+# ---------------------------------------------------------------------------
 # Exports
 # ---------------------------------------------------------------------------
 
@@ -347,4 +422,8 @@ __all__ = [
     "try_or",
     "try_or_none",
     "try_or_raise",
+    # Async hot-path helpers (zero allocation on Ok path)
+    "try_or_async",
+    "try_or_none_async",
+    "try_or_raise_async",
 ]

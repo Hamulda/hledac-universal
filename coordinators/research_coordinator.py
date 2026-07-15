@@ -18,7 +18,6 @@ from __future__ import annotations
 import asyncio
 import collections.abc
 import hashlib
-import json
 import logging
 import os as _os
 import time
@@ -28,6 +27,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 import msgspec
+from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
 from hledac.universal.utils.async_helpers import safe_gather_ok, safe_wait_for
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
 _level_stats_factory: defaultdict[str, dict[str, int]] = defaultdict(lambda: {'explored': 0, 'relevant': 0})
@@ -78,8 +78,7 @@ class ExcavationConfig(msgspec.Struct, frozen=True):
     auto_summarize: bool = True
     progress_callback: collections.abc.Callable | None = None
 
-@dataclass(slots=True)
-class ResearchPaper:
+class ResearchPaper(msgspec.Struct):
     """Research paper node with citation tracking."""
     id: str
     title: str
@@ -596,7 +595,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
                 fid_seed = f'{start}|{tgt}|{ts_now}'
                 fid = 'graph_path_' + hashlib.sha256(fid_seed.encode('utf-8')).hexdigest()[:16]
                 try:
-                    findings.append(CanonicalFinding(finding_id=fid, query=query or '', source_type='graph_path_analysis', confidence=0.5, ts=ts_now, provenance=('graph_path_analysis', 'research_coordinator', start, tgt), payload_text=json.dumps({'start': start, 'target': tgt, 'path': path, 'length': len(path), 'centrality': {'start': centrality.get(start, 0.0), 'target': centrality.get(tgt, 0.0)}, 'sprint_id': sprint_id}, default=str)))
+                    findings.append(CanonicalFinding(finding_id=fid, query=query or '', source_type='graph_path_analysis', confidence=0.5, ts=ts_now, provenance=('graph_path_analysis', 'research_coordinator', start, tgt), payload_text=_msgspec_encode({'start': start, 'target': tgt, 'path': path, 'length': len(path), 'centrality': {'start': centrality.get(start, 0.0), 'target': centrality.get(tgt, 0.0)}, 'sprint_id': sprint_id}).decode()))
                 except Exception as e:
                     logger.debug(f'ResearchCoordinator: CanonicalFinding build failed: {e}')
                     continue

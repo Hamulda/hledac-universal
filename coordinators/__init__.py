@@ -132,13 +132,8 @@ from .resource_allocator import (
     ResourceType,
 )
 from .security_coordinator import UniversalSecurityCoordinator
-from .swarm_coordinator import (
-    AdaptiveStrategy,
-    SwarmAgent,
-    SwarmMetrics,
-    SwarmState,
-    UniversalSwarmCoordinator,
-)
+
+# swarm_coordinator: deprecated - use lazy import via __getattr__
 
 # Validation coordinator
 from .validation_coordinator import (

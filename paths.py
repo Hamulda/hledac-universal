@@ -96,6 +96,13 @@ def _is_active_ramdisk(path: Path) -> bool:
     except OSError:
         return False
 _ramdisk_env = os.environ.get('HLEDAC_RAMDISK', '') or os.environ.get('GHOST_RAMDISK', '')
+# ISSUE-033: LIBC_PERF_OPT — SSD optimization hint
+# When True: /tmp is treated as a viable fast-path on SSD (APFS-backed on macOS).
+# This eliminates RAM disk overhead for testing on SSD-only machines.
+_LIBC_PERF_OPT: bool = os.environ.get('LIBC_PERF_OPT', '0').lower() in ('1', 'true', 'yes')
+# ISSUE-033: Deferred creation — mkdir happens at runtime, not on import (F500I spirit).
+# This avoids side-effects during module load and keeps import latency low.
+_TMP_OPT_ROOT: Path | None = Path('/tmp/hledac_tmp') if _LIBC_PERF_OPT else None
 if _ramdisk_env:
     _SELECTED_ROOT = Path(_ramdisk_env)
 else:
@@ -211,10 +218,25 @@ LIGHTRAG_ROOT: Path = RAMDISK_ROOT / 'lightrag'
 def _bootstrap_tempfile() -> None:
     """
     Set tempfile.tempdir to RAMDISK_ROOT for all tempfile operations.
+
+    ISSUE-033: When LIBC_PERF_OPT=1, uses /tmp/hledac_tmp instead of RAMDISK_ROOT.
+    On macOS /tmp is APFS/SSD-backed — suitable for testing without RAM disk overhead.
     Fail-open: if RAMDISK is not active, use FALLBACK_ROOT.
+
+    Deferred creation (F500I spirit): /tmp/hledac_tmp is created on first use,
+    not at module import time.
     """
     import tempfile as _tempfile
-    target = str(RAMDISK_ROOT)
+    # ISSUE-033: LIBC_PERF_OPT uses /tmp/hledac_tmp for SSD optimization
+    if _LIBC_PERF_OPT and _TMP_OPT_ROOT is not None:
+        # Deferred creation: create directory on first use (F500I)
+        try:
+            _TMP_OPT_ROOT.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        target = str(_TMP_OPT_ROOT)
+    else:
+        target = str(RAMDISK_ROOT)
     try:
         _tempfile.tempdir = target
     except Exception:
@@ -223,31 +245,46 @@ _bootstrap_tempfile()
 
 def lmdb_map_size() -> int:
     """
-    Get LMDB map_size in bytes from GHOST_LMDB_MAX_SIZE_MB env var.
+    Get LMDB map_size in bytes from StorageConfig (GHOST_LMDB_MAX_SIZE_MB env var).
 
     Returns:
         map_size in bytes (int), default 256MB (Phase4: M1 8GB ceiling).
     Bootstrap-safe: can be called before any LMDB init.
+
+    ISSUE-033: Delegates to StorageConfig to avoid duplicate GHOST_LMDB_MAX_SIZE_MB parsing.
     """
-    import os as _os
     try:
-        mb = int(_os.environ.get('GHOST_LMDB_MAX_SIZE_MB', 256))
-    except (ValueError, TypeError):
-        mb = 256
-    if mb <= 0:
-        mb = 256
-    return mb * 1024 * 1024
+        from core.config import get_storage_config
+        return get_storage_config().lmdb_map_size_mb * 1024 * 1024
+    except Exception:
+        # Fallback: bootstrap-safe (StorageConfig may not be importable at earliest init)
+        import os as _os
+        try:
+            mb = int(_os.environ.get('GHOST_LMDB_MAX_SIZE_MB', 256))
+        except (ValueError, TypeError):
+            mb = 256
+        return max(mb, 1) * 1024 * 1024
 
 def get_lmdb_max_size_mb() -> int:
     """
-    Get GHOST_LMDB_MAX_SIZE_MB from environment, default 256MB (Phase4: M1 8GB ceiling).
+    Get LMDB max_size in MB from StorageConfig (GHOST_LMDB_MAX_SIZE_MB env var).
+
+    Returns:
+        Size in MB, default 256MB (Phase4: M1 8GB ceiling).
     Bootstrap-safe: can be called before any LMDB init.
+
+    ISSUE-033: Delegates to StorageConfig to avoid duplicate GHOST_LMDB_MAX_SIZE_MB parsing.
     """
-    import os as _os
     try:
-        return int(_os.environ.get('GHOST_LMDB_MAX_SIZE_MB', 256))
-    except (ValueError, TypeError):
-        return 256
+        from core.config import get_storage_config
+        return get_storage_config().lmdb_map_size_mb
+    except Exception:
+        # Fallback: bootstrap-safe
+        import os as _os
+        try:
+            return int(_os.environ.get('GHOST_LMDB_MAX_SIZE_MB', 256))
+        except (ValueError, TypeError):
+            return 256
 
 def open_lmdb(path: pathlib.Path, *, map_size: int | None=None, **kw) -> Any:
     """

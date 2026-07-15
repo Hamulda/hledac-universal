@@ -22,18 +22,30 @@ Adding a new public symbol:
 3. Done — no edit needed to this file for symbol additions
 """
 
-# Namespace bootstrap (idempotent guard for direct importers)
-try:
-    from hledac._namespace_bootstrap import ensure_namespace_paths
-    ensure_namespace_paths()
-except (ImportError, Exception):  # noqa: BLE001
-    pass  # noqa: BLE001  # fail-soft guard
-
 from importlib import import_module
 from importlib.util import find_spec as _find_spec
 from types import ModuleType
 from typing import Any
 import re as _re
+
+# -----------------------------------------------------------------------------
+# Lazy namespace bootstrap (runs once on first __getattr__ call, not at import)
+# -----------------------------------------------------------------------------
+_BOOTSTRAPPED: bool = False
+
+
+def _ensure_bootstrap() -> None:
+    """Lazily bootstrap the hledac namespace — called once on first attribute access."""
+    global _BOOTSTRAPPED
+    if _BOOTSTRAPPED:
+        return
+    _BOOTSTRAPPED = True
+    try:
+        from hledac._namespace_bootstrap import ensure_namespace_paths
+
+        ensure_namespace_paths()
+    except (ImportError, Exception):  # noqa: BLE001
+        pass  # noqa: BLE001  # fail-soft guard
 
 # -----------------------------------------------------------------------------
 # Auto-discovery configuration
@@ -175,6 +187,9 @@ _cache: dict[str, Any] = {}
 
 def __getattr__(name: str) -> Any:
     """Lazy-load symbols on first access via auto-discovery from __all__."""
+    # Bootstrap namespace lazily on first attribute access
+    _ensure_bootstrap()
+
     # Fast path: already cached
     if name in _cache:
         return _cache[name]

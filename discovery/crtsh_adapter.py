@@ -4,7 +4,7 @@ discovery/crtsh_adapter.py — CT/crt.sh Providerless Pivot Adapter
 Sprint F206AV: transport alignment with canonical session_runtime + circuit_breaker.
 
 Replaces local httpx.AsyncClient + local checked_aiohttp_get with:
-- async_get_aiohttp_session() from network.session_runtime
+- async_get_httpx_session() from network.session_runtime
 - checked_aiohttp_get() from transport.circuit_breaker
 
 Passive only — no auth/API key, no body fetch beyond crt.sh JSON endpoint.
@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 import httpx
-from hledac.universal.network.session_runtime import async_get_aiohttp_session
+from hledac.universal.network.session_runtime import async_get_httpx_session
 from hledac.universal.transport.circuit_breaker import checked_aiohttp_get, domain_breaker_check
 from .base import DiscoveryBatchResult, DiscoveryHit
 from hledac.universal.discovery.base import BaseDiscoveryMixin, DiscoveryResult
@@ -388,7 +388,7 @@ async def call_crtsh(query: str, max_results: int=20, timeout_s: float=8.0, cach
     if not _crtsh_decision.allowed:
         _cs_start = time.monotonic()
         try:
-            _cs_session = await async_get_aiohttp_session()
+            _cs_session = await async_get_httpx_session()
             _cs_timeout = httpx.Timeout(min(timeout_s, _HTTP_TIMEOUT_S))
             _cs_raw, _cs_status, _cs_err = await _fetch_certspotter_fallback(_cs_session, query_stripped, _cs_timeout)
             _cs_elapsed = time.monotonic() - _cs_start
@@ -417,7 +417,7 @@ async def call_crtsh(query: str, max_results: int=20, timeout_s: float=8.0, cach
         async def _fetch_one(url: str) -> tuple[list[DiscoveryHit], str | None, CTProviderStatus]:
             async with _sem:
                 try:
-                    _session = await async_get_aiohttp_session()
+                    _session = await async_get_httpx_session()
                     _timeout = httpx.Timeout(min(15.0, _HTTP_TIMEOUT_S))
                     _data, _status, _err = await checked_aiohttp_get(_session, url, params={'output': 'json'}, headers={'User-Agent': 'Hledac/1.0 (research bot)'}, timeout=_timeout, failure_kind='crtsh')
                     if _err:
@@ -474,7 +474,7 @@ async def call_crtsh(query: str, max_results: int=20, timeout_s: float=8.0, cach
         _start_ft = time.monotonic()
         try:
             async with asyncio.timeout(min(timeout_s, 12.0)):
-                _session = await async_get_aiohttp_session()
+                _session = await async_get_httpx_session()
                 _timeout = httpx.Timeout(min(12.0, _HTTP_TIMEOUT_S))
                 _data, _status, _err = await checked_aiohttp_get(_session, _freetext_url, params={'output': 'json'}, headers={'User-Agent': 'Hledac/1.0 (research bot)'}, timeout=_timeout, failure_kind='crtsh')
                 if _err is None and _status == 200:
@@ -500,7 +500,7 @@ async def call_crtsh(query: str, max_results: int=20, timeout_s: float=8.0, cach
     else:
         _cs_start = time.monotonic()
         try:
-            _cs_session = await async_get_aiohttp_session()
+            _cs_session = await async_get_httpx_session()
             _cs_timeout = httpx.Timeout(min(timeout_s, _HTTP_TIMEOUT_S))
             _cs_raw, _cs_status, _cs_err = await _fetch_certspotter_fallback(_cs_session, domain_candidate, _cs_timeout)
             _cs_elapsed = time.monotonic() - _cs_start
@@ -531,7 +531,7 @@ async def call_crtsh(query: str, max_results: int=20, timeout_s: float=8.0, cach
     raw_count = 0
     built_count = 0
     try:
-        session = await async_get_aiohttp_session()
+        session = await async_get_httpx_session()
         timeout = httpx.Timeout(min(timeout_s, _HTTP_TIMEOUT_S))
         params = {'q': domain_candidate, 'output': 'json'}
         try:
@@ -638,7 +638,7 @@ async def call_crtsh(query: str, max_results: int=20, timeout_s: float=8.0, cach
         _dc_for_cache = domain_candidate if 'domain_candidate' in dir() else query_stripped
         _enter_cooldown(_dc_for_cache, 'timeout', start)
         try:
-            _cs_session = await async_get_aiohttp_session()
+            _cs_session = await async_get_httpx_session()
             _cs_timeout = httpx.Timeout(min(timeout_s, _HTTP_TIMEOUT_S))
             _cs_raw, _cs_status, _cs_err = await _fetch_certspotter_fallback(_cs_session, _dc_for_cache, _cs_timeout)
             if _cs_raw and isinstance(_cs_raw, list) and (not _cs_err):
@@ -706,7 +706,7 @@ async def async_search_crtsh(query: str, max_results: int=20, timeout_s: float=8
         return DiscoveryBatchResult(hits=(), error='no_domain_like_token', error_type='invalid_query', provider_name='crtsh', provider_chain=('crtsh',), source_family='ct', elapsed_s=elapsed)
     session: httpx.AsyncClient | None = None
     try:
-        session = await async_get_aiohttp_session()
+        session = await async_get_httpx_session()
         timeout = httpx.Timeout(min(timeout_s, _HTTP_TIMEOUT_S))
         params = {'q': domain_candidate, 'output': 'json'}
         try:

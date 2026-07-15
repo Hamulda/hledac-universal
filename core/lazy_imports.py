@@ -43,6 +43,8 @@ __all__ = [
     "aioquic",
     "selectolax",
     "cryptography",
+    "orjson",
+    "lmdb",
     # Availability checks
     "is_available",
     "get_available_modules",
@@ -178,6 +180,8 @@ transformers = LazyImport("transformers", install_hint="uv add transformers")
 aioquic = LazyImport("aioquic", install_hint="uv add aioquic (--extra http3)")
 selectolax = LazyImport("selectolax", install_hint="uv add selectolax")
 cryptography = LazyImport("cryptography", install_hint="uv add cryptography")
+orjson = LazyImport("orjson", install_hint="uv add orjson")
+lmdb = LazyImport("lmdb", install_hint="uv add lmdb")
 
 
 # PEP 810: Module-level __getattr__ for lazy module imports
@@ -195,6 +199,8 @@ def __getattr__(name: str) -> Any:
         "aioquic",
         "selectolax",
         "cryptography",
+        "orjson",
+        "lmdb",
     ):
         return globals()[name]
     # Dynamic lazy import

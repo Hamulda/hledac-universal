@@ -19,35 +19,38 @@ class TestF33BenchmarkDeprecation:
             with pytest.raises(ImportError, match="archived"):
                 import hledac.universal.coordinators.benchmark_coordinator as _  # noqa: F401
 
-    def test_shim_archived(self):
-        """The shim file was moved to archive/coordinators_deprecated_2026_07_05/."""
+    def test_shim_in_coordinators(self):
+        """The benchmark_coordinator.py shim exists in coordinators/ with ImportError."""
         from pathlib import Path
 
-        archive_dir = Path(__file__).parent.parent / "archive" / "coordinators_deprecated_2026_07_05"
-        shim = archive_dir / "benchmark_coordinator_shim.py"
-        assert shim.exists(), f"shim missing from archive: {shim}"
-        assert shim.stat().st_size > 1000, "shim too small"
+        shim = Path(__file__).parent.parent / "coordinators" / "benchmark_coordinator.py"
+        assert shim.exists(), f"shim missing from coordinators/: {shim}"
+        content = shim.read_text()
+        assert "raise ImportError" in content, "shim should raise ImportError"
 
-    def test_real_module_archived(self):
-        """The original benchmark_coordinator.py was moved to archive/."""
+    def test_no_real_module_in_archive(self):
+        """The original benchmark_coordinator.py was NEVER in archive (no-op deprecation)."""
         from pathlib import Path
 
         archive_dir = Path(__file__).parent.parent / "archive" / "coordinators_deprecated_2026_07_05"
         real_module = archive_dir / "benchmark_coordinator.py"
-        assert real_module.exists(), f"real module missing from archive: {real_module}"
-        # The original was ~29 KB.
-        assert real_module.stat().st_size > 15000, "real module too small — likely stripped"
+        # benchmark_coordinator never had a real implementation - only a deprecated shim
+        if real_module.exists():
+            assert real_module.stat().st_size < 1000, "benchmark_coordinator was always a shim"
 
     def test_deprecated_dir_clean(self):
-        """coordinators/_deprecated/ contains only __init__.py (no benchmark files)."""
+        """coordinators/_deprecated/ does not exist or is empty (benchmark files never existed)."""
         from pathlib import Path
 
         dep_dir = Path(__file__).parent.parent / "coordinators" / "_deprecated"
+        # _deprecated/ directory was never created for benchmark_coordinator
+        if not dep_dir.exists():
+            return
         files = [
             f.name for f in dep_dir.iterdir()
             if f.is_file() and f.name not in ("__init__.py", "__pycache__")
         ]
-        assert files == [], f"_deprecated/ should contain only __init__.py, found: {files}"
+        assert files == [], f"_deprecated/ should be empty, found: {files}"
 
     def test_top_level_alias_raises(self):
         """`coordinators.benchmark_coordinator` raises ImportError pointing to archive."""

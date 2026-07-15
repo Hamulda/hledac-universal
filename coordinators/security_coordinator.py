@@ -860,7 +860,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                 async with session.request(method, url, headers=headers, **kwargs) as resp:
                     content = await resp.text()
                     elapsed = time.time() - start_time
-                    return {'success': True, 'url': url, 'status_code': resp.status, 'content': content[:5000], 'headers': dict(resp.headers), 'elapsed_seconds': elapsed, 'jitter_delay': delay, 'impersonate': None, 'method': 'aiohttp'}
+                    return {'success': True, 'url': url, 'status_code': resp.status, 'content': content[:5000], 'headers': dict(resp.headers), 'elapsed_seconds': elapsed, 'jitter_delay': delay, 'impersonate': None, 'method': 'httpx'}
         except Exception as e:
             elapsed = time.time() - start_time
             logger.error(f'Stealth request failed for {url}: {e}')

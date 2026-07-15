@@ -37,8 +37,7 @@ class SourceTier(Enum):
         return f'SourceTier.{self.name}'
 _TIER_ORDER = [SourceTier.SURFACE, SourceTier.STRUCTURED_TI, SourceTier.DEEP, SourceTier.ARCHIVE, SourceTier.OTHER]
 
-@dataclass(slots=True)
-class EarlyExitClass:
+class EarlyExitClass(msgspec.Struct):
     """Canonical early-exit classification labels."""
     NATURAL = 'natural'
     FEED_DOMINANT = 'feed_dominant'
@@ -48,8 +47,7 @@ class EarlyExitClass:
     UNKNOWN = 'unknown'
 _UNSET: Any = object()
 
-@dataclass(slots=True)
-class SprintSchedulerConfig:
+class SprintSchedulerConfig(msgspec.Struct):
     """Configuration for one sprint run.
 
     STEP 1 extracted from sprint_scheduler.py (33 449 LOC → modular package).

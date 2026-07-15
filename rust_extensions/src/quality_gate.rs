@@ -30,11 +30,15 @@ use blake2::digest::{Update, VariableOutput};
 use blake2::Blake2bVar;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
+use rayon::prelude::*;
 use regex::Regex;
 use std::fmt::Write as _;
 
 // Sprint F216R canonical URL normalizer (lives in url_engine.rs).
 use crate::url_engine;
+
+// Zero-copy batch validation (OOM prevention with 1% sampling)
+use crate::zero_copy::validate_batch;
 
 /// BLAKE2b-128 output size (bytes). Used to truncate the default 64-byte
 /// BLAKE2b finalization — per the BLAKE2 spec, shorter output is just a
@@ -550,6 +554,9 @@ const BATCH_HARD_CAP: usize = 4096;
 /// `crate::cpu_pool()` (4 workers, 6 MiB total).
 // F270: 2→4 threads: parallel beneficial even for smaller batches
 // F266-U5: was 50 for 2 threads (was 100 for 4 threads).
+// NOTE: Differs from zero_copy::ZERO_COPY_PARALLEL_THRESHOLD (50) which uses
+// mixed_pool (2 threads, GIL held). quality_gate uses cpu_pool (4 workers) with
+// GIL released — lower threshold justified by better parallel efficiency.
 const BATCH_PARALLEL_THRESHOLD: usize = 25;
 
 /// Minimum chunk size for the parallel branch — see url_ops.rs for rationale.
@@ -560,6 +567,10 @@ const BATCH_PARALLEL_MIN_CHUNK: usize = 32;
 #[pyfunction]
 pub fn batch_entropy(texts: Vec<String>) -> Vec<f64> {
     use rayon::prelude::*;
+    let n_valid = validate_batch_slice(&texts);
+    if n_valid == 0 {
+        return vec![];
+    }
     let slice = cap_slice(&texts);
     let n = slice.len();
     if n < BATCH_PARALLEL_THRESHOLD {
@@ -580,6 +591,10 @@ pub fn batch_entropy(texts: Vec<String>) -> Vec<f64> {
 #[pyfunction]
 pub fn batch_dedup_fingerprints(texts: Vec<String>) -> Vec<String> {
     use rayon::prelude::*;
+    let n_valid = validate_batch_slice(&texts);
+    if n_valid == 0 {
+        return vec![];
+    }
     let slice = cap_slice(&texts);
     let n = slice.len();
     if n < BATCH_PARALLEL_THRESHOLD {
@@ -599,6 +614,10 @@ pub fn batch_dedup_fingerprints(texts: Vec<String>) -> Vec<String> {
 #[pyfunction]
 pub fn batch_url_fingerprints(urls: Vec<String>) -> Vec<String> {
     use rayon::prelude::*;
+    let n_valid = validate_batch_slice(&urls);
+    if n_valid == 0 {
+        return vec![];
+    }
     let slice = cap_slice(&urls);
     let n = slice.len();
     if n < BATCH_PARALLEL_THRESHOLD {
@@ -618,6 +637,10 @@ pub fn batch_url_fingerprints(urls: Vec<String>) -> Vec<String> {
 #[pyfunction]
 pub fn batch_normalize_quality_text(texts: Vec<String>) -> Vec<String> {
     use rayon::prelude::*;
+    let n_valid = validate_batch_slice(&texts);
+    if n_valid == 0 {
+        return vec![];
+    }
     let slice = cap_slice(&texts);
     let n = slice.len();
     if n < BATCH_PARALLEL_THRESHOLD {
@@ -642,6 +665,34 @@ fn cap_slice<T>(items: &[T]) -> &[T] {
     } else {
         items
     }
+}
+
+/// Validate batch size for OOM prevention on M1 8GB.
+/// Uses 1% sampling for byte size estimation (max 100 items sampled).
+/// Returns the validated item count, or panics if validation fails.
+#[inline]
+fn validate_batch_slice(items: &[String]) -> usize {
+    let n = items.len();
+    if n == 0 {
+        // Fail-soft: empty batch → return empty result (caller handles)
+        return 0;
+    }
+    if n > BATCH_HARD_CAP {
+        // Defensive truncate (cap_slice already did this, but double-check)
+        return BATCH_HARD_CAP;
+    }
+    // Sampled byte size check (1% sampling, max 100 items sampled)
+    let sample_size = ((n / 100) as usize).max(10).min(100);
+    let step = (n / sample_size).max(1);
+    let mut total_bytes = 0usize;
+    for i in (0..n).step_by(step) {
+        total_bytes = total_bytes.saturating_add(items[i].len());
+        if total_bytes > crate::zero_copy::ZERO_COPY_BATCH_MAX_BYTES {
+            // Truncate to hard cap on byte size overflow
+            return BATCH_HARD_CAP.min(n);
+        }
+    }
+    n
 }
 
 // ---------------------------------------------------------------------------

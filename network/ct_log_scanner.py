@@ -1,100 +1,18 @@
-"""Certificate Transparency log scanner (crt.sh) with local cache.
-
-F4XX MODERNIZACE: Migrated from aiohttp to httpx for HTTP/2 support.
-httpx is always available (core dependency).
 """
-import msgspec.json as _json
-import logging
-import sqlite3
-from pathlib import Path
-import httpx
-from hledac.universal.network.session_runtime import CT_CONNECT_TIMEOUT_S, CT_READ_TIMEOUT_S, async_get_httpx_session
-logger = logging.getLogger(__name__)
+Re-export from recon.cert.ct_log_scanner — canonical implementation.
 
-class _CTLogScanner:
-    """Scan crt.sh for subdomains and certificates, with local SQLite cache.
+Migration (F350M-R):
+  - network/ct_log_scanner.py was a near-duplicate (80.6% similar)
+  - recon/cert/ct_log_scanner.py is the canonical source (async, msgspec)
+  - This file is kept for backward compatibility with code that
+    imports from network.ct_log_scanner
 
-    NON-HOT-PATH surface — owns its session lifecycle when used standalone.
-    Supports shared-session injection for connection pooling when called from
-    a coordinator that manages session lifetime externally."""
-    CACHE_DIR = Path.home() / '.hledac' / 'ct_cache'
-    CACHE_DB = CACHE_DIR / 'ct_logs.db'
-    __slots__ = tuple(('allow_external', 'cache_ttl_days'))
+All production code should import from recon.cert.ct_log_scanner directly.
+"""
+from hledac.universal.recon.cert.ct_log_scanner import (  # noqa: F401, E402
+    _CTLogScanner,
+)
 
-    def __init__(self, allow_external: bool=False, cache_ttl_days: int=30):
-        self.allow_external = allow_external
-        self.cache_ttl_days = cache_ttl_days
-        self.CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        self._init_db()
-
-    def _init_db(self):
-        """Initialize SQLite cache table."""
-        with sqlite3.connect(self.CACHE_DB) as conn:
-            conn.execute('\n                CREATE TABLE IF NOT EXISTS ct_cache (\n                    domain TEXT PRIMARY KEY,\n                    subdomains TEXT,\n                    fetched_at REAL\n                )\n            ')
-            conn.commit()
-
-    async def get_subdomains(self, domain: str, *, async_session: httpx.AsyncClient | None=None) -> list[str]:
-        """Get subdomains for a domain, using cache first.
-
-        Args:
-            domain: Domain to scan
-            async_session: Optional shared httpx session for connection pooling.
-                          If not provided, creates a per-call session (legacy behavior).
-        """
-        cached = self._get_cached(domain)
-        if cached is not None:
-            logger.debug(f'[CT] Cache hit for {domain}: {len(cached)} subdomains')
-            return cached
-        if not self.allow_external:
-            return []
-
-        async def _fetch_with_session(session: httpx.AsyncClient) -> list[str]:
-            url = f'https://crt.sh/?q=%.{domain}&output=json'
-            resp = await session.get(url, timeout=httpx.Timeout(connect=CT_CONNECT_TIMEOUT_S, read=CT_READ_TIMEOUT_S))
-            if resp.status_code != 200:
-                return []
-            data = resp.json()
-            return data
-        try:
-            if async_session is not None:
-                data = await _fetch_with_session(async_session)
-            else:
-                shared_session = await async_get_httpx_session()
-                data = await _fetch_with_session(shared_session)
-            subdomains: set[str] = set()
-            for entry in data[:100]:
-                entry_dict: dict = dict(entry) if isinstance(entry, dict) else {}
-                name = entry_dict.get('name_value', '')
-                if name.endswith(f'.{domain}'):
-                    subdomains.add(name)
-                if '\n' in name:
-                    for n in name.split('\n'):
-                        if n.endswith(f'.{domain}'):
-                            subdomains.add(n)
-            result = list(subdomains)[:200]
-            self._save_to_cache(domain, result)
-            return result
-        except TimeoutError:
-            logger.warning(f'[CT] Timeout for {domain}')
-            return []
-        except Exception as e:
-            logger.warning(f'[CT] Error for {domain}: {e}')
-            return []
-
-    def _get_cached(self, domain: str) -> list[str] | None:
-        """Return cached subdomains if fresh enough."""
-        import time
-        now = time.time()
-        ttl_seconds = self.cache_ttl_days * 86400
-        with sqlite3.connect(self.CACHE_DB) as conn:
-            row = conn.execute('SELECT subdomains, fetched_at FROM ct_cache WHERE domain = ?', (domain,)).fetchone()
-            if row and now - row[1] < ttl_seconds:
-                return _json.decode(row[0])
-        return None
-
-    def _save_to_cache(self, domain: str, subdomains: list[str]):
-        """Store subdomains in cache."""
-        import time
-        with sqlite3.connect(self.CACHE_DB) as conn:
-            conn.execute('INSERT OR REPLACE INTO ct_cache (domain, subdomains, fetched_at) VALUES (?, ?, ?)', (domain, _json.encode(subdomains).decode('utf-8'), time.time()))
-            conn.commit()
+__all__ = [
+    "_CTLogScanner",
+]

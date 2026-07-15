@@ -77,7 +77,7 @@ def _has_fallback_schema_marker(report: ProbeReport) -> bool:
     """Scan report raw text for fallback acquisition schema marker."""
     if not report.found or report.parse_error:
         return False
-    text = json.dumps(report.data, separators=(',', ':'))
+    text = json.dumps(report.data)
     return any((marker in text for marker in _FALLBACK_SCHEMA_MARKERS))
 
 def _is_pass(report: ProbeReport) -> bool:

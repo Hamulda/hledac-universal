@@ -62,7 +62,27 @@ repos:
         files: "^rust_extensions/"
         pass_filenames: false
         require_serial: true
-        args: ["-c", "cd rust_extensions && cargo check"]
+        args: ["-c", "cd rust_extensions && cargo check --all-features"]
+        stages: [pre-commit]
+      - id: cargo-clippy
+        name: cargo clippy (rust_extensions)
+        entry: bash
+        language: system
+        types: [rust]
+        files: "^rust_extensions/"
+        pass_filenames: false
+        require_serial: true
+        args: ["-c", "cd rust_extensions && cargo clippy --all-targets --all-features -- -D warnings"]
+        stages: [pre-commit]
+      - id: cargo-fmt
+        name: cargo fmt --check (rust_extensions)
+        entry: bash
+        language: system
+        types: [rust]
+        files: "^rust_extensions/"
+        pass_filenames: false
+        require_serial: true
+        args: ["-c", "cd rust_extensions && cargo fmt --check"]
         stages: [pre-commit]
 
   # ── Shellcheck: shell scripts ─────────────────────────────────────────────

@@ -30,6 +30,19 @@ class _RustUrlDomain:
     def batch_classify(self, urls: list[str]) -> list[tuple[str, str]]:
         return self._ext.batch_classify(urls)
 
+    def looks_like_feed_url(self, url: str) -> bool:
+        return self._ext.looks_like_feed_url(url)
+
+    # is_valid_url, filter_valid, extract_domain not in Rust — use Python fallbacks
+    def is_valid_url(self, url: str) -> bool:
+        return _python_is_valid_url(url)
+
+    def filter_valid(self, urls: list[str]) -> list[str]:
+        return _python_filter_valid_urls(urls)
+
+    def extract_domain(self, url: str) -> str:
+        return _python_extract_domain(url)
+
 
 class _PythonUrlDomain:
     """Pure-Python URL normalization/fingerprint fallback."""
@@ -72,25 +85,14 @@ class _PythonUrlDomain:
     def extract_host(url: str) -> str:
         return _python_extract_host(url)
 
-    def priority_classify_urls(
-        self,
-        urls: list[tuple[str, float]],
-    ) -> list[tuple[str, float, str]]:
-        # Python fallback: sort by priority desc, then classify each URL in parallel.
-        if not urls:
-            return []
-        sorted_urls = sorted(urls, key=lambda x: x[1], reverse=True)
-        import concurrent.futures
+    @staticmethod
+    def looks_like_feed_url(url: str) -> bool:
+        return _python_looks_like_feed_url(url)
 
-        n_workers = min(2, max(1, len(sorted_urls) // 16))
-        with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as ex:
-            results = list(
-                ex.map(
-                    lambda item: (item[0], item[1], _python_classify_url(item[0])[0]),
-                    sorted_urls,
-                )
-            )
-        return results
+# priority_classify_urls is a module-level function exposed by rust_extensions.
+# _RustUrlDomain does NOT expose it as a method — use rust.priority_classify_urls()
+# directly if needed. The Python fallback is intentionally omitted (dead code,
+# never called in the codebase).
 
 # ------------------------------------------------------------------
 # Pure-Python URL helpers (moved from top of rust_backend.py)
@@ -199,6 +201,33 @@ def _python_extract_host(url: str) -> str:
         return urlparse(url).hostname or ""
     except Exception:  # noqa: BLE001
         return ""  # fail-soft: never raises
+
+
+_FEED_URL_RE = None  # lazily initialized
+
+
+def _get_feed_url_re():
+    global _FEED_URL_RE
+    if _FEED_URL_RE is None:
+        import re
+        _FEED_URL_RE = re.compile(
+            r"\.(rss|atom|xml|opensearch|sitemap)$",
+            re.IGNORECASE,
+        )
+    return _FEED_URL_RE
+
+
+@lru_cache(maxsize=8192)
+def _python_looks_like_feed_url(url: str) -> bool:
+    """Return True if URL path suggests an RSS/Atom/XML/Sitemap feed."""
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(url)
+        path = parsed.path.rstrip("/")
+        return bool(_get_feed_url_re().search(path))
+    except Exception:  # noqa: BLE001
+        return False  # fail-soft: never raises
 
 
 @lru_cache(maxsize=8192)

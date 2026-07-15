@@ -1,0 +1,60 @@
+# VT Code Configuration File
+# Saved from /config with readable section headings.
+# Every field includes descriptions, defaults, and known choices where available.
+
+# Agent Defaults
+# Primary model, prompt, and chat behavior.
+[agent]
+# Environment variable that stores the API key for the active provider
+# Default: "OPENROUTER_API_KEY"
+# Type: `string`
+api_key_env = "MINIMAX_API_KEY"
+
+# Default model to use
+# Default: "xiaomi/mimo-v2.5-pro"
+# Type: `string`
+default_model = "MiniMax-M3"
+
+# AI provider for single-agent sessions (gemini, openai, anthropic, openrouter, zai)
+# Possible values: anthropic, gemini, openai, openrouter, zai
+# Default: "openrouter"
+# Type: `string`
+provider = "minimax"
+
+# Reasoning effort level for models that support it (none, minimal, low, medium, high, xhigh, max)
+# Applies to: Claude, GPT-5 family, Gemini, Qwen3, DeepSeek with reasoning capability
+# Possible values: high, low, max, medium, minimal, none, xhigh
+# Default: "none"
+# Type: `string`
+reasoning_effort = "xhigh"
+
+# Persistent Memory
+# Per-repository memory summary, rollout staging, and learned durable notes.
+[agent.persistent_memory]
+# Toggle main-session persistent memory for this repository
+# Default: false
+# Type: `boolean`
+enabled = true
+
+
+# Features
+[features]
+# Master toggle for the memories subsystem. When true, VT Code extracts durable context from completed
+# threads and injects it into future sessions.
+# Default: false
+# Type: `boolean`
+memories = true
+
+
+# Provider Endpoints
+# Network and provider-specific API settings.
+[provider]
+# Anthropic
+# Anthropic-specific request settings.
+[provider.anthropic]
+# Claude Advisor
+# Anthropic server-side advisor tool: pair a faster executor model with a higher-intelligence advisor
+# for strategic guidance mid-generation.
+[provider.anthropic.advisor]
+enabled = true
+

@@ -1,0 +1,1834 @@
+"""
+Relationship Discovery Engine
+=============================
+
+Advanced relationship discovery and social network analysis system.
+
+Features:
+- Social network analysis (centrality metrics, cliques)
+- Communication pattern discovery
+- Co-occurrence analysis (entities appearing together)
+- Hidden path finding between entities (multi-hop)
+- Community detection (Louvain algorithm)
+- Affinity analysis
+- Influence propagation modeling
+
+ROLE: HELPER-ONLY
+  - Primary production caller: prefetch_oracle.py (RELATIONSHIP_DISCOVERY_AVAILABLE path)
+  - NOT on canonical sprint/autonomous_orchestrator.py hot path
+  - Re-exported via intelligence/__init__.py (lazy, try/except)
+  - identity_stitching.py uses Entity/Relationship from this module
+
+M1 8GB CEILING (ADVISORY — not hard-enforced):
+  - max_memory_mb=512 recommended; default 1024 is OVERSTATED for 8GB UMA
+  - scipy sparse adjacency: O(n²) float32 — large graphs exceed budget fast
+  - igraph graph: edges/vertices both count against RAM
+  - centrality cache: unbounded dict[str, Dict] — clear after large computations
+  - USE bounded collections, call optimize_memory() after graph builds
+
+MLX Integration:
+- MLX-accelerated similarity matrix computation
+- MLX for batch centrality calculations
+- Use mx.array for adjacency matrices where beneficial
+"""
+import asyncio
+import gc
+import logging
+import time
+from collections import OrderedDict, defaultdict
+from dataclasses import dataclass, field
+import msgspec
+from datetime import UTC, datetime
+from enum import Enum
+from pathlib import Path
+from itertools import combinations
+from typing import TYPE_CHECKING, Any
+if TYPE_CHECKING:
+    from scipy.sparse import csr_matrix, lil_matrix
+import numpy as np
+NETWORKX_AVAILABLE = True
+_nx = None
+
+def _get_nx():
+    """Lazy networkx importer — imported only when first graph method is called."""
+    global _nx
+    if _nx is None:
+        import networkx as _nx_mod
+        _nx = _nx_mod
+    return _nx
+_SESSION_ENGINE: RelationshipDiscoveryEngine | None = None
+
+def get_session_relationship_engine() -> RelationshipDiscoveryEngine:
+    """
+    Get or create the module-level session RelationshipDiscoveryEngine singleton.
+
+    Used by GraphService to sync DuckPGQ upserts → NetworkX session graph
+    for cross-sprint relationship discovery.
+    """
+    global _SESSION_ENGINE
+    if _SESSION_ENGINE is None:
+        _SESSION_ENGINE = RelationshipDiscoveryEngine(use_sparse=True, max_memory_mb=512)
+    return _SESSION_ENGINE
+
+# igraph — strict import with fallback
+try:
+    import igraph as ig
+    IGRAPH_AVAILABLE = True
+except ImportError:
+    ig = None
+    IGRAPH_AVAILABLE = False
+
+SCIPY_AVAILABLE = True
+_sparse_mod = None
+
+def _get_sparse():
+    """Lazy scipy.sparse loader — defers ~144 module load until first use."""
+    global _sparse_mod
+    if _sparse_mod is None:
+        try:
+            from scipy import sparse as _sparse
+            _sparse_mod = _sparse
+        except ImportError:
+            _sparse_mod = None
+            globals()['SCIPY_AVAILABLE'] = False
+    return _sparse_mod
+
+def _get_csr_matrix():
+    """Lazy csr_matrix loader."""
+    sp = _get_sparse()
+    if sp is not None:
+        return sp.csr_matrix
+    return None
+
+def _make_pair(entity_a: str, entity_b: str) -> tuple[str, str]:
+    """
+    Create a deterministic (sorted) pair tuple.
+
+    Replaces tuple(sorted([a, b])) which allocates a temporary list.
+    O(1) comparison vs O(n log n) sort, but for n=2 the main benefit
+    is avoiding allocation overhead in tight loops.
+    """
+    return (entity_a, entity_b) if entity_a < entity_b else (entity_b, entity_a)
+
+def _get_lil_matrix():
+    """Lazy lil_matrix loader."""
+    sp = _get_sparse()
+    if sp is not None:
+        return sp.lil_matrix
+    return None
+
+def _idx_discard(index, key):
+    """Pop key from `index` if present, regardless of underlying type.
+
+    Works for both `set` (.discard) and `OrderedDict` (pop with default).
+    """
+    if isinstance(index, OrderedDict):
+        index.pop(key, None)
+        return
+    try:
+        index.discard(key)
+    except AttributeError:
+        try:
+            del index[key]
+        except KeyError:
+            return
+
+# community (python-louvain) — strict import with fallback
+try:
+    from community import community_louvain
+    LOUVAIN_AVAILABLE = True
+except ImportError:
+    community_louvain = None
+    LOUVAIN_AVAILABLE = False
+
+# mlx — strict import with fallback
+try:
+    import mlx.core as mx
+    MLX_AVAILABLE = True
+except ImportError:
+    mx = None
+    MLX_AVAILABLE = False
+
+logger = logging.getLogger(__name__)
+
+class EntityType(Enum):
+    """Types of entities in the relationship graph."""
+    PERSON = 'person'
+    ORGANIZATION = 'organization'
+    LOCATION = 'location'
+    ASSET = 'asset'
+    DIGITAL_IDENTITY = 'digital_identity'
+    EVENT = 'event'
+    DOCUMENT = 'document'
+    UNKNOWN = 'unknown'
+
+class RelationshipType(Enum):
+    """Types of relationships between entities."""
+    KNOWS = 'knows'
+    WORKS_FOR = 'works_for'
+    OWNS = 'owns'
+    LOCATED_AT = 'located_at'
+    COMMUNICATED_WITH = 'communicated_with'
+    RELATED_TO = 'related_to'
+    FAMILY = 'family'
+    BUSINESS_PARTNER = 'business_partner'
+    INFLUENCES = 'influences'
+    ATTENDED = 'attended'
+    MENTIONED_IN = 'mentioned_in'
+    CO_OCCURS_WITH = 'co_occurs_with'
+
+@dataclass(slots=True)
+class Entity:
+    """Represents an entity in the relationship graph."""
+    id: str
+    type: str | EntityType
+    attributes: dict[str, Any] = field(default_factory=dict)
+    sources: list[str] = field(default_factory=list)
+    created_at: datetime = field(default_factory=datetime.now)
+    updated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.type, str):
+            try:
+                self.type = EntityType(self.type)
+            except ValueError:
+                self.type = EntityType.UNKNOWN
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert entity to dictionary."""
+        return {'id': self.id, 'type': self.type.value if isinstance(self.type, EntityType) else self.type, 'attributes': self.attributes, 'sources': self.sources, 'created_at': self.created_at.isoformat() if self.created_at else None, 'updated_at': self.updated_at.isoformat() if self.updated_at else None}
+
+@dataclass(slots=True)
+class Relationship:
+    """Represents a relationship between two entities."""
+    source: str
+    target: str
+    type: str | RelationshipType
+    strength: float = 1.0
+    evidence: list[str] = field(default_factory=list)
+    confidence: float = 0.5
+    first_seen: datetime | None = None
+    last_seen: datetime | None = None
+    attributes: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.type, str):
+            try:
+                self.type = RelationshipType(self.type)
+            except ValueError:
+                self.type = RelationshipType.RELATED_TO
+        if self.first_seen is None:
+            self.first_seen = datetime.now(UTC)
+        if self.last_seen is None:
+            self.last_seen = datetime.now(UTC)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert relationship to dictionary."""
+        return {'source': self.source, 'target': self.target, 'type': self.type.value if isinstance(self.type, RelationshipType) else self.type, 'strength': self.strength, 'evidence': self.evidence, 'confidence': self.confidence, 'first_seen': self.first_seen.isoformat() if self.first_seen else None, 'last_seen': self.last_seen.isoformat() if self.last_seen else None, 'attributes': self.attributes}
+
+    def __hash__(self) -> int:
+        return hash((self.source, self.target, self.type.value if isinstance(self.type, RelationshipType) else self.type))
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Relationship):
+            return False
+        return self.source == other.source and self.target == other.target and (self.type == other.type)
+
+@dataclass(slots=True)
+class ConnectionPath:
+    """Represents a path between two entities through the graph."""
+    entities: list[str]
+    relationships: list[Relationship]
+    total_strength: float
+    path_length: int
+    confidence: float = 0.0
+    path_type: str = 'unknown'
+
+    def __post_init__(self) -> None:
+        if not self.confidence and self.relationships:
+            self.confidence = sum((r.confidence for r in self.relationships)) / len(self.relationships)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert path to dictionary."""
+        return {'entities': self.entities, 'relationships': [r.to_dict() for r in self.relationships], 'total_strength': self.total_strength, 'path_length': self.path_length, 'confidence': self.confidence, 'path_type': self.path_type}
+
+@dataclass(frozen=True, slots=True)
+class Community:
+    """Represents a detected community in the graph."""
+    id: int
+    members: set[str]
+    density: float = 0.0
+    centrality: float = 0.0
+    cohesion: float = 0.0
+    entity_types: dict[str, int] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert community to dictionary."""
+        return {'id': self.id, 'members': list(self.members), 'size': len(self.members), 'density': self.density, 'centrality': self.centrality, 'cohesion': self.cohesion, 'entity_types': self.entity_types}
+
+@dataclass(frozen=True, slots=True)
+class AffinityMatrix:
+    """Represents affinity scores between entities of a specific type."""
+    entity_type: str
+    entities: list[str]
+    matrix: np.ndarray
+    metric: str = 'cooccurrence'
+
+    def get_top_pairs(self, n: int=10) -> list[tuple[str, str, float]]:
+        """Get top N entity pairs by affinity score."""
+        pairs = [(ent_a, ent_b, self.matrix[i, j]) for (i, ent_a), (j, ent_b) in combinations(enumerate(self.entities), 2)]
+        pairs.sort(key=lambda x: x[2], reverse=True)
+        return pairs[:n]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert affinity matrix to dictionary."""
+        return {'entity_type': self.entity_type, 'entities': self.entities, 'matrix': self.matrix.tolist(), 'metric': self.metric}
+
+@dataclass(frozen=True, slots=True)
+class Communication:
+    """Represents a communication event between entities."""
+    sender: str
+    recipients: list[str]
+    timestamp: datetime
+    communication_type: str = 'email'
+    metadata: dict[str, Any] = field(default_factory=dict)
+    content_hash: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert communication to dictionary."""
+        return {'sender': self.sender, 'recipients': self.recipients, 'timestamp': self.timestamp.isoformat() if self.timestamp else None, 'communication_type': self.communication_type, 'metadata': self.metadata, 'content_hash': self.content_hash}
+
+@dataclass(frozen=True, slots=True)
+class Document:
+    """Represents a document containing entity mentions."""
+    id: str
+    content: str
+    entities: list[str] = field(default_factory=list)
+    timestamp: datetime | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert document to dictionary."""
+        return {'id': self.id, 'content': self.content, 'entities': self.entities, 'timestamp': self.timestamp.isoformat() if self.timestamp else None, 'metadata': self.metadata}
+
+@dataclass(frozen=True, slots=True)
+class InfluenceModel:
+    """Represents influence propagation model results."""
+    seed_entities: list[str]
+    influence_scores: dict[str, float]
+    propagation_paths: list[ConnectionPath]
+    iterations: int
+    convergence_delta: float
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert influence model to dictionary."""
+        return {'seed_entities': self.seed_entities, 'influence_scores': self.influence_scores, 'propagation_paths': [p.to_dict() for p in self.propagation_paths], 'iterations': self.iterations, 'convergence_delta': self.convergence_delta}
+
+# datasketch — strict import with fallback
+try:
+    from datasketch import MinHash, MinHashLSH
+    LSH_AVAILABLE = True
+except ImportError:
+    MinHash = None
+    MinHashLSH = None
+    LSH_AVAILABLE = False
+
+if not LSH_AVAILABLE:
+    logger.warning('[LSH] datasketch not installed, LSH prediction disabled')
+
+class LSHLinkPredictor:
+    """Fast candidate generation for link prediction using MinHash LSH."""
+    __slots__ = tuple(('lsh', 'node_to_minhash', 'num_perm', 'threshold'))
+
+    def __init__(self, threshold: float=0.7, num_perm: int=128):
+        self.threshold = threshold
+        self.num_perm = num_perm
+        self.lsh = None
+        self.node_to_minhash = {}
+
+    def _node_to_minhash(self, graph: Any, node: int) -> Any:
+        """Create MinHash from node's neighbors."""
+        m = MinHash(num_perm=self.num_perm)
+        for neighbor in graph.neighbors(node):
+            m.update(str(neighbor).encode())
+        return m
+
+    def build_index(self, graph: Any):
+        """Build LSH index from graph."""
+        if not LSH_AVAILABLE:
+            return
+        self.lsh = MinHashLSH(threshold=self.threshold, num_perm=self.num_perm)
+        self.node_to_minhash = {}
+        for node in range(graph.vcount()):
+            m = self._node_to_minhash(graph, node)
+            self.node_to_minhash[node] = m
+            self.lsh.insert(node, m)
+
+    def get_candidates(self, node: int) -> set[int]:
+        """Return candidate nodes for prediction (≤1% of total)."""
+        if not LSH_AVAILABLE or self.lsh is None or node not in self.node_to_minhash:
+            return set()
+        return set(self.lsh.query(self.node_to_minhash[node]))
+
+class GNNPredictorWrapper:
+    """Wrapper for GNN predictor with training and prediction."""
+    __slots__ = tuple(('_entity_id_to_idx', 'hidden_dim', 'in_dim', 'predictor'))
+
+    def __init__(self, in_dim: int=64, hidden_dim: int=32):
+        self.in_dim = in_dim
+        self.hidden_dim = hidden_dim
+        self.predictor = None
+        self._entity_id_to_idx = {}
+
+    async def enable(self, scheduler=None):
+        """Initialize GNN predictor."""
+        try:
+            from hledac.universal.brain.gnn_predictor import GNNPredictor
+            self.predictor = GNNPredictor(in_dim=self.in_dim, hidden_dim=self.hidden_dim, out_dim=1)
+            if scheduler:
+                self.predictor.set_scheduler(scheduler)
+            logger.info('GNN predictor enabled')
+        except ImportError:
+            logger.warning('GNN predictor not available (MLX not installed)')
+
+    async def prepare_training_data(self, entities: dict[str, Entity], relationships: dict[str, list[Relationship]]):
+        """Prepare training data for GNN."""
+        if not self.predictor:
+            return (None, None, None)
+        import numpy as np
+        self._entity_id_to_idx = {eid: i for i, eid in enumerate(entities.keys())}
+        n_nodes = len(entities)
+        pos_edges = []
+        for source_id, rels in relationships.items():
+            source_idx = self._entity_id_to_idx.get(source_id)
+            if source_idx is None:
+                continue
+            for rel in rels:
+                target_idx = self._entity_id_to_idx.get(rel.target)
+                if target_idx is not None:
+                    pos_edges.append((source_idx, target_idx))
+        import random
+        neg_edges = []
+        all_pairs = set()
+        for u, v in pos_edges:
+            all_pairs.add((u, v))
+            all_pairs.add((v, u))
+        while len(neg_edges) < len(pos_edges):
+            u = random.randint(0, n_nodes - 1)
+            v = random.randint(0, n_nodes - 1)
+            if u != v and (u, v) not in all_pairs:
+                neg_edges.append((u, v))
+                all_pairs.add((u, v))
+        all_edges = pos_edges + neg_edges
+        feature_dim = 10
+        features_np = np.zeros((n_nodes, feature_dim), dtype=np.float32)
+        for i, entity in enumerate(entities.values()):
+            type_val = hash(str(entity.type)) % feature_dim
+            features_np[i, type_val] = 1.0
+        labels_np = np.zeros(n_nodes, dtype=np.float32)
+        for u, v in pos_edges:
+            labels_np[u] = 1.0
+            labels_np[v] = 1.0
+        return (all_edges, features_np, labels_np)
+
+    async def predict(self, node_ids: list[str], edges: list[tuple[int, int]]) -> list[tuple[str, str, float]]:
+        """Predict hidden relationships."""
+        if not self.predictor or not self.predictor.trained:
+            return []
+        node_indices = [self._entity_id_to_idx.get(nid) for nid in node_ids]
+        node_indices = [i for i in node_indices if i is not None]
+        if not node_indices:
+            return []
+        try:
+            pred = self.predictor.predict(node_indices, edges)
+            predictions = []
+            n = len(node_indices)
+            for i in range(n):
+                for j in range(i + 1, n):
+                    score = float(pred[i, j]) if hasattr(pred, '__getitem__') else float(pred)
+                    if score > 0.5:
+                        predictions.append((node_ids[i], node_ids[j], score))
+            predictions.sort(key=lambda x: x[2], reverse=True)
+            return predictions[:10]
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+            logger.warning(f'GNN prediction failed: {e}')
+            return []
+
+class RelationshipDiscoveryEngine:
+    """
+    Advanced relationship discovery and social network analysis engine.
+
+    This engine provides comprehensive capabilities for discovering and analyzing
+    relationships between entities, including social network analysis, community
+    detection, hidden path finding, and influence propagation modeling.
+
+    M1 8GB Optimizations:
+    - Uses scipy.sparse for large graphs to minimize memory usage
+    - Streaming graph construction for incremental updates
+    - Memory-efficient algorithms with lazy evaluation
+    - MLX acceleration where beneficial for matrix operations
+
+    Example:
+        engine = RelationshipDiscoveryEngine()
+
+        # Add entities
+        engine.add_entity(Entity("user1", "person", {"name": "Alice"}))
+        engine.add_entity(Entity("user2", "person", {"name": "Bob"}))
+
+        # Add relationships
+        engine.add_relationship(Relationship("user1", "user2", "knows", strength=0.8))
+
+        # Analyze
+        centrality = engine.calculate_centrality("betweenness")
+        communities = engine.detect_communities()
+        paths = engine.find_hidden_paths("user1", "user2", max_depth=3)
+    """
+    __slots__ = tuple(('_adjacency_matrix', '_affinity_cache', '_centrality_cache', '_community_cache', '_entities', '_entity_id_to_idx', '_idx_to_entity_id', '_igraph_graph', '_nx_graph', '_relationship_index', '_relationships', '_stats', 'enable_mlx', 'gnn_predictor', 'lazy_evaluation', 'max_memory_mb', 'url_to_node', 'use_gnn_threshold', 'use_sparse'))
+
+    def __init__(self, use_sparse: bool=True, max_memory_mb: int=512, enable_mlx: bool=True, lazy_evaluation: bool=True):
+        """
+        Initialize the Relationship Discovery Engine.
+
+        Args:
+            use_sparse: Use scipy.sparse for large graphs (memory efficient)
+            max_memory_mb: ADVISORY ceiling in MB — not hard-enforced.
+                           512MB recommended for M1 8GB UMA; 1024 is too aggressive.
+            enable_mlx: Enable MLX acceleration where available
+            lazy_evaluation: Defer expensive computations until needed
+        """
+        self.use_sparse = use_sparse and SCIPY_AVAILABLE
+        self.max_memory_mb = max_memory_mb
+        self.enable_mlx = enable_mlx and MLX_AVAILABLE
+        self.lazy_evaluation = lazy_evaluation
+        self._entities: dict[str, Entity] = {}
+        self._relationships: dict[str, list[Relationship]] = defaultdict(list)
+        self._relationship_index: OrderedDict[tuple[str, str, str], None] = OrderedDict()
+        self.url_to_node: dict[str, str] = {}
+        self._nx_graph: Any | None = None
+        self._igraph_graph: Any | None = None
+        self._adjacency_matrix: np.ndarray | csr_matrix | None = None
+        self._entity_id_to_idx: dict[str, int] = {}
+        self._idx_to_entity_id: dict[int, str] = {}
+        self._centrality_cache: dict[str, dict[str, float]] = {}
+        self._community_cache: list[Community] | None = None
+        self._affinity_cache: dict[str, AffinityMatrix] = {}
+        self._stats = {'entities_added': 0, 'relationships_added': 0, 'graphs_built': 0, 'centrality_calculations': 0, 'community_detections': 0, 'path_searches': 0}
+        self.gnn_predictor = None
+        self.use_gnn_threshold = 500
+        logger.info(f'RelationshipDiscoveryEngine initialized (sparse={self.use_sparse}, mlx={self.enable_mlx})')
+
+    def _save_graph(self, path: str) -> None:
+        """
+        Save the current graph to disk.
+
+        Format policy (F-BLOOM-REGRESSION companion):
+          * igraph -> ``write_picklez`` (igraph's native compact format, NOT
+            the Python ``pickle`` module — no exec surface).
+          * NetworkX -> ``_graph_serde.save_nx_graph_jsonl`` (JSON via orjson,
+            zero-copy, no ``pickle`` interpreter surface).
+          * Fallback: igraph instance saved via JSON if available.
+
+        Both paths bounded, fail-soft. Never raises.
+        """
+        if IGRAPH_AVAILABLE and self._igraph_graph is not None and (self._nx_graph is None):
+            try:
+                self._igraph_graph.write_picklez(path)
+                return
+            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+                logger.warning('[RelDiscovery] igraph write_picklez failed: %s', e)
+        try:
+            from ._graph_serde import save_nx_graph_jsonl
+        except ImportError:
+            from recon._graph_serde import save_nx_graph_jsonl
+        if NETWORKX_AVAILABLE and self._nx_graph is not None:
+            ok = save_nx_graph_jsonl(path, self._nx_graph, max_nodes=self.MAX_NODES)
+            if not ok:
+                raise RuntimeError('Graph save failed (NetworkX path)')
+            return
+        if self._igraph_graph is not None and NETWORKX_AVAILABLE:
+            from networkx import Graph as _NX
+            tmp_nx = _NX()
+            tmp_nx.add_nodes_from(self._igraph_graph.vs.indices)
+            tmp_nx.add_edges_from(self._igraph_graph.get_edgelist())
+            ok = save_nx_graph_jsonl(path, tmp_nx, max_nodes=self.MAX_NODES)
+            if not ok:
+                raise RuntimeError('Graph save failed (igraph->NX path)')
+            return
+        raise RuntimeError('No graph available to save')
+
+    def _load_graph(self, path: str) -> bool:
+        """
+        Load a graph from disk.
+
+        Format policy (F-BLOOM-REGRESSION companion):
+          * Our JSON envelope (orjson + node_link) is the canonical read path.
+            No ``pickle.load`` exec surface.
+          * igraph native ``Graph.Load`` (NOT Python pickle) is used for files
+            that don't match our JSON magic.
+          * Legacy ``.pkl`` (Python pickle) is only accepted as a one-shot
+            migration and ONLY on F196B-safe paths (``~/.hledac/graphs``).
+
+        SECURITY: F196B — legacy pickle is rejected outside the application's
+        graph directory. New code never writes Python pickle.
+        """
+        from pathlib import Path
+        graph_base_dir = Path('~/.hledac/graphs').expanduser()
+        resolved_path = Path(path).resolve()
+        resolved_base = graph_base_dir.resolve()
+        is_safe_path = str(resolved_path).startswith(str(resolved_base) + '/')
+        try:
+            from ._graph_serde import is_our_format, load_nx_graph_jsonl
+        except ImportError:
+            from recon._graph_serde import is_our_format, load_nx_graph_jsonl
+        if NETWORKX_AVAILABLE and is_our_format(path):
+            loaded = load_nx_graph_jsonl(path, max_nodes=self.MAX_NODES)
+            if loaded is not None:
+                self._nx_graph = loaded
+                return True
+        if IGRAPH_AVAILABLE:
+            try:
+                if is_safe_path:
+                    self._igraph_graph = ig.Graph.Load(path)
+                    return True
+                else:
+                    logger.warning(f'[F196B] igraph load rejected for path outside graphs dir: {path}')
+            except Exception:  # noqa: BLE001 — best-effort; igraph load failure is non-fatal
+                pass
+        if is_safe_path and NETWORKX_AVAILABLE:
+            try:
+                from recon._graph_serde import load_nx_graph_jsonl
+                obj = load_nx_graph_jsonl(str(path), max_nodes=self.MAX_NODES)
+                if obj is not None:
+                    self._nx_graph = obj
+                    return True
+            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+                logger.warning('[F196B] legacy JSON load failed: %s', e)
+        elif not is_safe_path:
+            logger.warning(f'[F196B] legacy pickle load rejected for unsafe path: {path}')
+        if is_safe_path:
+            try:
+                from recon._graph_serde import load_nx_graph_jsonl
+                loaded = load_nx_graph_jsonl(str(path), max_nodes=self.MAX_NODES)
+                if loaded is not None:
+                    self._nx_graph = loaded
+                    return True
+            except Exception:  # noqa: BLE001 — best-effort; networkx JSON load failure is non-fatal
+                pass
+        else:
+            logger.warning(f'[F196B] Pickle fallback rejected for unsafe path: {path}')
+        return False
+
+    def add_entity(self, entity: Entity) -> bool:
+        """
+        Add an entity to the engine.
+
+        Args:
+            entity: Entity to add
+
+        Returns:
+            True if added, False if already exists
+        """
+        if entity.id in self._entities:
+            logger.debug(f'Entity {entity.id} already exists, updating')
+            self._entities[entity.id].attributes.update(entity.attributes)
+            self._entities[entity.id].sources.extend(entity.sources)
+            self._entities[entity.id].updated_at = datetime.now(UTC)
+            return False
+        self._entities[entity.id] = entity
+        self._stats['entities_added'] += 1
+        self._invalidate_caches()
+        logger.debug(f'Added entity: {entity.id} ({entity.type})')
+        return True
+
+    def add_document(self, url: str, node_id: str) -> None:
+        """S49-E: Track URL to node mapping for quick lookup."""
+        self.url_to_node[url] = node_id
+
+    async def flag_manipulated_image(self, url: str, ela_score: float) -> None:
+        """S49-C: Flag manipulated image in graph and reduce credibility.
+
+        Args:
+            url: URL of the manipulated image
+            ela_score: ELA score (0-1, higher = more likely manipulated)
+        """
+        node_id = self.url_to_node.get(url)
+        if not node_id:
+            logger.warning(f'Node for URL {url} not found, cannot flag manipulation')
+            return
+        node = self._entities.get(node_id)
+        if node:
+            node.attributes['manipulation_flag'] = ela_score
+            if 'credibility' in node.attributes:
+                node.attributes['credibility'] *= 1 - ela_score * 0.5
+            logger.info(f'ELA[{ela_score:.3f}] flagged {url}, credibility updated')
+
+    async def enable_gnn(self, scheduler=None):
+        """
+        Inicializuje GNN prediktor a spustí trénink na pozadí, pokud je graf dostatečně velký.
+
+        Args:
+            scheduler: Volitelný scheduler pro background training
+        """
+        if self.gnn_predictor is None:
+            self.gnn_predictor = GNNPredictorWrapper()
+            await self.gnn_predictor.enable(scheduler)
+        if len(self._entities) >= self.use_gnn_threshold:
+            edges, features, labels = await self.gnn_predictor.prepare_training_data(self._entities, self._relationships)
+            if edges:
+                self.gnn_predictor.predictor.trigger_training(edges, features, labels)
+
+    async def predict_with_gnn(self, max_predictions: int=10) -> list[tuple[str, str, float]]:
+        """
+        Použije GNN k predikci skrytých spojení.
+
+        Args:
+            max_predictions: Maximální počet predikcí
+
+        Returns:
+            Seznam tuple (source_id, target_id, score)
+        """
+        if not self.gnn_predictor or not self.gnn_predictor.predictor:
+            return []
+        if not self.gnn_predictor.predictor.trained:
+            return []
+        edges = []
+        for source_id, rels in self._relationships.items():
+            source_idx = self.gnn_predictor._entity_id_to_idx.get(source_id)
+            if source_idx is None:
+                continue
+            for rel in rels:
+                target_idx = self.gnn_predictor._entity_id_to_idx.get(rel.target)
+                if target_idx is not None:
+                    edges.append((source_idx, target_idx))
+        node_ids = list(self._entities.keys())
+        return await self.gnn_predictor.predict(node_ids, edges)
+
+    def add_relationship(self, relationship: Relationship) -> bool:
+        """
+        Add a relationship between entities.
+
+        Args:
+            relationship: Relationship to add
+
+        Returns:
+            True if added, False if already exists
+        """
+        if relationship.source not in self._entities:
+            logger.warning(f'Source entity {relationship.source} not found, creating placeholder')
+            self.add_entity(Entity(relationship.source, EntityType.UNKNOWN))
+        if relationship.target not in self._entities:
+            logger.warning(f'Target entity {relationship.target} not found, creating placeholder')
+            self.add_entity(Entity(relationship.target, EntityType.UNKNOWN))
+        rel_key = (relationship.source, relationship.target, str(relationship.type))
+        if rel_key in self._relationship_index:
+            for existing in self._relationships[relationship.source]:
+                if existing.target == relationship.target and existing.type == relationship.type:
+                    existing.strength = max(existing.strength, relationship.strength)
+                    existing.confidence = max(existing.confidence, relationship.confidence)
+                    existing.evidence.extend(relationship.evidence)
+                    existing.last_seen = datetime.now(UTC)
+            self._relationship_index.move_to_end(rel_key)
+            return False
+        self._relationships[relationship.source].append(relationship)
+        self._relationship_index[rel_key] = None
+        if len(self._relationship_index) > self.MAX_RELATIONSHIPS:
+            self._relationship_index.popitem(last=False)
+        self._stats['relationships_added'] += 1
+        if relationship.type in [RelationshipType.KNOWS, RelationshipType.RELATED_TO, RelationshipType.CO_OCCURS_WITH]:
+            reverse = Relationship(source=relationship.target, target=relationship.source, type=relationship.type, strength=relationship.strength, confidence=relationship.confidence)
+            self._relationships[relationship.target].append(reverse)
+        self._invalidate_caches()
+        logger.debug(f'Added relationship: {relationship.source} -> {relationship.target}')
+        return True
+
+    def get_entity(self, entity_id: str) -> Entity | None:
+        """Get an entity by ID."""
+        return self._entities.get(entity_id)
+
+    def get_relationships(self, entity_id: str | None=None, relationship_type: RelationshipType | None=None) -> list[Relationship]:
+        """
+        Get relationships, optionally filtered by entity or type.
+
+        Args:
+            entity_id: Filter by source entity
+            relationship_type: Filter by relationship type
+
+        Returns:
+            List of matching relationships
+        """
+        if entity_id:
+            rels = self._relationships.get(entity_id, [])
+        else:
+            rels = [r for rel_list in self._relationships.values() for r in rel_list]
+        if relationship_type:
+            rels = [r for r in rels if r.type == relationship_type]
+        return rels
+
+    def remove_entity(self, entity_id: str) -> bool:
+        """Remove an entity and all its relationships."""
+        if entity_id not in self._entities:
+            return False
+        del self._entities[entity_id]
+        if entity_id in self._relationships:
+            for rel in self._relationships[entity_id]:
+                self._idx_discard(self._relationship_index, (rel.source, rel.target, str(rel.type)))
+            del self._relationships[entity_id]
+        for source_id, rels in list(self._relationships.items()):
+            self._relationships[source_id] = [r for r in rels if r.target != entity_id]
+            for r in rels:
+                if r.target == entity_id:
+                    self._idx_discard(self._relationship_index, (r.source, r.target, str(r.type)))
+        self._invalidate_caches()
+        return True
+
+    def discover_from_communications(self, communications: list[Communication], min_communications: int=1, time_window_days: int | None=None) -> list[Relationship]:
+        """
+        Discover relationships from communication patterns.
+
+        Args:
+            communications: List of communication events
+            min_communications: Minimum communications to establish relationship
+            time_window_days: Optional time window for analysis
+
+        Returns:
+            List of discovered relationships
+        """
+        discovered: list[Relationship] = []
+        communication_counts: dict[tuple[str, str], int] = defaultdict(int)
+        communication_evidence: dict[tuple[str, str], list[str]] = defaultdict(list)
+        now = datetime.now(UTC)
+        for comm in communications:
+            if time_window_days and comm.timestamp:
+                days_diff = (now - comm.timestamp).days
+                if days_diff > time_window_days:
+                    continue
+            for recipient in comm.recipients:
+                pair = _make_pair(comm.sender, recipient)
+                communication_counts[pair] += 1
+                evidence = f"{comm.communication_type}:{(comm.timestamp.isoformat() if comm.timestamp else 'unknown')}"
+                communication_evidence[pair].append(evidence)
+                if comm.sender not in self._entities:
+                    self.add_entity(Entity(comm.sender, EntityType.DIGITAL_IDENTITY))
+                if recipient not in self._entities:
+                    self.add_entity(Entity(recipient, EntityType.DIGITAL_IDENTITY))
+        for (entity_a, entity_b), count in communication_counts.items():
+            if count >= min_communications:
+                strength = min(1.0, count / 10.0)
+                confidence = min(1.0, 0.3 + count / 20.0)
+                rel = Relationship(source=entity_a, target=entity_b, type=RelationshipType.COMMUNICATED_WITH, strength=strength, evidence=communication_evidence[entity_a, entity_b], confidence=confidence)
+                if self.add_relationship(rel):
+                    discovered.append(rel)
+        logger.info(f'Discovered {len(discovered)} relationships from {len(communications)} communications')
+        return discovered
+
+    def discover_from_cooccurrence(self, documents: list[Document], min_cooccurrence: int=1, window_size: int | None=None) -> list[Relationship]:
+        """
+        Discover relationships from entity co-occurrence in documents.
+
+        Args:
+            documents: List of documents containing entity mentions
+            min_cooccurrence: Minimum co-occurrences to establish relationship
+            window_size: Optional context window size for co-occurrence
+
+        Returns:
+            List of discovered relationships
+        """
+        discovered: list[Relationship] = []
+        cooccurrence_counts: dict[tuple[str, str], int] = defaultdict(int)
+        cooccurrence_docs: dict[tuple[str, str], set[str]] = defaultdict(set)
+        for doc in documents:
+            entities = doc.entities
+            if window_size and len(entities) > window_size:
+                for window in (entities[i:i + window_size] for i in range(len(entities) - window_size + 1)):
+                    for j, entity_a in enumerate(window):
+                        for entity_b in window[j + 1:]:
+                            pair = _make_pair(entity_a, entity_b)
+                            cooccurrence_counts[pair] += 1
+                            cooccurrence_docs[pair].add(doc.id)
+            else:
+                for i, entity_a in enumerate(entities):
+                    for entity_b in entities[i + 1:]:
+                        pair = _make_pair(entity_a, entity_b)
+                        cooccurrence_counts[pair] += 1
+                        cooccurrence_docs[pair].add(doc.id)
+            for entity_id in entities:
+                if entity_id not in self._entities:
+                    self.add_entity(Entity(entity_id, EntityType.UNKNOWN))
+        for (entity_a, entity_b), count in cooccurrence_counts.items():
+            if count >= min_cooccurrence:
+                strength = min(1.0, count / 5.0)
+                confidence = min(1.0, 0.4 + count / 10.0)
+                rel = Relationship(source=entity_a, target=entity_b, type=RelationshipType.CO_OCCURS_WITH, strength=strength, evidence=list(cooccurrence_docs[entity_a, entity_b]), confidence=confidence)
+                if self.add_relationship(rel):
+                    discovered.append(rel)
+        logger.info(f'Discovered {len(discovered)} relationships from {len(documents)} documents')
+        return discovered
+
+    def _build_networkx_graph(self) -> Any:
+        """Build NetworkX graph (lazy evaluation)."""
+        if self._nx_graph is not None:
+            return self._nx_graph
+        if not NETWORKX_AVAILABLE:
+            raise ImportError('NetworkX is required for graph operations')
+        start_time = time.time()
+        nx = _get_nx()
+        graph = nx.DiGraph()
+        for entity_id, entity in self._entities.items():
+            graph.add_node(entity_id, type=entity.type.value if isinstance(entity.type, EntityType) else entity.type, **entity.attributes)
+        for _source_id, rels in self._relationships.items():
+            for rel in rels:
+                graph.add_edge(rel.source, rel.target, weight=rel.strength, type=rel.type.value if isinstance(rel.type, RelationshipType) else rel.type, confidence=rel.confidence)
+        self._nx_graph = graph
+        self._stats['graphs_built'] += 1
+        logger.debug(f'Built NetworkX graph in {time.time() - start_time:.3f}s')
+        return graph
+
+    def _build_igraph_graph(self) -> Any:
+        """Build igraph graph (M1 optimized, preferred over networkx when available)."""
+        if self._igraph_graph is not None:
+            return self._igraph_graph
+        if not IGRAPH_AVAILABLE:
+            logger.warning('igraph not available, falling back to networkx')
+            return self._build_networkx_graph()
+        try:
+            start_time = time.time()
+            graph = ig.Graph(directed=False)
+            entity_ids = list(self._entities.keys())
+            graph.add_vertices(len(entity_ids))
+            graph.vs['id'] = entity_ids
+            entity_types = [e.type.value if isinstance(e.type, EntityType) else e.type for e in self._entities.values()]
+            graph.vs['type'] = entity_types
+            edges = []
+            edge_weights = []
+            for source_id, rels in self._relationships.items():
+                for rel in rels:
+                    if source_id in entity_ids and rel.target in entity_ids:
+                        source_idx = entity_ids.index(source_id)
+                        target_idx = entity_ids.index(rel.target)
+                        edges.append((source_idx, target_idx))
+                        edge_weights.append(rel.strength)
+            if edges:
+                graph.add_edges(edges)
+                graph.es['weight'] = edge_weights
+            self._igraph_graph = graph
+            self._stats['graphs_built'] += 1
+            logger.debug(f'Built igraph graph in {time.time() - start_time:.3f}s')
+            return graph
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+            logger.warning(f'igraph build failed: {e}, falling back to networkx')
+            return self._build_networkx_graph()
+
+    def _adamic_adar(self, graph: Any, u: int, v: int) -> float:
+        """Compute Adamic/Adar score for non-adjacent vertices."""
+        if IGRAPH_AVAILABLE and isinstance(graph, ig.Graph):
+            neighbors_u = set(graph.neighbors(u))
+            neighbors_v = set(graph.neighbors(v))
+            common = neighbors_u & neighbors_v
+            score = 0.0
+            for w in common:
+                degree = graph.degree(w)
+                if degree > 1:
+                    score += 1.0 / np.log(degree)
+            return score
+        else:
+            return 0.0
+
+    def get_source_credibility(self, source: str) -> float:
+        """Get credibility score for source from bandit."""
+        if hasattr(self, '_source_bandit') and self._source_bandit:
+            return self._source_bandit.get_credibility(source)
+        return 0.5
+
+    def _add_predicted_edge(self, u: int, v: int, score: float):
+        """Add predicted edge to graph."""
+        if hasattr(self, '_igraph_graph') and self._igraph_graph and IGRAPH_AVAILABLE:
+            try:
+                self._igraph_graph.add_edge(u, v)
+                e = self._igraph_graph.es[self._igraph_graph.ecount() - 1]
+                e['predicted'] = True
+                e['confidence'] = score
+            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+                logger.warning(f'[PREDICT] Failed to add edge: {e}')
+
+    async def predict_hidden_connections(
+        self, max_predictions: int = 10, method: str = 'auto'
+    ) -> list[tuple[str, str, float]]:
+        """
+        Predict hidden connections using best available method.
+
+        Method routing (auto):
+            - V < 50:           brute-force 'slow' (baseline, no LSH overhead)
+            - 50 <= V < 500:    LSH 'fast' (datasketch MinHash)
+            - V >= 500 AND trained GNN available: 'gnn'
+            - else:             LSH 'fast'
+
+        Args:
+            max_predictions: Maximum number of predictions to return
+            method: Routing method ('auto', 'slow', 'fast', 'gnn')
+
+        Returns:
+            List of (source_id, target_id, score) tuples sorted by score desc.
+        """
+        n = len(self._entities)
+        if method == 'auto':
+            if n < 50:
+                method = 'slow'
+            elif n >= 500 and self.gnn_predictor and self.gnn_predictor.predictor and self.gnn_predictor.predictor.trained:
+                method = 'gnn'
+            else:
+                method = 'fast'
+
+        if method == 'slow':
+            return await self._predict_hidden_brute_force(max_predictions)
+        if method == 'fast':
+            return await self._predict_hidden_lsh(max_predictions)
+        if method == 'gnn':
+            return await self.predict_with_gnn(max_predictions)
+        raise ValueError(f'Unknown method: {method}')
+
+    async def _predict_hidden_brute_force(
+        self, max_predictions: int
+    ) -> list[tuple[str, str, float]]:
+        """
+        O(V²) Adamic/Adar brute-force. Only for n < 50.
+
+        Note: slow path — uses Python-set intersection, no LSH.
+        """
+        graph = self._build_igraph_graph()
+        if not graph:
+            return []
+        predictions = []
+        if IGRAPH_AVAILABLE and isinstance(graph, ig.Graph):
+            for u in range(graph.vcount()):
+                for v in range(u + 1, graph.vcount()):
+                    if not graph.are_adjacent(u, v):
+                        score = self._adamic_adar(graph, u, v)
+                        if score > 0.7:
+                            source_u = graph.vs[u]['source'] if 'source' in graph.vs[u].attribute_names() else 'unknown'
+                            source_v = graph.vs[v]['source'] if 'source' in graph.vs[v].attribute_names() else 'unknown'
+                            cred_u = self.get_source_credibility(source_u)
+                            cred_v = self.get_source_credibility(source_v)
+                            final_score = score * (cred_u + cred_v) / 2
+                            entity_a = self._idx_to_entity_id.get(u, str(u))
+                            entity_b = self._idx_to_entity_id.get(v, str(v))
+                            predictions.append((entity_a, entity_b, final_score))
+        predictions.sort(key=lambda x: x[2], reverse=True)
+        for entity_a, entity_b, score in predictions[:max_predictions]:
+            u = self._entity_id_to_idx.get(entity_a)
+            v = self._entity_id_to_idx.get(entity_b)
+            if u is not None and v is not None:
+                self._add_predicted_edge(u, v, score)
+        return predictions[:max_predictions]
+
+    async def _predict_hidden_lsh(
+        self, max_predictions: int
+    ) -> list[tuple[str, str, float]]:
+        """
+        O(V×K) LSH pre-filter + full rerank. For n >= 50.
+
+        Uses datasketch MinHash LSH for fast candidate generation.
+        """
+        if not LSH_AVAILABLE:
+            logger.warning('[LSH] datasketch not available, falling back to O(N²)')
+            return await self._predict_hidden_brute_force(max_predictions)
+        graph = self._build_igraph_graph()
+        if not graph:
+            return []
+        lsh = LSHLinkPredictor(threshold=0.7)
+        lsh.build_index(graph)
+        predictions = []
+        processed = set()
+        total_nodes = graph.vcount()
+        for u in range(total_nodes):
+            candidates = lsh.get_candidates(u)
+            for v in candidates:
+                if u >= v or (u, v) in processed:
+                    continue
+                processed.add((u, v))
+                if not graph.are_adjacent(u, v):
+                    score = self._adamic_adar(graph, u, v)
+                    if score > 0.7:
+                        source_u = graph.vs[u]['source'] if 'source' in graph.vs[u].attribute_names() else 'unknown'
+                        source_v = graph.vs[v]['source'] if 'source' in graph.vs[v].attribute_names() else 'unknown'
+                        cred_u = self.get_source_credibility(source_u)
+                        cred_v = self.get_source_credibility(source_v)
+                        final_score = score * (cred_u + cred_v) / 2
+                        entity_a = self._idx_to_entity_id.get(u, str(u))
+                        entity_b = self._idx_to_entity_id.get(v, str(v))
+                        predictions.append((entity_a, entity_b, final_score))
+        predictions.sort(key=lambda x: x[2], reverse=True)
+        for entity_a, entity_b, score in predictions[:max_predictions]:
+            u = self._entity_id_to_idx.get(entity_a)
+            v = self._entity_id_to_idx.get(entity_b)
+            if u is not None and v is not None:
+                self._add_predicted_edge(u, v, score)
+        return predictions[:max_predictions]
+
+    async def predict_hidden_connections_fast(self, max_predictions: int = 10):
+        """
+        DEPRECATED: Use predict_hidden_connections(method='fast') instead.
+
+        Args:
+            max_predictions: Maximum number of predictions to return
+
+        Returns:
+            List of (source_id, target_id, score) tuples sorted by score desc.
+        """
+        import warnings
+        warnings.warn(
+            "predict_hidden_connections_fast deprecated — "
+            "use predict_hidden_connections(method='fast') instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return await self._predict_hidden_lsh(max_predictions)
+
+    def _build_adjacency_matrix(self) -> np.ndarray | csr_matrix:
+        """Build adjacency matrix (sparse or dense)."""
+        if self._adjacency_matrix is not None:
+            return self._adjacency_matrix
+        start_time = time.time()
+        entity_ids = list(self._entities.keys())
+        self._entity_id_to_idx = {eid: i for i, eid in enumerate(entity_ids)}
+        self._idx_to_entity_id = dict(enumerate(entity_ids))
+        n = len(entity_ids)
+        if self.use_sparse and n > 100:
+            matrix = _get_lil_matrix()((n, n), dtype=np.float32)
+        else:
+            matrix = np.zeros((n, n), dtype=np.float32)
+        for source_id, rels in self._relationships.items():
+            if source_id not in self._entity_id_to_idx:
+                continue
+            i = self._entity_id_to_idx[source_id]
+            for rel in rels:
+                if rel.target not in self._entity_id_to_idx:
+                    continue
+                j = self._entity_id_to_idx[rel.target]
+                matrix[i, j] = rel.strength
+        if self.use_sparse and hasattr(matrix, 'tocsr'):
+            matrix = matrix.tocsr()
+        self._adjacency_matrix = matrix
+        logger.debug(f'Built adjacency matrix ({n}x{n}) in {time.time() - start_time:.3f}s')
+        return matrix
+
+    def _invalidate_caches(self):
+        """Invalidate all cached computations."""
+        self._nx_graph = None
+        self._igraph_graph = None
+        self._adjacency_matrix = None
+        self._centrality_cache.clear()
+        self._community_cache = None
+        self._affinity_cache.clear()
+
+    def calculate_centrality(self, metric: str='betweenness', use_mlx: bool=False) -> dict[str, float]:
+        """
+        Calculate centrality metrics for all entities.
+
+        Args:
+            metric: Centrality metric (betweenness, closeness, degree, eigenvector, pagerank)
+            use_mlx: Use MLX acceleration if available
+
+        Returns:
+            Dictionary mapping entity IDs to centrality scores
+        """
+        if metric in self._centrality_cache:
+            return self._centrality_cache[metric]
+        start_time = time.time()
+        if IGRAPH_AVAILABLE:
+            try:
+                scores = self._calculate_centrality_igraph(metric)
+                if scores is not None:
+                    self._centrality_cache[metric] = scores
+                    self._stats['centrality_calculations'] += 1
+                    logger.debug(f'Calculated {metric} centrality (igraph) in {time.time() - start_time:.3f}s')
+                    return scores
+            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+                logger.warning(f'igraph centrality failed: {e}, falling back to networkx')
+        if not NETWORKX_AVAILABLE:
+            raise ImportError('NetworkX is required for centrality calculations')
+        nx = _get_nx()
+        graph = self._build_networkx_graph()
+        if len(graph.nodes()) == 0:
+            return {}
+        if metric == 'betweenness':
+            scores = nx.betweenness_centrality(graph, weight='weight')
+        elif metric == 'closeness':
+            scores = nx.closeness_centrality(graph)
+        elif metric == 'degree':
+            scores = dict(nx.degree_centrality(graph))
+        elif metric == 'eigenvector':
+            try:
+                scores = nx.eigenvector_centrality(graph, weight='weight', max_iter=100)
+            except nx.PowerIterationFailedConvergence:
+                scores = dict.fromkeys(graph.nodes(), 0.0)
+        elif metric == 'pagerank':
+            scores = nx.pagerank(graph, weight='weight')
+        elif metric == 'harmonic':
+            scores = nx.harmonic_centrality(graph)
+        else:
+            raise ValueError(f'Unknown centrality metric: {metric}')
+        if use_mlx and self.enable_mlx and MLX_AVAILABLE:
+            scores = self._mlx_batch_centrality(scores)
+        self._centrality_cache[metric] = scores
+        self._stats['centrality_calculations'] += 1
+        logger.debug(f'Calculated {metric} centrality (networkx) in {time.time() - start_time:.3f}s')
+        return scores
+
+    def _calculate_centrality_igraph(self, metric: str) -> dict[str, float] | None:
+        """Calculate centrality using igraph (M1 optimized)."""
+        graph = self._build_igraph_graph()
+        if graph.vcount() == 0:
+            return {}
+        entity_ids = graph.vs['id']
+        try:
+            if metric == 'betweenness':
+                scores = graph.betweenness(weights='weight')
+            elif metric == 'closeness':
+                scores = graph.closeness(weights='weight')
+            elif metric == 'degree':
+                scores = graph.degree(weights='weight')
+                n = graph.vcount()
+                scores = [s / (n - 1) if n > 1 else 0 for s in scores]
+            elif metric == 'eigenvector':
+                scores = graph.eigenvector_centrality(weights='weight', maxiter=100)
+            elif metric == 'pagerank':
+                scores = graph.pagerank(weights='weight')
+            elif metric == 'harmonic':
+                scores = graph.harmonic_centrality(weights='weight')
+            else:
+                return None
+            return dict(zip(entity_ids, map(float, scores)))
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+            logger.warning(f'igraph {metric} centrality failed: {e}')
+            return None
+
+    def _mlx_batch_centrality(self, scores: dict[str, float]) -> dict[str, float]:
+        """Apply MLX acceleration to centrality scores."""
+        if not MLX_AVAILABLE or not scores:
+            return scores
+        try:
+            values = np.array(list(scores.values()), dtype=np.float32)
+            mx_values = mx.array(values)
+            exp_values = mx.exp(mx_values - mx.max(mx_values))
+            normalized = exp_values / mx.sum(exp_values)
+            return {k: float(v) for k, v in zip(scores.keys(), normalized.tolist(), strict=False)}
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+            logger.warning(f'MLX centrality acceleration failed: {e}')
+            return scores
+
+    def find_cliques(self, min_size: int=3) -> list[list[str]]:
+        """
+        Find cliques in the relationship graph.
+
+        Args:
+            min_size: Minimum clique size
+
+        Returns:
+            List of cliques (each clique is a list of entity IDs)
+        """
+        if IGRAPH_AVAILABLE:
+            try:
+                ig = self._build_igraph_graph()
+                cliques = []
+                for clique in ig.maximal_cliques():
+                    if len(clique) >= min_size:
+                        cliques.append([ig.vs[node]['id'] for node in clique])
+                return sorted(cliques, key=len, reverse=True)
+            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+                logger.warning(f'igraph cliques failed: {e}, falling back to networkx')
+        if not NETWORKX_AVAILABLE:
+            raise ImportError('NetworkX is required for clique detection')
+        nx = _get_nx()
+        graph = self._build_networkx_graph()
+        undirected = graph.to_undirected()
+        cliques = []
+        for clique in nx.find_cliques(undirected):
+            if len(clique) >= min_size:
+                cliques.append(list(clique))
+        return sorted(cliques, key=len, reverse=True)
+
+    def get_network_stats(self) -> dict[str, Any]:
+        """Get comprehensive network statistics."""
+        if IGRAPH_AVAILABLE:
+            try:
+                ig = self._build_igraph_graph()
+                undirected = ig.as_undirected()
+                stats = {'nodes': ig.vcount(), 'edges': ig.ecount(), 'density': ig.density() if ig.vcount() > 0 else 0.0, 'is_connected': undirected.is_connected() if undirected.vcount() > 0 else False, 'transitivity': undirected.transitivity_undirected() if undirected.vcount() > 0 else 0.0}
+                if ig.vcount() > 0:
+                    components = undirected.components()
+                    stats['connected_components'] = len(components)
+                    stats['largest_component_size'] = max([len(c) for c in components], default=0)
+                return stats
+            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+                logger.warning(f'igraph stats failed: {e}, falling back to networkx')
+        if not NETWORKX_AVAILABLE:
+            return {'error': 'NetworkX not available'}
+        nx = _get_nx()
+        graph = self._build_networkx_graph()
+        undirected = graph.to_undirected()
+        stats = {'nodes': graph.number_of_nodes(), 'edges': graph.number_of_edges(), 'density': nx.density(graph), 'is_connected': nx.is_connected(undirected) if graph.number_of_nodes() > 0 else False, 'transitivity': nx.transitivity(undirected) if graph.number_of_nodes() > 0 else 0.0}
+        if graph.number_of_nodes() > 0:
+            components = list(nx.connected_components(undirected))
+            stats['connected_components'] = len(components)
+            stats['largest_component_size'] = len(max(components, key=len)) if components else 0
+        return stats
+
+    def detect_communities(self, algorithm: str='louvain', resolution: float=1.0) -> list[Community]:
+        """
+        Detect communities in the relationship graph.
+
+        Args:
+            algorithm: Community detection algorithm (louvain, label_propagation)
+            resolution: Resolution parameter for Louvain algorithm
+
+        Returns:
+            List of detected communities
+        """
+        if self._community_cache is not None:
+            return self._community_cache
+        start_time = time.time()
+        if IGRAPH_AVAILABLE:
+            try:
+                ig = self._build_igraph_graph()
+                undirected = ig.as_undirected()
+                if ig.vcount() == 0:
+                    return []
+                if algorithm == 'louvain':
+                    partition_result = undirected.community_multilevel(weights='weight', resolution=resolution)
+                    partition = {}
+                    for i, comm in enumerate(partition_result):
+                        for node in comm:
+                            partition[ig.vs[node]['id']] = i
+                elif algorithm == 'label_propagation':
+                    partition_result = undirected.community_label_propagation(weights='weight')
+                    partition = {}
+                    for i, comm in enumerate(partition_result):
+                        for node in comm:
+                            partition[ig.vs[node]['id']] = i
+                else:
+                    components = undirected.components()
+                    partition = {}
+                    for i, comm in enumerate(components):
+                        for node in comm:
+                            partition[ig.vs[node]['id']] = i
+                community_groups: dict[int, set[str]] = defaultdict(set)
+                for node, comm_id in partition.items():
+                    community_groups[comm_id].add(node)
+                communities: list[Community] = []
+                for comm_id, members in community_groups.items():
+                    entity_types: dict[str, int] = defaultdict(int)
+                    for member in members:
+                        entity = self._entities.get(member)
+                        if entity:
+                            etype = entity.type.value if isinstance(entity.type, EntityType) else str(entity.type)
+                            entity_types[etype] += 1
+                    community = Community(id=comm_id, members=members, density=0.0, entity_types=dict(entity_types))
+                    communities.append(community)
+                communities.sort(key=lambda c: len(c.members), reverse=True)
+                self._community_cache = communities
+                self._stats['community_detections'] += 1
+                logger.debug(f'Detected {len(communities)} communities (igraph) in {time.time() - start_time:.3f}s')
+                return communities
+            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+                logger.warning(f'igraph community detection failed: {e}, falling back to networkx')
+        if not NETWORKX_AVAILABLE:
+            raise ImportError('NetworkX is required for community detection')
+        nx = _get_nx()
+        graph = self._build_networkx_graph()
+        if graph.number_of_nodes() == 0:
+            return []
+        undirected = graph.to_undirected()
+        if algorithm == 'louvain' and LOUVAIN_AVAILABLE:
+            partition = community_louvain.best_partition(undirected, weight='weight', resolution=resolution)
+        elif algorithm == 'label_propagation':
+            communities_nx = nx.community.label_propagation_communities(undirected)
+            partition = {}
+            for i, comm in enumerate(communities_nx):
+                for node in comm:
+                    partition[node] = i
+        else:
+            communities_nx = nx.connected_components(undirected)
+            partition = {}
+            for i, comm in enumerate(communities_nx):
+                for node in comm:
+                    partition[node] = i
+        community_groups: dict[int, set[str]] = defaultdict(set)
+        for node, comm_id in partition.items():
+            community_groups[comm_id].add(node)
+        communities: list[Community] = []
+        for comm_id, members in community_groups.items():
+            subgraph = undirected.subgraph(members)
+            density = nx.density(subgraph) if len(members) > 1 else 0.0
+            entity_types: dict[str, int] = defaultdict(int)
+            for member in members:
+                entity = self._entities.get(member)
+                if entity:
+                    etype = entity.type.value if isinstance(entity.type, EntityType) else str(entity.type)
+                    entity_types[etype] += 1
+            community = Community(id=comm_id, members=members, density=density, entity_types=dict(entity_types))
+            communities.append(community)
+        communities.sort(key=lambda c: len(c.members), reverse=True)
+        self._community_cache = communities
+        self._stats['community_detections'] += 1
+        logger.debug(f'Detected {len(communities)} communities in {time.time() - start_time:.3f}s')
+        return communities
+
+    def find_hidden_paths(self, entity_a: str, entity_b: str, max_depth: int=6, min_strength: float=0.0, max_paths: int=10) -> list[ConnectionPath]:
+        """
+        Find hidden connection paths between two entities.
+
+        Args:
+            entity_a: Starting entity ID
+            entity_b: Target entity ID
+            max_depth: Maximum path length
+            min_strength: Minimum relationship strength threshold
+            max_paths: Maximum number of paths to return
+
+        Returns:
+            List of connection paths
+        """
+        if entity_a not in self._entities or entity_b not in self._entities:
+            logger.warning(f'Entities not found: {entity_a} or {entity_b}')
+            return []
+        start_time = time.time()
+        if IGRAPH_AVAILABLE:
+            try:
+                ig = self._build_igraph_graph()
+                undirected = ig.as_undirected()
+                try:
+                    a_idx = ig.vs.find(id=entity_a).index
+                    b_idx = ig.vs.find(id=entity_b).index
+                except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+                    logger.warning(f'Entity not found in graph: {e}')
+                    return []
+                paths_gen = undirected.get_all_simple_paths(a_idx, to=b_idx, cutoff=max_depth)
+                paths: list[ConnectionPath] = []
+                for path_indices in paths_gen:
+                    if len(paths) >= max_paths:
+                        break
+                    path_entity_ids = [ig.vs[i]['id'] for i in path_indices]
+                    path_rels: list[Relationship] = []
+                    total_strength = 1.0
+                    for source, target in zip(path_entity_ids, path_entity_ids[1:]):
+                        rel = self._find_relationship(source, target)
+                        if rel:
+                            path_rels.append(rel)
+                            total_strength *= rel.strength
+                    if path_rels and total_strength >= min_strength:
+                        connection_path = ConnectionPath(entities=path_entity_ids, relationships=path_rels, total_strength=total_strength, path_length=len(path_entity_ids) - 1, path_type=self._classify_path_type(path_rels))
+                        paths.append(connection_path)
+                paths.sort(key=lambda p: p.total_strength, reverse=True)
+                self._stats['path_searches'] += 1
+                logger.debug(f'Found {len(paths)} paths (igraph) in {time.time() - start_time:.3f}s')
+                return paths
+            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+                logger.warning(f'igraph path finding failed: {e}, falling back to networkx')
+        if not NETWORKX_AVAILABLE:
+            raise ImportError('NetworkX is required for path finding')
+        nx = _get_nx()
+        graph = self._build_networkx_graph()
+        if min_strength > 0:
+            edges_to_remove = [(u, v) for u, v, d in graph.edges(data=True) if d.get('weight', 0) < min_strength]
+            graph = graph.copy()
+            graph.remove_edges_from(edges_to_remove)
+        paths: list[ConnectionPath] = []
+        try:
+            for path_nodes in nx.all_simple_paths(graph.to_undirected(), entity_a, entity_b, cutoff=max_depth):
+                if len(paths) >= max_paths:
+                    break
+                path_rels: list[Relationship] = []
+                total_strength = 1.0
+                for source, target in zip(path_nodes, path_nodes[1:]):
+                    rel = self._find_relationship(source, target)
+                    if rel:
+                        path_rels.append(rel)
+                        total_strength *= rel.strength
+                if path_rels:
+                    connection_path = ConnectionPath(entities=list(path_nodes), relationships=path_rels, total_strength=total_strength, path_length=len(path_nodes) - 1, path_type=self._classify_path_type(path_rels))
+                    paths.append(connection_path)
+        except nx.NetworkXNoPath:
+            pass
+        paths.sort(key=lambda p: p.total_strength, reverse=True)
+        self._stats['path_searches'] += 1
+        logger.debug(f'Found {len(paths)} paths in {time.time() - start_time:.3f}s')
+        return paths
+
+    def _find_relationship(self, source: str, target: str) -> Relationship | None:
+        """Find relationship between two entities."""
+        for rel in self._relationships.get(source, []):
+            if rel.target == target:
+                return rel
+        for rel in self._relationships.get(target, []):
+            if rel.target == source:
+                return rel
+        return None
+
+    def _classify_path_type(self, relationships: list[Relationship]) -> str:
+        """Classify the type of path based on relationships."""
+        types = [r.type.value if isinstance(r.type, RelationshipType) else str(r.type) for r in relationships]
+        if all((t == RelationshipType.FAMILY.value for t in types)):
+            return 'family'
+        elif all((t in [RelationshipType.WORKS_FOR.value, RelationshipType.BUSINESS_PARTNER.value] for t in types)):
+            return 'professional'
+        elif all((t in [RelationshipType.KNOWS.value, RelationshipType.COMMUNICATED_WITH.value] for t in types)):
+            return 'social'
+        elif RelationshipType.INFLUENCES.value in types:
+            return 'influence'
+        else:
+            return 'mixed'
+
+    def affinity_analysis(self, entity_type: str | None=None, metric: str='cooccurrence', use_mlx: bool=False) -> AffinityMatrix:
+        """
+        Perform affinity analysis on entities.
+
+        Args:
+            entity_type: Filter by entity type (None for all)
+            metric: Affinity metric (cooccurrence, jaccard, cosine)
+            use_mlx: Use MLX acceleration for similarity computation
+
+        Returns:
+            AffinityMatrix containing similarity scores
+        """
+        cache_key = f"{entity_type or 'all'}_{metric}"
+        if cache_key in self._affinity_cache:
+            return self._affinity_cache[cache_key]
+        if entity_type:
+            entities = [eid for eid, e in self._entities.items() if (e.type.value if isinstance(e.type, EntityType) else str(e.type)) == entity_type]
+        else:
+            entities = list(self._entities.keys())
+        if len(entities) < 2:
+            return AffinityMatrix(entity_type=entity_type or 'all', entities=entities, matrix=np.zeros((len(entities), len(entities))), metric=metric)
+        entity_vectors = self._build_entity_vectors(entities)
+        if use_mlx and self.enable_mlx and MLX_AVAILABLE:
+            similarity_matrix = self._mlx_similarity_matrix(entity_vectors, metric)
+        else:
+            similarity_matrix = self._numpy_similarity_matrix(entity_vectors, metric)
+        affinity = AffinityMatrix(entity_type=entity_type or 'all', entities=entities, matrix=similarity_matrix, metric=metric)
+        self._affinity_cache[cache_key] = affinity
+        return affinity
+
+    def _build_entity_vectors(self, entities: list[str]) -> np.ndarray:
+        """Build feature vectors for entities based on their relationships."""
+        n = len(entities)
+        entity_idx = {eid: i for i, eid in enumerate(entities)}
+        all_neighbors = set()
+        for eid in entities:
+            for rel in self._relationships.get(eid, []):
+                all_neighbors.add(rel.target)
+        all_neighbors = list(all_neighbors)
+        neighbor_idx = {nid: i for i, nid in enumerate(all_neighbors)}
+        vectors = np.zeros((n, len(all_neighbors)), dtype=np.float32)
+        for eid in entities:
+            i = entity_idx[eid]
+            for rel in self._relationships.get(eid, []):
+                if rel.target in neighbor_idx:
+                    j = neighbor_idx[rel.target]
+                    vectors[i, j] = rel.strength
+        return vectors
+
+    def _numpy_similarity_matrix(self, vectors: np.ndarray, metric: str='cooccurrence') -> np.ndarray:
+        """Compute similarity matrix using NumPy."""
+        n = vectors.shape[0]
+        similarity = np.zeros((n, n), dtype=np.float32)
+        if metric == 'cooccurrence':
+            similarity = vectors @ vectors.T
+        elif metric == 'jaccard':
+            for i in range(n):
+                for j in range(i, n):
+                    intersection = np.sum((vectors[i] > 0) & (vectors[j] > 0))
+                    union = np.sum((vectors[i] > 0) | (vectors[j] > 0))
+                    if union > 0:
+                        similarity[i, j] = similarity[j, i] = intersection / union
+        elif metric == 'cosine':
+            norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+            norms[norms == 0] = 1
+            normalized = vectors / norms
+            similarity = normalized @ normalized.T
+        return similarity
+
+    def _mlx_similarity_matrix(self, vectors: np.ndarray, metric: str='cooccurrence') -> np.ndarray:
+        """Compute similarity matrix using MLX acceleration."""
+        if not MLX_AVAILABLE:
+            return self._numpy_similarity_matrix(vectors, metric)
+        try:
+            mx_vectors = mx.array(vectors)
+            if metric == 'cooccurrence':
+                mx_similarity = mx.matmul(mx_vectors, mx_vectors.T)
+                return np.array(mx_similarity)
+            elif metric == 'cosine':
+                norms = mx.sqrt(mx.sum(mx_vectors ** 2, axis=1, keepdims=True))
+                norms = mx.where(norms == 0, 1.0, norms)
+                normalized = mx_vectors / norms
+                mx_similarity = mx.matmul(normalized, normalized.T)
+                return np.array(mx_similarity)
+            else:
+                return self._numpy_similarity_matrix(vectors, metric)
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+            logger.warning(f'MLX similarity computation failed: {e}, falling back to NumPy')
+            return self._numpy_similarity_matrix(vectors, metric)
+
+    def model_influence_propagation(self, seed_entities: list[str], iterations: int=100, damping: float=0.85, convergence_threshold: float=1e-06) -> InfluenceModel:
+        """
+        Model influence propagation through the network.
+
+        Args:
+            seed_entities: Initial influential entities
+            iterations: Maximum iterations
+            damping: Damping factor for propagation
+            convergence_threshold: Convergence threshold
+
+        Returns:
+            InfluenceModel with propagation results
+        """
+        start_time = time.time()
+        if IGRAPH_AVAILABLE:
+            try:
+                g = self._build_igraph_graph()
+                if g.vcount() == 0:
+                    return InfluenceModel(seed_entities=seed_entities, influence_scores={}, propagation_paths=[], iterations=0, convergence_delta=0.0)
+                pr = g.pagerank(weights='weight' if g.es else None)
+                influence_scores = {g.vs[i]['id']: pr[i] for i in range(g.vcount())}
+                propagation_paths: list[ConnectionPath] = []
+                max_paths = 20
+                for seed in seed_entities:
+                    if seed not in influence_scores:
+                        continue
+                    try:
+                        seed_idx = g.vs.find(id=seed).index
+                    except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+                        continue
+                    sorted_targets = sorted(influence_scores.items(), key=lambda x: x[1], reverse=True)
+                    for target, score in sorted_targets[:5]:
+                        if target == seed or score < 0.1:
+                            continue
+                        try:
+                            target_idx = g.vs.find(id=target).index
+                            path_nodes = g.get_shortest_paths(seed_idx, to=target_idx, weights='weight', output='vpath')[0]
+                            if path_nodes:
+                                path_entities = [g.vs[n]['id'] for n in path_nodes]
+                                path = ConnectionPath(entities=path_entities, relationships=[], total_strength=score, path_length=len(path_nodes) - 1, path_type='influence')
+                                propagation_paths.append(path)
+                                if len(propagation_paths) >= max_paths:
+                                    break
+                        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+                            continue
+                    if len(propagation_paths) >= max_paths:
+                        break
+                logger.debug(f'Influence propagation (igraph) in {time.time() - start_time:.3f}s')
+                return InfluenceModel(seed_entities=seed_entities, influence_scores=influence_scores, propagation_paths=propagation_paths, iterations=0, convergence_delta=0.0)
+            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+                logger.warning(f'igraph influence propagation failed: {e}, falling back to networkx')
+        if not NETWORKX_AVAILABLE:
+            raise ImportError('NetworkX is required for influence modeling')
+        graph = self._build_networkx_graph()
+        if graph.number_of_nodes() == 0:
+            return InfluenceModel(seed_entities=seed_entities, influence_scores={}, propagation_paths=[], iterations=0, convergence_delta=0.0)
+        influence_scores: dict[str, float] = dict.fromkeys(graph.nodes(), 0.0)
+        for seed in seed_entities:
+            if seed in influence_scores:
+                influence_scores[seed] = 1.0
+        prev_scores = influence_scores.copy()
+        converged = False
+        actual_iterations = 0
+        for iteration in range(iterations):
+            new_scores = influence_scores.copy()
+            for node in graph.nodes():
+                if node in seed_entities:
+                    continue
+                incoming = 0.0
+                for predecessor in graph.predecessors(node):
+                    weight = graph[predecessor][node].get('weight', 1.0)
+                    out_degree = graph.out_degree(predecessor)
+                    if out_degree > 0:
+                        incoming += prev_scores[predecessor] * weight / out_degree
+                new_scores[node] = (1 - damping) * influence_scores[node] + damping * incoming
+            delta = sum((abs(new_scores[n] - prev_scores[n]) for n in graph.nodes()))
+            prev_scores = new_scores
+            actual_iterations = iteration + 1
+            if delta < convergence_threshold:
+                converged = True
+                break
+        influence_scores = prev_scores
+        propagation_paths: list[ConnectionPath] = []
+        for seed in seed_entities:
+            for target, score in sorted(influence_scores.items(), key=lambda x: x[1], reverse=True):
+                if target != seed and score > 0.1:
+                    paths = self.find_hidden_paths(seed, target, max_depth=4, max_paths=1)
+                    if paths:
+                        propagation_paths.append(paths[0])
+        propagation_paths = propagation_paths[:20]
+        return InfluenceModel(seed_entities=seed_entities, influence_scores=influence_scores, propagation_paths=propagation_paths, iterations=actual_iterations, convergence_delta=delta if converged else float('inf'))
+
+    def export_graph(self) -> Any:
+        """Export the relationship graph as NetworkX graph."""
+        return self._build_networkx_graph()
+
+    def to_dict(self) -> dict[str, Any]:
+        """Export engine state as dictionary."""
+        return {'entities': {k: v.to_dict() for k, v in self._entities.items()}, 'relationships': [r.to_dict() for rels in self._relationships.values() for r in rels], 'stats': self._stats}
+    MAX_NODES: int = 10000
+    MAX_RELATIONSHIPS: int = 20000
+
+    def save_graph(self, path: Path) -> None:
+        """Persist NetworkX graph to disk with node-count pruning.
+
+        Uses ``_graph_serde.save_nx_graph_jsonl`` (JSON via orjson, no
+        Python ``pickle``). Bounded, fail-soft.
+        """
+        nx_graph = self._build_networkx_graph()
+        if nx_graph is None:
+            return
+        try:
+            from ._graph_serde import save_nx_graph_jsonl
+        except ImportError:
+            from recon._graph_serde import save_nx_graph_jsonl
+        ok = save_nx_graph_jsonl(str(path), nx_graph, max_nodes=self.MAX_NODES)
+        if not ok:
+            logger.warning('[RelDiscovery] save_graph failed (jsonl path) -> %s', path)
+            return
+        logger.debug(f'[RelDiscovery] Graph saved: {nx_graph.number_of_nodes()} nodes, {nx_graph.number_of_edges()} edges')
+
+    def load_graph(self, path: Path) -> bool:
+        """Load persisted NetworkX graph from disk with node-count bound.
+
+        Reads JSON envelope (orjson + node_link). Legacy ``.pkl`` is accepted
+        only on F196B-safe paths as a one-shot migration.
+
+        Returns True if loaded, False if file missing or error.
+        """
+        if not path.exists():
+            return False
+        try:
+            from ._graph_serde import is_our_format, load_nx_graph_jsonl
+        except ImportError:
+            from recon._graph_serde import is_our_format, load_nx_graph_jsonl
+        nx_graph: Any | None = None
+        if is_our_format(str(path)):
+            nx_graph = load_nx_graph_jsonl(str(path), max_nodes=self.MAX_NODES)
+        else:
+            from pathlib import Path as _P
+            graphs_root = _P('~/.hledac/graphs').expanduser().resolve()
+            if str(_P(str(path)).resolve()).startswith(str(graphs_root) + '/'):
+                try:
+                    from recon._graph_serde import load_nx_graph_jsonl
+                    nx_graph = load_nx_graph_jsonl(str(path), max_nodes=self.MAX_NODES)
+                except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+                    logger.warning('[F196B] legacy JSON load_graph failed: %s', e)
+                    nx_graph = None
+            else:
+                logger.warning(f'[F196B] load_graph rejected path outside graphs dir: {path}')
+        if nx_graph is None:
+            return False
+        try:
+            node_count = nx_graph.number_of_nodes()
+            if node_count > self.MAX_NODES:
+                degree_sorted = sorted(nx_graph.nodes(), key=lambda n: nx_graph.degree(n))
+                prune_count = node_count - self.MAX_NODES
+                nx_graph.remove_nodes_from(set(degree_sorted[:prune_count]))
+                logger.warning(f'[RelDiscovery] Loaded graph pruned to {nx_graph.number_of_nodes()} nodes (was {node_count}, max {self.MAX_NODES})')
+            self._nx_graph = nx_graph
+            for node in nx_graph.nodes():
+                if node not in self._entities:
+                    self.add_entity(Entity(node, EntityType.UNKNOWN))
+            edge_data = nx_graph.edges(data=True)
+            for src, dst, data in edge_data:
+                rel_type = data.get('rel_type', RelationshipType.RELATED_TO)
+                strength = data.get('weight', 1.0)
+                self.add_relationship(Relationship(source=src, target=dst, type=rel_type, strength=strength, confidence=0.5))
+            logger.info(f'[RelDiscovery] Graph loaded: {nx_graph.number_of_nodes()} nodes, {nx_graph.number_of_edges()} edges')
+            return True
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+            logger.warning(f'[RelDiscovery] Failed to load graph from {path}: {e}')
+            return False
+
+    def export_for_visualization(self) -> dict[str, Any]:
+        """Export graph data optimized for visualization."""
+        nodes = []
+        for entity_id, entity in self._entities.items():
+            node = {'id': entity_id, 'label': entity.attributes.get('name', entity_id), 'type': entity.type.value if isinstance(entity.type, EntityType) else str(entity.type), 'attributes': entity.attributes}
+            nodes.append(node)
+        links = []
+        seen = set()
+        for _source_id, rels in self._relationships.items():
+            for rel in rels:
+                link_key = _make_pair(rel.source, rel.target)
+                if link_key not in seen:
+                    links.append({'source': rel.source, 'target': rel.target, 'type': rel.type.value if isinstance(rel.type, RelationshipType) else str(rel.type), 'strength': rel.strength, 'confidence': rel.confidence})
+                    seen.add(link_key)
+        return {'nodes': nodes, 'links': links, 'stats': self.get_network_stats()}
+
+    def get_stats(self) -> dict[str, Any]:
+        """Get engine statistics."""
+        return self._stats.copy()
+
+    def clear(self):
+        """Clear all data from the engine."""
+        self._entities.clear()
+        self._relationships.clear()
+        self._relationship_index.clear()
+        self._invalidate_caches()
+        self._entity_id_to_idx.clear()
+        self._idx_to_entity_id.clear()
+        gc.collect()
+        logger.info('RelationshipDiscoveryEngine cleared')
+
+    def optimize_memory(self):
+        """Optimize memory usage by clearing caches and forcing GC."""
+        self._nx_graph = None
+        self._adjacency_matrix = None
+        self._centrality_cache.clear()
+        self._community_cache = None
+        self._affinity_cache.clear()
+        gc.collect()
+        logger.debug('Memory optimization completed')
+
+    def get_memory_usage(self) -> dict[str, int]:
+        """Estimate memory usage of key data structures."""
+        import sys
+        entity_size = sum((sys.getsizeof(e) for e in self._entities.values()))
+        rel_size = sum((sys.getsizeof(r) for rels in self._relationships.values() for r in rels))
+        return {'entities_bytes': entity_size, 'relationships_bytes': rel_size, 'total_bytes': entity_size + rel_size, 'entity_count': len(self._entities), 'relationship_count': sum((len(rels) for rels in self._relationships.values()))}
+
+def create_relationship_engine(use_sparse: bool=True, max_memory_mb: int=512, enable_mlx: bool=True) -> RelationshipDiscoveryEngine:
+    """Factory function to create a RelationshipDiscoveryEngine.
+
+    Note:
+        max_memory_mb=512 is the recommended ceiling for M1 8GB UMA.
+        The parameter is advisory — not hard-enforced.
+    """
+    return RelationshipDiscoveryEngine(use_sparse=use_sparse, max_memory_mb=max_memory_mb, enable_mlx=enable_mlx)
+
+async def example_usage():
+    """Example usage of the RelationshipDiscoveryEngine."""
+    engine = create_relationship_engine()
+    entities = [Entity('alice', EntityType.PERSON, {'name': 'Alice Smith', 'age': 30}), Entity('bob', EntityType.PERSON, {'name': 'Bob Jones', 'age': 35}), Entity('carol', EntityType.PERSON, {'name': 'Carol White', 'age': 28}), Entity('acme_corp', EntityType.ORGANIZATION, {'name': 'Acme Corporation'}), Entity('tech_inc', EntityType.ORGANIZATION, {'name': 'Tech Inc'})]
+    for entity in entities:
+        engine.add_entity(entity)
+    relationships = [Relationship('alice', 'bob', RelationshipType.KNOWS, strength=0.8, confidence=0.9), Relationship('bob', 'carol', RelationshipType.KNOWS, strength=0.6, confidence=0.8), Relationship('alice', 'acme_corp', RelationshipType.WORKS_FOR, strength=1.0, confidence=0.95), Relationship('bob', 'acme_corp', RelationshipType.WORKS_FOR, strength=1.0, confidence=0.95), Relationship('carol', 'tech_inc', RelationshipType.WORKS_FOR, strength=1.0, confidence=0.95), Relationship('acme_corp', 'tech_inc', RelationshipType.BUSINESS_PARTNER, strength=0.7, confidence=0.6)]
+    for rel in relationships:
+        engine.add_relationship(rel)
+    print('=== Centrality Analysis ===')
+    centrality = engine.calculate_centrality('betweenness')
+    for entity_id, score in sorted(centrality.items(), key=lambda x: x[1], reverse=True):
+        print(f'  {entity_id}: {score:.4f}')
+    print('\n=== Community Detection ===')
+    communities = engine.detect_communities()
+    for comm in communities:
+        print(f'  Community {comm.id}: {len(comm.members)} members, density={comm.density:.3f}')
+        print(f"    Members: {', '.join(comm.members)}")
+    print('\n=== Hidden Paths (Alice to Carol) ===')
+    paths = engine.find_hidden_paths('alice', 'carol', max_depth=4)
+    for i, path in enumerate(paths[:3], 1):
+        print(f"  Path {i}: {' -> '.join(path.entities)} (strength={path.total_strength:.3f})")
+    print('\n=== Affinity Analysis ===')
+    affinity = engine.affinity_analysis()
+    top_pairs = affinity.get_top_pairs(5)
+    for entity_a, entity_b, score in top_pairs:
+        print(f'  {entity_a} <-> {entity_b}: {score:.4f}')
+    print('\n=== Network Stats ===')
+    stats = engine.get_network_stats()
+    for key, value in stats.items():
+        print(f'  {key}: {value}')
+    engine.clear()
+if __name__ == '__main__':
+    asyncio.run(example_usage())

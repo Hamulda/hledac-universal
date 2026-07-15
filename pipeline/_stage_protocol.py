@@ -20,8 +20,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Generic, Protocol, TypeVar
+
+import msgspec
 
 if TYPE_CHECKING:
     from typing import AsyncIterator, Protocol
@@ -37,8 +38,7 @@ T_out = TypeVar("T_out")
 # ----------------------------------------------------------------------
 
 
-@dataclass(slots=True)
-class StageMetrics:
+class StageMetrics(msgspec.Struct):
     """
     Per-stage metrics for observability.
 
@@ -52,7 +52,7 @@ class StageMetrics:
     queue_size: int = 0
     aimd_window: float = 0.0
     latency_ms: float = 0.0
-    started_at: float = field(default_factory=time.monotonic)
+    started_at: float = 0.0
 
     def record_processed(self, n: int = 1) -> None:
         self.processed += n
@@ -94,8 +94,7 @@ class StageMetrics:
 # ----------------------------------------------------------------------
 
 
-@dataclass(slots=True)
-class StageContext:
+class StageContext(msgspec.Struct):
     """
    Sdílený kontext mezi všemi stages.
 
@@ -115,7 +114,7 @@ class StageContext:
     fetch_timeout_s: float = 35.0
     fetch_max_bytes: int = 2_000_000
     max_results: int = 10
-    metrics: dict[str, StageMetrics] = field(default_factory=dict)
+    metrics: dict[str, StageMetrics] = msgspec.field(default_factory=dict)
 
     def get_metrics(self, stage_name: str) -> StageMetrics:
         if stage_name not in self.metrics:
@@ -250,8 +249,7 @@ class Stage(Generic[T_in, T_out], Protocol):
 # ----------------------------------------------------------------------
 
 
-@dataclass(slots=True)
-class StageResult:
+class StageResult(msgspec.Struct):
     """Výsledek běhu jedné stage pro telemetry."""
     stage_name: str
     processed: int = 0

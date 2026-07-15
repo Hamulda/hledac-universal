@@ -1,9 +1,26 @@
 """
-Intelligent Resource Allocator
-Dynamic resource allocation and scaling system for Hledač automation
+Intelligent Resource Allocator — DEPRECATED for GC/backpressure/AIMD
+================================================================
+
+NOTE: GC/backpressure/AIMD functionality has moved to:
+    coordinators.resource.resource_coordinator
+
+This module still contains the full sklearn-based prediction model
+and ResourceAwareScheduler — these are NOT deprecated.
+
+Import GC/backpressure/AIMD from:
+    from coordinators.resource import gc_collect, BackpressureMonitor, AIMDController
 """
+
+import warnings
+
+warnings.warn(
+    "coordinators.resource_allocator: GC/backpressure/AIMD are deprecated here. "
+    "Import from coordinators.resource.resource_coordinator instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 import asyncio
-import json
 import logging
 import os
 import subprocess
@@ -13,8 +30,8 @@ from dataclasses import dataclass
 import msgspec
 from datetime import UTC, datetime
 from enum import Enum
+from hledac.universal.utils.msgspec_json import encode as _msgspec_encode, dumps_str as _msgspec_dumps_str
 from typing import Any
-from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str
 from core.psutil_shim import psutil
 import yaml
 from hledac.universal.utils.async_helpers import safe_create_task
@@ -22,8 +39,7 @@ SKLEARN_AVAILABLE = True
 logger = logging.getLogger(__name__)
 MAX_PENDING_RESOURCE_REQUESTS = 1000
 
-@dataclass(slots=True, frozen=True)
-class CapacitySnapshot:
+class CapacitySnapshot(msgspec.Struct, frozen=True):
     """Immutable snapshot of resource capacity with TTL tracking."""
     cpu_percent: float
     gpu_memory: float
@@ -122,8 +138,7 @@ class Priority(Enum):
     CRITICAL = 4
     EMERGENCY = 5
 
-@dataclass(slots=True)
-class ResourceRequest:
+class ResourceRequest(msgspec.Struct):
     """Resource request specification"""
     task_id: str
     task_name: str
@@ -139,8 +154,7 @@ class ResourceRequest:
     affinity: list[str] | None = None
     anti_affinity: list[str] | None = None
 
-@dataclass(frozen=True, slots=True)
-class ResourceCapacity:
+class ResourceCapacity(msgspec.Struct, frozen=True):
     """Available resource capacity"""
     cpu_cores: float
     memory_gb: float
@@ -151,8 +165,7 @@ class ResourceCapacity:
     memory_usage: float
     gpu_usage: float
 
-@dataclass(frozen=True, slots=True)
-class ResourceAllocation:
+class ResourceAllocation(msgspec.Struct, frozen=True):
     """Resource allocation record"""
     task_id: str
     allocated_resources: dict[str, float]
@@ -467,7 +480,7 @@ class IntelligentResourceAllocator:
         """Export detailed allocation report"""
         report = {'timestamp': datetime.now(UTC).isoformat(), 'statistics': self.get_allocation_statistics(), 'active_allocations': [{'task_id': alloc.task_id, 'allocated_resources': alloc.allocated_resources, 'start_time': alloc.start_time.isoformat(), 'efficiency_score': alloc.efficiency_score} for alloc in self.active_allocations.values()], 'recent_allocations': [{'task_id': alloc.task_id, 'allocated_resources': alloc.allocated_resources, 'start_time': alloc.start_time.isoformat(), 'end_time': alloc.end_time.isoformat() if alloc.end_time else None, 'efficiency_score': alloc.efficiency_score} for alloc in list(self.completed_allocations)[-20:]]}
         with open(filepath, 'w') as f:
-            json.dump(report, f, indent=2)
+            f.write(_msgspec_dumps_str(report, indent=2))
         logger.info(f'Allocation report exported to {filepath}')
 
 class ResourceAwareScheduler:

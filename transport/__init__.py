@@ -20,13 +20,6 @@ from .http3_lane import (  # type: ignore[import-not-found]  # P1-2: bounded HTT
 from .http3_lane import (
     is_enabled as http3_lane_enabled,
 )
-from .transport_resolver import (
-    RouteDecision,
-    TransportContext,
-    TransportResolver,
-    get_route_decision,
-    is_i2p_available,
-)
 from .unified_transport import (  # noqa: E402
     TransportKind,
     TransportPolicy,
@@ -41,6 +34,18 @@ from .unified_transport import (  # noqa: E402
     prefetch_dns,
     dns_cache_status,
 )
+
+
+def __getattr__(name: str):
+    """Lazy imports to break circular dependency cycle:
+    base.py → __init__.py → transport_resolver.py → tor_transport.py → base.py
+    """
+    if name in ('RouteDecision', 'TransportContext', 'TransportResolver',
+                'get_route_decision', 'is_i2p_available'):
+        from . import transport_resolver
+        return getattr(transport_resolver, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     # Transport ABC and adapters

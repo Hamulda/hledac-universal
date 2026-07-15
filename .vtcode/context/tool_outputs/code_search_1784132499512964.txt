@@ -1,0 +1,2313 @@
+{
+  "view": "full",
+  "files": [
+    {
+      "path": "runtime/scheduler_v2/protocol.py",
+      "lang": "Python",
+      "items": [
+        {
+          "role": "item",
+          "kind": "class",
+          "name": "PhaseRunner",
+          "signature": "class PhaseRunner(Protocol):",
+          "astKind": "class_definition",
+          "isImport": false,
+          "isExported": true,
+          "range": {
+            "byteOffset": {
+              "start": 509,
+              "end": 974
+            },
+            "start": {
+              "line": 15,
+              "column": 0
+            },
+            "end": {
+              "line": 28,
+              "column": 11
+            }
+          },
+          "lineRange": {
+            "start": 16,
+            "end": 29
+          },
+          "members": [
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "is_terminal",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 613,
+                  "end": 714
+                },
+                "start": {
+                  "line": 18,
+                  "column": 4
+                },
+                "end": {
+                  "line": 20,
+                  "column": 11
+                }
+              },
+              "lineRange": {
+                "start": 19,
+                "end": 21
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "should_enter_windup",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 720,
+                  "end": 847
+                },
+                "start": {
+                  "line": 22,
+                  "column": 4
+                },
+                "end": {
+                  "line": 24,
+                  "column": 11
+                }
+              },
+              "lineRange": {
+                "start": 23,
+                "end": 25
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "windup_guard",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 853,
+                  "end": 974
+                },
+                "start": {
+                  "line": 26,
+                  "column": 4
+                },
+                "end": {
+                  "line": 28,
+                  "column": 11
+                }
+              },
+              "lineRange": {
+                "start": 27,
+                "end": 29
+              }
+            }
+          ]
+        },
+        {
+          "role": "item",
+          "kind": "class",
+          "name": "Phase",
+          "signature": "class Phase(Protocol):",
+          "astKind": "class_definition",
+          "isImport": false,
+          "isExported": true,
+          "range": {
+            "byteOffset": {
+              "start": 976,
+              "end": 1197
+            },
+            "start": {
+              "line": 30,
+              "column": 0
+            },
+            "end": {
+              "line": 35,
+              "column": 11
+            }
+          },
+          "lineRange": {
+            "start": 31,
+            "end": 36
+          },
+          "members": [
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "run",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 1063,
+                  "end": 1197
+                },
+                "start": {
+                  "line": 33,
+                  "column": 4
+                },
+                "end": {
+                  "line": 35,
+                  "column": 11
+                }
+              },
+              "lineRange": {
+                "start": 34,
+                "end": 36
+              }
+            }
+          ]
+        },
+        {
+          "role": "item",
+          "kind": "class",
+          "name": "PreludePhase",
+          "signature": "class PreludePhase(Protocol):",
+          "astKind": "class_definition",
+          "isImport": false,
+          "isExported": true,
+          "range": {
+            "byteOffset": {
+              "start": 1199,
+              "end": 1492
+            },
+            "start": {
+              "line": 37,
+              "column": 0
+            },
+            "end": {
+              "line": 42,
+              "column": 11
+            }
+          },
+          "lineRange": {
+            "start": 38,
+            "end": 43
+          },
+          "members": [
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "run",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 1313,
+                  "end": 1492
+                },
+                "start": {
+                  "line": 40,
+                  "column": 4
+                },
+                "end": {
+                  "line": 42,
+                  "column": 11
+                }
+              },
+              "lineRange": {
+                "start": 41,
+                "end": 43
+              }
+            }
+          ]
+        },
+        {
+          "role": "item",
+          "kind": "class",
+          "name": "AcquisitionPhase",
+          "signature": "class AcquisitionPhase(Protocol):",
+          "astKind": "class_definition",
+          "isImport": false,
+          "isExported": true,
+          "range": {
+            "byteOffset": {
+              "start": 1494,
+              "end": 1809
+            },
+            "start": {
+              "line": 44,
+              "column": 0
+            },
+            "end": {
+              "line": 49,
+              "column": 11
+            }
+          },
+          "lineRange": {
+            "start": 45,
+            "end": 50
+          },
+          "members": [
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "run",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 1588,
+                  "end": 1809
+                },
+                "start": {
+                  "line": 47,
+                  "column": 4
+                },
+                "end": {
+                  "line": 49,
+                  "column": 11
+                }
+              },
+              "lineRange": {
+                "start": 48,
+                "end": 50
+              }
+            }
+          ]
+        },
+        {
+          "role": "item",
+          "kind": "class",
+          "name": "WinddownPhase",
+          "signature": "class WinddownPhase(Protocol):",
+          "astKind": "class_definition",
+          "isImport": false,
+          "isExported": true,
+          "range": {
+            "byteOffset": {
+              "start": 1811,
+              "end": 2055
+            },
+            "start": {
+              "line": 51,
+              "column": 0
+            },
+            "end": {
+              "line": 56,
+              "column": 11
+            }
+          },
+          "lineRange": {
+            "start": 52,
+            "end": 57
+          },
+          "members": [
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "run",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 1902,
+                  "end": 2055
+                },
+                "start": {
+                  "line": 54,
+                  "column": 4
+                },
+                "end": {
+                  "line": 56,
+                  "column": 11
+                }
+              },
+              "lineRange": {
+                "start": 55,
+                "end": 57
+              }
+            }
+          ]
+        },
+        {
+          "role": "item",
+          "kind": "constant",
+          "name": "T",
+          "signature": "T = TypeVar('T', default=object)",
+          "astKind": "assignment",
+          "isImport": false,
+          "isExported": true,
+          "range": {
+            "byteOffset": {
+              "start": 2056,
+              "end": 2088
+            },
+            "start": {
+              "line": 57,
+              "column": 0
+            },
+            "end": {
+              "line": 57,
+              "column": 32
+            }
+          },
+          "lineRange": {
+            "start": 58,
+            "end": 58
+          },
+          "members": []
+        },
+        {
+          "role": "item",
+          "kind": "class",
+          "name": "InitResult",
+          "signature": "class InitResult(Generic[T]):",
+          "astKind": "class_definition",
+          "isImport": false,
+          "isExported": true,
+          "range": {
+            "byteOffset": {
+              "start": 2126,
+              "end": 3477
+            },
+            "start": {
+              "line": 60,
+              "column": 0
+            },
+            "end": {
+              "line": 96,
+              "column": 66
+            }
+          },
+          "lineRange": {
+            "start": 61,
+            "end": 97
+          },
+          "members": [
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "value",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 2732,
+                  "end": 2747
+                },
+                "start": {
+                  "line": 76,
+                  "column": 4
+                },
+                "end": {
+                  "line": 76,
+                  "column": 19
+                }
+              },
+              "lineRange": {
+                "start": 77,
+                "end": 77
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "error",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 2806,
+                  "end": 2823
+                },
+                "start": {
+                  "line": 78,
+                  "column": 4
+                },
+                "end": {
+                  "line": 78,
+                  "column": 21
+                }
+              },
+              "lineRange": {
+                "start": 79,
+                "end": 79
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "elapsed_ms",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 2881,
+                  "end": 2898
+                },
+                "start": {
+                  "line": 80,
+                  "column": 4
+                },
+                "end": {
+                  "line": 80,
+                  "column": 21
+                }
+              },
+              "lineRange": {
+                "start": 81,
+                "end": 81
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "ok",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 2964,
+                  "end": 3081
+                },
+                "start": {
+                  "line": 84,
+                  "column": 4
+                },
+                "end": {
+                  "line": 86,
+                  "column": 37
+                }
+              },
+              "lineRange": {
+                "start": 85,
+                "end": 87
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "success",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 3104,
+                  "end": 3278
+                },
+                "start": {
+                  "line": 89,
+                  "column": 4
+                },
+                "end": {
+                  "line": 91,
+                  "column": 66
+                }
+              },
+              "lineRange": {
+                "start": 90,
+                "end": 92
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "failure",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 3301,
+                  "end": 3477
+                },
+                "start": {
+                  "line": 94,
+                  "column": 4
+                },
+                "end": {
+                  "line": 96,
+                  "column": 66
+                }
+              },
+              "lineRange": {
+                "start": 95,
+                "end": 97
+              }
+            }
+          ]
+        },
+        {
+          "role": "item",
+          "kind": "class",
+          "name": "PreludePhaseResult",
+          "signature": "class PreludePhaseResult:",
+          "astKind": "class_definition",
+          "isImport": false,
+          "isExported": true,
+          "range": {
+            "byteOffset": {
+              "start": 3502,
+              "end": 3741
+            },
+            "start": {
+              "line": 99,
+              "column": 0
+            },
+            "end": {
+              "line": 105,
+              "column": 28
+            }
+          },
+          "lineRange": {
+            "start": 100,
+            "end": 106
+          },
+          "members": [
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "lanes_attempted",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 3573,
+                  "end": 3599
+                },
+                "start": {
+                  "line": 101,
+                  "column": 4
+                },
+                "end": {
+                  "line": 101,
+                  "column": 30
+                }
+              },
+              "lineRange": {
+                "start": 102,
+                "end": 102
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "lanes_skipped",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 3604,
+                  "end": 3633
+                },
+                "start": {
+                  "line": 102,
+                  "column": 4
+                },
+                "end": {
+                  "line": 102,
+                  "column": 33
+                }
+              },
+              "lineRange": {
+                "start": 103,
+                "end": 103
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "lanes_accepted",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 3638,
+                  "end": 3668
+                },
+                "start": {
+                  "line": 103,
+                  "column": 4
+                },
+                "end": {
+                  "line": 103,
+                  "column": 34
+                }
+              },
+              "lineRange": {
+                "start": 104,
+                "end": 104
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "prelude_duration_s",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 3673,
+                  "end": 3712
+                },
+                "start": {
+                  "line": 104,
+                  "column": 4
+                },
+                "end": {
+                  "line": 104,
+                  "column": 43
+                }
+              },
+              "lineRange": {
+                "start": 105,
+                "end": 105
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "error",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 3717,
+                  "end": 3741
+                },
+                "start": {
+                  "line": 105,
+                  "column": 4
+                },
+                "end": {
+                  "line": 105,
+                  "column": 28
+                }
+              },
+              "lineRange": {
+                "start": 106,
+                "end": 106
+              }
+            }
+          ]
+        },
+        {
+          "role": "item",
+          "kind": "class",
+          "name": "AcquisitionPhaseResult",
+          "signature": "class AcquisitionPhaseResult:",
+          "astKind": "class_definition",
+          "isImport": false,
+          "isExported": true,
+          "range": {
+            "byteOffset": {
+              "start": 3766,
+              "end": 4050
+            },
+            "start": {
+              "line": 108,
+              "column": 0
+            },
+            "end": {
+              "line": 116,
+              "column": 28
+            }
+          },
+          "lineRange": {
+            "start": 109,
+            "end": 117
+          },
+          "members": [
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "cycles_started",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 3845,
+                  "end": 3868
+                },
+                "start": {
+                  "line": 110,
+                  "column": 4
+                },
+                "end": {
+                  "line": 110,
+                  "column": 27
+                }
+              },
+              "lineRange": {
+                "start": 111,
+                "end": 111
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "cycles_completed",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 3873,
+                  "end": 3898
+                },
+                "start": {
+                  "line": 111,
+                  "column": 4
+                },
+                "end": {
+                  "line": 111,
+                  "column": 29
+                }
+              },
+              "lineRange": {
+                "start": 112,
+                "end": 112
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "accepted_findings",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 3903,
+                  "end": 3929
+                },
+                "start": {
+                  "line": 112,
+                  "column": 4
+                },
+                "end": {
+                  "line": 112,
+                  "column": 30
+                }
+              },
+              "lineRange": {
+                "start": 113,
+                "end": 113
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "empty_cycles",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 3934,
+                  "end": 3955
+                },
+                "start": {
+                  "line": 113,
+                  "column": 4
+                },
+                "end": {
+                  "line": 113,
+                  "column": 25
+                }
+              },
+              "lineRange": {
+                "start": 114,
+                "end": 114
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "windup_entered",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 3960,
+                  "end": 3988
+                },
+                "start": {
+                  "line": 114,
+                  "column": 4
+                },
+                "end": {
+                  "line": 114,
+                  "column": 32
+                }
+              },
+              "lineRange": {
+                "start": 115,
+                "end": 115
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "exit_path",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 3993,
+                  "end": 4021
+                },
+                "start": {
+                  "line": 115,
+                  "column": 4
+                },
+                "end": {
+                  "line": 115,
+                  "column": 32
+                }
+              },
+              "lineRange": {
+                "start": 116,
+                "end": 116
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "error",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 4026,
+                  "end": 4050
+                },
+                "start": {
+                  "line": 116,
+                  "column": 4
+                },
+                "end": {
+                  "line": 116,
+                  "column": 28
+                }
+              },
+              "lineRange": {
+                "start": 117,
+                "end": 117
+              }
+            }
+          ]
+        },
+        {
+          "role": "item",
+          "kind": "class",
+          "name": "WinddownPhaseResult",
+          "signature": "class WinddownPhaseResult:",
+          "astKind": "class_definition",
+          "isImport": false,
+          "isExported": true,
+          "range": {
+            "byteOffset": {
+              "start": 4075,
+              "end": 4311
+            },
+            "start": {
+              "line": 119,
+              "column": 0
+            },
+            "end": {
+              "line": 124,
+              "column": 28
+            }
+          },
+          "lineRange": {
+            "start": 120,
+            "end": 125
+          },
+          "members": [
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "export_paths",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 4148,
+                  "end": 4201
+                },
+                "start": {
+                  "line": 121,
+                  "column": 4
+                },
+                "end": {
+                  "line": 121,
+                  "column": 57
+                }
+              },
+              "lineRange": {
+                "start": 122,
+                "end": 122
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "synthesis_success",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 4206,
+                  "end": 4237
+                },
+                "start": {
+                  "line": 122,
+                  "column": 4
+                },
+                "end": {
+                  "line": 122,
+                  "column": 35
+                }
+              },
+              "lineRange": {
+                "start": 123,
+                "end": 123
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "teardown_duration_s",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 4242,
+                  "end": 4282
+                },
+                "start": {
+                  "line": 123,
+                  "column": 4
+                },
+                "end": {
+                  "line": 123,
+                  "column": 44
+                }
+              },
+              "lineRange": {
+                "start": 124,
+                "end": 124
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "error",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 4287,
+                  "end": 4311
+                },
+                "start": {
+                  "line": 124,
+                  "column": 4
+                },
+                "end": {
+                  "line": 124,
+                  "column": 28
+                }
+              },
+              "lineRange": {
+                "start": 125,
+                "end": 125
+              }
+            }
+          ]
+        },
+        {
+          "role": "item",
+          "kind": "class",
+          "name": "_CycleState",
+          "signature": "class _CycleState:",
+          "astKind": "class_definition",
+          "isImport": false,
+          "isExported": true,
+          "range": {
+            "byteOffset": {
+              "start": 4336,
+              "end": 7185
+            },
+            "start": {
+              "line": 127,
+              "column": 0
+            },
+            "end": {
+              "line": 194,
+              "column": 38
+            }
+          },
+          "lineRange": {
+            "start": 128,
+            "end": 195
+          },
+          "members": [
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "wall_clock_start",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 5031,
+                  "end": 5060
+                },
+                "start": {
+                  "line": 143,
+                  "column": 4
+                },
+                "end": {
+                  "line": 143,
+                  "column": 33
+                }
+              },
+              "lineRange": {
+                "start": 144,
+                "end": 144
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "lifecycle",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 5112,
+                  "end": 5133
+                },
+                "start": {
+                  "line": 145,
+                  "column": 4
+                },
+                "end": {
+                  "line": 145,
+                  "column": 25
+                }
+              },
+              "lineRange": {
+                "start": 146,
+                "end": 146
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "duckdb_store",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 5177,
+                  "end": 5201
+                },
+                "start": {
+                  "line": 147,
+                  "column": 4
+                },
+                "end": {
+                  "line": 147,
+                  "column": 28
+                }
+              },
+              "lineRange": {
+                "start": 148,
+                "end": 148
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "stop_requested",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 5260,
+                  "end": 5288
+                },
+                "start": {
+                  "line": 149,
+                  "column": 4
+                },
+                "end": {
+                  "line": 149,
+                  "column": 32
+                }
+              },
+              "lineRange": {
+                "start": 150,
+                "end": 150
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "prewindup_barrier_delayed",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 5349,
+                  "end": 5388
+                },
+                "start": {
+                  "line": 151,
+                  "column": 4
+                },
+                "end": {
+                  "line": 151,
+                  "column": 43
+                }
+              },
+              "lineRange": {
+                "start": 152,
+                "end": 152
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "barrier_retry_count",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 5460,
+                  "end": 5488
+                },
+                "start": {
+                  "line": 153,
+                  "column": 4
+                },
+                "end": {
+                  "line": 153,
+                  "column": 32
+                }
+              },
+              "lineRange": {
+                "start": 154,
+                "end": 154
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "cycle_time_ema",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 5536,
+                  "end": 5563
+                },
+                "start": {
+                  "line": 155,
+                  "column": 4
+                },
+                "end": {
+                  "line": 155,
+                  "column": 31
+                }
+              },
+              "lineRange": {
+                "start": 156,
+                "end": 156
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "last_cycle_start",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 5627,
+                  "end": 5664
+                },
+                "start": {
+                  "line": 157,
+                  "column": 4
+                },
+                "end": {
+                  "line": 157,
+                  "column": 41
+                }
+              },
+              "lineRange": {
+                "start": 158,
+                "end": 158
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "effective_max_cycles",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 5716,
+                  "end": 5755
+                },
+                "start": {
+                  "line": 159,
+                  "column": 4
+                },
+                "end": {
+                  "line": 159,
+                  "column": 43
+                }
+              },
+              "lineRange": {
+                "start": 160,
+                "end": 160
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "enrichment_services",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 5818,
+                  "end": 5849
+                },
+                "start": {
+                  "line": 161,
+                  "column": 4
+                },
+                "end": {
+                  "line": 161,
+                  "column": 35
+                }
+              },
+              "lineRange": {
+                "start": 162,
+                "end": 162
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "sidecar_orchestrator",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 5902,
+                  "end": 5934
+                },
+                "start": {
+                  "line": 163,
+                  "column": 4
+                },
+                "end": {
+                  "line": 163,
+                  "column": 36
+                }
+              },
+              "lineRange": {
+                "start": 164,
+                "end": 164
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "sidecar_tasks",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 5988,
+                  "end": 6040
+                },
+                "start": {
+                  "line": 165,
+                  "column": 4
+                },
+                "end": {
+                  "line": 165,
+                  "column": 56
+                }
+              },
+              "lineRange": {
+                "start": 166,
+                "end": 166
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "acquisition_plan",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 6080,
+                  "end": 6108
+                },
+                "start": {
+                  "line": 167,
+                  "column": 4
+                },
+                "end": {
+                  "line": 167,
+                  "column": 32
+                }
+              },
+              "lineRange": {
+                "start": 168,
+                "end": 168
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "synth_windup_task",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 6158,
+                  "end": 6187
+                },
+                "start": {
+                  "line": 169,
+                  "column": 4
+                },
+                "end": {
+                  "line": 169,
+                  "column": 33
+                }
+              },
+              "lineRange": {
+                "start": 170,
+                "end": 170
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "hermes_engine",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 6253,
+                  "end": 6278
+                },
+                "start": {
+                  "line": 171,
+                  "column": 4
+                },
+                "end": {
+                  "line": 171,
+                  "column": 29
+                }
+              },
+              "lineRange": {
+                "start": 172,
+                "end": 172
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "privacy_layer",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 6350,
+                  "end": 6375
+                },
+                "start": {
+                  "line": 173,
+                  "column": 4
+                },
+                "end": {
+                  "line": 173,
+                  "column": 29
+                }
+              },
+              "lineRange": {
+                "start": 174,
+                "end": 174
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "privacy_context_id",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 6422,
+                  "end": 6452
+                },
+                "start": {
+                  "line": 175,
+                  "column": 4
+                },
+                "end": {
+                  "line": 175,
+                  "column": 34
+                }
+              },
+              "lineRange": {
+                "start": 176,
+                "end": 176
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "evidence_log",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 6496,
+                  "end": 6520
+                },
+                "start": {
+                  "line": 177,
+                  "column": 4
+                },
+                "end": {
+                  "line": 177,
+                  "column": 28
+                }
+              },
+              "lineRange": {
+                "start": 178,
+                "end": 178
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "prev_chain_hash",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 6566,
+                  "end": 6593
+                },
+                "start": {
+                  "line": 179,
+                  "column": 4
+                },
+                "end": {
+                  "line": 179,
+                  "column": 31
+                }
+              },
+              "lineRange": {
+                "start": 180,
+                "end": 180
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "sprint_id",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 6667,
+                  "end": 6693
+                },
+                "start": {
+                  "line": 181,
+                  "column": 4
+                },
+                "end": {
+                  "line": 181,
+                  "column": 30
+                }
+              },
+              "lineRange": {
+                "start": 182,
+                "end": 182
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "int_counter_layout",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 6730,
+                  "end": 6760
+                },
+                "start": {
+                  "line": 183,
+                  "column": 4
+                },
+                "end": {
+                  "line": 183,
+                  "column": 34
+                }
+              },
+              "lineRange": {
+                "start": 184,
+                "end": 184
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "rel_discovery_engine",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 6817,
+                  "end": 6849
+                },
+                "start": {
+                  "line": 185,
+                  "column": 4
+                },
+                "end": {
+                  "line": 185,
+                  "column": 36
+                }
+              },
+              "lineRange": {
+                "start": 186,
+                "end": 186
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "temporal_predictor",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 6904,
+                  "end": 6934
+                },
+                "start": {
+                  "line": 187,
+                  "column": 4
+                },
+                "end": {
+                  "line": 187,
+                  "column": 34
+                }
+              },
+              "lineRange": {
+                "start": 188,
+                "end": 188
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "pivot_planner",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 6980,
+                  "end": 7005
+                },
+                "start": {
+                  "line": 189,
+                  "column": 4
+                },
+                "end": {
+                  "line": 189,
+                  "column": 29
+                }
+              },
+              "lineRange": {
+                "start": 190,
+                "end": 190
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "analyst_workbench",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 7044,
+                  "end": 7073
+                },
+                "start": {
+                  "line": 191,
+                  "column": 4
+                },
+                "end": {
+                  "line": 191,
+                  "column": 33
+                }
+              },
+              "lineRange": {
+                "start": 192,
+                "end": 192
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "forensics_enricher",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 7116,
+                  "end": 7146
+                },
+                "start": {
+                  "line": 193,
+                  "column": 4
+                },
+                "end": {
+                  "line": 193,
+                  "column": 34
+                }
+              },
+              "lineRange": {
+                "start": 194,
+                "end": 194
+              }
+            }
+          ]
+        },
+        {
+          "role": "item",
+          "kind": "class",
+          "name": "SprintContext",
+          "signature": "class SprintContext:",
+          "astKind": "class_definition",
+          "isImport": false,
+          "isExported": true,
+          "range": {
+            "byteOffset": {
+              "start": 7223,
+              "end": 11363
+            },
+            "start": {
+              "line": 197,
+              "column": 0
+            },
+            "end": {
+              "line": 278,
+              "column": 57
+            }
+          },
+          "lineRange": {
+            "start": 198,
+            "end": 279
+          },
+          "members": [
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "config",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 7847,
+                  "end": 7876
+                },
+                "start": {
+                  "line": 211,
+                  "column": 4
+                },
+                "end": {
+                  "line": 211,
+                  "column": 33
+                }
+              },
+              "lineRange": {
+                "start": 212,
+                "end": 212
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "query",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 7939,
+                  "end": 7949
+                },
+                "start": {
+                  "line": 213,
+                  "column": 4
+                },
+                "end": {
+                  "line": 213,
+                  "column": 14
+                }
+              },
+              "lineRange": {
+                "start": 214,
+                "end": 214
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "result",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 7990,
+                  "end": 8019
+                },
+                "start": {
+                  "line": 215,
+                  "column": 4
+                },
+                "end": {
+                  "line": 215,
+                  "column": 33
+                }
+              },
+              "lineRange": {
+                "start": 216,
+                "end": 216
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "duckdb_store",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 8090,
+                  "end": 8133
+                },
+                "start": {
+                  "line": 217,
+                  "column": 4
+                },
+                "end": {
+                  "line": 217,
+                  "column": 47
+                }
+              },
+              "lineRange": {
+                "start": 218,
+                "end": 218
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "graph_service",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 8217,
+                  "end": 8242
+                },
+                "start": {
+                  "line": 219,
+                  "column": 4
+                },
+                "end": {
+                  "line": 219,
+                  "column": 29
+                }
+              },
+              "lineRange": {
+                "start": 220,
+                "end": 220
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "hermes_engine",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 8307,
+                  "end": 8351
+                },
+                "start": {
+                  "line": 221,
+                  "column": 4
+                },
+                "end": {
+                  "line": 221,
+                  "column": 48
+                }
+              },
+              "lineRange": {
+                "start": 222,
+                "end": 222
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "governor",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 8431,
+                  "end": 8470
+                },
+                "start": {
+                  "line": 223,
+                  "column": 4
+                },
+                "end": {
+                  "line": 223,
+                  "column": 43
+                }
+              },
+              "lineRange": {
+                "start": 224,
+                "end": 224
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "evidence_log",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 8555,
+                  "end": 8598
+                },
+                "start": {
+                  "line": 225,
+                  "column": 4
+                },
+                "end": {
+                  "line": 225,
+                  "column": 47
+                }
+              },
+              "lineRange": {
+                "start": 226,
+                "end": 226
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "ct_log_client",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 8676,
+                  "end": 8701
+                },
+                "start": {
+                  "line": 227,
+                  "column": 4
+                },
+                "end": {
+                  "line": 227,
+                  "column": 29
+                }
+              },
+              "lineRange": {
+                "start": 228,
+                "end": 228
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "runner",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 8740,
+                  "end": 8758
+                },
+                "start": {
+                  "line": 229,
+                  "column": 4
+                },
+                "end": {
+                  "line": 229,
+                  "column": 22
+                }
+              },
+              "lineRange": {
+                "start": 230,
+                "end": 230
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "lifecycle",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 8829,
+                  "end": 8850
+                },
+                "start": {
+                  "line": 231,
+                  "column": 4
+                },
+                "end": {
+                  "line": 231,
+                  "column": 25
+                }
+              },
+              "lineRange": {
+                "start": 232,
+                "end": 232
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "cancel_event",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 8932,
+                  "end": 8998
+                },
+                "start": {
+                  "line": 233,
+                  "column": 4
+                },
+                "end": {
+                  "line": 233,
+                  "column": 70
+                }
+              },
+              "lineRange": {
+                "start": 234,
+                "end": 234
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "bg_tasks",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 9058,
+                  "end": 9119
+                },
+                "start": {
+                  "line": 235,
+                  "column": 4
+                },
+                "end": {
+                  "line": 235,
+                  "column": 65
+                }
+              },
+              "lineRange": {
+                "start": 236,
+                "end": 236
+              }
+            },
+            {
+              "role": "member",
+              "kind": "field",
+              "name": "_cycle",
+              "signature": "",
+              "astKind": "assignment",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 9195,
+                  "end": 9251
+                },
+                "start": {
+                  "line": 237,
+                  "column": 4
+                },
+                "end": {
+                  "line": 237,
+                  "column": 60
+                }
+              },
+              "lineRange": {
+                "start": 238,
+                "end": 238
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "wall_clock_start",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 9324,
+                  "end": 9480
+                },
+                "start": {
+                  "line": 241,
+                  "column": 4
+                },
+                "end": {
+                  "line": 243,
+                  "column": 43
+                }
+              },
+              "lineRange": {
+                "start": 242,
+                "end": 244
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "is_terminal",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 9500,
+                  "end": 9655
+                },
+                "start": {
+                  "line": 246,
+                  "column": 4
+                },
+                "end": {
+                  "line": 248,
+                  "column": 65
+                }
+              },
+              "lineRange": {
+                "start": 247,
+                "end": 249
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "build",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 9678,
+                  "end": 10192
+                },
+                "start": {
+                  "line": 251,
+                  "column": 4
+                },
+                "end": {
+                  "line": 259,
+                  "column": 119
+                }
+              },
+              "lineRange": {
+                "start": 252,
+                "end": 260
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "with_services",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 10198,
+                  "end": 10928
+                },
+                "start": {
+                  "line": 261,
+                  "column": 4
+                },
+                "end": {
+                  "line": 267,
+                  "column": 205
+                }
+              },
+              "lineRange": {
+                "start": 262,
+                "end": 268
+              }
+            },
+            {
+              "role": "member",
+              "kind": "method",
+              "name": "with_cycle",
+              "signature": "",
+              "astKind": "function_definition",
+              "isPublic": true,
+              "range": {
+                "byteOffset": {
+                  "start": 10934,
+                  "end": 11363
+                },
+                "start": {
+                  "line": 269,
+                  "column": 4
+                },
+                "end": {
+                  "line": 278,
+                  "column": 57
+                }
+              },
+              "lineRange": {
+                "start": 270,
+                "end": 279
+              }
+            }
+          ]
+        },
+        {
+          "role": "item",
+          "kind": "function",
+          "name": "dataclass_replace",
+          "signature": "def dataclass_replace(obj: Any, **changes: Any) -> Any:",
+          "astKind": "function_definition",
+          "isImport": false,
+          "isExported": true,
+          "range": {
+            "byteOffset": {
+              "start": 11365,
+              "end": 12130
+            },
+            "start": {
+              "line": 280,
+              "column": 0
+            },
+            "end": {
+              "line": 298,
+              "column": 26
+            }
+          },
+          "lineRange": {
+            "start": 281,
+            "end": 299
+          },
+          "members": []
+        }
+      ]
+    }
+  ],
+  "hints": [
+    "Parameter `max_results` is not used by outline. It was ignored. Use `type` to filter symbol kinds or `match` to filter by name regex."
+  ]
+}

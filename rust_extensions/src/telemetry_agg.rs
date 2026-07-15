@@ -63,6 +63,8 @@ pub struct Histogram {
     boundaries: Vec<u64>,
     total: AtomicU64,
     sum: AtomicU64,
+    min: AtomicU64,
+    max: AtomicU64,
 }
 
 impl Histogram {
@@ -74,11 +76,15 @@ impl Histogram {
             boundaries.push(current);
         }
         let counts: Vec<AtomicU64> = (0..128).map(|_| AtomicU64::new(0)).collect();
+        let max_val = AtomicU64::new(u64::MAX);
+        let min_val = AtomicU64::new(0);
         Self {
             counts,
             boundaries,
             total: AtomicU64::new(0),
             sum: AtomicU64::new(0),
+            min: min_val,
+            max: max_val,
         }
     }
 
@@ -99,6 +105,15 @@ impl Histogram {
         self.counts[idx].fetch_add(1, Ordering::Relaxed);
         self.total.fetch_add(1, Ordering::Relaxed);
         self.sum.fetch_add(ns, Ordering::Relaxed);
+        // Update min/max with relaxed ordering (approximate is fine for histograms)
+        let current_min = self.min.load(Ordering::Relaxed);
+        if ns < current_min {
+            let _ = self.min.compare_exchange(current_min, ns, Ordering::Relaxed, Ordering::Relaxed);
+        }
+        let current_max = self.max.load(Ordering::Relaxed);
+        if ns > current_max {
+            let _ = self.max.compare_exchange(current_max, ns, Ordering::Relaxed, Ordering::Relaxed);
+        }
     }
 
     #[inline]
@@ -124,6 +139,18 @@ impl Histogram {
         (self.percentile(0.50), self.percentile(0.95), self.percentile(0.99))
     }
 
+    /// Extended percentiles for comprehensive latency tracking.
+    /// Returns p50, p75, p90, p95, p99, p99.9 as nanoseconds.
+    #[inline]
+    pub fn extended_percentiles(&self) -> [u64; 6] {
+        let targets = [0.50, 0.75, 0.90, 0.95, 0.99, 0.999];
+        let mut result = [0u64; 6];
+        for (i, &pct) in targets.iter().enumerate() {
+            result[i] = self.percentile(pct).as_nanos() as u64;
+        }
+        result
+    }
+
     pub fn stats(&self) -> HistogramStats {
         let total = self.total.load(Ordering::Relaxed);
         let sum = self.sum.load(Ordering::Relaxed);
@@ -141,6 +168,31 @@ impl Histogram {
         for count in &self.counts { count.store(0, Ordering::Relaxed); }
         self.total.store(0, Ordering::Relaxed);
         self.sum.store(0, Ordering::Relaxed);
+        self.min.store(0, Ordering::Relaxed);
+        self.max.store(u64::MAX, Ordering::Relaxed);
+    }
+
+    /// Extended stats with comprehensive percentiles for OTel export.
+    #[inline]
+    pub fn extended_stats(&self) -> ExtendedHistogramStats {
+        let total = self.total.load(Ordering::Relaxed);
+        let sum = self.sum.load(Ordering::Relaxed);
+        let percs = self.extended_percentiles();
+        let min_val = if total > 0 { self.min.load(Ordering::Relaxed) } else { 0 };
+        let max_val = if total > 0 { self.max.load(Ordering::Relaxed) } else { 0 };
+        ExtendedHistogramStats {
+            count: total,
+            mean_ns: if total > 0 { sum / total } else { 0 },
+            sum_ns: sum,
+            min_ns: min_val,
+            max_ns: max_val,
+            p50_ns: percs[0],
+            p75_ns: percs[1],
+            p90_ns: percs[2],
+            p95_ns: percs[3],
+            p99_ns: percs[4],
+            p999_ns: percs[5],
+        }
     }
 }
 
@@ -153,6 +205,23 @@ pub struct HistogramStats {
     pub p50_ns: u64,
     pub p95_ns: u64,
     pub p99_ns: u64,
+}
+
+/// Extended histogram stats with more percentiles for comprehensive latency tracking.
+/// Used by the Rust → Python OTel bridge for detailed metrics export.
+#[derive(Clone, Debug)]
+pub struct ExtendedHistogramStats {
+    pub count: u64,
+    pub mean_ns: u64,
+    pub sum_ns: u64,
+    pub min_ns: u64,
+    pub max_ns: u64,
+    pub p50_ns: u64,
+    pub p75_ns: u64,
+    pub p90_ns: u64,
+    pub p95_ns: u64,
+    pub p99_ns: u64,
+    pub p999_ns: u64,
 }
 
 // ============== Gauge ==============
@@ -268,6 +337,30 @@ impl TelemetryAggregator {
 
         TelemetrySnapshot { counters: counter_snap, histograms: histogram_snap, gauges: gauge_snap }
     }
+
+    /// Export with extended histogram stats for OTel metrics bridge.
+    /// Returns TelemetryExport with p50-p99.9 percentiles.
+    pub fn export(&self) -> TelemetryExport {
+        let counters = self.counters.lock().unwrap();
+        let counter_snap: HashMap<String, (u64, u64)> = counters.iter().map(|(k, v)| (k.clone(), v.get())).collect();
+
+        let histograms = self.histograms.lock().unwrap();
+        let histogram_snap: HashMap<String, ExtendedHistogramStats> =
+            histograms.iter().map(|(k, v)| (k.clone(), v.extended_stats())).collect();
+
+        let gauges = self.gauges.lock().unwrap();
+        let gauge_snap: HashMap<String, f64> = gauges.iter().map(|(k, v)| (k.clone(), v.get())).collect();
+
+        TelemetryExport {
+            counters: counter_snap,
+            histograms: histogram_snap,
+            gauges: gauge_snap,
+            timestamp_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0),
+        }
+    }
 }
 
 impl Default for TelemetryAggregator { fn default() -> Self { Self::new() } }
@@ -277,6 +370,19 @@ pub struct TelemetrySnapshot {
     pub counters: HashMap<String, (u64, u64)>,
     pub histograms: HashMap<String, HistogramStats>,
     pub gauges: HashMap<String, f64>,
+}
+
+/// Export struct for Python OTel bridge — zero-copy friendly POD.
+#[derive(Clone, Debug)]
+pub struct TelemetryExport {
+    /// Counter name → (count, bytes)
+    pub counters: HashMap<String, (u64, u64)>,
+    /// Histogram name → ExtendedHistogramStats (p50-p99.9)
+    pub histograms: HashMap<String, ExtendedHistogramStats>,
+    /// Gauge name → current value
+    pub gauges: HashMap<String, f64>,
+    /// Export timestamp in milliseconds since epoch
+    pub timestamp_ms: u64,
 }
 
 // ============== Python Bindings ==============
@@ -311,6 +417,7 @@ impl PyTelemetryAggregator {
     fn histogram_record_ns(&self, name: String, ns: u64) { self.inner.histogram_record_ns(&name, ns); }
     fn gauge_set(&self, name: String, value: f64) { self.inner.gauge_set(&name, value); }
 
+    /// Snapshot with standard histogram stats (p50/p95/p99).
     fn snapshot(&self, py: Python<'_>) -> HashMap<String, Py<PyAny>> {
         let snap = self.inner.snapshot();
         let mut result = HashMap::new();
@@ -331,6 +438,59 @@ impl PyTelemetryAggregator {
         for (name, value) in snap.gauges {
             result.insert(format!("gauge:{}", name), value.into_pyobject(py).unwrap().into());
         }
+        result
+    }
+
+    /// Export with extended histogram stats for OTel metrics bridge (p50-p99.9).
+    /// Returns dict with keys: "counters", "histograms", "gauges", "timestamp_ms".
+    fn export(&self, py: Python<'_>) -> HashMap<String, Py<PyAny>> {
+        let exp = self.inner.export();
+        let mut result = HashMap::new();
+
+        // Counters: name → (count, bytes)
+        let counters: HashMap<String, (u64, u64)> = exp.counters;
+        let counters_py: HashMap<String, Py<PyAny>> = counters
+            .into_iter()
+            .map(|(k, v)| {
+                (k, (v.0, v.1).into_pyobject(py).unwrap().into())
+            })
+            .collect();
+        result.insert("counters".into(), counters_py.into_pyobject(py).unwrap().into());
+
+        // Histograms: name → ExtendedHistogramStats
+        let histograms: HashMap<String, ExtendedHistogramStats> = exp.histograms;
+        let histograms_py: HashMap<String, Py<PyAny>> = histograms
+            .into_iter()
+            .map(|(k, stats)| {
+                let py_dict: HashMap<&str, Py<PyAny>> = HashMap::from([
+                    ("count", stats.count.into_pyobject(py).unwrap().into()),
+                    ("mean_ns", stats.mean_ns.into_pyobject(py).unwrap().into()),
+                    ("sum_ns", stats.sum_ns.into_pyobject(py).unwrap().into()),
+                    ("min_ns", stats.min_ns.into_pyobject(py).unwrap().into()),
+                    ("max_ns", stats.max_ns.into_pyobject(py).unwrap().into()),
+                    ("p50_ns", stats.p50_ns.into_pyobject(py).unwrap().into()),
+                    ("p75_ns", stats.p75_ns.into_pyobject(py).unwrap().into()),
+                    ("p90_ns", stats.p90_ns.into_pyobject(py).unwrap().into()),
+                    ("p95_ns", stats.p95_ns.into_pyobject(py).unwrap().into()),
+                    ("p99_ns", stats.p99_ns.into_pyobject(py).unwrap().into()),
+                    ("p999_ns", stats.p999_ns.into_pyobject(py).unwrap().into()),
+                ]);
+                (k, py_dict.into_pyobject(py).unwrap().into())
+            })
+            .collect();
+        result.insert("histograms".into(), histograms_py.into_pyobject(py).unwrap().into());
+
+        // Gauges: name → value
+        let gauges: HashMap<String, f64> = exp.gauges;
+        let gauges_py: HashMap<String, Py<PyAny>> = gauges
+            .into_iter()
+            .map(|(k, v)| (k, v.into_pyobject(py).unwrap().into()))
+            .collect();
+        result.insert("gauges".into(), gauges_py.into_pyobject(py).unwrap().into());
+
+        // Timestamp
+        result.insert("timestamp_ms".into(), exp.timestamp_ms.into_pyobject(py).unwrap().into());
+
         result
     }
 }

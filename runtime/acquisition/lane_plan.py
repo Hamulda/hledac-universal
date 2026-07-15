@@ -13,7 +13,6 @@ MODERNIZATION (Issue #18):
 from __future__ import annotations
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from typing import Any
 import msgspec
 from hledac.universal.runtime.acquisition.lane_constants import AcquisitionLane, RiskLevel
@@ -47,13 +46,9 @@ class LaneRule(msgspec.Struct, frozen=True):
     concurrency: int
     risk_level: str
 
-@dataclass(slots=True)
-class AcquisitionContext:
+class AcquisitionContext(msgspec.Struct):
     """
     Shared context for lane eligibility evaluation.
-
-    NOTE: Uses @dataclass (not msgspec) because it has field(default=...)
-    which msgspec.Struct does not support.
     """
     query: str
     uma_state: str

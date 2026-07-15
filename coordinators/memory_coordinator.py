@@ -34,20 +34,15 @@ Class Index
   - ``MemoryPattern`` — dataclass: temporal pattern with timestamp, intensity, frequency
   - ``STDPParameters`` — dataclass: spike-timing-dependent plasticity config
 
-**Context Optimization** (lines ~1400+):
-  - ``ContextPriority`` — Enum: CRITICAL, HIGH, MEDIUM, LOW, BACKGROUND
-  - ``ResearchPhase`` — Enum: DISCOVERY, ACQUISITION, ANALYSIS, SYNTHESIS, REPORTING
-  - ``ContextItem`` — dataclass: priority + metadata for one context entry
-  - ``CompressedContext`` — dataclass: compressed representation with ratio
-  - ``ContextOptimizationManager`` — LANCEDB reranking integration; narrow seam ``get_reranking_context()`` for thermal/battery-aware reranking
+**Context Optimization** — MOVED to ``coordinators.memory`` (F320):
+  - ``ContextOptimizationManager`` — use ``from coordinators.memory import ContextOptimizationManager``
+  - ``ContextPriority``, ``ResearchPhase``, ``ContextItem``, ``CompressedContext`` — same import
 
-**Multi-Level Cache** (lines ~1900+):
-  - ``CacheType`` — Enum: L1 (hot), L2 (warm), L3 (cold)
-  - ``CacheLocation`` — Enum: RAM, DISK, LMDB
-  - ``CacheEntry`` — dataclass: cached item with key, data, size, access metadata
-  - ``MultiLevelContextCache`` — LRU cache with L1/L2/L3 tiers and RAM pressure gating
+**Multi-Level Cache** — MOVED to ``coordinators.memory`` (F320):
+  - ``MultiLevelContextCache`` — use ``from coordinators.memory import MultiLevelContextCache``
+  - ``CacheType``, ``CacheLocation``, ``CacheEntry`` — same import
 
-**Memory Pressure Polling** (lines ~2400+):
+**Memory Pressure Polling** (lines ~700+):
   - ``MemoryPressurePoller`` — background poller with callbacks on pressure transitions
 
 Notes
@@ -985,6 +980,11 @@ class UniversalMemoryCoordinator:
         except Exception as e:
             logger.error(f'Language filtering failed: {e}')
             return {'success': False, 'error': str(e)}
+
+# DEPRECATED — MOVED to coordinators/memory/ (F320)
+class _DeprecatedContextPriority(Enum):
+    """Placeholder to preserve enum values during migration."""
+
 
 class ContextPriority(Enum):
     """Priority levels for context items."""

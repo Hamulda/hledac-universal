@@ -1,0 +1,941 @@
+{
+  "view": "names",
+  "files": [
+    {
+      "path": "rust_extensions/src/collections/mod.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/feed_decision.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/metal_pattern_matcher.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/compress.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/ioc_extract_simd.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/rate_limit.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_module"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/gil.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/async_query.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/simd_similarity.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/graph_traverse.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/text_similarity.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/data.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/lsh_index.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/mpsc_pool.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/simhash_ext.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/url_ops.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/feed_pipeline.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/int_counter_layout.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/quality_gate.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/arrow_batch_builder.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/claims_extraction.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/tls_metadata.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/adaptive_scheduler.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/madvise.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/crypto_accelerate.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/parquet_reader.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/zero_copy.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/data/connection.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/data/cache.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/pool_run.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/ioc_extract.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/data/graph_traverse.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/ioc_dedup.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_class"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/text_norm.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/dns_tunnel.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/url_engine.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/hot_edges_rs.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/mlx_bridge.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/regex_lz4.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/federated_qtable.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/sprint_policies.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/html_parse.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/bloom.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/health.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/pipeline_compose.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/memory.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/lmdb_dht.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/spsc_queue.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/serde_json_rs.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/telemetry_agg.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "rust_extensions/src/signal_batch.rs",
+      "lang": "Rust",
+      "groups": [
+        {
+          "kind": "function",
+          "names": [
+            "register_functions"
+          ]
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "path": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/rust_extensions/src",
+    "is_directory": true,
+    "file_count": 51,
+    "total_symbols": 51,
+    "by_lang": {
+      "Rust": 51
+    },
+    "by_kind": {
+      "function": 51
+    },
+    "all_symbols": [
+      {
+        "path": "rust_extensions/src/collections/mod.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/feed_decision.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/metal_pattern_matcher.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/compress.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/ioc_extract_simd.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/rate_limit.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_module"
+      },
+      {
+        "path": "rust_extensions/src/gil.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/async_query.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register"
+      },
+      {
+        "path": "rust_extensions/src/simd_similarity.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/graph_traverse.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/text_similarity.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/data.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/lsh_index.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/mpsc_pool.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register"
+      },
+      {
+        "path": "rust_extensions/src/simhash_ext.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/url_ops.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/feed_pipeline.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register"
+      },
+      {
+        "path": "rust_extensions/src/int_counter_layout.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/quality_gate.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/arrow_batch_builder.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register"
+      },
+      {
+        "path": "rust_extensions/src/claims_extraction.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/tls_metadata.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/adaptive_scheduler.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/madvise.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/crypto_accelerate.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/parquet_reader.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register"
+      },
+      {
+        "path": "rust_extensions/src/zero_copy.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/data/connection.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/data/cache.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/pool_run.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/ioc_extract.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/data/graph_traverse.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/ioc_dedup.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_class"
+      },
+      {
+        "path": "rust_extensions/src/text_norm.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/dns_tunnel.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/url_engine.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/hot_edges_rs.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/mlx_bridge.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register"
+      },
+      {
+        "path": "rust_extensions/src/regex_lz4.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register"
+      },
+      {
+        "path": "rust_extensions/src/federated_qtable.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register"
+      },
+      {
+        "path": "rust_extensions/src/sprint_policies.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register"
+      },
+      {
+        "path": "rust_extensions/src/html_parse.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/bloom.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register"
+      },
+      {
+        "path": "rust_extensions/src/health.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register"
+      },
+      {
+        "path": "rust_extensions/src/pipeline_compose.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register"
+      },
+      {
+        "path": "rust_extensions/src/memory.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/lmdb_dht.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/spsc_queue.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register"
+      },
+      {
+        "path": "rust_extensions/src/serde_json_rs.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/telemetry_agg.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      },
+      {
+        "path": "rust_extensions/src/signal_batch.rs",
+        "lang": "Rust",
+        "kind": "function",
+        "name": "register_functions"
+      }
+    ],
+    "next_action": "The directory outline is complete. Synthesize your final answer from the `summary.all_symbols` and `files` arrays above — no further tool calls needed for an overview."
+  },
+  "hints": [
+    "Parameter `max_results` is not used by outline. It was ignored. Use `type` to filter symbol kinds or `match` to filter by name regex."
+  ]
+}

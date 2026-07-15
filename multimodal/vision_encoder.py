@@ -247,9 +247,15 @@ class VisionEncoder:
         Semaphore(3) limits concurrent encodings.
         Fail-soft: returns dummy embeddings on any error — sprint never crashes.
         """
+        from contextlib import nullcontext
         mx_mod = _get_mlx_core()
         async with _IMAGE_SEMAPHORE:
-            async with self.governor.reserve({'ram_mb': max(50, 20 * len(images)), 'gpu': True}, Priority.NORMAL):
+            # Governor may be None in standalone use — skip RAM reservation if so
+            if self.governor is not None:
+                ram_ctx = self.governor.reserve({'ram_mb': max(50, 20 * len(images)), 'gpu': True}, Priority.NORMAL)
+            else:
+                ram_ctx = nullcontext()
+            async with ram_ctx:
                 if self._model is None or mx_mod is None:
                     out: list[np.ndarray] = []
                     for image_bytes in images:

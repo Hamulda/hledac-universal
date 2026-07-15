@@ -87,6 +87,14 @@ except ImportError:
     def _ORJSON_DECODER(b: Any) -> Any:
         return _stdjson.loads(b.decode("utf-8") if isinstance(b, (bytes, bytearray)) else b)
 
+# lmdb — strict import with fallback (used by _DuckDBQueryCache)
+try:
+    import lmdb
+    _HAS_LMDB: bool = True
+except ImportError:
+    lmdb = None  # type: ignore[assignment]
+    _HAS_LMDB = False
+
 
 if TYPE_CHECKING:
     import polars as pl
@@ -212,18 +220,16 @@ from hledac.universal.utils.async_helpers import safe_gather_return_exceptions
 
 from .dedup import DedupManager
 from .sprint_boundary import SprintBoundaryCoordinator
-from .quality_assessment import (
-    _HIGH_CONF_IOC_RE,
-    _QUALITY_ENTROPY_THRESHOLD,
-    _QUALITY_MIN_ENTROPY_LEN,
-    QualityAssessmentState,
-    QualityRejectionRecord,
-    _compute_dedup_fingerprint,
-    _compute_entropy,
-    _compute_url_fingerprint,
-    _normalize_for_quality,
-    _normalize_osint_url,
-)
+
+# Lazy imports from quality_assessment to avoid circular dependency
+# duckdb_store ↔ quality_assessment. Use TYPE_CHECKING for type hints only.
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .quality_assessment import (
+        QualityAssessmentState,
+        QualityRejectionRecord,
+    )
 
 # Rust backend — strict import
 try:
@@ -241,7 +247,16 @@ def _is_quality_gate_available() -> bool:
 
 
 _QUALITY_GATE_BATCH_AVAILABLE = _is_quality_gate_available()
-if not _QUALITY_GATE_BATCH_AVAILABLE:
+if _QUALITY_GATE_BATCH_AVAILABLE:
+    # ISSUE-024: Wire Rust batch functions — these were None even when Rust was available
+    _rust_batch_entropy = rust.quality.batch_entropy
+    _rust_batch_dedup_fingerprints = rust.quality.batch_dedup_fingerprints
+    _rust_batch_normalize_quality_text = rust.quality.batch_normalize_quality_text
+    _rust_batch_url_fingerprints = rust.quality.batch_url_fingerprints
+    _rust_dedup_fingerprint = rust.quality.dedup_fingerprint
+    _rust_url_fingerprint_b2b = rust.quality.url_fingerprint
+    _rust_normalize_quality_text = rust.quality.normalize_quality_text
+else:
     _rust_batch_entropy = None
     _rust_batch_dedup_fingerprints = None
     _rust_batch_normalize_quality_text = None
@@ -706,45 +721,149 @@ class ParquetHistoryReader:
         return f"ParquetHistoryReader(path={self.path!r}, row_groups={self.num_row_groups}, total_rows={self.total_rows}, batch_size={self.batch_size}{filter_str})"
 
 
+def _get_memory_pressure() -> "MemoryPressureLevel":
+    """
+    Get current memory pressure level using psutil.
+
+    Returns MemoryPressureLevel.NORMAL if unavailable.
+    Uses same thresholds as BaseCoordinator.check_memory_pressure().
+
+    ISSUE-025: Memory pressure gating for parquet export on M1 8GB.
+    """
+    from coordinators.enums import MemoryPressureLevel as _MPL
+    try:
+        import psutil
+        vm = psutil.virtual_memory()
+        ratio = vm.used / vm.total
+        # Match thresholds from coordinators/base.py: _memory_thresholds
+        if ratio >= 0.95:
+            return _MPL.CRITICAL
+        elif ratio >= 0.85:
+            return _MPL.HIGH
+        elif ratio >= 0.75:
+            return _MPL.ELEVATED
+        return _MPL.NORMAL
+    except Exception:  # noqa: BLE001 — best-effort; psutil/MemoryPressureLevel unavailable
+        # Return NORMAL so export proceeds when monitoring is unavailable
+        return _MPL.NORMAL
+
+
 def export_findings_to_parquet(
     path: str,
     query: str = "SELECT id, query, source_type, confidence, ts, provenance_json FROM canonical_findings",
     batch_size: int = 100000,
+    _memory_pressure_gate: bool = True,
 ) -> bool:
     """
-    Export DuckDB canonical_findings to a parquet file using DuckDB's COPY TO.
+    ISSUE-025: Streaming parquet export with per-batch memory pressure gate.
 
-    Uses DuckDB's native parquet writer — no Rust parquet extension needed.
+    Replaces atomic COPY TO with iterative fetchmany + pyarrow ParquetWriter.
+    Each batch:
+      1. DuckDB fetchmany(batch_size) — rows in memory
+      2. Memory pressure check — abort if HIGH/CRITICAL
+      3. pyarrow.Table.from_pydict — zero-copy columnar
+      4. ParquetWriter.write_table — appends row group to file
+
+    M1 8GB: max ~100 MB per batch (100k rows × 6 cols × ~180 bytes).
+    At 0.85 RAM threshold (HIGH), export pauses and returns False.
 
     Args:
         path: Output parquet file path
         query: SQL query to export (default: all canonical_findings)
-        batch_size: Rows per batch for DuckDB arrow export
+        batch_size: Rows per batch (default 100k; M1 8GB safe max ~100 MB/batch)
+        _memory_pressure_gate: If True, check pressure between batches, abort if HIGH/CRITICAL
 
     Returns:
-        True on success, False on error.
+        True on full success, False if paused (pressure) or error.
     """
+    import os
+
+    from coordinators.enums import MemoryPressureLevel as _MPL
+
+    _path = os.path.expanduser(path) if path.startswith("~") else path
+    _db_path = os.environ.get("HLEDAC_DUCKDB_PATH", "hledac.duckdb")
+    if not os.path.isabs(_db_path):
+        if not os.path.exists(_db_path):
+            for _p in ["./hledac.duckdb", "../hledac.duckdb", "~/.hledac/hledac.duckdb"]:
+                if os.path.exists(os.path.expanduser(_p)):
+                    _db_path = os.path.expanduser(_p)
+                    break
+
     try:
-        import duckdb
-
+        duckdb = _get_duckdb()
         conn = duckdb.connect(":memory:")
-        import os
-
-        db_path = os.environ.get("HLEDAC_DUCKDB_PATH", "hledac.duckdb")
-        if not os.path.isabs(db_path):
-            if not os.path.exists(db_path):
-                possible = ["./hledac.duckdb", "../hledac.duckdb", "~/.hledac/hledac.duckdb"]
-                for p in possible:
-                    if os.path.exists(os.path.expanduser(p)):
-                        db_path = os.path.expanduser(p)
-                        break
-        try:
-            conn.execute(f"ATTACH '{db_path}' AS source_db")
-        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
-            return False
+        conn.execute(f"ATTACH '{_db_path}' AS source_db")
         conn.execute("USE source_db")
-        conn.execute(f"COPY ({query}) TO '{path}' (FORMAT PARQUET)")
-        return True
+
+        result = conn.execute(query)
+        columns = [desc[0] for desc in result.description]
+
+        total_rows = 0
+        writer = None
+        pa = None
+
+        try:
+            import pyarrow as _pa
+
+            pa = _pa
+            os.makedirs(os.path.dirname(_path) or ".", exist_ok=True)
+
+            batch: list[tuple]
+            batch_num = 0
+            while True:
+                batch = result.fetchmany(batch_size)
+                if not batch:
+                    break
+
+                batch_num += 1
+
+                # ISSUE-025: Per-batch memory pressure gate — prevent OOM mid-export
+                if _memory_pressure_gate:
+                    pressure = _get_memory_pressure()
+                    if pressure in (_MPL.HIGH, _MPL.CRITICAL):
+                        logger.warning(
+                            "[EXPORT-PAUSE] batch %d memory pressure=%s, deferring parquet export to reduce OOM risk",
+                            batch_num,
+                            pressure.value,
+                        )
+                        if writer is not None:
+                            try:
+                                writer.close()
+                            except Exception:
+                                pass
+                        return False
+
+                col_arrays = [[row[i] for row in batch] for i in range(len(columns))]
+                table = _pa.Table.from_pydict(dict(zip(columns, col_arrays)))
+
+                if writer is None:
+                    writer = _pa.parquet.ParquetWriter(
+                        _path,
+                        table.schema,
+                        compression="zstd",
+                        row_group_size=batch_size,
+                    )
+
+                writer.write_table(table)
+                total_rows += len(batch)
+
+            if writer is not None:
+                writer.close()
+            return True
+
+        except Exception as _e:
+            logger.debug("[EXPORT-PAUSE] streaming parquet error: %s", _e)
+            if writer is not None:
+                try:
+                    writer.close()
+                except Exception:
+                    pass
+            return False
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
     except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
         return False
 
@@ -910,8 +1029,6 @@ class _DuckDBQueryCache:
             object.__setattr__(self, "_l2_env", None)
             return
         try:
-            import lmdb
-
             lmdb_path.parent.mkdir(parents=True, exist_ok=True)
             env = lmdb.open(str(lmdb_path), map_size=16 * 1024 * 1024, writemap=False, readahead=False, meminit=False)
             object.__setattr__(self, "_l2_env", env)
@@ -922,9 +1039,11 @@ class _DuckDBQueryCache:
     def _key(sql: str, params: tuple) -> str:
         """Stable cache key: sha256(sql + "|" + json(params))."""
         import hashlib
-        import json as _json
 
-        data = sql + "|" + _json.dumps(params, sort_keys=True)
+        # orjson supports sort_keys via OPT_SORT_KEYS option
+        opts = getattr(_orjson_mod, "OPT_SORT_KEYS", 0) if _HAS_ORJSON else 0
+        params_json = _orjson_mod.dumps(params, option=opts) if _HAS_ORJSON else _stdjson.dumps(params, sort_keys=True)
+        data = sql + "|" + params_json.decode()
         return hashlib.sha256(data.encode()).hexdigest()[:32]
 
     def _l1_get(self, key: str) -> list | None:
@@ -960,9 +1079,8 @@ class _DuckDBQueryCache:
                 raw = txn.get(key.encode())
             if raw is None:
                 return None
-            import orjson as _orjson
 
-            entry = _orjson.loads(raw)
+            entry = _orjson_mod.loads(raw)
             if time.monotonic() - entry["ts"] > object.__getattribute__(self, "_ttl_s"):
                 return None
             return entry["rows"]
@@ -971,8 +1089,6 @@ class _DuckDBQueryCache:
 
     def _l2_set(self, key: str, rows: list) -> None:
         import time
-
-        import orjson as _orjson
 
         env = object.__getattribute__(self, "_l2_env")
         if env is None:
@@ -1045,8 +1161,12 @@ def _get_duckdb() -> Any:
 
 from core.env_config import ENV
 
-_DUCKDB_MEMORY_LIMIT: str = ENV.get("GHOST_DUCKDB_MEMORY", default="600MB")
+_DUCKDB_MEMORY_LIMIT: str = ENV.get("GHOST_DUCKDB_MEMORY", default="1GB")
 _DUCKDB_MAX_TEMP: str = ENV.get("GHOST_DUCKDB_MAX_TEMP", default="1GB")
+# ISSUE-35: Hard ceiling — DuckDB will NOT exceed this under any circumstances.
+# On M1 8GB: OS ~2.5GB + Python ~1GB + MLX inference ~4.5GB = 8GB total.
+# DuckDB gets 1GB ceiling to leave headroom for other subsystems.
+_DUCKDB_HARD_MEMORY_LIMIT: str = "1GB"
 _ARROW_INGEST_ENABLED: bool = ENV.get_bool("HLEDAC_ARROW_INGEST")
 _DUCKDB_RAMDISK_TEMP: str | None = ENV.get_str("HLEDAC_DUCKDB_RAMDISK_TEMP") or None
 _ARROW_MIN_BATCH: int = ENV.get_int("HLEDAC_ARROW_MIN_BATCH", default=5)
@@ -1854,6 +1974,9 @@ class DuckDBShadowStore:
         memory_limit_val = _validate_duckdb_setting(str(runtime["memory_limit"]), "memory_limit")
         max_temp_val = _validate_duckdb_setting(self._max_temp, "max_temp")
         conn.execute("SET memory_limit = ?", [memory_limit_val])
+        # ISSUE-35: hard_memory_limit is a ceiling DuckDB cannot exceed.
+        # On M1 8GB, 1GB ceiling ensures DuckDB never steals from MLX inference budget.
+        conn.execute("PRAGMA hard_memory_limit = ?", [_DUCKDB_HARD_MEMORY_LIMIT])
         conn.execute("SET max_temp_directory_size = ?", [max_temp_val])
         if self._temp_dir is not None and (not is_read_only) and (not _is_memory_mode):
             temp_dir_val = _validate_path_setting(self._temp_dir, "temp_directory")
@@ -1964,6 +2087,8 @@ class DuckDBShadowStore:
             try:
                 memory_limit_val = _validate_duckdb_setting(str(resolved_memory), "memory_limit")
                 _conn.execute("SET memory_limit = ?", [memory_limit_val])
+                # ISSUE-35: hard_memory_limit ceiling — DuckDB cannot exceed 1GB on M1 8GB.
+                _conn.execute("PRAGMA hard_memory_limit = ?", [_DUCKDB_HARD_MEMORY_LIMIT])
                 if _DUCKDB_RAMDISK_TEMP:
                     temp_dir_val = _validate_path_setting(Path(_DUCKDB_RAMDISK_TEMP), "temp_directory")
                     _conn.execute("SET temp_directory = ?", [temp_dir_val])
@@ -3934,6 +4059,24 @@ class DuckDBShadowStore:
         except Exception:  # noqa: BLE001 — best-effort; Arrow/Parquet operation; non-critical
             return None
 
+    async def wait_until_ready(self, timeout_s: float = 10.0) -> bool:
+        """
+        Event-driven readiness wait — wakes via asyncio.Event, no polling.
+
+        ISSUE-006 fix: replaces the 40×50ms polling loop (2s worst-case)
+        with a single event-driven wait on _startup_ready.
+
+        Returns True if store became ready within timeout, False otherwise.
+        """
+        if self._startup_ready.is_set():
+            return True
+        try:
+            async with asyncio.timeout(timeout_s):
+                await self._startup_ready.wait()
+            return True
+        except asyncio.TimeoutError:
+            return False
+
     async def async_healthcheck(self) -> bool:
         """
         Quick health check - attempts a zero-cost query.
@@ -4707,8 +4850,7 @@ class DuckDBShadowStore:
         """
         from pathlib import Path
 
-        import duckdb
-
+        duckdb = _get_duckdb()
         ghost_home = Path.home() / ".hledac"
         ghost_home.mkdir(parents=True, exist_ok=True)
         db_path = ghost_home / "ghost_global.duckdb"
@@ -6478,6 +6620,9 @@ class DuckDBShadowStore:
         Mirrors the stateful parts of the legacy _assess_finding_quality_batch loop.
         Returns list[FindingQualityDecision] in same order as findings.
         """
+        # Lazy import to break circular dependency with quality_assessment.py
+        from .quality_assessment import _HIGH_CONF_IOC_RE, FindingQualityDecision
+
         n = len(findings)
         results: list[FindingQualityDecision] = [FindingQualityDecision(
             accepted=True, reason=None, entropy=0.0, normalized_hash="", duplicate=False
@@ -6684,6 +6829,14 @@ class DuckDBShadowStore:
         Text mapping: URL (if present) or payload_text (if exists and non-empty), else query.
         If both are empty, falls back to query (may accept trivially).
         """
+        # Lazy imports to break circular dependency with quality_assessment.py
+        from .quality_assessment import (
+            _compute_url_fingerprint,
+            _normalize_for_quality,
+            _compute_entropy,
+            _compute_dedup_fingerprint,
+            FindingQualityDecision,
+        )
         import logging as _logging
 
         _logger = _logging.getLogger(__name__)
@@ -6833,6 +6986,9 @@ class DuckDBShadowStore:
         Returns list[FindingQualityDecision] in same order as findings.
         Fail-soft: any exception propagates to caller for per-row fallback.
         """
+        # Lazy import to break circular dependency with quality_assessment.py
+        from .quality_assessment import _HIGH_CONF_IOC_RE, FindingQualityDecision
+
         n = len(findings)
 
         # ISSUE-022: Try Rust fast path — pure-compute decisions in one rayon pass
@@ -7573,8 +7729,9 @@ class DuckDBShadowStore:
                     if duckdb_err is not None:
                         return (0, "duckdb_insert_failed")
                     return (duckdb_count, None)
-            except Exception:  # noqa: BLE001 — best-effort; Arrow/Parquet operation; non-critical
-                pass
+            except Exception as _rust_e:  # noqa: BLE001 — best-effort; Arrow/Parquet operation; non-critical
+                _logger.debug("[Arrow-Rust] build_arrow_batch_from_findings failed, falling back to Python: %s", _rust_e)
+                pass  # fall through to Python fallback
         try:
             provenance_raw = [_provenance_to_arrow_native(f.provenance) for f in findings]
             provenance_arr = _pa.array(provenance_raw, type=_pa.string())
@@ -8340,7 +8497,6 @@ class DuckDBShadowStore:
                         if not key.startswith(prefix):
                             break
                         try:
-                            vb = value_bytes if isinstance(value_bytes, memoryview) else value_bytes
                             vb = bytes(value_bytes) if isinstance(value_bytes, memoryview) else value_bytes
                             value = _ORJSON_DECODER(vb)
                             ts = value.get("ts", 0.0)
@@ -8429,7 +8585,6 @@ class DuckDBShadowStore:
                         if not key.startswith(prefix):
                             break
                         try:
-                            vb = value_bytes if isinstance(value_bytes, memoryview) else value_bytes
                             vb = bytes(value_bytes) if isinstance(value_bytes, memoryview) else value_bytes
                             value = _ORJSON_DECODER(vb)
                             results.append(value)
@@ -8978,7 +9133,6 @@ class DuckDBShadowStore:
         with duckdb_store.
         """
         try:
-
             def _sync_graph_update() -> None:
                 try:
                     truth_graph = self._graph_store().get_truth_write_graph()

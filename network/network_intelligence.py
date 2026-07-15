@@ -127,7 +127,7 @@ class NetworkIntelAdapter:
 
     async def _query_bgp(self, target: str) -> list[dict]:
         """Query BGP for the target (IP only)."""
-        from network.bgp_monitor import BGP_AVAILABLE, monitor_bgp
+        from intel.bgp_monitor import BGP_AVAILABLE, monitor_bgp
         if not BGP_AVAILABLE:
             return []
         if not _is_ip(target):
@@ -152,7 +152,7 @@ class _PassiveDNSAdapter:
     __slots__ = tuple(('_inner',))
 
     def __init__(self):
-        from network.passive_dns import PassiveDNSAdapter as _cls
+        from intel.passive_dns import PassiveDNSAdapter as _cls
         self._inner = _cls()
 
     async def query(self, target: str) -> list[dict]:
@@ -166,7 +166,7 @@ class _PassiveFingerprintAdapter:
     __slots__ = tuple(('_inner',))
 
     def __init__(self):
-        from network.passive_fingerprint import PassiveFingerprintAdapter as _cls
+        from intel.passive_fingerprint import PassiveFingerprintAdapter as _cls
         self._inner = _cls()
 
     async def query(self, target: str) -> list[dict]:

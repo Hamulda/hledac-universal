@@ -308,3 +308,149 @@ maturin build --release --target aarch64-apple-darwin
 
 *Audit provedl: context-mode (Sonnet 4.6) · 2026-06-01*
 *Scope: read-only — žádný produkční kód nebyl změněn*
+
+---
+
+## 11. ISSUE-015: Unused pub mod Declarations Audit (2026-07-15)
+
+### Problem
+`lib.rs` declared 67 `pub mod` modules, but 2 were completely unused:
+- `evidence_rs` — never imported/used by any module
+- `ioc_core` — DEPRECATED, replaced by `ioc_extract` (which uses `ioc_patterns`)
+
+### Audit Methodology
+```python
+# 1. Extract all pub mod declarations from lib.rs
+mod_decls = re.findall(r'^\s*pub mod ([a-zA-Z_][a-zA-Z0-9_]*);', content, re.MULTILINE)
+
+# 2. Find all registration/internal use patterns
+# Pattern A: module::register_functions(m) or module::register(m)
+# Pattern B: use crate::module_name:: or crate::module_name.
+# Pattern C: m.add_class::<module::*
+
+# 3. Cross-reference to find truly unused modules
+```
+
+### Modules Removed
+| Module | File | Size | Reason |
+|--------|------|------|--------|
+| `evidence_rs` | evidence_rs.rs | 9.9K | Never used anywhere in codebase |
+| `ioc_core` | ioc_core.rs | 7.6K | DEPRECATED — ioc_extract provides has_* via ioc_patterns |
+
+### Files Deleted from Disk
+- `rust_extensions/src/evidence_rs.rs` — orphan .rs file (removed from lib.rs but file remained)
+- `rust_extensions/src/ioc_core.rs` — orphan .rs file (removed from lib.rs but file remained)
+- Corresponding .pyi stub files also removed
+
+### Result
+| Metric | Before | After |
+|--------|--------|-------|
+| `pub mod` declarations | 67 | 65 |
+| Rust source files | 67 | 65 |
+| Orphan .rs files on disk | 2 | 0 |
+| Unused modules | 2 | 0 |
+
+### Verification Commands
+```bash
+# Verify modules removed from lib.rs
+grep 'evidence_rs' src/lib.rs    # Should return nothing
+grep 'ioc_core' src/lib.rs       # Should return nothing
+
+# Verify .rs files deleted from disk
+test -f src/evidence_rs.rs && echo "STILL EXISTS" || echo "deleted OK"
+test -f src/ioc_core.rs && echo "STILL EXISTS" || echo "deleted OK"
+
+# Count declarations
+grep -c '^\s*pub mod' src/lib.rs   # Should show: 65
+```
+
+### Internal-Use Modules (No Python Export)
+These modules are declared and used internally but don't expose Python-callable functions:
+
+| Module | Used By | Purpose |
+|--------|---------|---------|
+| `arrow_batch_builder` | zero_copy, serde_json_rs | Arrow batch construction |
+| `bloom` | bloom module | File-backed mmap Bloom filter |
+| `federated_qtable` | mlx_bridge | Q-table with rayon parallel updates |
+| `feed_pipeline` | feed_decision | Multi-stage feed processing |
+| `health` | dedup_bloom, telemetry_agg | Health check endpoint |
+| `ioc_dedup` | ioc_extract | Cross-sprint IOC deduplication |
+| `mlx_bridge` | pool_run | MLX async token streaming |
+| `mpsc_pool` | spsc_queue | Bounded MPSC pool |
+| `parquet_reader` | lancedb_bridge | Lazy parquet RowGroup iterator |
+| `pipeline_compose` | feed_pipeline | Rayon parallel pipeline operators |
+| `regex_lz4` | metal_pattern_matcher | LZ4-compressed pattern store |
+| `sprint_policies` | (scheduler) | Sprint policy definitions |
+| `spsc_queue` | mlx_bridge | Lock-free SPSC queue |
+
+### All 65 Modules Accounted For
+```
+adaptive_scheduler    - register_functions()
+aho_corasick         - AhoCorasickMatcher PyClass
+arrow_batch_builder   - register() [internal]
+async_query          - register() [DuckDB async]
+bloom                - register() [mmap-backed]
+claims_extraction    - register_functions()
+collections          - register_functions()
+compress             - register_functions()
+content_hasher       - batch_xxh3_64_hex (wrap_pyfunction)
+crypto_accelerate    - register_functions()
+data                 - register_functions()
+dedup_bloom          - register() + health/telemetry use
+dns_tunnel           - register_functions()
+embedding_index      - PyHNSWIndex PyClass
+federated_qtable     - register() [internal]
+feed_decision        - register_functions()
+feed_pipeline        - register() [internal]
+gil                  - register_functions()
+graph_cache          - PyGraphLRUCache PyClass
+graph_traverse       - register_functions()
+health               - register() [internal]
+hot_edges_rs         - register_functions()
+html_parse           - register_functions()
+int_counter_layout   - register_functions()
+ioc_cooccurrence_rs  - compute/batch_cooccurrence_edges_py
+ioc_dedup            - register_class() [internal]
+ioc_extract          - register_functions()
+ioc_extract_fast     - batch_ioc_extract_unified (wrap_pyfunction)
+ioc_extract_simd     - register_functions()
+ioc_patterns         - Used by ioc_extract (internal)
+ioc_patterns_generated - Used by ioc_extract_simd (codegen)
+ip_parse             - parse_ip_fast, is_private_ip (wrap_pyfunction)
+lancedb_bridge       - PyHNSWBridge PyClass
+lmdb_dht             - register_functions()
+lsh_index            - register_functions()
+madvise              - register_functions()
+memory               - register_functions()
+metal_compute        - Used by metal_pattern_matcher (internal)
+metal_pattern_matcher - register_functions()
+mlx_bridge           - register() [internal]
+mpsc_pool            - register() [internal]
+parquet_reader       - register() [internal]
+pipeline_compose     - register() [internal]
+pool_run             - register_functions()
+quality_gate         - register_functions()
+query_terms          - scan_query_context (wrap_pyfunction)
+rate_limit           - register_functions()
+regex_lz4            - register() [internal]
+rolling_hash         - RollingHashEngine PyClass
+serde_json_rs        - register_functions()
+signal_batch         - register_functions()
+simd_similarity      - register_functions()
+simhash_ext          - register_functions()
+sprint_policies      - register() [internal]
+spsc_queue           - register() [internal]
+telemetry_agg        - register_functions()
+text_norm            - register_functions()
+text_similarity      - register_functions()
+tls_metadata         - register_functions()
+url_engine           - register_functions()
+url_ops              - register_functions() + UrlClassifyCachePy
+url_set              - MmapUrlSet, UrlSet PyClass
+xml_sanitize         - sanitize_xml, batch_sanitize_xml (wrap_pyfunction)
+xxhash_ext           - content_hash_64, batch_xxh3_64_bytes (wrap_pyfunction)
+zero_copy           - register_functions()
+```
+
+*Audit provedl: Claude Code (context-mode) · 2026-07-15*
+*Scope: Removed 2 unused modules, verified 65 modules accounted for*

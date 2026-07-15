@@ -43,6 +43,12 @@ from hledac.universal.export.parquet_writer import (
     export_parquet_to_path,
 )
 
+# Re-export sprint export functions (moved from formatters.py to break circular import)
+from hledac.universal.export.sprint_exporter import (
+    export_partial_sprint,
+    export_sprint,
+)
+
 __all__ = [
     # New unified engine (Issue 12.1)
     "ReportEngine",

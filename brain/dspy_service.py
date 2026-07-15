@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 from typing import Any
 from hledac.universal.brain.mlx_worker_thread import MLXWorkerThread
+from hledac.universal.utils.async_helpers import safe_wait_for
 try:
     import orjson
 except ImportError:
@@ -30,6 +31,9 @@ ENABLED = os.getenv('HLEDAC_ENABLE_DSPY', '0') == '1'
 CACHE_PATH = Path.home() / '.hledac' / 'dspy_cache.json'
 TIMEOUT_SECONDS = 30
 MAX_OUTPUT_TOKENS = 50
+# Batch scoring concurrency (M1 8GB bounded — DSPy is CPU-light, memory-light)
+_SCORING_CONCURRENCY = 5  # max concurrent DSPy scoring calls
+_SCORING_BATCH_SIZE = 20  # findings per DSPy call (prompt token budget)
 _programs: dict = {}
 _programs_loaded: bool = False
 
@@ -383,13 +387,16 @@ async def expand_query(query: str) -> list | None:
 
 async def score_findings(findings: list, min_score: float=4.0) -> list | None:
     """
-    Phase B: DSPy-powered finding relevance scoring.
+    Phase B: DSPy-powered finding relevance scoring — batch-parallel.
 
     Takes raw findings from discovery → returns scored+filtered list.
     Filters out findings with DSPy relevance score < min_score.
 
     Returns None if DSPy unavailable — caller accepts all findings.
     Each finding dict must have at least 'content' or 'title' field.
+
+    Batching: findings are split into batches of _SCORING_BATCH_SIZE,
+    processed concurrently with a semaphore cap of _SCORING_CONCURRENCY.
     """
     if not ENABLED:
         return None
@@ -405,57 +412,106 @@ async def score_findings(findings: list, min_score: float=4.0) -> list | None:
     lm = _get_dspy_lm()
     if lm is None:
         return None
-    try:
-        import dspy
-        finding_lines = []
-        for i, f in enumerate(findings[:20]):
-            text = f.get('content') or f.get('title') or f.get('url', '')[:80]
-            finding_lines.append(f'{i}:{text[:60]}')
-        if orjson is not None:
-            findings_json = orjson.dumps([{'i': i, 't': (f.get('content') or f.get('title') or '')[:60]} for i, f in enumerate(findings[:20])]).decode()
-        else:
-            from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
-            findings_json = _msgspec_encode([{'i': i, 't': (f.get('content') or f.get('title') or '')[:60]} for i, f in enumerate(findings[:20])]).decode()
 
-        class RelevanceScoreSignature(dspy.Signature):
-            """Score OSINT findings for relevance 0-10."""
-            query: str = dspy.InputField()
-            answer: str = dspy.OutputField()
-        program = dspy.Predict(RelevanceScoreSignature)
-        program.signature.instructions = prompt_template
+    # Split findings into batches
+    batches: list[list[tuple[int, dict]]] = []
+    for batch_start in range(0, len(findings), _SCORING_BATCH_SIZE):
+        batch_items = [
+            (i, findings[i])
+            for i in range(batch_start, min(batch_start + _SCORING_BATCH_SIZE, len(findings)))
+        ]
+        batches.append(batch_items)
 
-        async def _run():
-            try:
-                with dspy.context(lm=lm):
+    sem = asyncio.Semaphore(_SCORING_CONCURRENCY)
+    scored: list[tuple[dict, float]] = []
+
+    async def _score_batch(batch_items: list[tuple[int, dict]]) -> list[tuple[dict, float]]:
+        """Score a single batch of findings via DSPy."""
+        try:
+            import dspy
+            batch_findings = [f for _, f in batch_items]
+            if orjson is not None:
+                findings_json = orjson.dumps(
+                    [{'i': i, 't': (f.get('content') or f.get('title') or '')[:60]}
+                     for i, f in batch_items]
+                ).decode()
+            else:
+                from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
+                findings_json = _msgspec_encode(
+                    [{'i': i, 't': (f.get('content') or f.get('title') or '')[:60]}
+                     for i, f in batch_items]
+                ).decode()
+
+            class RelevanceScoreSignature(dspy.Signature):
+                """Score OSINT findings for relevance 0-10."""
+                query: str = dspy.InputField()
+                answer: str = dspy.OutputField()
+
+            program = dspy.Predict(RelevanceScoreSignature)
+            program.signature.instructions = prompt_template
+
+            async def _run():
+                try:
+                    with dspy.context(lm=lm):
+                        pred = program(query=findings_json[:500])
+                        return str(pred.answer) if hasattr(pred, 'answer') else None
+                except (AttributeError, TypeError):
+                    program.lm = lm
                     pred = program(query=findings_json[:500])
                     return str(pred.answer) if hasattr(pred, 'answer') else None
-            except (AttributeError, TypeError):
-                program.lm = lm
-                pred = program(query=findings_json[:500])
-                return str(pred.answer) if hasattr(pred, 'answer') else None
-        answer = await safe_wait_for(_run(), timeout=TIMEOUT_SECONDS, label='dspy_score_findings')
-        if answer is None:
-            return None
-        scored = []
-        for line in answer.split('\n'):
-            line = line.strip()
-            if ':' in line:
+
+            answer = await safe_wait_for(_run(), timeout=TIMEOUT_SECONDS, label='dspy_score_batch')
+            if answer is None:
+                return []
+
+            batch_scored: list[tuple[dict, float]] = []
+            for line in answer.split('\n'):
+                line = line.strip()
+                if ':' not in line:
+                    continue
                 parts = line.rsplit(':', 1)
                 try:
                     idx = int(parts[0].strip('[]-: '))
                     score = float(parts[1].strip())
-                    if 0 <= score <= 10 and idx < len(findings):
-                        scored.append((findings[idx], score))
+                    if 0 <= score <= 10 and idx < len(batch_findings):
+                        batch_scored.append((batch_findings[idx], score))
                 except (ValueError, IndexError):
                     pass
+            return batch_scored
+        except TimeoutError:
+            logger.warning('dspy_service: score_batch timed out after %ds', TIMEOUT_SECONDS)
+            return []
+        except Exception as e:
+            logger.warning('dspy_service: score_batch failed: %s', e)
+            return []
+
+    async def _score_batch_sem(batch_items: list[tuple[int, dict]]) -> list[tuple[dict, float]]:
+        async with sem:
+            return await _score_batch(batch_items)
+
+    try:
+        # Run all batches concurrently, bounded by semaphore
+        results = await asyncio.gather(
+            *[_score_batch_sem(b) for b in batches],
+            return_exceptions=True
+        )
+        for result in results:
+            if isinstance(result, Exception):
+                logger.warning('dspy_service: batch gather exception: %s', result)
+            elif isinstance(result, list):
+                scored.extend(result)
+
         scored.sort(key=lambda x: x[1], reverse=True)
         filtered = [(f, s) for f, s in scored if s >= min_score]
         elapsed_ms = (time.monotonic() - t0) * 1000
-        logger.info('dspy_service: score_findings dspy_call=finding_relevance latency_ms=%.0f tokens_in=%d tokens_out=%d scored=%d filtered=%d', elapsed_ms, len(findings_json), len(answer), len(scored), len(filtered))
+        total_batches = len(batches)
+        logger.info(
+            'dspy_service: score_findings batches=%d concurrency=%d batch_size=%d '
+            'latency_ms=%.0f scored=%d filtered=%d',
+            total_batches, _SCORING_CONCURRENCY, _SCORING_BATCH_SIZE,
+            elapsed_ms, len(scored), len(filtered)
+        )
         return filtered if filtered else None
-    except TimeoutError:
-        logger.warning('dspy_service: score_findings timed out after %ds', TIMEOUT_SECONDS)
-        return None
     except Exception as e:
         logger.warning('dspy_service: score_findings failed: %s', e)
         return None

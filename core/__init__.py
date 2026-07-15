@@ -25,6 +25,8 @@ if TYPE_CHECKING:
 # Lazy attrs map: name → plná import cesta k modulu, který jej poskytuje.
 # Při prvním `core.Priority` se teprve načte resource_governor.
 # Sprint F500I: mlx_embeddings added here to eliminate 20s import bottleneck
+# ISSUE-001: rust_backend redirect ensures deterministic import resolution on Python 3.12+
+# (file vs package ambiguity eliminated — core/rust_backend.py now redirects to package)
 _LAZY_ATTRS: dict[str, str] = {
     "Priority": "hledac.universal.core.resource_governor",
     "MLXEmbeddingManager": "hledac.universal.core.mlx_embeddings",
@@ -36,6 +38,9 @@ _LAZY_ATTRS: dict[str, str] = {
     "get_system_detector": "hledac.universal.core.system_detector",
     "get_hardware_capabilities": "hledac.universal.core.system_detector",
     "HardwareCapabilities": "hledac.universal.core.system_detector",
+    # ISSUE-001: rust_backend always resolves to the package (core/rust_backend/)
+    # even when imported as `from core.rust_backend import rust`.
+    "rust_backend": "hledac.universal.core.rust_backend",
 }
 
 # Thread-safe lazy loading lock — guards __getattr__ against concurrent import

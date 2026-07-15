@@ -509,7 +509,7 @@ async def _run_public_passive_once(
                 # Obtain shared session — this is a Lazy singleton
                 # We "own" it by registering its async close
                 from hledac.universal.network.session_runtime import (
-                    async_get_aiohttp_session,
+                    async_get_httpx_session,
                     close_aiohttp_session_async,
                 )
 
@@ -518,7 +518,7 @@ async def _run_public_passive_once(
                     """Async context manager for session lifecycle (setup → yield → teardown)."""
                     # Setup: create session
                     try:
-                        await async_get_aiohttp_session()
+                        await async_get_httpx_session()
                     except Exception as e:
                         logger.warning("session_acquisition_failed", context="managed_session", error=str(e))
                         raise  # Re-raise so the sprint doesn't silently continue without a session

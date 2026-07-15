@@ -19,55 +19,13 @@ import logging
 import time
 from abc import ABC, abstractmethod
 from collections import OrderedDict
-from dataclasses import dataclass, field
-import msgspec
-from enum import Enum, auto
+from dataclasses import dataclass
 from typing import Any
+
+from ._dto import CoordinatorCapabilities, DecisionResponse, OperationResult, OperationType
 from .enums import MemoryPressureLevel
+
 logger = logging.getLogger(__name__)
-
-class OperationType(Enum):
-    """Universal operation types supported by coordinators."""
-    RESEARCH = auto()
-    EXECUTION = auto()
-    SECURITY = auto()
-    MONITORING = auto()
-    SYNTHESIS = auto()
-    OPTIMIZATION = auto()
-
-@dataclass(slots=True)
-class DecisionResponse:
-    """Decision from orchestrator to be executed by coordinator."""
-    decision_id: str
-    chosen_option: str
-    confidence: float
-    reasoning: str
-    estimated_duration: float = 0.0
-    priority: int = 5
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-@dataclass(frozen=True, slots=True)
-class OperationResult:
-    """Result of coordinator operation execution."""
-    operation_id: str
-    status: str
-    result_summary: str
-    execution_time: float
-    success: bool
-    error_message: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
-    timestamp: float = field(default_factory=time.time)
-
-@dataclass(frozen=True, slots=True)
-class CoordinatorCapabilities:
-    """Capabilities reported by a coordinator."""
-    name: str
-    supported_operations: list[OperationType]
-    features: list[str]
-    is_available: bool
-    load_factor: float
-    max_concurrent: int
-    current_operations: int
 
 class UniversalCoordinator(ABC):
     """

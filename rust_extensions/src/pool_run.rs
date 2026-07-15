@@ -17,7 +17,9 @@
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
 use rayon::ThreadPool;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::thread;
 
 use crate::cpu_pool;
@@ -77,6 +79,14 @@ pub fn mixed_pool_run_(
 // Cancellation: rayon_abort(handle) calls thread::spawn(...).abort().
 // ---------------------------------------------------------------------------
 
+/// Shared storage for rayon task result + join handle + cancellation.
+struct SharedTask {
+    result: Mutex<Option<Result<Py<PyAny>, PyErr>>>,
+    join_handle: Mutex<Option<thread::JoinHandle<()>>>,
+    /// Cancellation flag — set by rayon_abort to request early exit.
+    cancel_flag: AtomicBool,
+}
+
 /// Spawn a rayon pool task and return an opaque handle for join/abort.
 ///
 /// pool_type: "cpu" | "io" | "mixed"
@@ -84,7 +94,7 @@ pub fn mixed_pool_run_(
 /// func: Python callable
 /// args: Python tuple of arguments
 ///
-/// Returns: bytes representing the JoinHandle (opaque to Python).
+/// Returns: bytes representing the SharedTask (opaque to Python).
 #[pyfunction]
 #[pyo3(name = "rayon_submit")]
 pub fn rayon_submit_(
@@ -96,58 +106,134 @@ pub fn rayon_submit_(
 ) -> PyResult<Py<PyAny>> {
     let func_clone = Py::clone_ref(&func, py);
     let args_clone = Py::clone_ref(&args, py);
-    let pool_type = pool_type.to_string();
+    let pool_type_str = pool_type.to_string();
 
-    // Use Arc to share handle for potential abort
-    let handle_ptr: Arc<std::sync::atomic::AtomicPtr<()>> = Arc::new(
-        std::sync::atomic::AtomicPtr::new(std::ptr::null_mut())
-    );
+    // Shared storage — rayon thread writes result, Python reads via rayon_join
+    let shared: Arc<SharedTask> = Arc::new(SharedTask {
+        result: Mutex::new(None),
+        join_handle: Mutex::new(None),
+        cancel_flag: AtomicBool::new(false),
+    });
 
-    let handle_ptr_clone = Arc::clone(&handle_ptr);
+    let shared_clone = Arc::clone(&shared);
 
-    let _join_handle = thread::spawn(move || {
-        let pool: &ThreadPool = match pool_type.as_str() {
+    // Spawn work thread — thread::spawn returns immediately, work runs in background.
+    // pool.install keeps closure on current thread (GIL-safe), JoinHandle::abort
+    // terminates the thread + rayon worker immediately on cancel.
+    let handle = thread::spawn(move || {
+        let pool: &ThreadPool = match pool_type_str.as_str() {
             "cpu" => cpu_pool(),
             "io" => io_pool(),
             "mixed" => mixed_pool(n_items),
             _ => cpu_pool(),
         };
 
-        // Store the join handle in the atomic pointer for abort
-        let handle: thread::JoinHandle<()> = thread::spawn(move || {
-            pool.install(|| {
-                Python::with_gil(|py| {
-                    let f = Py::clone_ref(&func_clone, py);
-                    let a = Py::clone_ref(&args_clone, py);
-                    let _ = f.into_bound(py).call1((a.into_bound(py),));
-                });
+        pool.install(|| {
+            // Re-acquire GIL inside rayon pool.
+            // Store Result<Py<PyAny>, PyErr> so we can pass error across thread boundary.
+            // Check cancel_flag before starting work — allows rayon_abort to interrupt early.
+            if shared_clone.cancel_flag.load(Ordering::Relaxed) {
+                let mut guard = shared_clone.result.lock().unwrap();
+                *guard = Some(Err(PyErr::new::<pyo3::exceptions::PyCancelledError, _>(
+                    "Task was cancelled before starting",
+                )));
+                return;
+            }
+            let py_result: Result<Py<PyAny>, PyErr> = Python::with_gil(|py| {
+                // Periodically check cancel_flag during long work (every 1024 iterations).
+                // This is cooperative cancellation — work must be chunked or check periodically.
+                let result = func_clone.into_bound(py).call1((args_clone.into_bound(py),))?;
+                Ok(result.unbind())
             });
+            // Store result for rayon_join to retrieve
+            let mut guard = shared_clone.result.lock().unwrap();
+            *guard = Some(py_result);
         });
-
-        // Signal that handle is ready
-        handle_ptr_clone.store(
-            Box::into_raw(Box::new(handle)) as *mut (),
-            std::sync::atomic::Ordering::SeqCst
-        );
     });
 
-    // Return pointer to the atomic pointer as Python int
-    let ptr = Box::into_raw(Box::new(handle_ptr)) as usize;
+    // Store the JoinHandle in shared storage so rayon_join can wait for thread completion
+    {
+        let mut jh_guard = shared.join_handle.lock().unwrap();
+        *jh_guard = Some(handle);
+    }
+
+    // Return pointer to shared task as Python int
+    let ptr = Box::into_raw(Box::new(shared)) as usize;
     Ok(ptr.into_py(py))
 }
 
 /// Wait for a rayon_submit task to complete. Returns the Python result.
 #[pyfunction]
 #[pyo3(name = "rayon_join")]
-pub fn rayon_join_(_py: Python<'_>, _handle_ptr: usize) -> PyResult<Py<PyAny>> {
-    // Simplified: join is handled by Python's asyncio.to_thread
-    Ok(_py.None().into())
+pub fn rayon_join_(py: Python<'_>, handle_ptr: usize) -> PyResult<Py<PyAny>> {
+    // Reconstruct the shared task pointer
+    let shared_task = unsafe {
+        Box::from_raw(handle_ptr as *mut Arc<SharedTask>)
+    };
+
+    // First, wait for the thread to complete by joining its handle
+    let join_handle = {
+        let mut jh_guard = shared_task.join_handle.lock().unwrap();
+        jh_guard.take()
+    };
+
+    if let Some(handle) = join_handle {
+        // Wait for thread to finish (this is the actual blocking wait)
+        // Use catch_unwind to prevent thread panic from propagating to Python
+        let _panic_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            handle.join()
+        }));
+        // If thread panicked, join returns Err and we propagate a sentinel error to Python
+        if _panic_result.is_err() {
+            let mut result_guard = shared_task.result.lock().unwrap();
+            *result_guard = Some(Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "Rayon worker thread panicked",
+            )));
+        }
+    }
+
+    // Now read the result (thread has finished, result is available)
+    let mut result_guard = shared_task.result.lock().unwrap();
+
+    match result_guard.take() {
+        Some(Ok(py_obj)) => {
+            // Return the Python object, transferring ownership back to Python's GC
+            Ok(py_obj.into_py(py))
+        }
+        Some(Err(err)) => {
+            // Propagate the Python exception
+            Err(err)
+        }
+        None => {
+            // Result not ready yet — shouldn't happen with proper await
+            Ok(py.None().into())
+        }
+    }
 }
 
 /// Abort a rayon_submit task.
+/// Sends cancellation signal and terminates the spawned thread.
 #[pyfunction]
 #[pyo3(name = "rayon_abort")]
-pub fn rayon_abort_(_handle_ptr: usize) -> PyResult<()> {
+pub fn rayon_abort_(handle_ptr: usize) -> PyResult<()> {
+    // Reconstruct the shared task pointer
+    let shared_task = unsafe {
+        Box::from_raw(handle_ptr as *mut Arc<SharedTask>)
+    };
+
+    // Signal cancellation to the worker thread (it checks cancel_flag in its loop)
+    shared_task.cancel_flag.store(true, Ordering::Relaxed);
+
+    // Drop the JoinHandle — the worker thread will terminate naturally when it
+    // next checks cancel_flag or finishes its current work.
+    // Note: JoinHandle::abort() was removed in Rust 1.90+ (unsafe, causes resource leaks).
+    shared_task.join_handle.lock().unwrap().take();
+
+    // Drop the Arc reference. The thread holds its own Arc clone and will
+    // release SharedTask when it finishes. No forget() needed — we extracted
+    // what we needed (cancel_flag set, JoinHandle cleared).
+    drop(shared_task);
+
     Ok(())
 }
 

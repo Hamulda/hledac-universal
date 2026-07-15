@@ -47,18 +47,17 @@ if TYPE_CHECKING:
 
 def _safe_payload_json(obj: Any) -> str:
     """Serialize obj to canonical JSON string, fail-soft."""
-    from utils.silent_except_helper import silenced
-    try:
+    from core.result import try_or
+
+    def _encode_orjson() -> str:
         import orjson
-        with silenced(Exception, name='orjson_dumps'):
-            return orjson.dumps(obj).decode('utf-8')
-    except Exception:
-        pass
-    try:
+        return orjson.dumps(obj).decode('utf-8')
+
+    def _encode_fallback() -> str:
         return _json.encode(obj).decode('utf-8')
-    except Exception:
-        pass
-    return str(obj)
+
+    # Triple fallback: orjson → msgspec → str (never raises)
+    return try_or(_encode_orjson, "").strip() or try_or(_encode_fallback, str(obj))
 logger = logging.getLogger(__name__)
 _sidecarlogger = logging.getLogger('sidecar_bus')
 MAX_SIDECAR_FINDINGS: int = 500

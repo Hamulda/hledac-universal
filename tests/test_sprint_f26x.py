@@ -150,7 +150,7 @@ class TestSprintF26X:
     # ------------------------------------------------------------------ 7
     def test_probe_f26x_fail_soft(self):
         """Forcing CommunicationLayer() to raise → get_communication_layer() returns None."""
-        from layers import get_communication_layer
+        from layers import get_communication_layer, _communication_layer_cached
 
         # Patch the CommunicationLayer constructor to raise — the accessor must
         # catch the exception and return None (fail-soft, per F26X plan §A.2).
@@ -158,6 +158,7 @@ class TestSprintF26X:
             "hledac.universal.layers.communication_layer.CommunicationLayer",
             side_effect=RuntimeError("simulated init failure"),
         ):
+            _communication_layer_cached.cache_clear()
             result = get_communication_layer()
         assert result is None, "get_communication_layer() must return None on init failure"
 
@@ -175,7 +176,7 @@ class TestSprintF26X:
             def __init__(self):
                 self.queries = []
 
-            async def query_model(self, prompt, **kwargs):
+            async def query_model(self, prompt, **_kwargs):
                 self.queries.append(prompt)
                 return {"response": "{}"}  # No PII detected
 
@@ -202,7 +203,7 @@ class TestSprintF26X:
             def __init__(self):
                 self._cap = 8  # M1 fanout cap
 
-            async def send_message(self, msg, **kwargs):
+            async def send_message(self, _msg, **_kwargs):
                 return {"ok": True}
 
         comm = _StubComm()
@@ -216,7 +217,10 @@ class TestSprintF26X:
         Per F26X plan §A.5 row 10: budget 50 ms for accessor + lazy import. This
         ensures the default-ON injection does not blow the M1 cold-start budget.
         """
-        from layers import get_communication_layer
+        from layers import get_communication_layer, _communication_layer_cached
+
+        # Clear any cached None from prior fail_soft test
+        _communication_layer_cached.cache_clear()
 
         # Warm up
         for _ in range(3):

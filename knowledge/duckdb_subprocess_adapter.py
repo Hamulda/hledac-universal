@@ -147,6 +147,10 @@ class DuckDBSubprocessAdapter:
         writer = await self._get_writer()
         if hasattr(writer, "async_initialize_schema"):
             await writer.async_initialize_schema()
+        # ISSUE-006 fix: ensure _startup_ready is set so wait_until_ready()
+        # does not timeout when async_initialize_schema() is called directly
+        # (without going through async_initialize() which also sets the event)
+        self._startup_ready.set()
 
     async def async_ingest_findings_batch(
         self,
@@ -222,6 +226,31 @@ class DuckDBSubprocessAdapter:
         except TimeoutError:
             # Fail-safe: ensure closed state even on timeout
             self._closed = True
+
+    async def wait_until_ready(self, timeout_s: float = 10.0) -> bool:
+        """
+        Event-driven readiness wait — ISSUE-006 fix.
+
+        Delegates to DuckDBShadowStore.wait_until_ready() once writer is available.
+        If writer is not yet created, waits on the adapter's _startup_ready event.
+        """
+        if self._closed:
+            return False
+        if self._startup_ready.is_set():
+            return True
+        # If writer already exists, delegate to it
+        if self._writer is not None:
+            try:
+                return await self._writer.wait_until_ready(timeout_s=timeout_s)
+            except Exception:  # noqa: BLE001
+                return False
+        # Writer not yet created — wait on adapter's startup event
+        try:
+            async with asyncio.timeout(timeout_s):
+                await self._startup_ready.wait()
+            return True
+        except asyncio.TimeoutError:
+            return False
 
     async def async_healthcheck(self) -> bool:
         """Quick health check — delegates to DuckDBShadowStore."""

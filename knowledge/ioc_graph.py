@@ -37,7 +37,6 @@ class GraphBackendUnavailableError(Exception):
     """Raised when a required graph backend (kuzu) is not installed."""
     pass
 GraphBackendUnavailable = GraphBackendUnavailableError
-_DB_EXECUTOR: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='kuzu_ioc_worker')
 _KUZU_DB_ROOT: Path = Path.home() / '.hledac' / 'kuzu'
 _IOC_GRAPH_FILENAME: str = 'ioc_graph'
 IOC_TYPES: frozenset[str] = frozenset(('cve', 'ip', 'hash_sha256', 'hash_md5', 'onion', 'i2p', 'domain', 'apt', 'malware', 'info_hash', 'magnet_uri', 'threat_actor', 'malware_family'))
@@ -140,7 +139,6 @@ class IOCGraph:
         self._db_path: Path = Path(db_path)
         self._db: Any | None = None
         self._conn: Any | None = None
-        self._executor: ThreadPoolExecutor = _DB_EXECUTOR
         self._closed: bool = False
         self._ioc_buffer: list[tuple[str, str, float]] = []
         self._obs_buffer: list[tuple[str, str, str, float, str]] = []
@@ -202,17 +200,15 @@ class IOCGraph:
         return {'ioc_created': len(ioc_created), 'obs_flushed': obs_recorded}
 
     async def _record_observation_batch_sync_async(self, obs: list[tuple[str, str, str, float, str]]) -> None:
-        """Async wrapper — runs sync impl on _executor thread via run_in_executor."""
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(self._executor, self._record_observation_batch_sync, obs)
+        """Async wrapper — runs sync impl on background thread via asyncio.to_thread."""
+        await asyncio.to_thread(self._record_observation_batch_sync, obs)
 
     async def initialize(self) -> None:
         """Create schema if not exists (try/except for already-exists)."""
         if self._closed:
             return
-        loop = asyncio.get_running_loop()
         try:
-            await loop.run_in_executor(self._executor, self._init_schema_sync)
+            await asyncio.to_thread(self._init_schema_sync)
         except Exception as e:
             import logging
             logging.warning(f'[IOCGraph] initialize failed: {e}')
@@ -243,14 +239,14 @@ class IOCGraph:
         """
         if self._closed:
             return
-        loop = asyncio.get_running_loop()
+
         try:
             await self.flush_buffers()
         except Exception:
             pass
         self._closed = True
         try:
-            await loop.run_in_executor(self._executor, self._close_sync)
+            await asyncio.to_thread(self._close_sync)
         except Exception:
             pass
 
@@ -271,11 +267,11 @@ class IOCGraph:
         """
         if self._closed or self._conn is None:
             return None
-        loop = asyncio.get_running_loop()
+
         node_id = _make_ioc_id(ioc_type, value)
         now = time.time()
         try:
-            return await loop.run_in_executor(self._executor, self._upsert_ioc_sync, node_id, ioc_type, value, confidence, now)
+            return await asyncio.to_thread(self._upsert_ioc_sync, node_id, ioc_type, value, confidence, now)
         except Exception as e:
             import logging
             logging.warning(f'[IOCGraph] upsert_ioc failed: {e}')
@@ -300,9 +296,9 @@ class IOCGraph:
         """
         if self._closed or self._conn is None:
             return
-        loop = asyncio.get_running_loop()
+
         try:
-            await loop.run_in_executor(self._executor, self._record_observation_sync, ioc_id_a, ioc_id_b, finding_id, ts, source_type)
+            await asyncio.to_thread(self._record_observation_sync, ioc_id_a, ioc_id_b, finding_id, ts, source_type)
         except Exception as e:
             import logging
             logging.warning(f'[IOCGraph] record_observation failed: {e}')
@@ -329,11 +325,11 @@ class IOCGraph:
         """
         if self._closed or self._conn is None or (not iocs):
             return []
-        loop = asyncio.get_running_loop()
+
         node_ids = [_make_ioc_id(t, v) for t, v, _ in iocs]
         now = time.time()
         try:
-            return await loop.run_in_executor(self._executor, self._upsert_ioc_batch_sync, node_ids, iocs, now)
+            return await asyncio.to_thread(self._upsert_ioc_batch_sync, node_ids, iocs, now)
         except Exception as e:
             import logging
             logging.warning(f'[IOCGraph] upsert_ioc_batch failed: {e}')
@@ -396,8 +392,8 @@ class IOCGraph:
         """
         if self._closed or self._conn is None or (not observations):
             return
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(self._executor, self._record_observation_batch_sync, observations)
+
+        await asyncio.to_thread(self._record_observation_batch_sync, observations)
 
     def _record_observation_batch_sync(self, observations: list[tuple[str, str, str, float, str]]) -> None:
         """Synchronous batch observation — runs on _executor thread.
@@ -455,10 +451,10 @@ class IOCGraph:
         """
         if self._closed or self._conn is None:
             return []
-        loop = asyncio.get_running_loop()
+
         depth_clamped = max(1, min(depth, 2))
         try:
-            return await loop.run_in_executor(self._executor, self._pivot_sync, ioc_value, ioc_type, depth_clamped)
+            return await asyncio.to_thread(self._pivot_sync, ioc_value, ioc_type, depth_clamped)
         except Exception as e:
             import logging
             logging.warning(f'[IOCGraph] pivot failed: {e}')
@@ -486,9 +482,9 @@ class IOCGraph:
         """Return total node and edge counts."""
         if self._closed or self._conn is None:
             return {'nodes': 0, 'edges': 0}
-        loop = asyncio.get_running_loop()
+
         try:
-            return await loop.run_in_executor(self._executor, self._graph_stats_sync)
+            return await asyncio.to_thread(self._graph_stats_sync)
         except Exception as e:
             import logging
             logging.warning(f'[IOCGraph] graph_stats failed: {e}')
@@ -522,9 +518,9 @@ class IOCGraph:
         """
         if self._closed or self._conn is None:
             return []
-        loop = asyncio.get_running_loop()
+
         try:
-            return await loop.run_in_executor(self._executor, self._export_stix_bundle_sync)
+            return await asyncio.to_thread(self._export_stix_bundle_sync)
         except Exception as e:
             import logging
             logging.warning(f'[IOCGraph] export_stix_bundle failed: {e}')

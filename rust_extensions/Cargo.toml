@@ -18,6 +18,9 @@ lol_html = "2.9"
 xml = "1.3"
 xxhash-rust = { version = "0.8", features = ["xxh3", "const_xxh3", "xxh64"] }
 sha2 = "0.10"
+aes-gcm = "0.10"
+pbkdf2 = { version = "0.12", features = ["simple"] }
+rand = "0.8"
 ahash = "0.8"
 parking_lot = "0.12.5"
 memchr = "2.7"
@@ -40,8 +43,85 @@ dirs = "5"
 [target.'cfg(target_os = "macos")'.dependencies]
 metal = "0.33"
 
+# ISSUE-021: Feature flags for selective compilation (M1 8GB compile time optimization)
+# Usage: cargo build --features "core,ml" or maturin build --features "core,ml"
 [features]
-default = []
+default = ["core"]  # Always-on baseline for Python fallback compatibility
+
+# Core: IOC extraction, URL ops, hashing, compression, HTML parsing
+# Required by all Python call sites (bloom, url_dedup, rolling_hash, health, pattern_matcher)
+core = [
+    "bloom",
+    "hash",           # content_hasher, xxhash, blake2/3
+    "regex",          # aho_corasick, quality_gate, claims_extraction
+    "url",            # url_ops, url_engine
+    "html_parse",
+    "compression",    # compress (lz4/zstd)
+    "crypto",         # sha2, crypto_accelerate
+    "text_processing", # text_norm, simhash_ext
+    "ioc_processing", # ioc_extract, ioc_dedup, ioc_cooccurrence
+    "validation",     # int_counter_layout, telemetry_agg
+    "pools",          # pool_run, adaptive_scheduler
+]
+
+# ML: Metal compute, embedding index, MLX bridge
+# M1 GPU acceleration (metal=macOS only)
+ml = ["metal_compute", "embedding_index", "mlx_bridge"]
+
+# Graph: Graph traversal, LSH index, hot edges
+# For knowledge graph operations
+graph = ["graph_traverse", "lsh_index", "hot_edges"]
+
+# Data: DuckDB integration, Arrow batch building
+# For database operations
+data = ["duckdb", "arrow_batch_builder", "async_query"]
+
+# Advanced: Feed pipeline, federated learning, pattern matching
+# Optional for specialized workloads (modules always compiled, features are no-op stubs)
+advanced = [
+    "feed_pipeline",
+    "federated_qtable",
+    "signal_batch",
+    "dedup_bloom",
+    "graph_cache",
+]
+
+# Individual feature stubs — modules are always compiled (no conditional compilation)
+# These exist only to satisfy Cargo feature resolution
+feed_pipeline = []
+federated_qtable = []
+signal_batch = []
+dedup_bloom = []
+graph_cache = []
+bloom = []
+hash = []
+regex = []
+url = []
+html_parse = []
+compression = []
+crypto = []
+text_processing = []
+ioc_processing = []
+validation = []
+pools = []
+metal_compute = []
+embedding_index = []
+mlx_bridge = []
+graph_traverse = []
+lsh_index = []
+hot_edges = []
+duckdb = []
+arrow_batch_builder = []
+async_query = []
+
+# Full: All features (development/CI only, ~3× compile time)
+full = ["core", "ml", "graph", "data", "advanced"]
+
+[target.'cfg(target_os = "macos")'.features]
+ml = ["metal_compute", "embedding_index", "mlx_bridge"]
+
+[target.'cfg(not(target_os = "macos"))'.features]
+ml = []  # Metal unavailable on non-macOS
 
 [profile.release]
 opt-level = 3

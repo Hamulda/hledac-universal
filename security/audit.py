@@ -6,19 +6,22 @@ Pro:
 - Forenzní analýza
 - Compliance reporting
 - Incident investigation
+
+ISSUE-001 Phase 2: SQLite3 → DuckDB Migration
+- AuditLogger now uses DuckDB via DuckDBAuditStore
 """
+
 import asyncio
 import hashlib
 import hmac
 import logging
 import msgspec.json as _json
 import os
-import sqlite3
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
-from pathlib import Path
 from typing import Any
+
 logger = logging.getLogger(__name__)
 
 class AuditLevel(Enum):
@@ -86,6 +89,9 @@ class AuditLogger:
     """
     Logger pro auditování s integrity protection.
 
+    ISSUE-001 Phase 2: SQLite3 → DuckDB Migration
+    Uses DuckDBAuditStore internally for better analytics and M1 optimization.
+
     Ukládá audit trail pro:
     - Výzkumné dotazy
     - Přístup k datům
@@ -101,125 +107,98 @@ class AuditLogger:
         ...     details={"query": "sensitive_topic"},
         ... )
     """
-    __slots__ = tuple(('_db', '_hmac_key', '_initialized', 'config'))
 
-    def __init__(self, config: AuditConfig | None=None):
+    def __init__(self, config: AuditConfig | None = None) -> None:
         self.config = config or AuditConfig()
-        self._db: sqlite3.Connection | None = None
+        self._duckdb_store: Any = None
         self._initialized = False
         if self.config.hmac_key is None:
             self.config.hmac_key = os.urandom(32)
         self._hmac_key: bytes = self.config.hmac_key
 
     async def initialize(self) -> None:
-        """Inicializovat databázi"""
-        Path(self.config.db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._db = await asyncio.to_thread(lambda: sqlite3.connect(self.config.db_path))
-        await asyncio.to_thread(lambda: self._db.execute('\n            CREATE TABLE IF NOT EXISTS audit_events (\n                id INTEGER PRIMARY KEY AUTOINCREMENT,\n                timestamp TEXT NOT NULL,\n                event_type TEXT NOT NULL,\n                action TEXT NOT NULL,\n                resource TEXT NOT NULL,\n                user_id TEXT,\n                session_id TEXT,\n                details TEXT,\n                level TEXT NOT NULL,\n                hash TEXT NOT NULL\n            )\n        '))
-        await asyncio.to_thread(lambda: self._db.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON audit_events(timestamp)'))
-        await asyncio.to_thread(lambda: self._db.execute('CREATE INDEX IF NOT EXISTS idx_event_type ON audit_events(event_type)'))
-        await asyncio.to_thread(lambda: self._db.execute('CREATE INDEX IF NOT EXISTS idx_resource ON audit_events(resource)'))
-        await asyncio.to_thread(lambda: self._db.commit())
+        """Initialize DuckDB-backed audit store."""
+        if self._initialized:
+            return
+
+        from knowledge.duckdb_audit_store import DuckDBAuditStore
+
+        # Create DuckDB store without passing config since AuditConfig types differ
+        self._duckdb_store = DuckDBAuditStore()
+        await self._duckdb_store.initialize()
         self._initialized = True
-        logger.info(f'AuditLogger initialized: {self.config.db_path}')
+        logger.info("[AUDIT] AuditLogger initialized (DuckDB)")
 
-    async def log(self, event_type: AuditEventType, action: str, resource: str, details: dict[str, Any] | None=None, level: AuditLevel=AuditLevel.INFO, user_id: str | None=None, session_id: str | None=None) -> bool:
-        """
-        Zalogovat audit událost.
-
-        Args:
-            event_type: Typ události
-            action: Provedená akce
-            resource: Zdroj
-            details: Detaily
-            level: Úroveň
-            user_id: ID uživatele
-            session_id: ID relace
-
-        Returns:
-            True pokud úspěšné
-        """
+    async def log(
+        self,
+        event_type: AuditEventType,
+        action: str,
+        resource: str,
+        details: dict[str, Any] | None = None,
+        level: AuditLevel = AuditLevel.INFO,
+        user_id: str | None = None,
+        session_id: str | None = None,
+    ) -> bool:
+        """Log audit event to DuckDB."""
         if not self._initialized:
-            return False
+            await self.initialize()
         if level.value < self.config.min_level.value:
             return True
-        event = AuditEvent(timestamp=datetime.now(UTC), event_type=event_type, action=action, resource=resource, user_id=user_id, session_id=session_id, details=details or {}, level=level, _hmac_key=self._hmac_key)
+
+        event = AuditEvent(
+            timestamp=datetime.now(UTC),
+            event_type=event_type,
+            action=action,
+            resource=resource,
+            user_id=user_id,
+            session_id=session_id,
+            details=details or {},
+            level=level,
+            _hmac_key=self._hmac_key,
+        )
         try:
-            await asyncio.to_thread(lambda: self._db.execute('\n                INSERT INTO audit_events\n                (timestamp, event_type, action, resource, user_id, session_id, details, level, hash)\n                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)\n            ', (event.timestamp.isoformat(), event.event_type.value, event.action, event.resource, event.user_id, event.session_id, _json.encode(event.details).decode('utf-8'), event.level.value, event.hash)))
-            await asyncio.to_thread(lambda: self._db.commit())
+            await self._duckdb_store.log(event)
             if self.config.log_to_console:
-                logger.info(f'AUDIT: {event.event_type.value} - {event.action} on {event.resource}')
+                logger.info(f"AUDIT: {event.event_type.value} - {event.action} on {event.resource}")
             return True
         except Exception as e:
-            logger.error(f'Failed to log audit event: {e}')
+            logger.error(f"Failed to log audit event: {e}")
             return False
 
-    async def query(self, event_type: AuditEventType | None=None, resource: str | None=None, start_time: datetime | None=None, end_time: datetime | None=None, limit: int=100) -> list[AuditEvent]:
-        """
-        Query audit log.
-
-        Args:
-            event_type: Filtrovat podle typu
-            resource: Filtrovat podle zdroje
-            start_time: Od
-            end_time: Do
-            limit: Limit výsledků
-
-        Returns:
-            Seznam audit událostí
-        """
+    async def query(
+        self,
+        event_type: AuditEventType | None = None,
+        resource: str | None = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        limit: int = 100,
+    ) -> list[AuditEvent]:
+        """Query audit events from DuckDB."""
         if not self._initialized:
+            await self.initialize()
+        if self._duckdb_store is None:
             return []
-        query = 'SELECT * FROM audit_events WHERE 1=1'
-        params = []
-        if event_type:
-            query += ' AND event_type = ?'
-            params.append(event_type.value)
-        if resource:
-            query += ' AND resource = ?'
-            params.append(resource)
-        if start_time:
-            query += ' AND timestamp >= ?'
-            params.append(start_time.isoformat())
-        if end_time:
-            query += ' AND timestamp <= ?'
-            params.append(end_time.isoformat())
-        query += ' ORDER BY timestamp DESC LIMIT ?'
-        params.append(limit)
-        cursor = await asyncio.to_thread(lambda: self._db.execute(query, params))
-        events = []
-        for row in cursor:
-            events.append(AuditEvent(timestamp=datetime.fromisoformat(row[1]), event_type=AuditEventType(row[2]), action=row[3], resource=row[4], user_id=row[5], session_id=row[6], details=_json.decode(row[7]) if row[7] else {}, level=AuditLevel(row[8]), hash=row[9], _hmac_key=self._hmac_key))
-        return events
+        return await self._duckdb_store.query(
+            event_type=event_type,
+            resource=resource,
+            start_time=start_time,
+            end_time=end_time,
+            limit=limit,
+        )
 
-    async def get_report(self, start_time: datetime | None=None, end_time: datetime | None=None) -> dict[str, Any]:
-        """
-        Vygenerovat audit report.
-
-        Args:
-            start_time: Od
-            end_time: Do
-
-        Returns:
-            Report statistiky
-        """
+    async def get_report(
+        self,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Generate audit report from DuckDB."""
         if not self._initialized:
+            await self.initialize()
+        if self._duckdb_store is None:
             return {}
-        query = 'SELECT event_type, COUNT(*) FROM audit_events WHERE 1=1'
-        params = []
-        if start_time:
-            query += ' AND timestamp >= ?'
-            params.append(start_time.isoformat())
-        if end_time:
-            query += ' AND timestamp <= ?'
-            params.append(end_time.isoformat())
-        query += ' GROUP BY event_type'
-        cursor = await asyncio.to_thread(lambda: self._db.execute(query, params))
-        stats = {row[0]: row[1] for row in cursor}
-        return {'period': {'start': start_time.isoformat() if start_time else 'all', 'end': end_time.isoformat() if end_time else 'all'}, 'event_counts': stats, 'total_events': sum(stats.values())}
+        return await self._duckdb_store.get_report(start_time=start_time, end_time=end_time)
 
     async def close(self) -> None:
-        """Zavřít databázi"""
-        if self._db:
-            await asyncio.to_thread(lambda: self._db.close())
-            self._db = None
+        """Close DuckDB connection."""
+        self._duckdb_store = None
+        self._initialized = False

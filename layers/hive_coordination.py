@@ -90,12 +90,12 @@ class ConnectedCoordinationSystem:
         """Initialize unified memory management"""
         import os
         os.makedirs('.hive-mind', exist_ok=True)
-        with closing(sqlite3.connect('.hive-mind/connected_memory.db')) as memory_db:
-            cursor = memory_db.cursor()
-            cursor.execute('\n                CREATE TABLE IF NOT EXISTS unified_memory (\n                    id INTEGER PRIMARY KEY AUTOINCREMENT,\n                    namespace TEXT NOT NULL,\n                    layer TEXT NOT NULL,\n                    key TEXT NOT NULL,\n                    value TEXT NOT NULL,\n                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,\n                    access_count INTEGER DEFAULT 0,\n                    last_accessed DATETIME DEFAULT CURRENT_TIMESTAMP,\n                    UNIQUE(namespace, layer, key)\n                )\n            ')
-            cursor.execute('\n                CREATE TABLE IF NOT EXISTS coordination_events (\n                    id INTEGER PRIMARY KEY AUTOINCREMENT,\n                    event_type TEXT NOT NULL,\n                    source_layer TEXT NOT NULL,\n                    target_layer TEXT NOT NULL,\n                    task_id TEXT,\n                    data TEXT NOT NULL,\n                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP\n                )\n            ')
-            cursor.execute('\n                CREATE TABLE IF NOT EXISTS topology_history (\n                    id INTEGER PRIMARY KEY AUTOINCREMENT,\n                    new_topology TEXT,\n                    new_topology TEXT NOT NULL,\n                    reason TEXT,\n                    performance_score REAL,\n                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP\n                )\n            ')
-            memory_db.commit()
+        self.memory_db = sqlite3.connect('.hive-mind/connected_memory.db')
+        cursor = self.memory_db.cursor()
+        cursor.execute('\n                CREATE TABLE IF NOT EXISTS unified_memory (\n                    id INTEGER PRIMARY KEY AUTOINCREMENT,\n                    namespace TEXT NOT NULL,\n                    layer TEXT NOT NULL,\n                    key TEXT NOT NULL,\n                    value TEXT NOT NULL,\n                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,\n                    access_count INTEGER DEFAULT 0,\n                    last_accessed DATETIME DEFAULT CURRENT_TIMESTAMP,\n                    UNIQUE(namespace, layer, key)\n                )\n            ')
+        cursor.execute('\n                CREATE TABLE IF NOT EXISTS coordination_events (\n                    id INTEGER PRIMARY KEY AUTOINCREMENT,\n                    event_type TEXT NOT NULL,\n                    source_layer TEXT NOT NULL,\n                    target_layer TEXT NOT NULL,\n                    task_id TEXT,\n                    data TEXT NOT NULL,\n                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP\n                )\n            ')
+        cursor.execute('\n                CREATE TABLE IF NOT EXISTS topology_history (\n                    id INTEGER PRIMARY KEY AUTOINCREMENT,\n                    old_topology TEXT,\n                    new_topology TEXT NOT NULL,\n                    reason TEXT,\n                    performance_score REAL,\n                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP\n                )\n            ')
+        self.memory_db.commit()
         logger.info('Unified memory system initialized')
 
     def _setup_coordination_layers(self):

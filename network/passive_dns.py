@@ -67,14 +67,20 @@ class _ResolverHealthTracker:
     """Thread-safe resolver health tracker with recovery window."""
     __slots__ = ('_health', '_lock')
     _health: dict[str, _ResolverHealth]
-    _lock: asyncio.Lock
+    _lock: asyncio.Lock | None  # ISSUE-014 fix: None sentinel, lazy creation
 
     def __init__(self) -> None:
         self._health = {name: _ResolverHealth() for name in DOH_RESOLVERS}
-        self._lock = asyncio.Lock()
+        self._lock = None  # Lazily created
+
+    def _get_lock(self) -> asyncio.Lock:
+        """Lazily create lock — ISSUE-014 fix: asyncio.Lock() at __init__ crashes on macOS."""
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
 
     async def record_success(self, resolver: str) -> None:
-        async with self._lock:
+        async with self._get_lock():
             h = self._health.get(resolver)
             if h:
                 h.total_requests += 1
@@ -82,7 +88,7 @@ class _ResolverHealthTracker:
                 h.consecutive_failures = 0
 
     async def record_failure(self, resolver: str) -> None:
-        async with self._lock:
+        async with self._get_lock():
             h = self._health.get(resolver)
             if h:
                 h.total_requests += 1
@@ -97,7 +103,7 @@ class _ResolverHealthTracker:
         doesn't permanently blacklist a provider. After recovery window expires
         the resolver is re-added (failure count is reset to 0).
         """
-        async with self._lock:
+        async with self._get_lock():
             now = time.time()
             result: list[tuple[str, str]] = []
             for name, url in DOH_FALLBACK_CHAIN:
@@ -221,15 +227,18 @@ class PassiveDNSResolver:
         for _retry_i in range(_MAX_DOH_RETRIES + 1):
             try:
                 params = {'name': name, 'type': rdtype}
-                resp = await session.get(url, params=params, timeout=httpx.Timeout(total=10.0), headers={'Accept': 'application/dns-json'})
-                if resp.status_code >= 500:
-                    if _retry_i < _MAX_DOH_RETRIES:
-                        await asyncio.sleep(_DOH_RETRY_DELAY_S * 2 ** _retry_i)
-                        continue
-                    return []
-                if resp.status_code != 200:
-                    return []
-                data = resp.json()
+                resp = await session.get(url, params=params, timeout=httpx.Timeout(10.0), headers={'Accept': 'application/dns-json'})
+                try:
+                    if resp.status_code >= 500:
+                        if _retry_i < _MAX_DOH_RETRIES:
+                            await asyncio.sleep(_DOH_RETRY_DELAY_S * 2 ** _retry_i)
+                            continue
+                        return []
+                    if resp.status_code != 200:
+                        return []
+                    data = resp.json()
+                finally:
+                    await resp.aclose()
             except Exception as e:
                 if _retry_i < _MAX_DOH_RETRIES:
                     await asyncio.sleep(_DOH_RETRY_DELAY_S * 2 ** _retry_i)

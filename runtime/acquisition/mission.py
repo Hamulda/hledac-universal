@@ -131,7 +131,8 @@ class NonfeedMissionController:
           - Fail-safe: returns None for unknown families
         """
         # Inline imports to avoid circular deps at module level
-        from hledac.universal.runtime.acquisition.plan_builder import (
+        # F208L version from lanes/__init__.py (not simple version from plan_builder)
+        from hledac.universal.runtime.scheduler.lanes import (
             normalize_terminal_state,
         )
         from hledac.universal.runtime.acquisition.lane_constants import (

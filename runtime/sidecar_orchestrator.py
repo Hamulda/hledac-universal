@@ -66,6 +66,21 @@ log = logging.getLogger(__name__)
 # Deferred import to avoid circular dep at mod load time
 _SPRINT_ADVISORY_RUNNER: Any = None
 
+# F039: OTel tracer lazy-loaded for sidecar telemetry spans
+_OTEL_TRACER: Any = None
+
+
+def _get_otel_tracer() -> Any:
+    """Lazily get OTel tracer for sidecar spans."""
+    global _OTEL_TRACER
+    if _OTEL_TRACER is None:
+        try:
+            from opentelemetry import trace
+            _OTEL_TRACER = trace.get_tracer("hledac.sidecar")
+        except Exception:
+            _OTEL_TRACER = False
+    return _OTEL_TRACER if _OTEL_TRACER else None
+
 # P0: Bounded concurrency for advisory sidecars (M1 8GB safe)
 # Advisory sidecary (IPFS, Tor, I2P, BGP, banner, DHT, Gopher, etc.) run in
 # fire-and-forget background tasks. This semaphore prevents unbounded parallel
@@ -108,15 +123,29 @@ async def _run_bounded_sidecar(coro, name: str) -> None:
     HLEDAC_ENABLE_* flags are active.
 
     Fail-soft: any exception is caught and logged, never raised.
+    F039: OTel span for sidecar telemetry.
     """
+    tracer = _get_otel_tracer()
     sem = _get_advisory_semaphore()
     async with sem:
-        try:
-            await coro
-        except _asyncio.CancelledError:
-            raise
-        except Exception as e:
-            log.debug("[P0 advisory] sidecar %s failed (fail-soft): %s", name, e)
+        if tracer:
+            with tracer.start_as_current_span(f"sidecar.{name}") as span:
+                span.set_attribute("sidecar.name", name)
+                span.set_attribute("sidecar.type", "advisory")
+                try:
+                    await coro
+                except _asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    span.set_attribute("sidecar.error", str(e))
+                    log.debug("[P0 advisory] sidecar %s failed (fail-soft): %s", name, e)
+        else:
+            try:
+                await coro
+            except _asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.debug("[P0 advisory] sidecar %s failed (fail-soft): %s", name, e)
 
 
 # P0: Shared semaphore for plugin sidecar concurrency control.
@@ -142,17 +171,33 @@ async def _run_bounded_plugin_sidecar(coro, sidecar_id: str) -> None:
     @SidecarRegistry.register adapters are available.
 
     Fail-soft: any exception is caught and logged, never raised.
+    F039: OTel span for plugin sidecar telemetry.
     """
+    tracer = _get_otel_tracer()
     sem = _get_plugin_semaphore()
     async with sem:
-        try:
-            await coro
-            return None  # explicit: gather() result slot always None on success
-        except _asyncio.CancelledError:
-            raise
-        except Exception as e:
-            log.debug("[P0 plugin] sidecar %s failed (fail-soft): %s", sidecar_id, e)
-            return None
+        if tracer:
+            with tracer.start_as_current_span(f"sidecar.plugin.{sidecar_id}") as span:
+                span.set_attribute("sidecar.id", sidecar_id)
+                span.set_attribute("sidecar.type", "plugin")
+                try:
+                    await coro
+                    return None
+                except _asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    span.set_attribute("sidecar.error", str(e))
+                    log.debug("[P0 plugin] sidecar %s failed (fail-soft): %s", sidecar_id, e)
+                    return None
+        else:
+            try:
+                await coro
+                return None
+            except _asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.debug("[P0 plugin] sidecar %s failed (fail-soft): %s", sidecar_id, e)
+                return None
 
 
 def _get_sprint_advisory_runner():
@@ -231,6 +276,7 @@ class SidecarOrchestrator:
         "_bus",
         "_dispatcher",
         "_target_memory_service",
+        "_prewarmed",
     )
 
     def __init__(
@@ -249,6 +295,11 @@ class SidecarOrchestrator:
             bus=self._bus,
             governor=governor,
         )
+        # ISSUE-005 FIX: Bind this SidecarOrchestrator to ContextVar so that
+        # SchedulerBackedSidecarAdapter.run_async() can find sidecar methods.
+        # SidecarOrchestrator hosts the _run_*_sidecar() methods, not SprintScheduler.
+        from runtime.sidecars._base import bind_scheduler as _bind_scheduler
+        _bind_scheduler(self)
 
     async def prewarm_async(self) -> None:
         """

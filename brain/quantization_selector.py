@@ -20,7 +20,7 @@ Invariant table:
   ─────────────────────────────────────────────────────────────────────
   Q4_K_M at CRITICAL/EMERGENCY         | test_q4_at_critical_emergency
   Q5_K_M at WARN with free >= 1.5GiB  | test_q5_at_warn_sufficient_free
-  Q8_0 only when free >= 2.5GiB       | test_q8_only_when_explicitly_safe
+  Q8_0 only when free >= 3.5GiB       | test_q8_only_when_explicitly_safe
   reject when governor denies           | test_reject_when_governor_denies
   fallback Q4_K_M on error             | test_fallback_q4_on_error
   select() returns InferenceBudget      | test_select_returns_inference_budget
@@ -30,13 +30,17 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 logger = logging.getLogger(__name__)
+Q3_K_M = 'q3_k_m'
 Q4_K_M = 'q4_k_m'
 Q5_K_M = 'q5_k_m'
 Q8_0 = 'q8_0'
 Q4_K_M_FALLBACK = 'q4_k_m'
+_FREE_UMA_FOR_Q3: float = 1.0  # ISSUE #15: M1 8GB emergency fallback
 _FREE_UMA_FOR_Q5: float = 2.0
-_FREE_UMA_FOR_Q8: float = 3.0
-RSS_OP_BUDGET_GB: float = 1.5
+# ISSUE-35: M1 8GB with 4.5GB MLX inference ceiling leaves 3.5GB for system.
+# Q8 threshold raised from 3.0 to 3.5 GB to match actual available headroom.
+_FREE_UMA_FOR_Q8: float = 3.5
+RSS_OP_BUDGET_GB: float = 4.5  # ISSUE-35: Hard cap 4.5 GB for MLX inference (from 8GB)
 
 @dataclass(frozen=True, slots=True)
 class InferenceBudget:
@@ -109,10 +113,11 @@ class QuantizationSelector:
         """
         Select quantization and inference budget for a model load.
 
-        Policy:
+        Policy (ISSUE #15 + ISSUE-35):
           CRITICAL/EMERGENCY → Q4_K_M (constrained, max_tokens=512, max_latency_ms=30000)
           WARN + free >= 1.5 GiB → Q5_K_M (balanced, max_tokens=1024, max_latency_ms=45000)
-          OK + free >= 2.5 GiB + explicitly safe → Q8_0 (full, max_tokens=2048, max_latency_ms=60000)
+          OK + free >= 3.5 GiB + explicitly safe → Q8_0 (full, max_tokens=2048, max_latency_ms=60000)
+          free < 1.0 GiB (any state) → Q3_K_M (emergency, max_tokens=256, max_latency_ms=20000)
           otherwise → Q4_K_M (safe fallback)
 
         Args:
@@ -135,6 +140,11 @@ class QuantizationSelector:
         model_denied = getattr(uma_snapshot, 'model_denied', False)
         if model_denied:
             return InferenceBudget(max_tokens=0, max_latency_ms=0, quantization=Q4_K_M_FALLBACK, reason='governor_denied')
+
+        # ISSUE #15: Q3_K_M emergency fallback when FREE_UMA < 1GB
+        if free_uma < _FREE_UMA_FOR_Q3:
+            return InferenceBudget(max_tokens=256, max_latency_ms=20000, quantization=Q3_K_M, reason=f'uma_{state}: free_uma={free_uma:.2f}GiB < 1.0GiB, Q3_K_M emergency')
+
         if state in ('critical', 'emergency'):
             return InferenceBudget(max_tokens=512, max_latency_ms=30000, quantization=Q4_K_M, reason=f'uma_{state}: constrained')
         if state == 'warn':
@@ -143,7 +153,7 @@ class QuantizationSelector:
             return InferenceBudget(max_tokens=512, max_latency_ms=30000, quantization=Q4_K_M, reason=f'uma_warn: free_uma={free_uma:.2f}GiB < 1.5GiB')
         explicitly_safe = _is_explicitly_safe(uma_snapshot)
         if explicitly_safe and free_uma >= _FREE_UMA_FOR_Q8:
-            return InferenceBudget(max_tokens=2048, max_latency_ms=60000, quantization=Q8_0, reason=f'uma_ok: free_uma={free_uma:.2f}GiB >= 2.5GiB, explicitly_safe')
+            return InferenceBudget(max_tokens=2048, max_latency_ms=60000, quantization=Q8_0, reason=f'uma_ok: free_uma={free_uma:.2f}GiB >= 3.5GiB, explicitly_safe')
         if free_uma >= _FREE_UMA_FOR_Q5:
             return InferenceBudget(max_tokens=1024, max_latency_ms=45000, quantization=Q5_K_M, reason=f'uma_ok: free_uma={free_uma:.2f}GiB >= 1.5GiB')
         return InferenceBudget(max_tokens=512, max_latency_ms=30000, quantization=Q4_K_M, reason=f'uma_ok: free_uma={free_uma:.2f}GiB < 1.5GiB')

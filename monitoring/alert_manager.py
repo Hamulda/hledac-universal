@@ -64,11 +64,17 @@ class AlertManager:
     def __init__(self) -> None:
         self._alerts: deque[Alert] = deque(maxlen=self.MAX_ALERTS)
         self._handlers: list[Callable[[Alert], None]] = []
-        self._lock = asyncio.Lock()
+        self._lock: asyncio.Lock | None = None
         try:
             self._metrics = get_metrics_registry()
         except Exception:
             self._metrics = None
+
+    def _get_lock(self) -> asyncio.Lock:
+        """ISSUE-014 FIX: Lazily create lock in the current event loop."""
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
 
     def register_handler(self, handler: Callable[[Alert], None]) -> None:
         """Register an alert handler (e.g., dashboard, webhook)."""
@@ -79,7 +85,7 @@ class AlertManager:
         if not _should_fire_alert(alert_id, cooldown_s):
             return
         alert = Alert(alert_id=alert_id, severity=severity, message=message, metric_value=metric_value, threshold=threshold, tags=tags)
-        async with self._lock:
+        async with self._get_lock():
             self._alerts.append(alert)
         if self._metrics:
             try:

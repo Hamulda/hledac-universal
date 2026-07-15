@@ -18,10 +18,19 @@ Design:
 from __future__ import annotations
 
 import asyncio
+import logging
 import time as _time
 from typing import Any, Sequence
 
 import msgspec
+
+from core.env_config import ENV
+from hledac.universal.utils.async_helpers import (
+    safe_create_task,
+    safe_gather_return_exceptions,
+)
+
+log = logging.getLogger(__name__)
 
 # ── Cycle Result Types ──────────────────────────────────────────────────────────
 
@@ -470,7 +479,7 @@ class AcquisitionOrchestrator:
         async def run_feed_branch() -> tuple[list, bool, int]:
             """Run feed sources and return (results, ok, count)."""
             _tasks = [fetch_one(w) for w in work_items]
-            _feed_results = await _safe_gather_ok(*_tasks)
+            _feed_results = await safe_gather_return_exceptions(*_tasks)
             _ok = all(r[1].ok for r in _feed_results if not isinstance(r, Exception))
             _count = sum(
                 r[1].accepted_findings if not isinstance(r, Exception) and hasattr(r[1], "accepted_findings") else 0
@@ -495,7 +504,7 @@ class AcquisitionOrchestrator:
                 return {"ok": False, "count": 0, "timeout": True, "skipped": False}
 
         # Launch both branches concurrently — FEED || PUBLIC
-        _all_results = await _safe_gather_ok(run_feed_branch(), run_public_branch())
+        _all_results = await safe_gather_return_exceptions(run_feed_branch(), run_public_branch())
 
         # Unpack FEED results
         _feed_data = _all_results[0]
@@ -623,7 +632,7 @@ class AcquisitionOrchestrator:
         duckdb_store: Any,
     ) -> tuple[bool, int]:
         try:
-            feed_results = await _safe_gather_ok(*[fetch_one(w) for w in work_items])
+            feed_results = await safe_gather_return_exceptions(*[fetch_one(w) for w in work_items])
             _ok = all(r[1].ok for r in feed_results if not isinstance(r, Exception))
             _count = sum(
                 r[1].accepted_findings if not isinstance(r, Exception) and hasattr(r[1], "accepted_findings") else 0
@@ -860,8 +869,113 @@ class AcquisitionOrchestrator:
         duckdb_store: Any,
         lifecycle: Any,
     ) -> None:
-        """Run Hermes synthesis sidecar in windup."""
-        pass
+        """Sprint F259: Run SynthesisRunner in WINDUP phase."""
+        if not ENV.get_bool("HLEDAC_ENABLE_HERMES_SYNTHESIS"):
+            log.debug("[F259] Synthesis skipped -- HLEDAC_ENABLE_SYNTHESIS != '1'")
+            return
+        try:
+            from hledac.universal.utils.uma_budget import get_uma_snapshot
+
+            uma = get_uma_snapshot()
+            if uma.rss_gib >= 5.5 or uma.is_critical or uma.is_emergency:
+                log.debug("[F259] Synthesis skipped -- UMA RSS=%.1fGB, state=%s", uma.rss_gib, uma.state)
+                ctx.result.synthesis_success = False
+                ctx.result.synthesis_engine = "uma_guard"
+                return
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+            log.debug("[F259] UMA check failed")
+        if not ctx.result.accepted_findings:
+            log.info("[F259-SYN] early-exit: no findings, skipping synthesis")
+            return
+        if duckdb_store is None:
+            log.debug("[F259] Synthesis skipped -- no duckdb_store")
+            return
+        findings: list[dict] = []
+        try:
+            if hasattr(duckdb_store, "get_top_findings"):
+                findings = await duckdb_store.get_top_findings(limit=15)
+            elif hasattr(duckdb_store, "get_recent_findings"):
+                findings = await duckdb_store.get_recent_findings(limit=15)
+        except Exception as e:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
+            log.debug("[F259] Failed to get findings: %s", e)
+            return
+        if not findings:
+            log.debug("[F259] Synthesis skipped -- no findings")
+            return
+        if ctx.result.hermes_load_reason == "deferred":
+            log.debug("[Phase4] Loading Hermes on-demand (findings=%d)", len(findings))
+            try:
+                await self._load_hermes_for_sprint()
+            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+                log.warning("[Phase4] Hermes load failed, continuing without: %s", e)
+                ctx.result.hermes_model_loaded = False
+        try:
+            from hledac.universal.brain.model_lifecycle import ModelLifecycle
+            from hledac.universal.brain.synthesis_runner import SynthesisRunner
+        except ImportError as e:
+            log.debug("[F259] SynthesisRunner import failed: %s", e)
+            ctx.result.synthesis_engine = "import_failed"
+            return
+        try:
+            runner = SynthesisRunner(ModelLifecycle())
+            runner.set_compression_threshold(4000)
+            runner._duckdb_store = duckdb_store
+            if lifecycle is not None:
+                runner.inject_lifecycle_adapter(lifecycle)
+            try:
+                stix_graph = getattr(duckdb_store, "get_stix_graph", None)
+                if stix_graph:
+                    stix = stix_graph()
+                    if stix is not None:
+                        runner.inject_stix_graph(stix)
+            except Exception:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
+                pass
+            report = await runner.synthesize_findings(query=ctx.query, findings=findings, force_synthesis=True)
+            ctx.result.synthesis_findings_count = len(findings)
+            ctx.result.synthesis_success = report is not None
+            ctx.result.synthesis_engine = (
+                getattr(runner, "_last_synthesis_engine", "synthesis_runner") or "synthesis_runner"
+            )
+            if report is not None:
+                try:
+                    ctx.result.synthesis_text = msgspec.json.encode(
+                        {
+                            "query": ctx.query,
+                            "ioc_entities": [
+                                {"type": e.ioc_type, "value": e.value}
+                                for e in getattr(report, "ioc_entities", None) or []
+                            ],
+                            "threat_summary": getattr(report, "threat_summary", ""),
+                            "threat_actors": list(getattr(report, "threat_actors", None) or []),
+                            "confidence": getattr(report, "confidence", 0.0),
+                            "sources_count": getattr(report, "sources_count", 0),
+                            "timestamp": getattr(report, "timestamp", 0.0),
+                        }
+                    ).decode("utf-8")
+                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+                    ctx.result.synthesis_text = str(report)[:4096]
+                log.info(
+                    "[F259] Synthesis complete: success=%s, findings=%d",
+                    ctx.result.synthesis_success,
+                    ctx.result.synthesis_findings_count,
+                )
+                try:
+                    hermes = getattr(runner, "_hermes_engine", None)
+                    if hermes is not None:
+                        batcher = getattr(hermes, "_mlx_batcher", None)
+                        if batcher is not None and hasattr(batcher, "get_stats"):
+                            ctx.result.mlx_batcher_stats = batcher.get_stats()
+                            log.debug("[F285] batcher stats: %s", ctx.result.mlx_batcher_stats)
+                except Exception:  # noqa: BLE001 — best-effort; telemetry/stats; best-effort
+                    log.debug("[F285] batcher stats collection failed")
+            else:
+                ctx.result.synthesis_text = ""
+            await runner.close()
+        except Exception as e:  # noqa: BLE001 — best-effort; telemetry/stats; best-effort
+            log.debug("[F259] Synthesis failed: %s", e)
+            ctx.result.synthesis_success = False
+            ctx.result.synthesis_engine = "error"
+            ctx.result.synthesis_text = ""
 
     async def _run_epistemic_gap_advisory(
         self,
@@ -1118,23 +1232,6 @@ class AcquisitionOrchestrator:
             pass
 
 
-# ── Lazy imports helper ────────────────────────────────────────────────────────
-
-
-def safe_create_task(coro: Any, name: str | None = None) -> asyncio.Task:
-    """safe_create_task wrapper — avoids importing utils.async_helpers at module load."""
-    from hledac.universal.utils.async_helpers import safe_create_task as _sct
-
-    return _sct(coro, name=name)
-
-
-async def _safe_gather_ok(*args: Any, **kwargs: Any) -> list:
-    """safe_gather_return_exceptions wrapper — avoids importing utils.async_helpers at module load."""
-    from hledac.universal.utils.async_helpers import safe_gather_return_exceptions
-
-    return await safe_gather_return_exceptions(*args, **kwargs)
-
-
 # ── Protocol re-export ────────────────────────────────────────────────────────
 
 from runtime.scheduler_v2.protocol import AcquisitionPhaseResult  # noqa: E402
@@ -1143,5 +1240,4 @@ __all__ = [
     "AcquisitionOrchestrator",
     "AcquisitionPhaseResult",
     "CycleResult",
-    "safe_create_task",
 ]

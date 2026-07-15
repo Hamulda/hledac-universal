@@ -33,11 +33,14 @@ def _get_mlx() -> Any | None:
 
 @dataclass(slots=True)
 class ModelEntry:
+    """ISSUE #15: Přidána weakref pro referenční počítání."""
     model: Any
     tokenizer: Any | None = None
     size_bytes: int = 0
     loaded_at: float = 0.0
     access_count: int = 0
+    ref_count: int = 1  # ISSUE #15: Reference count pro pool management
+    weak_ref: Any = None  # ISSUE #15: weakref pro GC-safe referenci
 
 @dataclass(slots=True)
 class MLXModelPoolConfig:
@@ -45,6 +48,8 @@ class MLXModelPoolConfig:
     min_eviction_interval_s: float = 1.0
     auto_clear_cache: bool = True
     force_gc: bool = True
+    # ISSUE #15: Priority queue settings
+    priority_q4_k_m_before_q8_0: bool = True  # Q4_K_M modely mají přednost při evict
 
 class MLXModelPool:
     """
@@ -131,18 +136,68 @@ class MLXModelPool:
             return await self._evict_internal(model_id)
 
     async def evict_lru(self, count: int=1) -> list[str]:
+        """ISSUE #15: Priority-aware LRU eviction."""
         evicted = []
         async with self._lock:
             for _ in range(min(count, max(1, len(self._loaded) - 1))):
                 if not self._loaded:
                     break
-                mid, _ = self._loaded.popitem(last=False)
+                # ISSUE #15: Výběr LRU candidate s ohledem na priority
+                mid = self._select_lru_candidate()
+                if mid is None:
+                    break
+                self._loaded.pop(mid)
                 evicted.append(mid)
                 self._total_evictions += 1
                 self._loaded_count = len(self._loaded)
         if evicted:
             await self._post_eviction_cleanup()
         return evicted
+
+    def _select_lru_candidate(self) -> str | None:
+        """
+        ISSUE #15: Vybere LRU candidate s ohledem na priority.
+
+        Pokud je povolena priority Q4_K_M před Q8_0:
+        - Nejprve evict Q8_0 modely (nízká priorita)
+        - Pak modely s nízkou prioritou napříč kategoriím
+        Jinak: standard LRU (oldest access)
+
+        LRU = OrderedDict.keys()[0] = oldest by insertion/access order.
+        """
+        if not self._loaded:
+            return None
+
+        if not self._config.priority_q4_k_m_before_q8_0:
+            # Standard LRU — first item in OrderedDict is oldest
+            return next(iter(self._loaded))
+
+        # ISSUE #15: Priority-based selection
+        # Q8_0 = nízká priorita (vysoká paměť), Q4_K_M = vysoká priorita
+        # OrderedDict udržuje pořadí přístupů — first = LRU
+        q8_candidates = [mid for mid in self._loaded.keys()
+                        if self._get_model_priority(mid) < 5]
+        if q8_candidates:
+            # Evict Q8_0 model s nejstarším přístupem (LRU = first in OrderedDict)
+            return q8_candidates[0]
+
+        # Jinak evict oldest (LRU)
+        return next(iter(self._loaded))
+
+    def _get_model_priority(self, model_id: str) -> int:
+        """Vrátí prioritu modelu (vyšší = důležitější)."""
+        # Priority podle velikosti modelu
+        if model_id not in self._loaded:
+            return 5
+        size = self._loaded[model_id].size_bytes
+        # Velké modely (Hermes ~1.75GB) mají vysokou prioritu
+        if size >= 1.5 * 1024 ** 3:
+            return 10  # Q8_0 large models - protected unless desperate
+        elif size >= 1.0 * 1024 ** 3:
+            return 7
+        elif size >= 0.5 * 1024 ** 3:
+            return 5
+        return 3  # Small models - evict first
 
     async def _evict_if_needed(self) -> None:
         while self.total_bytes_used >= self._budget_bytes and self._loaded:
@@ -152,7 +207,10 @@ class MLXModelPool:
             if elapsed < self._config.min_eviction_interval_s and len(self._loaded) > 1:
                 logger.warning(f'[MLX_POOL] Eviction throttled')
                 break
-            mid, e = self._loaded.popitem(last=False)
+            mid = self._select_lru_candidate()
+            if mid is None:
+                break
+            self._loaded.pop(mid)
             self._total_evictions += 1
             self._last_eviction_at = time.time()
             self._loaded_count = len(self._loaded)
@@ -208,6 +266,90 @@ class MLXModelPool:
             yield (model, tokenizer)
         finally:
             await self.release(model_id)
+
+    # ── Async Preload (ISSUE #15) ─────────────────────────────────────────────
+
+    async def preload_async(self, model_id: str, loader: Callable[[], Awaitable[tuple[Any, Any | None]]]) -> None:
+        """
+        ISSUE #15: Fire-and-forget async preload.
+
+        Načte model na pozadí bez blokování. Pokud už model existuje,
+        nic nedělá. Pokud preload běží, zruší starý a spustí nový.
+
+        Args:
+            model_id: Identifikátor modelu
+            loader: Async funkce vracející (model, tokenizer)
+        """
+        async with self._lock:
+            if model_id in self._loaded:
+                # Model už načten
+                return
+            # Spust preload jako Task
+            async def _preload_task() -> None:
+                try:
+                    model, tokenizer = await loader()
+                    async with self._lock:
+                        if model_id not in self._loaded:
+                            size = self._estimate_model_size(model, tokenizer)
+                            e = ModelEntry(model=model, tokenizer=tokenizer, size_bytes=size, loaded_at=time.time(), access_count=1)
+                            self._loaded[model_id] = e
+                            self._loaded.move_to_end(model_id)
+                            self._loaded_count = len(self._loaded)
+                            logger.info(f'[MLX_POOL] Preloaded: {model_id} ({size / 1024 ** 2:.1f}MB)')
+                except Exception as ex:
+                    logger.debug(f'[MLX_POOL] Preload failed for {model_id}: {ex}')
+
+            task = asyncio.create_task(_preload_task())
+            # ISSUE #15: Uložíme Task pro případné zrušení
+            # Non-slotted dict pro dynamické atributy (objekt nemá __slots__)
+            try:
+                self._preload_tasks
+            except AttributeError:
+                self._preload_tasks: dict[str, asyncio.Task] = {}
+            self._preload_tasks[model_id] = task
+
+    def preload_cancel(self, model_id: str) -> None:
+        """ISSUE #15: Zruší aktivní preload pokud existuje."""
+        if hasattr(self, '_preload_tasks') and model_id in self._preload_tasks:
+            task = self._preload_tasks.pop(model_id)
+            if not task.done():
+                task.cancel()
+
+    # ── Reference Counting (ISSUE #15) ─────────────────────────────────────────
+
+    async def acquire_with_ref(self, model_id: str, loader: Callable[[], Awaitable[tuple[Any, Any | None]]]) -> tuple[Any, Any | None]:
+        """
+        ISSUE #15: acquire + inkrementace ref count.
+
+        Args:
+            model_id: Identifikátor modelu
+            loader: Async funkce vracející (model, tokenizer)
+
+        Returns:
+            (model, tokenizer)
+        """
+        result = await self.acquire(model_id, loader)
+        async with self._lock:
+            if model_id in self._loaded:
+                self._loaded[model_id].ref_count += 1
+        return result
+
+    async def release_with_ref(self, model_id: str) -> None:
+        """
+        ISSUE #15: decrementace ref count + eviction pokud ref_count == 0.
+
+        Args:
+            model_id: Identifikátor modelu
+        """
+        async with self._lock:
+            if model_id not in self._loaded:
+                return
+            entry = self._loaded[model_id]
+            entry.ref_count -= 1
+            if entry.ref_count <= 0:
+                # Evict z pool
+                await self._evict_internal(model_id)
+
 _pool: MLXModelPool | None = None
 
 def get_mlx_model_pool(**kwargs: Any) -> MLXModelPool:

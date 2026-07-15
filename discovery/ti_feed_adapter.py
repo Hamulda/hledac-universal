@@ -22,9 +22,9 @@ from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.msgspec_json import loads as _msgspec_loads, dumps_str as _msgspec_dumps_str
 import httpx
 import msgspec
-from hledac.universal.network.session_runtime import async_get_aiohttp_session
+from hledac.universal.network.session_runtime import async_get_httpx_session
 from hledac.universal.tools.discovery_replay import read_cassette, replay_enabled, replay_strict_enabled, write_cassette
-from hledac.universal.transport.circuit_breaker import checked_httpx_get as checked_aiohttp_get, checked_httpx_post as checked_aiohttp_post
+from hledac.universal.transport.circuit_breaker import checked_httpx_get, checked_httpx_post
 try:
     from selectolax.parser import HTMLParser as _SelectolaxHTMLParser
     SELECTOLAX_AVAILABLE = True
@@ -331,8 +331,8 @@ logger = logging.getLogger(__name__)
 async def fetch_urlhaus(max_items: int=100) -> list[dict]:
     """URLhaus — live malware URL feed, public API, no key required."""
     try:
-        s = await async_get_aiohttp_session()
-        data, status, err = await checked_aiohttp_get(s, 'https://urlhaus-api.abuse.ch/v1/urls/recent/', timeout=httpx.Timeout(15), failure_kind='urlhaus')
+        s = await async_get_httpx_session()
+        data, status, err = await checked_httpx_get(s, 'https://urlhaus-api.abuse.ch/v1/urls/recent/', timeout=httpx.Timeout(15), failure_kind='urlhaus')
         if err:
             logger.debug(f'[URLhaus] {err}')
             return []
@@ -344,8 +344,8 @@ async def fetch_urlhaus(max_items: int=100) -> list[dict]:
 async def fetch_threatfox(days: int=1) -> list[dict]:
     """ThreatFox IOC feed — public API, no key required."""
     try:
-        s = await async_get_aiohttp_session()
-        data, status, err = await checked_aiohttp_post(s, 'https://threatfox-api.abuse.ch/api/v1/', json={'query': 'get_iocs', 'days': days}, timeout=httpx.Timeout(float(os.environ.get('HLEDAC_FEED_TIMEOUT', '45')), connect=10.0), failure_kind='threatfox')
+        s = await async_get_httpx_session()
+        data, status, err = await checked_httpx_post(s, 'https://threatfox-api.abuse.ch/api/v1/', json={'query': 'get_iocs', 'days': days}, timeout=httpx.Timeout(float(os.environ.get('HLEDAC_FEED_TIMEOUT', '45')), connect=10.0), failure_kind='threatfox')
         if err:
             logger.debug(f'[ThreatFox] {err}')
             return []
@@ -361,7 +361,7 @@ async def fetch_sslbl() -> list[dict]:
     No auth required. Updated every 5 min; do not fetch more often.
     """
     try:
-        s = await async_get_aiohttp_session()
+        s = await async_get_httpx_session()
         timeout_cfg = httpx.Timeout(float(os.environ.get('HLEDAC_FEED_TIMEOUT', '45')), connect=10.0)
         resp = await s.get('https://sslbl.abuse.ch/blacklist/sslblacklist.csv', timeout=timeout_cfg)
         if resp.status_code != 200:
@@ -388,8 +388,8 @@ async def fetch_sslbl() -> list[dict]:
 async def fetch_feodo_c2() -> list[dict]:
     """Feodo Tracker C2 blocklist — public JSON, no key required."""
     try:
-        s = await async_get_aiohttp_session()
-        data, status, err = await checked_aiohttp_get(s, 'https://feodotracker.abuse.ch/downloads/ipblocklist.json', timeout=httpx.Timeout(15), failure_kind='feodo')
+        s = await async_get_httpx_session()
+        data, status, err = await checked_httpx_get(s, 'https://feodotracker.abuse.ch/downloads/ipblocklist.json', timeout=httpx.Timeout(15), failure_kind='feodo')
         if err:
             logger.debug(f'[Feodo] {err}')
             return []
@@ -402,8 +402,8 @@ async def query_circl_pdns(domain: str, max_results: int=50) -> list[dict]:
     """CIRCL Passive DNS — community free tier, no authentication."""
     import json as _json
     try:
-        s = await async_get_aiohttp_session()
-        text, status, err = await checked_aiohttp_get(s, f'https://www.circl.lu/pdns/query/{domain}', timeout=httpx.Timeout(15), failure_kind='circl_pdns')
+        s = await async_get_httpx_session()
+        text, status, err = await checked_httpx_get(s, f'https://www.circl.lu/pdns/query/{domain}', timeout=httpx.Timeout(15), failure_kind='circl_pdns')
         if err:
             logger.debug(f'[CIRCL pDNS] {err}')
             return []
@@ -424,8 +424,8 @@ async def query_circl_pdns(domain: str, max_results: int=50) -> list[dict]:
 async def search_crtsh(domain: str, max_results: int=100) -> list[dict]:
     """crt.sh Certificate Transparency search — no key required."""
     try:
-        s = await async_get_aiohttp_session()
-        data, status, err = await checked_aiohttp_get(s, 'https://crt.sh/', params={'q': f'%.{domain}', 'output': 'json'}, timeout=httpx.Timeout(20), failure_kind='crtsh')
+        s = await async_get_httpx_session()
+        data, status, err = await checked_httpx_get(s, 'https://crt.sh/', params={'q': f'%.{domain}', 'output': 'json'}, timeout=httpx.Timeout(20), failure_kind='crtsh')
         if err:
             logger.warning(f'[crt.sh] {err}')
             return []
@@ -486,8 +486,8 @@ async def enrich_ip_internetdb(ip: str) -> dict:
     Free, no API key, ARM64 native. ~1MB RAM.
     """
     try:
-        s = await async_get_aiohttp_session()
-        data, status, err = await checked_aiohttp_get(s, f'https://internetdb.shodan.io/{ip}', timeout=httpx.Timeout(8), failure_kind='shodan_internetdb')
+        s = await async_get_httpx_session()
+        data, status, err = await checked_httpx_get(s, f'https://internetdb.shodan.io/{ip}', timeout=httpx.Timeout(8), failure_kind='shodan_internetdb')
         if err:
             logger.debug(f'[ShodanInternetDB] {err}')
             return {}
@@ -551,8 +551,8 @@ async def scrape_pastebin_for_keyword(keyword: str, max_pastes: int=10) -> list[
     results: list[dict] = []
     _UA = 'Mozilla/5.0 (Macintosh; ARM Mac OS X 14_0) AppleWebKit/605.1.15'
     try:
-        s = await async_get_aiohttp_session()
-        text, status, err = await checked_aiohttp_get(s, 'https://pastebin.com/archive', timeout=httpx.Timeout(10), failure_kind='pastebin_archive')
+        s = await async_get_httpx_session()
+        text, status, err = await checked_httpx_get(s, 'https://pastebin.com/archive', timeout=httpx.Timeout(10), failure_kind='pastebin_archive')
         if err:
             logger.debug(f'[Pastebin archive] {err}')
             return []
@@ -580,7 +580,7 @@ async def scrape_pastebin_for_keyword(keyword: str, max_pastes: int=10) -> list[
         for raw_url in paste_urls[:max_pastes]:
             await asyncio.sleep(1.0)
             try:
-                content, pr_status, pr_err = await checked_aiohttp_get(s, raw_url, timeout=httpx.Timeout(8), failure_kind='pastebin_paste')
+                content, pr_status, pr_err = await checked_httpx_get(s, raw_url, timeout=httpx.Timeout(8), failure_kind='pastebin_paste')
                 if pr_err:
                     logger.debug(f'[Pastebin] Paste fetch error for {raw_url}: {pr_err}')
                     continue
@@ -598,8 +598,8 @@ async def search_github_gists(keyword: str, max_results: int=10) -> list[dict]:
     """GitHub Gist public search — free, no key required."""
     results: list[dict] = []
     try:
-        s = await async_get_aiohttp_session()
-        text, status, err = await checked_aiohttp_get(s, 'https://gist.github.com/search', params={'q': keyword, 's': 'updated'}, timeout=httpx.Timeout(12), failure_kind='github_gist')
+        s = await async_get_httpx_session()
+        text, status, err = await checked_httpx_get(s, 'https://gist.github.com/search', params={'q': keyword, 's': 'updated'}, timeout=httpx.Timeout(12), failure_kind='github_gist')
         if err:
             logger.debug(f'[GitHub Gist] {err}')
             return []
@@ -646,8 +646,8 @@ async def github_dork(value: str, dork_type: str='ioc_in_code', max_results: int
         headers['Authorization'] = f'token {token}'
     query = _GH_DORK_TEMPLATES.get(dork_type, _GH_DORK_TEMPLATES['ioc_in_code']).format(v=value)
     try:
-        s = await async_get_aiohttp_session()
-        data, status, err = await checked_aiohttp_get(s, 'https://api.github.com/search/code', params={'q': query, 'per_page': min(max_results, 30)}, headers=headers, timeout=httpx.Timeout(15), failure_kind='github_dork')
+        s = await async_get_httpx_session()
+        data, status, err = await checked_httpx_get(s, 'https://api.github.com/search/code', params={'q': query, 'per_page': min(max_results, 30)}, headers=headers, timeout=httpx.Timeout(15), failure_kind='github_dork')
         if err:
             logger.debug(f'[GitHub dork] {err}')
             return []
@@ -669,10 +669,10 @@ async def search_ahmia(query: str, max_results: int=20, use_onion: bool=False) -
     base = AHMIA_ONION if use_onion else AHMIA_CLEARNET
     html = ''
     try:
-        s = await async_get_aiohttp_session()
+        s = await async_get_httpx_session()
         url = f'{base}?q={query}' if use_onion else base
         params = None if use_onion else {'q': query}
-        text, status, err = await checked_aiohttp_get(s, url, params=params, headers={'User-Agent': 'Mozilla/5.0'}, timeout=httpx.Timeout(15), failure_kind='ahmia_onion' if use_onion else 'ahmia_clearnet')
+        text, status, err = await checked_httpx_get(s, url, params=params, headers={'User-Agent': 'Mozilla/5.0'}, timeout=httpx.Timeout(15), failure_kind='ahmia_onion' if use_onion else 'ahmia_clearnet')
         if err:
             logger.debug(f'[Ahmia] fetch failed: {err}')
             return []
@@ -719,8 +719,8 @@ async def query_rdap(target: str) -> dict:
     base = 'https://rdap.org'
     endpoint = f'{base}/ip/{target}' if is_ip else f'{base}/domain/{target}'
     try:
-        s = await async_get_aiohttp_session()
-        data, status, err = await checked_aiohttp_get(s, endpoint, timeout=httpx.Timeout(10), failure_kind='rdap')
+        s = await async_get_httpx_session()
+        data, status, err = await checked_httpx_get(s, endpoint, timeout=httpx.Timeout(10), failure_kind='rdap')
         if err:
             logger.debug(f'[RDAP] {err}')
             return {}
@@ -1003,7 +1003,7 @@ async def fetch_i2p_eepsite(url: str, proxy_url: str='http://127.0.0.1:4444') ->
     RC-5: Uses shared session from session_runtime (connection pooling).
     """
     try:
-        session = await async_get_aiohttp_session()
+        session = await async_get_httpx_session()
         resp = await session.get(url, timeout=httpx.Timeout(60), headers={'User-Agent': 'Mozilla/5.0 (compatible; research)'})
         content = resp.text
         return {'url': url, 'status': resp.status_code, 'content': content[:50000], 'source': 'i2p_eepsite', 'error': None}
@@ -1055,7 +1055,7 @@ async def fetch_ipfs_cid(cid: str) -> dict:
 
     RC-5: Uses shared session from session_runtime (connection pooling).
     """
-    session = await async_get_aiohttp_session()
+    session = await async_get_httpx_session()
     try:
         resp = await session.post('http://127.0.0.1:5001/api/v0/cat', params={'arg': cid}, timeout=httpx.Timeout(5))
         if resp.status_code == 200:
@@ -1077,7 +1077,7 @@ async def search_ipfs(query: str, max_results: int=10) -> list[dict]:
     """ipfs-search.com REST API — index veřejného IPFS obsahu."""
     results = []
     try:
-        s = await async_get_aiohttp_session()
+        s = await async_get_httpx_session()
         resp = await s.get('https://api.ipfs-search.com/v1/search', params={'q': query, 'type': 'any'}, timeout=httpx.Timeout(15))
         if resp.status_code == 200:
             data = resp.json()
@@ -1213,7 +1213,7 @@ async def query_ripe_stat_asn(ip: str) -> dict:
     Free, no API key, M1 native.
     """
     try:
-        s = await async_get_aiohttp_session()
+        s = await async_get_httpx_session()
         resp = await s.get('https://stat.ripe.net/data/prefix-overview/data.json', params={'resource': ip}, timeout=httpx.Timeout(15))
         if resp.status_code == 200:
             data = (await resp.json()).get('data', {})
@@ -1271,7 +1271,7 @@ async def query_bgp_routing_history(resource: str, max_rows: int=20) -> dict:
     Ukazuje historické routing changes — užitečné pro infrastructure tracking.
     """
     try:
-        s = await async_get_aiohttp_session()
+        s = await async_get_httpx_session()
         resp = await s.get('https://stat.ripe.net/data/routing-history/data.json', params={'resource': resource, 'max_rows': max_rows}, timeout=httpx.Timeout(15))
         if resp.status_code == 200:
             data = resp.json()
@@ -1318,8 +1318,8 @@ async def fetch_malwarebazaar_recent(tag: str | None=None, max_items: int=25) ->
     if tag:
         payload = {'query': 'get_taginfo', 'tag': tag, 'limit': max_items}
     try:
-        s = await async_get_aiohttp_session()
-        resp, err = await checked_aiohttp_post(s, 'https://mb-api.abuse.ch/api/v1/', json=payload, timeout=httpx.Timeout(20), failure_kind='malwarebazaar_recent')
+        s = await async_get_httpx_session()
+        resp, err = await checked_httpx_post(s, 'https://mb-api.abuse.ch/api/v1/', json=payload, timeout=httpx.Timeout(20), failure_kind='malwarebazaar_recent')
         if err:
             logger.debug(f'[MalwareBazaar] {err}')
             return []
@@ -1335,8 +1335,8 @@ async def _handle_malwarebazaar_search(task, scheduler):
     ioc = task.ioc_value
     if len(ioc) == 64 and all((c in '0123456789abcdefABCDEF' for c in ioc)):
         try:
-            s = await async_get_aiohttp_session()
-            resp, err = await checked_aiohttp_post(s, 'https://mb-api.abuse.ch/api/v1/', json={'query': 'get_info', 'hash': ioc}, timeout=httpx.Timeout(15), failure_kind='malwarebazaar_info')
+            s = await async_get_httpx_session()
+            resp, err = await checked_httpx_post(s, 'https://mb-api.abuse.ch/api/v1/', json={'query': 'get_info', 'hash': ioc}, timeout=httpx.Timeout(15), failure_kind='malwarebazaar_info')
             if err:
                 logger.debug(f'[MalwareBazaar hash] {err}')
                 return
@@ -1374,7 +1374,7 @@ async def _handle_cve_to_github(task, scheduler):
     except Exception:
         return
     try:
-        s = await async_get_aiohttp_session()
+        s = await async_get_httpx_session()
         results = await client.search_cve(task.ioc_value, s)
         await client.close()
         sem = asyncio.Semaphore(4)

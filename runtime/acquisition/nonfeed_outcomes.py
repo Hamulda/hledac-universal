@@ -13,7 +13,6 @@ MODERNIZATION (Issue #18):
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from typing import Any
 
 import msgspec
@@ -38,7 +37,7 @@ class NonfeedPlanDebug(msgspec.Struct):
     optional_lanes_eligible: tuple[str, ...] = ()
     required_lanes_ineligible: tuple[str, ...] = ()
     optional_lanes_ineligible: tuple[str, ...] = ()
-    lane_eligibility: dict[str, dict] = field(default_factory=dict)
+    lane_eligibility: dict[str, dict] = msgspec.field(default_factory=dict)
     seed_context_has_domain: bool = False
     seed_context_has_ip: bool = False
     seed_context_has_url: bool = False
@@ -47,8 +46,7 @@ class NonfeedPlanDebug(msgspec.Struct):
 # ── NonfeedSeedContext ─────────────────────────────────────────────────────────
 
 
-@dataclass(slots=True)
-class NonfeedSeedContext:
+class NonfeedSeedContext(msgspec.Struct, frozen=False):
     """
     F217: Seed context for nonfeed lane seeding.
 
@@ -66,28 +64,6 @@ class NonfeedSeedContext:
     # F228C: Surface completeness
     expected_lanes: tuple[str, ...] = ()
     missing_lanes: tuple[str, ...] = ()
-
-    def __post_init__(self) -> None:
-        # Normalize: filter empty strings from all tuple fields
-        def _clean(t: tuple) -> tuple:
-            return tuple(x for x in t if x)
-
-        if self.domains:
-            object.__setattr__(self, "domains", _clean(self.domains))
-        if self.ips:
-            object.__setattr__(self, "ips", _clean(self.ips))
-        if self.urls:
-            object.__setattr__(self, "urls", _clean(self.urls))
-        if self.cves:
-            object.__setattr__(self, "cves", _clean(self.cves))
-        if self.wallets:
-            object.__setattr__(self, "wallets", _clean(self.wallets))
-        if self.hashes:
-            object.__setattr__(self, "hashes", _clean(self.hashes))
-        if self.expected_lanes:
-            object.__setattr__(self, "expected_lanes", _clean(self.expected_lanes))
-        if self.missing_lanes:
-            object.__setattr__(self, "missing_lanes", _clean(self.missing_lanes))
 
     def has_domain(self) -> bool:
         return bool(self.domains)
@@ -132,18 +108,10 @@ class AcquisitionLaneOutcome(msgspec.Struct, frozen=True):
     items_queued: int = 0
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to JSON-serializable dict."""
-        return {
-            "lane": self.lane,
-            "accepted_findings": self.accepted_findings,
-            "rejected_findings": self.rejected_findings,
-            "terminal_state": self.terminal_state,
-            "error": self.error or "",
-            "skipped": self.skipped,
-            "duration_s": self.duration_s,
-            "items_discovered": self.items_discovered,
-            "items_queued": self.items_queued,
-        }
+        """Convert to JSON-serializable dict via msgspec.to_builtins (C-level ~50 ns)."""
+        d = msgspec.to_builtins(self)
+        d["error"] = self.error or ""  # preserve None→"" semantic
+        return d
 
 
 # ── SourceFamilyOutcome ─────────────────────────────────────────────────────────
@@ -169,18 +137,10 @@ class SourceFamilyOutcome(msgspec.Struct, frozen=True):
     items_discovered: int = 0
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "family": self.family,
-            "accepted_count": self.accepted_count,
-            "rejected_count": self.rejected_count,
-            "quality_rejected": self.quality_rejected,
-            "duplicate_rejected": self.duplicate_rejected,
-            "low_information": self.low_information,
-            "terminal_state": self.terminal_state,
-            "error": self.error or "",
-            "skipped": self.skipped,
-            "items_discovered": self.items_discovered,
-        }
+        """Convert to JSON-serializable dict via msgspec.to_builtins (C-level ~50 ns)."""
+        d = msgspec.to_builtins(self)
+        d["error"] = self.error or ""  # preserve None→"" semantic
+        return d
 
 
 # ── MandatoryLaneTerminality ─────────────────────────────────────────────────────

@@ -277,29 +277,3 @@ class SmartSpawnedCoordinationIntegration:
         self.coordination_history.append(event)
         if len(self.coordination_history) > 100:
             self.coordination_history = self.coordination_history[-100:]
-
-async def demo_smart_spawned_integration():
-    """Demonstrate the smart-spawned coordination integration"""
-    print('🚀 Smart-Spawned Coordination Integration Demo')
-    print('=' * 50)
-    connected_system = ConnectedCoordinationSystem('swarm_1762976564550_bvsm9hm1n')
-    smart_integration = SmartSpawnedCoordinationIntegration(connected_system)
-    status = smart_integration.get_smart_coordination_status()
-    print(f"Initial Smart Coordination Status: {_json.encode(status, indent=2).decode('utf-8')}")
-    tasks = [('Implement intelligent task routing system', 'high'), ('Optimize coordination layer performance', 'medium'), ('Test cross-system integration capabilities', 'high')]
-    for task_desc, priority in tasks:
-        print(f'\n📋 Processing with Smart Coordination: {task_desc}')
-        result = await smart_integration.process_task_with_smart_coordination(task_desc, priority)
-        print(f"✅ Task {result['task_id']} completed")
-        print(f"   Efficiency Score: {result['performance_analysis']['efficiency_score']:.2f}")
-        print(f"   Processing Time: {result['total_processing_time']:.2f}s")
-    final_status = smart_integration.get_smart_coordination_status()
-    print(f"\n📊 Final Smart Coordination Status: {_json.encode(final_status, indent=2).decode('utf-8')}")
-    print('\n🎯 Smart-Spawned Integration Complete!')
-    print('✅ Smart coordinator optimized task analysis and routing')
-    print('✅ Smart coders implemented components efficiently')
-    print('✅ Smart tester validated integration comprehensively')
-    print('✅ Performance analysis provided actionable insights')
-    print('✅ System recommendations generated for optimization')
-if __name__ == '__main__':
-    asyncio.run(demo_smart_spawned_integration())

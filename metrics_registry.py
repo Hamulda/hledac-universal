@@ -204,7 +204,7 @@ class MetricsRegistry:
                         line = _orjson.dumps(m, option=_orjson.OPT_APPEND_NEWLINE)
                         self._persist_file.write(line)
                     else:
-                        line = json.dumps(m, separators=(',', ':'))
+                        line = json.dumps(m)
                         self._persist_file.write(line.encode('utf-8') + b'\n')
                 self._persist_file.flush()
                 os.fsync(self._persist_file.fileno())
