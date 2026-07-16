@@ -37,8 +37,7 @@ _MAX_BATCH_SIZE = 32
 _MAX_DOCS = 50000
 _EMBEDDING_DIM = 256
 
-@dataclass(slots=True)
-class RAGDocument:
+class RAGDocument(msgspec.Struct):
     """Document for LanceDB-backed RAG."""
     id: str
     content: str
@@ -48,8 +47,7 @@ class RAGDocument:
     def __hash__(self):
         return hash(self.id)
 
-@dataclass(frozen=True, slots=True)
-class RetrievedChunk:
+class RetrievedChunk(msgspec.Struct, frozen=True):
     """Retrieved document chunk with scores."""
     document: RAGDocument
     chunk_text: str

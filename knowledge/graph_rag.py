@@ -67,8 +67,7 @@ def _check_ram_for_igraph() -> bool:
         pass
     return True
 
-@dataclass(slots=True)
-class CentralityScores:
+class CentralityScores(msgspec.Struct):
     """Centrality analysis results for a node."""
     node_id: str
     degree: float = 0.0
@@ -78,8 +77,7 @@ class CentralityScores:
     pagerank: float = 0.0
     overall_influence: float = 0.0
 
-@dataclass(slots=True)
-class Community:
+class Community(msgspec.Struct):
     """Detected community in the graph."""
     community_id: int
     nodes: list[str] = field(default_factory=list)
@@ -87,8 +85,7 @@ class Community:
     dominant_type: str = 'mixed'
     key_characteristics: list[str] = field(default_factory=list)
 
-@dataclass(slots=True)
-class GraphContradiction:
+class GraphContradiction(msgspec.Struct):
     """Contradiction detected in the graph."""
     node_a_id: str
     node_b_id: str

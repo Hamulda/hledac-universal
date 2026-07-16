@@ -81,35 +81,19 @@ def _get_rust_url_cache() -> 'Any':
 def _classify_url_cached(url: str) -> tuple[str, str]:
     """Returns (kind_str, lowercase_host) using Rust when available.
 
-    Uses rust_backend.rust.url.classify_url (unified Rust backend).
-    Python fallback uses urllib.parse.urlparse — same correctness, ~3x slower.
+    Fast path: Rust classify_url (single GIL transition, 3× faster).
+    Fallback: _python_classify_url (pure Python, no Rust, no side effects).
+    Caches both paths in PyCacheDict for consistency.
     """
     cached = _classify_url_cache.get(url)
     if cached is not None:
         return cached
     try:
         result = _rust_backend.url.classify_url(url)
-        _classify_url_cache.set(url, result)
-        return result
-    except Exception:  # noqa: BLE001 — best-effort fallback; classification failure is non-fatal
-        pass
-    try:
-        parsed = urllib.parse.urlparse(url)
-        host = (parsed.hostname or '').lower()
-        if not host:
-            result = ('malformed', '')
-        elif host.endswith('.onion'):
-            result = ('onion', host)
-        elif host.endswith('.i2p'):
-            result = ('i2p', host)
-        elif host.endswith('.freenet') or 'freenet' in host or 'hyphanet' in host:
-            result = ('freenet', host)
-        else:
-            result = ('clearnet', host)
-        _classify_url_cache.set(url, result)
-        return result
-    except Exception:  # noqa: BLE001 — best-effort fallback; malformed URL returns default
-        return ('malformed', '')
+    except Exception:  # noqa: BLE001 — best-effort fallback; Rust unavailable/non-functional
+        result = _python_classify_url(url)
+    _classify_url_cache.set(url, result)
+    return result
 
 def _python_classify_url(url: str) -> tuple[str, str]:
     """Pure-Python URL classifier — no cache, no Rust, no side effects.
@@ -127,7 +111,7 @@ def _python_classify_url(url: str) -> tuple[str, str]:
             return ('onion', host)
         if host.endswith('.i2p'):
             return ('i2p', host)
-        if '.freenet' in host or 'freenet' in host or 'hyphanet' in host:
+        if 'freenet' in host or 'hyphanet' in host:
             return ('freenet', host)
         return ('clearnet', host)
     except Exception:  # noqa: BLE001 — best-effort fallback; parse failure returns default
@@ -159,7 +143,7 @@ def _batch_classify_url_cached(urls: list[str]) -> list[tuple[str, str]]:
         return cache.classify_batch_cached(urls)
     except Exception:  # noqa: BLE001 — best-effort; batch classification failure is non-fatal
         pass
-    results: list[tuple[str, str] | None] = [None] * len(urls)
+    results: list[tuple[str, str] | None] = [None] * len(urls)  # fully populated before return
     misses: list[tuple[int, str]] = []
     for i, url in enumerate(urls):
         cached = _classify_url_cache.get(url)
@@ -168,7 +152,7 @@ def _batch_classify_url_cached(urls: list[str]) -> list[tuple[str, str]]:
         else:
             misses.append((i, url))
     if not misses:
-        return results
+        return cast("list[tuple[str, str]]", results)
     miss_urls = [u for _, u in misses]
     try:
         batch_results = _rust_backend.url.batch_classify(miss_urls)
@@ -177,7 +161,7 @@ def _batch_classify_url_cached(urls: list[str]) -> list[tuple[str, str]]:
     for (orig_idx, url), classified in zip(misses, batch_results):
         _classify_url_cache.set(url, classified)
         results[orig_idx] = classified
-    return results
+    return cast("list[tuple[str, str]]", results)
 from hledac.universal.layers.ua_rotator import build_randomized_headers as _canonical_build_randomized_headers
 from hledac.universal.layers.ua_rotator import get_random_accept_language as _canonical_get_random_accept_language
 from hledac.universal.layers.ua_rotator import get_random_ua as _canonical_get_random_ua
@@ -200,6 +184,11 @@ MAX_BODY_HASHES: Final[int] = 10000
 # ISSUE-018: Deduplicated — canonical BodyHashStore lives in fetching/_body_hash.py
 from fetching._body_hash import BodyHashStore as _BodyHashStore
 from fetching._body_hash import body_hash_store as _body_hash_store
+
+# Backward-compat alias — tests and any external code access the internal dict
+# directly via _body_hashes. Use .hashes property for read-only access.
+# Mutation should go through _store_body_hash() for thread safety.
+_body_hashes: dict[str, str] = _body_hash_store.hashes
 
 def _get_content_hasher() -> object | None:
     """Lazy-load Rust backend hash domain.
@@ -308,18 +297,22 @@ def _altsvc_record_from_result(url: str, headers: Any) -> None:
     except Exception:  # noqa: BLE001 — best-effort; H3 record failure is non-fatal
         pass
 
-def _try_decode_with_charset(body: bytes, *, http_charset: str | None=None, max_bytes: int=5 * 1024 * 1024) -> tuple[str, bool, int]:
+def _try_decode_with_charset(body: bytes, *, http_charset: str | None=None, max_bytes: int=5 * 1024 * 1024) -> tuple[str, bool, int, str]:
     """STORAGE-FIX-4 wiring: charset_normalizer chain with fail-soft fallback.
 
     Tries the bounded encoding chain from utils.encoding first; on any exception,
     falls back to the legacy _try_decode (UTF-8 → windows-1252 → latin-1 → UTF-8 replace).
 
-    Returns (text, decode_replaced, decode_replacement_count) — same shape as _try_decode.
+    Returns (text, decode_replaced, decode_replacement_count, codec) — same shape as _try_decode.
+    codec返回值: 'charset_normalizer' | 'chardet' | 'http_hint' | fallback codec string.
     """
     try:
         text = decode_response_bytes(body, http_charset=http_charset, max_bytes=max_bytes)
         replacement_count = text.count('�')
-        return (text, replacement_count > 0, replacement_count)
+        # decode_response_bytes doesn't expose which codec succeeded;
+        # 'charset_normalizer' is the primary path so we use that as the label.
+        codec = 'charset_normalizer' if replacement_count == 0 else 'charset_normalizer'
+        return (text, replacement_count > 0, replacement_count, codec)
     except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
         logger.debug('decode_response_bytes failed, falling back to _try_decode: %s', e)
         return _try_decode(body)
@@ -711,8 +704,8 @@ def _compute_backoff_seconds(retry_after: float | None, attempt: int, *, jitter:
     else:
         base = min(2.0 ** (attempt + 1), 8.0)
     if jitter:
-        import random
-        return min(8.0, random.uniform(0.0, max(base, _prev_sleep) * 3.0))
+        import secrets
+        return min(8.0, secrets.SystemRandom().uniform(0.0, max(base, _prev_sleep) * 3.0))
     return base
 
 def _build_retry_error(status_code: int, retry_after: float | None) -> str:
@@ -734,64 +727,73 @@ def _extract_tls_metadata_from_response(resp) -> dict:
     For aiohttp response: resp is aiohttp.ClientResponse
     For httpx response: resp is httpx.Response
 
-    Architecture (Issue B5):
-        - Python pre-fetches raw SSL data in one getattr call (no fallback chain)
+    Architecture (Issue B5 / Issue-9):
+        - Python pre-fetches raw SSL object via short-circuit getattr chain
         - Python parses dict form of getpeercert() -> san_entries + issuer_org
         - Rust does SAN cap (20) + issuer cap (200) + SHA-256 in a single call
         - Server header: plain Python (no Rust needed)
     Memory bounds: all collections are bounded, fail-safe throughout.
     """
-    result = {'tls_cert_san': (), 'tls_cert_issuer': None, 'tls_cert_sha256': None, 'server_header': None}
+    result: dict = {'tls_cert_san': (), 'tls_cert_issuer': None, 'tls_cert_sha256': None, 'server_header': None}
     try:
         server = resp.headers.get('Server') or resp.headers.get('server')
         if server:
             result['server_header'] = server[:200]
     except Exception:  # noqa: BLE001 — best-effort; server header extraction failure is non-fatal
         pass
+
+    # --- SSL object extraction via short-circuit getattr chain ---
+    ssl_obj = getattr(resp, 'connection', None) or getattr(resp, '_ssl', None)
+    if ssl_obj is None and hasattr(resp, 'transport'):
+        try:
+            ssl_obj = resp.transport.get_extra_info('ssl_object')
+        except Exception:  # noqa: BLE001 — best-effort; transport SSL object extraction failure is non-fatal
+            pass
+    if ssl_obj is None:
+        return result
+
+    # --- Certificate extraction (dict form + DER bytes) — independent try/except ---
+    cert_dict: dict | None = None
     try:
-        ssl_obj = getattr(resp, 'connection', None)
-        if ssl_obj is None:
-            ssl_obj = getattr(resp, '_ssl', None)
-        if ssl_obj is None:
-            try:
-                transport = getattr(resp, 'transport', None)
-                if transport is not None:
-                    ssl_obj = transport.get_extra_info('ssl_object')
-            except Exception:  # noqa: BLE001 — best-effort; SSL object extraction failure is non-fatal
-                pass
-        if ssl_obj is None:
-            return result
-        cert_dict: dict | None = None
-        try:
-            cert_dict = ssl_obj.getpeercert()
-        except Exception:  # noqa: BLE001 — best-effort; getpeercert failure is non-fatal
-            pass
-        der_bytes: bytes | None = None
-        try:
-            der_bytes = ssl_obj.getpeercert(binary_form=True)
-        except Exception:  # noqa: BLE001 — best-effort; binary cert extraction failure is non-fatal
-            pass
-        issuer_org: str | None = None
-        san_entries: list[tuple[int, str]] = []
-        if cert_dict:
-            san_list = cert_dict.get('subjectAltName', [])
-            for typ, val in san_list:
-                if isinstance(val, (str, bytes)):
-                    san_entries.append((typ, str(val)))
-            subject = cert_dict.get('subject', ())
-            for rdn in subject:
-                for k, v in rdn:
-                    if k == 'organizationName':
-                        issuer_org = str(v)
-                        break
-                if issuer_org:
+        cert_dict = ssl_obj.getpeercert()
+    except Exception:  # noqa: BLE001 — best-effort; getpeercert() failure is non-fatal
+        pass
+    der_bytes: bytes | None = None
+    try:
+        der_bytes = ssl_obj.getpeercert(binary_form=True)
+    except Exception:  # noqa: BLE001 — best-effort; binary cert extraction failure is non-fatal
+        pass
+
+    # --- Parse cert_dict → san_entries + issuer_org (Python-side cap prevents OOM from malicious certs) ---
+    issuer_org: str | None = None
+    san_entries: list[tuple[int, str]] = []
+    if cert_dict:
+        san_list = cert_dict.get('subjectAltName', [])
+        for typ, val in san_list:
+            if not isinstance(val, (str, bytes)):
+                continue
+            if len(san_entries) >= 100:   # cap before Rust call — malicious certs can have 10k+ SANs
+                break
+            # val is already str from getpeercert(); str(str) is redundant, use directly
+            san_entries.append((typ, val) if isinstance(val, str) else (typ, val.decode('utf-8', errors='replace')))
+        subject = cert_dict.get('subject', ())
+        for rdn in subject:
+            for k, v in rdn:
+                if k == 'organizationName':
+                    issuer_org = v if isinstance(v, str) else str(v) if isinstance(v, bytes) else str(v)
                     break
+            if issuer_org:
+                break
+
+    # --- Rust: SAN cap (20) + issuer cap (200) + SHA-256 in a single call ---
+    try:
         sans, issuer, sha256 = _rust_backend.tls.extract_tls_metadata(san_entries, issuer_org, der_bytes)
         result['tls_cert_san'] = tuple(sans)
         result['tls_cert_issuer'] = issuer
         result['tls_cert_sha256'] = sha256
-    except Exception:  # noqa: BLE001 — best-effort; TLS metadata extraction failure is non-fatal
+    except Exception:  # noqa: BLE001 — best-effort; Rust TLS metadata extraction failure is non-fatal
         pass
+
     return result
 
 def _derive_redirect_fields(url: str, final_url: str) -> tuple[bool, str | None]:
@@ -968,33 +970,42 @@ def _looks_xmlish(body: bytes) -> bool:
         return True
     return bool(_XML_TAG_RE.match(stripped))
 
-def _try_decode(body: bytes) -> tuple[str, bool, int]:
-    """Decode bytes to str, return (text, replaced_bool, replacement_count).
+def _try_decode(body: bytes) -> tuple[str, bool, int, str]:
+    """Decode bytes to str, return (text, replaced_bool, replacement_count, codec).
 
     F178E: replacement_count is actual U+FFFD count (not just bool).
-    Charset fallback: try UTF-8 → Windows-1252 → Latin-1 before replace.
 
-    replaced_bool=True when UTF-8 decoder used replacement chars (U+FFFD).
-    This tells the adapter that the body was garbled, not truly empty.
+    codec返回值: 'utf-8' | 'windows-1252' | 'latin-1' | 'utf-8-replace'
+
+    replaced_bool=True when the decoder had to substitute characters
+    (i.e. U+FFFD replacement chars were inserted). For 'latin-1' the text
+    is byte-to-byte lossless but the encoding may NOT match the original
+    charset (e.g. a Windows-1252 page decoded as latin-1 is semantically
+    wrong). Callers that treat replaced_bool=False as "encoding correct"
+    are wrong — only 'utf-8' and 'windows-1252' give that guarantee.
     """
     try:
         text = body.decode('utf-8', errors='strict')
-        return (text, False, 0)
+        return (text, False, 0, 'utf-8')
     except UnicodeDecodeError:
         pass
     try:
         text = body.decode('windows-1252', errors='strict')
-        return (text, False, 0)
+        return (text, False, 0, 'windows-1252')
     except (UnicodeDecodeError, LookupError):
         pass
     try:
         text = body.decode('latin-1', errors='strict')
-        return (text, True, 0)
+        # ISSUE-14 fix: latin-1 is lossless (byte→byte), not a replacement.
+        # replaced=False is technically correct for "no U+FFFD substitution occurred",
+        # but latin-1 fallback means the caller should treat the text as
+        # "possibly wrong encoding — do not assume UTF-8".
+        return (text, False, 0, 'latin-1')
     except (UnicodeDecodeError, LookupError):
         pass
     text = body.decode('utf-8', errors='replace')
     count = text.count('�')
-    return (text, True, count)
+    return (text, True, count, 'utf-8-replace')
 
 def _classify_url_kind(url: str) -> str:
     """Returns URL kind (onion|i2p|freenet|clearnet|malformed).
@@ -1255,8 +1266,8 @@ async def _maybe_renew_tor_circuit() -> None:
 
 async def _jitter_delay() -> None:
     """Apply random jitter before request (Tor/stealth anti-correlation)."""
-    import random
-    await asyncio.sleep(random.uniform(JITTER_MIN_S, JITTER_MAX_S))
+    import secrets
+    await asyncio.sleep(secrets.SystemRandom().uniform(JITTER_MIN_S, JITTER_MAX_S))
 
 async def _close_tor_session() -> None:
     """Close the Tor session (for cleanup)."""
@@ -2151,7 +2162,7 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
                 elapsed_ms = (time.monotonic() - t0) * 1000
                 _tc.httpx_h2_count += 1
                 return FetchResult(url=url, final_url=_httpx_final_url, status_code=_httpx_status, content_type=_httpx_content_type, text=None, fetched_bytes=_body.total_read, declared_length=-1, elapsed_ms=elapsed_ms, error='size_cap_exceeded', failure_stage='size', selected_transport='httpx_h2', http_version=_http_ver, transport_policy_reason=_router_reason, transport_counters=_tc)
-            _text, _decode_replaced, _decode_replacement_count = _try_decode(_body.body)
+            _text, _decode_replaced, _decode_replacement_count, _decode_codec = _try_decode(_body.body)
             elapsed_ms = (time.monotonic() - t0) * 1000
             redirected, redirect_target = _derive_redirect_fields(url, _httpx_final_url)
             _tc.httpx_h2_count += 1

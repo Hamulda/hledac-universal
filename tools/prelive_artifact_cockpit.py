@@ -27,16 +27,14 @@ from enum import StrEnum
 from pathlib import Path
 _SPRINT_ID_RE = re.compile('^F(\\d{3,})[A-Z]?(?:_[A-Z_]+)?$')
 
-@dataclass(slots=True)
-class SprintIdCollision:
+class SprintIdCollision(msgspec.Struct):
     sprint_id: str
     aliases: list[str] = field(default_factory=list)
     probe_dirs: list[str] = field(default_factory=list)
     report_paths: list[str] = field(default_factory=list)
     json_paths: list[str] = field(default_factory=list)
 
-@dataclass(frozen=True, slots=True)
-class SprintCollisionReport:
+class SprintCollisionReport(msgspec.Struct, frozen=True):
     has_collisions: bool = False
     collisions: list[SprintIdCollision] = field(default_factory=list)
     total_probes_scanned: int = 0
@@ -129,8 +127,7 @@ def render_collision_warning(report: SprintCollisionReport) -> list[str]:
         lines.append(f'**Action:** Operator reports may show ambiguous labels. Use full alias (e.g. `{coll.aliases[0]}`) to disambiguate. **Live is NOT blocked** — required artifact paths are explicit.')
     return lines
 
-@dataclass(frozen=True, slots=True)
-class SprintIdCollisionWarning:
+class SprintIdCollisionWarning(msgspec.Struct, frozen=True):
     has_collisions: bool = False
     collision_count: int = 0
     total_probes_scanned: int = 0
@@ -161,8 +158,7 @@ class NextAction(StrEnum):
     FIX_PROVIDER_SURFACE = 'fix_provider_surface'
     FIX_CONTRACT_GATE = 'fix_contract_gate'
 
-@dataclass(frozen=True, slots=True)
-class UmaState:
+class UmaState(msgspec.Struct, frozen=True):
     system_used_gib: float = 0.0
     swap_used_gib: float = 0.0
     swap_detected: bool = False
@@ -173,8 +169,7 @@ class UmaState:
     swap_policy_tier: str = 'unknown'
     swap_gate_reason: str = ''
 
-@dataclass(frozen=True, slots=True)
-class CockpitResult:
+class CockpitResult(msgspec.Struct, frozen=True):
     verdict: Verdict
     live_allowed: bool
     next_action: NextAction

@@ -33,6 +33,7 @@ Usage:
         entities   = await dispatcher.ner_predict("Apple released iPhone 15", ["organization", "product"])
 """
 from __future__ import annotations
+import msgspec
 
 import asyncio
 import contextvars
@@ -52,8 +53,7 @@ logger = logging.getLogger(__name__)
 # Používá contextvars.ContextVar pro async-safe izolaci per-sprint contextu.
 
 
-@dataclass(slots=True)
-class _DispatcherContext:
+class _DispatcherContext(msgspec.Struct):
     """
     Per-sprint context pro MLXDispatcher.
 
@@ -130,6 +130,21 @@ _INITIALIZED = False
 # ── Env gate ─────────────────────────────────────────────────────────────────
 
 _HLEDAC_MLX_ENABLED = os.environ.get('HLEDAC_MLX', '0') == '1'
+
+# Lazy mlx.core accessor (for hot paths like _unload_model)
+_MLX_CORE: Any | None = None
+
+
+def _get_mx() -> Any | None:
+    """Lazy accessor for mlx.core — imports once and caches. Returns None if unavailable."""
+    global _MLX_CORE
+    if _MLX_CORE is None:
+        try:
+            import mlx.core as _mx
+            _MLX_CORE = _mx
+        except ImportError:
+            _MLX_CORE = False
+    return _MLX_CORE if _MLX_CORE is not False else None
 
 
 def _is_mlx_enabled() -> bool:
@@ -716,12 +731,13 @@ class MLXDispatcher:
         global _ANE_EMBEDDER, _EMBEDDER
         _ANE_EMBEDDER = None
         _EMBEDDER = None
-        try:
-            import mlx.core as mx
-            mx.eval([])
-            mx.metal.clear_cache()
-        except Exception:
-            pass
+        mx = _get_mx()
+        if mx:
+            try:
+                mx.eval([])
+                mx.metal.clear_cache()
+            except Exception:
+                pass
         logger.info('[MLXDispatcher] Unloaded — metal cache cleared')
 
     # ── Async Preload (ISSUE #15) ─────────────────────────────────────────────

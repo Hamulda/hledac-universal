@@ -28,6 +28,7 @@ import logging
 from collections.abc import Callable
 from typing import TypeVar, Awaitable, Generic
 from dataclasses import dataclass
+import msgspec
 
 T = TypeVar("T", default=object)
 F = TypeVar("F", default=object)
@@ -59,8 +60,7 @@ class Ok(Generic[T]):
         return self.value
 
 
-@dataclass(frozen=True, slots=True)
-class Err:
+class Err(msgspec.Struct, frozen=True):
     """Err result — carries error message and optional exception."""
     error: str
     exception: BaseException | None = None

@@ -43,7 +43,9 @@ import re
 import urllib.parse
 from dataclasses import dataclass
 from typing import Any, Literal
+
 from core.env_config import ENV
+
 Lane = Literal['aiohttp_default', 'httpx_h2', 'httpx_h3', 'curl_cffi_stealth', 'tor_socks', 'i2p_socks', 'js_renderer', 'cache_safe_http', 'gopher']
 
 @dataclass(frozen=True, slots=True)
@@ -154,7 +156,7 @@ class TransportRouter:
         try:
             from hledac.universal.fetching.public_fetcher import _classify_url_cached
             return _classify_url_cached(url)
-        except Exception:
+        except Exception:  # noqa: BLE001 — fail-soft: Rust cache miss → fallback to urllib
             pass
         try:
             parsed = urllib.parse.urlparse(url)
@@ -168,7 +170,7 @@ class TransportRouter:
             if host.endswith('.freenet') or 'freenet' in host:
                 return ('freenet', host)
             return ('clearnet', host)
-        except Exception:
+        except (ValueError, OSError):  # urllib raises ValueError for malformed URLs; OSError for IDN encoding failures
             return ('malformed', '')
 
     def _is_httpx_h2_candidate(self, url: str, hostname: str='') -> bool:
@@ -202,7 +204,7 @@ class TransportRouter:
             for pattern in self._API_PATH_PATTERNS:
                 if re.match(pattern, f'{parsed.scheme}://{hostname}{path}'):
                     return True
-        except Exception:
+        except re.error:  # invalid regex pattern in _API_PATH_PATTERNS
             pass
         return False
 
@@ -243,7 +245,7 @@ class TransportRouter:
             from hledac.universal.transport.http3_lane import _cache_get as _h3_cache_get
             if _h3_cache_get(hostname) is not True:
                 return False
-        except Exception:
+        except (ValueError, OSError):  # cache lookup: ValueError for type errors, OSError for backend failures
             return False
         for suffix in self._API_HOST_SUFFIXES:
             if hostname.endswith(suffix):
@@ -255,7 +257,7 @@ class TransportRouter:
             for pattern in self._API_PATH_PATTERNS:
                 if re.match(pattern, f'{parsed.scheme}://{hostname}{parsed.path}'):
                     return True
-        except Exception:
+        except re.error:  # invalid regex pattern in _API_PATH_PATTERNS
             pass
         return False
 _router = TransportRouter()

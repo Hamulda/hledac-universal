@@ -27,8 +27,7 @@ S2AG_AUTHOR_FIELDS = 'authorId,name,hIndex,paperCount,citationCount'
 RATE_LIMIT = 10
 REQUEST_TIMEOUT_S = 25.0
 
-@dataclass(slots=True)
-class S2Paper:
+class S2Paper(msgspec.Struct):
     """Semantic Scholar paper."""
     paper_id: str
     title: str
@@ -43,8 +42,7 @@ class S2Paper:
     doi: str | None
     tldr: str | None
 
-@dataclass(frozen=True, slots=True)
-class CitationEdge:
+class CitationEdge(msgspec.Struct, frozen=True):
     """Citation edge between papers."""
     source_id: str
     target_id: str

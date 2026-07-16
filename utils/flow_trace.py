@@ -147,8 +147,8 @@ def _should_sample() -> bool:
         return False
     if TRACE_SAMPLE_RATE >= 1.0:
         return True
-    import random
-    return random.random() < TRACE_SAMPLE_RATE
+    import secrets
+    return secrets.SystemRandom().random() < TRACE_SAMPLE_RATE
 
 def trace_event(
     component: str,

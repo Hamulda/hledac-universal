@@ -37,8 +37,7 @@ from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_
 _DOH_SEMAPHORE = get_semaphore_for_testing(ConcurrencyCategory.DNS_BRUTE)
 COMMON_SUBDOMAINS: list[str] = ['www', 'mail', 'ftp', 'vpn', 'api', 'admin', 'dev', 'staging', 'beta', 'internal', 'corp', 'git', 'jira', 'confluence', 'jenkins', 'gitlab']
 
-@dataclass(slots=True)
-class DOHFinding:
+class DOHFinding(msgspec.Struct):
     domain: str
     record_type: str
     value: str
@@ -131,7 +130,7 @@ async def full_doh_profile(domain: str, session: httpx.AsyncClient, *, limit: in
 
     Args:
         domain: Target domain to profile.
-        session: aiohttp.ClientSession (caller manages lifecycle).
+        session: httpx.AsyncClient (caller manages lifecycle).
         limit: MAX_BRIDGE_OUTPUT bound — caps total findings.
         timeout: Per-request timeout in seconds.
 
@@ -158,7 +157,7 @@ async def subdomain_probe(domain: str, session: httpx.AsyncClient, wordlist: lis
 
     Args:
         domain: Base domain (e.g. "example.com").
-        session: aiohttp.ClientSession.
+        session: httpx.AsyncClient.
         wordlist: Subdomain list (defaults to COMMON_SUBDOMAINS).
         timeout: Per-request timeout.
 

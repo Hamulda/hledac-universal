@@ -86,8 +86,7 @@ def _operator_action_for_verdict(verdict: str) -> str:
         return 'close some apps to clear swap; rerun preflight'
     return 'memory state OK — ready for active300 sprint'
 
-@dataclass(slots=True)
-class PreflightResult:
+class PreflightResult(msgspec.Struct):
     verdict: str
     uma_state: str
     system_used_gib: float

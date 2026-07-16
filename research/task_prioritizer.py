@@ -10,7 +10,7 @@ ISSUE-037 решения:
 from __future__ import annotations
 
 import logging
-import random
+import secrets
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -32,6 +32,9 @@ except ImportError:
     MLX_AVAILABLE = False
     mx = None  # type: ignore[assignment]
     nn = None  # type: ignore[assignment]
+
+# Crypto-safe RNG — F350M-R
+_RNG = secrets.SystemRandom()
 
 # --------------------------------------------------------------------------- #
 # Module-level helpers — type-narrowed access za MLX_AVAILABLE guard
@@ -409,7 +412,7 @@ class TaskPrioritizationRouter:
 
         if strat == "random":
             self._random_counter += 1
-            if random.random() < 0.5:
+            if _RNG.random() < 0.5:
                 self._mlx_counter += 1
                 return await self._mlx_wrapper.predict(task_metadata)
             else:

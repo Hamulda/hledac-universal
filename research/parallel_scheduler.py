@@ -16,11 +16,13 @@ ISSUE-037 opravy:
 - mx.eval() + clear_cache() pro MLX workers
 """
 from __future__ import annotations
+import msgspec
 
 import asyncio
 import logging
 import time
 from collections.abc import Callable
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -30,7 +32,7 @@ try:
     import msgspec
 
     _MSGSpec = True
-except Exception:
+except Exception:  # noqa: BLE001 — fail-soft: msgspec optional import, struct availability checked at runtime
     msgspec: Any = None  # type: ignore[assignment]
     _MSGSpec = False
 
@@ -61,8 +63,7 @@ if _MSGSpec:
 else:
     from dataclasses import dataclass, field
 
-    @dataclass(order=True, slots=True)
-    class PrioritizedTask:
+    class PrioritizedTask(msgspec.Struct):
         priority: float
         task_id: str
         coro_or_fn: Any
@@ -77,6 +78,10 @@ else:
 PRIORITY_RESEARCH = 5
 PRIORITY_PREFETCH = 9
 PRIORITY_BACKGROUND = 10
+# ContextVar: each async context (Task) gets its own lock automatically.
+# ISSUE-037 + ISSUE-014 FIX: asyncio.Lock bound to a single loop is a bug on macOS —
+# ContextVar keyed by Task gives per-context isolation without manual tracking.
+_pending_lock_var: ContextVar[asyncio.Lock | None] = ContextVar("_pending_lock_var", default=None)
 
 
 class ParallelResearchScheduler:
@@ -129,20 +134,17 @@ class ParallelResearchScheduler:
         self._cpu_sem = asyncio.BoundedSemaphore(max_concurrent_cpu)
         self._seq = 0
         self._pending = 0
-        # ISSUE-037: Lazy lock — asyncio.Lock() bez event loopu = CRITICAL bug na macOS
-        self._pending_lock: asyncio.Lock | None = None
         self._all_done = asyncio.Event()
         self._completed: dict[str, Any] = {}
         self._shutdown = False
 
     def _get_lock(self) -> asyncio.Lock:
-        """
-        Lazy lock getter — vytvoří lock až při prvním volání v async kontextu.
-        ISSUE-037 FIX: asyncio.Lock() bez event loopu na macOS = CRITICAL.
-        """
-        if self._pending_lock is None:
-            self._pending_lock = asyncio.Lock()
-        return self._pending_lock
+        """Get the ContextVar-backed pending lock for the current async context."""
+        lock = _pending_lock_var.get()
+        if lock is None:
+            lock = asyncio.Lock()
+            _pending_lock_var.set(lock)
+        return lock
 
     async def submit(
         self,
@@ -347,7 +349,7 @@ class ParallelResearchScheduler:
             logger.warning(
                 "Task %s timed out after %ss", task.task_id, task.timeout
             )
-        except BaseException as e:
+        except BaseException as e:  # noqa: BLE001 — intentional: must catch ALL exceptions including CancelledError/SystemExit
             async with self._get_lock():
                 self._completed[task.task_id] = e
             logger.error(
@@ -365,7 +367,7 @@ class ParallelResearchScheduler:
         def _sync_wrapper() -> Any:
             try:
                 return task.coro_or_fn(*task.args, **task.kwargs)
-            except BaseException as e:
+            except BaseException as e:  # noqa: BLE001 — intentional: catch all to return as result; caller handles
                 return e
 
         try:
@@ -388,7 +390,7 @@ class ParallelResearchScheduler:
             logger.warning(
                 "CPU task %s timed out after %ss", task.task_id, task.timeout
             )
-        except BaseException as e:
+        except BaseException as e:  # noqa: BLE001 — intentional: must catch ALL exceptions including CancelledError/SystemExit
             async with self._get_lock():
                 self._completed[task.task_id] = e
             logger.error(

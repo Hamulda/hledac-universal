@@ -28,6 +28,7 @@ Invariant table:
 """
 import logging
 from dataclasses import dataclass
+import msgspec
 from typing import Any
 logger = logging.getLogger(__name__)
 Q3_K_M = 'q3_k_m'
@@ -42,16 +43,14 @@ _FREE_UMA_FOR_Q5: float = 2.0
 _FREE_UMA_FOR_Q8: float = 3.5
 RSS_OP_BUDGET_GB: float = 4.5  # ISSUE-35: Hard cap 4.5 GB for MLX inference (from 8GB)
 
-@dataclass(frozen=True, slots=True)
-class InferenceBudget:
+class InferenceBudget(msgspec.Struct, frozen=True):
     """F203J: Inference budget for a model load decision."""
     max_tokens: int
     max_latency_ms: int
     quantization: str
     reason: str
 
-@dataclass(frozen=True, slots=True)
-class QuantizationDecision:
+class QuantizationDecision(msgspec.Struct, frozen=True):
     """F203J: Full decision record from QuantizationSelector.select()."""
     quantization: str
     max_tokens: int

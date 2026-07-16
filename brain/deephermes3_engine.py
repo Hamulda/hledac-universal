@@ -158,7 +158,7 @@ _mx_resolver = lazy('mlx.core')
 MLX_AVAILABLE = _mx_resolver() is not None
 mx = _mx_resolver() if MLX_AVAILABLE else None
 _FALLBACK_CACHE_BYTES: int = 32 * 1024 * 1024
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok, safe_wait_for, safe_gather_return_exceptions
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok, safe_wait_for, parallel
 _INJECTION_PATTERNS: list = [_re_pi.compile('ignore\\s+(?:all\\s+)?previous\\s+(?:instructions?|commands?)', _re_pi.I), _re_pi.compile('(?:system|prompt)\\s*:\\s*you\\s+are\\s+(?:now\\s+)?a', _re_pi.I), _re_pi.compile('#{3,}\\s*system\\s*[:\\s]', _re_pi.I), _re_pi.compile('<\\|system\\|>', _re_pi.I), _re_pi.compile('\\bROLE\\s*:\\s*(?:admin|root|superuser)', _re_pi.I), _re_pi.compile('(?:jailbreak|DAN|do\\s+anything\\s+now)', _re_pi.I), _re_pi.compile('```\\s*system', _re_pi.I)]
 
 def _detect_prompt_injection(prompt: str) -> tuple[bool, list[str]]:
@@ -291,8 +291,7 @@ M3_METAL_PRESSURE_BYTES = 2 * 1024 * 1024 * 1024
 STREAM_BUFFER_SIZE = 32
 STREAM_MIN_BUFFER = 8
 
-@dataclass(slots=True)
-class DeepHermesConfig:
+class DeepHermesConfig(msgspec.Struct):
     """Konfigurace pro DeepHermes-3"""
     model_path: str = 'mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit'
     temperature: float = 0.3
@@ -1259,7 +1258,8 @@ class DeepHermes3Engine:
                 except Exception as e:
                     logger.warning(f'[P1-3] Warmup cache prefill failed: {e}')
                     return False
-            results = await safe_gather_return_exceptions(_prefill_system_cache(), _prefill_warmup_cache(), label='deephermes3:parallel_prefill')
+            _result = await parallel([_prefill_system_cache(), _prefill_warmup_cache()], taskgroup=True, policy='collect', ctx='deephermes3:parallel_prefill')
+            results = _result.ok
             if len(results) > 1 and results[1] is True:
                 try:
                     await self._save_cache()

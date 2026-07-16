@@ -21,8 +21,7 @@ import msgspec
 from typing import Any
 logger = logging.getLogger(__name__)
 
-@dataclass(slots=True)
-class RRFConfig:
+class RRFConfig(msgspec.Struct):
     """Configuration for Reciprocal Rank Fusion"""
     k: int = 60
     max_results: int = 100
@@ -30,8 +29,7 @@ class RRFConfig:
     deduplication: bool = True
     dedup_threshold: float = 0.7
 
-@dataclass(frozen=True, slots=True)
-class RankedResult:
+class RankedResult(msgspec.Struct, frozen=True):
     """Individual ranked result"""
     id: str
     title: str

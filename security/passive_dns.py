@@ -16,7 +16,7 @@ Anti-patterns prevented:
   - CIRCL 401 triggers automatic HackerTarget fallback
 
 F206AW Transport Seams:
-  - Optional session_provider: inject a pre-configured aiohttp.ClientSession
+  - Optional session_provider: inject a pre-configured httpx.AsyncClient
   - Optional fetch_func: inject an async fetch(url, headers) -> bytes
   - Canonical circuit breaker preflight via domain_breaker_check
   - transport_policy telemetry: "injected" | "local_fallback" | "bypass_legacy"
@@ -24,51 +24,54 @@ F206AW Transport Seams:
 """
 import asyncio
 import logging
-import random
 import re
+import secrets
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+import msgspec
 from typing import Any
 import httpx
 import orjson
 logger = logging.getLogger(__name__)
+
+# Crypto-safe RNG — F350M-R
+_RNG = secrets.SystemRandom()
 _HACKERTARGET_PDNS_URL = 'https://api.hackertarget.com/dnslookup'
 _HACKERTARGET_RATE_LIMIT_SLEEP = 2.0
 _HACKERTARGET_TIMEOUT = httpx.Timeout(10.0)
 
-async def _fallback_hackertarget_pdns(domain: str, session: aiohttp.ClientSession) -> tuple[list[str], PassiveDNSOutcome]:
+async def _fallback_hackertarget_pdns(domain: str, session: httpx.AsyncClient) -> tuple[list[str], PassiveDNSOutcome]:
     """Fallback to HackerTarget PDNS when CIRCL returns 401."""
     start = time.monotonic()
     url = f'{_HACKERTARGET_PDNS_URL}?q={domain}'
     try:
         await asyncio.sleep(_HACKERTARGET_RATE_LIMIT_SLEEP)
-        async with session.get(url, timeout=_HACKERTARGET_TIMEOUT) as resp:
-            text = await resp.text()
-            if resp.status != 200:
-                elapsed = time.monotonic() - start
-                return ([], PassiveDNSOutcome(attempted=True, query=domain, result_count=0, error=f'http_{resp.status}', duration_s=elapsed))
-            if 'error' in text.lower() or 'quota' in text.lower() or (not text) or text.startswith('#'):
-                elapsed = time.monotonic() - start
-                return ([], PassiveDNSOutcome(attempted=True, query=domain, result_count=0, error='hackertarget_empty', duration_s=elapsed))
-            ips: list[str] = []
-            for line in text.splitlines()[:50]:
-                parts = re.split('\\s*:\\s*|\\|', line.strip(), maxsplit=1)
-                if len(parts) < 2:
-                    continue
-                rec_type = parts[0].strip()
-                value = parts[1].strip()
-                if rec_type in ('A', 'AAAA') and re.match('^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$', value):
-                    ips.append(value)
+        resp = await session.get(url, timeout=_HACKERTARGET_TIMEOUT)
+        text = resp.text
+        if resp.status_code != 200:
             elapsed = time.monotonic() - start
-            outcome = PassiveDNSOutcome(attempted=True, query=domain, result_count=len(ips), error=None, duration_s=elapsed)
-            return (ips, outcome)
+            return ([], PassiveDNSOutcome(attempted=True, query=domain, result_count=0, error=f'http_{resp.status_code}', duration_s=elapsed))
+        if 'error' in text.lower() or 'quota' in text.lower() or (not text) or text.startswith('#'):
+            elapsed = time.monotonic() - start
+            return ([], PassiveDNSOutcome(attempted=True, query=domain, result_count=0, error='hackertarget_empty', duration_s=elapsed))
+        ips: list[str] = []
+        for line in text.splitlines()[:50]:
+            parts = re.split('\\s*:\\s*|\\|', line.strip(), maxsplit=1)
+            if len(parts) < 2:
+                continue
+            rec_type = parts[0].strip()
+            value = parts[1].strip()
+            if rec_type in ('A', 'AAAA') and re.match('^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$', value):
+                ips.append(value)
+        elapsed = time.monotonic() - start
+        outcome = PassiveDNSOutcome(attempted=True, query=domain, result_count=len(ips), error=None, duration_s=elapsed)
+        return (ips, outcome)
     except Exception as e:
         elapsed = time.monotonic() - start
         return ([], PassiveDNSOutcome(attempted=True, query=domain, result_count=0, error=str(e), duration_s=elapsed))
 
-@dataclass(frozen=True, slots=True)
-class CIRCLPDNSRecord:
+class CIRCLPDNSRecord(msgspec.Struct, frozen=True):
     """Parsed CIRCL PDNS record — F207F."""
     ip: str
     rrname: str
@@ -126,8 +129,7 @@ def parse_circl_pdns_text(text: str, max_results: int=50) -> list[CIRCLPDNSRecor
         records.append(CIRCLPDNSRecord(ip=ip, rrname=rrname, rrtype=rrtype))
     return records
 
-@dataclass(frozen=True, slots=True)
-class PassiveDNSOutcome:
+class PassiveDNSOutcome(msgspec.Struct, frozen=True):
     """
     Normalized PassiveDNS adapter outcome — F207F.
 
@@ -153,9 +155,9 @@ _DOH_POST_PROVIDERS: frozenset[str] = frozenset({'quad9'})
 DOH_PROVIDER_WEIGHTS: dict[str, float] = {'cloudflare': 1.0, 'google': 1.0, 'opendns': 1.0, 'quad9': 1.0}
 
 def get_random_doh_provider() -> str:
-    """Return a random DoH provider weighted evenly. Thread-safe via random.choice."""
+    """Return a random DoH provider weighted evenly. Thread-safe via _RNG.choice (secrets.SystemRandom)."""
     providers = list(DOH_PROVIDER_WEIGHTS.keys())
-    return random.choice(providers)
+    return _RNG.choice(providers)
 CIRCL_PDNS_URL: str = 'https://www.circl.lu/pdns/query'
 CIRCL_RATE_LIMIT_SLEEP: float = 2.0
 transport_policy: str = 'bypass_legacy'
@@ -251,7 +253,7 @@ def _parse_dns_wire_response(wire: bytes) -> dict[str, Any] | None:
     except Exception:
         return None
 
-async def resolve_doh(domain: str, provider: str='cloudflare', session_provider: aiohttp.ClientSession | None=None, fetch_func: Callable[..., Any] | None=None) -> list[str]:
+async def resolve_doh(domain: str, provider: str='cloudflare', session_provider: httpx.AsyncClient | None=None, fetch_func: Callable[..., Any] | None=None) -> list[str]:
     """
     Resolve hostname via DNS-over-HTTPS (DoH).
 
@@ -261,7 +263,7 @@ async def resolve_doh(domain: str, provider: str='cloudflare', session_provider:
     Args:
         domain: Domain name to resolve (e.g. "example.com")
         provider: DoH provider — "cloudflare" (default), "google", "opendns", or "quad9"
-        session_provider: Optional pre-configured aiohttp.ClientSession.
+        session_provider: Optional pre-configured httpx.AsyncClient.
             When provided, takes precedence over internal ephemeral session.
             Enables canonical transport seam (shared session, circuit breaker).
         fetch_func: Optional async fetch(url, headers) -> bytes.
@@ -271,7 +273,7 @@ async def resolve_doh(domain: str, provider: str='cloudflare', session_provider:
         List of IP addresses (A records), or [] on failure.
 
     Anti-patterns prevented:
-      - Non-blocking aiohttp
+      - Non-blocking httpx
       - Graceful degradation: [] return on any error
       - Accept: application/dns-json header
     """
@@ -279,7 +281,7 @@ async def resolve_doh(domain: str, provider: str='cloudflare', session_provider:
     if provider not in DOH_ENDPOINTS:
         logger.warning(f'Unknown DoH provider: {provider} — using cloudflare')
         provider = 'cloudflare'
-    timeout = aiohttp.ClientTimeout(total=15)
+    timeout = httpx.Timeout(15.0)
     ips: list[str] = []
     circuit_decision = _try_domain_breaker_check(domain)
     if circuit_decision is not None and (not circuit_decision.allowed):
@@ -300,9 +302,8 @@ async def resolve_doh(domain: str, provider: str='cloudflare', session_provider:
         try:
             if _use_post:
                 import base64
-                import random
                 import struct
-                txn_id = random.randint(0, 65535)
+                txn_id = secrets.token_hex(2)  # 16-bit TXN ID via crypto RNG
                 qname = b''
                 for label in domain.split('.'):
                     qname += bytes([len(label)]) + label.encode('ascii')
@@ -315,32 +316,33 @@ async def resolve_doh(domain: str, provider: str='cloudflare', session_provider:
                     result = await fetch_func(post_url, post_headers)
                     data = result if isinstance(result, dict) else {}
                 elif session_provider is not None:
-                    async with session_provider.get(post_url, headers=post_headers, allow_redirects=True) as resp:
-                        if resp.status >= 500:
-                            logger.warning(f'DoH {_attempt_provider} returned HTTP {resp.status} for {domain}, retrying...')
-                            continue
-                        if resp.status != 200:
-                            logger.warning(f'DoH {_attempt_provider} failed for {domain}: HTTP {resp.status}')
-                            return []
-                        raw = await resp.read()
-                        data = _parse_dns_wire_response(raw)
-                        if data is None:
-                            logger.warning(f'DoH {_attempt_provider} invalid wire format for {domain}')
-                            return []
+                    resp = await session_provider.get(post_url, headers=post_headers, follow_redirects=True, timeout=timeout)
+                    if resp.status_code >= 500:
+                        logger.warning(f'DoH {_attempt_provider} returned HTTP {resp.status_code} for {domain}, retrying...')
+                        continue
+                    if resp.status_code != 200:
+                        logger.warning(f'DoH {_attempt_provider} failed for {domain}: HTTP {resp.status_code}')
+                        return []
+                    raw = resp.content
+                    data = _parse_dns_wire_response(raw)
+                    if data is None:
+                        logger.warning(f'DoH {_attempt_provider} invalid wire format for {domain}')
+                        return []
                 else:
-                    async with aiohttp.ClientSession(timeout=timeout) as session:
-                        async with session.get(post_url, headers=post_headers, allow_redirects=True) as resp:
-                            if resp.status >= 500:
-                                logger.warning(f'DoH {_attempt_provider} returned HTTP {resp.status} for {domain}, retrying...')
-                                continue
-                            if resp.status != 200:
-                                logger.warning(f'DoH {_attempt_provider} failed for {domain}: HTTP {resp.status}')
-                                return []
-                            raw = await resp.read()
-                            data = _parse_dns_wire_response(raw)
-                            if data is None:
-                                logger.warning(f'DoH {_attempt_provider} invalid wire format for {domain}')
-                                return []
+                    from hledac.universal.transport.session_pool import session_pool
+                    session = await session_pool.httpx()
+                    resp = await session.get(post_url, headers=post_headers, follow_redirects=True, timeout=timeout)
+                    if resp.status_code >= 500:
+                        logger.warning(f'DoH {_attempt_provider} returned HTTP {resp.status_code} for {domain}, retrying...')
+                        continue
+                    if resp.status_code != 200:
+                        logger.warning(f'DoH {_attempt_provider} failed for {domain}: HTTP {resp.status_code}')
+                        return []
+                    raw = resp.content
+                    data = _parse_dns_wire_response(raw)
+                    if data is None:
+                        logger.warning(f'DoH {_attempt_provider} invalid wire format for {domain}')
+                        return []
             else:
                 _attempt_url = f'{_attempt_endpoint}?name={domain}&type=A'
                 get_headers = {'Accept': 'application/dns-json'}
@@ -348,36 +350,37 @@ async def resolve_doh(domain: str, provider: str='cloudflare', session_provider:
                     result = await fetch_func(_attempt_url, get_headers)
                     data = result if isinstance(result, dict) else {}
                 elif session_provider is not None:
-                    async with session_provider.get(_attempt_url, headers=get_headers, allow_redirects=True) as resp:
-                        if resp.status >= 500:
-                            logger.warning(f'DoH {_attempt_provider} returned HTTP {resp.status} for {domain}, retrying...')
-                            continue
-                        if resp.status != 200:
-                            logger.warning(f'DoH {_attempt_provider} failed for {domain}: HTTP {resp.status}')
-                            return []
-                        text = await resp.text()
-                        import json
-                        try:
-                            data = json.loads(text)
-                        except (json.JSONDecodeError, Exception):
-                            logger.warning(f'DoH {_attempt_provider} invalid JSON for {domain}')
-                            return []
+                    resp = await session_provider.get(_attempt_url, headers=get_headers, follow_redirects=True, timeout=timeout)
+                    if resp.status_code >= 500:
+                        logger.warning(f'DoH {_attempt_provider} returned HTTP {resp.status_code} for {domain}, retrying...')
+                        continue
+                    if resp.status_code != 200:
+                        logger.warning(f'DoH {_attempt_provider} failed for {domain}: HTTP {resp.status_code}')
+                        return []
+                    text = resp.text
+                    import json
+                    try:
+                        data = json.loads(text)
+                    except (json.JSONDecodeError, Exception):
+                        logger.warning(f'DoH {_attempt_provider} invalid JSON for {domain}')
+                        return []
                 else:
-                    async with aiohttp.ClientSession(timeout=timeout) as session:
-                        async with session.get(_attempt_url, headers=get_headers, allow_redirects=True) as resp:
-                            if resp.status >= 500:
-                                logger.warning(f'DoH {_attempt_provider} returned HTTP {resp.status} for {domain}, retrying...')
-                                continue
-                            if resp.status != 200:
-                                logger.warning(f'DoH {_attempt_provider} failed for {domain}: HTTP {resp.status}')
-                                return []
-                            text = await resp.text()
-                            import json
-                            try:
-                                data = json.loads(text)
-                            except (json.JSONDecodeError, Exception):
-                                logger.warning(f'DoH {_attempt_provider} invalid JSON for {domain}')
-                                return []
+                    from hledac.universal.transport.session_pool import session_pool
+                    session = await session_pool.httpx()
+                    resp = await session.get(_attempt_url, headers=get_headers, follow_redirects=True, timeout=timeout)
+                    if resp.status_code >= 500:
+                        logger.warning(f'DoH {_attempt_provider} returned HTTP {resp.status_code} for {domain}, retrying...')
+                        continue
+                    if resp.status_code != 200:
+                        logger.warning(f'DoH {_attempt_provider} failed for {domain}: HTTP {resp.status_code}')
+                        return []
+                    text = resp.text
+                    import json
+                    try:
+                        data = json.loads(text)
+                    except (json.JSONDecodeError, Exception):
+                        logger.warning(f'DoH {_attempt_provider} invalid JSON for {domain}')
+                        return []
             answers = data.get('Answer', []) if isinstance(data, dict) else []
             for answer in answers:
                 if answer.get('type') == 1:
@@ -397,7 +400,7 @@ async def resolve_doh(domain: str, provider: str='cloudflare', session_provider:
             continue
     return ips
 
-async def lookup_passive_dns(domain: str, session_provider: aiohttp.ClientSession | None=None, fetch_func: Callable[..., Any] | None=None) -> list[str]:
+async def lookup_passive_dns(domain: str, session_provider: httpx.AsyncClient | None=None, fetch_func: Callable[..., Any] | None=None) -> list[str]:
     """
     Legacy compatibility wrapper for CIRCL PDNS lookup.
 
@@ -435,7 +438,7 @@ def _looks_like_domain(value: str) -> bool:
         return False
     return True
 
-async def call_lookup_passive_dns(domain: str, session_provider: aiohttp.ClientSession | None=None, fetch_func: Callable[..., Any] | None=None) -> tuple[list[str], PassiveDNSOutcome]:
+async def call_lookup_passive_dns(domain: str, session_provider: httpx.AsyncClient | None=None, fetch_func: Callable[..., Any] | None=None) -> tuple[list[str], PassiveDNSOutcome]:
     """
     CIRCL PDNS lookup with normalized outcome — F207F.
 
@@ -444,7 +447,7 @@ async def call_lookup_passive_dns(domain: str, session_provider: aiohttp.ClientS
 
     Args:
         domain:          Domain or IP to query.
-        session_provider: Optional pre-configured aiohttp.ClientSession.
+        session_provider: Optional pre-configured httpx.AsyncClient.
         fetch_func:      Optional async fetch(url) -> str (plain text).
 
     Returns:
@@ -463,7 +466,6 @@ async def call_lookup_passive_dns(domain: str, session_provider: aiohttp.ClientS
         outcome = PassiveDNSOutcome(attempted=True, query=domain_stripped, result_count=0, error=None, skip_reason='not_domain_or_ip', duration_s=elapsed)
         return ([], outcome)
     url = f'{CIRCL_PDNS_URL}/{domain_stripped}'
-    ips: list[str] = []
     circuit_decision = _try_domain_breaker_check(domain_stripped)
     if circuit_decision is not None and (not circuit_decision.allowed):
         elapsed = time.monotonic() - start
@@ -478,28 +480,24 @@ async def call_lookup_passive_dns(domain: str, session_provider: aiohttp.ClientS
         if fetch_func is not None:
             text = await fetch_func(url)
         elif session_provider is not None:
-            async with session_provider.get(url) as resp:
-                if resp.status == 404:
-                    elapsed = time.monotonic() - start
-                    outcome = PassiveDNSOutcome(attempted=True, query=domain_stripped, result_count=0, error=None, duration_s=elapsed)
-                    await asyncio.sleep(CIRCL_RATE_LIMIT_SLEEP)
-                    return ([], outcome)
-                if resp.status != 200:
-                    elapsed = time.monotonic() - start
-                    outcome = PassiveDNSOutcome(attempted=True, query=domain_stripped, result_count=0, error=f'http_{resp.status}', duration_s=elapsed)
-                    await asyncio.sleep(CIRCL_RATE_LIMIT_SLEEP)
-                    return ([], outcome)
-                text = await resp.text()
-        else:
-            session = await async_get_httpx_session()
-            http_timeout = aiohttp.ClientTimeout(total=15)
-            text, status, err = await checked_aiohttp_get(session, url, headers={'User-Agent': 'Hledac/1.0 (research bot)'}, timeout=http_timeout, failure_kind='circl_pdns')
-            if err:
+            resp = await session_provider.get(url, timeout=httpx.Timeout(15.0))
+            if resp.status_code == 404:
                 elapsed = time.monotonic() - start
-                is_timeout = err == 'timeout'
-                outcome = PassiveDNSOutcome(attempted=True, query=domain_stripped, result_count=0, error=err, timeout=is_timeout, duration_s=elapsed)
+                outcome = PassiveDNSOutcome(attempted=True, query=domain_stripped, result_count=0, error=None, duration_s=elapsed)
                 await asyncio.sleep(CIRCL_RATE_LIMIT_SLEEP)
                 return ([], outcome)
+            if resp.status_code != 200:
+                elapsed = time.monotonic() - start
+                outcome = PassiveDNSOutcome(attempted=True, query=domain_stripped, result_count=0, error=f'http_{resp.status_code}', duration_s=elapsed)
+                await asyncio.sleep(CIRCL_RATE_LIMIT_SLEEP)
+                return ([], outcome)
+            text = resp.text
+        else:
+            from hledac.universal.transport.session_pool import session_pool
+            session = await session_pool.httpx()
+            http_timeout = httpx.Timeout(15.0)
+            resp = await session.get(url, headers={'User-Agent': 'Hledac/1.0 (research bot)'}, timeout=http_timeout)
+            status = resp.status_code
             if status == 404:
                 elapsed = time.monotonic() - start
                 outcome = PassiveDNSOutcome(attempted=True, query=domain_stripped, result_count=0, error=None, duration_s=elapsed)
@@ -508,7 +506,6 @@ async def call_lookup_passive_dns(domain: str, session_provider: aiohttp.ClientS
             if status != 200:
                 elapsed = time.monotonic() - start
                 if status == 401:
-                    session = await async_get_httpx_session()
                     ips, outcome = await _fallback_hackertarget_pdns(domain_stripped, session)
                     if not outcome.error:
                         await asyncio.sleep(CIRCL_RATE_LIMIT_SLEEP)
@@ -516,6 +513,7 @@ async def call_lookup_passive_dns(domain: str, session_provider: aiohttp.ClientS
                 outcome = PassiveDNSOutcome(attempted=True, query=domain_stripped, result_count=0, error=f'http_{status}', duration_s=elapsed)
                 await asyncio.sleep(CIRCL_RATE_LIMIT_SLEEP)
                 return ([], outcome)
+            text = resp.text
         records = parse_circl_pdns_text(str(text), max_results=50)
         ips = [record.ip for record in records]
     except TimeoutError:

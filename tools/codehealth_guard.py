@@ -36,8 +36,7 @@ class GuardVerdict(Enum):
     FAIL_SYNTAX_ERROR = 'CODEHEALTH_FAIL_SYNTAX_ERROR'
     FAIL_SYMBOL_MISSING = 'CODEHEALTH_FAIL_SYMBOL_MISSING'
 
-@dataclass(slots=True)
-class GuardResult:
+class GuardResult(msgspec.Struct):
     verdict: GuardVerdict
     function_name: str
     explicit_args: int

@@ -38,6 +38,7 @@ Author: Sprint KV-PERSIST
 
 
 import asyncio
+import msgspec
 import hashlib
 import logging
 import time
@@ -70,8 +71,7 @@ _ENTRY_TTL_S = 7 * 24 * 3600  # 7 days TTL
 # CacheEntry dataclass
 # ─────────────────────────────────────────────────────────────────────────────
 
-@dataclass(slots=True)
-class CacheEntry:
+class CacheEntry(msgspec.Struct):
     """Metadata entry for one cached KV cache."""
 
     prompt_hash: str

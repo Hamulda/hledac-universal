@@ -577,19 +577,39 @@ async def scrape_pastebin_for_keyword(keyword: str, max_pastes: int=10) -> list[
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(html_text, 'html.parser')
             paste_urls = [f"https://pastebin.com/raw{a['href']}" for tr in soup.select('table.maintable tr')[1:21] for a in tr.select('td a')[:1] if a.get('href')]
-        for raw_url in paste_urls[:max_pastes]:
-            await asyncio.sleep(1.0)
+        paste_urls = paste_urls[:max_pastes]
+        # F350M-R: Parallel batch fetch — replaces sequential await loop.
+        # Original: 1 URL × 1s sleep = N seconds serial. New: N URLs in one
+        # asyncio.gather with concurrency=3 (Pastebin rate-limit friendly).
+        from hledac.universal.fetching.public_fetcher import async_fetch_public_text_batch
+
+        batch_results = await async_fetch_public_text_batch(
+            paste_urls,
+            timeout_s=8.0,
+            max_bytes=200_000,
+            use_stealth=False,
+            use_js=False,
+            use_doh=False,
+            js_confidence=0.0,
+            priority=5,
+            concurrency=3,  # Pastebin rate-limit friendly
+        )
+        for raw_url, fetch_result in zip(paste_urls, batch_results):
             try:
-                content, pr_status, pr_err = await checked_httpx_get(s, raw_url, timeout=httpx.Timeout(8), failure_kind='pastebin_paste')
-                if pr_err:
-                    logger.debug(f'[Pastebin] Paste fetch error for {raw_url}: {pr_err}')
+                if fetch_result.error or fetch_result.text is None:
+                    logger.debug(f'[Pastebin] Paste fetch error for {raw_url}: {fetch_result.error}')
                     continue
-                if pr_status == 200:
-                    content_str = str(content)
-                    if keyword.lower() in content_str.lower():
-                        results.append({'url': raw_url, 'content': content_str[:2000], 'content_hash': hashlib.sha256(content_str.encode()).hexdigest()[:16], 'title': f'Pastebin hit: {keyword}', 'source': 'pastebin_scrape'})
+                content_str = fetch_result.text
+                if keyword.lower() in content_str.lower():
+                    results.append({
+                        'url': raw_url,
+                        'content': content_str[:2000],
+                        'content_hash': hashlib.sha256(content_str.encode()).hexdigest()[:16],
+                        'title': f'Pastebin hit: {keyword}',
+                        'source': 'pastebin_scrape',
+                    })
             except Exception as e:
-                logger.debug(f'[Pastebin] Paste fetch error for {raw_url}: {e}')
+                logger.debug(f'[Pastebin] Paste processing error for {raw_url}: {e}')
     except Exception as e:
         logger.debug(f'[Pastebin] {e}')
     return results

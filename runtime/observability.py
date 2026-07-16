@@ -39,16 +39,14 @@ MAX_PHASE_SAMPLES = 100
 MAX_SOURCE_STATS = 50
 import msgspec
 
-@dataclass(slots=True)
-class _PhaseSample:
+class _PhaseSample(msgspec.Struct):
     """A single phase duration sample."""
     phase: str
     component: str | None
     duration_ms: float
     ts: str
 
-@dataclass(slots=True)
-class _TransitionSample:
+class _TransitionSample(msgspec.Struct):
     """A single phase transition record."""
     from_phase: str
     to_phase: str
@@ -56,8 +54,7 @@ class _TransitionSample:
     duration_ms: float
     ts: str
 
-@dataclass(slots=True)
-class _SourceStats:
+class _SourceStats(msgspec.Struct):
     """Per-source finding statistics."""
     source_type: str
     findings_count: int

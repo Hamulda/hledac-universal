@@ -24,7 +24,7 @@ GHOST_INVARIANTS:
   - Fail-soft: resolver error returns empty list, never raises
 """
 import asyncio
-from utils.async_helpers import safe_gather_ok, safe_gather_return_exceptions
+from utils.async_helpers import safe_gather_ok, parallel
 import logging
 import time
 import httpx
@@ -44,8 +44,7 @@ _DOH_RETRY_DELAY_S: float = 0.5
 from dataclasses import dataclass
 import msgspec
 
-@dataclass(slots=True)
-class _ResolverHealth:
+class _ResolverHealth(msgspec.Struct):
     """Per-resolver health state for circuit breaker."""
     consecutive_failures: int = 0
     last_failure_ts: float = 0.0
@@ -318,8 +317,8 @@ class PassiveDNSResolver:
         if not healthy_resolvers:
             return {}
         tasks = {resolver: self._do_query(name, rdtype, resolver, url) for resolver, url in healthy_resolvers}
-        raw = await safe_gather_return_exceptions(*tasks.values(), label='passive_dns:compare_resolvers')
-        _ok_results, _errors = _check_gathered(raw, logger, 'compare_resolvers')
+        _result = await parallel(list(tasks.values()), taskgroup=True, policy='collect', ctx='passive_dns:compare_resolvers', logger_instance=logger)
+        _ok_results, _errors = _result.ok, list(_result.errors)
         comparison: dict[str, list[str]] = {}
         for (resolver, _coro), res in zip(tasks.items(), _ok_results, strict=False):
             comparison[resolver] = res if isinstance(res, list) else []

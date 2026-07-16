@@ -43,7 +43,7 @@ from __future__ import annotations
 import asyncio
 import collections.abc
 import logging
-import random
+import secrets
 import threading
 import time
 from dataclasses import dataclass, field
@@ -56,6 +56,9 @@ if TYPE_CHECKING:
     import httpx
 
 logger = logging.getLogger(__name__)
+
+# Crypto-safe jitter — F350M-R
+_JITTER_RNG = secrets.SystemRandom()
 
 
 __all__ = [
@@ -203,8 +206,7 @@ class CircuitDecision(msgspec.Struct, frozen=True):
     reason: str
 
 
-@dataclass(slots=True)
-class CircuitBreaker:
+class CircuitBreaker(msgspec.Struct):
     """Domain-based circuit breaker for transport layer.
 
     Features: warmup failure tracking, boot-phase TTL shortcuts,
@@ -280,7 +282,7 @@ class CircuitBreaker:
         samples from the same range, spreading out retry attempts.
         """
         try:
-            raw = random.uniform(
+            raw = _JITTER_RNG.uniform(
                 _JITTER_MIN_MULTIPLIER * self.recovery_timeout,
                 _JITTER_MAX_MULTIPLIER * self.recovery_timeout,
             )
@@ -591,8 +593,7 @@ def clear_all_breakers() -> None:
 # =============================================================================
 
 
-@dataclass(slots=True)
-class ModelCircuitBreaker:
+class ModelCircuitBreaker(msgspec.Struct):
     """Per-model inference failure circuit breaker.
 
     Tracks OOM, timeout, and Metal driver failures per model_id.

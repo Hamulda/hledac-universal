@@ -177,8 +177,7 @@ class RelationshipType(Enum):
     MENTIONED_IN = 'mentioned_in'
     CO_OCCURS_WITH = 'co_occurs_with'
 
-@dataclass(slots=True)
-class Entity:
+class Entity(msgspec.Struct):
     """Represents an entity in the relationship graph."""
     id: str
     type: str | EntityType
@@ -198,8 +197,7 @@ class Entity:
         """Convert entity to dictionary."""
         return {'id': self.id, 'type': self.type.value if isinstance(self.type, EntityType) else self.type, 'attributes': self.attributes, 'sources': self.sources, 'created_at': self.created_at.isoformat() if self.created_at else None, 'updated_at': self.updated_at.isoformat() if self.updated_at else None}
 
-@dataclass(slots=True)
-class Relationship:
+class Relationship(msgspec.Struct):
     """Represents a relationship between two entities."""
     source: str
     target: str
@@ -234,8 +232,7 @@ class Relationship:
             return False
         return self.source == other.source and self.target == other.target and (self.type == other.type)
 
-@dataclass(slots=True)
-class ConnectionPath:
+class ConnectionPath(msgspec.Struct):
     """Represents a path between two entities through the graph."""
     entities: list[str]
     relationships: list[Relationship]
@@ -252,8 +249,7 @@ class ConnectionPath:
         """Convert path to dictionary."""
         return {'entities': self.entities, 'relationships': [r.to_dict() for r in self.relationships], 'total_strength': self.total_strength, 'path_length': self.path_length, 'confidence': self.confidence, 'path_type': self.path_type}
 
-@dataclass(frozen=True, slots=True)
-class Community:
+class Community(msgspec.Struct, frozen=True):
     """Represents a detected community in the graph."""
     id: int
     members: set[str]
@@ -266,8 +262,7 @@ class Community:
         """Convert community to dictionary."""
         return {'id': self.id, 'members': list(self.members), 'size': len(self.members), 'density': self.density, 'centrality': self.centrality, 'cohesion': self.cohesion, 'entity_types': self.entity_types}
 
-@dataclass(frozen=True, slots=True)
-class AffinityMatrix:
+class AffinityMatrix(msgspec.Struct, frozen=True):
     """Represents affinity scores between entities of a specific type."""
     entity_type: str
     entities: list[str]
@@ -284,8 +279,7 @@ class AffinityMatrix:
         """Convert affinity matrix to dictionary."""
         return {'entity_type': self.entity_type, 'entities': self.entities, 'matrix': self.matrix.tolist(), 'metric': self.metric}
 
-@dataclass(frozen=True, slots=True)
-class Communication:
+class Communication(msgspec.Struct, frozen=True):
     """Represents a communication event between entities."""
     sender: str
     recipients: list[str]
@@ -298,8 +292,7 @@ class Communication:
         """Convert communication to dictionary."""
         return {'sender': self.sender, 'recipients': self.recipients, 'timestamp': self.timestamp.isoformat() if self.timestamp else None, 'communication_type': self.communication_type, 'metadata': self.metadata, 'content_hash': self.content_hash}
 
-@dataclass(frozen=True, slots=True)
-class Document:
+class Document(msgspec.Struct, frozen=True):
     """Represents a document containing entity mentions."""
     id: str
     content: str
@@ -311,8 +304,7 @@ class Document:
         """Convert document to dictionary."""
         return {'id': self.id, 'content': self.content, 'entities': self.entities, 'timestamp': self.timestamp.isoformat() if self.timestamp else None, 'metadata': self.metadata}
 
-@dataclass(frozen=True, slots=True)
-class InfluenceModel:
+class InfluenceModel(msgspec.Struct, frozen=True):
     """Represents influence propagation model results."""
     seed_entities: list[str]
     influence_scores: dict[str, float]
@@ -407,15 +399,16 @@ class GNNPredictorWrapper:
                 target_idx = self._entity_id_to_idx.get(rel.target)
                 if target_idx is not None:
                     pos_edges.append((source_idx, target_idx))
-        import random
+        import secrets
+        _RNG = secrets.SystemRandom()
         neg_edges = []
         all_pairs = set()
         for u, v in pos_edges:
             all_pairs.add((u, v))
             all_pairs.add((v, u))
         while len(neg_edges) < len(pos_edges):
-            u = random.randint(0, n_nodes - 1)
-            v = random.randint(0, n_nodes - 1)
+            u = _RNG.randint(0, n_nodes - 1)
+            v = _RNG.randint(0, n_nodes - 1)
             if u != v and (u, v) not in all_pairs:
                 neg_edges.append((u, v))
                 all_pairs.add((u, v))

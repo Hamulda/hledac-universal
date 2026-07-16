@@ -16,6 +16,7 @@ and adds integration logic without duplicating code.
 """
 import hashlib
 from utils.hashing import xxh3_64_hex
+from utils.mlx_cache import get_mx
 import logging
 import subprocess
 from typing import Any
@@ -391,8 +392,7 @@ class ProcessType(Enum):
     SUSPICIOUS = 2
     MALWARE = 3
 
-@dataclass(slots=True)
-class ProcessInfo:
+class ProcessInfo(msgspec.Struct):
     """Process information"""
     pid: int
     name: str
@@ -405,8 +405,7 @@ class ProcessInfo:
     create_time: float
     status: ProcessType
 
-@dataclass(frozen=True, slots=True)
-class SecurityEvent:
+class SecurityEvent(msgspec.Struct, frozen=True):
     """Security event for VM threats"""
     event_type: str
     timestamp: float
@@ -528,7 +527,9 @@ class SystemContext:
                     cleanup_results['mlx_detected'] = True
                     logger.info(f'MLX detected, modules: {mlx_modules}')
                     try:
-                        import mlx.core as mx
+                        mx = get_mx()
+                        if mx is None:
+                            raise ImportError("mlx.core unavailable")
                         mx.eval([])
                         import gc
                         gc.collect()

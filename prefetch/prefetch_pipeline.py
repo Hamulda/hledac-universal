@@ -27,11 +27,11 @@ M1 8GB invariants:
 - Rust SPSC lock-free queue (spsc_queue.rs) used for MLX worker coordination, not for this pipeline
 """
 import asyncio
-from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
-from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
+from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for, parallel
 import logging
 import time
 from dataclasses import dataclass, field
+import msgspec
 from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     pass
@@ -45,8 +45,7 @@ IDLE_PREFETCH_INTERVAL_S = 5.0
 IDLE_PREFETCH_THRESHOLD = 3
 PREFETCH_PREWARMED_HOSTS_MAX = 50
 
-@dataclass(order=False, slots=True)
-class PrefetchItem:
+class PrefetchItem(msgspec.Struct):
     """
     Single IOC prefetch item with priority queue ordering.
 
@@ -134,7 +133,7 @@ class ContinuousPrefetchPipeline:
         for task in list(self._executor_tasks):
             task.cancel()
         if self._executor_tasks:
-            await safe_gather_fire_and_forget(*self._executor_tasks, label='prefetch:executor_shutdown')
+            await parallel(list(self._executor_tasks), taskgroup=True, policy='log', ctx='prefetch:executor_shutdown', logger_instance=logger)
         self._executor_tasks.clear()
         drained = 0
         while not self._queue.empty():

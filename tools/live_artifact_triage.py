@@ -48,8 +48,7 @@ class SprintFamily(StrEnum):
     F219 = 'F219'
     NONE = 'NONE'
 
-@dataclass(slots=True)
-class TriageResult:
+class TriageResult(msgspec.Struct):
     root_cause_class: RootCause
     confidence: float
     reasons: list[str]

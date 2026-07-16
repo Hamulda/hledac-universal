@@ -45,6 +45,7 @@ import logging
 import re
 from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass, field
+import msgspec
 from enum import Enum, StrEnum
 from typing import Any
 from hledac.universal.network.session_runtime import async_get_httpx_session
@@ -127,8 +128,7 @@ class RiskLevel(StrEnum):
     HIGH = 'high'
     CRITICAL = 'critical'
 
-@dataclass(frozen=True, slots=True)
-class AcquisitionLanePlan:
+class AcquisitionLanePlan(msgspec.Struct, frozen=True):
     """Plan for one acquisition lane."""
     lane: str
     enabled: bool
@@ -138,8 +138,7 @@ class AcquisitionLanePlan:
     concurrency: int = 2
     risk_level: str = RiskLevel.MEDIUM
 
-@dataclass(frozen=True, slots=True)
-class AcquisitionContext:
+class AcquisitionContext(msgspec.Struct, frozen=True):
     """Derived flags bundle for lane planning — constructed once per _build_plan_impl call."""
     query: str
     duration_s: float
@@ -162,15 +161,13 @@ class AcquisitionContext:
     _feed_max_items: int = field(default=50)
     _feed_cap_reason: str | None = field(default=None)
 
-@dataclass(frozen=True, slots=True)
-class LaneSpec:
+class LaneSpec(msgspec.Struct, frozen=True):
     """Static per-lane execution constants."""
     max_items: int
     timeout_s: int
     risk_level: str
 
-@dataclass(frozen=True, slots=True)
-class LaneRule:
+class LaneRule(msgspec.Struct, frozen=True):
     """Table-driven lane planning rule.
 
     One rule per AcquisitionLane.  The enabled/reason/concurrency logic
@@ -259,8 +256,7 @@ def _disabled_reason(lane: str, ctx: AcquisitionContext) -> str:
     return 'lane_disabled'
 LANE_RULES: tuple[LaneRule, ...] = (_lane_rule(AcquisitionLane.FEED, LaneSpecFeed, lambda ctx: ctx.uma_state not in ('critical', 'emergency'), lambda ctx: 'always_allowed', lambda ctx: _lc(AcquisitionLane.FEED, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.PUBLIC, LaneSpecPublic, lambda ctx: not ctx.hardware_critical and (not ctx.transport_degraded) if ctx.is_deep_osint_m1 else ctx.is_nonfeed_diagnostic and ctx.has_domain and (not ctx.transport_degraded) if ctx.is_nonfeed_diagnostic else ctx.uma_state not in ('critical', 'emergency') and (not ctx.transport_degraded), lambda ctx: 'deep_osint_m1_stage1' if ctx.is_deep_osint_m1 else 'nonfeed_diagnostic_domain' if ctx.is_nonfeed_diagnostic and ctx.has_domain else 'transport_degraded' if ctx.transport_degraded else 'hardware_critical' if ctx.uma_state in ('critical', 'emergency') else 'query_eligible', lambda ctx: _lc(AcquisitionLane.PUBLIC, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.CT, LaneSpecCT, lambda ctx: (ctx.has_domain or ctx.aggressive_mode or ctx.is_nonfeed_diagnostic) and (not ctx.hardware_critical or ctx.aggressive_mode) and (not ctx.is_deep_osint_m1), lambda ctx: 'domain_or_aggressive_or_nonfeed_diagnostic', lambda ctx: _lc(AcquisitionLane.CT, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.DOH, LaneSpecDOH, lambda ctx: (ctx.has_domain or (ctx.is_nonfeed_diagnostic and ctx.has_domain)) and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic or ctx.aggressive_mode) and (not ctx.is_deep_osint_m1), lambda ctx: 'domain_or_ip_or_nonfeed_diagnostic', lambda ctx: _lc(AcquisitionLane.DOH, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.WAYBACK, LaneSpecWayback, lambda ctx: (ctx.has_url or ctx.has_long_duration or (ctx.is_nonfeed_diagnostic and ctx.has_domain)) and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic or ctx.aggressive_mode) and (not ctx.is_deep_osint_m1), lambda ctx: 'has_url_or_long_duration_or_nonfeed_domain', lambda ctx: _lc(AcquisitionLane.WAYBACK, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.PASSIVE_DNS, LaneSpecPDNS, lambda ctx: ctx.has_domain and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic or ctx.aggressive_mode) and (not ctx.is_deep_osint_m1), lambda ctx: 'has_domain_or_ip', lambda ctx: _lc(AcquisitionLane.PASSIVE_DNS, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.BLOCKCHAIN, LaneSpecBlockchain, lambda ctx: ctx.has_crypto and (not ctx.hardware_critical or ctx.aggressive_mode), lambda ctx: 'has_crypto_indicator', lambda ctx: _lc(AcquisitionLane.BLOCKCHAIN, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.STEALTH, LaneSpecStealth, lambda ctx: ctx.stealth_ready and (not ctx.hardware_critical or ctx.aggressive_mode) and (not ctx.is_nonfeed_diagnostic), lambda ctx: 'stealth_ready', lambda ctx: 1), _lane_rule(AcquisitionLane.PIVOT_EXECUTOR, LaneSpecPivot, lambda ctx: True, lambda ctx: 'always_allowed_lightweight', lambda ctx: ctx.base_concurrency + 1), _lane_rule(AcquisitionLane.ACADEMIC, LaneSpecAcademic, lambda ctx: ctx.is_academic and (not ctx.hardware_critical or ctx.aggressive_mode), lambda ctx: 'academic_profile', lambda ctx: 1), _lane_rule(AcquisitionLane.IPFS, LaneSpecIPFS, lambda ctx: ctx.cid_present and (not ctx.hardware_critical or ctx.aggressive_mode), lambda ctx: 'explicit_cid_in_query', lambda ctx: 1), _lane_rule(AcquisitionLane.OPEN_SOURCE, LaneSpecOpenSrc, lambda ctx: ctx.is_academic and (not ctx.hardware_critical or ctx.aggressive_mode), lambda ctx: 'academic_profile', lambda ctx: 1), _lane_rule(AcquisitionLane.SHODAN, LaneSpecShodan, lambda ctx: ctx.has_ip and (not ctx.hardware_critical or ctx.aggressive_mode), lambda ctx: 'ip_or_cidr_indicator', lambda ctx: _lc(AcquisitionLane.SHODAN, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.CENSYS, LaneSpecCensys, lambda ctx: ctx.has_domain and (not ctx.hardware_critical or ctx.aggressive_mode), lambda ctx: 'domain_or_cert_indicator', lambda ctx: _lc(AcquisitionLane.CENSYS, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.GREYNOISE, LaneSpecGreyNoise, lambda ctx: ctx.has_ip and (not ctx.hardware_critical or ctx.aggressive_mode), lambda ctx: 'ip_or_cidr_indicator', lambda ctx: _lc(AcquisitionLane.GREYNOISE, ctx.base_concurrency, ctx.uma_state)))
 
-@dataclass(slots=True)
-class NonfeedPlanDebug:
+class NonfeedPlanDebug(msgspec.Struct):
     """[F207L] Diagnostic snapshot of nonfeed lane planning for live KPI debugging.
 
     Records what the acquisition planner decided and why,
@@ -357,8 +353,7 @@ class NonfeedSeedContext:
         """Return counts by non-empty seed kind."""
         return {k: len(v) for k, v in [('domains', self.domains), ('ips', self.ips), ('urls', self.urls), ('hashes', self.hashes), ('cves', self.cves)] if v}
 
-@dataclass(slots=True)
-class AcquisitionStrategySnapshot:
+class AcquisitionStrategySnapshot(msgspec.Struct):
     """Full acquisition strategy snapshot for one sprint/cycle."""
     query: str = ''
     duration_s: float = 0.0
@@ -375,8 +370,7 @@ class AcquisitionStrategySnapshot:
     nonfeed_candidate_ledger_summary: dict = field(default_factory=dict)
     has_domain: bool = False
 
-@dataclass(slots=True)
-class MandatoryLaneTerminality:
+class MandatoryLaneTerminality(msgspec.Struct):
     """[F208A] Canonical terminality contract for mandatory lanes.
 
     A mandatory lane must reach a terminal state (attempted, skipped, error, timeout)
@@ -686,8 +680,7 @@ def lane_skip_reason(snapshot: AcquisitionStrategySnapshot, lane_name: str) -> s
             return None if plan.enabled else plan.reason
     return None
 
-@dataclass(frozen=True, slots=True)
-class SourceFamilyOutcome:
+class SourceFamilyOutcome(msgspec.Struct, frozen=True):
     """Normalized outcome for one source family (lane) in the scheduler report.
 
     F207G: Unifies CTOutcome, PassiveDNSOutcome, WaybackDiffResult, and feed
@@ -844,8 +837,7 @@ def normalize_source_family_outcome(family: str, raw: dict) -> dict:
     _ts = _derive_terminal(_ts_raw, attempted, skipped, skip_reason, _error, _timeout, accepted_count)
     return SourceFamilyOutcome(family=_canonical_family, attempted=attempted, skipped=skipped, skip_reason=skip_reason, raw_count=raw_count, built_count=built_count, accepted_count=accepted_count, error=_error, timeout=_timeout, duration_s=_d.get('duration_s'), terminal_state=_ts).to_dict()
 
-@dataclass(frozen=True, slots=True)
-class AcquisitionLaneOutcome:
+class AcquisitionLaneOutcome(msgspec.Struct, frozen=True):
     lane: str
     enabled: bool
     attempted: bool
@@ -874,8 +866,7 @@ class AcquisitionLaneOutcome:
 _NONFEED_LANE_FAMILY_MAP = {'PUBLIC': AcquisitionLane.PUBLIC, 'CT': AcquisitionLane.CT, 'PIVOT_EXECUTOR': AcquisitionLane.PIVOT_EXECUTOR, 'WAYBACK': AcquisitionLane.WAYBACK, 'PASSIVE_DNS': AcquisitionLane.PASSIVE_DNS}
 _ACCEPTED_TERMINAL_STATES = frozenset(['success', 'success_empty', 'empty'])
 
-@dataclass(slots=True)
-class NonfeedMissionSnapshot:
+class NonfeedMissionSnapshot(msgspec.Struct):
     """F217B: Snapshot of nonfeed mission controller state at a point in time.
 
     This is a plain dataclass (not frozen) so that the scheduler can

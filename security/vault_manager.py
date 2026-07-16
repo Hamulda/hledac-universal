@@ -102,7 +102,7 @@ class LootManager:
     """
     Encrypted vault export manager.
 
-    DEPRECATED (F350M-R): Use ``secrets.vault.SecretVault`` instead.
+    DEPRECATED (F350M-R): Use ``secrets_vault.vault.SecretVault`` instead.
     This module is kept for backward compatibility only.
 
     Canonical name: VaultManager (alias below).

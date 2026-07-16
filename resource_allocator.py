@@ -32,9 +32,26 @@ from hledac.universal.utils.config_introspection import safe_attr_get
 logger = logging.getLogger(__name__)
 MLX_AVAILABLE = False
 _FALLBACK_RAM_ESTIMATE_MB: float = 500.0
+_MLX_CORE: Any | None = None  # lazy singleton for mlx.core
 
-@dataclass(slots=True)
-class ResourceBudget:
+
+def _get_mx() -> Any | None:
+    """
+    Lazy accessor for mlx.core — imports once and caches.
+
+    Returns None if mlx is unavailable (non-Apple platform or ImportError).
+    """
+    global _MLX_CORE
+    if _MLX_CORE is None:
+        try:
+            import mlx.core as mx
+            _MLX_CORE = mx
+        except ImportError:
+            _MLX_CORE = False  # cache negative result
+    return _MLX_CORE if _MLX_CORE is not False else None
+
+
+class ResourceBudget(msgspec.Struct):
     """Resource budget for a request."""
     ram_mb: int
     time_sec: float
@@ -78,7 +95,9 @@ class ResourceAllocator:
             self.warmup_counter += 1
             return
         try:
-            import mlx.core as mx
+            mx = _get_mx()
+            if mx is None:
+                return
             X = mx.array([f for f, _ in self.history])
             y = mx.array([a for _, a in self.history])
             ones = mx.ones((X.shape[0], 1))
@@ -94,7 +113,9 @@ class ResourceAllocator:
         if self.coeffs is None:
             return _FALLBACK_RAM_ESTIMATE_MB
         try:
-            import mlx.core as mx
+            mx = _get_mx()
+            if mx is None:
+                return _FALLBACK_RAM_ESTIMATE_MB
             features = mx.array(self._extract_features(ctx) + [1.0])
             prediction = float(mx.sum(features * self.coeffs))
             return max(100.0, prediction)
@@ -309,7 +330,9 @@ def get_mlx_memory_mb() -> float:
     if platform.system() != 'Darwin':
         return 0.0
     try:
-        import mlx.core as mx
+        mx = _get_mx()
+        if mx is None:
+            return 0.0
         if hasattr(mx.metal, 'get_cache_memory'):
             return mx.get_cache_memory() / (1024 * 1024)
         elif hasattr(mx.metal, 'get_active_memory'):
@@ -327,7 +350,9 @@ def clear_mlx_cache_if_needed(threshold_mb: float=500.0) -> bool:
     if platform.system() != 'Darwin':
         return False
     try:
-        import mlx.core as mx
+        mx = _get_mx()
+        if mx is None:
+            return False
         cache_mb = get_mlx_memory_mb()
         if cache_mb > threshold_mb:
             mx.eval([])

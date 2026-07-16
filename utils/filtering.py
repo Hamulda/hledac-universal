@@ -40,8 +40,7 @@ except ImportError:
     ORJSON_AVAILABLE = False
 logger = logging.getLogger(__name__)
 
-@dataclass(slots=True)
-class FilterStats:
+class FilterStats(msgspec.Struct):
     """Statistics for fast filter."""
     total_checked: int = 0
     blocked: int = 0
@@ -55,8 +54,7 @@ class FilterStats:
             return 0.0
         return self.blocked / self.total_checked
 
-@dataclass(frozen=True, slots=True)
-class FrontierStats:
+class FrontierStats(msgspec.Struct, frozen=True):
     """Statistics for frontier operations."""
     total_urls: int = 0
     checked_urls: int = 0

@@ -47,8 +47,7 @@ try:
 except ImportError:
     CanonicalFinding = None
 
-@dataclass(slots=True)
-class TimelineFindingResult:
+class TimelineFindingResult(msgspec.Struct):
     """
     Result of timeline synthesis containing events and derived findings.
     """

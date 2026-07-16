@@ -16,8 +16,7 @@ from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_o
 logger = logging.getLogger(__name__)
 MODULE_TIMEOUT = 60
 
-@dataclass(slots=True)
-class Finding:
+class Finding(msgspec.Struct):
     """Represents a finding from cross-module analysis.
 
     Attributes:
@@ -33,8 +32,7 @@ class Finding:
     confidence: float
     modules: list[str] = field(default_factory=list)
 
-@dataclass(frozen=True, slots=True)
-class CorrelationReport:
+class CorrelationReport(msgspec.Struct, frozen=True):
     """Report of cross-module correlations.
 
     Attributes:
@@ -46,8 +44,7 @@ class CorrelationReport:
     risk_score: float = 0.0
     attribution: dict[str, Any] = field(default_factory=dict)
 
-@dataclass(frozen=True, slots=True)
-class Anomaly:
+class Anomaly(msgspec.Struct, frozen=True):
     """Represents an anomaly detected during analysis.
 
     Attributes:
@@ -61,8 +58,7 @@ class Anomaly:
     description: str
     affected_modules: list[str] = field(default_factory=list)
 
-@dataclass(frozen=True, slots=True)
-class SharedContext:
+class SharedContext(msgspec.Struct, frozen=True):
     """Shared context passed between workflow modules.
 
     Attributes:
@@ -76,8 +72,7 @@ class SharedContext:
     module_status: dict[str, str] = field(default_factory=dict)
     resource_usage: dict[str, Any] = field(default_factory=dict)
 
-@dataclass(frozen=True, slots=True)
-class ComprehensiveReport:
+class ComprehensiveReport(msgspec.Struct, frozen=True):
     """Comprehensive analysis report from workflow execution.
 
     Attributes:
@@ -172,8 +167,7 @@ class ComprehensiveReport:
         parts.append('        </div>\n    </div>\n</body>\n</html>')
         return ''.join(parts)
 
-@dataclass(frozen=True, slots=True)
-class WorkflowPlan:
+class WorkflowPlan(msgspec.Struct, frozen=True):
     """Plan for workflow execution.
 
     Attributes:
@@ -185,8 +179,7 @@ class WorkflowPlan:
     execution_mode: str = 'sequential'
     parallel_groups: list[list[str]] | None = None
 
-@dataclass(frozen=True, slots=True)
-class IntelligenceConfig:
+class IntelligenceConfig(msgspec.Struct, frozen=True):
     """Configuration for workflow orchestrator.
 
     Attributes:
@@ -618,8 +611,7 @@ class WorkflowOrchestrator:
 HIGH_RISK_PATTERNS: dict[tuple[str, str], float] = {('scrubbed_metadata', 'steganography_detected'): 0.5, ('dns_tunneling', 'encoded_payload'): 0.4, ('zero_width_unicode', 'base64_hidden'): 0.3, ('future_timestamp', 'gps_mismatch'): 0.2}
 SEVERITY_WEIGHTS = {'critical': 1.0, 'high': 0.75, 'medium': 0.5, 'low': 0.25}
 
-@dataclass(frozen=True, slots=True)
-class CorrelationResult:
+class CorrelationResult(msgspec.Struct, frozen=True):
     """Lightweight correlation result from findings analysis.
 
     Attributes:

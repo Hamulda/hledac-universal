@@ -28,14 +28,16 @@ import asyncio
 import logging
 import time
 from collections import OrderedDict
-from urllib.parse import urlparse
-
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_fire_and_forget, async_getaddrinfo
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+import msgspec
 from enum import Enum, auto
 from typing import Any
+from urllib.parse import urlparse
+
 from hledac.universal.core.constants import M1_BOUNDS
 from hledac.universal.core.env_config import ENV
+from hledac.universal.utils.async_helpers import async_getaddrinfo, safe_create_task, parallel
+
 if __name__ == '__main__':
     import sys
     sys.path.insert(0, str(__file__).rsplit('/', 4)[0])
@@ -52,8 +54,7 @@ class TransportKind(Enum):
     CURL_CFFI_H3_TOR = auto()
     CURL_CFFI_H3_I2P = auto()
 
-@dataclass(frozen=True, slots=True)
-class TransportPolicy:
+class TransportPolicy(msgspec.Struct, frozen=True):
     """
     Policy that determines which transport to use.
 
@@ -108,7 +109,7 @@ class _HttpxPool:
                     try:
                         if hasattr(old_client, 'aclose'):
                             safe_create_task(old_client.aclose(), name=f'httpx:evict:{oldest_key}')
-                    except Exception:
+                    except AttributeError:  # aclose not available on evicted client
                         pass
             try:
                 import httpx
@@ -131,7 +132,7 @@ class _HttpxPool:
             try:
                 if hasattr(client, 'aclose'):
                     await client.aclose()
-            except Exception:
+            except AttributeError:  # aclose not available on closed client
                 pass
         logger.debug(f'[HTTPX] {len(clients)} clients closed')
 _CURL_CFFI_MAX_PROFILES = 3
@@ -154,7 +155,7 @@ class _CurlCffiPool:
             _m1 = M1_BOUNDS()
             self._max_host_sessions = _m1.curl_host_session_max
             self._host_ttl_s = _m1.curl_host_session_ttl_s
-        except Exception:
+        except (AttributeError, KeyError, TypeError):  # M1_BOUNDS() attributes missing or invalid
             self._max_host_sessions = 64
             self._host_ttl_s = 300.0
 
@@ -175,7 +176,6 @@ class _CurlCffiPool:
         Returns:
             (success, session_or_None, used_profile)
         """
-        from urllib.parse import urlparse
         h3_hint = 'h3' if http_version else 'h2'
         cache_key = f"{profile}:{proxy or ''}:{h3_hint}"
         async with self._lock:
@@ -194,7 +194,7 @@ class _CurlCffiPool:
                     try:
                         if hasattr(old_session, 'aclose'):
                             safe_create_task(old_session.aclose(), name=f'curl:profile_evict:{oldest_key}')
-                    except Exception:
+                    except AttributeError:  # aclose not available on evicted session
                         pass
             try:
                 from curl_cffi.requests import AsyncSession  # type: ignore[unresolved-import]
@@ -207,7 +207,7 @@ class _CurlCffiPool:
                 self._profile_order.append(cache_key)
                 await self._cache_host_locked(host, session, profile)
                 return (True, session, profile)
-            except Exception as e:
+            except (ValueError, OSError) as e:  # invalid impersonate profile or network failure
                 return (False, None, str(e))
 
     async def _cache_host_locked(self, host: str, session: Any, profile: str) -> None:
@@ -226,7 +226,7 @@ class _CurlCffiPool:
                 try:
                     if hasattr(_evicted_sess, 'aclose'):
                         safe_create_task(_evicted_sess.aclose(), name=f'curl:host_evict:{oldest_host}')
-                except Exception:
+                except AttributeError:  # aclose not available on evicted session
                     pass
         self._host_sessions[host] = (session, now, profile)
         self._host_order.append(host)
@@ -244,7 +244,7 @@ class _CurlCffiPool:
             try:
                 if hasattr(session, 'aclose'):
                     await session.aclose()
-            except Exception:
+            except AttributeError:  # aclose not available on session
                 pass
         logger.debug(f'[curl_cffi] {len(profile_sessions)} profiles + {len(host_sessions)} hosts closed')
 _httpx_pool = _HttpxPool()
@@ -307,7 +307,7 @@ class _DnsCache:
                     self._cache[host] = (ips, now)
                     self._order[host] = None
                 return ips
-        except Exception:
+        except (OSError, ValueError):  # getaddrinfo: OSError for network/DNS, ValueError for encoding issues
             pass
         return None
 
@@ -320,7 +320,7 @@ class _DnsCache:
                 if parsed.netloc:
                     clean_host = parsed.netloc.split(':')[0]
                     hosts.add(clean_host)
-            except Exception:
+            except (ValueError, OSError):  # urlparse: ValueError for malformed URLs, OSError for IDN encoding
                 continue
         for host in hosts:
             safe_create_task(self.resolve(host), name=f'dns_prefetch:{host}')
@@ -335,7 +335,7 @@ _dns_cache = _DnsCache()
 async def close_all_transports() -> None:
     """Close all transport pools. Call at winddown."""
     global _initialized
-    await safe_gather_fire_and_forget(_httpx_pool.close_all(), _curl_pool.close_all(), _dns_cache.close(), label='close_all_transports')
+    await parallel([_httpx_pool.close_all(), _curl_pool.close_all(), _dns_cache.close()], taskgroup=True, policy='log', ctx='close_all_transports', logger_instance=logger)
     _initialized = False
     logger.debug('[TransportRuntime] all transports closed')
 
@@ -375,7 +375,7 @@ async def get_transport_client(policy: TransportPolicy, url: str) -> tuple[bool,
         from urllib.parse import urlparse
         parsed = urlparse(url)
         host = parsed.netloc or ''
-    except Exception:
+    except (ValueError, OSError):  # urlparse: ValueError for malformed URLs, OSError for IDN encoding
         pass
     kind = policy.kind
     if kind == TransportKind.HTTPX_H2:
@@ -404,10 +404,10 @@ async def get_transport_client(policy: TransportPolicy, url: str) -> tuple[bool,
                 try:
                     from hledac.universal.transport.http3_lane import probe_altsvc_speculative as _probe
                     _probe(url)
-                except Exception:
+                except Exception:  # noqa: BLE001 — fail-soft: speculative Alt-Svc probe
                     pass
-            except Exception:
-                pass  # fail-soft: proceed without H3
+            except Exception:  # noqa: BLE001 — fail-soft: proceed without H3
+                pass
         ok, session, used_profile = await _curl_pool.get_session(host=host, profile=profile, proxy=proxy, http_version=http_version)
         if not ok:
             return (False, None, f'curl_cffi_error:{session}' if session else 'curl_cffi_unavailable')
@@ -443,7 +443,6 @@ async def fetch_via_unified(url: str, policy: TransportPolicy | None=None, heade
     t0 = time.monotonic()
     try:
         if kind.startswith('httpx'):
-            import httpx
             extra_headers = headers or {}
             resp = await client.get(url, headers=extra_headers, timeout=timeout_s, follow_redirects=True)
             body = resp.content[:max_bytes]
@@ -463,14 +462,14 @@ async def fetch_via_unified(url: str, policy: TransportPolicy | None=None, heade
             try:
                 from hledac.universal.transport.http3_lane import record_from_curl_cffi_result as _record_h3
                 _record_h3(url, resp.headers)
-            except Exception:
-                pass  # fail-soft: Alt-Svc recording is best-effort
+            except Exception:  # noqa: BLE001 — fail-soft: Alt-Svc recording is best-effort
+                pass
             # final_url: curl_cffi stores final URL after redirects in resp.url
             final_url = url
             try:
                 if hasattr(resp, 'url') and resp.url:
                     final_url = str(resp.url)
-            except Exception:
+            except (ValueError, AttributeError):  # str(resp.url) can raise ValueError or AttributeError
                 pass
             return {'url': url, 'final_url': final_url, 'status_code': resp.status_code, 'content_type': resp.headers.get('Content-Type', ''), 'text': body.decode('utf-8', errors='replace') if body else '', 'fetched_bytes': len(body), 'declared_length': -1, 'elapsed_ms': elapsed_ms, 'error': None, 'failure_stage': None, 'headers': dict(resp.headers) if hasattr(resp, 'headers') else {}}
         else:
@@ -481,7 +480,6 @@ async def fetch_via_unified(url: str, policy: TransportPolicy | None=None, heade
     except Exception as e:
         elapsed_ms = (time.monotonic() - t0) * 1000
         return {'url': url, 'final_url': url, 'status_code': 0, 'content_type': '', 'text': None, 'fetched_bytes': 0, 'declared_length': -1, 'elapsed_ms': elapsed_ms, 'error': str(e), 'failure_stage': 'fetch', 'headers': {}}
-from .curl_cffi_fetch import is_curl_cffi_available, next_ja3_profile, reset_ja3_cycle, get_curl_cffi_runtime_status, close_curl_cffi_sessions_async, fetch_via_tor_curl_cffi, fetch_via_i2p_curl_cffi, fetch_via_curl_cffi_cached
 if __name__ == '__main__':
 
     async def _smoke() -> None:

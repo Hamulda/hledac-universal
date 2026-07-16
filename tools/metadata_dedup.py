@@ -26,8 +26,7 @@ TOP_K = 200
 MAX_COMPARISONS = 50000
 MAX_FIELD_REASONS = 5
 
-@dataclass(slots=True)
-class MetadataEntry:
+class MetadataEntry(msgspec.Struct):
     """A single metadata entry for deduplication."""
     url: str
     canonical_url: str = ''
@@ -55,8 +54,7 @@ class MetadataEntry:
         data = f'{self.canonical_url or self.url}|{self.title}|{self.description}'
         return hashlib.sha256(data.encode()).hexdigest()[:16]
 
-@dataclass(frozen=True, slots=True)
-class DedupResult:
+class DedupResult(msgspec.Struct, frozen=True):
     """Result of metadata deduplication."""
     winner: str
     loser_hash: str

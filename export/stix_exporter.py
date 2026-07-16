@@ -19,12 +19,13 @@ Otherwise the builtins path produces plain dicts that are syntactically
 STIX-compatible and pass basic shape validation.
 """
 import asyncio
-from hledac.universal.utils.async_helpers import safe_gather, safe_gather_return_exceptions
+from hledac.universal.utils.async_helpers import safe_gather, parallel
 from ._shared import _iso_timestamp, _safe_str, _utc_now, normalize_export_input
 import os
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
+import msgspec
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -93,8 +94,7 @@ _ATTACK_TTP_MAP: dict[str, dict[str, Any]] = {'T1590.001': {'name': 'Domain Name
 _IOC_ATTACK_TECHNIQUES: dict[str, list[str]] = {'domain': ['T1590.001', 'T1590.002', 'T1590.003', 'T1590.004', 'T1584.001'], 'ip': ['T1016', 'T1595.001', 'T1595.002', 'T1584.004'], 'url': ['T1105', 'T1041'], 'email': ['T1589.002'], 'hash_md5': ['T1589.001'], 'hash_sha1': ['T1589.001'], 'hash_sha256': ['T1589.001'], 'cve': ['T1589.001'], 'username': ['T1589.003'], 'leak': ['T1589.001', 'T1589.002'], 'paste': ['T1589.001', 'T1589.002']}
 _PHASE_TO_TACTIC: dict[str, str] = {'reconnaissance': 'Reconnaissance', 'resource_development': 'Resource Development', 'initial_access': 'Initial Access', 'execution': 'Execution', 'persistence': 'Persistence', 'privilege_escalation': 'Privilege Escalation', 'defense_evasion': 'Defense Evasion', 'credential_access': 'Credential Access', 'discovery': 'Discovery', 'lateral_movement': 'Lateral Movement', 'collection': 'Collection', 'command_and_control': 'Command and Control', 'exfiltration': 'Exfiltration', 'impact': 'Impact'}
 
-@dataclass(frozen=True, slots=True)
-class CTIExportInputs:
+class CTIExportInputs(msgspec.Struct, frozen=True):
     """Frozen inputs for production CTI STIX export (F204F)."""
     findings: tuple[Any, ...]
     identity_candidates: tuple[dict[str, Any], ...]
@@ -147,7 +147,7 @@ async def collect_cti_export_inputs(report: dict[str, Any], store: Any) -> CTIEx
     async def _get_identity_candidates() -> tuple[dict[str, Any], ...]:
         cands = report.get('identity_candidates') or []
         return tuple(cands) if isinstance(cands, (list, tuple)) else ()
-    from hledac.universal.utils.async_helpers import safe_gather, safe_gather_return_exceptions
+    from hledac.universal.utils.async_helpers import safe_gather, parallel
     _result = await safe_gather(_fetch_findings(), _get_identity_candidates(), label='collect_cti_export_inputs')
     ok = _result.ok
     findings_result = ok[0] if ok and ok[0] is not None else []
@@ -935,8 +935,9 @@ async def _maybe_sign_bundle_async(bundle: dict[str, Any]) -> dict[str, Any]:
     Returns bundle unchanged if PQ unavailable or signing fails.
     """
     try:
-        results = await safe_gather_return_exceptions(_get_pq_backend_async(), label='stix_exporter:pq_backend')
-        errors = [r for r in results if isinstance(r, Exception)]
+        _result = await parallel([_get_pq_backend_async()], taskgroup=True, policy='collect', ctx='stix_exporter:pq_backend')
+        results = _result.ok
+        errors = _result.errors
         if errors:
             return bundle
         backend, status = results[0]

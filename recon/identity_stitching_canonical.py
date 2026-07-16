@@ -24,6 +24,7 @@ M1 8GB CEILING:
 import logging
 import time
 from dataclasses import dataclass
+import msgspec
 from typing import Any
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str
 logger = logging.getLogger(__name__)
@@ -43,8 +44,7 @@ try:
 except ImportError:
     CanonicalFinding = None
 
-@dataclass(slots=True)
-class IdentityCandidate:
+class IdentityCandidate(msgspec.Struct):
     """
     A derived identity candidate produced by the stitching engine.
 

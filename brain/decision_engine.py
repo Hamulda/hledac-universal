@@ -27,8 +27,7 @@ class DecisionType(Enum):
     ERROR = 'error'
     COMPLETE = 'complete'
 
-@dataclass(slots=True)
-class Decision:
+class Decision(msgspec.Struct):
     """Rozhodnutí orchestrátoru"""
     decision_type: DecisionType
     action: str

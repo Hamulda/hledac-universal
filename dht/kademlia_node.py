@@ -60,7 +60,7 @@ import asyncio
 import hashlib
 import logging
 import os
-import random
+import secrets
 import socket
 import time
 import uuid
@@ -70,6 +70,9 @@ from hledac.universal.core.resource_governor import ResourceGovernor
 from hledac.universal.dht.local_graph import LocalGraphStore
 from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok, safe_gather_fire_and_forget, safe_wait_for
 logger = logging.getLogger(__name__)
+
+# Crypto-safe RNG — F350M-R
+_RNG = secrets.SystemRandom()
 MAX_ITEM_BYTES = 256 * 1024
 MAX_PENDING_RPCS = 5000
 MAX_PENDING_RPC_TTL_S = 60.0
@@ -901,7 +904,7 @@ class KademliaNode:
         while self._running:
             await asyncio.sleep(300)
             self._cleanup_pending_rpcs()
-            bucket_idx = random.randint(0, 255)
+            bucket_idx = _RNG.randint(0, 255)
             bucket = list(self.routing_table.get(bucket_idx, []))
             for peer in bucket:
                 pid = peer.get('id')
@@ -1096,8 +1099,8 @@ class KademliaNode:
                     if len(results) >= max_results:
                         break
                     for _ in range(3):
-                        peer_host = random.choice([p[0] for p in BOOTSTRAP_PEERS])
-                        peer_port = random.choice([p[1] for p in BOOTSTRAP_PEERS])
+                        peer_host = _RNG.choice([p[0] for p in BOOTSTRAP_PEERS])
+                        peer_port = _RNG.choice([p[1] for p in BOOTSTRAP_PEERS])
                         try:
                             peers_response = await self._dht_send_get_peers(sock, peer_host, peer_port, info_hash)
                             if peers_response:

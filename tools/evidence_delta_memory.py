@@ -27,8 +27,7 @@ class Verdict(StrEnum):
     DELTA_NEW_NONFEED_EVIDENCE = 'DELTA_NEW_NONFEED_EVIDENCE'
     DELTA_MEANINGFUL_RESEARCH_PROGRESS = 'DELTA_MEANINGFUL_RESEARCH_PROGRESS'
 
-@dataclass(slots=True)
-class EvidenceDelta:
+class EvidenceDelta(msgspec.Struct):
     new_source_families: list[str] = field(default_factory=list)
     disappeared_source_families: list[str] = field(default_factory=list)
     continued_source_families: list[str] = field(default_factory=list)
@@ -65,8 +64,7 @@ class CapabilityDeltaVerdict(StrEnum):
     NOT_COMPARABLE_HARDWARE_TAINTED = 'NOT_COMPARABLE_HARDWARE_TAINTED'
     NO_PRIOR = 'NO_PRIOR'
 
-@dataclass(frozen=True, slots=True)
-class CapabilityDelta:
+class CapabilityDelta(msgspec.Struct, frozen=True):
     capability_delta_verdict: CapabilityDeltaVerdict
     improved_dimensions: list[str] = field(default_factory=list)
     regressed_dimensions: list[str] = field(default_factory=list)

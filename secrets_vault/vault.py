@@ -1,5 +1,5 @@
 """
-secrets/vault.py — Canonical password vault with AES-256-GCM (F350M-R)
+secrets_vault/vault.py — Canonical password vault with AES-256-GCM (F350M-R)
 
 M1 8GB RAM: ~20 MB resident for 1000 credentials (each ~20 KB encrypted blob).
 Rust batch AES-GCM: ~3-5× faster than pure Python Fernet.
@@ -12,7 +12,7 @@ Key features:
     - Thread-safe via asyncio.Lock (canonical circuit_breaker pattern)
 
 Usage:
-    from secrets.vault import SecretVault
+    from secrets_vault.vault import SecretVault
     vault = SecretVault(store_path="/path/to/secrets.lmdb")
     vault.put("api_key", {"key": "value"})
     creds = vault.get("api_key")

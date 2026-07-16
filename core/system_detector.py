@@ -37,6 +37,7 @@ import platform
 import sys
 import sysconfig
 from dataclasses import dataclass, field
+import msgspec
 from functools import lru_cache
 from typing import Literal
 try:
@@ -45,8 +46,7 @@ except ImportError:
     from typing_extensions import Literal
 from core.psutil_shim import psutil_module as _psutil_mod
 
-@dataclass(frozen=True, slots=True)
-class HardwareCapabilities:
+class HardwareCapabilities(msgspec.Struct, frozen=True):
     """
     Immutable hardware capability snapshot.
 

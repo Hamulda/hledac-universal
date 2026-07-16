@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import threading
 from dataclasses import dataclass, field
+import msgspec
 from enum import IntEnum
 from typing import Any, Callable, Generic, TypeVar
 
@@ -64,8 +65,7 @@ _MAX_ENTRIES_ELEVATED = 50_000
 _MAX_ENTRIES_CRITICAL = 10_000
 
 
-@dataclass
-class AdaptiveCacheConfig:
+class AdaptiveCacheConfig(msgspec.Struct):
     """
     Konfigurácia adaptívnej cache.
 
@@ -85,8 +85,7 @@ class AdaptiveCacheConfig:
     pressure_threshold_critical_gib: float = 1.0
 
 
-@dataclass
-class CacheStats:
+class CacheStats(msgspec.Struct):
     """Cache statistics."""
     hits: int = 0
     misses: int = 0

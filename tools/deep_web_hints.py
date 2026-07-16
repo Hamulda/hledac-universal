@@ -27,8 +27,7 @@ MAX_FIELDS_PER_FORM = 10
 MAX_API_CANDIDATES = 20
 MAX_HTML_PREVIEW_SIZE = 50 * 1024
 
-@dataclass(slots=True)
-class DeepWebHints:
+class DeepWebHints(msgspec.Struct):
     """Structured hints extracted from HTML preview."""
     url: str
     forms: list[dict] = field(default_factory=list)

@@ -22,6 +22,7 @@ import json
 import re
 import time as _time
 from dataclasses import dataclass
+import msgspec
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 from hledac.universal.utils.async_helpers import safe_gather_ok
@@ -83,8 +84,7 @@ def _get_bloom_filter() -> Any:
             _BLOOM = BloomFilter(capacity=_SOCIAL_BLOOM_CAPACITY, fp_rate=0.01)
     return _BLOOM
 
-@dataclass(frozen=True, slots=True)
-class SocialIdentityFacet:
+class SocialIdentityFacet(msgspec.Struct, frozen=True):
     """A single social identity profile extracted from findings."""
     finding_id: str
     platform: str
@@ -96,8 +96,7 @@ class SocialIdentityFacet:
     confidence: float
     evidence_kind: str = 'url_in_payload'
 
-@dataclass(frozen=True, slots=True)
-class SocialIdentityResult:
+class SocialIdentityResult(msgspec.Struct, frozen=True):
     """Outcome of a social identity mining scan."""
     facets: tuple[SocialIdentityFacet, ...]
     scanned_count: int

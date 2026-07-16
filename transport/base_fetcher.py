@@ -14,7 +14,7 @@ No circular deps: this module is independent of fetching/public_fetcher.py.
 """
 import asyncio
 import logging
-import random
+import secrets
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -33,8 +33,10 @@ _CIRCUIT_BREAKER_MAX_DOMAINS: int = 512
 _CIRCUIT_BREAKER_FAILURE_THRESHOLD: int = 5
 _CIRCUIT_BREAKER_RECOVERY_SECONDS: float = 30.0
 
-@dataclass(slots=True)
-class RetryPolicy:
+# Crypto-safe jitter — F350M-R
+_JITTER_RNG = secrets.SystemRandom()
+
+class RetryPolicy(msgspec.Struct):
     """Bounded retry policy for fetch operations.
 
     M1 8GB: max_attempts=3 keeps memory bounded.
@@ -57,7 +59,7 @@ class RetryPolicy:
         if retry_after is not None and retry_after > 0:
             return min(retry_after, 60.0)
         backoff = min(self.backoff_base ** attempt, self.backoff_max)
-        return backoff + random.uniform(0, 0.5)
+        return backoff + _JITTER_RNG.uniform(0, 0.5)
 
     def extract_retry_after(self, headers: dict[str, str] | None) -> float | None:
         """Parse Retry-After header, return seconds or None."""
@@ -71,8 +73,7 @@ class RetryPolicy:
         except (ValueError, TypeError):
             return None
 
-@dataclass(frozen=True, slots=True)
-class CircuitBreakerState:
+class CircuitBreakerState(msgspec.Struct, frozen=True):
     """Per-domain circuit breaker state."""
     failure_count: int = 0
     last_failure: float = 0.0
@@ -113,8 +114,7 @@ class CircuitBreakerRegistry:
             cls._breakers[domain] = CircuitBreakerState()
         return cls._breakers[domain]
 
-@dataclass(frozen=True, slots=True)
-class FetcherResult:
+class FetcherResult(msgspec.Struct, frozen=True):
     """Internal fetch result for base_fetcher.py abstraction.
 
     Independent of FetchResult (msgspec.Struct) to avoid circular deps.

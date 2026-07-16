@@ -42,8 +42,7 @@ class EvictionStrategy(Enum):
     LFU = 'lfu'
     ADAPTIVE = 'adaptive'
 
-@dataclass(slots=True)
-class CacheConfig:
+class CacheConfig(msgspec.Struct):
     """Configuration for intelligent cache."""
     max_size_bytes: int = 100 * 1024 * 1024
     max_entries: int = 10000
@@ -54,8 +53,7 @@ class CacheConfig:
     warm_keys: list[str] | None = None
     warm_loader: Callable | None = None
 
-@dataclass(frozen=True, slots=True)
-class CacheEntry:
+class CacheEntry(msgspec.Struct, frozen=True):
     """Single cache entry with metadata."""
     key: str
     value: Any
@@ -65,8 +63,7 @@ class CacheEntry:
     access_count: int = 0
     last_accessed: float = field(default_factory=time.time)
 
-@dataclass(frozen=True, slots=True)
-class CacheStats:
+class CacheStats(msgspec.Struct, frozen=True):
     """Cache performance statistics."""
     hits: int = 0
     misses: int = 0

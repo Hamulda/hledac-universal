@@ -37,8 +37,7 @@ class PatternType(Enum):
     RANDOM = 'random'
     STEP_CHANGE = 'step_change'
 
-@dataclass(slots=True)
-class TrendAnalysis:
+class TrendAnalysis(msgspec.Struct):
     """Result of trend analysis."""
     direction: TrendDirection
     strength: float
@@ -48,8 +47,7 @@ class TrendAnalysis:
     end_value: float
     time_period_days: int
 
-@dataclass(slots=True)
-class TemporalPattern:
+class TemporalPattern(msgspec.Struct):
     """Detected temporal pattern."""
     pattern_type: PatternType
     period_days: int | None
@@ -57,8 +55,7 @@ class TemporalPattern:
     confidence: float
     description: str
 
-@dataclass(frozen=True, slots=True)
-class CausalEvent:
+class CausalEvent(msgspec.Struct, frozen=True):
     """Event in causal chain."""
     timestamp: datetime
     event: str
@@ -66,8 +63,7 @@ class CausalEvent:
     lag_days: int
     evidence: list[str] = field(default_factory=list)
 
-@dataclass(frozen=True, slots=True)
-class Scenario:
+class Scenario(msgspec.Struct, frozen=True):
     """Future scenario projection."""
     name: str
     probability: float
@@ -76,8 +72,7 @@ class Scenario:
     implications: str
     time_horizon_days: int
 
-@dataclass(frozen=True, slots=True)
-class TurningPoint:
+class TurningPoint(msgspec.Struct, frozen=True):
     """Detected turning point in time series."""
     timestamp: datetime
     significance: float
@@ -85,8 +80,7 @@ class TurningPoint:
     before_trend: TrendDirection
     after_trend: TrendDirection
 
-@dataclass(frozen=True, slots=True)
-class TemporalAnalysisResult:
+class TemporalAnalysisResult(msgspec.Struct, frozen=True):
     """Complete temporal analysis result."""
     query: str
     timestamp: datetime

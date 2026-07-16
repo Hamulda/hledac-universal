@@ -120,8 +120,7 @@ class LayerStatus(Enum):
     ERROR = 'error'
     SHUTDOWN = 'shutdown'
 
-@dataclass(slots=True)
-class LayerHealth:
+class LayerHealth(msgspec.Struct):
     """Layer health status"""
     name: str
     status: LayerStatus

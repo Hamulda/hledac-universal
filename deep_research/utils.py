@@ -6,12 +6,12 @@ import asyncio
 import logging
 import re
 from dataclasses import dataclass
+import msgspec
 from typing import Any
 from hledac.universal.utils.async_helpers import safe_gather_ok
 logger = logging.getLogger(__name__)
 
-@dataclass(slots=True)
-class LinkCheckResult:
+class LinkCheckResult(msgspec.Struct):
     """Result of link rot check"""
     url: str
     is_alive: bool

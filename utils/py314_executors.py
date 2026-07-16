@@ -32,6 +32,7 @@ import os
 from collections.abc import Callable, Iterator
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
+import msgspec
 from typing import Any, TypeVar
 __all__ = ['ChunkedExecutor', 'smart_executor', 'ExecutorType', 'get_optimal_chunksize']
 T = TypeVar('T')
@@ -46,8 +47,7 @@ _MAX_PROCESS_WORKERS = 4
 _MAX_INTERPRETER_WORKERS = 2
 _MIN_CHUNKSIZE = 100
 
-@dataclass(frozen=True, slots=True)
-class ExecutorConfig:
+class ExecutorConfig(msgspec.Struct, frozen=True):
     """Immutable executor configuration."""
     executor_type: str
     max_workers: int
@@ -168,8 +168,7 @@ class ChunkedExecutor:
         chunk_size = chunksize if chunksize is not None else self._get_chunksize(len(items))
         yield from self._executor.map(fn, items, chunksize=chunk_size)
 
-@dataclass(frozen=True, slots=True)
-class WorkloadProfile:
+class WorkloadProfile(msgspec.Struct, frozen=True):
     """Describes a workload's characteristics for executor selection."""
     name: str
     estimated_cpu_ms_per_item: float
@@ -275,8 +274,7 @@ def interpreter_pool_available() -> bool:
     except ImportError:
         return False
 
-@dataclass(slots=True)
-class BenchmarkResult:
+class BenchmarkResult(msgspec.Struct):
     """Result of a parallel execution benchmark."""
     name: str
     serial_ms: float

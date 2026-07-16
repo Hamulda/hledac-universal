@@ -40,6 +40,7 @@ Backward compatibility:
 import logging
 import os
 from dataclasses import dataclass, field
+import msgspec
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
@@ -99,8 +100,7 @@ _FORCE_RUST: bool = os.environ.get("HLEDAC_FORCE_RUST", "0") == "1"
 # =============================================================================
 
 
-@dataclass(frozen=True, slots=True)
-class AccelInfo:
+class AccelInfo(msgspec.Struct, frozen=True):
     """
     Frozen accelerator backend info.
     Describes which backend is active and its capabilities.

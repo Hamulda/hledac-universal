@@ -44,8 +44,7 @@ _MAX_TRAIN_STEPS_PER_SPRINT = 1
 _Q_CACHE_TTL_S = 5.0
 _QMIX_FIELD = 'qmix_weights'
 
-@dataclass(slots=True)
-class SprintPolicyState:
+class SprintPolicyState(msgspec.Struct):
     """Serialized policy state persisted to disk."""
     sprint_sequence_number: int = 0
     epsilon: float = _DEFAULT_EPSILON
@@ -740,8 +739,8 @@ class SprintPolicyManager:
         seq = self._state.sprint_sequence_number
         if seq > 0 and (seq + 1) % self._exploration_interval == 0:
             return True
-        import random
-        if random.random() < self._epsilon:
+        import secrets
+        if secrets.SystemRandom().random() < self._epsilon:
             return True
         return False
 

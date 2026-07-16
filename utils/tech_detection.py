@@ -15,8 +15,7 @@ import msgspec
 from typing import Any
 logger = logging.getLogger(__name__)
 
-@dataclass(slots=True)
-class TechStackResult:
+class TechStackResult(msgspec.Struct):
     """Result of technology stack detection."""
     framework: str | None
     confidence: float

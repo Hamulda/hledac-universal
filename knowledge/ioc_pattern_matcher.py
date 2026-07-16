@@ -36,6 +36,7 @@ Usage:
 import logging
 import re
 from dataclasses import dataclass
+import msgspec
 from typing import Final
 
 __all__ = [
@@ -69,8 +70,7 @@ HOT_PATTERNS: Final[list[tuple[str, re.Pattern[str]]]] = [
 ]
 
 
-@dataclass(frozen=True, slots=True)
-class IOCMatch:
+class IOCMatch(msgspec.Struct, frozen=True):
     """A single IOC pattern match."""
     pattern_name: str
     matched_value: str

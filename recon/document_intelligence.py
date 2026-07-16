@@ -140,8 +140,7 @@ class MetadataCategory(Enum):
     DEVICE = 'device'
     CUSTOM = 'custom'
 
-@dataclass(slots=True)
-class GeoLocation:
+class GeoLocation(msgspec.Struct):
     """GPS coordinates extracted from EXIF."""
     latitude: float
     longitude: float
@@ -167,8 +166,7 @@ class GeoLocation:
         """Generate Google Maps URL."""
         return f'https://www.google.com/maps?q={self.latitude},{self.longitude}'
 
-@dataclass(frozen=True, slots=True)
-class EXIFData:
+class EXIFData(msgspec.Struct, frozen=True):
     """Comprehensive EXIF data from images."""
     camera_make: str | None = None
     camera_model: str | None = None
@@ -186,8 +184,7 @@ class EXIFData:
     shutter_speed: str | None = None
     raw_exif: dict[str, Any] = field(default_factory=dict)
 
-@dataclass(frozen=True, slots=True)
-class DocumentMetadata:
+class DocumentMetadata(msgspec.Struct, frozen=True):
     """Comprehensive document metadata."""
     file_hash_md5: str
     file_hash_sha1: str
@@ -218,8 +215,7 @@ class DocumentMetadata:
     hyperlinks_base: str | None = None
     raw_metadata: dict[str, Any] = field(default_factory=dict)
 
-@dataclass(frozen=True, slots=True)
-class EmbeddedObject:
+class EmbeddedObject(msgspec.Struct, frozen=True):
     """Represents an embedded object in a document."""
     object_type: str
     object_name: str
@@ -228,8 +224,7 @@ class EmbeddedObject:
     extracted_content: bytes | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
-@dataclass(frozen=True, slots=True)
-class DocumentAnalysis:
+class DocumentAnalysis(msgspec.Struct, frozen=True):
     """Complete document analysis result."""
     metadata: DocumentMetadata
     embedded_objects: list[EmbeddedObject] = field(default_factory=list)
@@ -1314,8 +1309,7 @@ class DocumentIntelligenceEngine:
         keywords.update(tech_terms[:10])
         return list(keywords)[:20]
 
-@dataclass(frozen=True, slots=True)
-class EntityMention:
+class EntityMention(msgspec.Struct, frozen=True):
     """Mention of an entity in text."""
     text: str
     entity_type: str
@@ -1324,8 +1318,7 @@ class EntityMention:
     confidence: float
     context: str
 
-@dataclass(frozen=True, slots=True)
-class CrossDocumentLink:
+class CrossDocumentLink(msgspec.Struct, frozen=True):
     """Link between entities across documents."""
     entity_type: str
     value: str
@@ -1334,8 +1327,7 @@ class CrossDocumentLink:
     first_seen: str
     last_seen: str
 
-@dataclass(slots=True)
-class TimelineEvent:
+class TimelineEvent(msgspec.Struct):
     """Event extracted from document with temporal information."""
     date: datetime | None
     description: str
@@ -1343,8 +1335,7 @@ class TimelineEvent:
     entities_involved: list[str]
     confidence: float
 
-@dataclass(frozen=True, slots=True)
-class LongContextAnalysis:
+class LongContextAnalysis(msgspec.Struct, frozen=True):
     """Results from MLX long-context analysis."""
     total_chunks: int
     total_tokens: int

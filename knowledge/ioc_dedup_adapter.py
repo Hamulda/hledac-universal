@@ -83,8 +83,7 @@ def _normalize_ioc_value(value: str, ioc_type: str) -> str:
         return value.lower()
     return value
 
-@dataclass(slots=True)
-class _IocEntryPython:
+class _IocEntryPython(msgspec.Struct):
     """Python fallback entry matching ioc_dedup.rs::IocEntry."""
     normalized_value: str
     ioc_type: str
@@ -180,8 +179,7 @@ class IocDedupStorePythonFallback:
         self._total_seen = 0
         self._total_deduped = 0
 
-@dataclass(frozen=True, slots=True)
-class IocDedupStats:
+class IocDedupStats(msgspec.Struct, frozen=True):
     """Stats snapshot from IocDedupAdapter."""
     total_seen: int = 0
     total_deduped: int = 0

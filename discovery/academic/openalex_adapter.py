@@ -26,8 +26,7 @@ REQUEST_TIMEOUT_S = 5.0
 MAX_RESULTS = 20
 FIELD_CONCEPTS = {'cs': 'C164176025', 'ai': 'C39432361', 'ml': 'C185592260', 'security': 'C162324750', 'crypto': 'C2777199784'}
 
-@dataclass(slots=True)
-class OpenAlexWork:
+class OpenAlexWork(msgspec.Struct):
     """OpenAlex academic work."""
     id: str
     title: str
@@ -42,8 +41,7 @@ class OpenAlexWork:
     abstract: str
     publication_date: str | None
 
-@dataclass(frozen=True, slots=True)
-class OpenAlexInstitution:
+class OpenAlexInstitution(msgspec.Struct, frozen=True):
     """OpenAlex institution."""
     id: str
     display_name: str
@@ -52,8 +50,7 @@ class OpenAlexInstitution:
     homepage: str | None
     works_count: int
 
-@dataclass(frozen=True, slots=True)
-class OpenAlexAuthor:
+class OpenAlexAuthor(msgspec.Struct, frozen=True):
     """OpenAlex author."""
     id: str
     display_name: str
@@ -61,8 +58,7 @@ class OpenAlexAuthor:
     institutions: list[str]
     works_count: int
 
-@dataclass(frozen=True, slots=True)
-class InstitutionNetwork:
+class InstitutionNetwork(msgspec.Struct, frozen=True):
     """Collaboration network for an institution."""
     institution: OpenAlexInstitution
     collaborators: list[tuple[OpenAlexInstitution, int]]

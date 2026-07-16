@@ -13,6 +13,7 @@ Fail-soft throughout: any helper failure returns safe defaults.
 Never spawns subprocess at import time.
 """
 import asyncio
+import msgspec
 import logging
 import msgspec.json as _json
 import os
@@ -96,14 +97,12 @@ async def _run_helper_async(command: list[str], timeout: float=10.0) -> dict[str
     """
     return await asyncio.to_thread(_run_helper_sync, command, timeout)
 
-@dataclass(slots=True)
-class _CachedStatus:
+class _CachedStatus(msgspec.Struct):
     """Bounded status cache entry with short TTL."""
     status: HPKEStatus
     until: float
 
-@dataclass(slots=True)
-class HPKEExportBackend:
+class HPKEExportBackend(msgspec.Struct):
     """
     HPKE export backend using the Swift secure-enclave-helper.
 

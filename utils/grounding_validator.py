@@ -10,13 +10,13 @@ Bounded:
 - exact substring match v1
 """
 from dataclasses import dataclass
+import msgspec
 REASON_ALL_ITEMS_GROUNDED = 'all_items_grounded'
 REASON_MISSING_ITEMS = 'missing_items'
 REASON_NO_CLAIMED_ITEMS = 'no_claimed_items'
 REASON_EMPTY_EVIDENCE = 'empty_evidence'
 
-@dataclass(frozen=True, slots=True)
-class GroundingValidationResult:
+class GroundingValidationResult(msgspec.Struct, frozen=True):
     """Result of grounding validation.
 
     Attributes:

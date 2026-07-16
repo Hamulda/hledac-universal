@@ -49,7 +49,7 @@ the getattr seam.
 
 import asyncio as _asyncio
 
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.async_helpers import parallel, safe_create_task
 import logging
 import os as _os
 import time as _time
@@ -638,16 +638,15 @@ class SidecarOrchestrator:
             ]
             if run_coros:
                 try:
-                    gathered = await _asyncio.gather(*run_coros, return_exceptions=True)
+                    result = await parallel(run_coros, policy="log")
                     # Check for unexpected exceptions (fail-soft, per GHOST_INVARIANTS)
-                    for i, item in enumerate(gathered):
-                        if isinstance(item, BaseException) and not isinstance(item, _asyncio.CancelledError):
-                            adapter = available[i] if i < len(available) else None
-                            sidecar_id = getattr(adapter, "sidecar_id", f"plugin[{i}]") if adapter else f"plugin[{i}]"
-                            log.warning(
-                                "[ISSUE #027] plugin sidecar %s unexpected exception (fail-soft): %s: %s",
-                                sidecar_id, type(item).__name__, item,
-                            )
+                    for i, item in enumerate(result.errors):
+                        adapter = available[i] if i < len(available) else None
+                        sidecar_id = getattr(adapter, "sidecar_id", f"plugin[{i}]") if adapter else f"plugin[{i}]"
+                        log.warning(
+                            "[ISSUE #027] plugin sidecar %s unexpected exception (fail-soft): %s: %s",
+                            sidecar_id, type(item).__name__, item,
+                        )
                 except _asyncio.CancelledError:
                     # Propagate cancellation — gather() cancels all child coroutines on CancelledError
                     raise

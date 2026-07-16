@@ -24,8 +24,7 @@ except ImportError:
     FLASHRANK_AVAILABLE = False
     logger.warning('FlashRank not installed. Install with: pip install flashrank')
 
-@dataclass(slots=True)
-class RerankResult:
+class RerankResult(msgspec.Struct):
     """Result from reranking operation."""
     document_id: str
     content: str
@@ -34,8 +33,7 @@ class RerankResult:
     score_delta: float
     rank: int
 
-@dataclass(frozen=True, slots=True)
-class RerankRequest:
+class RerankRequest(msgspec.Struct, frozen=True):
     """Request for reranking."""
     query: str
     documents: list[dict[str, Any]]

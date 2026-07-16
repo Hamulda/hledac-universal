@@ -114,8 +114,7 @@ def _dequantize_int8(int8_vec: np.ndarray, scale: np.ndarray) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True)
-class CacheStats:
+class CacheStats(msgspec.Struct):
     hits: int = 0
     misses: int = 0
     l1_hits: int = 0
@@ -154,8 +153,7 @@ class CacheStats:
 
 
 # ISSUE #022: CacheEntry now mutable (no frozen=True) to allow mtime updates
-@dataclass(slots=True)
-class CacheEntry:
+class CacheEntry(msgspec.Struct):
     offset: int
     length: int  # embedding dimension (256)
     mtime: float
@@ -225,29 +223,48 @@ class EmbeddingCache:
         self._memmap_path = self.cache_dir / f"embeddings_d{dim}.dat"
         self._meta_path = self.cache_dir / f"embeddings_d{dim}.meta.json"
         self._l1: dict[str, CacheEntry] = {}
-        self._l1_lock = asyncio.Lock()
+        # ISSUE-2984: lazy lock — NEVER asyncio.Lock() at __init__ (macOS crash vector)
+        self._l1_lock: asyncio.Lock | None = None
         self._mmap: np.memmap | None = None
-        self._mmap_lock = asyncio.Lock()
+        self._mmap_lock: asyncio.Lock | None = None
         self.stats = CacheStats()
         self._file_size = 0
         self._version: int = _CACHE_VERSION
-        _loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(_loop)
+        # ISSUE-ZOOMOUT: run _init_memmap in thread to avoid event loop in __init__
         try:
-            _loop.run_until_complete(self._init_memmap())
-        finally:
-            _loop.close()
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
             try:
-                gc.collect()
-            except Exception:
-                pass
+                loop.run_until_complete(self._init_memmap())
+            finally:
+                loop.close()
+                try:
+                    gc.collect()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    # ISSUE-2984: lazy lock helpers — NEVER instantiate asyncio.Lock() in __init__
+    async def _get_l1_lock(self) -> asyncio.Lock:
+        """Lazily create _l1_lock inside an event loop."""
+        if self._l1_lock is None:
+            self._l1_lock = asyncio.Lock()
+        return self._l1_lock
+
+    async def _get_mmap_lock(self) -> asyncio.Lock:
+        """Lazily create _mmap_lock inside an event loop."""
+        if self._mmap_lock is None:
+            self._mmap_lock = asyncio.Lock()
+        return self._mmap_lock
 
     def _bytes_per_entry(self) -> int:
         """ISSUE #022: Return bytes per entry based on version."""
         return self._INT8_BYTES_PER_ENTRY if self._version >= _VERSION_INT8 else self._FLOAT16_BYTES_PER_ENTRY
 
     async def _init_memmap(self) -> None:
-        async with self._mmap_lock:
+        async with await self._get_mmap_lock():
             try:
                 if self._memmap_path.exists():
                     await self._load_meta()
@@ -411,7 +428,7 @@ class EmbeddingCache:
         self, text: str, encode_fn: Any = None
     ) -> np.ndarray | None:
         text_hash = self._hash_text(text)
-        async with self._l1_lock:
+        async with await self._get_l1_lock():
             entry = self._l1.get(text_hash)
         if entry is not None:
             self.stats.hits += 1
@@ -422,7 +439,7 @@ class EmbeddingCache:
         if l2_entry is not None:
             self.stats.hits += 1
             self.stats.l2_hits += 1
-            async with self._l1_lock:
+            async with await self._get_l1_lock():
                 self._l1[text_hash] = l2_entry
             l2_entry.mtime = asyncio.get_running_loop().time()
             return await self._read_memmap(l2_entry)
@@ -449,7 +466,7 @@ class EmbeddingCache:
         return result
 
     async def _l2_lookup(self, text_hash: str) -> CacheEntry | None:
-        async with self._l1_lock:
+        async with await self._get_l1_lock():
             return self._l1.get(text_hash)
 
     async def _read_memmap(self, entry: CacheEntry) -> np.ndarray | None:
@@ -531,7 +548,7 @@ class EmbeddingCache:
                 if hasattr(self._mmap, "flush"):
                     self._mmap.flush()
 
-                async with self._l1_lock:
+                async with await self._get_l1_lock():
                     if len(self._l1) >= self.max_entries:
                         await self._evict_lru()
                     self._l1[text_hash] = entry
@@ -567,7 +584,7 @@ class EmbeddingCache:
         return None
 
     async def _evict_lru(self) -> None:
-        async with self._l1_lock:
+        async with await self._get_l1_lock():
             if not self._l1:
                 return
             lru_key = min(self._l1.keys(), key=lambda k: self._l1[k].mtime)
@@ -594,7 +611,7 @@ class EmbeddingCache:
             self.stats.evictions += 1
 
     async def clear(self) -> None:
-        async with self._l1_lock:
+        async with await self._get_l1_lock():
             self._l1.clear()
         if self._mmap is not None:
             del self._mmap

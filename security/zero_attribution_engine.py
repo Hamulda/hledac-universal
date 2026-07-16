@@ -11,10 +11,13 @@ Real implementation provides:
 """
 import io
 import logging
-import random
+import secrets
 import string
 import zipfile
 logger = logging.getLogger(__name__)
+
+# Crypto-safe RNG — F350M-R
+_RNG = secrets.SystemRandom()
 _JPEG_MIME_TYPES = {'image/jpeg', 'image/jpg'}
 _PNG_MIME_TYPES = {'image/png'}
 _PDF_MIME_TYPES = {'application/pdf'}
@@ -148,10 +151,10 @@ _TOR_DECOY_PATHS = ['/', '/search', '/about', '/contact', '/privacy', '/terms', 
 _I2P_DECOY_PATHS = ['/', '/stats', '/info', '/network', '/peers', '/status', '/api', '/docs', '/help']
 
 def _random_base32(length: int) -> str:
-    return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
+    return ''.join(_RNG.choices(string.ascii_lowercase + string.digits, k=length))
 
 def _random_hex(length: int) -> str:
-    return ''.join(random.choices('0123456789abcdef', k=length))
+    return ''.join(_RNG.choices('0123456789abcdef', k=length))
 
 def generate_cover_traffic_urls(n_decoys: int=1, transport: str='clearnet') -> list[str]:
     """
@@ -173,23 +176,23 @@ def generate_cover_traffic_urls(n_decoys: int=1, transport: str='clearnet') -> l
     urls: list[str] = []
     if t == 'clearnet':
         for _ in range(n_decoys):
-            domain = random.choice(_DECOY_CLEARNET_DOMAINS)
-            path = random.choice(_DECOY_PATHS)
+            domain = _RNG.choice(_DECOY_CLEARNET_DOMAINS)
+            path = _RNG.choice(_DECOY_PATHS)
             urls.append(f'https://{domain}{path}')
     elif t == 'tor':
         for _ in range(n_decoys):
             prefix = _random_hex(16)
-            path = random.choice(_TOR_DECOY_PATHS)
+            path = _RNG.choice(_TOR_DECOY_PATHS)
             urls.append(f'http://{prefix}.onion{path}')
     elif t == 'i2p':
         for _ in range(n_decoys):
             dest = _random_base32(52)
-            path = random.choice(_I2P_DECOY_PATHS)
+            path = _RNG.choice(_I2P_DECOY_PATHS)
             urls.append(f'http://{dest}.b32.i2p{path}')
     else:
         for _ in range(n_decoys):
-            domain = random.choice(_DECOY_CLEARNET_DOMAINS)
-            path = random.choice(_DECOY_PATHS)
+            domain = _RNG.choice(_DECOY_CLEARNET_DOMAINS)
+            path = _RNG.choice(_DECOY_PATHS)
             urls.append(f'https://{domain}{path}')
     return urls
 
@@ -251,5 +254,5 @@ class ZeroAttributionEngine:
 
     def generate_cover_traffic_urls(self, count: int=5) -> list[str]:
         """Generate plausible cover traffic URLs."""
-        return random.sample(_DECOY_CLEARNET_DOMAINS, min(count, len(_DECOY_CLEARNET_DOMAINS)))
+        return _RNG.sample(_DECOY_CLEARNET_DOMAINS, min(count, len(_DECOY_CLEARNET_DOMAINS)))
 __all__ = ['ZeroAttributionEngine', 'strip_metadata', 'fingerprint_rotate_headers', 'generate_cover_traffic_urls']

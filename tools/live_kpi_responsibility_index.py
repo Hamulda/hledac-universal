@@ -18,8 +18,7 @@ import msgspec
 from pathlib import Path
 from typing import Any
 
-@dataclass(slots=True)
-class FunctionSpec:
+class FunctionSpec(msgspec.Struct):
     """One KPI-related function."""
     name: str
     source_lines: tuple[int, int]

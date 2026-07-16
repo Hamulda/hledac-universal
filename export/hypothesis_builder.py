@@ -18,6 +18,7 @@ M1 8GB constraints:
 - All processing bounded and fail-soft
 """
 import logging
+import msgspec
 import os
 import time
 from dataclasses import dataclass
@@ -27,8 +28,7 @@ logger = logging.getLogger(__name__)
 HYPOTHESIS_ENABLED = os.environ.get('HLEDAC_ENABLE_HYPOTHESIS', '1') == '1'
 RAM_THRESHOLD = 0.7
 
-@dataclass(slots=True)
-class HypothesisResult:
+class HypothesisResult(msgspec.Struct):
     """Result of hypothesis generation run."""
     enabled: bool
     hypotheses_generated: int

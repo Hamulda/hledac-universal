@@ -13,12 +13,13 @@ Migrated from: hledac/stealth_toolkit/
 """
 import asyncio
 import logging
-import random
+import secrets
 import time
 from collections import OrderedDict
 from collections.abc import Coroutine
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 from urllib.parse import urlparse
 try:
@@ -34,6 +35,10 @@ from ..recon.stealth_crawler import HeaderConfig, HeaderSpoofer
 from ..layers.stealth_layer import BrowserProfile, FingerprintConfig, FingerprintRandomizer
 from ..utils.rate_limiter import RateLimitConfig, RateLimiter, RateLimitExceeded
 logger = logging.getLogger(__name__)
+
+# Crypto-safe jitter — F350M-R
+_JITTER_RNG = secrets.SystemRandom()
+
 STEALTH_MANAGER_TRANSPORT_AUTHORITY = 'local_stealth_pool_until_transport_unified'
 STEALTH_MANAGER_PHASE = 'phase2_breaker_seam'
 MAX_STEALTH_PROFILES = len(_IMPERSONATE_PROFILES)
@@ -55,8 +60,7 @@ TCP_LIMIT = 20
 TCP_LIMIT_PER_HOST = 4
 TCP_KEEPALIVE_TIMEOUT = 30
 
-@dataclass(slots=True)
-class StealthManagerConfig:
+class StealthManagerConfig(msgspec.Struct):
     """Configuration for complete stealth system"""
     enable_rate_limiter: bool = True
     enable_header_spoofer: bool = True
@@ -327,8 +331,7 @@ class SkipFetch(Exception):
     """
     pass
 
-@dataclass(frozen=True, slots=True)
-class StealthResponse:
+class StealthResponse(msgspec.Struct, frozen=True):
     """Response from stealth HTTP request - M1 8GB optimized (no large bodies in RAM)."""
     status: int
     final_url: str
@@ -449,7 +452,7 @@ class StealthSession:
             except (ValueError, TypeError):
                 pass
         base_delay = BASE_RETRY_DELAY * 2 ** attempt
-        jitter = base_delay * RETRY_JITTER_PCT * (2 * random.random() - 1)
+        jitter = base_delay * RETRY_JITTER_PCT * (2 * _JITTER_RNG.random() - 1)
         return base_delay + jitter
 
     async def request(self, method: str, url: str, max_bytes: int=DEFAULT_MAX_BYTES, allow_redirects: bool=True, headers: dict[str, str] | None=None, data: Any=None, **kwargs) -> StealthResponse:
@@ -482,7 +485,7 @@ class StealthSession:
         if not allowed:
             raise SkipFetch(f'circuit_breaker_open:{reason}')
         for attempt in range(MAX_RETRY_ATTEMPTS):
-            await asyncio.sleep(random.uniform(0.3, 1.8))
+            await asyncio.sleep(_JITTER_RNG.uniform(0.3, 1.8))
             self._request_count += 1
             if self._request_count >= 10:
                 self._request_count = 0
@@ -816,7 +819,7 @@ class StealthManagerExtensions:
         ht = await self._get_host_telemetry(domain)
         if ht.errors > 0:
             backoff = min(60, 2 ** ht.errors)
-            jitter = random.uniform(0.5, 1.5) * backoff
+            jitter = _JITTER_RNG.uniform(0.5, 1.5) * backoff
             await asyncio.sleep(jitter)
         await ht.semaphore.acquire()
         await self._concurrency.acquire()

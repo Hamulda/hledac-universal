@@ -43,8 +43,7 @@ def get_rss_gib() -> float:
     except Exception:
         return 0.0
 
-@dataclass(slots=True)
-class BudgetBenchmarkResult:
+class BudgetBenchmarkResult(msgspec.Struct):
     """Result of the M1 mission budget benchmark."""
     status: str
     peak_rss_gib: float

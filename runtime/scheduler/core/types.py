@@ -67,8 +67,7 @@ class LaneBudgetAllocation(msgspec.Struct):
     released_s: float = 0.0
     timeout_count: int = 0
 
-@dataclass(slots=True)
-class LaneBudgetPool:
+class LaneBudgetPool(msgspec.Struct):
     """Per-lane timeout accounting pool."""
     _allocations: dict = field(default_factory=dict)
     _total_budget_s: float = 0.0

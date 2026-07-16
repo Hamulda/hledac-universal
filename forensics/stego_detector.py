@@ -50,8 +50,7 @@ def _check_mps_available():
     return False
 MAX_IMAGE_SIZE = 2048
 
-@dataclass(slots=True)
-class StegoConfig:
+class StegoConfig(msgspec.Struct):
     """Configuration for statistical steganography detector.
 
     Attributes:

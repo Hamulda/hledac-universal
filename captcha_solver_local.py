@@ -21,6 +21,7 @@ import io
 import logging
 import time
 from dataclasses import dataclass
+import msgspec
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -47,8 +48,7 @@ def _check_enabled() -> bool:
 # Local OCR Config
 # ─────────────────────────────────────────────────────────────────────────────
 
-@dataclass(slots=True)
-class LocalOcrConfig:
+class LocalOcrConfig(msgspec.Struct):
     """Configuration for local OCR CAPTCHA solving."""
     model_name: str = "microsoft/trocr-small-printed"
     use_mlx: bool = True  # Use MLX acceleration if available

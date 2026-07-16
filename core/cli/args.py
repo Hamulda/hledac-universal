@@ -5,6 +5,7 @@ Exported symbols:
     SPLIT_ARGS: list[str] — arguments that split CLI parsing (multi-cmd dispatch)
     RL_ENV_VARS: set[str] — env vars written by RL resolve logic
 """
+import msgspec
 
 import argparse
 import os

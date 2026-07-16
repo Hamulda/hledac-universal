@@ -48,7 +48,7 @@ class SprintSchedulerV2:
     def __repr__(self) -> str:
         try:
             return f"SprintSchedulerV2(config={getattr(self, '_config', None)!r})"
-        except Exception:
+        except Exception:  # noqa: BLE001 — fail-soft: __repr__ safety net for test fixtures with uninitialized slots
             return f"SprintSchedulerV2(id={hex(id(self))})"
 
     # ── __new__ for test fixtures ──────────────────────────────────────────
@@ -192,7 +192,6 @@ class SprintSchedulerV2:
     async def run(self, query: str) -> Any:
         """Run the sprint — orchestrate prelude → acquisition → winddown phases."""
         import time as _time
-        import logging as _logging
 
         _wall_clock_start = _time.monotonic()
         object.__setattr__(self, '_wall_clock_start', _wall_clock_start)
@@ -407,7 +406,7 @@ class SprintSchedulerV2:
             return
         try:
             await self._hermes_engine.value.load()
-        except Exception:
+        except Exception:  # noqa: BLE001 — fail-soft: Hermes load failure should not prevent sprint start
             pass
 
     async def _run_prelude_and_first_cycle(self, query: str) -> None:
@@ -419,8 +418,9 @@ class SprintSchedulerV2:
         import time as _t
 
         from hledac.universal._lazy_imports import get_async_helpers
+        from hledac.universal.utils.async_helpers import parallel
 
-        safe_create_task, safe_gather_return_exceptions = get_async_helpers()
+        safe_create_task, _safe_gather_return_exceptions = get_async_helpers()
 
         # Prelude task
         prelude_coro = self._run_prelude(query)
@@ -434,13 +434,14 @@ class SprintSchedulerV2:
         _findings_before = getattr(self._result, 'accepted_findings', 0) or 0
 
         # Gather both
-        _results = await safe_gather_return_exceptions(
-            prelude_task,
-            first_cycle_task,
-            label="sprint_v2:prelude_first_cycle",
+        _results = await parallel(
+            [prelude_task, first_cycle_task],
+            taskgroup=True,
+            policy='collect',
+            ctx="sprint_v2:prelude_first_cycle",
         )
 
-        _prelude_exc, _cycle_exc = _results[0], _results[1]
+        _prelude_exc, _cycle_exc = _results.errors[0] if _results.errors else None, _results.errors[1] if len(_results.errors) > 1 else None
 
         if isinstance(_prelude_exc, BaseException) and not isinstance(_prelude_exc, asyncio.CancelledError):
             logging.warning("[sprint_v2] prelude raised: %s: %s", type(_prelude_exc).__name__, _prelude_exc)
@@ -570,7 +571,7 @@ class SprintSchedulerV2:
                     if predictor is not None and hasattr(predictor, 'predict_next_iocs'):
                         try:
                             temporal_preds = await predictor.predict_next_iocs(top_k=10)
-                        except Exception:
+                        except Exception:  # noqa: BLE001 — fail-soft: temporal prediction failure should not prevent prewarm
                             pass
                     # 2. Q-table guided ranking (pre-warm state = 'prelude')
                     if oracle is not None and temporal_preds:
@@ -590,7 +591,7 @@ class SprintSchedulerV2:
                                         seen.add(r)
                                         merged.append({'ioc_value': r, 'ioc_type': 'domain', 'confidence': 0.5, 'source_node': 'qtable', 'prediction_method': 'qtable_guided'})
                                 temporal_preds = merged[:10]
-                        except Exception:
+                        except Exception:  # noqa: BLE001 — fail-soft: temporal predictor failure should not prevent prewarm
                             pass
                     # 3. Pre-warm curl_cffi sessions for predicted hosts
                     if temporal_preds:
@@ -611,7 +612,7 @@ class SprintSchedulerV2:
                                         _success = ok
                                         if ok:
                                             prewarmed.add(ioc_value)
-                                    except Exception:
+                                    except Exception:  # noqa: BLE001 — fail-soft: session acquire failure should not prevent prewarm
                                         _success = False
                                     # ISSUE B fix: record outcome to Rust Q-table so it learns
                                     # whether pre-warm succeeded. next_state_key='first_cycle'
@@ -625,17 +626,17 @@ class SprintSchedulerV2:
                                                 state_key=_STATE_PREWARM,
                                                 next_state_key=_STATE_NEXT,
                                             )
-                                        except Exception:
+                                        except Exception:  # noqa: BLE001 — fail-soft: prefetch action failure should not prevent prewarm
                                             pass
                                 if len(prewarmed) >= 5:
                                     break
-                        except ImportError:
+                        except ImportError:  # noqa: BLE001 — fail-soft: prewarm pool unavailable
                             pass
-                except Exception:
+                except Exception:  # noqa: BLE001 — fail-soft: prewarm host failure should not prevent prelude
                     pass
 
             safe_create_task(_prewarm_bg(), name='sprint:prelude_prewarm')
-        except Exception:
+        except Exception:  # noqa: BLE001 — fail-soft: prelude prewarm failure should not prevent sprint
             pass
 
     async def _run_first_cycle(self, query: str) -> bool:
@@ -669,7 +670,7 @@ class SprintSchedulerV2:
                     _gov_dec = await self._governor.value.evaluate()
                     if _gov_dec:
                         _uma_state = getattr(_gov_dec, 'uma_state', 'ok')
-                except Exception:
+                except Exception:  # noqa: BLE001 — fail-soft: governor evaluate failure should not prevent plan build
                     pass
 
             _plan_kwargs = {
@@ -687,7 +688,7 @@ class SprintSchedulerV2:
             }
 
             return await asyncio.to_thread(build_acquisition_plan, **_plan_kwargs)
-        except Exception:
+        except Exception:  # noqa: BLE001 — fail-soft: plan build failure should return None gracefully
             return None
 
     async def _run_acquisition_loop(self, query: str) -> None:
@@ -771,8 +772,8 @@ class SprintSchedulerV2:
 
     @property
     def sprint_id(self) -> str:
-        """Read-only sprint_id from the result object."""
-        return getattr(self._result, "sprint_id", "")
+        """Return _sprint_id (setter stores there, not in result)."""
+        return getattr(self, '_sprint_id', '')
 
     @sprint_id.setter
     def sprint_id(self, value: str) -> None:
@@ -1035,3 +1036,49 @@ class SprintSchedulerV2:
     async def health_check(self) -> Any:
         """Stub health check — returns None (pass)."""
         return None
+
+    async def aclose(self, timeout_s: float = 10.0) -> None:
+        """Graceful shutdown — F285 canonical async cleanup path.
+
+        Cancels the cancel event, cancels sidecar tasks, closes DuckDB store
+        and evidence log. Idempotent — safe to call multiple times.
+        """
+        import logging as _log
+        import sys as _sys
+
+        # Emit to stdout for BC with structlog-based test capture
+        sprint_id = getattr(self, '_sprint_id', 'unknown')
+        _sys.stdout.write(f"[aclean] sprint_id={sprint_id}\n")
+        _sys.stdout.flush()
+
+        # Cancel the cancel event if set (stops acquisition loops)
+        if self._cancel_event is not None and not self._cancel_event.is_set():
+            self._cancel_event.set()
+
+        # Cancel sidecar tasks
+        for task in list(getattr(self, '_sidecar_tasks', []) or []):
+            if not task.done():
+                task.cancel()
+
+        # Close DuckDB store if present
+        duckdb_store = getattr(self, '_duckdb_store', None)
+        if duckdb_store is not None:
+            try:
+                from runtime.duckdb_store import DuckDBShadowStore
+                if isinstance(duckdb_store, DuckDBShadowStore):
+                    await asyncio.wait_for(duckdb_store.aclose(), timeout=timeout_s)
+            except Exception as e:
+                _sys.stdout.write(f"[aclean] duckdb_store close error: {e}\n")
+                _sys.stdout.flush()
+
+        # Close evidence log if present
+        evidence_log = getattr(self, '_evidence_log', None)
+        if evidence_log is not None:
+            try:
+                await asyncio.wait_for(evidence_log.aclose(), timeout=timeout_s)
+            except Exception as e:
+                _sys.stdout.write(f"[aclean] evidence_log close error: {e}\n")
+                _sys.stdout.flush()
+
+        _sys.stdout.write(f"[aclean] done\n")
+        _sys.stdout.flush()

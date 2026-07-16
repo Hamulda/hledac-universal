@@ -597,8 +597,15 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
                 issues.extend(component_issues)
             else:
                 components = ['memory', 'system', 'network', 'storage']
-                for comp in components:
-                    comp_issues = await engine.run_manual_diagnostic(comp)
+                from hledac.universal.utils.async_helpers import chunked_taskgroup
+                results = await chunked_taskgroup(
+                    components,
+                    engine.run_manual_diagnostic,
+                    batch_size=20,
+                    concurrency=20,
+                    ctx="monitoring.diagnostics",
+                )
+                for comp_issues in results:
                     issues.extend(comp_issues)
             issues_dict = [{'issue_id': issue.issue_id, 'component': issue.component, 'severity': issue.severity.value, 'description': issue.description, 'recommendations': issue.recommendations, 'resolved': issue.resolved, 'timestamp': issue.timestamp} for issue in issues]
             critical_count = sum((1 for i in issues if i.severity.value in ['critical', 'error']))

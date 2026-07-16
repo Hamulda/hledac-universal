@@ -16,8 +16,7 @@ from typing import Any
 MAX_NODES: int = 5000
 MAX_EDGES: int = 20000
 
-@dataclass(slots=True)
-class HypothesisNode:
+class HypothesisNode(msgspec.Struct):
     """Single node in the hypothesis graph."""
     node_id: str
     label: str
@@ -58,16 +57,14 @@ class HypothesisEdge:
     def __repr__(self) -> str:
         return f'HypothesisEdge(edge_id={self.edge_id!r}, source_id={self.source_id!r}, target_id={self.target_id!r}, weight={self.weight}, type={self.hypothesis_type!r})'
 
-@dataclass(frozen=True, slots=True)
-class HiddenBridge:
+class HiddenBridge(msgspec.Struct, frozen=True):
     """Latent edge discovered by the pathfinder."""
     bridge_id: str
     endpoint_a: str
     endpoint_b: str
     score: float = 0.0
 
-@dataclass(frozen=True, slots=True)
-class AnomalousCluster:
+class AnomalousCluster(msgspec.Struct, frozen=True):
     """A cluster whose edge density or weight distribution is anomalous."""
     cluster_id: str
     node_ids: list[str] = field(default_factory=list)

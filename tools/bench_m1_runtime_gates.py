@@ -32,6 +32,7 @@ Exit codes:
     65 = benchmark error
 """
 from __future__ import annotations
+import msgspec
 
 
 import argparse

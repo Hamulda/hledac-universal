@@ -26,10 +26,11 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
+import msgspec
 from typing import Any
 import httpx
 from hledac.universal.network.session_runtime import async_get_httpx_session
-from hledac.universal.utils.async_helpers import safe_gather_ok, safe_gather_shielded
+from hledac.universal.utils.async_helpers import safe_gather_ok, parallel
 logger = logging.getLogger(__name__)
 MAX_IPV6_TARGETS: int = 50
 RDAP_TIMEOUT_S: float = 8.0
@@ -69,8 +70,7 @@ _rdap_cache = _RDAPCache()
 RDAP_BOOTSTRAP: dict[str, str] = {'arin': 'https://rdap.arin.net/registry/ip', 'ripe': 'https://rdap.ripe.net/rdap/ip', 'apnic': 'https://rdap.apnic.net/ip', 'lacnic': 'https://rdap.lacnic.net/rdap/ip', 'afrinic': 'https://rdap.afrinic.net/rdap/ip'}
 WHOIS_SERVERS: dict[str, str] = {'arin': 'whois.arin.net', 'ripe': 'whois.ripe.net', 'apnic': 'whois.apnic.net'}
 
-@dataclass(slots=True)
-class IPv6Result:
+class IPv6Result(msgspec.Struct):
     target: str
     rdap: dict[str, Any]
     whois: dict[str, Any]
@@ -255,7 +255,7 @@ class IPv6Recon:
         """Full IPv6 recon for an IP address."""
         t0 = time.monotonic()
         errors: list[str] = []
-        gathered = await safe_gather_shielded(self._rdap_lookup(ip), self._whois_lookup(ip), self.get_bgp_peer(ip), label='ipv6_recon', logger_instance=logger)
+        gathered = await parallel([self._rdap_lookup(ip), self._whois_lookup(ip), self.get_bgp_peer(ip)], taskgroup=True, policy='collect', ctx='ipv6_recon', logger_instance=logger)
         rdap_result: dict[str, Any] = {}
         whois_result: dict[str, Any] = {}
         bgp_result: dict[str, Any] = {}
@@ -278,14 +278,14 @@ class IPv6Recon:
         """Full IPv6 recon for a domain — gets AAAA records, then RDAP for each."""
         t0 = time.monotonic()
         errors: list[str] = []
-        aaaa_gathered = await safe_gather_shielded(self.get_aaaa(domain), label='ipv6_recon:aaaa', logger_instance=logger)
+        aaaa_gathered = await parallel([self.get_aaaa(domain)], taskgroup=True, policy='collect', ctx='ipv6_recon:aaaa', logger_instance=logger)
         aaaa_records: list[str] = []
         for res in aaaa_gathered.ok:
             if isinstance(res, list):
                 aaaa_records.extend(res)
         for exc in aaaa_gathered.errors:
             errors.append(f'aaaa:{exc}')
-        bgp_gathered = await safe_gather_shielded(*[self.get_bgp_peer(ip) for ip in aaaa_records[:10]], label='ipv6_recon:bgp', logger_instance=logger)
+        bgp_gathered = await parallel([self.get_bgp_peer(ip) for ip in aaaa_records[:10]], taskgroup=True, policy='collect', ctx='ipv6_recon:bgp', logger_instance=logger)
         bgp_results: list[dict] = []
         for res in bgp_gathered.ok:
             if isinstance(res, dict):

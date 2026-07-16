@@ -454,9 +454,11 @@ class IntelligentResourceAllocator:
             os.environ['MEMORY_EFFICIENCY_MODE'] = 'efficiency'
 
     async def _optimize_active_allocations(self):
-        """Optimize active resource allocations"""
+        """Optimize active resource allocations."""
+        # ISSUE-2b: get_current_capacity() is expensive (psutil via to_thread) —
+        # call ONCE before the loop, not per-allocation.
+        capacity = await self.get_current_capacity()
         for _task_id, allocation in self.active_allocations.items():
-            capacity = await self.get_current_capacity()
             allocation.actual_usage = {'cpu_cores': capacity.cpu_usage * allocation.allocated_resources.get('cpu_cores', 1), 'memory_gb': capacity.memory_usage * allocation.allocated_resources.get('memory_gb', 1)}
             allocated_cpu = allocation.allocated_resources.get('cpu_cores', 1)
             used_cpu = allocation.actual_usage.get('cpu_cores', 0)

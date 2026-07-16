@@ -38,6 +38,7 @@ import logging
 import struct
 from collections.abc import Sequence
 from dataclasses import dataclass
+import msgspec
 from typing import TYPE_CHECKING, Final
 
 from datasketch import MinHash, MinHashLSH
@@ -67,15 +68,13 @@ MINHASH_NUM_PERM: Final[int] = 128  # permutations for MinHash (M1 8GB balance)
 # ── Result Types ───────────────────────────────────────────────────────────────
 
 
-@dataclass(frozen=True, slots=True)
-class SimHashResult:
+class SimHashResult(msgspec.Struct, frozen=True):
     """SimHash fingerprint result."""
     fingerprint: int  # 64-bit integer
     bits: int  # actual bits used
 
 
-@dataclass(frozen=True, slots=True)
-class DedupDecision:
+class DedupDecision(msgspec.Struct, frozen=True):
     """Dedup advisory decision."""
     is_duplicate: bool
     reason: str  # e.g. "simhash_distance_2", "minhash_similarity_0.92"

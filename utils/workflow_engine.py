@@ -37,8 +37,7 @@ class TaskStatus(Enum):
     FAILED = 'failed'
     SKIPPED = 'skipped'
 
-@dataclass(slots=True)
-class Task:
+class Task(msgspec.Struct):
     """Úkol ve workflow"""
     id: str
     name: str
@@ -88,8 +87,7 @@ class Task:
             return self.end_time - self.start_time
         return None
 
-@dataclass(frozen=True, slots=True)
-class Workflow:
+class Workflow(msgspec.Struct, frozen=True):
     """Workflow definice"""
     id: str
     name: str

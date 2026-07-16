@@ -43,8 +43,7 @@ except ImportError:
 import numpy as np
 logger = logging.getLogger(__name__)
 
-@dataclass(slots=True)
-class RAGConfig:
+class RAGConfig(msgspec.Struct):
     """Konfigurace pro RAG — Sprint F330: env var defaults consistent with knowledge/ pattern."""
     enable_ultra_context: bool = os.environ.get('HLEDAC_RAG_ULTRA_CONTEXT', '1') == '1'
     enable_spr_compression: bool = os.environ.get('HLEDAC_RAG_SPR_COMPRESSION', '1') == '1'
@@ -67,8 +66,7 @@ class RAGConfig:
     hnsw_index_path: str | None = os.environ.get('HLEDAC_RAG_HNSW_INDEX_PATH')
     hnsw_space: str = os.environ.get('HLEDAC_RAG_HNSW_SPACE', 'cosine')
 
-@dataclass(slots=True)
-class Document:
+class Document(msgspec.Struct):
     """Document for retrieval"""
     id: str
     content: str
@@ -78,8 +76,7 @@ class Document:
     def __hash__(self):
         return hash(self.id)
 
-@dataclass(frozen=True, slots=True)
-class RetrievedChunk:
+class RetrievedChunk(msgspec.Struct, frozen=True):
     """Retrieved document chunk with scores"""
     document: Document
     chunk_text: str
@@ -481,8 +478,7 @@ class HNSWVectorIndex:
         self.max_elements = new_max_elements
         logger.debug(f'USearch index resize requested to {new_max_elements} (not directly supported)')
 
-@dataclass(frozen=True, slots=True)
-class RaptorNode:
+class RaptorNode(msgspec.Struct, frozen=True):
     """Single node in RAPTOR summarization tree."""
     node_id: str
     level: int

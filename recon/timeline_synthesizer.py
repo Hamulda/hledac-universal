@@ -26,8 +26,7 @@ logger = logging.getLogger(__name__)
 MAX_TIMELINE_EVENTS: int = 200
 MAX_EVENT_AGE_DAYS: int = 365 * 5
 
-@dataclass(slots=True)
-class TimelineEvent:
+class TimelineEvent(msgspec.Struct):
     """
     A single timestamped event in the synthesized timeline.
 
@@ -53,8 +52,7 @@ class TimelineEvent:
     def to_dict(self) -> dict[str, Any]:
         return {'ts': self.ts, 'event_type': self.event_type, 'source': self.source, 'description': self.description, 'entity_id': self.entity_id, 'confidence': self.confidence, 'evidence': self.evidence}
 
-@dataclass(slots=True)
-class TimelineMetadata:
+class TimelineMetadata(msgspec.Struct):
     """
     Metadata about the synthesized timeline.
     """
@@ -64,8 +62,7 @@ class TimelineMetadata:
     event_types: dict[str, int] = field(default_factory=dict)
     sources: dict[str, int] = field(default_factory=dict)
 
-@dataclass(frozen=True, slots=True)
-class SynthesizedTimeline:
+class SynthesizedTimeline(msgspec.Struct, frozen=True):
     """
     Complete synthesized timeline with events and metadata.
     """

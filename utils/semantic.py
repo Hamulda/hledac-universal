@@ -32,8 +32,7 @@ from typing import Any
 import numpy as np
 logger = logging.getLogger(__name__)
 
-@dataclass(slots=True)
-class FilterResult:
+class FilterResult(msgspec.Struct):
     """Result of semantic filtering."""
     passed: bool
     similarity: float

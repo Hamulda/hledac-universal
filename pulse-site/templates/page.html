@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}{{ page.title }} — {{ config.title }}{% endblock title %}
+{% block content %}
+<nav class="breadcrumbs" aria-label="Breadcrumb">
+    <a href="{{ get_url(path='/') }}">Home</a>
+    <span class="sep">/</span>
+    <a href="{{ get_url(path='wiki/') }}">Reference</a>
+    {% if page.extra.parent_path is defined %}
+    <span class="sep">/</span>
+    {% set parent_slug = page.extra.parent_path | replace(from="/", to="-") %}
+    <a href="{{ get_url(path='wiki/' ~ parent_slug ~ '/') }}">{{ page.extra.parent_path }}/</a>
+    {% endif %}
+    <span class="sep">/</span>
+    <span class="current">{{ page.title }}</span>
+</nav>
+
+<h1>{{ page.title }}</h1>
+{% if page.extra.tier %}
+<div class="page-meta">
+    <span class="badge tier-{{ page.extra.tier }}">Tier {{ page.extra.tier }}</span>
+    {% if page.extra.file_count %}
+    <span class="badge">{{ page.extra.file_count }} files</span>
+    {% endif %}
+    {% if page.extra.languages %}
+    <span class="badge">{{ page.extra.languages }}</span>
+    {% endif %}
+</div>
+{% endif %}
+{{ page.content | safe }}
+{% endblock content %}
+{% block scripts %}
+{% if page.extra.has_mermaid is defined %}
+<script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({
+        startOnLoad: true,
+        theme: 'base',
+        themeVariables: {
+            primaryColor: '#1a1a2e',
+            primaryTextColor: '#e0e0e0',
+            primaryBorderColor: '#a78bfa',
+            lineColor: '#8888a8',
+            secondaryColor: '#252542',
+            tertiaryColor: '#0d0d0d',
+            edgeLabelBackground: 'transparent',
+            clusterBkg: '#1a1a2e',
+            clusterBorder: '#2a2a4a',
+            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+            fontSize: '14px',
+            xyChart: {
+                backgroundColor: 'transparent',
+                titleColor: '#e0e0e0',
+                xAxisLabelColor: '#8888a8',
+                yAxisLabelColor: '#8888a8',
+                xAxisTitleColor: '#e0e0e0',
+                yAxisTitleColor: '#e0e0e0',
+                xAxisTickColor: '#2a2a4a',
+                yAxisTickColor: '#2a2a4a',
+                xAxisLineColor: '#2a2a4a',
+                yAxisLineColor: '#2a2a4a',
+                plotColorPalette: '#a78bfa'
+            }
+        },
+        securityLevel: 'loose'
+    });
+</script>
+{% endif %}
+{% endblock scripts %}

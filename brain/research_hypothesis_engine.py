@@ -37,6 +37,7 @@ import uuid
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field
+import msgspec
 from datetime import UTC, datetime
 from typing import Any
 from brain.evidence_fusion import DempsterShafer
@@ -58,8 +59,7 @@ HLEDAC_ENABLE_LLM = os.environ.get('HLEDAC_ENABLE_LLM', '1') == '1'
 logger = logging.getLogger(__name__)
 from hledac_hypothesis._types import CO_OCCURRENCE_FP16, MAX_CAUSAL_ENTITIES, MAX_CAUSAL_FINDINGS, MAX_CAUSAL_HYPOTHESES, MAX_CO_OCCURRENCE_MATRIX_SIZE, AdversarialReport, AnomalySignal, CausalEntity, CausalHypothesis, Contradiction, CrossReferenceResult, DarkQuery, DarkQueryType, Event, Evidence, FalsificationResult, HypothesisStatus, HypothesisType, InferenceEngineProtocol, SourceCredibility, TemporalSequence, TestDesign, TestResult, TestType, _DarkQueryListResponse
 
-@dataclass(slots=True)
-class Hypothesis:
+class Hypothesis(msgspec.Struct):
     """
     A hypothesis with full tracking and Bayesian updating.
 

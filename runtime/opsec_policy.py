@@ -29,29 +29,25 @@ _render_count_lock = threading.Lock()
 _MAX_CONCURRENT_RENDERERS: Final[int] = 1
 _RENDER_TIMEOUT_HINTS: dict[str, float] = {'fast': 8.0, 'standard': 15.0, 'heavy': 30.0}
 
-@dataclass(frozen=True, slots=True)
-class RendererPolicy:
+class RendererPolicy(msgspec.Struct, frozen=True):
     """Renderer capability and timeout hints."""
     allowed: bool
     max_concurrent: int
     timeout_hint: float
     blocked_reason: str | None = None
 
-@dataclass(frozen=True, slots=True)
-class ConcurrencyHint:
+class ConcurrencyHint(msgspec.Struct, frozen=True):
     """Concurrency hint for a transport class."""
     max_workers: int
     timeout_s: float
 
-@dataclass(slots=True)
-class TransportPolicy:
+class TransportPolicy(msgspec.Struct):
     """Composite transport policy."""
     renderer: RendererPolicy
     concurrency: ConcurrencyHint
     transport: str
 
-@dataclass(frozen=True, slots=True)
-class OPSECContext:
+class OPSECContext(msgspec.Struct, frozen=True):
     """Runtime context for OPSEC policy evaluation."""
     url: str = ''
     has_model_context: bool = False

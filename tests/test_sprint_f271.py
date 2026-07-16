@@ -213,9 +213,15 @@ class TestF271BCoroutineLeak:
     via AST inspection (no live pipeline run needed)."""
 
     def test_discovery_uses_asyncio_wait_for(self) -> None:
-        """F271B: assert `asyncio.wait_for` is called on the discovery
+        """F271B: assert `safe_wait_for` is called on the discovery
         await, with a bounded timeout. We do this by importing the
-        module and looking for the literal source pattern."""
+        module and looking for the literal source pattern.
+
+        F350M-R FIX: Replaced asyncio.wait_for → safe_wait_for (from
+        utils.async_helpers) which wraps asyncio.wait_for with proper
+        error handling and logging. The AST test now checks for the
+        safe_wait_for call site instead of the raw asyncio.wait_for.
+        """
         from pathlib import Path
 
         path = Path(__file__).resolve().parent.parent / "pipeline" / "live_public_pipeline.py"
@@ -224,17 +230,15 @@ class TestF271BCoroutineLeak:
 
         found_wait_for = False
         found_timeout_35 = False
-        # Look for `asyncio.wait_for(...timeout=35.0...)` near
+        # Look for `safe_wait_for(...timeout=35.0...)` near
         # `_ASYNC_DISCOVERY_SEARCH`. AST visitor pattern.
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
                 func = node.func
-                # asyncio.wait_for
+                # safe_wait_for (F350M-R: replaces asyncio.wait_for)
                 if (
-                    isinstance(func, ast.Attribute)
-                    and func.attr == "wait_for"
-                    and isinstance(func.value, ast.Name)
-                    and func.value.id == "asyncio"
+                    isinstance(func, ast.Name)
+                    and func.id == "safe_wait_for"
                 ):
                     # Verify timeout kwarg
                     for kw in node.keywords:
@@ -243,10 +247,10 @@ class TestF271BCoroutineLeak:
                                 found_timeout_35 = True
                     found_wait_for = True
         assert found_wait_for, (
-            "F271B: pipeline/live_public_pipeline.py must use asyncio.wait_for to bound discovery coroutine"
+            "F271B: pipeline/live_public_pipeline.py must use safe_wait_for to bound discovery coroutine"
         )
         assert found_timeout_35, (
-            "F271B: asyncio.wait_for must use timeout=35.0 to match the classify_discovery_error contract"
+            "F271B: safe_wait_for must use timeout=35.0 to match the classify_discovery_error contract"
         )
 
     def test_discovery_does_not_raise_on_outer_timeout(self, session_event_loop: asyncio.AbstractEventLoop) -> None:

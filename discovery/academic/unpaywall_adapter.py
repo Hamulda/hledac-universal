@@ -31,8 +31,7 @@ def _get_email() -> str:
     """Get email for polite pool."""
     return os.environ.get('HLEDAC_CONTACT_EMAIL', 'research@hledac.ai')
 
-@dataclass(slots=True)
-class OAPaper:
+class OAPaper(msgspec.Struct):
     """Open Access paper info from Unpaywall."""
     doi: str
     title: str

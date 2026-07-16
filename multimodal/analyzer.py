@@ -30,6 +30,7 @@ import hashlib
 import logging
 import time as _time
 from dataclasses import dataclass, field
+import msgspec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.async_helpers import safe_gather_ok
@@ -40,6 +41,20 @@ log = logging.getLogger(__name__)
 _VisionEncoder: type | None = None
 _MambaFusion: type | None = None
 _MOBILECLIP_AVAILABLE = False
+_MLX_CORE: Any | None = None  # lazy singleton for mlx.core
+
+
+def _get_mx() -> Any | None:
+    """Lazy accessor for mlx.core — imports once and caches. Returns None if unavailable."""
+    global _MLX_CORE
+    if _MLX_CORE is None:
+        try:
+            import mlx.core as mx
+            _MLX_CORE = mx
+        except ImportError:
+            _MLX_CORE = False
+    return _MLX_CORE if _MLX_CORE is not False else None
+
 
 def _lazy_load_modules() -> None:
     """Load multimodal modules lazily on first use."""
@@ -280,7 +295,9 @@ class MultimodalEnricher:
                 log.debug('Multimodal vision encode failed for %s: %s', finding_id, exc)
         if self._fusion_model is not None and enrichment['vision_embedding'] is not None:
             try:
-                import mlx.core as mx
+                mx = _get_mx()
+                if mx is None:
+                    raise ImportError("mlx.core unavailable")
                 vision_emb = mx.array(enrichment['vision_embedding'])
                 text_emb = mx.zeros_like(vision_emb)
                 graph_emb = mx.zeros_like(vision_emb)
@@ -361,7 +378,9 @@ class MultimodalEnricher:
         if not _MOBILECLIP_AVAILABLE:
             return None
         try:
-            import mlx.core as mx
+            mx = _get_mx()
+            if mx is None:
+                return None
             from mobileclip import create_model_and_transforms, get_tokenizer
             from PIL import Image
 
@@ -419,8 +438,7 @@ class MultimodalEnricher:
                 out[fid] = enrich_data
         return out
 
-@dataclass(slots=True)
-class DocumentResult:
+class DocumentResult(msgspec.Struct):
     """
     Typed result from document extraction.
 

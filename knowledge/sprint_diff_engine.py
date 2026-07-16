@@ -21,6 +21,7 @@ Profile logic:
 
 import logging
 from dataclasses import dataclass, field
+import msgspec
 
 import orjson
 
@@ -35,8 +36,7 @@ MAX_PROFILE_ENTRIES: int = 500
 
 # ── Dataclasses ────────────────────────────────────────────────────────────────
 
-@dataclass(slots=True, frozen=True)
-class SprintDiffResult:
+class SprintDiffResult(msgspec.Struct, frozen=True):
     target_id: str
     current_sprint_id: str
     previous_sprint_id: str | None
@@ -45,8 +45,7 @@ class SprintDiffResult:
     changed_entities: list[dict]
 
 
-@dataclass(slots=True)
-class TargetProfileSummary:
+class TargetProfileSummary(msgspec.Struct):
     target_id: str
     first_seen: float
     last_seen: float

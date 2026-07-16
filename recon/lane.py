@@ -30,6 +30,7 @@ import os
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+import msgspec
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
@@ -45,8 +46,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True, slots=True)
-class LaneSpec:
+class LaneSpec(msgspec.Struct, frozen=True):
     """
     Budget contract for a lane.
 
@@ -66,8 +66,7 @@ class LaneSpec:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True)
-class LaneContext:
+class LaneContext(msgspec.Struct):
     """
     Runtime context for lane execution.
 
@@ -85,8 +84,7 @@ class LaneContext:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True)
-class ResolveResult:
+class ResolveResult(msgspec.Struct):
     """
     Structured result from the resolve phase.
 
@@ -105,8 +103,7 @@ class ResolveResult:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True)
-class FetchResult:
+class FetchResult(msgspec.Struct):
     """
     Structured result from the fetch phase.
 
@@ -131,8 +128,7 @@ class FetchResult:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True)
-class ParsedResult:
+class ParsedResult(msgspec.Struct):
     """
     Structured result from the parse phase.
 
@@ -155,8 +151,7 @@ class ParsedResult:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True)
-class DedupResult:
+class DedupResult(msgspec.Struct):
     """
     Result of the dedup phase.
 

@@ -35,8 +35,9 @@ Ring-buffer drop counter telemetry (per SprintSchedulerResult):
   - entries_per_source_dropped: int = 0
   - novelty_bonuses_dropped: int = 0
 """
-
 from __future__ import annotations
+
+import msgspec
 
 from collections import OrderedDict
 from typing import Callable, Iterator

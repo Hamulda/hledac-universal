@@ -10,6 +10,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass, field
+import msgspec
 from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from hledac.universal.knowledge.graph_service import DuckPGQGraph
@@ -19,8 +20,7 @@ MAX_SEEDS_PER_HYPOTHESIS = 5
 MAX_EXTRACTS_PER_TYPE = 1000
 HLEDAC_ENABLE_DSPY = os.environ.get('HLEDAC_ENABLE_DSPY', '').lower() in ('1', 'true', 'yes')
 
-@dataclass(frozen=True, slots=True)
-class ResearchHypothesis:
+class ResearchHypothesis(msgspec.Struct, frozen=True):
     """Single research hypothesis produced by HypothesisGenerator."""
     hypothesis_text: str
     confidence: float

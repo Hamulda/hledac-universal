@@ -16,8 +16,7 @@ import msgspec
 from typing import Any
 logger = logging.getLogger(__name__)
 
-@dataclass(slots=True)
-class Prediction:
+class Prediction(msgspec.Struct):
     """Predikce kroku"""
     action: str
     params: dict[str, Any]
@@ -26,8 +25,7 @@ class Prediction:
     executed: bool = False
     correct: bool | None = None
 
-@dataclass(frozen=True, slots=True)
-class PredictionMetrics:
+class PredictionMetrics(msgspec.Struct, frozen=True):
     """Metriky predikcí"""
     total_predictions: int = 0
     correct_predictions: int = 0

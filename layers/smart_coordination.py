@@ -23,6 +23,7 @@ Migration:
          layer.enable_smart_mode()
 """
 import asyncio
+import msgspec
 import msgspec.json as _json
 import logging
 from dataclasses import dataclass
@@ -41,8 +42,7 @@ class SmartSpawnedRole(Enum):
     CODER = 'coder'
     TESTER = 'tester'
 
-@dataclass(slots=True)
-class SmartSpawnedAgent:
+class SmartSpawnedAgent(msgspec.Struct):
     """Represents a smart-spawned agent"""
     agent_id: str
     name: str

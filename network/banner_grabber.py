@@ -42,6 +42,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
+import msgspec
 from typing import TYPE_CHECKING
 from hledac.universal.utils.async_helpers import safe_gather_ok, safe_wait_for
 if TYPE_CHECKING:
@@ -52,8 +53,7 @@ PORT_TIMEOUTS: dict[int, float] = {21: 5.0, 22: 8.0, 25: 8.0, 80: 5.0, 443: 5.0,
 TOR_PORTS: frozenset[int] = frozenset({22, 25, 3389})
 CURL_PORTS: frozenset[int] = frozenset({80, 443, 8080, 8443, 993})
 
-@dataclass(slots=True)
-class BannerResult:
+class BannerResult(msgspec.Struct):
     ip: str
     port: int
     banner: str

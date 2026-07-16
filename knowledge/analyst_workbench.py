@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 import re
 import time
 from dataclasses import dataclass, field
+import msgspec
 from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from knowledge.evidence_chain import EvidenceChain
@@ -59,8 +60,7 @@ MAX_TEXT_PER_CLUSTER: int = 200
 MAX_RISK_HYPOTHESES: int = 5
 MAX_PIVOT_RECOMMENDATIONS: int = 5
 
-@dataclass(frozen=True, slots=True)
-class AnalystBrief:
+class AnalystBrief(msgspec.Struct, frozen=True):
     """
     Sprint F204E: Analyst brief produced at sprint teardown.
     F225B: Added source_family_summary, evidence_gaps, risk_hypotheses,
@@ -105,8 +105,7 @@ class AnalystBrief:
     pivot_recommendations: tuple[str, ...] = field(default_factory=lambda: ())
     target_memory_feedback: dict[str, Any] = field(default_factory=lambda: {})
 
-@dataclass(frozen=True, slots=True)
-class EvidencePointer:
+class EvidencePointer(msgspec.Struct, frozen=True):
     """
     Evidence pointer for an analyst answer.
 
@@ -129,8 +128,7 @@ class EvidencePointer:
     envelope_available: bool
     snippet: str | None = None
 
-@dataclass(frozen=True, slots=True)
-class RelatedEntity:
+class RelatedEntity(msgspec.Struct, frozen=True):
     """
     Related entity from graph traversal.
 
@@ -147,8 +145,7 @@ class RelatedEntity:
     hops: int
     relation_types: frozenset[str] = field(default_factory=frozenset)
 
-@dataclass(slots=True)
-class AnalystAnswer:
+class AnalystAnswer(msgspec.Struct):
     """
     Complete analyst answer with evidence.
 

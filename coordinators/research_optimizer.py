@@ -35,8 +35,7 @@ class CachePolicy(Enum):
     MEMORY_ONLY = 'memory_only'
     PERSISTENT = 'persistent'
 
-@dataclass(slots=True)
-class OptimizationConfig:
+class OptimizationConfig(msgspec.Struct):
     """Configuration for research optimization."""
     strategy: OptimizationStrategy = OptimizationStrategy.BALANCED
     cache_policy: CachePolicy = CachePolicy.MEMORY_ONLY
@@ -48,8 +47,7 @@ class OptimizationConfig:
     batch_size: int = 10
     memory_limit_mb: float = 500.0
 
-@dataclass(frozen=True, slots=True)
-class QueryMetrics:
+class QueryMetrics(msgspec.Struct, frozen=True):
     """Metrics for a query type."""
     query_hash: str
     count: int = 0
@@ -57,8 +55,7 @@ class QueryMetrics:
     success_rate: float = 1.0
     last_executed: float | None = None
 
-@dataclass(frozen=True, slots=True)
-class OptimizedResult:
+class OptimizedResult(msgspec.Struct, frozen=True):
     """Result with optimization metadata."""
     data: Any
     cache_hit: bool

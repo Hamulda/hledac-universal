@@ -35,6 +35,7 @@ import logging
 import re
 from collections import deque
 from dataclasses import dataclass, field
+import msgspec
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from hledac.universal.utils.async_helpers import safe_gather_ok
@@ -74,8 +75,7 @@ except Exception:
     GLINER_AVAILABLE = False
     logger.debug('GLiNER check failed, using fallback NER')
 
-@dataclass(slots=True)
-class EntityCandidate:
+class EntityCandidate(msgspec.Struct):
     """
     Represents a candidate entity from Wikidata.
 
@@ -107,8 +107,7 @@ class EntityCandidate:
         """Create from dictionary."""
         return cls(entity_text=data['entity_text'], wikidata_id=data['wikidata_id'], label=data['label'], description=data['description'], types=data.get('types', []), context_score=data.get('context_score', 0.0), popularity_score=data.get('popularity_score', 0.0), final_score=data.get('final_score', 0.0))
 
-@dataclass(slots=True)
-class LinkedEntity:
+class LinkedEntity(msgspec.Struct):
     """
     Represents a successfully linked entity.
 

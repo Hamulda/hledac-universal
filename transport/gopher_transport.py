@@ -50,8 +50,7 @@ GTYPE_TN3270 = 'T'
 GTYPE_GIF = 'g'
 GTYPE_IMAGE = 'I'
 
-@dataclass(slots=True)
-class GopherResponse:
+class GopherResponse(msgspec.Struct):
     """Response from a Gopher request."""
     selector: str
     content: bytes
@@ -68,8 +67,7 @@ class GopherResponse:
     def size(self) -> int:
         return len(self.content)
 
-@dataclass(slots=True)
-class GopherItem:
+class GopherItem(msgspec.Struct):
     """Single item in a Gopher directory listing."""
     item_type: str
     display_string: str

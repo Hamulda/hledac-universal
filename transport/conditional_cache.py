@@ -64,13 +64,14 @@ while keeping the rest of curl_cffi, the in-memory env var
 ``HLEDAC_CONDITIONAL_CACHE=0`` is honored (default ON).
 """
 import logging
-import os
 import time
 import zlib
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any
+
 from hledac.universal.core.env_config import ENV
+
 logger = logging.getLogger('hledac.universal.transport.conditional_cache')
 _MAX_ENTRIES: int = 5000
 _DEFAULT_TTL_S: int = 3600
@@ -99,7 +100,7 @@ def _probe_zstd() -> Any:
         import zstandard as _zs
         _zstd_module = _zs
         logger.debug('conditional_cache: using zstd backend')
-    except Exception:
+    except ImportError:  # zstandard not installed
         _zstd_module = None
         logger.debug('conditional_cache: zstd unavailable, using zlib fallback')
     return _zstd_module
@@ -122,7 +123,7 @@ def _compress(body: bytes) -> bytes:
                 marker = b'\x01'
                 return marker + compressed
             return marker + body
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — zstd.ZstdError (lazy import, not available at top)
             logger.debug('conditional_cache: zstd compress failed: %s', e)
     try:
         compressed = zlib.compress(body, 6)
@@ -130,7 +131,7 @@ def _compress(body: bytes) -> bytes:
             marker = b'\x02'
             return marker + compressed
         return marker + body
-    except Exception as e:
+    except zlib.error as e:
         logger.debug('conditional_cache: zlib compress failed: %s', e)
     return b'\x00' + body
 
@@ -145,13 +146,13 @@ def _decompress(blob: bytes) -> bytes:
     if marker == b'\x01' and _zstd_module is not None:
         try:
             return _zstd_module.ZstdDecompressor().decompress(payload)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — zstd.ZstdError (lazy import)
             logger.debug('conditional_cache: zstd decompress failed: %s', e)
             return b''
     if marker == b'\x02':
         try:
             return zlib.decompress(payload)
-        except Exception as e:
+        except zlib.error as e:
             logger.debug('conditional_cache: zlib decompress failed: %s', e)
             return b''
     return payload
@@ -217,14 +218,14 @@ class _Backend:
             import diskcache
             try:
                 _DISKCACHE_DIR.mkdir(parents=True, exist_ok=True)
-            except Exception as e:
+            except OSError as e:  # permission denied, path not found
                 logger.debug('conditional_cache: mkdir %s failed: %s', _DISKCACHE_DIR, e)
                 return
             try:
                 self._diskcache = diskcache.Cache(str(_DISKCACHE_DIR), eviction_policy='FIFO', sqlite_journal_mode='WAL', sqlite_synchronous='NORMAL', store_gc_time=False, quota=_MAX_ENTRIES)
                 self._using_diskcache = True
                 logger.info('conditional_cache: diskcache backend at %s (quota=%d entries)', _DISKCACHE_DIR, _MAX_ENTRIES)
-            except Exception as e:
+            except OSError as e:  # permission denied, disk full, locked
                 logger.debug('conditional_cache: diskcache open failed (in-memory fallback): %s', e)
                 self._diskcache = None
         except ImportError:
@@ -235,7 +236,7 @@ class _Backend:
             try:
                 raw = self._diskcache.get(key)
                 return raw
-            except Exception as e:
+            except (OSError, KeyError) as e:  # disk I/O errors, corrupted entry
                 logger.debug('conditional_cache: diskcache get failed: %s', e)
         v = self._memory.get(key)
         if v is not None:
@@ -247,7 +248,7 @@ class _Backend:
             try:
                 self._diskcache.set(key, value)
                 return
-            except Exception as e:
+            except OSError as e:  # disk full, write error
                 logger.debug('conditional_cache: diskcache put failed: %s', e)
         self._memory[key] = value
         self._memory.move_to_end(key)
@@ -258,7 +259,7 @@ class _Backend:
         if self._diskcache is not None:
             try:
                 self._diskcache.close()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort cleanup
                 pass
             self._diskcache = None
             self._using_diskcache = False
@@ -275,7 +276,7 @@ def _encode_entry(entry: CacheEntry) -> bytes:
         parts.append(int(entry.status_code).to_bytes(4, 'little', signed=True))
         parts.append(len(body).to_bytes(4, 'little') + body)
         return b''.join(parts)
-    except Exception as e:
+    except (TypeError, ValueError, AttributeError) as e:  # field access, encoding, int conversion errors
         logger.debug('conditional_cache: encode failed: %s', e)
         return b''
 
@@ -371,11 +372,11 @@ def lookup(url: str) -> CacheEntry | None:
                     logger.debug('conditional_cache: sha256 mismatch for %s — cache corrupted, serving live', url)
                     _stats['lookup_misses'] += 1
                     return None
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort sha256 verification
                 pass
         _stats['lookup_hits'] += 1
         return entry
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — best-effort: decode/lookup errors return None gracefully
         logger.debug('conditional_cache: lookup failed: %s', e)
         _stats['lookup_errors'] += 1
         return None
@@ -453,7 +454,7 @@ def close_cache() -> None:
     if _backend is not None:
         try:
             _backend.close()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort cleanup
             pass
         _backend = None
 
@@ -466,6 +467,6 @@ def clear_cache_for_tests() -> None:
     if _backend is not None:
         try:
             _backend._memory.clear()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort memory clear
             pass
 __all__ = ['CacheEntry', 'close_cache', 'clear_cache_for_tests', 'conditional_headers_for', 'get_stats', 'lookup', 'record_conditional_result', 'reset_stats', 'store']

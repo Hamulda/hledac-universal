@@ -35,7 +35,9 @@ import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_fire_and_forget
+
+from hledac.universal.utils.async_helpers import safe_create_task, parallel
+
 if TYPE_CHECKING:
     from .base import Transport
 logger = logging.getLogger(__name__)
@@ -145,7 +147,7 @@ class TransportSupervisor:
                     await transport.stop()
             except TimeoutError:
                 logger.warning('[TransportSupervisor] Transport %r stop timed out', name)
-            except Exception as e:
+            except (KeyError, RuntimeError) as e:  # transport not found or stop failed
                 logger.error('[TransportSupervisor] Error stopping transport %r: %s', name, e)
         self._started = False
         logger.info('[TransportSupervisor] Stopped')
@@ -203,7 +205,7 @@ class TransportSupervisor:
                         await t.keepalive()
                 except TimeoutError:
                     logger.debug('[TransportSupervisor] keepalive timeout for transport %r', n)
-                except Exception as e:
+                except (KeyError, RuntimeError) as e:  # transport not found or keepalive failed
                     logger.debug('[TransportSupervisor] keepalive error for transport %r: %s', n, e)
             task = safe_create_task(_keepalive_wrapper(transport, name))
             coros.append((name, task))
@@ -212,13 +214,13 @@ class TransportSupervisor:
         tasks = [t for _, t in coros]
         try:
             async with asyncio.timeout(10.0):
-                await safe_gather_fire_and_forget(*tasks, label='transport_supervisor.keepalive')
+                await parallel(tasks, taskgroup=True, policy='log', ctx='transport_supervisor.keepalive', logger_instance=logger)
         except TimeoutError:
             logger.debug('[TransportSupervisor] keepalive batch timed out (some transports skipped)')
             for _, t in coros:
                 if not t.done():
                     t.cancel()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — fail-soft: aggregate gather result, unknown errors per-transport
             logger.debug('[TransportSupervisor] keepalive batch error: %s', e)
 
     async def _check_health_batch(self, failures: dict[str, int]) -> list[str]:
@@ -236,7 +238,7 @@ class TransportSupervisor:
                     healthy = await transport.is_healthy()
             except TimeoutError:
                 healthy = False
-            except Exception:
+            except (KeyError, RuntimeError):  # transport not found or health check failed
                 healthy = False
             self._last_health[name] = healthy
             if not healthy:
@@ -255,7 +257,7 @@ class TransportSupervisor:
         (stops, does not unregister) the lowest-priority transport.
         Priority order: dht > nym > i2p > tor > httpx > curl_cffi
         """
-        total_ram = sum((t.health_cost() for t in self._transports.values()))
+        total_ram = sum(t.health_cost() for t in self._transports.values())
         if total_ram <= self._ram_budget_mb:
             return
         overage_mb = total_ram - self._ram_budget_mb
@@ -272,7 +274,7 @@ class TransportSupervisor:
             try:
                 async with asyncio.timeout(SHUTDOWN_TIMEOUT_S):
                     await transport.stop()
-            except Exception as e:
+            except (KeyError, RuntimeError) as e:  # transport not found or pause failed
                 logger.error('[TransportSupervisor] Error pausing transport %r: %s', name, e)
             break
 
@@ -296,20 +298,20 @@ class TransportSupervisor:
                         await t.on_phase_boundary(old_phase, new_phase)
                 except TimeoutError:
                     logger.debug('[TransportSupervisor] on_phase_boundary timeout for %r', n)
-                except Exception as e:
+                except (KeyError, RuntimeError) as e:  # transport not found or notification failed
                     logger.debug('[TransportSupervisor] on_phase_boundary error for %r: %s', n, e)
             task = safe_create_task(_notify(transport, name))
             tasks.append(task)
         if tasks:
             try:
                 async with asyncio.timeout(15.0):
-                    await safe_gather_fire_and_forget(*tasks, label='transport_supervisor.phase_boundary')
+                    await parallel(tasks, taskgroup=True, policy='log', ctx='transport_supervisor.phase_boundary', logger_instance=logger)
             except TimeoutError:
                 logger.warning('[TransportSupervisor] Phase boundary notification timed out')
 
     def get_status(self) -> dict:
         """Return supervisor status for telemetry."""
-        total_ram = sum((t.health_cost() for t in self._transports.values()))
+        total_ram = sum(t.health_cost() for t in self._transports.values())
         return {'phase': self._phase, 'started': self._started, 'transport_count': len(self._transports), 'total_ram_mb': total_ram, 'ram_budget_mb': self._ram_budget_mb, 'health': {name: self._last_health.get(name, False) for name in self._transports}}
 
     @property

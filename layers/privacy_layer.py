@@ -89,8 +89,7 @@ except ImportError:
     ProtocolSpec = None
     HAS_PCG = False
 
-@dataclass(slots=True)
-class PrivacyContext:
+class PrivacyContext(msgspec.Struct):
     """Privacy context for operations."""
     level: PrivacyLevel
     identity_id: str | None = None

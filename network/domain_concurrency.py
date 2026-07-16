@@ -14,7 +14,10 @@ Authoritative arms: network/domain_concurrency.py
 
 
 import math
-import random
+import secrets
+
+# Crypto-safe RNG — F350M-R
+_RNG = secrets.SystemRandom()
 
 # =============================================================================
 # Arm Definition — Fibonacci-like conservative concurrency levels
@@ -94,7 +97,7 @@ class DomainConcurrencyBandit:
             return 0
 
         probs = self._softmax_probs()
-        r = random.random()
+        r = _RNG.random()
         cumulative = 0.0
         for i, p in enumerate(probs):
             cumulative += p

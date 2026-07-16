@@ -16,14 +16,14 @@ Usage:
 import logging
 import threading
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 from hledac_rust_extensions import LSHIndex, lsh_index_new, lsh_estimate_recall, batch_compute_simhash, hamming_dist
 logger = logging.getLogger(__name__)
 DEFAULT_NUM_TABLES = 16
 DEFAULT_NUM_ROWS = 4
 
-@dataclass(slots=True)
-class LSHStats:
+class LSHStats(msgspec.Struct):
     """Statistics for LSH near-duplicate detection."""
     num_documents: int = 0
     num_tables: int = DEFAULT_NUM_TABLES

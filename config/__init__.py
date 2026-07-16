@@ -35,8 +35,7 @@ class ResearchPresets:
     def get_preset(cls, mode: ResearchMode) -> dict[str, Any]:
         return {ResearchMode.QUICK: cls.QUICK, ResearchMode.STANDARD: cls.STANDARD, ResearchMode.DEEP: cls.DEEP, ResearchMode.EXTREME: cls.EXTREME, ResearchMode.AUTONOMOUS: cls.AUTONOMOUS}.get(mode, cls.STANDARD)
 
-@dataclass(slots=True)
-class SecurityConfig:
+class SecurityConfig(msgspec.Struct):
     obfuscation_level: str = 'medium'
     generate_decoys: bool = True
     decoy_count: int = 20
@@ -52,8 +51,7 @@ class SecurityConfig:
     enable_audit_logging: bool = True
     anonymize_pii: bool = True
 
-@dataclass(frozen=True, slots=True)
-class StealthConfig:
+class StealthConfig(msgspec.Struct, frozen=True):
     browser_type: str = 'chromium'
     headless: bool = True
     pool_size: int = 2
@@ -72,8 +70,7 @@ class StealthConfig:
     enable_proxy_rotation: bool = False
     proxy_list: list[str] = field(default_factory=list)
 
-@dataclass(frozen=True, slots=True)
-class PrivacyConfig:
+class PrivacyConfig(msgspec.Struct, frozen=True):
     enable_vpn: bool = False
     vpn_config_path: str | None = None
     enable_tor: bool = False
@@ -84,8 +81,7 @@ class PrivacyConfig:
     enable_encryption: bool = True
     encryption_algorithm: str = 'fernet'
 
-@dataclass(frozen=True, slots=True)
-class UniversalConfig:
+class UniversalConfig(msgspec.Struct, frozen=True):
     mode: ResearchMode = ResearchMode.STANDARD
     research: ResearchConfig = field(default_factory=ResearchConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)

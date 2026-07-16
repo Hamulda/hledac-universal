@@ -33,6 +33,7 @@ import itertools
 import logging
 from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
+import msgspec
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any
@@ -223,8 +224,7 @@ class AnomalyType(Enum):
     COLLECTIVE = 'collective'
     SEASONAL = 'seasonal'
 
-@dataclass(slots=True)
-class Event:
+class Event(msgspec.Struct):
     """Generic event for pattern mining."""
     timestamp: datetime
     entity_id: str
@@ -232,8 +232,7 @@ class Event:
     value: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
-@dataclass(slots=True)
-class Action:
+class Action(msgspec.Struct):
     """User action for behavioral pattern mining."""
     timestamp: datetime
     user_id: str
@@ -242,8 +241,7 @@ class Action:
     duration_ms: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
-@dataclass(slots=True)
-class Communication:
+class Communication(msgspec.Struct):
     """Communication event for pattern mining."""
     timestamp: datetime
     sender: str
@@ -252,8 +250,7 @@ class Communication:
     size_bytes: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
-@dataclass(slots=True)
-class Transaction:
+class Transaction(msgspec.Struct):
     """Financial transaction for flow analysis."""
     timestamp: datetime
     sender: str
@@ -263,8 +260,7 @@ class Transaction:
     transaction_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
-@dataclass(slots=True)
-class Pattern:
+class Pattern(msgspec.Struct):
     """Base pattern class."""
     pattern_type: PatternType
     description: str
@@ -354,8 +350,7 @@ class SequentialPattern(Pattern):
             self.pattern_type = PatternType.SEQUENTIAL
         self.sequence_length = len(self.sequence)
 
-@dataclass(slots=True)
-class Anomaly:
+class Anomaly(msgspec.Struct):
     """Detected anomaly in data."""
     anomaly_type: AnomalyType
     timestamp: datetime
@@ -366,8 +361,7 @@ class Anomaly:
     actual_value: float | None = None
     related_pattern: str | None = None
 
-@dataclass(slots=True)
-class CorrelationMatrix:
+class CorrelationMatrix(msgspec.Struct):
     """Cross-pattern correlation results."""
     pattern_ids: list[str] = field(default_factory=list)
     correlation_matrix: np.ndarray = field(default_factory=lambda: np.array([]))

@@ -19,6 +19,7 @@ Edit ONLY these files:
 
 
 import asyncio
+import msgspec
 import tempfile
 import time as time_module
 from pathlib import Path

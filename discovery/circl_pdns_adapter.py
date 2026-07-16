@@ -15,6 +15,7 @@ No API key required — CIRCL PDNS community tier is keyless.
 Fail-soft throughout.
 """
 import asyncio
+import msgspec
 import logging
 import time
 from dataclasses import dataclass
@@ -41,8 +42,7 @@ class PDNSProviderStatus(Enum):
     COOLDOWN_ACTIVE = 'cooldown_active'
     PROVIDER_FAILURE = 'provider_failure'
 
-@dataclass(frozen=True, slots=True)
-class PDNSOutcome:
+class PDNSOutcome(msgspec.Struct, frozen=True):
     """
     Normalized CIRCL PDNS adapter outcome — F229.
 

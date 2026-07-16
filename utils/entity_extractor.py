@@ -50,8 +50,7 @@ class PatternType(Enum):
     URL = 'url'
     PHONE = 'phone'
 
-@dataclass(slots=True)
-class ExtractedEntity:
+class ExtractedEntity(msgspec.Struct):
     """Extracted entity with metadata."""
     pattern_type: PatternType
     value: str

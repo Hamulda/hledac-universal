@@ -64,8 +64,7 @@ def _deserialize_cnew(data: bytes) -> dict[str, ContextItem]:
         result[k] = _deserialize_context_item(v)
     return result
 
-@dataclass(slots=True)
-class ContextItem:
+class ContextItem(msgspec.Struct):
     """Individual context item with metadata."""
     item_id: str
     content: str

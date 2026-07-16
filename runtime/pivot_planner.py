@@ -24,6 +24,7 @@ Each pivot output:
 - evidence_pointers: list of source finding_ids
 """
 import logging
+import msgspec
 import msgspec.json as _json
 import math
 import re
@@ -51,8 +52,7 @@ class PivotType:
     ARCHIVE = 'archive'
     GRAPH = 'graph'
 
-@dataclass(frozen=True, order=True, slots=True)
-class Pivot:
+class Pivot(msgspec.Struct, frozen=True):
     """
     A single investigation pivot derived from findings.
 
@@ -81,8 +81,7 @@ class Pivot:
     estimated_cost: float = field(compare=False, default=0.5)
     mission_boost: float = field(compare=False, default=1.0)
 
-@dataclass(slots=True)
-class PivotStats:
+class PivotStats(msgspec.Struct):
     """
     Tracks pivot usage history for exponential decay scoring.
     Tracks successes/failures so underperforming or stale pivots lose priority.

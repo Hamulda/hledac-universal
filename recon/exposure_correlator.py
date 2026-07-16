@@ -72,8 +72,7 @@ def reset_correlator_stats() -> None:
     _stats.clear()
     _stats.update({'assets_registered': 0, 'signals_extracted': 0, 'correlations_run': 0, 'findings_produced': 0, 'exposed_hosts_found': 0, 'open_buckets_found': 0, 'infra_clusters_found': 0, 'subdomain_takeovers_found': 0})
 
-@dataclass(slots=True)
-class AssetSignal:
+class AssetSignal(msgspec.Struct):
     """A single signal associated with an asset."""
     signal_type: str
     asset_key: str
@@ -81,8 +80,7 @@ class AssetSignal:
     metadata: dict
     finding_id: str
 
-@dataclass(slots=True)
-class Asset:
+class Asset(msgspec.Struct):
     """An asset (host, domain, IP) with collected signals."""
     key: str
     signals: list[AssetSignal] = field(default_factory=list)
@@ -103,8 +101,7 @@ class Asset:
     def has_dns(self) -> bool:
         return any((s.signal_type == SIGNAL_TYPE_PASSIVE_DNS for s in self.signals))
 
-@dataclass(slots=True)
-class ExposureFinding:
+class ExposureFinding(msgspec.Struct):
     """A correlated exposure finding with evidence."""
     corr_type: str
     asset_key: str
@@ -345,8 +342,7 @@ def _classify_jarm_hosting(jarm_hash: str, http_status: int) -> str:
         return 'real_content'
     return 'unknown'
 
-@dataclass(slots=True)
-class OpenStorageResult:
+class OpenStorageResult(msgspec.Struct):
     """Normalized DTO for open storage scan results."""
     url: str
     status: int

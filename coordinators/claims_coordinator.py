@@ -16,8 +16,9 @@ from collections import deque
 from dataclasses import dataclass
 import msgspec
 from typing import Any
-from hledac.universal.intelligence.confidence_policy import compute_confidence
+from hledac.universal.intel.confidence_policy import compute_confidence
 from .base import UniversalCoordinator
+from hledac.universal.utils.async_helpers import parallel
 logger = logging.getLogger(__name__)
 MAX_UNCERTAIN_CLUSTERS = 10
 MAX_PENDING_EVIDENCE_IDS = 10000
@@ -29,8 +30,7 @@ PROVENANCE_BONUS = 0.1
 TITLE_AGREEMENT_BONUS = 0.1
 MAX_CONFIDENCE = 0.75
 
-@dataclass(slots=True)
-class ClaimsCoordinatorConfig:
+class ClaimsCoordinatorConfig(msgspec.Struct):
     """Configuration for ClaimsCoordinator."""
     max_evidence_per_step: int = 10
     max_clusters_per_step: int = 20
@@ -73,7 +73,7 @@ class ClaimsCoordinator(UniversalCoordinator):
         from .base import OperationType
         return [OperationType.SYNTHESIS, OperationType.RESEARCH]
 
-    async def handle_request(self, operation_ref: str, decision: Any) -> Any:
+    async def handle_request(self, operation_ref: str, decision: Any) -> Any:  # noqa: ARG001
         """
         Handle a decision request (required by UniversalCoordinator base).
 
@@ -129,8 +129,9 @@ class ClaimsCoordinator(UniversalCoordinator):
                 evidence_to_process.append(eid)
         clusters_updated = 0
         uncertain_clusters = []
-        for evidence_id in evidence_to_process:
-            result = await self._process_evidence(evidence_id)
+        coros: list = [self._process_evidence(e) for e in evidence_to_process]
+        raw = await parallel(coros, concurrency=self._max_concurrent, policy="collect", ctx="claims_coordinator.step")
+        for result in raw.ok:
             if result:
                 self._evidence_processed += 1
                 clusters_updated += result.get('clusters_updated', 0)
@@ -186,8 +187,6 @@ class ClaimsCoordinator(UniversalCoordinator):
             for claim in claims:
                 cluster_id = claim_index.add_claim(evidence_id=evidence_id, claim_text=claim.get('text', ''), polarity=claim.get('polarity', 'neutral'), domain=evidence_packet.get('domain', 'unknown'))
                 if cluster_id:
-                    if self._config.enable_stance_update:
-                        pass
                     cluster = claim_index.get_cluster(cluster_id)
                     if cluster and len(cluster.evidence_ids) < 3:
                         uncertain.append(cluster_id)
@@ -328,7 +327,7 @@ class ClaimsCoordinator(UniversalCoordinator):
         """
         return {'claims_extracted_count': self._claims_extracted_count, 'claims_positive_count': self._claims_positive_count, 'claims_negative_count': self._claims_negative_count, 'claims_neutral_count': self._claims_neutral_count, 'claims_low_confidence_count': self._claims_low_confidence_count, 'claims_extraction_packets_seen': self._claims_extraction_packets_seen, 'claims_extraction_packets_with_claims': self._claims_extraction_packets_with_claims}
 
-    async def _do_shutdown(self, ctx: dict[str, Any]) -> None:
+    async def _do_shutdown(self, ctx_: dict[str, Any]) -> None:
         """Cleanup on shutdown."""
         logger.info(f'ClaimsCoordinator shutting down: {self._evidence_processed} evidence processed')
         self._pending_evidence_ids.clear()

@@ -34,6 +34,7 @@ INVARIANTS:
 """
 import os
 from dataclasses import dataclass
+import msgspec
 from core.env_config import ENV
 from enum import Enum
 from typing import Literal
@@ -52,8 +53,7 @@ Tier = Literal['T0_curl_cffi', 'T1_httpx_h2', 'T2_httpx_h3', 'T3_js_renderer']
 _SOFT_GIB: float = 4.5
 _HARD_GIB: float = 6.0
 
-@dataclass(frozen=True, slots=True)
-class TransportPolicyDecision:
+class TransportPolicyDecision(msgspec.Struct, frozen=True):
     """
     Output of get_transport_policy().
 

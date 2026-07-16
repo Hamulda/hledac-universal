@@ -18,6 +18,7 @@ import pytest
 from hledac.universal.utils.feature_flags import is_enabled
 from hledac.universal.utils.flag_registry import (
     FLAG_REGISTRY,
+    FlagGroup,
     VALID_GROUPS,
     FlagRegistryError,
     FlagSpec,
@@ -193,9 +194,10 @@ def test_register_rejects_invalid_group() -> None:
     """Group typo → :class:`FlagRegistryError` at registration time."""
     # ``cast`` bypasses the Literal type check so we can deliberately
     # feed an invalid group string to the runtime validator.
+    # msgspec.Struct doesn't have __dataclass_fields__, use typing.cast instead.
     bad = FlagSpec(
         name="HLEDAC_TEST_BAD_GROUP",
-        group=cast(FlagSpec.__dataclass_fields__["group"].type, "brian"),  # type: ignore[valid-type]
+        group=cast(FlagGroup, "brian"),  # type: ignore[arg-type]
     )
     with pytest.raises(FlagRegistryError) as excinfo:
         register(bad)

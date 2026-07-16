@@ -24,7 +24,8 @@ Sprint F320: Issue #10 per-source manual rate limiting.
 
 import asyncio
 import logging
-import random
+import math
+import secrets
 import time
 import urllib.parse
 from typing import ClassVar
@@ -32,6 +33,16 @@ from typing import ClassVar
 __all__ = ["DomainRateLimiter", "LMDBDomainRateLimiter"]
 
 logger = logging.getLogger(__name__)
+
+# Crypto-safe RNG — F350M-R
+_RNG = secrets.SystemRandom()
+
+def _gauss(mu: float, sigma: float) -> float:
+    """Box-Muller transform for Gaussian random numbers using crypto-safe RNG."""
+    u1 = _RNG.random()
+    u2 = _RNG.random()
+    z0 = math.sqrt(-2.0 * math.log(u1)) * math.cos(2.0 * math.pi * u2)
+    return mu + sigma * z0
 
 # Default rates per domain category
 _DEFAULT_RPS: float = 5.0
@@ -245,7 +256,7 @@ class DomainRateLimiter:
         """Apply Gaussian jitter to wait time (±15%)."""
         if self._jitter_sigma <= 0.0 or wait <= 0.0:
             return wait
-        jitter = random.gauss(0.0, self._jitter_sigma)
+        jitter = _gauss(0.0, self._jitter_sigma)
         jitter = max(-self._jitter_sigma, min(self._jitter_sigma, jitter))
         return max(0.0, wait * (1.0 + jitter))
 

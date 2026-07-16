@@ -35,6 +35,7 @@ Usage:
 import asyncio
 import logging
 from dataclasses import dataclass
+import msgspec
 from typing import TYPE_CHECKING, Any, Final
 
 import numpy as np
@@ -73,8 +74,7 @@ MIN_TEXT_LEN: Final[int] = 50  # minimum text length for embedding dedup
 # ── Result Types ───────────────────────────────────────────────────────────────
 
 
-@dataclass(frozen=True, slots=True)
-class DedupResult:
+class DedupResult(msgspec.Struct, frozen=True):
     """Embedding-based dedup advisory result."""
     is_duplicate: bool
     similarity: float  # cosine similarity to nearest neighbor

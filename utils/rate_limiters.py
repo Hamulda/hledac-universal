@@ -10,8 +10,20 @@ Provides async-safe TokenBucket with:
 Sprint 7A scope: SSOT layer only, no sweeping integration.
 """
 import asyncio
-import random
+import math
+import secrets
 import time
+
+# Crypto-safe RNG — F350M-R
+_RNG = secrets.SystemRandom()
+
+def _gauss(mu: float, sigma: float) -> float:
+    """Box-Muller transform for Gaussian random numbers using crypto-safe RNG."""
+    u1 = _RNG.random()
+    u2 = _RNG.random()
+    z0 = math.sqrt(-2.0 * math.log(u1)) * math.cos(2.0 * math.pi * u2)
+    return mu + sigma * z0
+
 QOS_CLASS_USER_INTERACTIVE = 33
 QOS_CLASS_USER_INITIATED = 25
 QOS_CLASS_UTILITY = 17
@@ -92,7 +104,7 @@ class TokenBucket:
         else:
             base_wait = (1.0 - self._tokens) / self._rate
         if self._jitter_sigma > 0.0:
-            jitter = random.gauss(0.0, self._jitter_sigma)
+            jitter = _gauss(0.0, self._jitter_sigma)
             jitter = max(-self._jitter_sigma, min(self._jitter_sigma, jitter))
             wait = base_wait * (1.0 + jitter)
         else:

@@ -315,10 +315,11 @@ class _JARMFingerprinter:
         alpn: bytes | None = None
     ) -> bytes:
         """Build a TLS Client Hello packet."""
-        import random
+        import secrets
+        _JARM_RNG = secrets.SystemRandom()
 
         # Generate random session ID
-        session_id = bytes([random.randint(0, 255) for _ in range(32)])
+        session_id = bytes([_JARM_RNG.randint(0, 255) for _ in range(32)])
 
         # Build cipher suites (2 bytes each)
         cipher_bytes = b"".join(struct.pack(">H", c) for c in ciphers)
@@ -377,7 +378,7 @@ class _JARMFingerprinter:
         import time
         random_bytes = bytes([
             (int(time.time()) >> (8 * i)) & 0xFF for i in range(4)
-        ] + [random.randint(0, 255) for _ in range(28)])
+        ] + [_JARM_RNG.randint(0, 255) for _ in range(28)])
         parts.append(random_bytes)
 
         # Session ID

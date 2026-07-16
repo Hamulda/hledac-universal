@@ -62,8 +62,7 @@ def _check_coreml_engine_available() -> bool:
     logger.info(f'[CoreML-ANE] Engine available — model: {_ANE_MODEL_PATH}')
     return True
 
-@dataclass(slots=True)
-class CoreMLModernBERTConfig:
+class CoreMLModernBERTConfig(msgspec.Struct):
     """Configuration for CoreML ANE ModernBERT embedder."""
     model_path: Path = field(default_factory=lambda: _ANE_MODEL_PATH)
     max_seq_len: int = 512

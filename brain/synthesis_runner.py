@@ -19,6 +19,7 @@ E2E flow:
   → unload + gc → JSON export do ~/.hledac/reports/
 """
 from __future__ import annotations
+import msgspec
 
 import asyncio
 import gc

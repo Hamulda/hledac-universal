@@ -34,6 +34,7 @@ import asyncio
 import logging
 import weakref
 from dataclasses import dataclass, field
+import msgspec
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -155,16 +156,14 @@ def _get_rust_pool() -> bool | None:
 # ============================================================================
 
 
-@dataclass(slots=True, frozen=True)
-class DBCoordinates:
+class DBCoordinates(msgspec.Struct, frozen=True):
     """Coordinates for a database operation."""
     db: str  # "duckdb" | "lmdb"
     table: str | None = None
     schema: str | None = None
 
 
-@dataclass(slots=True)
-class QueryResult:
+class QueryResult(msgspec.Struct):
     """Generic query result."""
     rows: list[dict[str, Any]]
     columns: list[str]

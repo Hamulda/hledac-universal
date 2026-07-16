@@ -30,8 +30,7 @@ CONFIRMATION_BOOST_MIN = 0.5
 CONFIRMATION_DECAY = 0.05
 CONFIRMATION_GROWTH = 0.1
 
-@dataclass(frozen=True, slots=True)
-class TemporalEvent:
+class TemporalEvent(msgspec.Struct, frozen=True):
     ts: float
     key: str
     family: str = 'generic'
@@ -39,8 +38,7 @@ class TemporalEvent:
     weight: float = 1.0
     labels: tuple[str, ...] = ()
 
-@dataclass(frozen=True, slots=True)
-class TemporalScore:
+class TemporalScore(msgspec.Struct, frozen=True):
     key: str
     family: str
     event_count: int
@@ -55,8 +53,7 @@ class TemporalScore:
     autocorr_lag1: float
     reason: str
 
-@dataclass(frozen=True, slots=True)
-class TemporalEdgeCandidate:
+class TemporalEdgeCandidate(msgspec.Struct, frozen=True):
     src_key: str
     dst_key: str
     edge_type: str
@@ -65,8 +62,7 @@ class TemporalEdgeCandidate:
     window_end: float
     reason: str
 
-@dataclass(slots=True)
-class _KeyState:
+class _KeyState(msgspec.Struct):
     last_ts: float = 0.0
     event_count: int = 0
     ewma_rate: float = 0.0

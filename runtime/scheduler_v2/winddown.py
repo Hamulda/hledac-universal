@@ -16,6 +16,7 @@ Design:
 import asyncio
 import time as _time
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 from hledac.universal.utils.async_helpers import safe_create_task
 
@@ -35,8 +36,7 @@ def _maybe_call_pressure_relief(ctx: Any) -> None:
     except Exception:
         pass
 
-@dataclass(slots=True)
-class WinddownPhaseResult:
+class WinddownPhaseResult(msgspec.Struct):
     """Result from the winddown phase."""
     export_paths: list[str] = field(default_factory=list)
     synthesis_success: bool = False

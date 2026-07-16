@@ -32,8 +32,7 @@ class EnclaveAvailability(Enum):
     SIGNED = 'signed'
     FAIL_SOFT = 'fail_soft'
 
-@dataclass(slots=True)
-class EnclaveStatus:
+class EnclaveStatus(msgspec.Struct):
     """Current status of the secure enclave backend."""
     availability: EnclaveAvailability = EnclaveAvailability.DISABLED
     backend_name: str = 'null'
@@ -41,16 +40,14 @@ class EnclaveStatus:
     signed_batch_digest: str | None = None
     chunk_count: int = 0
 
-@dataclass(frozen=True, slots=True)
-class SignedDigest:
+class SignedDigest(msgspec.Struct, frozen=True):
     """A single Secure Enclave signature over a canonical batch digest."""
     batch_digest: str
     signature: bytes
     backend_name: str
     chunk_count: int
 
-@dataclass(frozen=True, slots=True)
-class BatchManifest:
+class BatchManifest(msgspec.Struct, frozen=True):
     """Canonical manifest for a chunk batch — used for signing."""
     chunk_count: int
     chunk_hashes: list[str]

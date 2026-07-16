@@ -12,7 +12,8 @@ No async. No threads. No I/O.
 
 import collections.abc
 import time
-from dataclasses import dataclass, field
+import msgspec
+from dataclasses import dataclass
 from enum import Enum, auto
 
 # ── Phase enum ───────────────────────────────────────────────────────────────
@@ -50,8 +51,7 @@ _PHASE_ORDER = [
 
 # ── Manager ──────────────────────────────────────────────────────────────────
 
-@dataclass(slots=True)
-class SprintLifecycleManager:
+class SprintLifecycleManager(msgspec.Struct):
     """
     Lightweight sprint lifecycle state machine.
 
@@ -77,15 +77,15 @@ class SprintLifecycleManager:
     checkpoint_path: str = ""                    # metadata only — no I/O here
 
     # Mutable state
-    _started_at: float | None = field(default=None, repr=False)
-    _current_phase: SprintPhase = field(default=SprintPhase.BOOT, repr=False)
-    _entered_phase_at: float | None = field(default=None, repr=False)
-    _phase_history: dict = field(default_factory=dict, repr=False)  # phase→entered_at timestamp
-    _export_started: bool = field(default=False, repr=False)
-    _teardown_started: bool = field(default=False, repr=False)
-    _abort_requested: bool = field(default=False, repr=False)
-    _abort_reason: str = field(default="", repr=False)
-    _last_checkpoint_at: float | None = field(default=None, repr=False)
+    _started_at: float | None = None
+    _current_phase: SprintPhase = SprintPhase.BOOT
+    _entered_phase_at: float | None = None
+    _phase_history: dict = {}
+    _export_started: bool = False
+    _teardown_started: bool = False
+    _abort_requested: bool = False
+    _abort_reason: str = ""
+    _last_checkpoint_at: float | None = None
 
     # F288: Pre-loop cost measured at runtime — subtracted from windup_lead_s
     # so should_enter_windup() does not fire prematurely when init is slow.
@@ -105,15 +105,7 @@ class SprintLifecycleManager:
     # Issue 1.2 — Phase TaskGroup callbacks
     # Invoked synchronously after _transition_to_unlocked() updates phase.
     # Fail-safe: each callback wrapped in try/except Exception.
-    _on_phase_exit_callbacks: list[collections.abc.Callable[[SprintPhase, SprintPhase], None]] = field(default_factory=list, repr=False)
-
-    # Issue 3.3 — Transport circuit event callback
-    # Set by SprintScheduler when it wires the circuit breaker to the lifecycle.
-    # Receives (event: str, domain: str) — events are TRANSPORT_CIRCUIT_OPEN/HALF_OPEN/CLOSE.
-    # When TRANSPORT_CIRCUIT_OPEN is received during ACTIVE phase and first_cycle_ran=True,
-    # the lifecycle requests windup via request_windup() — giving up Tor rotation
-    # and reducing concurrent transport requests.
-    _transport_event_callback: collections.abc.Callable[[str, str], None] | None = field(default=None, repr=False)
+    _on_phase_exit_callbacks: list[collections.abc.Callable[[SprintPhase, SprintPhase], None]] = []
 
     # ── Phase exit callbacks (Issue 1.2) ───────────────────────────────────────
 
@@ -146,64 +138,6 @@ class SprintLifecycleManager:
             self._on_phase_exit_callbacks.remove(cb)
         except ValueError:
             pass
-
-    def set_transport_event_callback(
-        self,
-        cb: collections.abc.Callable[[str, str], None] | None,
-    ) -> None:
-        """
-        Set the transport circuit event callback.
-
-        Issue 3.3: Wires the circuit breaker (transport/circuit_breaker.py) to the
-        lifecycle. When a circuit transitions to OPEN during the ACTIVE phase and
-        at least one acquisition cycle has completed (first_cycle_ran=True), the
-        lifecycle requests wind-down via request_windup().
-
-        This is the cutting-edge solution: the watchdog does not directly manage the
-        sprint wind-down — it delegates to the lifecycle, which owns the authoritative
-        phase state machine.
-
-        The callback receives (event: str, domain: str) where event is one of:
-        - TRANSPORT_CIRCUIT_OPEN: circuit transitioned to OPEN — trigger wind-down
-        - TRANSPORT_CIRCUIT_HALF_OPEN: circuit probing recovery — informational
-        - TRANSPORT_CIRCUIT_CLOSE: circuit recovered — informational
-
-        The callback is invoked fail-safely inside a try/except Exception block.
-        """
-        self._transport_event_callback = cb
-
-    def _handle_transport_event(self, event: str, domain: str) -> None:
-        """
-        Internal handler for transport circuit events.
-
-        Issue 3.3: TRANSPORT_CIRCUIT_OPEN during ACTIVE phase triggers wind-down.
-        Guard: first_cycle_ran must be True (at least one cycle must have completed
-        to avoid premature wind-down on early failures).
-
-        All other events (HALF_OPEN, CLOSE) are logged only.
-        """
-        if event == "TRANSPORT_CIRCUIT_OPEN":
-            if self._current_phase == SprintPhase.ACTIVE:
-                if self.first_cycle_ran:
-                    import logging as _logger
-                    _logger.warning(
-                        "[SPRINT-LIFECYCLE] TRANSPORT_CIRCUIT_OPEN on %s — "
-                        "requesting wind-down (first_cycle_ran=True)",
-                        domain,
-                    )
-                    self.request_windup()
-                else:
-                    import logging as _logger
-                    _logger.debug(
-                        "[SPRINT-LIFECYCLE] TRANSPORT_CIRCUIT_OPEN on %s "
-                        "— first_cycle_ran=False, blocking wind-down",
-                        domain,
-                    )
-        elif event == "TRANSPORT_CIRCUIT_CLOSE":
-            import logging as _logger
-            _logger.debug(
-                "[SPRINT-LIFECYCLE] TRANSPORT_CIRCUIT_CLOSE on %s", domain
-            )
 
     # ── start ────────────────────────────────────────────────────────────────
 
@@ -735,88 +669,6 @@ class SprintLifecycleManager:
         from_idx = _PHASE_ORDER.index(from_phase)
         to_idx = _PHASE_ORDER.index(to_phase)
         return to_idx == from_idx + 1
-
-
-# ── Phase Concurrency Policy ─────────────────────────────────────────────────
-
-from dataclasses import dataclass  # noqa: E402
-
-
-@dataclass(slots=True, frozen=True)
-class PhaseConcurrencyPolicy:
-    """
-    F314: Per-phase concurrency limits with UMA-aware throttling.
-
-    Issue requirement: Pre-flight ≤2; acquisition 4–8; analysis 2.
-
-    Policy is IMMUTABLE (frozen=True, slots=True) — created by
-    for_phase() classmethod, never mutated after creation.
-    M1 8GB RAM: ~50 bytes per instance vs ~200 bytes for a dataclass without slots.
-    """
-
-    phase: SprintPhase
-    base_max_concurrency: int
-    uma_throttle_map: dict[str, int]
-
-    @classmethod
-    def for_phase(cls, phase: SprintPhase, _uma_state: str = "ok") -> PhaseConcurrencyPolicy:
-        """
-        Factory: build a policy for the given phase, throttled by UMA state.
-
-        Base limits from issue: Pre-flight ≤2; acquisition 4–8; analysis 2.
-        Uma_throttle_map overrides base_max_concurrency when UMA state matches.
-
-        Note: ``_uma_state`` is a template parameter for API symmetry with
-        ``max_concurrency()`` — the full throttle map is built for all states
-        at construction time, so runtime lookup is a simple dict get.
-        """
-        # Base limits per phase (pre-flight=BOOT/WARMUP, acquisition=ACTIVE, analysis=WINDUP/EXPORT)
-        _BASE: dict[SprintPhase, int] = {
-            SprintPhase.BOOT: 2,       # Pre-flight: ≤2
-            SprintPhase.WARMUP: 3,      # Pre-flight + model warmup
-            SprintPhase.ACTIVE: 6,      # Acquisition: 4–8 (6 is midpoint)
-            SprintPhase.WINDUP: 2,      # Analysis / wind-down: ≤2
-            SprintPhase.EXPORT: 2,      # Export: ≤2
-            SprintPhase.TEARDOWN: 1,   # Teardown: minimal concurrency
-        }
-        # UMA-aware throttle overrides: more restrictive on lower UMA states
-        # Structure: {current_uma_state: {query_uma_state: concurrency_override}}
-        _UMA_THROTTLE: dict[str, dict[str, int]] = {
-            # soft_warn: reduce by 1, floor at 1
-            "soft_warn": {"soft_warn": 1, "warn": 1, "critical": 1, "emergency": 1},
-            # warn: reduce by 2, floor at 1
-            "warn": {"warn": 2, "critical": 1, "emergency": 1},
-            # critical: aggressive reduction
-            "critical": {"critical": 1, "emergency": 1},
-            # emergency: hard cap at 1
-            "emergency": {"emergency": 1},
-        }
-
-        base = _BASE.get(phase, 2)
-        uma_throttle_map: dict[str, int] = {}
-
-        # Build per-UMA-state override map
-        for state_name, overrides in _UMA_THROTTLE.items():
-            if state_name in overrides:
-                override_val = overrides[state_name]
-                uma_throttle_map[state_name] = max(override_val, 1)
-            else:
-                # States not explicitly overridden get base
-                uma_throttle_map[state_name] = base
-
-        return cls(
-            phase=phase,
-            base_max_concurrency=base,
-            uma_throttle_map=dict(uma_throttle_map),
-        )
-
-    def max_concurrency(self, uma_state: str = "ok") -> int:
-        """
-        Effective concurrency limit for this phase, respecting UMA throttle.
-
-        Returns at minimum 1 (always at least 1 concurrent operation).
-        """
-        return max(self.uma_throttle_map.get(uma_state, self.base_max_concurrency), 1)
 
 
 # ── Clock helper ─────────────────────────────────────────────────────────────

@@ -66,8 +66,7 @@ except ImportError:
     MLX_EMBEDDINGS_AVAILABLE = False
     _ModernBERTMLXLoader = None
 
-@dataclass(slots=True)
-class ModernBERTConfig:
+class ModernBERTConfig(msgspec.Struct):
     """Configuration for ModernBERT embedder."""
     model_path: str = 'nomic-ai/modernbert-embed-base'
     max_seq_len: int = 512

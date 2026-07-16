@@ -28,8 +28,7 @@ MAX_ENTRIES = 200
 MAX_BYTES = 256 * 1024
 ALLOWED_EXTENSIONS = {'.txt', '.csv', '.json', '.log', '.md', '.xml', '.yaml', '.yml'}
 
-@dataclass(slots=True)
-class FTPListingItem:
+class FTPListingItem(msgspec.Struct):
     """Represents a single item in FTP directory listing."""
     path: str
     is_dir: bool

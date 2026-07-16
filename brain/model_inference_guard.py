@@ -39,8 +39,7 @@ class ModelGuardDecision(msgspec.Struct, frozen=True):
     retry_after_s: float
     reason: str
 
-@dataclass(frozen=True, slots=True)
-class ModelGuardSnapshot:
+class ModelGuardSnapshot(msgspec.Struct, frozen=True):
     model_key: str
     state: str
     failure_count: int

@@ -32,6 +32,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
+import msgspec
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_fire_and_forget
@@ -121,16 +122,14 @@ def _redact_text(text: str) -> str:
         pass
     return result
 
-@dataclass(slots=True)
-class LeakSourceResult:
+class LeakSourceResult(msgspec.Struct):
     """Result from one leak source."""
     source: str
     findings: list[dict]
     errors: list[str]
     elapsed_s: float = 0.0
 
-@dataclass(slots=True)
-class LeakSentinelStats:
+class LeakSentinelStats(msgspec.Struct):
     """Statistics from a leak sentinel run."""
     sources_run: int = 0
     sources_succeeded: int = 0

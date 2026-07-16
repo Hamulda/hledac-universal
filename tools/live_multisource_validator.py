@@ -47,15 +47,13 @@ for _member in Verdict:
     globals()[_member.name] = _member
 del _member
 
-@dataclass(slots=True)
-class ValidationFailure:
+class ValidationFailure(msgspec.Struct):
     verdict: Verdict
     reason: str
     field_path: str | None = None
 VALIDATOR_SCHEMA_VERSION = 'f209b.validator.v1'
 
-@dataclass(frozen=True, slots=True)
-class ValidationResult:
+class ValidationResult(msgspec.Struct, frozen=True):
     overall: Verdict
     failures: list[ValidationFailure] = field(default_factory=list)
     metadata: dict = field(default_factory=dict)

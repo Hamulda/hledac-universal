@@ -109,8 +109,7 @@ class CapabilityTruthLayer(Enum):
     RUNTIME_LOADED = 'loaded'
     EFFECTIVE_FOR_TOOL_CONTRACT = 'effective'
 
-@dataclass(slots=True)
-class CapabilityTruthStatus:
+class CapabilityTruthStatus(msgspec.Struct):
     """
     F6: Truthful capability status across all four layers.
 
@@ -217,8 +216,7 @@ def get_capability_truth_matrix(capabilities: list[Capability], registry: Capabi
     declarations = _get_tool_capability_declarations()
     return {cap: probe_capability_truth(cap, registry, declarations) for cap in capabilities}
 
-@dataclass(frozen=True, slots=True)
-class CapabilityStatus:
+class CapabilityStatus(msgspec.Struct, frozen=True):
     """Status of a capability."""
     available: bool
     reason: str = ''

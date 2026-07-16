@@ -58,12 +58,13 @@ import asyncio
 import gc
 import hashlib
 import logging
-import random
 import re
+import secrets
 import time
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
+import msgspec
 from datetime import UTC, datetime
 from enum import Enum, auto
 from typing import Any
@@ -120,6 +121,9 @@ class QueryType(Enum):
     SECURITY = 'security'
     GENERAL = 'general'
 
+# Crypto-safe RNG — F350M-R
+_RNG = secrets.SystemRandom()
+
 class SourceFamily(Enum):
     """Source families for research — defines which engines/tools are used.
 
@@ -139,8 +143,7 @@ class SourceFamily(Enum):
     OSINT = 'osint'
     LOCAL_CORPUS = 'local_corpus'
 
-@dataclass(slots=True)
-class UnifiedResearchConfig:
+class UnifiedResearchConfig(msgspec.Struct):
     """Configuration for unified research engine.
 
     M1 Adaptive: All memory/concurrency settings tuned based on detected RAM tier.
@@ -198,8 +201,7 @@ class UnifiedResearchConfig:
         required_depth = tool_depth_map.get(tool_name, ResearchDepth.BASIC)
         return self.depth.value >= required_depth.value
 
-@dataclass(slots=True)
-class ResearchFinding:
+class ResearchFinding(msgspec.Struct):
     """A single research finding with rich metadata."""
     id: str
     title: str
@@ -216,8 +218,7 @@ class ResearchFinding:
     def to_dict(self) -> dict[str, Any]:
         return {'id': self.id, 'title': self.title, 'content': self.content[:500] if self.content else '', 'url': self.url, 'source': self.source, 'source_type': self.source_type, 'timestamp': self.timestamp.isoformat(), 'relevance_score': self.relevance_score, 'credibility_score': self.credibility_score, 'metadata': self.metadata}
 
-@dataclass(slots=True)
-class UnifiedResearchResult:
+class UnifiedResearchResult(msgspec.Struct):
     """Complete result from unified research."""
     query: str
     depth: ResearchDepth
@@ -241,8 +242,7 @@ class UnifiedResearchResult:
     def to_dict(self) -> dict[str, Any]:
         return {'query': self.query, 'depth': self.depth.name, 'query_type': self.query_type.value, 'findings_count': len(self.findings), 'sources_used': self.sources_used, 'total_sources': self.total_sources_found, 'unique_sources': self.unique_sources, 'execution_time': self.execution_time_seconds, 'confidence': self.confidence_score, 'coverage': self.coverage_score, 'completed_at': self.completed_at.isoformat()}
 
-@dataclass(slots=True)
-class EnhancedResearchConfig:
+class EnhancedResearchConfig(msgspec.Struct):
     """Configuration for enhanced research workflow with advanced features.
 
     DEPRECATED: Use UnifiedResearchConfig instead for new code.
@@ -1315,7 +1315,7 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
             logger.warning('Stealth mode disabled, falling back to normal research')
             return await self.research(query, domain='academic')
         logger.info(f'Starting stealth research: {url}')
-        behavior_stats = await self.behavior.simulate_page_visit(num_scrolls=random.randint(2, 5), read_time=random.uniform(10, 20))
+        behavior_stats = await self.behavior.simulate_page_visit(num_scrolls=_RNG.randint(2, 5), read_time=_RNG.uniform(10, 20))
         content = None
         if scrape_func:
             try:
@@ -1725,8 +1725,7 @@ def create_unified_research_engine(depth: ResearchDepth=ResearchDepth.ADVANCED, 
     config = UnifiedResearchConfig(depth=depth, **kwargs)
     return UnifiedResearchEngine(config=config)
 
-@dataclass(frozen=True, slots=True)
-class SourcePlan:
+class SourcePlan(msgspec.Struct, frozen=True):
     """Immutable source plan — which families, engines, why, and conditions.
 
     PROVIDER-OWNED INTERNAL SEAM: Toto je read-only planning artifact,
@@ -1840,8 +1839,7 @@ def _build_source_plan(query_type: QueryType, depth: ResearchDepth, config: Unif
     reasoning = f'depth={depth.name}, query_type={query_type.value}, families={len(families)}, engines={len(engines)}'
     return SourcePlan(families=tuple(families), engines=tuple(engines), reasoning=reasoning, conditions=tuple(conditions), excluded=tuple(excluded))
 
-@dataclass(slots=True)
-class DeepResearchRequest:
+class DeepResearchRequest(msgspec.Struct):
     """
     Request wrapper for deep research provider seam.
 
@@ -1874,8 +1872,7 @@ class DeepResearchRequest:
                 kwargs['grounding_hints'] = _canonical_hints
         return kwargs
 
-@dataclass(slots=True)
-class DeepResearchResponse:
+class DeepResearchResponse(msgspec.Struct):
     """
     Response wrapper for deep research provider seam.
 
@@ -1897,8 +1894,7 @@ class DeepResearchResponse:
         """Create from UnifiedResearchResult."""
         return cls(findings=result.findings, fused_results=result.fused_results, confidence_score=result.confidence_score, execution_time_seconds=result.execution_time_seconds, sources_used=result.sources_used, tools_executed=result.tools_executed)
 
-@dataclass(frozen=True, slots=True)
-class _BudgetHints:
+class _BudgetHints(msgspec.Struct, frozen=True):
     """Internal budget hints for DeepResearch session.
 
     Not a canonical contract — internal to enhanced_research.py.
@@ -1906,8 +1902,7 @@ class _BudgetHints:
     stagnation_tolerance: int = 0
     confidence_boost: float = 0.0
 
-@dataclass(frozen=True, slots=True)
-class _EvidenceHints:
+class _EvidenceHints(msgspec.Struct, frozen=True):
     """Internal evidence/logging hints for DeepResearch session.
 
     Not a canonical contract — internal to enhanced_research.py.
@@ -1915,8 +1910,7 @@ class _EvidenceHints:
     log_level: str = 'INFO'
     detail_depth: str = 'standard'
 
-@dataclass(frozen=True, slots=True)
-class _PolicyFlags:
+class _PolicyFlags(msgspec.Struct, frozen=True):
     """Internal execution policy flags for DeepResearch session.
 
     Not a canonical contract — internal to enhanced_research.py.
@@ -1924,8 +1918,7 @@ class _PolicyFlags:
     skip_stagnation_check: bool = False
     force_exhaustive: bool = False
 
-@dataclass(slots=True)
-class DeepResearchGroundingShim:
+class DeepResearchGroundingShim(msgspec.Struct):
     """
     Minimal internal grounding adapter for DeepResearch.
 
@@ -2009,8 +2002,7 @@ async def deep_research_provider_seam(request: DeepResearchRequest, grounding: D
     finally:
         await engine.cleanup()
 
-@dataclass(frozen=True, slots=True)
-class TriadAdmissionDescriptor:
+class TriadAdmissionDescriptor(msgspec.Struct, frozen=True):
     """
     Read-only admission metadata for DeepResearch provider candidate.
 
@@ -2047,8 +2039,7 @@ class TriadAdmissionDescriptor:
         return '\n'.join(lines)
 DEEP_RESEARCH_ADMISSION = TriadAdmissionDescriptor()
 
-@dataclass(frozen=True, slots=True)
-class LocalCorpusConsumerDescriptor:
+class LocalCorpusConsumerDescriptor(msgspec.Struct, frozen=True):
     """
     Read-only consumer seam for local corpus search plane.
 

@@ -77,8 +77,7 @@ class ActionType(Enum):
     STEALTH_HARVEST = 'stealth_harvest'
     OSINT_DISCOVERY = 'osint_discovery'
 
-@dataclass(slots=True)
-class ActionResult:
+class ActionResult(msgspec.Struct):
     """Výsledek akce"""
     success: bool
     action: str

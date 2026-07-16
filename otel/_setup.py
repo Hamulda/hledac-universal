@@ -22,6 +22,7 @@ import os
 import sys
 import threading
 from dataclasses import dataclass
+import msgspec
 from typing import Any, TextIO
 _MAX_QUEUE_SIZE: int = 2048
 _MAX_EXPORT_BATCH: int = 64
@@ -29,8 +30,7 @@ _SCHEDULE_DELAY_MS: int = 2000
 _MAX_ATTRS_PER_SPAN: int = 32
 _RING_BUFFER_CAPACITY: int = 4096
 
-@dataclass(frozen=True, slots=True)
-class TelemetryConfig:
+class TelemetryConfig(msgspec.Struct, frozen=True):
     """Immutable telemetry configuration."""
     exporter_kind: str = 'stdout'
     service_name: str = 'hledac-universal'

@@ -41,6 +41,11 @@ def __getattr__(name: str):
         "GraphServiceLifecycle",
         "ResourceLease",
         "ResourceRegistry",
+        "HealthReport",
+        "_advisory_log_stats",
+        "_log_advisory_dedup",
+        "_reset_advisory_log_dedup",
+        "canonical_lane_name",
     }
     if name in _v1_archived_names:
         from runtime import sprint_scheduler_v1_archived as _v1
@@ -48,10 +53,10 @@ def __getattr__(name: str):
         return getattr(_v1, name)
 
     # ── Shared types ──────────────────────────────────────────────────────
-    if name in ("SprintSchedulerConfig", "SprintSchedulerResult"):
-        if name == "SprintSchedulerConfig":
-            from runtime.scheduler_config import SprintSchedulerConfig
-            return SprintSchedulerConfig
+    if name == "SprintSchedulerConfig":
+        from runtime.scheduler_config import SprintSchedulerConfig
+        return SprintSchedulerConfig
+    if name == "SprintSchedulerResult":
         from runtime.scheduler_result import SprintSchedulerResult
         return SprintSchedulerResult
 
@@ -87,6 +92,7 @@ __all__ = [
     "get_sprint_ctx",
     "reset_sprint_ctx",
     "PivotTask",
+    "_LifecycleAdapter",
     "SourceWork",
     "SprintTooShortError",
     "SPRINT_TIERS",

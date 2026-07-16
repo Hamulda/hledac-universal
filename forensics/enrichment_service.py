@@ -171,8 +171,7 @@ def _extract_domain_from_url(url: str | None) -> str | None:
         pass
     return None
 
-@dataclass(slots=True)
-class ForensicsResult:
+class ForensicsResult(msgspec.Struct):
     """
     Sprint F198B: Typed forensics enrichment result.
 

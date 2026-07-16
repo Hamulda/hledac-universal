@@ -27,8 +27,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
-@dataclass(slots=True)
-class Insight:
+class Insight(msgspec.Struct):
     """Generated insight."""
     insight_id: str
     type: str
@@ -41,8 +40,7 @@ class Insight:
     related_insights: list[str] = field(default_factory=list)
 
 
-@dataclass(slots=True)
-class Pattern:
+class Pattern(msgspec.Struct):
     """Discovered pattern."""
     pattern_type: str
     description: str
@@ -51,8 +49,7 @@ class Pattern:
     examples: list[str] = field(default_factory=list)
 
 
-@dataclass(slots=True)
-class Anomaly:
+class Anomaly(msgspec.Struct):
     """Detected anomaly."""
     anomaly_type: str
     description: str
@@ -62,8 +59,7 @@ class Anomaly:
     implications: str
 
 
-@dataclass(slots=True)
-class Contradiction:
+class Contradiction(msgspec.Struct):
     """Identified contradiction."""
     contradiction_id: str
     statement_a: str
@@ -72,8 +68,7 @@ class Contradiction:
     resolution_options: list[str] = field(default_factory=list)
 
 
-@dataclass(slots=True)
-class Gap:
+class Gap(msgspec.Struct):
     """Identified knowledge gap."""
     area: str
     description: str
@@ -81,8 +76,7 @@ class Gap:
     research_opportunities: list[str] = field(default_factory=list)
 
 
-@dataclass(slots=True)
-class Hypothesis:
+class Hypothesis(msgspec.Struct):
     """Generated hypothesis."""
     # Intentionally NOT brain.hypothesis._types.Hypothesis —
     # simpler shape (insight string only, no statement/evidence/tests).
@@ -93,8 +87,7 @@ class Hypothesis:
     test_methods: list[str] = field(default_factory=list)
 
 
-@dataclass(slots=True)
-class CausalRelationship:
+class CausalRelationship(msgspec.Struct):
     """
     Causal relationship between variables.
 
@@ -111,8 +104,7 @@ class CausalRelationship:
     alternative_explanations: list[str] = field(default_factory=list)
 
 
-@dataclass(slots=True)
-class SynthesisLevel:
+class SynthesisLevel(msgspec.Struct):
     """
     Multi-level synthesis result.
 

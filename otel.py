@@ -23,6 +23,7 @@ import json
 import threading
 import uuid
 from dataclasses import dataclass, field
+import msgspec
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 from opentelemetry.sdk.trace import Span, SpanProcessor
@@ -34,8 +35,7 @@ if TYPE_CHECKING:
 __all__ = ['DuckDBSpanExporter', 'create_otel_spans_table', 'QueryBuilder']
 _SPAN_COLUMNS = ['trace_id', 'span_id', 'parent_span_id', 'name', 'status', 'status_message', 'start_time_ms', 'end_time_ms', 'duration_ms', 'attributes_json', 'resource_json']
 
-@dataclass(slots=True)
-class SpanRecord:
+class SpanRecord(msgspec.Struct):
     """Serializovaný OTel span záznam."""
     trace_id: str
     span_id: str

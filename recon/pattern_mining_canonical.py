@@ -54,8 +54,7 @@ try:
 except ImportError:
     CanonicalFinding = None
 
-@dataclass(slots=True)
-class PatternCandidate:
+class PatternCandidate(msgspec.Struct):
     """A derived pattern candidate produced by the pattern mining engine."""
     pattern_id: str
     pattern_type: str
@@ -69,8 +68,7 @@ class PatternCandidate:
     def to_dict(self) -> dict[str, Any]:
         return {'pattern_id': self.pattern_id, 'pattern_type': self.pattern_type, 'pattern_data': self.pattern_data, 'confidence': self.confidence, 'severity': self.severity, 'description': self.description, 'source_findings': self.source_findings, 'metadata': self.metadata}
 
-@dataclass(frozen=True, slots=True)
-class PatternMiningResult:
+class PatternMiningResult(msgspec.Struct, frozen=True):
     """Aggregated result of pattern mining on sprint findings."""
     temporal_patterns: list[PatternCandidate] = field(default_factory=list)
     behavioral_patterns: list[PatternCandidate] = field(default_factory=list)

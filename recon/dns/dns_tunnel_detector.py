@@ -82,8 +82,7 @@ class Verdict(Enum):
     MALICIOUS = 'malicious'
     AMBIGUOUS = 'ambiguous'
 
-@dataclass(slots=True)
-class DNSTunnelConfig:
+class DNSTunnelConfig(msgspec.Struct):
     """Configuration for DNS tunneling detector.
 
     Attributes:
@@ -105,8 +104,7 @@ class DNSTunnelConfig:
     wavelet_levels: int = 4
     majority_vote_threshold: int = 2
 
-@dataclass(frozen=True, slots=True)
-class NGramScore:
+class NGramScore(msgspec.Struct, frozen=True):
     """N-gram analysis score.
 
     Attributes:
@@ -120,8 +118,7 @@ class NGramScore:
     char_distribution: float = 0.0
     anomaly_score: float = 0.0
 
-@dataclass(slots=True)
-class TunnelingFinding:
+class TunnelingFinding(msgspec.Struct):
     """DNS tunneling detection finding.
 
     Attributes:

@@ -60,9 +60,9 @@ def get_task_tool_preview_mapping() -> dict[str, str]:
     """Return read-only task_type → tool_name preview mapping."""
     return dict(TASK_TYPE_TO_TOOL_PREVIEW)
 from dataclasses import dataclass
+import msgspec
 
-@dataclass(frozen=True, slots=True)
-class DeepResearchProviderMirror:
+class DeepResearchProviderMirror(msgspec.Struct, frozen=True):
     """Triad-side read-only mirror for DeepResearch provider admission metadata."""
     mirror_module: str = 'tool_registry'
     owning_module: str = 'enhanced_research'

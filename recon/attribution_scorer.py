@@ -6,6 +6,7 @@ No model load, no network, pure Python with Levenshtein fallback.
 """
 import re
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 from rapidfuzz.distance import Levenshtein
 __all__ = ['AttributionFactor', 'AttributionScore', 'AttributionConfidenceScorer', 'create_attribution_scorer', 'enrich_candidate_with_attribution']
@@ -15,8 +16,7 @@ DEFAULT_FACTOR_WEIGHTS = {'email_domain_match': 0.25, 'username_pattern_similari
 SOCIAL_FACTOR_MIN_OVERLAP: int = 1
 SOCIAL_FACTOR_MAX_FACTOR_SCORE: float = 0.8
 
-@dataclass(frozen=True, slots=True)
-class AttributionFactor:
+class AttributionFactor(msgspec.Struct, frozen=True):
     """A single factor contributing to attribution confidence."""
     factor_id: str
     factor_type: str
@@ -25,8 +25,7 @@ class AttributionFactor:
     evidence: tuple[str, ...] = field(default_factory=tuple)
     metadata: dict[str, Any] = field(default_factory=dict)
 
-@dataclass(frozen=True, slots=True)
-class AttributionScore:
+class AttributionScore(msgspec.Struct, frozen=True):
     """
     Explainable confidence score for an identity pair.
 

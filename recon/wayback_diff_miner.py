@@ -32,11 +32,12 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+import msgspec
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 import httpx
 from hledac.universal.transport.circuit_breaker import domain_breaker_check, domain_breaker_record_failure, domain_breaker_record_success
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_shielded
+from hledac.universal.utils.async_helpers import safe_create_task, parallel
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 else:
@@ -54,8 +55,7 @@ TIMEOUT_PER_REQUEST: float = 30.0
 WAYBACK_CDX_API: str = 'https://web.archive.org/cdx/search/cdx'
 WAYBACK_BASE_URL: str = 'https://web.archive.org'
 
-@dataclass(frozen=True, slots=True)
-class CDXDiffEvent:
+class CDXDiffEvent(msgspec.Struct, frozen=True):
     """
     A single change event detected from Wayback CDX comparison.
 
@@ -74,8 +74,7 @@ class CDXDiffEvent:
     change_type: str
     evidence_url: str
 
-@dataclass(slots=True)
-class WaybackDiffResult:
+class WaybackDiffResult(msgspec.Struct):
     """Result of a WaybackDiffMiner.mine() call."""
     input_count: int
     change_events: list[CDXDiffEvent] = field(default_factory=list)
@@ -138,8 +137,8 @@ class WaybackDiffMiner:
       4. Convert to CanonicalFinding with source_type="wayback_diff"
 
     Guardrails:
-      - safe_gather_shielded() with return_exceptions=True (structured TaskGroup)
-      - Error aggregation via SafeGatherResult.errors list
+      - parallel() with taskgroup=True, policy='collect'
+      - Error aggregation via ParallelResult.errors list
       - Circuit breaker after 3 consecutive 429/503
       - HTTP only, no JS renderer
       - Bounded semaphore for rate limiting (2 req/s)
@@ -223,7 +222,7 @@ class WaybackDiffMiner:
                 return await self._fetch_cdx(target)
         try:
             fetch_tasks = [safe_create_task(_rate_limited_fetch(t)) for t in targets]
-            fetch_gathered = await safe_gather_shielded(*fetch_tasks, label='wayback_fetch', logger_instance=logger)
+            fetch_gathered = await parallel(fetch_tasks, taskgroup=True, policy='collect', ctx='wayback_fetch', logger_instance=logger)
             snapshots_map: dict[str, list[dict[str, str]]] = {}
             for res in fetch_gathered.ok:
                 if isinstance(res, tuple) and len(res) == 2:
@@ -239,7 +238,7 @@ class WaybackDiffMiner:
                     raise _reraise
             diff_tasks = [safe_create_task(asyncio.to_thread(self._diff_snapshots, t, snaps)) for t, snaps in snapshots_map.items() if snaps]
             if diff_tasks:
-                diff_gathered = await safe_gather_shielded(*diff_tasks, label='wayback_diff', logger_instance=logger)
+                diff_gathered = await parallel(diff_tasks, taskgroup=True, policy='collect', ctx='wayback_diff', logger_instance=logger)
                 for res in diff_gathered.ok:
                     if isinstance(res, list):
                         all_events.extend(res)

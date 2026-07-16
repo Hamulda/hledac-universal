@@ -28,6 +28,8 @@ GHOST_INVARIANTS enforced:
 - Stage N failure does not stop stage N+1
 """
 import asyncio
+
+import msgspec
 import json
 import msgspec.json as _json
 try:
@@ -98,8 +100,7 @@ def _sidecar_profile_allows(sidecar_name: str, profile: str | None) -> tuple[boo
         return (True, '')
     return (False, f"profile '{profile}' disallows active-network sidecar '{sidecar_name}'")
 
-@dataclass(slots=True)
-class SidecarBatch:
+class SidecarBatch(msgspec.Struct):
     """Batch of accepted findings submitted to the sidecar bus."""
     findings: list
     query: str
@@ -119,8 +120,7 @@ class SidecarBatch:
                 outcomes[f'sidecar_{r.sidecar_name}'] = {'attempted': False, 'skipped_reason': r.skipped_reason or 'unknown', 'elapsed_ms': round(r.elapsed_ms, 1)}
         return outcomes
 
-@dataclass(slots=True)
-class SidecarRunResult:
+class SidecarRunResult(msgspec.Struct):
     sidecar_name: str
     attempted: bool
     produced_count: int

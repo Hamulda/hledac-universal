@@ -7,10 +7,10 @@ import logging
 import os
 import secrets
 from dataclasses import dataclass
+import msgspec
 logger = logging.getLogger(__name__)
 
-@dataclass(slots=True)
-class EncryptionResult:
+class EncryptionResult(msgspec.Struct):
     """Result of encryption operation"""
     ciphertext: str
     nonce: str
@@ -18,8 +18,7 @@ class EncryptionResult:
     success: bool = True
     error: str | None = None
 
-@dataclass(slots=True)
-class DecryptionResult:
+class DecryptionResult(msgspec.Struct):
     """Result of decryption operation"""
     plaintext: str
     success: bool = True

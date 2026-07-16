@@ -13,8 +13,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 EvidenceLog = None
 
-@dataclass(slots=True)
-class OnlineRidge:
+class OnlineRidge(msgspec.Struct):
     """Online ridge regrese přes Sherman-Morrison."""
     n_features: int
     alpha: float = 1.0

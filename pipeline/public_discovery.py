@@ -15,6 +15,7 @@ import re
 import time
 import urllib.parse
 from dataclasses import dataclass
+import msgspec
 from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     pass
@@ -36,8 +37,7 @@ def _ensure_discovery_patched() -> None:
         from hledac.universal.discovery.duckduckgo_adapter import search_multi_engine as _search_multi_engine_bootstrap
         _async_search_multi_engine_var.set(_search_multi_engine_bootstrap)
 
-@dataclass(frozen=True, slots=True)
-class FetchPolicy:
+class FetchPolicy(msgspec.Struct, frozen=True):
     """Bounded fetch policy for canonical public sprint."""
     use_js: bool = False
     use_doh: bool = False

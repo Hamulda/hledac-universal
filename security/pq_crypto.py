@@ -41,8 +41,7 @@ class PQSecurityLevel(Enum):
     """ML-DSA security levels (NIST FIPS 204)."""
     ML_DSA_65 = 65
 
-@dataclass(slots=True)
-class PQStatus:
+class PQStatus(msgspec.Struct):
     """Current status of the post-quantum backend."""
     availability: PQAvailability = PQAvailability.DISABLED
     backend_name: str = 'null'
@@ -52,16 +51,14 @@ class PQStatus:
     signed_batch_digest: str | None = None
     chunk_count: int = 0
 
-@dataclass(frozen=True, slots=True)
-class PQSignature:
+class PQSignature(msgspec.Struct, frozen=True):
     """A single ML-DSA signature over a canonical batch digest."""
     algorithm: str
     signature: bytes
     backend_name: str
     security_level: int
 
-@dataclass(frozen=True, slots=True)
-class HybridSignatureSet:
+class HybridSignatureSet(msgspec.Struct, frozen=True):
     """
     Hybrid signature set containing P-256 + optional ML-DSA.
 

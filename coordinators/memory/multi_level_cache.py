@@ -27,6 +27,7 @@ import sys
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
+import msgspec
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -66,8 +67,7 @@ class CacheLocation(Enum):
     L2_DISK = 'l2_disk'
 
 
-@dataclass(slots=True)
-class CacheEntry:
+class CacheEntry(msgspec.Struct):
     """Single cache entry with FAISS embedding support."""
     cache_id: str
     content: Any
@@ -94,17 +94,18 @@ class MultiLevelContextCache:
     - LFU eviction policy
     """
     __slots__ = tuple((
-        '_hnsw_ef_construction', '_hnsw_ef_search', '_hnsw_index', '_hnsw_m',
-        '_hnsw_max_elements', '_l1_freq', '_l2_freq', '_lock',
+        '_embedding_cache', '_embedding_cache_lock', '_hnsw_ef_construction',
+        '_hnsw_ef_search', '_hnsw_index', '_hnsw_m', '_hnsw_max_elements',
+        '_l1_freq', '_l2_freq', '_lock',
         'embedder', 'embedding_dim', 'embedding_model', 'embedding_to_cache_id',
         'faiss_available', 'l1_cache', 'l1_max_size_bytes', 'l2_cache',
         'l2_storage_path', 'max_entries', 'semantic_index', 'similarity_threshold',
         'stats',
     ))
 
-    # Class-level embedding cache (F320-Issue2: NFC-normalized text keys)
-    _embedding_cache: dict[str, Any] = {}
-    _embedding_cache_lock: asyncio.Lock | None = None
+    # F320-Issue2: NFC-normalized text embedding cache — now per-instance
+    _embedding_cache: dict[str, Any]
+    _embedding_cache_lock: asyncio.Lock | None
 
     def __init__(
         self,
@@ -158,9 +159,20 @@ class MultiLevelContextCache:
             'l1_promotions': 0, 'l2_demotions': 0, 'evictions': 0,
             'similarities': [],
         }
-        self._lock: asyncio.Lock = asyncio.Lock()
+        # ISSUE-2984: lazy lock — NEVER asyncio.Lock() at import/construct time
+        self._lock: asyncio.Lock | None = None
+        # ISSUE-ZOOMOUT: per-instance embedding cache (was class-level = bug)
+        self._embedding_cache = {}
+        self._embedding_cache_lock = None
         self._load_l2_cache()
         self._rebuild_semantic_index()
+
+    # ISSUE-2984: lazy lock helper — NEVER asyncio.Lock() at import/__init__ time
+    async def _get_lock(self) -> asyncio.Lock:
+        """Lazily create asyncio.Lock inside an event loop."""
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
 
     def _init_hnsw(self) -> None:
         """Initialize usearch index for approximate nearest neighbor search (Sprint 26)."""
@@ -273,12 +285,13 @@ class MultiLevelContextCache:
         """
         import unicodedata
         normalized = unicodedata.normalize('NFC', text)
-        if MultiLevelContextCache._embedding_cache_lock is None:
+        # ISSUE-2984: lazy lock initialization
+        if self._embedding_cache_lock is None:
             try:
-                MultiLevelContextCache._embedding_cache_lock = asyncio.Lock()
+                self._embedding_cache_lock = asyncio.Lock()
             except Exception:
-                MultiLevelContextCache._embedding_cache_lock = None
-        cached = MultiLevelContextCache._embedding_cache.get(normalized)
+                self._embedding_cache_lock = None
+        cached = self._embedding_cache.get(normalized)
         if cached is not None:
             return cached
         if self.embedder:
@@ -307,7 +320,7 @@ class MultiLevelContextCache:
                     return np.array(embeddings[0])
             except Exception as e:
                 logger.debug(f'Embedding failed: {e}')
-        MultiLevelContextCache._embedding_cache[normalized] = None
+        self._embedding_cache[normalized] = None
         return None
 
     async def get(
@@ -332,7 +345,7 @@ class MultiLevelContextCache:
         input_text = str(input_data)
         similar_entry = await self._find_similar_entry(input_text, threshold)
         if similar_entry:
-            async with self._lock:
+            async with await self._get_lock():
                 self.stats['hits'] += 1
                 self._update_access(similar_entry.cache_id)
                 if similar_entry.cache_id in self.l2_cache:
@@ -360,7 +373,7 @@ class MultiLevelContextCache:
                         continue
                     entry = self.l1_cache.get(cache_id, self.l2_cache.get(cache_id))
                     if entry:
-                        async with self._lock:
+                        async with await self._get_lock():
                             self.stats['similarities'].append(float(similarity))
                         return entry
         except Exception as e:
@@ -384,7 +397,7 @@ class MultiLevelContextCache:
                     continue
                 entry = self.l1_cache.get(cache_id, self.l2_cache.get(cache_id))
                 if entry:
-                    async with self._lock:
+                    async with await self._get_lock():
                         self.stats['similarities'].append(1.0)
                     return entry
         except Exception as e:
@@ -421,7 +434,7 @@ class MultiLevelContextCache:
             cache_type=cache_type,
             metadata={},
         )
-        async with self._lock:
+        async with await self._get_lock():
             if embedding is not None and self.faiss_available:
                 try:
                     embedding_id = len(self.embedding_to_cache_id)
@@ -543,7 +556,7 @@ class MultiLevelContextCache:
         Args:
             location: Specific location to clear, or None for all
         """
-        async with self._lock:
+        async with await self._get_lock():
             if location is None or location == CacheLocation.L1_MEMORY:
                 self.l1_cache.clear()
                 self._l1_freq.clear()

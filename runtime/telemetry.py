@@ -26,6 +26,7 @@ NOT telemetry authority:
   - MLX/cache metrics (metrics_registry.py owns those)
 """
 import logging
+import msgspec
 import msgspec.json as _json
 import time
 from collections import deque
@@ -35,8 +36,7 @@ from typing import Any
 _OTEL_AVAILABLE: bool | None = None
 TELEMETRY_EVENT_FIELDS = frozenset(['session_id', 'phase', 'component', 'event', 'elapsed_ms'])
 
-@dataclass(slots=True)
-class SprintEvent:
+class SprintEvent(msgspec.Struct):
     """
     A single sprint telemetry event.
 

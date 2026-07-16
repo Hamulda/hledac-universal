@@ -11,6 +11,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 import httpx
 logger = logging.getLogger(__name__)
@@ -21,8 +22,7 @@ MAX_ROOMS_TO_SEARCH = 20
 MAX_GUEST_TOKEN_AGE = 3600
 MATRIX_RATE_LIMIT_DELAY = 2.0
 
-@dataclass(slots=True)
-class MatrixRoom:
+class MatrixRoom(msgspec.Struct):
     """Represents a Matrix public room."""
     room_id: str
     name: str | None
@@ -32,8 +32,7 @@ class MatrixRoom:
     world_readable: bool
     guest_can_join: bool
 
-@dataclass(frozen=True, slots=True)
-class MatrixPublicAdapter:
+class MatrixPublicAdapter(msgspec.Struct, frozen=True):
     """Search Matrix public rooms for intelligence signals.
 
     Matrix.org has 80M+ users, many security/research communities.

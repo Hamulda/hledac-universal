@@ -37,6 +37,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
+import msgspec
 from typing import TYPE_CHECKING, Any, TypedDict
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
@@ -49,8 +50,7 @@ MAX_FINGERPRINTS_PER_FINDING: int = 5
 MAX_PATTERN_BYTES: int = 4096
 FINGERPRINT_TIMEOUT_S: float = 10.0
 
-@dataclass(slots=True, frozen=True)
-class ServiceFingerprint:
+class ServiceFingerprint(msgspec.Struct, frozen=True):
     """A single passive service fingerprint derived from finding data."""
     finding_id: str
     service_name: str
@@ -60,16 +60,14 @@ class ServiceFingerprint:
     evidence_ids: tuple[str, ...]
     facets: dict[str, str]
 
-@dataclass(frozen=True, slots=True)
-class FingerprintResult:
+class FingerprintResult(msgspec.Struct, frozen=True):
     """Outcome of a passive fingerprinting run."""
     fingerprints: tuple[ServiceFingerprint, ...]
     scanned_count: int
     skipped_count: int
     elapsed_ms: float
 
-@dataclass(frozen=True, slots=True)
-class TechStack:
+class TechStack(msgspec.Struct, frozen=True):
     """R11: Tech stack signals extracted from HTTP headers, cookies, and HTML."""
     cloud_provider: str | None
     cdn_provider: str | None

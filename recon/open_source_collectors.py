@@ -38,12 +38,13 @@ import re
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
+import msgspec
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     pass
 from hledac.universal.fetching.public_fetcher import FetchResult, async_fetch_public_text
 from hledac.universal.runtime.resource_governor import M1ResourceGovernor
-from hledac.universal.utils.async_helpers import safe_gather, safe_gather_ok
+from hledac.universal.utils.async_helpers import safe_gather_ok, parallel
 from hledac.universal.utils.msgspec_json import loads as _msgspec_loads
 logger = logging.getLogger(__name__)
 MAX_PASTE_RESULTS: int = 50
@@ -55,8 +56,7 @@ MAX_COURT_CASES: int = 50
 RATE_LIMIT_S: float = 2.0
 TIMEOUT_S: float = 30.0
 
-@dataclass(slots=True)
-class PasteFinding:
+class PasteFinding(msgspec.Struct):
     uri: str
     source: str
     extracted_secrets: list[str] = field(default_factory=list)
@@ -67,8 +67,7 @@ class PasteFinding:
     def to_finding_dict(self) -> dict:
         return {'source': 'pastebin', 'source_family': 'FEED', 'uri': self.uri, 'source_name': self.source, 'secrets': [_mask_secret(s) for s in self.extracted_secrets], 'emails': self.emails, 'ips': self.ip_addresses, 'snippet': self.context_snippet[:200]}
 
-@dataclass(slots=True)
-class UsenetArticle:
+class UsenetArticle(msgspec.Struct):
     message_id: str
     subject: str
     from_addr: str
@@ -80,8 +79,7 @@ class UsenetArticle:
     def to_finding_dict(self) -> dict:
         return {'source': 'usenet', 'source_family': 'FEED', 'message_id': self.message_id, 'subject': self.subject, 'from': self.from_addr, 'date': self.date, 'newsgroup': self.newsgroup, 'body_preview': self.body[:500], 'url': self.url}
 
-@dataclass(frozen=True, slots=True)
-class ChatMessage:
+class ChatMessage(msgspec.Struct, frozen=True):
     platform: str
     channel: str
     user: str
@@ -92,8 +90,7 @@ class ChatMessage:
     def to_finding_dict(self) -> dict:
         return {'source': f'{self.platform}_chat', 'source_family': 'FEED', 'platform': self.platform, 'channel': self.channel, 'user': self.user, 'timestamp': self.timestamp, 'content_preview': self.content[:200], 'message_id': self.message_id}
 
-@dataclass(slots=True)
-class AcademicPaper:
+class AcademicPaper(msgspec.Struct):
     title: str
     authors: list[str]
     year: int | None
@@ -107,8 +104,7 @@ class AcademicPaper:
     def to_finding_dict(self) -> dict:
         return {'source': 'academic', 'source_family': 'PUBLIC', 'title': self.title, 'authors': self.authors, 'year': self.year, 'link': self.link, 'source_name': self.source, 'abstract_preview': self.abstract[:500], 'doi': self.doi, 'citations': self.citations, 'tags': self.tags}
 
-@dataclass(frozen=True, slots=True)
-class EdgarFiling:
+class EdgarFiling(msgspec.Struct, frozen=True):
     cik: str
     company_name: str
     form_type: str
@@ -120,8 +116,7 @@ class EdgarFiling:
     def to_finding_dict(self) -> dict:
         return {'source': 'sec_edgar', 'source_family': 'PUBLIC', 'cik': self.cik, 'company': self.company_name, 'form': self.form_type, 'date': self.filing_date, 'accession': self.accession_number, 'url': self.document_url}
 
-@dataclass(frozen=True, slots=True)
-class CourtCase:
+class CourtCase(msgspec.Struct, frozen=True):
     case_id: str
     docket_number: str
     court: str
@@ -233,8 +228,7 @@ class PasteSiteAdapter(Protocol):
         """Parse the response body. Return None on parse error or empty body."""
         ...
 
-@dataclass(slots=True, frozen=True)
-class _RawPasteAdapter:
+class _RawPasteAdapter(msgspec.Struct, frozen=True):
     """Trivial adapter: response body IS the paste text (ghostbin, rentry, pastebin_raw)."""
     site_id: str
     host: str
@@ -248,8 +242,7 @@ class _RawPasteAdapter:
     def parse(self, body: str, paste_id: str) -> str | None:
         return body or None
 
-@dataclass(slots=True, frozen=True)
-class _PrivateBinAdapter:
+class _PrivateBinAdapter(msgspec.Struct, frozen=True):
     """PrivateBin v2 → v1 fallback + encrypted-paste marker detection.
 
     Behavior preserved bit-for-bit from the original _scrape_privatebin:
@@ -278,8 +271,7 @@ class _PrivateBinAdapter:
             return data.get('content') or None
         return None
 
-@dataclass(slots=True, frozen=True)
-class _ZeroBinAdapter:
+class _ZeroBinAdapter(msgspec.Struct, frozen=True):
     """0bin HTML page → extract <pre class='paste-content'> with len > 10."""
     site_id: str = '0bin'
     host: str = '0bin.net'
@@ -529,9 +521,8 @@ async def search_paste_sites(query: str, max_results: int=MAX_PASTE_RESULTS) -> 
         except Exception as e:
             logger.debug(f'rentry search failed: {e}')
             return []
-    _result = await safe_gather(search_pastebin(), search_paste_gg(), search_rentry(), label='paste_sites')
-    gathered = _result.ok
-    for res in gathered:
+    gathered = await parallel([search_pastebin(), search_paste_gg(), search_rentry()], taskgroup=True, policy='collect', ctx='paste_sites', logger_instance=logger)
+    for res in gathered.ok:
         if isinstance(res, list):
             findings.extend(res)
     return findings[:max_results]
@@ -601,10 +592,9 @@ async def search_usenet(query: str, max_results: int=MAX_USENET_ARTICLES) -> lis
         except Exception as e:
             logger.debug(f'GMane search failed: {e}')
             return []
-    _result = await safe_gather(search_google_groups(), search_gmane(), label='usenet')
-    gathered = _result.ok
+    gathered = await parallel([search_google_groups(), search_gmane()], taskgroup=True, policy='collect', ctx='usenet', logger_instance=logger)
     seen_ids: set[str] = set()
-    for res in gathered:
+    for res in gathered.ok:
         if isinstance(res, list):
             for article in res:
                 if article.message_id and article.message_id not in seen_ids:
@@ -670,9 +660,8 @@ async def search_matrix(query: str, max_results: int=MAX_CHAT_MESSAGES) -> list[
     if not room_ids:
         return []
     tasks = [fetch_room_messages(rid) for rid in room_ids[:10]]
-    _result = await safe_gather(*tasks, label='matrix')
-    gathered = _result.ok
-    for res in gathered:
+    gathered = await parallel(tasks, taskgroup=True, policy='collect', ctx='matrix', logger_instance=logger)
+    for res in gathered.ok:
         if isinstance(res, list):
             messages.extend(res)
     return messages[:max_results]
@@ -771,9 +760,8 @@ async def search_academic(query: str, max_results: int=MAX_ACADEMIC_PAPERS) -> l
         except Exception as e:
             logger.debug(f'RePEc search failed: {e}')
             return []
-    _result = await safe_gather(search_biorxiv(), search_medrxiv(), search_ssrn(), search_repec(), label='academic')
-    gathered = _result.ok
-    for res in gathered:
+    gathered = await parallel([search_biorxiv(), search_medrxiv(), search_ssrn(), search_repec()], taskgroup=True, policy='collect', ctx='academic', logger_instance=logger)
+    for res in gathered.ok:
         if isinstance(res, list):
             papers.extend(res)
     return papers[:max_results]
@@ -957,7 +945,7 @@ class OpenSourceCollectors:
                 return
             cases = await self.search_court_records(query)
             results['court_records'] = [c.to_finding_dict() for c in cases]
-        _result = await safe_gather(gather_pastebin(), gather_usenet(), gather_matrix(), gather_academic(), gather_sec_edgar(), gather_court_records(), label='open_source_collectors.gather_all')
+        gathered = await parallel([gather_pastebin(), gather_usenet(), gather_matrix(), gather_academic(), gather_sec_edgar(), gather_court_records()], taskgroup=True, policy='collect', ctx='open_source_collectors.gather_all', logger_instance=logger)
         return results
 
     async def close(self) -> None:

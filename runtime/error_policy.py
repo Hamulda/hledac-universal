@@ -30,6 +30,7 @@ Author: Issue 9
 import asyncio
 import logging
 from dataclasses import dataclass
+import msgspec
 from typing import TypeVar, Generic, Any, cast
 from collections.abc import Awaitable, Callable
 
@@ -44,7 +45,6 @@ E = TypeVar("E", bound=BaseException, default=Exception)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-@dataclass(frozen=True, slots=True)
 class Ok[T]:
     """Success variant of Result[T, E]."""
 
@@ -73,7 +73,6 @@ class Ok[T]:
         return ok(self.value)
 
 
-@dataclass(frozen=True, slots=True)
 class Err[E: BaseException]:
     """Error variant of Result[T, E]."""
 

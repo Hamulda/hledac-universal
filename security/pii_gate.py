@@ -43,8 +43,7 @@ class PIICategory(Enum):
     DRIVER_LICENSE = 'driver_license'
     ADDRESS = 'address'
 
-@dataclass(slots=True)
-class PIIMatch:
+class PIIMatch(msgspec.Struct):
     """A single PII match found in text"""
     text: str
     category: PIICategory

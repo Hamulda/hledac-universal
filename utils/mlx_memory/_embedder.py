@@ -16,6 +16,7 @@ import gc
 import logging
 import threading
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -26,8 +27,7 @@ _MAX_BUFFER_BYTES: int = 256 * 1024 * 1024
 __all__ = ["MetalBufferPool", "get_buffer_pool", "init_metal_embedder_buffers", "release_metal_embedder_buffers"]
 
 
-@dataclass(slots=True)
-class _MetalBuffer:
+class _MetalBuffer(msgspec.Struct):
     """A single pre-allocated Metal buffer."""
 
     name: str

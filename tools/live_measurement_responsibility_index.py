@@ -12,8 +12,7 @@ from dataclasses import dataclass, field
 import msgspec
 from typing import Any
 
-@dataclass(slots=True)
-class SectionIndex:
+class SectionIndex(msgspec.Struct):
     name: str
     line_count_estimate: int
     line_range: str
@@ -22,8 +21,7 @@ class SectionIndex:
     extraction_risk: str
     notes: list[str] = field(default_factory=list)
 
-@dataclass(frozen=True, slots=True)
-class ResponsibilityIndex:
+class ResponsibilityIndex(msgspec.Struct, frozen=True):
     source_file: str = 'benchmarks/live_sprint_measurement.py'
     total_lines: int = 3757
     sections: list[SectionIndex] = field(default_factory=list)

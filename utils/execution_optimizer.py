@@ -3,6 +3,7 @@ Parallel Execution Optimizer
 Advanced parallel execution optimization for Hledač automation systems
 """
 import asyncio
+import msgspec
 import inspect
 import logging
 import multiprocessing
@@ -19,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 import msgspec.json as _json
 import numpy as np
 import psutil
-from .async_helpers import safe_create_task, safe_gather_ok, safe_gather_shielded
+from .async_helpers import safe_create_task, safe_gather_ok, parallel
 if TYPE_CHECKING:
     pass
 logger = logging.getLogger(__name__)
@@ -42,8 +43,7 @@ class TaskType(Enum):
     NETWORK_INTENSIVE = 'network_intensive'
     MIXED = 'mixed'
 
-@dataclass(slots=True)
-class TaskMetrics:
+class TaskMetrics(msgspec.Struct):
     """Task execution metrics"""
     task_id: str
     task_type: TaskType
@@ -56,8 +56,7 @@ class TaskMetrics:
     worker_id: str | None = None
     parallel_group: str | None = None
 
-@dataclass(slots=True)
-class WorkerMetrics:
+class WorkerMetrics(msgspec.Struct):
     """Worker performance metrics"""
     worker_id: str
     cpu_cores: int
@@ -68,8 +67,7 @@ class WorkerMetrics:
     efficiency_score: float
     last_updated: datetime
 
-@dataclass(slots=True)
-class ParallelGroup:
+class ParallelGroup(msgspec.Struct):
     """Parallel execution group"""
     group_id: str
     tasks: list[Any]
@@ -424,7 +422,7 @@ class ParallelExecutionOptimizer:
             batch_size = min(current_workers * 2, len(tasks) - task_index)
             batch = tasks[task_index:task_index + batch_size]
             batch_start = time.time()
-            batch_result = await safe_gather_shielded(*[self._execute_with_semaphore(task) for task in batch], label='batch_optimization', logger_instance=logger)
+            batch_result = await parallel([self._execute_with_semaphore(task) for task in batch], taskgroup=True, policy='collect', ctx='batch_optimization', logger_instance=logger)
             for r in batch_result.ok:
                 results.append(r)
             for exc in batch_result.errors:
@@ -571,7 +569,7 @@ class ParallelExecutionOptimizer:
         if cpu_tasks:
             cpu_workers = min(max_workers // 2, len(cpu_tasks))
             logger.info(f'Executing {len(cpu_tasks)} CPU tasks with {cpu_workers} workers')
-            cpu_result = await safe_gather_shielded(*[self._execute_with_semaphore(task) for task in cpu_tasks], label='cpu_optimization', logger_instance=logger)
+            cpu_result = await parallel([self._execute_with_semaphore(task) for task in cpu_tasks], taskgroup=True, policy='collect', ctx='cpu_optimization', logger_instance=logger)
             for r in cpu_result.ok:
                 results.append(r)
             for exc in cpu_result.errors:
@@ -581,7 +579,7 @@ class ParallelExecutionOptimizer:
         if memory_tasks:
             memory_workers = min(max_workers // 3, len(memory_tasks))
             logger.info(f'Executing {len(memory_tasks)} memory tasks with {memory_workers} workers')
-            memory_result = await safe_gather_shielded(*[self._execute_with_semaphore(task) for task in memory_tasks], label='memory_optimization', logger_instance=logger)
+            memory_result = await parallel([self._execute_with_semaphore(task) for task in memory_tasks], taskgroup=True, policy='collect', ctx='memory_optimization', logger_instance=logger)
             for r in memory_result.ok:
                 results.append(r)
             for exc in memory_result.errors:
@@ -591,7 +589,7 @@ class ParallelExecutionOptimizer:
         if io_tasks:
             io_workers = max_workers
             logger.info(f'Executing {len(io_tasks)} I/O tasks with {io_workers} workers')
-            io_result = await safe_gather_shielded(*[self._execute_with_semaphore(task) for task in io_tasks], label='io_optimization', logger_instance=logger)
+            io_result = await parallel([self._execute_with_semaphore(task) for task in io_tasks], taskgroup=True, policy='collect', ctx='io_optimization', logger_instance=logger)
             for r in io_result.ok:
                 results.append(r)
             for exc in io_result.errors:
@@ -647,7 +645,7 @@ class ParallelExecutionOptimizer:
             optimal_workers = min(max_workers, max(1, int(remaining_tasks / max(estimated_total_time / 60, 1))))
             batch_size = min(optimal_workers * 2, len(tasks) - task_index)
             batch = tasks[task_index:task_index + batch_size]
-            batch_result = await safe_gather_shielded(*[self._execute_with_semaphore(task) for task in batch], label='predictive_optimization', logger_instance=logger)
+            batch_result = await parallel([self._execute_with_semaphore(task) for task in batch], taskgroup=True, policy='collect', ctx='predictive_optimization', logger_instance=logger)
             for r in batch_result.ok:
                 results.append(r)
             for exc in batch_result.errors:
@@ -781,8 +779,7 @@ class OptimizationLevel(Enum):
     BALANCED = 'balanced'
     AGGRESSIVE = 'aggressive'
 
-@dataclass(slots=True)
-class ResourceMetrics:
+class ResourceMetrics(msgspec.Struct):
     """Current resource utilization metrics."""
     cpu_percent: float = 0.0
     memory_percent: float = 0.0
@@ -794,8 +791,7 @@ class ResourceMetrics:
     network_bytes_recv: int = 0
     timestamp: float = field(default_factory=time.time)
 
-@dataclass(slots=True)
-class ResourceLimits:
+class ResourceLimits(msgspec.Struct):
     """Resource utilization limits for M1 8GB systems."""
     max_cpu_percent: float = 80.0
     max_memory_percent: float = 85.0
@@ -1055,8 +1051,7 @@ async def main():
 if __name__ == '__main__':
     asyncio.run(main())
 
-@dataclass(slots=True)
-class CacheEntry:
+class CacheEntry(msgspec.Struct):
     """Entry in predictive cache."""
     key: str
     value: Any

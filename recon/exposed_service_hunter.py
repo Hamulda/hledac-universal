@@ -62,8 +62,7 @@ class RiskLevel(Enum):
     HIGH = 'high'
     CRITICAL = 'critical'
 
-@dataclass(slots=True)
-class ExposedService:
+class ExposedService(msgspec.Struct):
     """Represents a discovered exposed service."""
     service_type: str
     host: str
@@ -77,8 +76,7 @@ class ExposedService:
         """Convert to dictionary."""
         return {'service_type': self.service_type, 'host': self.host, 'port': self.port, 'exposure_type': self.exposure_type, 'metadata': self.metadata, 'risk_level': self.risk_level, 'discovered_at': self.discovered_at.isoformat()}
 
-@dataclass(frozen=True, slots=True)
-class S3Bucket:
+class S3Bucket(msgspec.Struct, frozen=True):
     """S3 bucket information."""
     bucket_name: str
     region: str | None
@@ -88,8 +86,7 @@ class S3Bucket:
     total_size: int | None
     permissions: list[str]
 
-@dataclass(frozen=True, slots=True)
-class CertificateInfo:
+class CertificateInfo(msgspec.Struct, frozen=True):
     """Certificate transparency information."""
     domain: str
     issuer: str

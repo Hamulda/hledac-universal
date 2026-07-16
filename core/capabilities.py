@@ -22,6 +22,7 @@ import importlib
 import importlib.util
 import logging
 from dataclasses import dataclass
+import msgspec
 from typing import Any
 
 __all__ = [
@@ -107,8 +108,7 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True, slots=True)
-class Capability:
+class Capability(msgspec.Struct, frozen=True):
     """Frozen descriptor for one optional dependency."""
 
     name: str

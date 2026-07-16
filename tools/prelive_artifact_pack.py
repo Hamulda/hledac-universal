@@ -32,16 +32,14 @@ def _canonical_base(sprint_id: str) -> tuple[str, str]:
     suffix = sprint_id[len(f'F{digits}'):]
     return (f'F{digits}', suffix if suffix else '')
 
-@dataclass(slots=True)
-class SprintIdCollision:
+class SprintIdCollision(msgspec.Struct):
     sprint_id: str
     aliases: list[str] = field(default_factory=list)
     probe_dirs: list[str] = field(default_factory=list)
     report_paths: list[str] = field(default_factory=list)
     json_paths: list[str] = field(default_factory=list)
 
-@dataclass(frozen=True, slots=True)
-class SprintCollisionReport:
+class SprintCollisionReport(msgspec.Struct, frozen=True):
     has_collisions: bool = False
     collisions: list[SprintIdCollision] = field(default_factory=list)
     total_probes_scanned: int = 0
@@ -111,8 +109,7 @@ def render_collision_warning(report: SprintCollisionReport) -> list[str]:
         lines.append('')
     return lines
 
-@dataclass(frozen=True, slots=True)
-class ArtifactPackResult:
+class ArtifactPackResult(msgspec.Struct, frozen=True):
     required: list
     optional: list
     commands: list
@@ -125,8 +122,7 @@ class ArtifactStatus(StrEnum):
     STALE_OR_CORRUPT = 'STALE_OR_CORRUPT'
     OPTIONAL_MISSING = 'OPTIONAL_MISSING'
 
-@dataclass(frozen=True, slots=True)
-class ProbeArtifact:
+class ProbeArtifact(msgspec.Struct, frozen=True):
     probe_dir: str
     filename: str
     full_path: str

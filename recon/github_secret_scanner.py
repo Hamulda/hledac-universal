@@ -14,9 +14,10 @@ import logging
 import re
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
+import msgspec
 import httpx
 from hledac.universal.transport.circuit_breaker import checked_httpx_get as checked_aiohttp_get
-from hledac.universal.utils.async_helpers import parallel, safe_gather_shielded
+from hledac.universal.utils.async_helpers import parallel
 logger = logging.getLogger(__name__)
 _SECRET_REDACT_LEN = 4
 
@@ -26,8 +27,7 @@ def _mask_secret(value: str) -> str:
         return '*' * len(value)
     return value[:-_SECRET_REDACT_LEN] + '*' * _SECRET_REDACT_LEN
 
-@dataclass(slots=True)
-class SecretFinding:
+class SecretFinding(msgspec.Struct):
     pattern: str
     file_path: str
     line: int
@@ -244,7 +244,7 @@ async def scan_repo(repo_full_name: str) -> list[SecretFinding]:
                     content = await _fetch_file_content(item.get('url'), session)
                     return (item, content)
             fetched: list[tuple[dict, str | None]] = []
-            gathered = await safe_gather_shielded(*[_fetch_one(item) for item in items], label='github_fetch', logger_instance=logger)
+            gathered = await parallel([_fetch_one(item) for item in items], taskgroup=True, policy='collect', ctx='github_fetch', logger_instance=logger)
             for result in gathered.ok:
                 fetched.append(result)
             for exc in gathered.errors:

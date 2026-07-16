@@ -39,6 +39,7 @@ M1 8GB: msgspec.Struct is 2-3× faster init, zero GC pressure.
 """
 
 from __future__ import annotations
+import msgspec
 
 import ast
 import argparse

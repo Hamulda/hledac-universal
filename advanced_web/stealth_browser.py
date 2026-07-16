@@ -10,11 +10,14 @@ Returns dict with: url, content, title, links, status, js_rendered
 import asyncio
 import logging
 import os
-import random
+import secrets
 from typing import Any
 from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
 from transport.circuit_breaker import domain_breaker_check, domain_breaker_record_failure, domain_breaker_record_success
 from transport.session_pool import session_pool
+
+# Crypto-safe RNG — F350M-R
+_RNG = secrets.SystemRandom()
 
 class MemoryPressureError(Exception):
     """Raised when system RSS exceeds the browser launch threshold."""
@@ -34,7 +37,7 @@ def _pick_fingerprint_pair() -> tuple[str, str]:
     Returns:
         Tuple of (user_agent, curl_cffi_impersonate_target).
     """
-    ua = random.choice(_CHROME_UAS)
+    ua = _RNG.choice(_CHROME_UAS)
     impersonate = _TLS_FALLBACK_IMPERSONATE
     for substring, target in _TLS_FINGERPRINT_PAIRS:
         if substring in ua:

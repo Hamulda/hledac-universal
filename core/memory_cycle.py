@@ -44,6 +44,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 from utils.async_helpers import safe_wait_for
 logger = logging.getLogger(__name__)
@@ -112,8 +113,7 @@ _PRESSURE_RELIEF_MIN_INTERVAL_S: float = 60.0
 # Issue #042: Background gc.collect(2) interval (60s per spec)
 _GC_BACKGROUND_INTERVAL_S: float = 60.0
 
-@dataclass(slots=True)
-class MemoryCycleStats:
+class MemoryCycleStats(msgspec.Struct):
     """Snapshot of GC + pressure-relief state — for telemetry / debug."""
     gc_freeze_supported: bool
     gc_gen0_collected: int

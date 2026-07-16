@@ -35,16 +35,14 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 logger = logging.getLogger(__name__)
 
-@dataclass(slots=True)
-class TwoPassPipelineConfig:
+class TwoPassPipelineConfig(msgspec.Struct):
     """Configuration for a two-pass pipeline."""
     queue_size: int = 512
     label: str = 'two_pass'
     consumer_concurrency: int = 8
     timeout_s: float | None = None
 
-@dataclass(frozen=True, slots=True)
-class PipelineStats:
+class PipelineStats(msgspec.Struct, frozen=True):
     """Runtime statistics for a two-pass pipeline."""
     produced: int = 0
     consumed: int = 0

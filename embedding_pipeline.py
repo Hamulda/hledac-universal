@@ -30,14 +30,15 @@ import inspect
 import logging
 import threading
 from collections.abc import AsyncIterator
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Self
 import numpy as np
-from core.psutil_shim import psutil
+from core.psutil_shim import psutil, process
 from hledac.universal.utils.exceptions import MemoryPressureError
 if TYPE_CHECKING:
     from hledac.universal.embeddings.modernbert_embedder import ModernBERTEmbedder
 logger = logging.getLogger(__name__)
-COREML_AVAILABLE = False
+COREML_AVAILABLE = False  # noqa: F841 — reserved for future CoreML ANE path
 _EMBEDDING_DIM = 256
 _BATCH_SIZE = 16
 _ESTIMATED_EMBEDDING_MODEL_SIZE_GB = 0.5
@@ -54,7 +55,7 @@ class EmbeddingRouter:
     """
     __slots__ = tuple(('_modernbert',))
 
-    def __init__(self) -> Self:
+    def __init__(self) -> None:
         self._modernbert: ModernBERTEmbedder | None = None
 
     def _load_modernbert(self) -> ModernBERTEmbedder:
@@ -62,19 +63,14 @@ class EmbeddingRouter:
         if self._modernbert is None:
             from hledac.universal.embeddings.modernbert_embedder import ModernBERTEmbedder
             self._modernbert = ModernBERTEmbedder(lazy_load=True)
+        assert self._modernbert is not None
         if not self._modernbert.is_loaded:
             self._modernbert._load_model()
         return self._modernbert
 
     def _check_mlx_loaded(self) -> bool:
-        """Check if MLX ModernBERT is currently in memory via ModelManager."""
-        try:
-            from hledac.universal.brain.model_manager import ModelManager
-            mm = ModelManager.instance()
-            current = mm.get_current_model()
-            return current is not None
-        except Exception:
-            return False
+        """Check if MLX ModernBERT is currently loaded in memory."""
+        return self._modernbert is not None and self._modernbert.is_loaded
 
     def encode(self, texts: str | list[str], **kwargs) -> np.ndarray:
         """
@@ -94,7 +90,6 @@ class EmbeddingRouter:
                 return embedder.embed_batch(texts, **kwargs)
             except AttributeError:
                 return np.zeros((len(texts) if isinstance(texts, list) else 1, _EMBEDDING_DIM), dtype=np.float32)
-        return np.zeros((len(texts) if isinstance(texts, list) else 1, _EMBEDDING_DIM), dtype=np.float32)
 
     def _get_embedder_sync(self):
         """
@@ -107,13 +102,13 @@ class EmbeddingRouter:
                 mb = self._load_modernbert()
                 logger.debug('[EMBED:ROUTER] sync: MLX in UMA, using ModernBERT')
                 return mb
-            except Exception:
+            except Exception:  # noqa: BLE001 — fail-soft: MLX load failures are varied (memory, Metal, import)
                 pass
         try:
             mb = self._load_modernbert()
             logger.debug('[EMBED:ROUTER] sync: MLX ModernBERT loaded')
             return mb
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — fail-soft: log and fallback to compat embedder
             logger.debug(f'[EMBED:ROUTER] ModernBERT sync load failed: {e}')
         from compat.core_mlx_embeddings import get_mlx_embedder
         return get_mlx_embedder()
@@ -128,13 +123,13 @@ class EmbeddingRouter:
                 mb = self._load_modernbert()
                 logger.debug('[EMBED:ROUTER] async: MLX in UMA, using ModernBERT')
                 return mb
-            except Exception:
+            except Exception:  # noqa: BLE001 — fail-soft: MLX load failures are varied (memory, Metal, import)
                 pass
         try:
             mb = self._load_modernbert()
             logger.debug('[EMBED:ROUTER] async: MLX ModernBERT loaded')
             return mb
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — fail-soft: log and fallback to compat embedder
             logger.warning(f'[EMBED:ROUTER] ModernBERT load failed: {e}')
         from compat.core_mlx_embeddings import get_mlx_embedder
         return get_mlx_embedder()
@@ -155,7 +150,7 @@ class EmbeddingRouter:
         if self._modernbert is not None:
             try:
                 self._modernbert.unload()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort cleanup, unload failures are non-critical
                 pass
             self._modernbert = None
         logger.info('[EMBED:ROUTER] All embedders unloaded')
@@ -177,7 +172,7 @@ def _is_swap_detected() -> bool:
         import psutil
         swap = psutil.swap_memory()
         return swap.used > 0
-    except Exception:
+    except Exception:  # noqa: BLE001 — fail-soft: psutil probe failure should not prevent embedding
         return False
 
 def get_adaptive_batch_size() -> int:
@@ -202,7 +197,7 @@ def get_adaptive_batch_size() -> int:
         from hledac.universal.utils.uma_budget import is_uma_critical, is_uma_emergency, is_uma_warn
         if is_uma_emergency() or is_uma_critical() or is_uma_warn():
             return 16
-    except Exception:
+    except Exception:  # noqa: BLE001 — fail-soft: uma_budget import/usage failure should not prevent batch size calculation
         pass
     if _is_swap_detected():
         return 16
@@ -248,7 +243,7 @@ def _check_memory_guard() -> bool:
         if level_str != 'normal':
             logger.warning(f'[EMBED] UmaWatchdog level={level_str} ({level_int}%) — skipping embedding')
             return False
-    except Exception:
+    except Exception:  # noqa: BLE001 — fail-soft: uma_budget probe failure should not prevent embedding
         pass
     return True
 _UMA_GUARD_THRESHOLD_MB: int | None = None
@@ -272,7 +267,7 @@ def _get_uma_guard_threshold() -> int:
     try:
         from core.resource_governor import _THRESHOLD_CRITICAL_GIB
         _UMA_GUARD_THRESHOLD_MB = int(_THRESHOLD_CRITICAL_GIB * 1024)
-    except Exception:
+    except Exception:  # noqa: BLE001 — fail-soft: resource_governor import failure should not prevent threshold calculation
         _UMA_GUARD_THRESHOLD_MB = 6656
         logger.debug('[EMBED:UMA] Could not import _THRESHOLD_CRITICAL_GIB, using fallback 6656MB')
     return _UMA_GUARD_THRESHOLD_MB
@@ -294,7 +289,7 @@ def _uma_guard_before_batch() -> tuple[bool, dict]:
         active_mb = get_mlx_active_memory_mb()
         if active_mb is None:
             return (True, {})
-        rss_mb = psutil.Process().memory_info().rss // (1024 * 1024)
+        rss_mb = process().memory_info().rss // (1024 * 1024) if process() else 0
         combined_mb = active_mb + rss_mb
         threshold_mb = _get_uma_guard_threshold()
         telemetry['combined_memory_mb'] = combined_mb
@@ -305,31 +300,38 @@ def _uma_guard_before_batch() -> tuple[bool, dict]:
             telemetry['uma_guard_reason'] = f'combined_uma_pressure_{combined_mb}mb_exceeds_{threshold_mb}mb'
             logger.warning(f'[EMBED:UMA] Combined UMA pressure {combined_mb}MB (Metal={active_mb}MB + RSS={rss_mb}MB) > {threshold_mb}MB — flushing cache')
             try:
-                import mlx.core as mx
-                mx.eval([])
-                import gc
-                gc.collect()
-                try:
-                    mx.clear_cache()
-                except AttributeError:
+                from utils.mlx_cache import get_mx
+                mx = get_mx()
+                if mx is not None:
+                    mx.eval([])
+                    gc.collect()
                     try:
-                        mx.metal.clear_cache()
-                    except Exception:
+                        mx.clear_cache()
+                    except AttributeError:
+                        try:
+                            mx.metal.clear_cache()
+                        except Exception:  # noqa: BLE001 — best-effort: Metal cache clear failure
+                            pass
+                    except Exception:  # noqa: BLE001 — best-effort: clear_cache failure should not prevent cleanup
                         pass
-                except Exception:
-                    pass
-                gc.collect()
-            except Exception:
+                    gc.collect()
+            except Exception:  # noqa: BLE001 — best-effort: mlx/gc cleanup failure is non-critical
                 pass
             return (False, telemetry)
         return (True, {})
-    except Exception:
+    except ImportError:
+        # mlx.core unavailable — cannot clear cache, return unsafe to be conservative
+        telemetry['uma_guard_blocked_batch'] = True
+        telemetry['uma_guard_reason'] = 'mlx_import_failed'
+        logger.warning('[EMBED:UMA] mlx.core import failed — cannot determine memory state, blocking batch')
+        return (False, telemetry)
+    except Exception:  # noqa: BLE001 — fail-soft: uma guard should not block embedding on unknown errors
         return (True, {})
 
 def _get_current_rss_gb() -> float:
     """Get current RSS memory in GB. P19: For memory guard checks."""
     try:
-        return psutil.Process().memory_info().rss / 1000000000.0
+        return process().memory_info().rss / 1000000000.0 if process() else 0.0
     except Exception:
         return 0.0
 
@@ -399,12 +401,12 @@ def generate_embeddings(texts: list[str], batch_size: int | None=None, keep_load
             original_to_unique.append(seen[h])
         if len(unique_list) < len(texts):
             dedup_happened = True
+            original_to_unique = original_to_unique  # used in remap below
             dedup_ratio = (len(texts) - len(unique_list)) / len(texts)
             logger.debug('[EMBED:J] xxhash dedup: %d→%d texts (%.0f%% duplicates removed)', len(texts), len(unique_list), dedup_ratio * 100)
             texts_to_embed = unique_list
     except ImportError:
         logger.debug('[EMBED:J] xxhash not available — skipping dedup')
-        original_to_unique = list(range(len(texts)))
     if not _check_memory_guard():
         logger.warning('[EMBED] Skipping embedding generation due to memory pressure')
         return np.zeros((0, _EMBEDDING_DIM), dtype=np.float32)
@@ -548,14 +550,18 @@ _embed_max_rss_gb: float = 5.5
 _embedding_depth: int = 0
 _embedding_depth_lock = threading.Lock()
 _embed_refcount: int = 0
-_embed_refcount_lock: asyncio.Lock | None = None
+# ContextVar: each async context (Task) gets its own lock automatically.
+# ISSUE-014 FIX: asyncio.Lock bound to a single loop is a bug on macOS —
+# ContextVar keyed by Task gives per-context isolation without manual tracking.
+_embed_refcount_lock_var: ContextVar[asyncio.Lock | None] = ContextVar("_embed_refcount_lock_var", default=None)
 
 def _get_embed_refcount_lock() -> asyncio.Lock:
-    """ISSUE-014 FIX: Lazily create embed refcount lock in the current event loop."""
-    global _embed_refcount_lock
-    if _embed_refcount_lock is None:
-        _embed_refcount_lock = asyncio.Lock()
-    return _embed_refcount_lock
+    """Get the ContextVar-backed refcount lock for the current async context."""
+    lock = _embed_refcount_lock_var.get()
+    if lock is None:
+        lock = asyncio.Lock()
+        _embed_refcount_lock_var.set(lock)
+    return lock
 
 class embedding_session:
     """
@@ -716,14 +722,19 @@ async def generate_embeddings_streaming(texts: list[str], batch_size: int=_BATCH
     try:
         if not _get_embedder().is_loaded:
             if not load_embedding_model():
-                safe, telemetry = _uma_guard_before_batch()
-                if not safe:
-                    logger.warning(f"[EMBED:streaming] Fallback batch skipped due to UMA pressure: combined={telemetry.get('combined_memory_mb', 0)}MB")
-                    return
-                embs = await asyncio.to_thread(generate_embeddings, texts, batch_size)
-                ids = [str(i) for i, _ in enumerate(texts)]
-                if embs.shape[0] > 0:
-                    yield (ids, embs)
+                # load_embedding_model() already applied UmaWatchdog/RSS guard.
+                # Fallback: process in per-batch chunks using _uma_guard_before_batch
+                # per batch (same as main loop below) instead of materializing all at once.
+                for i in range(0, len(texts), batch_size):
+                    chunk = texts[i:i + batch_size]
+                    chunk_ids = [str(i + j) for j in range(len(chunk))]
+                    safe, _telemetry = _uma_guard_before_batch()
+                    if not safe:
+                        logger.warning(f"[EMBED:streaming] Fallback batch {i} skipped due to UMA pressure")
+                        break
+                    embs = await asyncio.to_thread(_generate_embeddings_chunk, chunk, batch_size)
+                    if embs is not None and embs.shape[0] == len(chunk):
+                        yield (chunk_ids, embs)
                 return
             model_loaded = True
         for i in range(0, len(texts), batch_size):
@@ -748,7 +759,7 @@ def _generate_embeddings_chunk(texts: list[str], batch_size: int) -> np.ndarray:
     """Sync helper for a single chunk — runs in thread executor."""
     return generate_embeddings(texts, batch_size=batch_size)
 
-def _encode_batch_no_release(texts: list[str], batch_size: int) -> np.ndarray:
+def _encode_batch_no_release(texts: list[str], _batch_size: int) -> np.ndarray:
     """
     Issue #15: Sync batch encode WITHOUT embedder unload.
 
@@ -785,20 +796,21 @@ async def _async_enumerate(iterator: AsyncIterator[str], start: int=0) -> AsyncI
 
 async def embed_stream(texts: list[str], batch_size: int=_BATCH_SIZE) -> AsyncIterator[tuple[str, np.ndarray]]:
     """
-    Issue #15 fix: Batch-oriented per-item embedding stream.
+    Issue-3: Batch-oriented per-item embedding stream.
 
-    Accumulates items into batches internally, then yields one embedding
-    at a time. Contrast with old single-item encode which had per-item
-    tokenizer overhead. Peak RSS bounded by batch_size × seq_len × 4B.
+    Delegates to _batch_encode_with_guard() for UMA guard + mx.eval/clear_cache.
+    Accumulates items into batches internally, yields one embedding per item.
+
+    Contrast with embed_stream_chunks() which yields per-batch.
 
     NOTE: Unlike mlx_lm.generate_stream() which streams LLM tokens during
     autoregressive decode, this function streams ModernBERT forward-pass
     embeddings one-item-at-a-time. There is no autoregressive process.
 
     M1 8GB invariants:
-    - Batch-oriented encoding: amortizes tokenizer overhead across batch_size items
     - mx.eval([]) barrier before mx.metal.clear_cache() after each batch
     - UMA guard pre-batch skips yielding when Metal pressure is critical
+    - Fail-open: any error yields nothing
 
     Args:
         texts: List of text strings to embed.
@@ -807,7 +819,6 @@ async def embed_stream(texts: list[str], batch_size: int=_BATCH_SIZE) -> AsyncIt
     Yields:
         tuple[str, np.ndarray]: (item_id, embedding_vector) per item.
             embedding_vector shape=(256,) float32.
-            Yields nothing if memory pressure or error (fail-open).
 
     Example:
         async for item_id, emb in embed_stream(["doc1", "doc2", "doc3"]):
@@ -816,70 +827,29 @@ async def embed_stream(texts: list[str], batch_size: int=_BATCH_SIZE) -> AsyncIt
     if not texts:
         return
     batch_size = min(batch_size, _BATCH_SIZE)
-    batch: list[tuple[int, str]] = []
+    if not _check_memory_guard():
+        logger.warning("[EMBED:stream] Skipped due to memory pressure")
+        return
     model_loaded = False
-    if not _get_embedder().is_loaded:
-        if not load_embedding_model():
-            return
-        model_loaded = True
     try:
+        if not _get_embedder().is_loaded:
+            if not load_embedding_model():
+                return
+            model_loaded = True
+        batch: list[tuple[int | str, str]] = []
         for i, text in enumerate(texts):
             batch.append((i, text))
             if len(batch) >= batch_size:
-                safe, telemetry = _uma_guard_before_batch()
-                if not safe:
-                    logger.warning(f"[EMBED:stream] Batch behind item {i} skipped due to UMA pressure: combined={telemetry.get('combined_memory_mb', 0)}MB")
-                    batch.clear()
-                    continue
-                _, batch_texts = zip(*batch)
-                try:
-                    embs = await asyncio.to_thread(_encode_batch_no_release, list(batch_texts), batch_size)
-                    if embs is not None and embs.shape[0] == len(batch_texts):
-                        for (orig_idx, _), emb_vec in zip(batch, embs):
-                            yield (str(orig_idx), emb_vec)
-                except Exception as e:
-                    logger.debug(f'[EMBED:stream] batch error at item {i}: {e}')
-                finally:
-                    batch.clear()
-                try:
-                    import mlx.core as mx
-                    mx.eval([])
-                    try:
-                        mx.clear_cache()
-                    except AttributeError:
-                        try:
-                            mx.metal.clear_cache()
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
+                result = await _batch_encode_with_guard(batch, batch_size)
+                if result is not None:
+                    for (orig_idx, _), emb_vec in zip(result[0], result[1]):
+                        yield (str(orig_idx), emb_vec)
+                batch.clear()
         if batch:
-            safe, telemetry = _uma_guard_before_batch()
-            if safe:
-                _, batch_texts = zip(*batch)
-                try:
-                    embs = await asyncio.to_thread(_encode_batch_no_release, list(batch_texts), batch_size)
-                    if embs is not None and embs.shape[0] == len(batch_texts):
-                        for (orig_idx, _), emb_vec in zip(batch, embs):
-                            yield (str(orig_idx), emb_vec)
-                except Exception as e:
-                    logger.debug(f'[EMBED:stream] final batch error: {e}')
-                finally:
-                    batch.clear()
-            try:
-                import mlx.core as mx
-                mx.eval([])
-                try:
-                    mx.clear_cache()
-                except AttributeError:
-                    try:
-                        mx.metal.clear_cache()
-                    except Exception:
-                        pass
-                except Exception:
-                    pass
-            except Exception:
-                pass
+            result = await _batch_encode_with_guard(batch, batch_size)
+            if result is not None:
+                for (orig_idx, _), emb_vec in zip(result[0], result[1]):
+                    yield (str(orig_idx), emb_vec)
     finally:
         if model_loaded:
             unload_embedding_model()
@@ -919,7 +889,10 @@ async def generate_embeddings_from_iterator(texts_iter: AsyncIterator[str], batc
         async for item_id, emb in generate_embeddings_from_iterator(text_source()):
             print(f"Item {item_id}: shape={emb.shape}")
     """
-    batch: list[tuple[str, str]] = []
+    if not _check_memory_guard():
+        logger.warning('[EMBED:from_iter] Skipped due to memory pressure')
+        return
+    batch: list[tuple[str | int, str]] = []
     batch_size = min(batch_size, _BATCH_SIZE)
     model_loaded = False
     if not _get_embedder().is_loaded:
@@ -930,60 +903,16 @@ async def generate_embeddings_from_iterator(texts_iter: AsyncIterator[str], batc
         async for item_id, text in _async_enumerate(texts_iter):
             batch.append((item_id, text))
             if len(batch) >= batch_size:
-                safe, telemetry = _uma_guard_before_batch()
-                if not safe:
-                    logger.warning(f"[EMBED:stream-iter] Batch behind {item_id} skipped due to UMA pressure: combined={telemetry.get('combined_memory_mb', 0)}MB")
-                    batch.clear()
-                    continue
-                chunk_ids, chunk_texts = zip(*batch)
-                try:
-                    embs = await asyncio.to_thread(_encode_batch_no_release, list(chunk_texts), batch_size)
-                    if embs is not None and embs.shape[0] == len(chunk_texts):
-                        for cid, emb_vec in zip(chunk_ids, embs):
-                            yield (str(cid), emb_vec)
-                except Exception as e:
-                    logger.debug(f'[EMBED:stream-iter] batch error at {item_id}: {e}')
-                finally:
-                    batch.clear()
-                try:
-                    import mlx.core as mx
-                    mx.eval([])
-                    try:
-                        mx.clear_cache()
-                    except AttributeError:
-                        try:
-                            mx.metal.clear_cache()
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
+                result = await _batch_encode_with_guard(batch, batch_size)
+                if result is not None:
+                    for cid, emb_vec in zip(result[0], result[1]):
+                        yield (str(cid), emb_vec)
+                batch.clear()
         if batch:
-            safe, telemetry = _uma_guard_before_batch()
-            if safe:
-                chunk_ids, chunk_texts = zip(*batch)
-                try:
-                    embs = await asyncio.to_thread(_encode_batch_no_release, list(chunk_texts), batch_size)
-                    if embs is not None and embs.shape[0] == len(chunk_texts):
-                        for cid, emb_vec in zip(chunk_ids, embs):
-                            yield (str(cid), emb_vec)
-                except Exception as e:
-                    logger.debug(f'[EMBED:stream-iter] final batch error: {e}')
-                finally:
-                    batch.clear()
-            try:
-                import mlx.core as mx
-                mx.eval([])
-                try:
-                    mx.clear_cache()
-                except AttributeError:
-                    try:
-                        mx.metal.clear_cache()
-                    except Exception:
-                        pass
-                except Exception:
-                    pass
-            except Exception:
-                pass
+            result = await _batch_encode_with_guard(batch, batch_size)
+            if result is not None:
+                for cid, emb_vec in zip(result[0], result[1]):
+                    yield (str(cid), emb_vec)
     finally:
         if model_loaded:
             unload_embedding_model()
@@ -1005,10 +934,137 @@ def _uma_pressure_provider() -> float:
     """
     try:
         from hledac.universal.utils.uma_budget import get_uma_pressure_level
-        level_int, level_str = get_uma_pressure_level()
+        level_int, _ = get_uma_pressure_level()
         return level_int / 100.0
     except Exception:
         return 0.5
+
+
+# ---------------------------------------------------------------------------
+# Shared streaming helpers — single source of truth for M1 8GB UMA guard +
+# mx.eval / mx.metal.clear_cache barrier. Used by embed_stream,
+# generate_embeddings_from_iterator, and embed_stream_chunks.
+# ---------------------------------------------------------------------------
+
+def _clear_mlx_cache() -> None:
+    """
+    Issue-3: Single source of truth for MLX Metal cache eviction.
+
+    mx.eval([]) is required as an evaluation barrier before clear_cache —
+    without it, clear_cache is a no-op (MLX uses lazy evaluation).
+    Bare import is lazy (mlx.core loaded only when first called).
+
+    Fail-safe: any exception is swallowed — telemetry is NOT updated here
+    because this is a best-effort memory relief call.
+    """
+    try:
+        from utils.mlx_cache import get_mx
+        mx = get_mx()
+        if mx is None:
+            return
+        mx.eval([])
+        try:
+            mx.clear_cache()
+        except AttributeError:
+            try:
+                mx.metal.clear_cache()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+async def _batch_encode_with_guard(
+    batch: list[tuple[int | str, str]],
+    batch_size: int,
+) -> tuple[list[tuple[int | str, str]], np.ndarray] | None:
+    """
+    Issue-3: Single source of truth for batch encoding with M1 8GB UMA guard.
+
+    Encodes a batch and yields embeddings only when safe (UMA pressure pass).
+    Handles mx.eval/clear_cache barrier after the encode call.
+    Returns None when blocked or on error.
+
+    Architecture:
+        embed_stream()       → _batch_encode_with_guard()  (list input, per-item yield)
+        embed_stream_chunks() → _batch_encode_with_guard()  (list input, per-batch yield)
+        generate_embeddings_from_iterator() → _batch_encode_with_guard() (async iter input, per-item yield)
+
+    Args:
+        batch: List of (id, text) tuples. Ids may be int or str.
+        batch_size: Max batch size (used for adaptiveUMA fallback).
+
+    Returns:
+        None if UMA guard blocked or error — caller skips yielding.
+        tuple[batch, embeddings] on success — embeddings shape=(len(batch), 256) float32.
+    """
+    safe, telemetry = _uma_guard_before_batch()
+    if not safe:
+        logger.warning(
+            f"[EMBED:_batch] Skipped due to UMA pressure: "
+            f"combined={telemetry.get('combined_memory_mb', 0)}MB"
+        )
+        return None
+    try:
+        _, texts = zip(*batch)
+        embs = await asyncio.to_thread(_encode_batch_no_release, list(texts), batch_size)
+        if embs is None or embs.shape[0] != len(batch):
+            return None
+        _clear_mlx_cache()
+        return (batch, embs)
+    except Exception as e:
+        logger.debug(f"[EMBED:_batch] encode failed: {e}")
+        return None
+
+
+async def embed_stream_chunks(
+    texts: list[str],
+    batch_size: int = _BATCH_SIZE,
+) -> AsyncIterator[tuple[list[str], np.ndarray]]:
+    """
+    Issue-3: Per-batch streaming embedder — yields one batch at a time.
+
+    Delegates to _batch_encode_with_guard() for UMA guard + mx.eval/clear_cache.
+    Contrast with embed_stream() which yields per-item; this yields per-batch
+    for callers that need batch-level granularity (e.g. pipeline batching).
+
+    Args:
+        texts: List of text strings to embed.
+        batch_size: Max batch size (capped at _BATCH_SIZE=16).
+
+    Yields:
+        tuple[list[str], np.ndarray]: (ids, embeddings) per batch.
+            embeddings shape=(batch_size, 256) float32.
+
+    Fail-open: any error yields nothing.
+    """
+    if not texts:
+        return
+    batch_size = min(batch_size, _BATCH_SIZE)
+    if not _check_memory_guard():
+        logger.warning("[EMBED:chunks] Skipped due to memory pressure")
+        return
+    model_loaded = False
+    try:
+        if not _get_embedder().is_loaded:
+            if not load_embedding_model():
+                return
+            model_loaded = True
+        for i in range(0, len(texts), batch_size):
+            chunk = texts[i:i + batch_size]
+            chunk_ids = [str(i + j) for j in range(len(chunk))]
+            result = await _batch_encode_with_guard(
+                list(zip(chunk_ids, chunk)), batch_size
+            )
+            if result is not None:
+                batch_tuples, embs = result
+                ids = [str(item[0]) for item in batch_tuples]
+                yield (ids, embs)
+            else:
+                logger.warning(f"[EMBED:chunks] Batch at offset {i} skipped due to UMA pressure")
+    finally:
+        if model_loaded:
+            unload_embedding_model()
 
 async def generate_embeddings_adaptive_streaming(texts: list[str], initial_batch_size: int=32, min_batch_size: int=4, max_batch_size: int=128, pressure_high: float=0.8, pressure_low: float=0.5) -> AsyncIterator[tuple[list[int], np.ndarray]]:
     """
@@ -1090,12 +1146,9 @@ def get_embedding_backend() -> str:
     F218A: Return which embedding backend is currently active.
 
     Inspects the EmbeddingRouter state to determine the active path:
-      - "ane"           — ANEEmbedder (CoreML MiniLM-L6-v2)
-      - "mlx"           — MLX ModernBERT (ModernBERTEmbedder via mlx-embeddings)
-      - "mlx_manager"   — MLXEmbeddingManager fallback (when ModernBERT unavailable)
-      - "zero_fallback" — fail-open zero-array fallback (model load failed)
-      - "not_loaded"    — router initialized but no model loaded yet
-      - "unknown"       — cannot determine (error state)
+      - "mlx"        — MLX ModernBERT loaded and active
+      - "not_loaded" — router exists but no model loaded yet
+      - "unknown"    — cannot determine (error state)
 
     This is a read-only diagnostic — does not trigger model loading.
     """
@@ -1104,17 +1157,12 @@ def get_embedding_backend() -> str:
         return 'not_loaded'
     try:
         router = _embedding_router
-        if router._ane_available and router._ane is not None and router._ane.is_loaded:
-            return 'ane'
+        # CoreML ANE path removed — MLX-only (ModernBERT or fallback)
         if router._check_mlx_loaded():
             if router._modernbert is not None and router._modernbert.is_loaded:
                 return 'mlx'
         if router._modernbert is not None and router._modernbert.is_loaded:
             return 'mlx'
-        if not router._initialized:
-            return 'not_loaded'
-        if not router._ane_available:
-            return 'not_loaded'
         return 'not_loaded'
     except Exception:
         return 'unknown'

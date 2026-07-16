@@ -39,6 +39,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
+import msgspec
 from typing import Any, Literal
 import orjson
 logger = logging.getLogger(__name__)
@@ -53,8 +54,7 @@ SourceTier = Literal['surface', 'dark', 'archive', 'p2p', 'academic']
 TransportRequired = Literal['direct', 'tor', 'i2p', 'none']
 DataType = Literal['ct_logs', 'passive_dns', 'leak_db', 'academic', 'forum', 'paste', 'repo']
 
-@dataclass(frozen=True, slots=True)
-class DeepSource:
+class DeepSource(msgspec.Struct, frozen=True):
     """Immutable description of a single beyond-surface OSINT source.
 
     source_id is a BLAKE2b 8-byte digest of base_url (16 hex chars) — stable

@@ -26,4 +26,16 @@ warnings.warn(
 # Re-export from new location for backwards compatibility
 from coordinators.resource.resource_coordinator import AIMDController
 
-__all__ = ["AIMDController"]
+__all__ = ["AIMDController", "make_enrich_aimd"]
+
+
+def make_enrich_aimd() -> AIMDController:
+    """Factory for EnrichStage AIMD controller — ceiling=16, aggressive scaling."""
+    return AIMDController(
+        min_value=1,
+        max_value=16,
+        additive_increment=1,
+        decrease_factor=0.75,
+        success_threshold=2,
+        name="enrich",
+    )

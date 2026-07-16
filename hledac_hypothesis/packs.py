@@ -46,15 +46,13 @@ from dataclasses import dataclass, field
 import msgspec
 from typing import Any
 
-@dataclass(slots=True)
-class SourceHint:
+class SourceHint(msgspec.Struct):
     """Source recommendation with quality score."""
     source: str
     quality: float
     hint_type: str = 'general'
 
-@dataclass(frozen=True, slots=True)
-class HypothesisPack:
+class HypothesisPack(msgspec.Struct, frozen=True):
     """
     Bounded hypothesis/query pack from findings.
 

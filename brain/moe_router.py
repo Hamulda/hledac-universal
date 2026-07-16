@@ -39,8 +39,7 @@ except ImportError:
 _torch_nn = None
 logger = logging.getLogger(__name__)
 
-@dataclass(slots=True)
-class MoERouterConfig:
+class MoERouterConfig(msgspec.Struct):
     """Konfigurace pro MoE Router"""
     expert_names: list[str] = field(default_factory=lambda: ['osint', 'security', 'temporal', 'graph', 'synthesis'])
     model_paths: dict[str, str] = field(default_factory=lambda: {'osint': 'mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit', 'security': 'mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit', 'temporal': 'mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit', 'graph': 'mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit', 'synthesis': 'mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit'})

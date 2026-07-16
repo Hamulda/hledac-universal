@@ -868,7 +868,7 @@ class _LifecycleAdapter:
       - Fail-safe: AttributeError from _lc propagates as-is
     """
 
-    __slots__ = ("_lc", "_phase_transition_callback", "_prev_phase")
+    __slots__ = ("_lc", "_phase_transition_callback", "_prev_phase", "__dict__")
 
     def __init__(self, lifecycle: Any, phase_transition_callback: Callable[[str, str], None] | None = None) -> None:
         object.__setattr__(self, "_lc", lifecycle)
@@ -1001,7 +1001,11 @@ class _LifecycleAdapter:
             attr_name = self._resolve_attr("set_first_cycle_ran_attr")
         except AttributeError:
             return
-        setattr(self._lc, attr_name, True)
+        val = getattr(self._lc, attr_name)
+        if callable(val):
+            val()
+        else:
+            setattr(self._lc, attr_name, True)
 
     def set_deadline_expired_pre_cycle(self) -> None:
         """F290-Deadline: Signal that hard deadline expired before first cycle."""

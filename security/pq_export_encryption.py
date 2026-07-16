@@ -49,8 +49,7 @@ class Decryptability(Enum):
     EPHEMERAL_TEST_ONLY = 'ephemeral_test_only'
     UNSUPPORTED = 'unsupported'
 
-@dataclass(slots=True)
-class ExportEncryptionEnvelope:
+class ExportEncryptionEnvelope(msgspec.Struct):
     """
     Encrypted export bundle envelope — PRODUCTION safe, no private key material.
 
@@ -105,8 +104,7 @@ class ExportEncryptionEnvelope:
         """Safe repr — no private key material."""
         return f'ExportEncryptionEnvelope(mode={self.mode!r}, pq={self.pq}, decryptability={self.decryptability.value}, recipient_key_id={self.recipient_key_id!r}, backend={self.backend!r})'
 
-@dataclass(frozen=True, slots=True)
-class TestOnlyHPKERoundtripMaterial:
+class TestOnlyHPKERoundtripMaterial(msgspec.Struct, frozen=True):
     """
     Test-only HPKE roundtrip material — NEVER used in production.
 
@@ -119,8 +117,7 @@ class TestOnlyHPKERoundtripMaterial:
     public_key_b64: str
     private_key_b64: str
 
-@dataclass(frozen=True, slots=True)
-class HPKEStatus:
+class HPKEStatus(msgspec.Struct, frozen=True):
     """Current status of the HPKE export backend."""
     availability: HPKEAvailability = HPKEAvailability.DISABLED
     backend_name: str = 'null'

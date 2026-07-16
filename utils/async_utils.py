@@ -25,12 +25,16 @@ Example:
 """
 import asyncio
 import logging
-import random
+import secrets
 import sys
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from typing import Any, TypeVar, cast
-from .async_helpers import safe_create_task, safe_gather_fire_and_forget, safe_gather_ok, safe_gather_strict
+from .async_helpers import safe_create_task, safe_gather_ok, parallel
 logger = logging.getLogger(__name__)
+
+# Crypto-safe jitter — F350M-R
+_JITTER_RNG = secrets.SystemRandom()
+
 T = TypeVar('T', default=Any)
 
 class TaskResult:
@@ -105,14 +109,15 @@ async def bounded_map[T](tasks: Sequence[tuple[Callable[..., Awaitable[T]], tupl
             except Exception as e:
                 if attempt == max_retries or not isinstance(e, retryable_exceptions):
                     raise
-                delay = 0.5 * 2 ** attempt * random.uniform(0.5, 1.5)
+                delay = 0.5 * 2 ** attempt * _JITTER_RNG.uniform(0.5, 1.5)
                 logger.debug(f'Task {index} retry {attempt + 1}/{max_retries} after {delay:.2f}s')
                 await asyncio.sleep(delay)
         return None
     results: list[T | None] = [None] * len(tasks)
     if sys.version_info >= (3, 11) and cancel_on_error:
         coros = [_run(i, fn, a, k) for i, (fn, a, k) in enumerate(tasks)]
-        return await safe_gather_strict(*coros, label=f'async_utils:run[{len(tasks)}]')
+        result = await parallel(coros, taskgroup=True, policy='raise', ctx=f'async_utils:run[{len(tasks)}]')
+        return result.ok
     coros = [_run(i, fn, a, k) for i, (fn, a, k) in enumerate(tasks)]
     gathered = await safe_gather_ok(*coros, label='async_utils:149')
     if cancel_on_error:
@@ -288,7 +293,7 @@ class BoundedTaskSet:
         logger.debug(f'[BoundedTaskSet] Cancelling {len(tasks)} tasks')
         for t in tasks:
             t.cancel()
-        await safe_gather_fire_and_forget(*tasks, label='async_utils:BoundedTaskSet:cancel', logger_instance=logger)
+        await parallel(tasks, taskgroup=True, policy='log', ctx='async_utils:BoundedTaskSet:cancel', logger_instance=logger)
         async with self._lock:
             self._tasks.clear()
 __all__ = ['TaskResult', 'bounded_map', 'map_as_completed', 'bounded_gather', 'BoundedTaskSet']

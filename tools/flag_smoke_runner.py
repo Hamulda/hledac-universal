@@ -34,6 +34,7 @@ import sys
 import time
 import tracemalloc
 from dataclasses import dataclass, field
+import msgspec
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -79,8 +80,7 @@ _SKIP_PATH_FRAGMENTS = (
 )
 
 
-@dataclass(slots=True)
-class FlagReport:
+class FlagReport(msgspec.Struct):
     """Per-flag result.
 
     ``slots=True`` keeps the report footprint bounded — each instance

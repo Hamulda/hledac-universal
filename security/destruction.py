@@ -17,8 +17,7 @@ from pathlib import Path
 from typing import Any
 logger = logging.getLogger(__name__)
 
-@dataclass(slots=True)
-class DestructionConfig:
+class DestructionConfig(msgspec.Struct):
     """Konfigurace bezpečného mazání"""
     passes: int = 3
     pass_patterns: list[bytes] | None = None

@@ -23,6 +23,7 @@ import threading
 import time as _time
 import uuid
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 logger = logging.getLogger(__name__)
 _SLAB_CLASSES_BYTES: tuple[int, ...] = (64 * 1024, 256 * 1024, 1024 * 1024, 4 * 1024 * 1024, 16 * 1024 * 1024, 64 * 1024 * 1024, 128 * 1024 * 1024, 256 * 1024 * 1024)
@@ -30,8 +31,7 @@ _SLAB_CLASS_NAMES: tuple[str, ...] = ('64KB', '256KB', '1MB', '4MB', '16MB', '64
 _SLABS_PER_CLASS: int = 2
 _MAX_SLAB_TOTAL_BYTES: int = 512 * 1024 * 1024
 
-@dataclass(slots=True)
-class _Slab:
+class _Slab(msgspec.Struct):
     """A single Metal buffer slab."""
     slab_id: str
     size_class: int

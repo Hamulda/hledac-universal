@@ -20,13 +20,14 @@ Section 3.1 (implication rules), 3.2 (mutual exclusion),
 3.3 (resource gates), 2.1 (8-group taxonomy).
 """
 import os
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
+import msgspec
+import msgspec
 from typing import Literal
 FlagGroup = Literal['network', 'brain', 'storage', 'dark_surface', 'intelligence_apis', 'forensics', 'stealth', 'system']
 VALID_GROUPS: frozenset[str] = frozenset({'network', 'brain', 'storage', 'dark_surface', 'intelligence_apis', 'forensics', 'stealth', 'system'})
 
-@dataclass(frozen=True, slots=True)
-class FlagSpec:
+class FlagSpec(msgspec.Struct, frozen=True):
     """Canonical specification of a single HLEDAC_* feature flag.
 
     Attributes:
@@ -52,8 +53,8 @@ class FlagSpec:
     name: str
     group: FlagGroup
     default: str = '0'
-    implies: tuple[str, ...] = field(default_factory=tuple)
-    conflicts_with: tuple[str, ...] = field(default_factory=tuple)
+    implies: tuple[str, ...] = msgspec.field(default_factory=tuple)
+    conflicts_with: tuple[str, ...] = msgspec.field(default_factory=tuple)
     requires_daemon: str | None = None
     min_ram_mb: int = 0
     description: str = ''
@@ -96,8 +97,16 @@ def _register_symmetric_conflict(a: FlagSpec, b: FlagSpec) -> tuple[FlagSpec, Fl
     Both specs are written to :data:`FLAG_REGISTRY`; existing
     ``conflicts_with`` tuples are preserved and extended.
     """
-    a = replace(a, conflicts_with=tuple(dict.fromkeys((*a.conflicts_with, b.name))))
-    b = replace(b, conflicts_with=tuple(dict.fromkeys((*b.conflicts_with, a.name))))
+    a_conflicts = tuple(dict.fromkeys((*a.conflicts_with, b.name)))
+    b_conflicts = tuple(dict.fromkeys((*b.conflicts_with, a.name)))
+    # msgspec.Struct is frozen — use direct construction instead of dataclasses.replace
+    a = FlagSpec(name=a.name, group=a.group, default=a.default, implies=a.implies,
+                 conflicts_with=a_conflicts, requires_daemon=a.requires_daemon,
+                 min_ram_mb=a.min_ram_mb, description=a.description)
+    b = FlagSpec(name=b.name, group=b.group, default=b.default, implies=b.implies,
+                 conflicts_with=b_conflicts, requires_daemon=b.requires_daemon,
+                 min_ram_mb=b.min_ram_mb, description=b.description)
+
     FLAG_REGISTRY[a.name] = a
     FLAG_REGISTRY[b.name] = b
     return (a, b)

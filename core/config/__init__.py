@@ -22,6 +22,7 @@ Usage:
     # Validate at startup
     M1AirConfig.validate()
 """
+import msgspec
 
 
 from core.config.m1_air_config import M1AirConfig, M1_AIR

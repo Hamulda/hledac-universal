@@ -17,10 +17,10 @@ before _sanitize_for_llm callback or fallback_sanitize.
 """
 import re
 from dataclasses import dataclass
+import msgspec
 __all__ = ['PromptInjectionValidationResult', 'sanitize_prompt_injection_patterns']
 
-@dataclass(frozen=True, slots=True)
-class PromptInjectionValidationResult:
+class PromptInjectionValidationResult(msgspec.Struct, frozen=True):
     safe_text: str
     suspicious: bool
     patterns: tuple[str, ...]

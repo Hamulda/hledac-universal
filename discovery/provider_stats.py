@@ -14,6 +14,7 @@ Persistence: DuckDB (canonical) or JSON snapshot, env-gated.
 No ML hot path. Pure Python. M1-safe.
 """
 import os
+import msgspec
 import msgspec.json as _json
 import time
 from collections import deque
@@ -24,8 +25,7 @@ _EWMA_ALPHA = 0.3
 _MAX_ERRORS_STORED = 50
 _MIN_RELIABILITY = 0.01
 
-@dataclass(slots=True)
-class ProviderStats:
+class ProviderStats(msgspec.Struct):
     """
     Per-provider EWMA statistics.
 

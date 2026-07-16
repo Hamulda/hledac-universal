@@ -67,8 +67,7 @@ from hledac.universal.project_types import MemoryConfig, MemoryPressureError, Or
 from hledac.universal.utils.async_helpers import safe_create_task
 logger = logging.getLogger(__name__)
 
-@dataclass(slots=True, frozen=True)
-class ThermalSnapshot:
+class ThermalSnapshot(msgspec.Struct, frozen=True):
     """Immutable snapshot of thermal reading with TTL tracking."""
     celsius: float | None
     sampled_at_monotonic: float
@@ -766,8 +765,7 @@ class RAMDiskConfig(msgspec.Struct, frozen=True, kw_only=True):
     min_memory_mb: int = 1024
     max_memory_usage_percent: float = 0.3
 
-@dataclass(frozen=True, slots=True)
-class SharedMemoryBlock:
+class SharedMemoryBlock(msgspec.Struct, frozen=True):
     """Metadata for a shared memory block."""
     block_id: str
     size: int
@@ -776,8 +774,7 @@ class SharedMemoryBlock:
     data_type: str
     metadata: dict[str, Any]
 
-@dataclass(frozen=True, slots=True)
-class ProcessMessage:
+class ProcessMessage(msgspec.Struct, frozen=True):
     """Inter-process communication message."""
     message_type: str
     block_id: str | None = None

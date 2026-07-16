@@ -12,6 +12,7 @@ ISSUE-001 Phase 2: SQLite3 → DuckDB Migration
 """
 
 import asyncio
+import msgspec
 import hashlib
 import hmac
 import logging
@@ -44,8 +45,7 @@ class AuditEventType(Enum):
     SECURITY_ALERT = 'security_alert'
     SYSTEM_EVENT = 'system_event'
 
-@dataclass(slots=True)
-class AuditEvent:
+class AuditEvent(msgspec.Struct):
     """Audit událost"""
     timestamp: datetime
     event_type: AuditEventType
@@ -74,8 +74,7 @@ class AuditEvent:
         """Export jako slovník"""
         return {'timestamp': self.timestamp.isoformat(), 'event_type': self.event_type.value, 'action': self.action, 'resource': self.resource, 'user_id': self.user_id, 'session_id': self.session_id, 'details': self.details, 'level': self.level.value, 'hash': self.hash}
 
-@dataclass(slots=True)
-class AuditConfig:
+class AuditConfig(msgspec.Struct):
     """Konfigurace auditu"""
     db_path: str = 'storage/audit.db'
     min_level: AuditLevel = AuditLevel.INFO

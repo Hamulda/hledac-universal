@@ -26,6 +26,7 @@ from utils.async_helpers import safe_gather_ok
 import logging
 import time
 from dataclasses import dataclass
+import msgspec
 from typing import Any, Callable, Awaitable
 from hledac.universal.utils.uuid7 import new_runtime_id
 __all__ = ['PivotExecutionRequest', 'PivotExecutionResult', 'AutonomousPivotExecutor', 'MAX_ACTIVE_PIVOTS', 'MAX_PIVOTS_PER_SPRINT', 'PIVOT_TIMEOUT_S', 'MAX_PIVOT_FINDINGS']
@@ -35,8 +36,7 @@ MAX_PIVOTS_PER_SPRINT: int = 10
 PIVOT_TIMEOUT_S: float = 25.0
 MAX_PIVOT_FINDINGS: int = 50
 
-@dataclass(frozen=True, slots=True)
-class PivotExecutionRequest:
+class PivotExecutionRequest(msgspec.Struct, frozen=True):
     """Request to execute a single pivot."""
     pivot_id: str
     pivot_type: str
@@ -45,8 +45,7 @@ class PivotExecutionRequest:
     confidence: float
     reason: str
 
-@dataclass(frozen=True, slots=True)
-class PivotExecutionResult:
+class PivotExecutionResult(msgspec.Struct, frozen=True):
     """Result of executing a single pivot."""
     pivot_id: str
     attempted: bool

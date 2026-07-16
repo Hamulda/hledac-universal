@@ -35,13 +35,13 @@ Rules:
 - Always bounded
 """
 from dataclasses import dataclass, field
+import msgspec
 __all__ = ['InvestigationAction', 'plan_next_investigation_actions', 'build_planner_state_from_report', 'summarize_planner_actions', 'MAX_ACTIONS']
 MAX_ACTIONS: int = 10
 _CORROBORATION_STRONG_THRESHOLD: float = 0.7
 _MIN_SOURCES_FOR_SYNTHESIS: int = 2
 
-@dataclass(frozen=True, slots=True)
-class InvestigationAction:
+class InvestigationAction(msgspec.Struct, frozen=True):
     """
     A single recommended investigation action.
 

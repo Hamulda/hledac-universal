@@ -5,12 +5,15 @@ import logging
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode, decode as _msgspec_decode
 import math
 import os
-import random
+import secrets
 import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
 logger = logging.getLogger(__name__)
+
+# Crypto-safe RNG — F350M-R
+_RNG = secrets.SystemRandom()
 
 class PromptBandit:
     PROMPT_ARMS: list[str] = ['default', 'adversarial', 'temporal', 'technical', 'contextual']
@@ -158,7 +161,7 @@ class PromptBandit:
         self._n_variants = len(variants)
         untried = [i for i in range(self._n_variants) if self._counts.get(i, 0) == 0]
         if untried:
-            return random.choice(untried)
+            return _RNG.choice(untried)
         x = self._get_context_vector(context)
         try:
             import numpy as np

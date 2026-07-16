@@ -11,11 +11,12 @@ Passive only — no auth/API key, no body fetch beyond crt.sh JSON endpoint.
 Fail-soft throughout.
 """
 import asyncio
-from hledac.universal.utils.async_helpers import safe_gather_return_exceptions
+from hledac.universal.utils.async_helpers import parallel
 import logging
 import re
 import time
 from dataclasses import dataclass
+import msgspec
 from enum import Enum
 from pathlib import Path
 import httpx
@@ -38,8 +39,7 @@ class CTProviderStatus(Enum):
     COOLDOWN_ACTIVE = 'cooldown_active'
     PROVIDER_FAILURE = 'provider_failure'
 
-@dataclass(frozen=True, slots=True)
-class CTProviderStatusReport:
+class CTProviderStatusReport(msgspec.Struct, frozen=True):
     """
     F217D: Explicit CT provider status report with bounded error sampling.
     F219E adds cooldown fields.
@@ -76,8 +76,7 @@ class CTProviderStatusReport:
     stale_cache_preferred: bool = False
     provider_attempt_suppressed: bool = False
 
-@dataclass(frozen=True, slots=True)
-class CTOutcome:
+class CTOutcome(msgspec.Struct, frozen=True):
     """
     Normalized CT adapter outcome — F207F, extended F217D with cache fields.
 
@@ -432,7 +431,8 @@ async def call_crtsh(query: str, max_results: int=20, timeout_s: float=8.0, cach
                     return ([], str(_e), CTProviderStatus.DISABLED)
         try:
             async with asyncio.timeout(min(timeout_s, 15.0)):
-                results = await safe_gather_return_exceptions(*[_fetch_one(u) for u in wildcard_urls], label='crtsh_adapter:wildcard')
+                _result = await parallel([_fetch_one(u) for u in wildcard_urls], taskgroup=True, policy='collect', ctx='crtsh_adapter:wildcard')
+                results = _result.ok
         except asyncio.CancelledError:
             raise
         except Exception:

@@ -6,6 +6,7 @@ Deterministic, side-effect-free markdown diagnostic reporter for ObservedRunRepo
 Accepts msgspec.Struct or Mapping input. Produces stable markdown output
 ready for future MLX/Outlines synthesis layer.
 """
+import msgspec
 
 
 import json

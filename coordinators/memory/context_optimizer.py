@@ -19,6 +19,7 @@ Canonical import:
 import logging
 import time
 from dataclasses import dataclass, field
+import msgspec
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -44,8 +45,7 @@ class ResearchPhase(Enum):
     VALIDATION = 'validation'
 
 
-@dataclass(slots=True)
-class ContextItem:
+class ContextItem(msgspec.Struct):
     """Individual context item with metadata for three-tier storage."""
     item_id: str
     content: str
@@ -59,8 +59,7 @@ class ContextItem:
     confidence: float = 0.5
 
 
-@dataclass(slots=True)
-class CompressedContext:
+class CompressedContext(msgspec.Struct):
     """Compressed context container."""
     context_id: str
     original_size: int

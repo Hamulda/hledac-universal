@@ -12,8 +12,7 @@ import msgspec
 from pathlib import Path
 from typing import Any
 
-@dataclass(slots=True)
-class APIClass:
+class APIClass(msgspec.Struct):
     """Represents a Python class with its documentation."""
     name: str
     module: str
@@ -25,8 +24,7 @@ class APIClass:
     file_path: str
     line_number: int
 
-@dataclass(frozen=True, slots=True)
-class APIMethod:
+class APIMethod(msgspec.Struct, frozen=True):
     """Represents a Python method or function."""
     name: str
     signature: str
@@ -40,8 +38,7 @@ class APIMethod:
     is_property: bool
     line_number: int
 
-@dataclass(frozen=True, slots=True)
-class APIParameter:
+class APIParameter(msgspec.Struct, frozen=True):
     """Represents a function parameter."""
     name: str
     type_hint: str
@@ -49,8 +46,7 @@ class APIParameter:
     is_optional: bool
     description: str
 
-@dataclass(frozen=True, slots=True)
-class APIProperty:
+class APIProperty(msgspec.Struct, frozen=True):
     """Represents a class property."""
     name: str
     type_hint: str
@@ -58,8 +54,7 @@ class APIProperty:
     is_readonly: bool
     line_number: int
 
-@dataclass(frozen=True, slots=True)
-class APIModule:
+class APIModule(msgspec.Struct, frozen=True):
     """Represents a Python module."""
     name: str
     file_path: str

@@ -26,8 +26,7 @@ class TestType(Enum):
     PREDICTION_TEST = "prediction_test"
 
 
-@dataclass(slots=True)
-class TestResult:
+class TestResult(msgspec.Struct):
     """Result of executing a test against a hypothesis."""
     test_type: str
     result: str  # passed, failed, inconclusive

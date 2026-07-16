@@ -17,6 +17,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
+import msgspec
 from typing import NamedTuple
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 logger = logging.getLogger(__name__)
@@ -29,8 +30,7 @@ def _get_api_key() -> str | None:
     """Get CORE API key from environment."""
     return os.environ.get('CORE_API_KEY') or os.environ.get('HLEDAC_CORE_API_KEY')
 
-@dataclass(slots=True)
-class COREWork:
+class COREWork(msgspec.Struct):
     """CORE.ac.uk academic work."""
     id: int
     title: str
@@ -45,8 +45,7 @@ class COREWork:
     topics: list[str]
     oai_ids: list[str]
 
-@dataclass(frozen=True, slots=True)
-class COREPageResult:
+class COREPageResult(msgspec.Struct, frozen=True):
     """A page of text with highlight markers."""
     text: str
     score: float

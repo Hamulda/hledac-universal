@@ -25,8 +25,7 @@ class SecurityLevel(Enum):
     HIGH = 'high'
     MAXIMUM = 'maximum'
 
-@dataclass(slots=True)
-class EncryptedContainer:
+class EncryptedContainer(msgspec.Struct):
     """Šifrovaný kontejner"""
     ciphertext: bytes
     encapsulated_key: bytes

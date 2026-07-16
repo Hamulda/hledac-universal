@@ -130,8 +130,7 @@ def extract_structured_snippet(data: str, max_chars: int=20000) -> str:
         pass
     return data[:max_chars]
 
-@dataclass(slots=True)
-class ExtractedContent:
+class ExtractedContent(msgspec.Struct):
     """Structured extracted content."""
     url: str
     title: str = ''

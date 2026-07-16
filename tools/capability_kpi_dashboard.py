@@ -31,8 +31,7 @@ class DomainStatus(StrEnum):
     RED = 'red'
     UNKNOWN = 'unknown'
 
-@dataclass(slots=True)
-class DomainResult:
+class DomainResult(msgspec.Struct):
     status: DomainStatus
     score: int
     evidence_artifacts: list[str]
@@ -40,8 +39,7 @@ class DomainResult:
     recommended_action: str
     raw: dict[str, Any] = field(default_factory=dict)
 
-@dataclass(frozen=True, slots=True)
-class DashboardOutput:
+class DashboardOutput(msgspec.Struct, frozen=True):
     sprint: str
     date: str
     capability_score: int

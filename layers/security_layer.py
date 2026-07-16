@@ -37,11 +37,16 @@ import asyncio
 import concurrent.futures
 import hashlib
 import logging
+import secrets
+import msgspec
 import msgspec.json as _json
 from pathlib import Path
 from typing import Any
 from hledac.universal.project_types import DestructionResult, ObfuscationLevel, ObfuscationResult, SecurityConfig, WipeStandard
 logger = logging.getLogger(__name__)
+
+# Crypto-safe RNG — F350M-R
+_RNG = secrets.SystemRandom()
 
 class SecurityLayer:
     """
@@ -456,8 +461,7 @@ class SecurityLayer:
             except Exception as e:
                 logger.warning(f'⚠️ Chaff generation failed: {e}')
         fallback_chaff = ['weather forecast today', 'healthy dinner recipes', 'how to meditate', 'best programming tutorials', 'latest science discoveries', 'workout routines', 'productivity tips', 'travel destinations 2024', 'book recommendations', 'time management techniques']
-        import random
-        chaff = random.sample(fallback_chaff, min(count, len(fallback_chaff)))
+        chaff = _RNG.sample(fallback_chaff, min(count, len(fallback_chaff)))
         self._chaff_generated += len(chaff)
         return chaff
 
@@ -592,8 +596,7 @@ class SecurityLayer:
 import time
 from dataclasses import dataclass, field
 
-@dataclass(slots=True)
-class AuditEntry:
+class AuditEntry(msgspec.Struct):
     """
     Immutable audit entry with SHA-256 hashing.
 

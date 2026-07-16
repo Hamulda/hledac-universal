@@ -10,14 +10,14 @@ import logging
 import re
 from collections import defaultdict
 from dataclasses import dataclass
+import msgspec
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 import yaml
 logger = logging.getLogger(__name__)
 
-@dataclass(slots=True)
-class ThreatIntelligence:
+class ThreatIntelligence(msgspec.Struct):
     """Threat intelligence data"""
     threat_id: str
     threat_type: str
@@ -30,8 +30,7 @@ class ThreatIntelligence:
     confidence: float
     tags: list[str]
 
-@dataclass(frozen=True, slots=True)
-class SecurityAlert:
+class SecurityAlert(msgspec.Struct, frozen=True):
     """Security alert generated from threat intelligence"""
     alert_id: str
     threat_intelligence: ThreatIntelligence
@@ -41,8 +40,7 @@ class SecurityAlert:
     timestamp: datetime
     status: str
 
-@dataclass(frozen=True, slots=True)
-class DefenseAction:
+class DefenseAction(msgspec.Struct, frozen=True):
     """Automated defense action"""
     action_id: str
     action_type: str

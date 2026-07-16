@@ -16,6 +16,7 @@ Seed type → lane mapping:
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+import msgspec
 from typing import Any
 
 # ----------------------------------------------------------------------
@@ -23,8 +24,7 @@ from typing import Any
 # ----------------------------------------------------------------------
 
 
-@dataclass(frozen=True, slots=True)
-class LanePlanItem:
+class LanePlanItem(msgspec.Struct, frozen=True):
     """A single planned lane invocation for a pivot seed."""
 
     lane: str  # e.g. "DOH", "CT", "WAYBACK"
@@ -34,8 +34,7 @@ class LanePlanItem:
     reason: str
 
 
-@dataclass(frozen=True, slots=True)
-class PivotLanePlan:
+class PivotLanePlan(msgspec.Struct, frozen=True):
     """Complete lane plan for a set of pivot seeds."""
 
     items: tuple[LanePlanItem, ...]

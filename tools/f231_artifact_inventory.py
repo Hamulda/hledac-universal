@@ -12,8 +12,7 @@ import msgspec
 ARTIFACTS: dict[str, tuple[str, str]] = {'F231A': ('probe_f231a_public_candidate_ledger', 'public_candidate_ledger.json'), 'F231B': ('probe_f231b_ct_acceptance_lift', 'ct_acceptance_lift.json'), 'F231C': ('probe_f231c_advisory_evidence_surface', 'advisory_evidence_surface.json'), 'F231D': ('probe_f231d_research_quality_v2', 'research_quality_v2.json'), 'F231E': ('probe_f231e_research_quality_comparable_field', 'research_quality_comparable_field.json'), 'F231F': ('probe_f231f_evidence_depth_aliases', 'evidence_depth_aliases.json'), 'F231G': ('probe_f231g_quality_sanity_bundle_smoke', 'quality_sanity_bundle_smoke.json'), 'F231H': ('probe_f231h_prelive_evidence_lift_gate', 'prelive_evidence_lift_gate.json')}
 GATE_BLOCKING_SET = {'F231A', 'F231B', 'F231C', 'F231D', 'F231E', 'F231F', 'F231G'}
 
-@dataclass(slots=True)
-class ArtifactResult:
+class ArtifactResult(msgspec.Struct):
     name: str
     exists: bool
     valid_json: bool | None = None
@@ -22,8 +21,7 @@ class ArtifactResult:
     verdict: str | None = None
     error: str | None = None
 
-@dataclass(frozen=True, slots=True)
-class PackInventory:
+class PackInventory(msgspec.Struct, frozen=True):
     verdict: str
     gate_status: str
     present: list[str] = field(default_factory=list)

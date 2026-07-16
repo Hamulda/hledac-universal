@@ -38,6 +38,7 @@ import asyncio
 import logging
 import threading
 from dataclasses import dataclass
+import msgspec
 from enum import Enum
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -66,8 +67,7 @@ class ConcurrencyCategory(Enum):
     ISOLATED_INTERPRETER = 'isolated_interpreter'
 _CONCURRENCY_LIMITS: dict[ConcurrencyCategory, tuple[int, int, int, int]] = {ConcurrencyCategory.HTTP_LANE: (8, 4, 2, 1), ConcurrencyCategory.DNS_BRUTE: (50, 25, 10, 5), ConcurrencyCategory.BGP_QUERY: (3, 2, 1, 1), ConcurrencyCategory.IP_QUERY: (10, 5, 3, 1), ConcurrencyCategory.ACADEMIC_SEARCH: (5, 3, 2, 1), ConcurrencyCategory.SOCIAL_MINE: (4, 2, 1, 1), ConcurrencyCategory.TRANSPORT_TOR: (3, 2, 1, 1), ConcurrencyCategory.TRANSPORT_I2P: (2, 1, 1, 1), ConcurrencyCategory.TRANSPORT_NYM: (2, 1, 1, 1), ConcurrencyCategory.DHT_BOOTSTRAP: (2, 1, 1, 1), ConcurrencyCategory.DHT_REQUEST: (50, 25, 10, 5), ConcurrencyCategory.GOPHER_LANE: (2, 1, 1, 1), ConcurrencyCategory.BANNER_GRAB: (1, 1, 1, 1), ConcurrencyCategory.PASTE_SCRAPE: (4, 2, 1, 1), ConcurrencyCategory.GRAPH_RAG: (3, 2, 1, 1), ConcurrencyCategory.MLX_INFERENCE: (1, 1, 1, 1), ConcurrencyCategory.SCRAPE_GENERAL: (10, 5, 3, 1), ConcurrencyCategory.ISOLATED_INTERPRETER: (3, 2, 1, 1)}
 
-@dataclass(frozen=True, slots=True)
-class ConcurrencyBudget:
+class ConcurrencyBudget(msgspec.Struct, frozen=True):
     """Immutable concurrency budget for a category."""
     category: ConcurrencyCategory
     ok_limit: int

@@ -31,8 +31,7 @@ CRAWL_TIMEOUT_S: float = 30.0
 MAX_CONCURRENT: int = 4
 SEED_SERVERS: list[tuple[str, int]] = [('gopher.floodgap.com', 70), ('gopher.quux.org', 70)]
 
-@dataclass(slots=True)
-class GopherCrawlResult:
+class GopherCrawlResult(msgspec.Struct):
     """Result from a single gopher crawl operation."""
     host: str
     port: int
@@ -40,8 +39,7 @@ class GopherCrawlResult:
     errors: list[str] = field(default_factory=list)
     crawled_at: float = field(default_factory=time.time)
 
-@dataclass(frozen=True, slots=True)
-class GopherCrawlItem:
+class GopherCrawlItem(msgspec.Struct, frozen=True):
     """Structured item extracted from Gopher crawl."""
     host: str
     port: int

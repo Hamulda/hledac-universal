@@ -68,16 +68,14 @@ def get_provider_state(name: str) -> ProviderCapabilityState:
         return ProviderCapabilityState.DISABLED
     return ProviderCapabilityState.PRODUCTION
 
-@dataclass(slots=True)
-class ProviderPlan:
+class ProviderPlan(msgspec.Struct):
     """Plan for a single discovery call."""
     provider: str
     max_results: int
     timeout_s: float
     estimated_cost_ms: float
 
-@dataclass(frozen=True, slots=True)
-class ProviderStatusDebug:
+class ProviderStatusDebug(msgspec.Struct, frozen=True):
     """Why a provider was selected or skipped."""
     provider: str
     state: ProviderCapabilityState
@@ -105,8 +103,7 @@ def serialize_provider_status_debug(debug_entries: list[ProviderStatusDebug] | l
             result.append({'provider': entry.get('provider', ''), 'state': state if state is not None else str(state), 'selected': entry.get('selected', False), 'reason': entry.get('reason', '')})
     return result
 
-@dataclass(frozen=True, slots=True)
-class DiscoveryPlan:
+class DiscoveryPlan(msgspec.Struct, frozen=True):
     """Full plan for a sprint discovery pass."""
     plans: list[ProviderPlan]
     estimated_total_ms: float

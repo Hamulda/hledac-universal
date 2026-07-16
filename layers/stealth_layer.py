@@ -26,18 +26,26 @@ CAPTCHA SOLVER OVERLAP NOTE (F360):
 """
 import asyncio
 import logging
-import random
+import math
+import secrets
 import sys
 import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
+import msgspec
 import orjson
 from hledac.universal.project_types import BrowserType, CaptchaSolution, CaptchaType, RiskLevel, StealthConfig, StealthSession
 logger = logging.getLogger(__name__)
 
-@dataclass(slots=True)
-class CaptchaSolverConfig:
+def _gauss(mu: float, sigma: float) -> float:
+    """Box-Muller transform for Gaussian random numbers using crypto-safe RNG."""
+    u1 = _RNG.random()
+    u2 = _RNG.random()
+    z0 = math.sqrt(-2.0 * math.log(u1)) * math.cos(2.0 * math.pi * u2)
+    return mu + sigma * z0
+
+class CaptchaSolverConfig(msgspec.Struct):
     """Configuration for self-hosted CAPTCHA solving"""
     ocr_model: str = 'microsoft/trocr-small-printed'
     use_mlx: bool = True
@@ -48,8 +56,7 @@ class CaptchaSolverConfig:
     timeout_seconds: float = 30.0
     confidence_threshold: float = 0.6
 
-@dataclass(slots=True)
-class CaptchaResult:
+class CaptchaResult(msgspec.Struct):
     """Result of CAPTCHA solving attempt"""
     success: bool
     solution: str | None
@@ -57,6 +64,9 @@ class CaptchaResult:
     processing_time_ms: float
     method: str
     alternative_solutions: list[str] = field(default_factory=list)
+
+# Crypto-safe RNG — F350M-R
+_RNG = secrets.SystemRandom()
 
 class AdvancedCaptchaSolver:
     """
@@ -294,8 +304,7 @@ class AdvancedCaptchaSolver:
         solved = self._solve_stats['solved']
         return {'attempted': attempted, 'solved': solved, 'success_rate': solved / attempted if attempted > 0 else 0.0, 'by_method': self._solve_stats['by_method'].copy(), 'ocr_backend': self._ocr_pipeline.get('type') if self._ocr_pipeline else None}
 
-@dataclass(slots=True)
-class JavaScriptEvasionConfig:
+class JavaScriptEvasionConfig(msgspec.Struct):
     """Configuration for JavaScript evasion"""
     hide_webdriver: bool = True
     hide_automation: bool = True
@@ -440,8 +449,7 @@ class BehaviorPattern(Enum):
     QUICK = 'quick'
     CAREFUL = 'careful'
 
-@dataclass(slots=True)
-class SimulationConfig:
+class SimulationConfig(msgspec.Struct):
     """Configuration for behavior simulation"""
     pattern: BehaviorPattern = BehaviorPattern.RESEARCHER
     min_delay: float = 0.5
@@ -453,15 +461,13 @@ class SimulationConfig:
     randomness: float = 0.3
     viewport_variation: bool = True
 
-@dataclass(slots=True)
-class MouseMovement:
+class MouseMovement(msgspec.Struct):
     """Mouse movement point"""
     x: float
     y: float
     timestamp: float
 
-@dataclass(slots=True)
-class ScrollAction:
+class ScrollAction(msgspec.Struct):
     """Scroll action"""
     delta_y: int
     duration: float
@@ -501,8 +507,8 @@ class BehaviorSimulator:
 
     def _random_delay(self, min_mult: float=0.8, max_mult: float=1.2) -> float:
         """Generate random delay with variation"""
-        base = random.uniform(self.config.min_delay, self.config.max_delay)
-        variation = random.uniform(min_mult, max_mult)
+        base = _RNG.uniform(self.config.min_delay, self.config.max_delay)
+        variation = _RNG.uniform(min_mult, max_mult)
         return base * variation
 
     def _apply_randomness(self, value: float) -> float:
@@ -510,7 +516,7 @@ class BehaviorSimulator:
         if self.config.randomness <= 0:
             return value
         variation = value * self.config.randomness
-        return value + random.uniform(-variation, variation)
+        return value + _RNG.uniform(-variation, variation)
 
     def _bezier_curve(self, p0: tuple[float, float], p1: tuple[float, float], p2: tuple[float, float], t: float) -> tuple[float, float]:
         """Calculate quadratic Bézier curve point (M1-optimized)"""
@@ -537,16 +543,16 @@ class BehaviorSimulator:
         mid_y = (start[1] + end[1]) / 2
         offset_range = abs(end[0] - start[0]) + abs(end[1] - start[1])
         offset_range *= 0.2 * self.config.randomness
-        control = (mid_x + random.uniform(-offset_range, offset_range), mid_y + random.uniform(-offset_range, offset_range))
+        control = (mid_x + _RNG.uniform(-offset_range, offset_range), mid_y + _RNG.uniform(-offset_range, offset_range))
         points = []
         now = time.time()
         for i in range(num_points):
             t = i / (num_points - 1)
             x, y = self._bezier_curve(start, control, end, t)
             jitter = self.config.randomness * 2
-            x += random.uniform(-jitter, jitter)
-            y += random.uniform(-jitter, jitter)
-            speed_variation = random.uniform(0.8, 1.2) / self.config.mouse_speed
+            x += _RNG.uniform(-jitter, jitter)
+            y += _RNG.uniform(-jitter, jitter)
+            speed_variation = _RNG.uniform(0.8, 1.2) / self.config.mouse_speed
             timestamp = now + i * 0.01 * speed_variation
             points.append(MouseMovement(x=x, y=y, timestamp=timestamp))
         return points
@@ -598,7 +604,7 @@ class BehaviorSimulator:
             callback: Optional callback function
         """
         if amount is None:
-            amount = random.randint(self.config.scroll_min, self.config.scroll_max)
+            amount = _RNG.randint(self.config.scroll_min, self.config.scroll_max)
         if direction == 'up':
             amount = -amount
         chunk_size = 100
@@ -628,12 +634,12 @@ class BehaviorSimulator:
         chars_per_minute = wpm * 5
         base_delay = 60 / chars_per_minute
         for char in text:
-            delay = base_delay * random.uniform(0.7, 1.3)
+            delay = base_delay * _RNG.uniform(0.7, 1.3)
             if callback:
                 await callback(('type', char))
             await asyncio.sleep(delay)
-            if random.random() < 0.05:
-                await asyncio.sleep(random.uniform(0.2, 0.5))
+            if _RNG.random() < 0.05:
+                await asyncio.sleep(_RNG.uniform(0.2, 0.5))
         logger.debug(f'Simulated typing {len(text)} characters')
         self.action_count += 1
         self.last_action_time = time.time()
@@ -649,8 +655,8 @@ class BehaviorSimulator:
         start_time = time.time()
         while time.time() - start_time < duration:
             await asyncio.sleep(self._random_delay(0.5, 1.5))
-            if random.random() < scroll_probability:
-                direction = 'down' if random.random() > 0.3 else 'up'
+            if _RNG.random() < scroll_probability:
+                direction = 'down' if _RNG.random() > 0.3 else 'up'
                 await self.simulate_scroll(direction)
         logger.debug(f'Simulated reading for {duration}s')
 
@@ -669,8 +675,8 @@ class BehaviorSimulator:
         await asyncio.sleep(self._random_delay(0.5, 1.5))
         await self.simulate_reading(duration=read_time, scroll_probability=0.4)
         for _ in range(num_scrolls):
-            if random.random() > 0.3:
-                direction = random.choice(['up', 'down'])
+            if _RNG.random() > 0.3:
+                direction = _RNG.choice(['up', 'down'])
                 await self.simulate_scroll(direction)
                 await asyncio.sleep(self._random_delay(1.0, 3.0))
         duration = time.time() - start_time
@@ -680,8 +686,7 @@ class BehaviorSimulator:
         """Get simulation statistics"""
         return {'action_count': self.action_count, 'mouse_position': self.mouse_position, 'scroll_position': self.scroll_position, 'last_action_time': self.last_action_time, 'pattern': self.config.pattern.value, 'config': {'min_delay': self.config.min_delay, 'max_delay': self.config.max_delay, 'randomness': self.config.randomness}}
 
-@dataclass(slots=True)
-class FingerprintConfig:
+class FingerprintConfig(msgspec.Struct):
     """Configuration for fingerprint randomization (from stealth_toolkit)"""
     randomize_canvas: bool = True
     randomize_webgl: bool = True
@@ -694,8 +699,7 @@ class FingerprintConfig:
     use_realistic_profiles: bool = True
     platform: str | None = None
 
-@dataclass(slots=True)
-class BrowserProfile:
+class BrowserProfile(msgspec.Struct):
     """Browser fingerprint profile (from stealth_toolkit)"""
     screen_width: int = 1920
     screen_height: int = 1080
@@ -743,16 +747,16 @@ class FingerprintRandomizer:
 
     def _generate_canvas_noise(self) -> tuple[int, int, int]:
         """Generate subtle canvas noise (invisible to human eye)"""
-        return (random.randint(0, 2), random.randint(0, 2), random.randint(0, 2))
+        return (_RNG.randint(0, 2), _RNG.randint(0, 2), _RNG.randint(0, 2))
 
     def _generate_screen_resolution(self) -> tuple[int, int, int, float]:
         """Generate realistic screen specs"""
-        if random.random() < 0.9:
-            width, height = random.choice(self.SCREEN_RESOLUTIONS[:5])
+        if _RNG.random() < 0.9:
+            width, height = _RNG.choice(self.SCREEN_RESOLUTIONS[:5])
         else:
-            width, height = random.choice(self.SCREEN_RESOLUTIONS)
-        color_depth = random.choice([24, 32])
-        pixel_ratio = random.choice([1.0, 1.0, 1.0, 1.25, 1.5, 2.0])
+            width, height = _RNG.choice(self.SCREEN_RESOLUTIONS)
+        color_depth = _RNG.choice([24, 32])
+        pixel_ratio = _RNG.choice([1.0, 1.0, 1.0, 1.25, 1.5, 2.0])
         return (width, height, color_depth, pixel_ratio)
 
     def _generate_timezone(self) -> tuple[str, int]:
@@ -762,38 +766,38 @@ class FingerprintRandomizer:
             tz = time.tzname[0] if time.tzname else 'UTC'
             offset = -time.timezone // 3600
             return (tz, offset)
-        return random.choice(self.TIMEZONES)
+        return _RNG.choice(self.TIMEZONES)
 
     def _generate_webgl_profile(self, platform: str) -> tuple[str, str]:
         """Generate WebGL vendor/renderer"""
         if not self.config.randomize_webgl:
             return ('', '')
         profiles = self.WEBGL_PROFILES.get(platform, self.WEBGL_PROFILES['macos'])
-        return random.choice(profiles)
+        return _RNG.choice(profiles)
 
     def _generate_font_list(self) -> list[str]:
         """Generate randomized font list"""
         if not self.config.randomize_fonts:
             return self.COMMON_FONTS[:10]
-        num_fonts = random.randint(10, 15)
-        return random.sample(self.COMMON_FONTS, min(num_fonts, len(self.COMMON_FONTS)))
+        num_fonts = _RNG.randint(10, 15)
+        return _RNG.sample(self.COMMON_FONTS, min(num_fonts, len(self.COMMON_FONTS)))
 
     def _generate_plugins(self) -> list[dict[str, str]]:
         """Generate browser plugins"""
         if not self.config.randomize_plugins:
             return self.COMMON_PLUGINS[:2]
-        num_plugins = random.randint(2, len(self.COMMON_PLUGINS))
-        return random.sample(self.COMMON_PLUGINS, num_plugins)
+        num_plugins = _RNG.randint(2, len(self.COMMON_PLUGINS))
+        return _RNG.sample(self.COMMON_PLUGINS, num_plugins)
 
     def _generate_hardware_specs(self, platform: str) -> tuple[int, int, int]:
         """Generate hardware specs"""
         if platform == 'macos':
-            concurrency = random.choice([8, 8, 10, 10])
-            memory = random.choice([8, 16, 16, 32])
+            concurrency = _RNG.choice([8, 8, 10, 10])
+            memory = _RNG.choice([8, 16, 16, 32])
         else:
-            concurrency = random.choice([4, 4, 8, 8, 8, 16])
-            memory = random.choice([4, 8, 8, 16, 16, 32])
-        touch_points = 0 if platform != 'mobile' else random.choice([5, 10])
+            concurrency = _RNG.choice([4, 4, 8, 8, 8, 16])
+            memory = _RNG.choice([4, 8, 8, 16, 16, 32])
+        touch_points = 0 if platform != 'mobile' else _RNG.choice([5, 10])
         return (concurrency, memory, touch_points)
 
     def generate_profile(self, force_new: bool=False) -> BrowserProfile:
@@ -804,7 +808,7 @@ class FingerprintRandomizer:
                 return self._current_profile
         platform = self.config.platform
         if platform is None:
-            platform = random.choice(['macos', 'windows', 'linux'])
+            platform = _RNG.choice(['macos', 'windows', 'linux'])
         width, height, color_depth, pixel_ratio = self._generate_screen_resolution()
         timezone, tz_offset = self._generate_timezone()
         webgl_vendor, webgl_renderer = self._generate_webgl_profile(platform)
@@ -918,8 +922,7 @@ class StealthLayer:
         if not getattr(self, '_enabled', True):
             return 0.0
         try:
-            import random
-            return max(0.0, min(2.0, random.gauss(0.5, 0.3)))
+            return max(0.0, min(2.0, _gauss(0.5, 0.3)))
         except Exception:
             return 0.0
 
@@ -1318,9 +1321,8 @@ class Chameleon:
             True if successful
         """
         try:
-            import random
             if target_index is None:
-                target_index = random.randint(0, len(self.MASQUERADE_TARGETS) - 1)
+                target_index = _RNG.randint(0, len(self.MASQUERADE_TARGETS) - 1)
             target_name, target_desc = self.MASQUERADE_TARGETS[target_index]
             self._original_name = sys.argv[0] if sys.argv else 'python'
             try:

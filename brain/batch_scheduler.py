@@ -18,7 +18,7 @@ import logging
 import time
 from collections.abc import Callable, Coroutine
 from typing import Any
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_shielded
+from hledac.universal.utils.async_helpers import safe_create_task, parallel
 from hledac.universal.core.constants import MLX
 logger = logging.getLogger(__name__)
 
@@ -342,7 +342,7 @@ class BatchScheduler:
                 async with _batch_sem:
                     return (payload, await self._execute_callback(payload))
             _tasks = [process_with_sem(payload) for payload, _ in items]
-            _gathered = await safe_gather_shielded(*_tasks, label='batch_scheduler', logger_instance=logger)
+            _gathered = await parallel(_tasks, taskgroup=True, policy='collect', ctx='batch_scheduler', logger_instance=logger)
             results = []
             ok_idx = 0
             err_idx = 0

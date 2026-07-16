@@ -290,6 +290,9 @@ async def safe_gather_strict[T](
     """
     asyncio.gather wrapper that auto-raises BaseExceptionGroup on exceptions.
 
+    DEPRECATED: Use ``parallel(coros, policy="raise")`` instead.
+    This function is maintained for backward compatibility.
+
     This is the Python 3.14-idiomatic counterpart to ``_check_gathered`` —
     instead of returning ``(ok_results, error_results)`` and requiring the caller
     to check for errors, this function:
@@ -324,6 +327,12 @@ async def safe_gather_strict[T](
         except* TimeoutError as e:
             print(f"{len(e.exceptions)} timeouts: {[str(x) for x in e.exceptions]}")
     """
+    import warnings
+    warnings.warn(
+        "safe_gather_strict is deprecated. Use parallel(coros, policy='raise') instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     _log = logger_instance or logger
     if not coros:
         return []
@@ -854,44 +863,30 @@ async def safe_gather[T](
         If a BaseException is encountered, it is stored in .re_raised — caller
         should re-raise it manually (we don't auto-raise in a frozen dataclass
         context to keep the call site in control of the cancellation policy).
+
+    DEPRECATED: Use ``parallel(coros, policy="collect")`` instead.
     """
+    import warnings
+    warnings.warn(
+        "safe_gather is deprecated. Use parallel(coros, policy='collect') instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     _log = logger_instance or logger
     if not coros:
         return SafeGatherResult(ok=[], errors=[])
 
     # I6/I7/I8 boundary: always return_exceptions=True at the gather level.
-    # We classify after to differentiate CancelledError / BaseException / Exception.
+    # Classification delegated to _classify_gathered (ISSUE-15: single source of truth).
     raw = await asyncio.gather(*(_wrap_awaitable(c) for c in coros), return_exceptions=True)
+    ok, errors, re_raise = _classify_gathered(raw, label, _log)
 
-    ok: list[Any] = []
-    errors: list[BaseException] = []
+    # [I6]/[I7] — re_raise carries CancelledError or non-Exception BaseException.
+    # Re-raise immediately so caller's finally blocks run.
+    if re_raise is not None:
+        raise re_raise
 
-    for i, item in enumerate(raw):
-        if isinstance(item, asyncio.CancelledError):
-            # [I6] — never swallow cancellation. Re-raise immediately so the
-            # caller's finally blocks run, but record in result for diagnostics.
-            _log.debug("[GHOST] safe_gather CancelledError[%d]%s", i, (" " + label) if label else "")
-            raise item
-        if isinstance(item, BaseException) and not isinstance(item, Exception):
-            # [I7] — KeyboardInterrupt, SystemExit, GeneratorExit → re-raise
-            _log.debug(
-                "[GHOST] safe_gather BaseException[%d]%s: %s", i, (" " + label) if label else "", type(item).__name__
-            )
-            raise item
-        if isinstance(item, Exception):
-            # [I8] — regular Exception → log + collect, never propagate silently
-            _log.debug(
-                "[GHOST] safe_gather exception[%d]%s: %s: %s",
-                i,
-                (" " + label) if label else "",
-                type(item).__name__,
-                item,
-            )
-            errors.append(item)
-        else:
-            ok.append(item)
-
-    return SafeGatherResult(ok=ok, errors=errors)
+    return SafeGatherResult(ok=list(ok), errors=list(errors))
 
 
 # =============================================================================
@@ -1055,7 +1050,15 @@ async def safe_gather_fire_and_forget[T](
     Returns:
         _BoundedExceptionLog with sample of first 5 exceptions + suppressed count,
         or None if all coros succeeded.
+
+    DEPRECATED: Use ``parallel(coros, policy="log")`` instead.
     """
+    # warnings added at top of function body (after docstring for stacklevel accuracy)
+    import warnings  # noqa: E702
+    warnings.warn(
+        "safe_gather_fire_and_forget is deprecated. Use parallel(coros, policy='log') instead.",
+        DeprecationWarning, stacklevel=2,
+    )
     _log = logger_instance or logger
     if not coros:
         return None
@@ -1125,7 +1128,15 @@ async def safe_gather_ok[T](
     Raises:
         asyncio.CancelledError: if any coro was cancelled.
         BaseException: for non-Exception BaseException (KeyboardInterrupt, SystemExit).
+
+    DEPRECATED: Use ``parallel(coros, policy="log")`` instead.
     """
+    import warnings
+    warnings.warn(
+        "safe_gather_ok is deprecated. Use parallel(coros, policy='log') instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     _log = logger_instance or logger
     if not coros:
         return []
@@ -1203,6 +1214,12 @@ async def bounded_gather[T](
         asyncio.CancelledError: if the caller's task is cancelled.
         BaseException (not Exception): KeyboardInterrupt, SystemExit, etc.
     """
+    import warnings
+    warnings.warn(
+        "bounded_gather is deprecated. Use parallel(coros, concurrency=N, policy='collect') instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     result = await parallel(
         coros,
         policy="collect",
@@ -1292,7 +1309,9 @@ async def bounded_parallel_map[T, R](
                 )
                 return idx, e  # noqa: RET504
 
-    tasks = [asyncio.create_task(_run(i, item)) for i, item in enumerate(items)]
+    # E4: use safe_create_task for OTel trace context propagation on all child tasks
+    from utils.async_helpers import safe_create_task  # noqa: F811
+    tasks = [safe_create_task(_run(i, item)) for i, item in enumerate(items)]
     raw = cast("list[tuple[int, R | BaseException]]", await asyncio.gather(*tasks, return_exceptions=True))
 
     # Check for CancelledError / BaseException — re-raise per GHOST I6/I7
@@ -1346,7 +1365,15 @@ async def safe_gather_return_exceptions(
     Raises:
         asyncio.CancelledError: if any coro was cancelled.
         BaseException: for non-Exception BaseException (KeyboardInterrupt, SystemExit).
+
+    DEPRECATED: Use ``parallel(coros, policy="collect", return_exceptions=True)`` instead.
     """
+    import warnings
+    warnings.warn(
+        "safe_gather_return_exceptions is deprecated. Use parallel(coros, policy='collect') instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     _log = logger_instance or logger
     if not coros:
         return []
@@ -1441,7 +1468,16 @@ async def safe_gather_shielded[T](
     Raises:
         asyncio.CancelledError: if caller's task was cancelled.
         BaseException (not Exception): re-raised per I7 invariant.
+
+    DEPRECATED: Use ``parallel(coros, taskgroup=True, policy="collect")`` instead.
+    This function is maintained for its unique partial-result preservation semantics.
     """
+    import warnings
+    warnings.warn(
+        "safe_gather_shielded is deprecated. Use parallel(coros, taskgroup=True, policy='collect') instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     _log = logger_instance or logger
     if not coros:
         return SafeGatherShieldedResult(ok=[], errors=[], re_raised=None)
@@ -1702,6 +1738,12 @@ async def gather_taskgroup[T](
 
     Drop-in replacement for bounded_gather with TaskGroup (PEP 654, 3.11+).
     """
+    import warnings
+    warnings.warn(
+        "gather_taskgroup is deprecated. Use parallel(coros, concurrency=N, taskgroup=True, policy='collect') instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     result = await parallel(
         coros,
         policy="collect",

@@ -10,12 +10,12 @@ live_measurement_quality, and tools/research_quality_score.
 """
 __all__ = ['LiveKpiInput', '_derive_live_kpi', '_derive_live_kpi_from_input', '_derive_discovery_provider_status_debug', '_derive_discovery_selected_providers', '_derive_discovery_skipped_providers', '_derive_discovery_stub_providers', '_derive_discovery_not_wired_providers']
 from dataclasses import dataclass
+import msgspec
 from benchmarks.live_measurement_next_action import _derive_next_action
 from benchmarks.live_measurement_quality import _has_scheduler_exit_path, _has_terminal_source_outcomes, _is_active_domain_query
 from benchmarks.live_measurement_schema import MeasurementStatus, RunQualityVerdict
 
-@dataclass(frozen=True, slots=True)
-class LiveKpiInput:
+class LiveKpiInput(msgspec.Struct, frozen=True):
     """All inputs needed by _derive_live_kpi_from_input.
 
     Frozen dataclass ensures rule helpers are pure and cannot mutate inputs.

@@ -137,8 +137,7 @@ class NodeLane:
     ALL: tuple[str, ...] = (SURFACE, DARK, ARCHIVE)
     'The default 3-lane partitioning (matches MAX_VIRTUAL_NODES).'
 
-@dataclass(slots=True)
-class NodeResult:
+class NodeResult(msgspec.Struct):
     """Result of a single virtual node's research cycle."""
     lane: str
     findings: list[dict[str, Any]] = field(default_factory=list)
@@ -149,8 +148,7 @@ class NodeResult:
     def is_ok(self) -> bool:
         return self.error is None
 
-@dataclass(frozen=True, slots=True)
-class FederatedResult:
+class FederatedResult(msgspec.Struct, frozen=True):
     """
     Aggregated output of distribute_research().
 

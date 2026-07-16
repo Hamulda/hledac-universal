@@ -89,8 +89,7 @@ class OnionType(Enum):
     UNKNOWN = 'unknown'
 
 
-@dataclass(slots=True, frozen=True)
-class CrawlTask:
+class CrawlTask(msgspec.Struct, frozen=True):
     """
     ISSUE-017: BFS crawl task — single URL with depth for parallel processing.
     Thread-safe: immutable (frozen=True), no internal mutable state.
@@ -100,8 +99,7 @@ class CrawlTask:
     parent_url: str | None = None
 
 
-@dataclass(slots=True)
-class HiddenService:
+class HiddenService(msgspec.Struct):
     """Represents a discovered hidden service."""
     address: str
     onion_type: OnionType
@@ -120,8 +118,7 @@ class HiddenService:
     keywords: list[str] = field(default_factory=list)
     risk_level: RiskLevel = RiskLevel.MEDIUM
 
-@dataclass(frozen=True, slots=True)
-class DarkWebContent:
+class DarkWebContent(msgspec.Struct, frozen=True):
     """Content extracted from dark web."""
     url: str
     content_hash: str
@@ -136,8 +133,7 @@ class DarkWebContent:
     magnet_links: list[str] = field(default_factory=list)
     raw_html: str = ''
 
-@dataclass(frozen=True, slots=True)
-class PGPKeyInfo:
+class PGPKeyInfo(msgspec.Struct, frozen=True):
     """Extracted PGP key information."""
     key_id: str
     fingerprint: str
@@ -838,8 +834,7 @@ def darkweb_content_to_canonical(content: DarkWebContent, query: str) -> Canonic
     finding_id = f'dw_{hashlib.md5(content.url.encode()).hexdigest()[:16]}'
     return CanonicalFinding(finding_id=finding_id, query=query, source_type='onion_discovery', confidence=confidence, ts=content.extracted_at, provenance=(content.url,), payload_text=payload)
 
-@dataclass(frozen=True, slots=True)
-class DHTFinding:
+class DHTFinding(msgspec.Struct, frozen=True):
     """Structured output from DHT crawl operations."""
     info_hash: str
     name: str = ''

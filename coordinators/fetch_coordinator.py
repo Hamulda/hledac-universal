@@ -15,7 +15,7 @@ import asyncio
 import ipaddress
 import json
 import os
-import random
+import secrets
 import socket
 import time
 from collections import deque
@@ -103,6 +103,9 @@ if _stealth_tbc is None:
 else:
     TokenBucketController = _stealth_tbc
 logger = get_logger(__name__)
+
+# Crypto-safe jitter — F350M-R
+_JITTER_RNG = secrets.SystemRandom()
 from core.constants import NETWORK
 _nw = NETWORK()
 TIMEOUT_CLEARNET_API = _nw.clearnet_api
@@ -1532,13 +1535,13 @@ class FetchCoordinator(UniversalCoordinator):
         if not _ZERO_ATTR_ENGINE:
             return
         try:
-            if random.random() < _COVER_RATE:
+            if _JITTER_RNG.random() < _COVER_RATE:
                 cover_urls = _ZERO_ATTR_ENGINE.generate_cover_traffic_urls(n_decoys=1, transport=transport)
                 if not cover_urls:
                     return
                 cover_url = cover_urls[0]
                 self._cover_count += 1
-                delay = random.uniform(0.5, 3.0)
+                delay = _JITTER_RNG.uniform(0.5, 3.0)
                 safe_create_task(self._fire_cover_traffic_url(cover_url, delay, transport))
                 from metrics_registry import get_metrics_registry
                 get_metrics_registry().inc('cover_traffic_fired')

@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import random
 import re
 from typing import Any
 from urllib.parse import quote, urlparse
@@ -557,7 +556,6 @@ class StealthWebScraper:
         if not headers:
             if self._curl_cffi_available:
                 # Profile selected but not used — reserved for future fingerprint rotation
-                _ = random.choice(self._fingerprint_profiles)
                 headers = {
                     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",

@@ -38,16 +38,14 @@ except ImportError:
     MLX_AVAILABLE = False
     logger.warning('MLX not available - using numpy fallback')
 
-@dataclass(slots=True)
-class ImageHash:
+class ImageHash(msgspec.Struct):
     """Perceptual hash for image similarity."""
     ahash: str
     phash: str
     dhash: str
     whash: str
 
-@dataclass(frozen=True, slots=True)
-class OCRResult:
+class OCRResult(msgspec.Struct, frozen=True):
     """OCR extraction result."""
     text: str
     confidence: float
@@ -55,8 +53,7 @@ class OCRResult:
     regions: list[dict[str, Any]]
     processing_time_ms: float
 
-@dataclass(frozen=True, slots=True)
-class SteganalysisResult:
+class SteganalysisResult(msgspec.Struct, frozen=True):
     """Steganography analysis result."""
     is_suspicious: bool
     lsb_entropy: float
@@ -66,8 +63,7 @@ class SteganalysisResult:
     suspicious_patterns: list[str]
     visual_artifacts: np.ndarray | None = None
 
-@dataclass(frozen=True, slots=True)
-class ImageAnalysis:
+class ImageAnalysis(msgspec.Struct, frozen=True):
     """Complete image analysis result."""
     file_hash: str
     image_hash: ImageHash

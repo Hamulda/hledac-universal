@@ -37,6 +37,7 @@ import asyncio
 import logging
 import os
 from dataclasses import dataclass, field
+import msgspec
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, TypeVar, cast
 
 from hledac.universal.coordinators.aimd_controllers import (
@@ -65,8 +66,7 @@ _MAX_CPU_POOL_THREADS = 4  # P-cores for SIMD
 _MAX_IO_POOL_THREADS = 2  # I/O-bound
 
 
-@dataclass(slots=True)
-class PoolStats:
+class PoolStats(msgspec.Struct):
     """Statistiky pro jeden pool."""
     active_workers: int = 0
     queued_tasks: int = 0

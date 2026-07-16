@@ -29,6 +29,7 @@ M1 8GB: DuckDB in-process, WAL mode, 2 threads.
 """
 
 from __future__ import annotations
+import msgspec
 
 import asyncio
 import hashlib
@@ -69,8 +70,7 @@ class AuditEventType(Enum):
     SYSTEM_EVENT = "system_event"
 
 
-@dataclass(slots=True)
-class AuditEvent:
+class AuditEvent(msgspec.Struct):
     """Audit event."""
     timestamp: datetime
     event_type: AuditEventType
@@ -89,8 +89,7 @@ class AuditEvent:
         return hashlib.sha256(data.encode()).hexdigest()
 
 
-@dataclass(slots=True)
-class AuditConfig:
+class AuditConfig(msgspec.Struct):
     """Audit configuration."""
     db_path: str = "data/audit.duckdb"
     min_level: AuditLevel = AuditLevel.INFO

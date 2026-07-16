@@ -10,15 +10,17 @@ Pro ultra-deep research v tajných databázích:
 """
 import asyncio
 import logging
-import random
+import secrets
 from dataclasses import dataclass, field
 import msgspec
 from datetime import UTC, datetime
 from typing import Any
 logger = logging.getLogger(__name__)
 
-@dataclass(slots=True)
-class ObfuscationConfig:
+# Crypto-safe jitter — F350M-R
+_JITTER_RNG = secrets.SystemRandom()
+
+class ObfuscationConfig(msgspec.Struct):
     """Konfigurace obfuskace"""
     mask_queries: bool = True
     generate_chaff: bool = True
@@ -72,14 +74,14 @@ class ResearchObfuscator:
         masked = query.lower()
         if self.config.mask_queries:
             for sensitive, replacement in self.SENSITIVE_MAPPINGS.items():
-                if strength == 'high' or (strength == 'medium' and random.random() > 0.3):
+                if strength == 'high' or (strength == 'medium' and _JITTER_RNG.random() > 0.3):
                     masked = masked.replace(sensitive.lower(), replacement)
         if self.config.use_synonyms:
             words = masked.split()
             new_words = []
             for word in words:
-                if word in self.SYNONYMS and random.random() > 0.5:
-                    new_words.append(random.choice(self.SYNONYMS[word]))
+                if word in self.SYNONYMS and _JITTER_RNG.random() > 0.5:
+                    new_words.append(_JITTER_RNG.choice(self.SYNONYMS[word]))
                 else:
                     new_words.append(word)
             masked = ' '.join(new_words)
@@ -112,7 +114,7 @@ class ResearchObfuscator:
         all_chaff = general_chaff + related_chaff + cover_chaff
         for _ in range(count):
             if all_chaff:
-                query = random.choice(all_chaff)
+                query = _JITTER_RNG.choice(all_chaff)
                 query = f"{query} {datetime.now(UTC).strftime('%H:%M')}"
                 chaff.append(query)
                 self._chaff_queries_generated += 1
@@ -145,12 +147,12 @@ class ResearchObfuscator:
         count = chaff_count or int(self.config.chaff_ratio * 10)
         chaff_queries = self.generate_chaff_queries(real_query, count)
         all_queries = chaff_queries + [real_query]
-        random.shuffle(all_queries)
+        _JITTER_RNG.shuffle(all_queries)
         results = []
         real_result = None
         for query in all_queries:
             if self.config.timing_jitter:
-                delay = self.config.min_delay + random.uniform(0, self.config.max_delay - self.config.min_delay)
+                delay = self.config.min_delay + _JITTER_RNG.uniform(0, self.config.max_delay - self.config.min_delay)
                 await asyncio.sleep(delay)
             result = await execute_func(query)
             if query == real_query:
@@ -173,7 +175,7 @@ class ResearchObfuscator:
         if not self.config.timing_jitter:
             return base_delay
         jitter = base_delay * self.config.jitter_range
-        return base_delay + random.uniform(-jitter, jitter)
+        return base_delay + _JITTER_RNG.uniform(-jitter, jitter)
 
     def get_stats(self) -> dict[str, Any]:
         """Získat statistiky obfuskace"""

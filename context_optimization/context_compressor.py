@@ -65,8 +65,7 @@ class CompressionLevel(Enum):
     IMPORTANT = IMPORTANT
     ABSTRACT = ABSTRACT
 
-@dataclass(slots=True)
-class CompressedContext:
+class CompressedContext(msgspec.Struct):
     """Compressed context container."""
     context_id: str
     original_size: int

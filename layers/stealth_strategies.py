@@ -14,13 +14,17 @@ Vision/CoreML fallback is secondary. Local OCR is off-by-default.
 
 import asyncio
 import logging
-import random
+import secrets
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any, Protocol, runtime_checkable
 
 from hledac.universal.utils.async_helpers import safe_create_task
 
 logger = logging.getLogger(__name__)
+
+# Crypto-safe RNG — F350M-R
+_RNG = secrets.SystemRandom()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -52,8 +56,7 @@ class StealthStrategy(Protocol):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-@dataclass(slots=True)
-class UARotationConfig:
+class UARotationConfig(msgspec.Struct):
     rotate_on_each_request: bool = False
     min_rotation_interval: float = 300.0  # 5 minutes
     pool: tuple[str, ...] = field(
@@ -85,7 +88,7 @@ class UARotationStrategy:
         self._last_rotation: float = 0.0
 
     async def mount(self, ctx: Any) -> None:
-        self._current_ua = random.choice(self._config.pool)
+        self._current_ua = _RNG.choice(self._config.pool)
         self._last_rotation = asyncio.get_running_loop().time()
         logger.debug(f"UARotationStrategy mounted: {self._current_ua[:60]}...")
 
@@ -101,7 +104,7 @@ class UARotationStrategy:
 
     async def rotate(self) -> str:
         """Generate new UA and return it."""
-        self._current_ua = random.choice(self._config.pool)
+        self._current_ua = _RNG.choice(self._config.pool)
         self._rotation_count += 1
         self._last_rotation = asyncio.get_running_loop().time()
         return self._current_ua
@@ -123,8 +126,7 @@ class UARotationStrategy:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-@dataclass(slots=True)
-class HeaderRandomizationConfig:
+class HeaderRandomizationConfig(msgspec.Struct):
     enabled: bool = True
     randomize_order: bool = True
     add_chaff_headers: bool = False
@@ -185,13 +187,13 @@ class HeaderRandomizationStrategy:
         """Randomize header order and add chaff headers."""
         if self._config.randomize_order and headers:
             items = list(headers.items())
-            random.shuffle(items)
+            _RNG.shuffle(items)
             headers = dict(items)
 
         if self._config.add_chaff_headers:
             for _ in range(self._config.chaff_count):
-                key = random.choice(self._CHAFF_HEADERS)
-                headers[key] = f"{random.randint(1, 999)}"
+                key = _RNG.choice(self._CHAFF_HEADERS)
+                headers[key] = f"{_RNG.randint(1, 999)}"
                 self._chaff_count += 1
 
         return headers
@@ -209,8 +211,7 @@ class HeaderRandomizationStrategy:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-@dataclass(slots=True)
-class CircuitManagementConfig:
+class CircuitManagementConfig(msgspec.Struct):
     enabled: bool = False
     tor_control_port: int = 9051
     tor_control_host: str = "127.0.0.1"
@@ -310,8 +311,7 @@ class CircuitManagementStrategy:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-@dataclass(slots=True)
-class FingerprintMuterConfig:
+class FingerprintMuterConfig(msgspec.Struct):
     enabled: bool = True
     mute_canvas: bool = True
     mute_webgl: bool = True
@@ -410,8 +410,7 @@ class FingerprintMuterStrategy:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-@dataclass(slots=True)
-class CaptchaSolvingConfig:
+class CaptchaSolvingConfig(msgspec.Struct):
     """Configuration for CAPTCHA solving strategy.
 
     M1 8GB: Primary = third-party API (2captcha), Secondary = Vision/CoreML.

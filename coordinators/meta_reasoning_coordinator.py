@@ -16,7 +16,7 @@ Features:
 """
 import asyncio
 import logging
-import random
+import secrets
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -27,6 +27,9 @@ from hledac.universal.utils.async_helpers import safe_gather_ok
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
 logger = logging.getLogger(__name__)
 
+# Crypto-safe RNG — F350M-R
+_RNG = secrets.SystemRandom()
+
 class ReasoningStrategy(Enum):
     """Available reasoning strategies."""
     CHAIN_OF_THOUGHT = 'cot'
@@ -34,8 +37,7 @@ class ReasoningStrategy(Enum):
     GRAPH_REASONING = 'graph'
     HYBRID = 'hybrid'
 
-@dataclass(slots=True)
-class ReasoningStep:
+class ReasoningStep(msgspec.Struct):
     """Single reasoning step."""
     step_id: str
     description: str
@@ -45,16 +47,14 @@ class ReasoningStep:
     parent_steps: list[str] = field(default_factory=list)
     sub_steps: list[str] = field(default_factory=list)
 
-@dataclass(frozen=True, slots=True)
-class ReasoningChain:
+class ReasoningChain(msgspec.Struct, frozen=True):
     """Chain of reasoning steps."""
     chain_id: str
     steps: list[ReasoningStep] = field(default_factory=list)
     final_conclusion: str | None = None
     overall_confidence: float = 0.0
 
-@dataclass(frozen=True, slots=True)
-class ThoughtNode:
+class ThoughtNode(msgspec.Struct, frozen=True):
     """Node in Tree of Thoughts."""
     node_id: str
     thought: str
@@ -181,7 +181,7 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
                 if leaf.expanded:
                     continue
                 for i in range(branching_factor):
-                    child = ThoughtNode(node_id=f'node_{depth}_{i}', thought=f'Branch {i + 1} at depth {depth + 1}', value_estimate=random.uniform(0.3, 0.9), parent=leaf.node_id, depth=depth + 1)
+                    child = ThoughtNode(node_id=f'node_{depth}_{i}', thought=f'Branch {i + 1} at depth {depth + 1}', value_estimate=_RNG.uniform(0.3, 0.9), parent=leaf.node_id, depth=depth + 1)
                     leaf.children.append(child.node_id)
                     nodes[child.node_id] = child
                     new_leaves.append(child)
@@ -209,10 +209,10 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
         edges: list[tuple[str, str]] = []
         aspects = query.split()[:max_nodes]
         for i, aspect in enumerate(aspects):
-            nodes[f'node_{i}'] = {'concept': aspect, 'importance': random.uniform(0.3, 1.0), 'connections': []}
+            nodes[f'node_{i}'] = {'concept': aspect, 'importance': _RNG.uniform(0.3, 1.0), 'connections': []}
         for i in range(len(aspects)):
             for j in range(i + 1, min(i + 3, len(aspects))):
-                if random.random() < config['connection_density']:
+                if _RNG.random() < config['connection_density']:
                     edges.append((f'node_{i}', f'node_{j}'))
                     nodes[f'node_{i}']['connections'].append(f'node_{j}')
                     nodes[f'node_{j}']['connections'].append(f'node_{i}')

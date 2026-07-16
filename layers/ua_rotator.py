@@ -6,7 +6,7 @@ Design (Issue 10.2):
     Safari 17-18, Edge 124-136) across Windows/macOS/Linux/Android/iOS
   - JA3 consistency: get_ua_for_profile() returns UA matching curl_cffi impersonate target
     so TLS fingerprint + HTTP header never mismatch
-  - Thread-safe via random.choice (GIL-protected on CPython)
+  - Thread-safe via _RNG.choice (GIL-protected on CPython)
   - Exposed as module-level functions (drop-in replacement for public_fetcher's
     get_random_ua/build_randomized_headers) AND as UARotator class for callers
     that need stateful round-robin or platform/browser filtering
@@ -21,9 +21,12 @@ M1 8GB: all data is tuples (immutable) — no RAM growth under load.
 """
 
 
-import random
+import secrets
 import threading
 from typing import Literal
+
+# Crypto-safe RNG — F350M-R
+_RNG = secrets.SystemRandom()
 
 # --------------------------------------------------------------------------------
 # Canonical UA pool — must match curl_cffi impersonate targets
@@ -84,7 +87,7 @@ _EDGE_UAS: tuple[_EdgeUA, ...] = (
     ("Edg/124.0.0.0", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0"),
 )
 
-# All pools flat — for random.choice across all browsers
+# All pools flat — for _RNG.choice across all browsers
 _ALL_UAS: tuple[tuple[str, str], ...] = _CHROME_UAS + _FIREFOX_UAS + _SAFARI_UAS + _EDGE_UAS
 
 # curl_cffi profile → UA family mapping (for JA3 consistency)
@@ -158,7 +161,7 @@ def get_random_ua() -> str:
     alignment. For curl_cffi requests, use get_ua_for_profile() instead.
     """
     with _ua_lock:
-        return random.choice(_ALL_UAS)[1]
+        return _RNG.choice(_ALL_UAS)[1]
 
 
 def get_ua_for_profile(profile: str) -> str:
@@ -190,19 +193,19 @@ def get_ua_for_profile(profile: str) -> str:
         if not matching:
             # Fallback: any from pool
             matching = list(pool)
-        return random.choice(matching)[1]
+        return _RNG.choice(matching)[1]
 
 
 def get_random_accept_language() -> str:
     """Return a random Accept-Language string (thread-safe)."""
     with _ua_lock:
-        return random.choice(_ACCEPT_LANGUAGE_POOL)
+        return _RNG.choice(_ACCEPT_LANGUAGE_POOL)
 
 
 def get_random_accept_encoding() -> str:
     """Return a random Accept-Encoding string (thread-safe)."""
     with _ua_lock:
-        return random.choice(_ACCEPT_ENCODING_POOL)
+        return _RNG.choice(_ACCEPT_ENCODING_POOL)
 
 
 # --------------------------------------------------------------------------------
@@ -254,9 +257,9 @@ def build_randomized_headers(
         "Accept-Language": _lang,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Encoding": _enc,
-        "Sec-Ch-Ua": random.choice(_CHROME_TOKEN_CHOICES),
-        "Sec-Ch-Ua-Mobile": random.choice(_MOBILE_CHOICES),
-        "Sec-Ch-Ua-Platform": random.choice(_OS_CHOICES),
+        "Sec-Ch-Ua": _RNG.choice(_CHROME_TOKEN_CHOICES),
+        "Sec-Ch-Ua-Mobile": _RNG.choice(_MOBILE_CHOICES),
+        "Sec-Ch-Ua-Platform": _RNG.choice(_OS_CHOICES),
         "Sec-Fetch-Dest": "document",
         "Sec-Fetch-Mode": "navigate",
         "Sec-Fetch-Site": "none",
@@ -272,7 +275,7 @@ class UARotator:
     """Stateful UA rotator with round-robin and platform/browser filtering.
 
     Use when you need:
-      - Deterministic round-robin (vs random.choice)
+      - Deterministic round-robin (vs _RNG.choice)
       - Platform or browser filtering (e.g., "give me only Safari UAs")
       - Persistent state across many requests
 
@@ -299,7 +302,7 @@ class UARotator:
     def random(self) -> str:
         """Return a random UA from the current pool (thread-safe)."""
         with self._lock:
-            return random.choice(self._pool)[1]
+            return _RNG.choice(self._pool)[1]
 
     def peek(self) -> str:
         """Peek at the next UA without advancing the index."""

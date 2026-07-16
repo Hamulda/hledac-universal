@@ -19,7 +19,7 @@ Bounds:
 Env: HLEDAC_ENABLE_BGP_PDNS=1 to enable (default: 0)
 
 INVARIANTS:
-  - All HTTP calls use aiohttp.ClientSession (injected via setter)
+  - All HTTP calls use httpx.AsyncClient (injected via setter)
   - Fail-soft throughout: errors never crash the sprint
   - RFC1918/loopback IPs filtered before any lookup
   - Rate limiting enforced per request
@@ -31,11 +31,9 @@ import os
 import re
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
-if TYPE_CHECKING:
-    import httpx
-else:
-    import httpx
+import msgspec
+from typing import Any
+import httpx
 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
 logger = logging.getLogger(__name__)
 _CanonicalFinding = None
@@ -61,8 +59,7 @@ def _is_private_ip(ip: str) -> bool:
     """Check if IP is RFC1918/loopback/private."""
     return bool(_PRIVATE_IP_RE.match(ip))
 
-@dataclass(slots=True)
-class BGPFinding:
+class BGPFinding(msgspec.Struct):
     """BGP intelligence finding from RIPE/BGP.tools."""
     ip: str = ''
     asn: int = 0
@@ -81,12 +78,11 @@ class BGPFinding:
             content_hash = hashlib.sha256(f"{self.ip or ''}:{self.asn}:{self.source}".encode()).hexdigest()[:16]
             finding_id = f'bgp_{self.asn}_{content_hash}'
             metadata = {'asn': str(self.asn), 'asn_name': self.asn_name, 'ip': self.ip, 'prefix': self.prefix, 'holder': self.holder, 'country': self.country_code}
-            return _CanonicalFinding(finding_id=finding_id, query=(query or f'bgp:{self.ip}')[:128], source_type='bgp_enrichment', confidence=0.88, ts=self.ts or time.time(), provenance=(f'asn:{self.asn}', f'ip:{self.ip}', f'prefix:{self.prefix}'), payload_text=str(metadata), accepted=True, reason='bgp_passive_dns', entropy=0.0, normalized_hash=None, duplicate=False)
+            return _CanonicalFinding(finding_id=finding_id, query=(query or f'bgp:{self.ip}')[:128], source_type='bgp_enrichment', confidence=0.88, ts=self.ts or time.time(), provenance=(f'asn:{self.asn}', f'ip:{self.ip}', f'prefix:{self.prefix}'), payload_text=str(metadata))
         except Exception:
             return None
 
-@dataclass(frozen=True, slots=True)
-class PDNSRecord:
+class PDNSRecord(msgspec.Struct, frozen=True):
     """Passive DNS record."""
     domain: str = ''
     record_type: str = ''
@@ -104,7 +100,7 @@ class PDNSRecord:
             content_hash = hashlib.sha256(f'{self.domain}:{self.record_type}:{self.value}'.encode()).hexdigest()[:16]
             finding_id = f'pdns_{self.domain}_{self.record_type}_{content_hash[:8]}'
             metadata = {'domain': self.domain, 'record_type': self.record_type, 'value': self.value, 'first_seen': self.first_seen, 'last_seen': self.last_seen}
-            return _CanonicalFinding(finding_id=finding_id, query=(query or f'pdns:{self.domain}')[:128], source_type='passive_dns', confidence=0.82, ts=self.ts or time.time(), provenance=(f'domain:{self.domain}', f'type:{self.record_type}'), payload_text=str(metadata), accepted=True, reason='passive_dns', entropy=0.0, normalized_hash=None, duplicate=False)
+            return _CanonicalFinding(finding_id=finding_id, query=(query or f'pdns:{self.domain}')[:128], source_type='passive_dns', confidence=0.82, ts=self.ts or time.time(), provenance=(f'domain:{self.domain}', f'type:{self.record_type}'), payload_text=str(metadata))
         except Exception:
             return None
 _DEFAULT_HEADERS = {'Accept': 'application/json', 'User-Agent': 'Hledac-OSINT/1.0 (research tool)'}
@@ -118,9 +114,9 @@ async def _rate_limited_request(session: httpx.AsyncClient, url: str, last_reque
     if extra_headers:
         headers.update(extra_headers)
     try:
-        async with session.get(url, timeout=httpx.Timeout(timeout), headers=headers) as resp:
-            if resp.status_code == 200:
-                return resp.json()
+        resp = await session.get(url, timeout=httpx.Timeout(timeout), headers=headers)
+        if resp.status_code == 200:
+            return resp.json()
     except Exception:
         pass
     return None
@@ -131,9 +127,9 @@ async def _rate_limited_text(session: httpx.AsyncClient, url: str, last_request:
     if elapsed < RATE_LIMIT_S:
         await asyncio.sleep(RATE_LIMIT_S - elapsed)
     try:
-        async with session.get(url, timeout=httpx.Timeout(timeout), headers=_DEFAULT_HEADERS) as resp:
-            if resp.status_code == 200:
-                return resp.text()
+        resp = await session.get(url, timeout=httpx.Timeout(timeout), headers=_DEFAULT_HEADERS)
+        if resp.status_code == 200:
+            return resp.text
     except Exception:
         pass
     return None
@@ -224,28 +220,28 @@ async def hackertarget_pdns(domain: str, session: httpx.AsyncClient, rate_limit_
         elapsed = time.monotonic() - rate_limit_ref
         if elapsed < RATE_LIMIT_S:
             await asyncio.sleep(RATE_LIMIT_S - elapsed)
-        async with session.get(url, timeout=httpx.Timeout(TIMEOUT_PER_REQUEST)) as resp:
-            if resp.status_code != 200:
-                return []
-            if resp.headers.get('Content-Type', '').startswith('application/json'):
-                return []
-            text = resp.text()
-            if 'error' in text.lower() or 'quota' in text.lower():
-                logger.debug('PassiveDNS HackerTarget error response for domain=%r: %r', domain, text[:200] if text else '')
-                return []
-            if not text or text.startswith('#'):
-                logger.debug('PassiveDNS HackerTarget empty response for domain=%r (status_code=%d)', domain, resp.status_code)
-                return []
-            records = []
-            for line in text.splitlines()[:MAX_PDNS_RECORDS]:
-                parts = re.split('\\s*:\\s*|\\|', line.strip(), maxsplit=1)
-                if len(parts) < 2:
-                    continue
-                rec_type = parts[0].strip()
-                value = parts[1].strip()
-                if rec_type in ('A', 'AAAA', 'MX', 'NS', 'TXT', 'CNAME', 'PTR'):
-                    records.append(PDNSRecord(domain=domain, record_type=rec_type, value=value, source='hackertarget', ts=time.time()))
-            return records
+        resp = await session.get(url, timeout=httpx.Timeout(TIMEOUT_PER_REQUEST))
+        if resp.status_code != 200:
+            return []
+        if resp.headers.get('Content-Type', '').startswith('application/json'):
+            return []
+        text = resp.text
+        if 'error' in text.lower() or 'quota' in text.lower():
+            logger.debug('PassiveDNS HackerTarget error response for domain=%r: %r', domain, text[:200] if text else '')
+            return []
+        if not text or text.startswith('#'):
+            logger.debug('PassiveDNS HackerTarget empty response for domain=%r (status_code=%d)', domain, resp.status_code)
+            return []
+        records = []
+        for line in text.splitlines()[:MAX_PDNS_RECORDS]:
+            parts = re.split('\\s*:\\s*|\\|', line.strip(), maxsplit=1)
+            if len(parts) < 2:
+                continue
+            rec_type = parts[0].strip()
+            value = parts[1].strip()
+            if rec_type in ('A', 'AAAA', 'MX', 'NS', 'TXT', 'CNAME', 'PTR'):
+                records.append(PDNSRecord(domain=domain, record_type=rec_type, value=value, source='hackertarget', ts=time.time()))
+        return records
     except Exception:
         return []
 
@@ -261,18 +257,18 @@ async def hackertarget_reverse_dns(ip: str, session: httpx.AsyncClient, rate_lim
         elapsed = time.monotonic() - rate_limit_ref
         if elapsed < RATE_LIMIT_S:
             await asyncio.sleep(RATE_LIMIT_S - elapsed)
-        async with session.get(url, timeout=httpx.Timeout(TIMEOUT_PER_REQUEST)) as resp:
-            if resp.status_code != 200:
-                return []
-            text = resp.text()
-            domains = []
-            for line in text.splitlines()[:50]:
-                parts = re.split('\\s*:\\s*|\\|', line.strip(), maxsplit=1)
-                if len(parts) >= 2 and parts[0] in ('PTR', 'A', 'AAAA'):
-                    val = parts[1].strip()
-                    if '.' in val and (not _is_private_ip(val)):
-                        domains.append(val)
-            return domains[:50]
+        resp = await session.get(url, timeout=httpx.Timeout(TIMEOUT_PER_REQUEST))
+        if resp.status_code != 200:
+            return []
+        text = resp.text
+        domains = []
+        for line in text.splitlines()[:50]:
+            parts = re.split('\\s*:\\s*|\\|', line.strip(), maxsplit=1)
+            if len(parts) >= 2 and parts[0] in ('PTR', 'A', 'AAAA'):
+                val = parts[1].strip()
+                if '.' in val and (not _is_private_ip(val)):
+                    domains.append(val)
+        return domains[:50]
     except Exception:
         return []
 

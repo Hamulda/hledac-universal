@@ -20,8 +20,10 @@ Migration:
          layer.enable_hive_mode()
 """
 import asyncio
-import msgspec.json as _json
 import logging
+
+import msgspec
+import msgspec.json as _json
 import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
@@ -46,8 +48,7 @@ class TopologyType(Enum):
     HYBRID = 'hybrid'
     ADAPTIVE = 'adaptive'
 
-@dataclass(slots=True)
-class CoordinationNode:
+class CoordinationNode(msgspec.Struct):
     """Represents a node in the coordination network"""
     node_id: str
     layer: CoordinationLayer
@@ -57,8 +58,7 @@ class CoordinationNode:
     connected_nodes: list[str]
     performance_metrics: dict[str, float]
 
-@dataclass(slots=True)
-class CoordinationTask:
+class CoordinationTask(msgspec.Struct):
     """Represents a task flowing through the coordination system"""
     task_id: str
     description: str

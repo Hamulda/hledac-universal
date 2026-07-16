@@ -16,6 +16,7 @@ M1 8GB safe: ~0 bytes extra RAM, async by design.
 import asyncio
 import logging
 from dataclasses import dataclass
+import msgspec
 from typing import TYPE_CHECKING
 
 from core.resource_governor import _get_cached_psutil_async, _read_virtual_memory_sync, _read_swap_memory_sync
@@ -31,8 +32,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True, frozen=True)
-class SystemMemory:
+class SystemMemory(msgspec.Struct, frozen=True):
     """Immutable snapshot of system memory."""
 
     total_gib: float
@@ -54,8 +54,7 @@ class SystemMemory:
         )
 
 
-@dataclass(slots=True, frozen=True)
-class SwapMemory:
+class SwapMemory(msgspec.Struct, frozen=True):
     """Immutable snapshot of swap usage."""
 
     total_gib: float

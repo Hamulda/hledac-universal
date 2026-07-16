@@ -25,15 +25,20 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 import msgspec
-from typing import Any
+from typing import Any, cast
 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
 from hledac.universal.transport.session_pool import session_pool
 import httpx
-try:
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+_CanonicalFinding: "type[CanonicalFinding] | None" = None
+try:
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding as _CF
+    _CanonicalFinding = _CF
 except ImportError:
-    CanonicalFinding = None
-from hledac.universal.utils.async_helpers import safe_gather
+    pass
+from hledac.universal.utils.async_helpers import parallel, ParallelResult
 logger = logging.getLogger(__name__)
 MAX_ASN_RESULTS: int = 500
 RATE_LIMIT_S: float = 2.0
@@ -41,8 +46,7 @@ TIMEOUT_PER_REQUEST: float = 15.0
 MAX_PREFIXES_PER_ASN: int = 200
 BGPVIEW_API = 'https://api.bgpview.io'
 
-@dataclass(slots=True)
-class BGPFinding:
+class BGPFinding(msgspec.Struct):
     """
     BGP intelligence finding.
 
@@ -71,11 +75,11 @@ class BGPFinding:
 
     def to_canonical_finding(self, query: str, _sprint_id: str='') -> CanonicalFinding | None:
         """Convert to CanonicalFinding for DuckDB ingestion."""
-        if CanonicalFinding is None:
+        if _CanonicalFinding is None:
             return None
         try:
             payload = self._build_payload()
-            return CanonicalFinding(finding_id=f"bgp-{self.asn}-{self.prefix.replace('/', '-')}", source_type='bgp_intelligence', confidence=0.85, query=query[:128], ts=time.time(), payload_text=payload, provenance=(f'asn:AS{self.asn}', f'org:{self.asn_name}', f'prefix:{self.prefix}', f'country:{self.country_code}', f"rir:{self.rir or 'unknown'}"))
+            return _CanonicalFinding(finding_id=f"bgp-{self.asn}-{self.prefix.replace('/', '-')}", source_type='bgp_intelligence', confidence=0.85, query=query[:128], ts=time.time(), payload_text=payload, provenance=(f'asn:AS{self.asn}', f'org:{self.asn_name}', f'prefix:{self.prefix}', f'country:{self.country_code}', f"rir:{self.rir or 'unknown'}"))
         except Exception:
             return None
 
@@ -89,8 +93,7 @@ class BGPFinding:
             parts.append(f'Queried IP: {self.query_ip}')
         return '\n'.join(parts)
 
-@dataclass(frozen=True, slots=True)
-class BGPResult:
+class BGPResult(msgspec.Struct, frozen=True):
     """Result of a BGP lane operation."""
     ip: str
     asn: int | None = None
@@ -197,7 +200,7 @@ async def org_to_asns(org_query: str, session: httpx.AsyncClient, *, limit: int=
 
     Args:
         org_query: Organisation name or part of it (e.g. "Google", "Cloudflare")
-        session:   aiohttp.ClientSession
+        session:   httpx.AsyncClient
         limit:     Max ASNs to return (default 500)
 
     Returns:
@@ -230,7 +233,7 @@ async def ip_bulk_to_asn(ips: list[str], session: httpx.AsyncClient, *, rate_lim
 
     Args:
         ips:           List of IP addresses
-        session:       aiohttp.ClientSession
+        session:       httpx.AsyncClient
         rate_limit_s:  Minimum seconds between batch requests (bgpview ~30 req/min)
         concurrency:   Max concurrent requests (Semaphore)
 
@@ -252,7 +255,7 @@ async def ip_bulk_to_asn(ips: list[str], session: httpx.AsyncClient, *, rate_lim
             last_request = time.monotonic()
             result = await ip_to_asn(ip, session)
             return result
-    _result = await safe_gather(*[_fetch_one(ip) for ip in ips], label='bgp_ip_to_asn_bulk')
+    _result = await parallel([_fetch_one(ip) for ip in ips], taskgroup=True, policy='collect', ctx='bgp_ip_to_asn_bulk', logger_instance=logger)
     for r in _result.ok:
         if isinstance(r, BGPFinding):
             findings.append(r)
@@ -267,7 +270,7 @@ async def org_bulk_to_asns_with_prefixes(org_queries: list[str], session: httpx.
 
     Args:
         org_queries:   List of organisation name strings
-        session:       aiohttp.ClientSession
+        session:       httpx.AsyncClient
         rate_limit_s:  Seconds between requests
         concurrency:   Max concurrent ASN lookups
 
@@ -287,7 +290,7 @@ async def org_bulk_to_asns_with_prefixes(org_queries: list[str], session: httpx.
                 await asyncio.sleep(rate_limit_s - elapsed)
             last_request = time.monotonic()
             return await org_to_asns(org, session)
-    _result = await safe_gather(*[_org_to_asns(q) for q in org_queries], label='bgp_org_to_asns')
+    _result = await parallel([_org_to_asns(q) for q in org_queries], taskgroup=True, policy='collect', ctx='bgp_org_to_asns', logger_instance=logger)
     org_results: list[Any] = _result.ok
     all_asns: list[tuple[int, BGPFinding]] = []
     for res in org_results:
@@ -308,7 +311,7 @@ async def org_bulk_to_asns_with_prefixes(org_queries: list[str], session: httpx.
                 await asyncio.sleep(rate_limit_s - elapsed)
             last_request = time.monotonic()
             return await asn_to_prefixes(asn, session)
-    _result = await safe_gather(*[_asn_prefixes(asn) for asn in unique_asns], label='bgp_asn_prefixes')
+    _result = await parallel([_asn_prefixes(asn) for asn in unique_asns], taskgroup=True, policy='collect', ctx='bgp_asn_prefixes', logger_instance=logger)
     prefix_results: list[Any] = _result.ok
     findings: list[BGPFinding] = []
     for res in prefix_results:

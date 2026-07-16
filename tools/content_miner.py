@@ -46,8 +46,7 @@ except ImportError:
         _CANONICAL_HTML_TEXT_AVAILABLE = False
 _CLEAN_PATTERNS: list[tuple[re.Pattern, str]] = [(re.compile('<script[^>]*>.*?</script>', flags=re.DOTALL | re.IGNORECASE), ' '), (re.compile('<style[^>]*>.*?</style>', flags=re.DOTALL | re.IGNORECASE), ' '), (re.compile('<head[^>]*>.*?</head>', flags=re.DOTALL | re.IGNORECASE), ' '), (re.compile('<nav[^>]*>.*?</nav>', flags=re.DOTALL | re.IGNORECASE), ' '), (re.compile('<footer[^>]*>.*?</footer>', flags=re.DOTALL | re.IGNORECASE), ' '), (re.compile('<header[^>]*>.*?</header>', flags=re.DOTALL | re.IGNORECASE), ' '), (re.compile('<aside[^>]*>.*?</aside>', flags=re.DOTALL | re.IGNORECASE), ' '), (re.compile('<[^>]+>'), ' '), (re.compile('&nbsp;'), ' '), (re.compile('&amp;'), '&'), (re.compile('&lt;'), '<'), (re.compile('&gt;'), '>'), (re.compile('&quot;'), '"'), (re.compile('&apos;'), "'"), (re.compile('\\s+'), ' ')]
 
-@dataclass(slots=True)
-class MiningResult:
+class MiningResult(msgspec.Struct):
     """Result of content mining operation"""
     content: str
     title: str = ''
@@ -573,8 +572,7 @@ def create_rust_miner(prefer_rust: bool=True) -> RustMiner:
     """
     return RustMiner(prefer_rust=prefer_rust)
 
-@dataclass(frozen=True, slots=True)
-class FeedDiscoveryResult:
+class FeedDiscoveryResult(msgspec.Struct, frozen=True):
     """Result of feed discovery."""
     feed_urls: list[str]
     source_url: str
@@ -651,8 +649,7 @@ class FeedDiscoverer:
             return urljoin(base_url, href)
         return ''
 
-@dataclass(frozen=True, slots=True)
-class ExtractedMetadata:
+class ExtractedMetadata(msgspec.Struct, frozen=True):
     """Metadata extracted from non-HTML documents."""
     content_type: str
     file_size: int

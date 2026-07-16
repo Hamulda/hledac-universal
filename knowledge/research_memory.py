@@ -24,6 +24,7 @@ import logging
 import re
 import time as _time
 from dataclasses import dataclass
+import msgspec
 from typing import TYPE_CHECKING, Any
 
 import orjson
@@ -41,8 +42,7 @@ MAX_TEMPORAL_ANOMALIES = 100
 _MAYBE_MEMORY: ResearchSessionMemory | None = None
 
 
-@dataclass(slots=True)
-class EntityObservation:
+class EntityObservation(msgspec.Struct):
     observation_id: str
     entity_value: str
     entity_type: str
@@ -53,8 +53,7 @@ class EntityObservation:
     finding_id: str
 
 
-@dataclass(slots=True)
-class EntityHistory:
+class EntityHistory(msgspec.Struct):
     entity_value: str
     observations: list[EntityObservation]
     sprint_count: int
@@ -63,8 +62,7 @@ class EntityHistory:
     activity_trend: str
 
 
-@dataclass(slots=True)
-class TemporalAnomaly:
+class TemporalAnomaly(msgspec.Struct):
     entity_value: str
     anomaly_type: str
     severity: float
@@ -73,8 +71,7 @@ class TemporalAnomaly:
     ts: float
 
 
-@dataclass(slots=True)
-class UnexploredAngle:
+class UnexploredAngle(msgspec.Struct):
     angle: str
     rationale: str
     suggested_sources: list[str]

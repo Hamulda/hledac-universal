@@ -52,6 +52,7 @@ import logging
 import os
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
+import msgspec
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.coordinators.aimd_controllers import (
@@ -66,6 +67,9 @@ if TYPE_CHECKING:
     from hledac.universal.coordinators.memory_coordinator import UniversalMemoryCoordinator
     from hledac.universal.coordinators.resource_allocator import IntelligentResourceAllocator
 
+# E4: OTel trace context propagation on I/O boundaries
+from hledac.universal.utils.async_helpers import safe_create_task  # noqa: E402
+
 logger = logging.getLogger(__name__)
 
 # M1 8GB UMA bounds
@@ -75,8 +79,7 @@ _MAX_FETCH_WORKERS = 25
 _MEMORY_PRESSURE_SCALE_DOWN = 0.5  # Reduce workers by 50% on memory pressure
 
 
-@dataclass(slots=True)
-class TaskRequest:
+class TaskRequest(msgspec.Struct):
     """Resource request for a task."""
     task_id: str
     task_name: str
@@ -249,7 +252,8 @@ class UnifiedResourceManager:
             await asyncio.sleep(0.01)
 
         async with self._lock:
-            task = asyncio.create_task(self._run_task(request, coro))
+            # E4: safe_create_task propagates OTel trace context into child task
+            task = safe_create_task(self._run_task(request, coro), name=f"unified_rm:{request.task_type}:{request.task_id}")
             self._active_tasks[request.task_id] = task
 
             def done_callback(t: asyncio.Task) -> None:

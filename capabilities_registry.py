@@ -8,9 +8,9 @@ without triggering any network I/O or full module imports.
 import importlib.util
 import os
 from dataclasses import dataclass
+import msgspec
 
-@dataclass(frozen=True, slots=True)
-class CapabilityRegistration:
+class CapabilityRegistration(msgspec.Struct, frozen=True):
     """Immutable registration record for a single capability."""
     module_spec: str
     env_gate: str | None

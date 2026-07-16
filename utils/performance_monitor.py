@@ -16,8 +16,7 @@ import msgspec
 from typing import Any
 logger = logging.getLogger(__name__)
 
-@dataclass(slots=True)
-class PerformanceMetrics:
+class PerformanceMetrics(msgspec.Struct):
     """Metriky výkonu"""
     generation_count: int = 0
     total_tokens: int = 0
@@ -157,8 +156,7 @@ class MemoryPressure(Enum):
     HIGH = 'high'
     CRITICAL = 'critical'
 
-@dataclass(frozen=True, slots=True)
-class SystemMetrics:
+class SystemMetrics(msgspec.Struct, frozen=True):
     """Current system metrics."""
     cpu_percent: float
     memory_percent: float

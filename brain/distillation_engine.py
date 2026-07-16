@@ -17,6 +17,7 @@ Example:
     >>> score = await engine.score_chain(query, chain)
 """
 import asyncio
+import msgspec
 import gc
 import msgspec.json as _json
 import logging
@@ -33,8 +34,7 @@ from hledac.universal.utils.mlx_cache import MLX_AVAILABLE, get_mx
 logger = logging.getLogger(__name__)
 _MLX_NN_AVAILABLE: bool = MLX_AVAILABLE
 
-@dataclass(slots=True)
-class DistillationExample:
+class DistillationExample(msgspec.Struct):
     """
     Dataclass pro training example pro distillation.
 

@@ -235,7 +235,7 @@ class SidecarRegistry:
         Idempotent: subsequent calls are no-ops.
         Skips sidecars already cached via get_available().
         """
-        import asyncio
+        from utils.async_helpers import parallel  # ISSUE-006: parallel() canonical API
         for sidecar_id in cls._registry:
             if sidecar_id in cls._cached_instances:
                 continue  # Already pre-warmed
@@ -259,7 +259,7 @@ class SidecarRegistry:
             if sid not in cls._cached_instances
         ]
         if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await parallel(tasks, policy="log")
 
     @classmethod
     def _instantiate(cls, klass: type[SidecarAdapterProtocol]) -> SidecarAdapterProtocol | None:

@@ -10,15 +10,17 @@ This is the canonical stealth surface used by fetching/public_fetcher.py.
 Always-on, bounded, fail-safe.
 """
 import asyncio
-import random
+import secrets
 from dataclasses import dataclass, field
 import msgspec
+
+# Crypto-safe jitter + UA selection — F350M-R
+_JITTER_RNG = secrets.SystemRandom()
 _STEALTH_UA_POOL: tuple[str, ...] = ('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36')
 _JITTER_MIN_S: float = 0.05
 _JITTER_MAX_S: float = 0.5
 
-@dataclass(slots=True)
-class StealthResponse:
+class StealthResponse(msgspec.Struct):
     """Response from stealth HTTP request."""
     status: int
     final_url: str
@@ -54,7 +56,7 @@ class StealthSession:
 
     def get_random_ua(self) -> str:
         """Return a random UA from the pool (testable)."""
-        return random.choice(self._ua_pool)
+        return _JITTER_RNG.choice(self._ua_pool)
 
     def get_current_ua(self) -> str:
         """Return the UA that would be used next (round-robin peek)."""
@@ -79,7 +81,7 @@ class StealthSession:
         Returns:
             Actual seconds slept (for testing variance verification).
         """
-        delay = random.uniform(self._jitter_min, self._jitter_max)
+        delay = _JITTER_RNG.uniform(self._jitter_min, self._jitter_max)
         await asyncio.sleep(delay)
         return delay
 

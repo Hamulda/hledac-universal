@@ -15,6 +15,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
+import msgspec
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
@@ -89,8 +90,7 @@ class STDPParameters:
         self.tau = tau
 
 
-@dataclass(slots=True)
-class MemoryPattern:
+class MemoryPattern(msgspec.Struct):
     """
     A memory pattern stored in neuromorphic memory.
 

@@ -21,8 +21,7 @@ _COMPILED_PATTERN_HASHES: tuple[tuple[re.Pattern[str], str, str], ...] = tuple((
 _HEX_HASH_SCAN_RE = re.compile('\\b[0-9a-fA-F]{32,128}\\b')
 _COMPILED_SCAN_PATTERN_HASHES: tuple[tuple[re.Pattern[str], str], ...] = tuple(((re.compile(pattern + '\\S+'), pattern) for pattern in PATTERN_HASHES.keys()))
 
-@dataclass(slots=True)
-class HashMatch:
+class HashMatch(msgspec.Struct):
     """Represents a hash algorithm match.
 
     Attributes:

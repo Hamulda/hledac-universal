@@ -27,7 +27,7 @@ import msgspec
 from core.env_config import ENV
 from hledac.universal.utils.async_helpers import (
     safe_create_task,
-    safe_gather_return_exceptions,
+    parallel,
 )
 
 log = logging.getLogger(__name__)
@@ -479,7 +479,8 @@ class AcquisitionOrchestrator:
         async def run_feed_branch() -> tuple[list, bool, int]:
             """Run feed sources and return (results, ok, count)."""
             _tasks = [fetch_one(w) for w in work_items]
-            _feed_results = await safe_gather_return_exceptions(*_tasks)
+            _result = await parallel(_tasks, taskgroup=True, policy='collect', ctx='acquisition:feed_branch')
+            _feed_results = _result.ok
             _ok = all(r[1].ok for r in _feed_results if not isinstance(r, Exception))
             _count = sum(
                 r[1].accepted_findings if not isinstance(r, Exception) and hasattr(r[1], "accepted_findings") else 0
@@ -504,7 +505,8 @@ class AcquisitionOrchestrator:
                 return {"ok": False, "count": 0, "timeout": True, "skipped": False}
 
         # Launch both branches concurrently — FEED || PUBLIC
-        _all_results = await safe_gather_return_exceptions(run_feed_branch(), run_public_branch())
+        _gather_result = await parallel([run_feed_branch(), run_public_branch()], taskgroup=True, policy='collect', ctx='acquisition:feed_vs_public')
+        _all_results = _gather_result.ok
 
         # Unpack FEED results
         _feed_data = _all_results[0]
@@ -632,7 +634,8 @@ class AcquisitionOrchestrator:
         duckdb_store: Any,
     ) -> tuple[bool, int]:
         try:
-            feed_results = await safe_gather_return_exceptions(*[fetch_one(w) for w in work_items])
+            _result = await parallel([fetch_one(w) for w in work_items], taskgroup=True, policy='collect', ctx='acquisition:feed_branch_aggressive')
+            feed_results = _result.ok
             _ok = all(r[1].ok for r in feed_results if not isinstance(r, Exception))
             _count = sum(
                 r[1].accepted_findings if not isinstance(r, Exception) and hasattr(r[1], "accepted_findings") else 0

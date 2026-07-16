@@ -38,6 +38,23 @@ try:
 except ImportError:
     MLX_AVAILABLE = False
     warnings.warn('MLX not available. Install: pip install mlx>=0.15.0', stacklevel=2)
+
+# Lazy mlx.core accessor
+_MLX_CORE: Any | None = None
+
+
+def _get_mx() -> Any | None:
+    """Lazy accessor for mlx.core — imports once and caches. Returns None if unavailable."""
+    global _MLX_CORE
+    if _MLX_CORE is None:
+        try:
+            import mlx.core as _mx
+            _MLX_CORE = _mx
+        except ImportError:
+            _MLX_CORE = False
+    return _MLX_CORE if _MLX_CORE is not False else None
+
+
 MLX_EMBEDDINGS_LOAD = None
 MLX_EMBEDDINGS_AVAILABLE = None
 from enum import Enum
@@ -373,9 +390,9 @@ class MLXEmbeddingManager:
             self._is_loaded = False
             import gc
             gc.collect()
-            if MLX_AVAILABLE:
+            mx = _get_mx()
+            if mx:
                 try:
-                    import mlx.core as mx
                     mx.eval([])
                     import gc
                     gc.collect()
@@ -521,11 +538,9 @@ def get_mlx_embedder() -> MLXEmbeddingManager:
         if not _init_logged:
             mgr = _default_manager
             metal_status = 'unknown'
-            try:
-                import mlx.core as mx
-                metal_status = 'yes' if hasattr(mx, 'metal') and mx.metal.is_available() else 'no'
-            except Exception:
-                pass
+            mx = _get_mx()
+            if mx and hasattr(mx, 'metal'):
+                metal_status = 'yes' if mx.metal.is_available() else 'no'
             logger.info(f'[EMBEDDER] provider=MLX model={mgr.model_path} dim={mgr.EMBEDDING_DIM} MRL_dim={mgr.MRL_DIM} max_length={mgr.MAX_LENGTH} source=auto normalized=yes pooling=mean metal={metal_status}')
             _init_logged = True
     return _default_manager
@@ -540,11 +555,9 @@ def get_embedding_info() -> dict:
     if _default_manager is None:
         return {'provider': 'not_initialized'}
     metal_status = 'unknown'
-    try:
-        import mlx.core as mx
-        metal_status = 'yes' if hasattr(mx, 'metal') and mx.metal.is_available() else 'no'
-    except Exception:
-        pass
+    mx = _get_mx()
+    if mx and hasattr(mx, 'metal'):
+        metal_status = 'yes' if mx.metal.is_available() else 'no'
     return {'provider': 'MLXEmbeddingManager', 'model': str(_default_manager.model_path), 'dim': _default_manager.EMBEDDING_DIM, 'mrl_dim': _default_manager.MRL_DIM, 'max_length': _default_manager.MAX_LENGTH, 'metal': metal_status, 'is_loaded': _default_manager.is_loaded}
 
 class EmbeddingDimensionError(Exception):

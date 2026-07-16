@@ -30,6 +30,7 @@ import asyncio
 import logging
 import re
 from dataclasses import dataclass, field
+import msgspec
 from pathlib import Path
 from typing import Any
 from hledac.universal.utils.msgspec_json import loads as _msgspec_loads, dumps_str as _msgspec_dumps_str
@@ -57,8 +58,7 @@ MAX_HOPS = 2
 # RESULT DATA CLASSES
 # =============================================================================
 
-@dataclass(slots=True)
-class AcademicPaper:
+class AcademicPaper(msgspec.Struct):
     """Structured academic paper result."""
     title: str
     authors: list[str]

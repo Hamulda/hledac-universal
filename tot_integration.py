@@ -45,8 +45,7 @@ def _load_tot_components():
         TOT_AVAILABLE = False
         return False
 
-@dataclass(slots=True)
-class TotResult:
+class TotResult(msgspec.Struct):
     """Result from Tree of Thoughts reasoning."""
     solution: str | None
     confidence_score: float
@@ -63,8 +62,7 @@ class TotResult:
         """Convert ToT result to standard ResearchResult."""
         return ResearchResult(success=self.solution is not None and self.error is None, query=query, mode='tree_of_thoughts', final_answer=self.solution or 'No solution found', sources=[], knowledge_graph={}, execution_history=self.reasoning_trace, agent_results=[], statistics={'confidence': self.confidence_score, 'computation_time': self.computation_time, 'iterations': self.iterations_performed, 'converged': self.converged, 'backtracking_used': self.backtracking_used, 'memory_usage_mb': self.memory_usage_mb, 'tree_stats': self.tree_statistics}, metadata={'reasoning_mode': 'tree_of_thoughts', 'tree_depth': self.tree_statistics.get('max_depth', 0), 'exploration_rate': self.tree_statistics.get('exploration_rate', 0.0)})
 
-@dataclass(frozen=True, slots=True)
-class TotConfig:
+class TotConfig(msgspec.Struct, frozen=True):
     """Configuration for Tree of Thoughts integration."""
     enable_tot_autonomous: bool = True
     tot_complexity_threshold: float = 0.7

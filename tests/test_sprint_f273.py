@@ -19,6 +19,7 @@ Pattern follows tests/test_f250_dynamic_windup.py + tests/test_sprint_f272.py.
 """
 
 import asyncio
+import msgspec
 import os
 import platform
 import unittest

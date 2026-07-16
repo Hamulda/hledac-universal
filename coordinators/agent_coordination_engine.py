@@ -17,12 +17,13 @@ Features:
 import asyncio
 import logging
 import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 import msgspec
 from enum import Enum
 from typing import Any
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel
 logger = logging.getLogger(__name__)
 
 class AgentType(Enum):
@@ -43,8 +44,7 @@ class TaskPriority(Enum):
     LOW = 4
     BACKGROUND = 5
 
-@dataclass(slots=True)
-class AgentCapability:
+class AgentCapability(msgspec.Struct):
     """Capability definition for an agent."""
     agent_type: AgentType
     name: str
@@ -53,8 +53,7 @@ class AgentCapability:
     supported_operations: list[str] = field(default_factory=list)
     priority_boost: float = 1.0
 
-@dataclass(frozen=True, slots=True)
-class AgentPerformance:
+class AgentPerformance(msgspec.Struct):
     """Performance metrics for an agent."""
     agent_type: AgentType
     total_tasks: int = 0
@@ -70,8 +69,7 @@ class AgentPerformance:
             return 1.0
         return self.successful_tasks / self.total_tasks
 
-@dataclass(frozen=True, slots=True)
-class TaskRequest:
+class TaskRequest(msgspec.Struct, frozen=True):
     """Request for agent execution."""
     id: str
     operation: str
@@ -82,8 +80,7 @@ class TaskRequest:
     timeout: float = 60.0
     max_retries: int = 2
 
-@dataclass(frozen=True, slots=True)
-class TaskResult:
+class TaskResult(msgspec.Struct, frozen=True):
     """Result from agent execution."""
     task_id: str
     agent_type: AgentType
@@ -93,8 +90,7 @@ class TaskResult:
     duration: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
 
-@dataclass(frozen=True, slots=True)
-class CoordinationStrategy:
+class CoordinationStrategy(msgspec.Struct, frozen=True):
     """Strategy for task coordination."""
     parallel_execution: bool = True
     max_parallel_agents: int = 3
@@ -134,7 +130,7 @@ class AgentCoordinationEngine:
         self._executors: dict[AgentType, Callable] = {}
         self._active_tasks: dict[str, asyncio.Task] = {}
         self._task_semaphores: dict[AgentType, asyncio.Semaphore] = {}
-        self._operation_history: list[dict[str, Any]] = []
+        self._operation_history: deque = deque(maxlen=self._max_history)
         self._max_history = 1000
         logger.info('AgentCoordinationEngine initialized')
 
@@ -160,7 +156,7 @@ class AgentCoordinationEngine:
         self._task_semaphores.pop(agent_type, None)
         logger.info(f'Unregistered agent: {agent_type.value}')
 
-    async def execute_task(self, request: TaskRequest, strategy: CoordinationStrategy | None=None) -> TaskResult:
+    async def execute_task(self, request: TaskRequest) -> TaskResult:
         """
         Execute a single task with the best available agent.
 
@@ -171,7 +167,6 @@ class AgentCoordinationEngine:
         Returns:
             Task execution result
         """
-        strategy = strategy or self.strategy
         selected_agent = self._select_agent(request)
         if not selected_agent:
             return TaskResult(task_id=request.id, agent_type=AgentType.GENERAL, success=False, error='No suitable agent found')
@@ -205,7 +200,7 @@ class AgentCoordinationEngine:
         if not strategy.parallel_execution:
             results = []
             for request in requests:
-                result = await self.execute_task(request, strategy)
+                result = await self.execute_task(request)
                 results.append(result)
                 if strategy.fail_fast and (not result.success):
                     break
@@ -214,16 +209,10 @@ class AgentCoordinationEngine:
 
         async def execute_with_limit(request: TaskRequest) -> TaskResult:
             async with sem:
-                return await self.execute_task(request, strategy)
-        tasks = [execute_with_limit(req) for req in requests]
-        results = await safe_gather_ok(*tasks, label='agent_coordination_engine:281')
-        processed_results = []
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                processed_results.append(TaskResult(task_id=requests[i].id, agent_type=AgentType.GENERAL, success=False, error=str(result)))
-            else:
-                processed_results.append(result)
-        return processed_results
+                return await self.execute_task(request)
+        tasks: list = [execute_with_limit(req) for req in requests]
+        gathered = await parallel(tasks, policy="collect", ctx="agent_coordination_engine:219")
+        return list(gathered.ok)
 
     def _select_agent(self, request: TaskRequest) -> AgentType | None:
         """Select the best agent for a task based on capabilities and performance."""
@@ -286,8 +275,6 @@ class AgentCoordinationEngine:
         """Record operation in history."""
         record = {'timestamp': time.time(), 'task_id': request.id, 'operation': request.operation, 'agent_type': result.agent_type.value, 'success': result.success, 'duration': result.duration}
         self._operation_history.append(record)
-        if len(self._operation_history) > self._max_history:
-            self._operation_history = self._operation_history[-self._max_history:]
 
     def get_agent_stats(self) -> dict[str, Any]:
         """Get statistics for all registered agents."""
@@ -298,7 +285,7 @@ class AgentCoordinationEngine:
         history = self._operation_history
         if agent_type:
             history = [h for h in history if h['agent_type'] == agent_type.value]
-        return history[-limit:]
+        return list(history)[-limit:]
 
 async def coordinated_search(query: str, agents: list[AgentType], engine: AgentCoordinationEngine | None=None) -> list[TaskResult]:
     """

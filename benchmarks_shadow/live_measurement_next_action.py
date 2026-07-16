@@ -8,6 +8,7 @@ Only imports MeasurementStatus from live_measurement_schema.
 """
 __all__ = ['NextActionInput', '_derive_next_action', '_was_family_attempted']
 from dataclasses import dataclass
+import msgspec
 from benchmarks.live_measurement_schema import MeasurementStatus, RunQualityVerdict
 
 def _was_family_attempted(runtime_truth: dict, family: str) -> bool:
@@ -19,8 +20,7 @@ def _was_family_attempted(runtime_truth: dict, family: str) -> bool:
     timed_out = runtime_truth.get(f'{family}_branch_timed_out', False)
     return timed_out
 
-@dataclass(frozen=True, slots=True)
-class NextActionInput:
+class NextActionInput(msgspec.Struct, frozen=True):
     """All inputs needed by _derive_next_action rule helpers.
 
     Frozen dataclass ensures rule helpers are pure and cannot mutate inputs.

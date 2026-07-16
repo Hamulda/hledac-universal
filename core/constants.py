@@ -33,6 +33,7 @@ import os
 import sys
 import time
 from dataclasses import dataclass, field
+import msgspec
 from typing import TYPE_CHECKING
 __all__ = ['NetworkTimeouts', 'M1MemoryBounds', 'MLXInference', 'ProtocolPorts', 'HTTPCodes', 'SemanticRatios', 'DuckDBStorage', 'NETWORK', 'M1_BOUNDS', 'MLX', 'PORTS', 'HTTP', 'RATIOS', 'DUCKDB', 'get_m1_uma_mb']
 
@@ -54,8 +55,7 @@ def get_m1_uma_mb() -> int:
     """Public accessor for detected UMA size."""
     return _UMA_TOTAL_MB
 
-@dataclass(frozen=True, slots=True)
-class NetworkTimeouts:
+class NetworkTimeouts(msgspec.Struct, frozen=True):
     """
     HTTP/HTTPS network timeouty — všechny sítové operace.
 
@@ -84,8 +84,7 @@ class NetworkTimeouts:
     i2p: float = 150.0
     gopher: float = 30.0
 
-@dataclass(frozen=True, slots=True)
-class M1MemoryBounds:
+class M1MemoryBounds(msgspec.Struct, frozen=True):
     """
     M1 8GB UMA specifické memory a cache limity.
 
@@ -116,8 +115,7 @@ class M1MemoryBounds:
     domain_failure_cutoff_s: int = 86400
     duckdb_vacuum_threshold_mb: int = 2048
 
-@dataclass(frozen=True, slots=True)
-class MLXInference:
+class MLXInference(msgspec.Struct, frozen=True):
     """
     MLX inference limity — KV cache, batch, token boundy.
 
@@ -160,8 +158,7 @@ class MLXInference:
     pid_kd: float = 0.1
     lora_kv_reduction_factor: int = 2
 
-@dataclass(frozen=True, slots=True)
-class ProtocolPorts:
+class ProtocolPorts(msgspec.Struct, frozen=True):
     """
     Protocol-specific port numbers.
 
@@ -175,8 +172,7 @@ class ProtocolPorts:
     i2p_http: int = 8888
     https: int = 443
 
-@dataclass(frozen=True, slots=True)
-class HTTPCodes:
+class HTTPCodes(msgspec.Struct, frozen=True):
     """
     HTTP status kódy pro retry/error policy.
 
@@ -189,8 +185,7 @@ class HTTPCodes:
     redirect_min: int = 300
     redirect_max: int = 399
 
-@dataclass(frozen=True, slots=True)
-class SemanticRatios:
+class SemanticRatios(msgspec.Struct, frozen=True):
     """
     Empiricky odvozené plovoucí konstanty.
 
@@ -217,8 +212,7 @@ class SemanticRatios:
     funnel_text_rate: float = 100.0
     windup_efficiency_acceptable: float = 0.7
 
-@dataclass(frozen=True, slots=True)
-class DuckDBStorage:
+class DuckDBStorage(msgspec.Struct, frozen=True):
     """
     DuckDB-specific storage bounds.
     """

@@ -18,6 +18,7 @@ import json
 import re
 import sys
 from dataclasses import dataclass
+import msgspec
 from enum import Enum
 from pathlib import Path
 
@@ -29,8 +30,7 @@ class ClaimStatus(Enum):
     FALSE_POSITIVE = 'FALSE_POSITIVE'
     UNKNOWN = 'UNKNOWN'
 
-@dataclass(frozen=True, slots=True)
-class ClaimResult:
+class ClaimResult(msgspec.Struct, frozen=True):
     claim_id: str
     original_text: str
     status: ClaimStatus

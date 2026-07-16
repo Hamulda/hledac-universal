@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Generic, Protocol, TypeVar
 
 import msgspec
@@ -161,22 +162,27 @@ class BoundedStageQueue(Generic[T_out]):
         """
         Vloží item do fronty.
 
+        Serializuje concurrent put() volání přes asyncio.Lock — více korutin
+        volajících put() současně by mohlo způsobit race condition v put_nowait,
+        protože asyncio.Queue negeneruje yield-point během put_nowait a tudíž
+        by se korutiny mohly při čekání na GIL přepínat uprostřed operace.
+
         Returns:
             True pokud item byl vložen (wasn't dropped).
             False pokud queue full (item dropped).
         """
-        try:
-            self._queue.put_nowait(item)
-            return True
-        except asyncio.QueueFull:
-            async with self._lock:
+        async with self._lock:
+            try:
+                self._queue.put_nowait(item)
+                return True
+            except asyncio.QueueFull:
                 self._dropped += 1
-            logger.debug(
-                "BoundedStageQueue[%s]: dropped item (queue full, size=%d)",
-                self.stage_name,
-                self.maxsize,
-            )
-            return False
+                logger.debug(
+                    "BoundedStageQueue[%s]: dropped item (queue full, size=%d)",
+                    self.stage_name,
+                    self.maxsize,
+                )
+                return False
 
     async def get(self) -> T_out:
         """Blokuje dokud není item dostupný."""

@@ -9,6 +9,7 @@ import inspect
 import typing
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable
 from dataclasses import dataclass
+import msgspec
 
 from utils.async_helpers import safe_create_task, safe_gather_ok
 
@@ -16,8 +17,7 @@ T = typing.TypeVar("T", default=object)
 R = typing.TypeVar("R", default=object)
 
 
-@dataclass(frozen=True, slots=True)
-class BatchStats:
+class BatchStats(msgspec.Struct, frozen=True):
     """Statistics pro batch processing."""
 
     items_processed: int = 0

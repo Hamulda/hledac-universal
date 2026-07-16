@@ -6,11 +6,13 @@ Rozděleno z původního stealth_crawler.py (ISSUE-028).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import msgspec
 from datetime import datetime, UTC
 from enum import Enum
 from typing import Any
 
 import logging
+import secrets
 
 logger = logging.getLogger(__name__)
 
@@ -183,8 +185,7 @@ class SourceType(Enum):
     URL = "url"
 
 
-@dataclass(slots=True)
-class MonitoredSource:
+class MonitoredSource(msgspec.Struct):
     """
     Configuration for a monitored source.
 
@@ -210,8 +211,7 @@ class MonitoredSource:
             raise ValueError(f"Invalid source_type: {self.source_type}")
 
 
-@dataclass(slots=True)
-class Change:
+class Change(msgspec.Struct):
     """Represents a single detected change"""
 
     change_type: ChangeType
@@ -220,8 +220,7 @@ class Change:
     new_text: str | None
 
 
-@dataclass(slots=True)
-class StreamEvent:
+class StreamEvent(msgspec.Struct):
     """Represents a change detection event from the monitoring stream."""
 
     event_id: str
@@ -235,8 +234,7 @@ class StreamEvent:
     changes: list[Change]
 
 
-@dataclass(slots=True)
-class Alert:
+class Alert(msgspec.Struct):
     """Represents an alert generated from monitoring."""
 
     alert_id: str
@@ -247,8 +245,7 @@ class Alert:
     event: StreamEvent | None = None
 
 
-@dataclass(slots=True)
-class AlertRule:
+class AlertRule(msgspec.Struct):
     """
     Rule for generating alerts based on monitoring events.
 
@@ -287,8 +284,7 @@ class BypassMethod(Enum):
     Manual = "manual"
 
 
-@dataclass(slots=True)
-class ScrapingResult:
+class ScrapingResult(msgspec.Struct):
     """Result of a scraping operation."""
 
     url: str
@@ -301,8 +297,7 @@ class ScrapingResult:
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
-@dataclass(slots=True)
-class ProxyConfig:
+class ProxyConfig(msgspec.Struct):
     """Configuration for proxy rotation."""
 
     proxy_url: str
@@ -313,8 +308,7 @@ class ProxyConfig:
     last_used: datetime | None = None
 
 
-@dataclass(slots=True)
-class FingerprintProfile:
+class FingerprintProfile(msgspec.Struct):
     """
     TLS/HTTP fingerprint profile for stealth scraping.
 
@@ -330,8 +324,7 @@ class FingerprintProfile:
     tls_version: str
 
 
-@dataclass(slots=True)
-class HeaderConfig:
+class HeaderConfig(msgspec.Struct):
     """Configuration for HTTP header spoofing."""
 
     header_name: str
@@ -356,7 +349,7 @@ class HeaderSpoofer:
     ):
         self.headers = headers if headers is not None else []
         self.default_profile = default_profile
-        self._random = __import__("random").Random()
+        self._random = secrets.SystemRandom()
 
     def get_headers(
         self,
@@ -400,8 +393,7 @@ class HeaderSpoofer:
         return result
 
 
-@dataclass(slots=True)
-class SearchResult:
+class SearchResult(msgspec.Struct):
     """Represents a single search result from stealth search."""
 
     url: str

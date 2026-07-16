@@ -24,6 +24,7 @@ import logging
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+import msgspec
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import httpx
@@ -35,8 +36,7 @@ except ImportError:
     MAX_BRIDGE_OUTPUT = 500
 _CT_RATE_LIMIT_S = 1.0
 
-@dataclass(slots=True)
-class CTFinding:
+class CTFinding(msgspec.Struct):
     """Single Certificate Transparency log entry."""
     domain: str
     org_name: str | None

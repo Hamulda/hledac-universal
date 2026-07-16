@@ -58,8 +58,7 @@ class RecordType(Enum):
     SRV = 'SRV'
     CAA = 'CAA'
 
-@dataclass(slots=True)
-class DNSRecord:
+class DNSRecord(msgspec.Struct):
     """DNS record information."""
     record_type: RecordType
     name: str
@@ -67,8 +66,7 @@ class DNSRecord:
     ttl: int
     priority: int | None = None
 
-@dataclass(frozen=True, slots=True)
-class WHOISData:
+class WHOISData(msgspec.Struct, frozen=True):
     """WHOIS lookup results."""
     domain: str
     registrar: str | None
@@ -87,8 +85,7 @@ class WHOISData:
     tech_email: str | None
     raw_whois: str
 
-@dataclass(frozen=True, slots=True)
-class SSLCertificate:
+class SSLCertificate(msgspec.Struct, frozen=True):
     """SSL/TLS certificate information."""
     subject: dict[str, str]
     issuer: dict[str, str]
@@ -102,8 +99,7 @@ class SSLCertificate:
     is_valid: bool
     days_until_expiry: int
 
-@dataclass(frozen=True, slots=True)
-class ServiceBanner:
+class ServiceBanner(msgspec.Struct, frozen=True):
     """Service banner information."""
     port: int
     protocol: str
@@ -112,8 +108,7 @@ class ServiceBanner:
     version: str | None
     timestamp: float
 
-@dataclass(frozen=True, slots=True)
-class HostInfo:
+class HostInfo(msgspec.Struct, frozen=True):
     """Complete host information."""
     hostname: str
     ip_addresses: list[str]
@@ -816,8 +811,7 @@ class DHTProbe:
                 results.append((h, f'found_at:{nodes[0]}'))
         return results
 
-@dataclass(frozen=True, slots=True)
-class CNAMERecord:
+class CNAMERecord(msgspec.Struct, frozen=True):
     """CNAME chain record."""
     source: str
     target: str
@@ -858,8 +852,7 @@ async def resolve_cname_chain(domain: str, max_depth: int=10) -> list[CNAMERecor
         logger.debug(f'resolve_cname_chain({domain}): {e}')
     return chain
 
-@dataclass(frozen=True, slots=True)
-class ASNInfo:
+class ASNInfo(msgspec.Struct, frozen=True):
     """Autonomous System Number information."""
     asn: int
     prefix: str
@@ -894,8 +887,7 @@ async def lookup_asn(ip_or_prefix: str) -> list[ASNInfo]:
         logger.debug(f'lookup_asn({ip_or_prefix}): {e}')
     return results
 
-@dataclass(frozen=True, slots=True)
-class CTRawCertificate:
+class CTRawCertificate(msgspec.Struct, frozen=True):
     """Certificate Transparency log entry."""
     common_name: str
     name_value: str

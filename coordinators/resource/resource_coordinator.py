@@ -44,6 +44,7 @@ import threading
 import time as _time_module
 from collections import deque
 from dataclasses import dataclass, field
+import msgspec
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -189,8 +190,7 @@ AIMD_EXTRACTION_MIN = 1
 AIMD_EXTRACTION_MAX = 8
 
 
-@dataclass(slots=True)
-class AIMDController:
+class AIMDController(msgspec.Struct):
     """
     Unified AIMD (Additive Increase/Multiplicative Decrease) controller.
 
@@ -312,8 +312,7 @@ _MIN_CLEARNET = 1
 _MAX_CLEARNET_FROM_GOVERNOR = 20
 
 
-@dataclass(frozen=True, slots=True)
-class BackpressureDecision:
+class BackpressureDecision(msgspec.Struct, frozen=True):
     """
     Backpressure decision for the fetch lane.
     Derived from GovernorDecision but scoped to fetch concurrency only.
@@ -449,8 +448,7 @@ class BackpressureMonitor:
 MAX_PENDING_RESOURCE_REQUESTS = 1000
 
 
-@dataclass(frozen=True, slots=True)
-class CapacitySnapshot:
+class CapacitySnapshot(msgspec.Struct, frozen=True):
     """Immutable snapshot of M1 resource capacity with TTL tracking."""
     cpu_percent: float
     gpu_memory: float

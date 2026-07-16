@@ -34,6 +34,22 @@ _ANE_AVAILABLE: bool | None = None
 _ANE_CHECKED: bool = False
 _lock = threading.Lock()
 
+# Lazy mlx.core singleton
+_MLX_CORE: Any | None = None
+
+
+def _get_mx() -> Any | None:
+    """Lazy accessor for mlx.core — imports once and caches. Returns None if unavailable."""
+    global _MLX_CORE
+    if _MLX_CORE is None:
+        try:
+            import mlx.core as mx
+            _MLX_CORE = mx
+        except ImportError:
+            _MLX_CORE = False
+    return _MLX_CORE if _MLX_CORE is not False else None
+
+
 def _check_ane_available() -> bool:
     """Lazily check ANE availability."""
     global _ANE_AVAILABLE, _ANE_CHECKED
@@ -139,7 +155,9 @@ class _UnifiedEmbedder:
     def _clear_metal_cache_hook(self) -> None:
         """Hook: mx.metal.clear_cache() after each batch."""
         try:
-            import mlx.core as mx
+            mx = _get_mx()
+            if mx is None:
+                return
             mx.eval([])
             if hasattr(mx, 'clear_cache'):
                 mx.clear_cache()

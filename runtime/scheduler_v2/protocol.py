@@ -5,9 +5,11 @@ F350M-R / Issue #P2.
 Defines the Protocol interfaces that each phase orchestrator must implement,
 and the shared SprintContext passed to all phases.
 """
+from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
+import msgspec
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
 if TYPE_CHECKING:
     from runtime.scheduler_config import SprintSchedulerConfig
@@ -96,8 +98,7 @@ class InitResult(Generic[T]):
         """Construct a failure result."""
         return cls(value=None, error=error, elapsed_ms=elapsed_ms)
 
-@dataclass(slots=True)
-class PreludePhaseResult:
+class PreludePhaseResult(msgspec.Struct):
     """Result from the prelude phase."""
     lanes_attempted: list[str]
     lanes_skipped: dict[str, str]
@@ -105,8 +106,7 @@ class PreludePhaseResult:
     prelude_duration_s: float | None = None
     error: str | None = None
 
-@dataclass(slots=True)
-class AcquisitionPhaseResult:
+class AcquisitionPhaseResult(msgspec.Struct):
     """Result from one acquisition cycle."""
     cycles_started: int = 0
     cycles_completed: int = 0
@@ -116,16 +116,14 @@ class AcquisitionPhaseResult:
     exit_path: str | None = None
     error: str | None = None
 
-@dataclass(slots=True)
-class WinddownPhaseResult:
+class WinddownPhaseResult(msgspec.Struct):
     """Result from the winddown phase."""
     export_paths: list[str] = field(default_factory=list)
     synthesis_success: bool = False
     teardown_duration_s: float | None = None
     error: str | None = None
 
-@dataclass(slots=True)
-class _CycleState:
+class _CycleState(msgspec.Struct):
     """Per-cycle mutable state — isolated to prevent cross-cycle leakage.
 
     Unlike SprintContext (which is immutable/frozen), _CycleState IS mutable
@@ -194,8 +192,7 @@ class _CycleState:
     forensics_enricher: Any = None
     'Forensics enricher. May be None.'
 
-@dataclass(frozen=True, slots=True)
-class SprintContext:
+class SprintContext(msgspec.Struct, frozen=True):
     """Shared immutable context passed to all phase orchestrators.
 
     Unlike v1's `self._*` slots, v2 passes all state explicitly via this

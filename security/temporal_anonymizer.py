@@ -7,8 +7,11 @@ Real implementation deferred — stub provides interface compatibility
 with callers expecting get_random_delay() method.
 """
 import logging
-import random
+import secrets
 logger = logging.getLogger(__name__)
+
+# Crypto-safe jitter — F350M-R
+_JITTER_RNG = secrets.SystemRandom()
 
 class TemporalAnonymizer:
     """
@@ -36,5 +39,5 @@ class TemporalAnonymizer:
         Returns:
             float: Random delay between min_delay and max_delay
         """
-        return random.uniform(self._min_delay, self._max_delay)
+        return _JITTER_RNG.uniform(self._min_delay, self._max_delay)
 __all__ = ['TemporalAnonymizer']

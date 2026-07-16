@@ -48,6 +48,7 @@ import asyncio
 import logging
 import re
 from dataclasses import dataclass
+import msgspec
 from typing import TYPE_CHECKING, Any
 from hledac.universal.core.protocols import safe_get_finding_field, safe_get_payload_text
 from hledac.universal.utils.graph_utils import lazy_ig as _lazy_ig
@@ -739,8 +740,7 @@ class EvidenceNetworkAnalyzer:
         return {'entities': [], 'edges': [], 'clusters': [], 'centrality': {}, 'contradictions': [], 'confidence': 0.0, 'analysis_type': 'evidence_network', 'not_implemented': False, 'todo_ref': self._TODO_REF, 'call_count': self._call_count}
 __all__ = ['EvidenceNetworkAnalyzer', 'EvidenceGraphNode', 'EvidenceGraphEdge', 'EvidenceGraph']
 
-@dataclass(frozen=True, slots=True)
-class EvidenceGraphNode:
+class EvidenceGraphNode(msgspec.Struct, frozen=True):
     """Single entity node in the evidence network.
 
     node_id convention: f"{ioc_type}:{value}" (lowercased, deduped).
@@ -752,8 +752,7 @@ class EvidenceGraphNode:
     confidence: float
     sources: tuple[str, ...] = ()
 
-@dataclass(frozen=True, slots=True)
-class EvidenceGraphEdge:
+class EvidenceGraphEdge(msgspec.Struct, frozen=True):
     """Directed relationship between two EvidenceGraphNodes.
 
     weight is bounded [0.0, 1.0]; evidence_count records how many findings
@@ -765,8 +764,7 @@ class EvidenceGraphEdge:
     weight: float
     evidence_count: int = 1
 
-@dataclass(frozen=True, slots=True)
-class EvidenceGraph:
+class EvidenceGraph(msgspec.Struct, frozen=True):
     """Read-only evidence network assembled from a batch of findings.
 
     Invariants:

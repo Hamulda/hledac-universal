@@ -31,7 +31,7 @@ import msgspec
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from hledac.universal.utils.async_helpers import safe_gather_strict
+from hledac.universal.utils.async_helpers import parallel
 from hledac.universal.utils.serialization import _safe_dataclass_to_dict
 from hledac.universal.utils.mem_stats import get_rss_mb
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -71,8 +71,7 @@ def count_cves_in_text(text: str) -> int:
     import re
     return len(re.findall('CVE-\\d{4}-\\d{4,}', text))
 
-@dataclass(slots=True)
-class BenchmarkResult:
+class BenchmarkResult(msgspec.Struct):
     """Hermetic benchmark result."""
     status: str
     duration_s: float
@@ -134,7 +133,7 @@ async def run_hermetic_sprint(duration_s: float=DEFAULT_DURATION_S) -> Benchmark
             cycle_count += 1
             if rss_peak_mb > M1_8GB_CEILING_MB:
                 break
-    await safe_gather_strict(_sprint_loop(), label='benchmark:sprint_loop')
+    await parallel([_sprint_loop()], taskgroup=True, policy='raise', ctx='benchmark:sprint_loop')
     elapsed_s = time.monotonic() - start_time
     uma_final = sample_uma_status()
     fetch_limit = 25

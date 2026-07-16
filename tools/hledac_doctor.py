@@ -40,8 +40,7 @@ class OutputFormat(Enum):
     MARKDOWN = 'markdown'
     JSON = 'json'
 
-@dataclass(slots=True)
-class DepStatus:
+class DepStatus(msgspec.Struct):
     """Status for a single dependency."""
     name: str
     import_name: str
@@ -51,8 +50,7 @@ class DepStatus:
     install_hint: str | None
     extra: str | None
 
-@dataclass(frozen=True, slots=True)
-class DoctorReport:
+class DoctorReport(msgspec.Struct, frozen=True):
     """Full doctor report."""
     python_version: str
     platform: str

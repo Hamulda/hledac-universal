@@ -59,6 +59,7 @@ import asyncio
 import fnmatch
 import logging
 from dataclasses import dataclass
+import msgspec
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -109,8 +110,7 @@ class StorageKind(str, Enum):
     KEYVALUE = 'kv'
     STRING = 'string'
 
-@dataclass(frozen=True, slots=True)
-class StoragePolicy:
+class StoragePolicy(msgspec.Struct, frozen=True):
     """Decision policy: which storage for which data type."""
     kind: StorageKind
     max_bytes: int

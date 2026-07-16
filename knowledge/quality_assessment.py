@@ -28,6 +28,7 @@ import string as _string
 from collections import Counter, OrderedDict
 import collections.abc
 from dataclasses import dataclass
+import msgspec
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qsl, urlencode, urlparse
 
@@ -283,8 +284,7 @@ def _compute_url_fingerprint(url: str) -> str:
 
 
 # Sprint F216G: Quality Rejection Ledger
-@dataclass(frozen=True, slots=True)
-class QualityRejectionRecord:
+class QualityRejectionRecord(msgspec.Struct, frozen=True):
     """
     Sprint F216G: Bounded per-finding quality gate rejection record.
 

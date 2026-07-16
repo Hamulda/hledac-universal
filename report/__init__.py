@@ -21,6 +21,7 @@
 # Export compatibility: export/ re-exports from report/ for backward compat
 
 from report.engine import ReportEngine, get_report_engine
+import msgspec
 
 __all__ = [
     "ReportEngine",

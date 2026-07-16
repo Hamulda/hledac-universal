@@ -34,8 +34,7 @@ class Evidence(msgspec.Struct):
 from dataclasses import dataclass, field
 
 
-@dataclass(slots=True)
-class SourceCredibility:
+class SourceCredibility(msgspec.Struct):
     """
     Credibility assessment for an evidence source.
 

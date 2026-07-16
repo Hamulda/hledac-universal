@@ -53,8 +53,7 @@ class LeakSource(Enum):
     PUBLIC_RECORDS = 'public_records'
     HACKER_FORUM = 'hacker_forum'
 
-@dataclass(slots=True)
-class LeakAlert:
+class LeakAlert(msgspec.Struct):
     """Data leak alert"""
     alert_id: str
     timestamp: datetime
@@ -67,8 +66,7 @@ class LeakAlert:
     raw_sample: str | None = None
     url: str | None = None
 
-@dataclass(frozen=True, slots=True)
-class MonitoringTarget:
+class MonitoringTarget(msgspec.Struct, frozen=True):
     """Target to monitor for leaks"""
     target_id: str
     value: str
@@ -78,8 +76,7 @@ class MonitoringTarget:
     last_check: datetime | None = None
     alert_count: int = 0
 
-@dataclass(frozen=True, slots=True)
-class BreachAPIConfig:
+class BreachAPIConfig(msgspec.Struct, frozen=True):
     """Configuration for breach APIs"""
     haveibeenpwned_api_key: str | None = None
     dehashed_api_key: str | None = None

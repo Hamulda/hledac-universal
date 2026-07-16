@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Canonical entry point for the reporting pipeline.
 Coordinates all renderers and provides streaming write for M1 8GB disk bottleneck.
@@ -9,8 +10,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 __all__ = ['ReportEngine', 'get_report_engine', 'ReportOutput']
 
-@dataclass(slots=True)
-class ReportOutput:
+class ReportOutput(msgspec.Struct):
     """Result of a render operation."""
     path: Path | None = None
     content: str | bytes | None = None
@@ -18,8 +18,7 @@ class ReportOutput:
     success: bool = False
     error: str | None = None
 
-@dataclass(frozen=True, slots=True)
-class ReportEngine:
+class ReportEngine(msgspec.Struct, frozen=True):
     """
     Unified reporting engine — emits {json, md, html, svg, pdf}.
 

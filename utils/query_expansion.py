@@ -16,8 +16,7 @@ import msgspec
 from typing import Any
 logger = logging.getLogger(__name__)
 
-@dataclass(slots=True)
-class ExpansionConfig:
+class ExpansionConfig(msgspec.Struct):
     """Configuration for query expansion"""
     max_variations: int = 50
     synonym_depth: int = 2
@@ -234,8 +233,7 @@ class ExpansionStrategy(ABC):
         """Get strategy type identifier."""
         pass
 
-@dataclass(frozen=True, slots=True)
-class QueryVariation:
+class QueryVariation(msgspec.Struct, frozen=True):
     """A single query variation with metadata."""
     query: str
     strategy: str

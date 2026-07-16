@@ -43,6 +43,7 @@ Environment override (Issue 2 fix):
 Always-on, no feature flag.
 M1 8GB safe: bounded by construction, no recursion, fail-soft throughout.
 """
+import msgspec
 
 
 import array

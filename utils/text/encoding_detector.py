@@ -20,8 +20,7 @@ URL_ENCODING_REGEX = '(?:%[0-9A-Fa-f]{2})+'
 MIN_ENTROPY = 2.5
 MAX_ENTROPY = 7.5
 
-@dataclass(slots=True)
-class EncodingChain:
+class EncodingChain(msgspec.Struct):
     """Represents a chain of nested encodings.
 
     Attributes:

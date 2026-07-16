@@ -53,8 +53,7 @@ class PluginType(Enum):
     UTILITY = 'utility'
     INTEGRATION = 'integration'
 
-@dataclass(slots=True)
-class PluginMetadata:
+class PluginMetadata(msgspec.Struct):
     """Plugin metadata structure"""
     name: str
     version: str
@@ -67,8 +66,7 @@ class PluginMetadata:
     permissions: list[str] = field(default_factory=list)
     config_schema: dict[str, Any] | None = None
 
-@dataclass(frozen=True, slots=True)
-class LoadedPlugin:
+class LoadedPlugin(msgspec.Struct, frozen=True):
     """Loaded plugin container"""
     metadata: PluginMetadata
     module: Any

@@ -76,6 +76,15 @@ class BodyHashStore:
                 "utilization_pct": round(len(self._hashes) / self._max_size * 100, 1),
             }
 
+    @property
+    def hashes(self) -> dict[str, str]:
+        """Return reference to internal dict for backward-compat testing.
+
+        WARNING: Do not mutate directly — use store() for thread-safe writes.
+        Exposed only for test compatibility with the legacy _body_hashes interface.
+        """
+        return self._hashes
+
 
 # =============================================================================
 # MODULE-LEVEL SINGLETON

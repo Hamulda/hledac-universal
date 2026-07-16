@@ -62,8 +62,7 @@ HAS_SECRET_EXPORT_RISK = {'security/pq_export_encryption.py', 'security/pq_expor
 PRIVATE_HELPER_PATHS = {}
 PRODUCTION_CALL_PATHS = {'runtime/sprint_scheduler.py': {'core/__main__.py', 'core/__main__.py:run_sprint'}, 'runtime/sprint_lifecycle.py': {'core/__main__.py'}, 'runtime/sprint_lifecycle_runner.py': {'runtime/sprint_scheduler.py'}, 'runtime/sprint_advisory_runner.py': {'runtime/sprint_scheduler.py'}, 'runtime/sidecar_bus.py': {'runtime/sprint_scheduler.py'}, 'runtime/sidecar_dispatcher.py': {'runtime/sprint_scheduler.py'}, 'knowledge/duckdb_store.py': {'core/__main__.py'}, 'knowledge/semantic_store.py': {'core/__main__.py'}, 'export/sprint_exporter.py': {'core/__main__.py'}, 'transport/circuit_breaker.py': {'runtime/sprint_scheduler.py', 'coordinators/fetch_coordinator.py'}, 'transport/transport_resolver.py': {'pipeline/live_public_pipeline.py'}, 'transport/tor_transport.py': {'core/__main__.py'}}
 
-@dataclass(slots=True)
-class ModuleReality:
+class ModuleReality(msgspec.Struct):
     path: str
     exists: bool
     verdict: str
@@ -72,8 +71,7 @@ class ModuleReality:
     risks: list[str] = field(default_factory=list)
     recommended_action: str = ''
 
-@dataclass(frozen=True, slots=True)
-class Overclaim:
+class Overclaim(msgspec.Struct, frozen=True):
     doc_path: str
     claim: str
     referenced_path: str
@@ -83,8 +81,7 @@ class Overclaim:
     examples: list[str] = field(default_factory=list)
     group_key: str = ''
 
-@dataclass(frozen=True, slots=True)
-class HighRiskGap:
+class HighRiskGap(msgspec.Struct, frozen=True):
     gap_type: str
     description: str
     affected_paths: list[str]

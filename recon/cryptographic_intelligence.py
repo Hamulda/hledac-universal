@@ -106,8 +106,7 @@ class HashType(Enum):
     APACHE_MD5 = 'apache_md5'
     UNKNOWN = 'unknown'
 
-@dataclass(slots=True)
-class CryptanalysisResult:
+class CryptanalysisResult(msgspec.Struct):
     """Result of cryptanalysis attempt."""
     success: bool
     plaintext: str | None
@@ -119,8 +118,7 @@ class CryptanalysisResult:
     time_seconds: float
     alternative_solutions: list[dict[str, Any]] = field(default_factory=list)
 
-@dataclass(frozen=True, slots=True)
-class HashAnalysis:
+class HashAnalysis(msgspec.Struct, frozen=True):
     """Analysis of a hash value."""
     hash_value: str
     possible_types: list[HashType]
@@ -131,8 +129,7 @@ class HashAnalysis:
     salt: str | None = None
     estimated_complexity: str = 'unknown'
 
-@dataclass(frozen=True, slots=True)
-class EncryptionDetection:
+class EncryptionDetection(msgspec.Struct, frozen=True):
     """Detection of encryption type from ciphertext."""
     is_encrypted: bool
     possible_ciphers: list[CipherType]
@@ -142,8 +139,7 @@ class EncryptionDetection:
     language_detected: str | None
     block_size_hint: int | None = None
 
-@dataclass(frozen=True, slots=True)
-class CertificateInfo:
+class CertificateInfo(msgspec.Struct, frozen=True):
     """Parsed certificate information."""
     subject: dict[str, str]
     issuer: dict[str, str]
@@ -162,8 +158,7 @@ class CertificateInfo:
     is_ca: bool
     chain_valid: bool
 
-@dataclass(frozen=True, slots=True)
-class KeyAnalysis:
+class KeyAnalysis(msgspec.Struct, frozen=True):
     """Analysis of cryptographic key."""
     key_type: str
     key_size: int

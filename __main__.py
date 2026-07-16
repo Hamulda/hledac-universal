@@ -18,6 +18,7 @@ Benchmark mode activates internal probe tests.
 """
 
 from __future__ import annotations
+import msgspec
 
 import asyncio
 import contextlib

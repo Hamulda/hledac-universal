@@ -42,16 +42,14 @@ class NextAction(StrEnum):
     RUN_MISSING_PROBE = 'RUN_MISSING_PROBE'
     FIX_CONTRACT_GATE = 'FIX_CONTRACT_GATE'
 
-@dataclass(slots=True)
-class Blocker:
+class Blocker(msgspec.Struct):
     category: str
     severity: str
     detail: str
     current_swap_gib: float | None = None
     threshold_gib: float | None = None
 
-@dataclass(frozen=True, slots=True)
-class ReadinessResult:
+class ReadinessResult(msgspec.Struct, frozen=True):
     verdict: Verdict
     live_allowed: bool
     next_action: NextAction

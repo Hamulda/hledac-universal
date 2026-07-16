@@ -39,6 +39,8 @@ _LAZY_IMPORTS: typing.Final[dict[str, tuple[str, str]]] = {
     "configure_async_logging": ("runtime.observability_async_handler", "configure_async_logging"),
     # Issue #22: Health endpoint
     "collect_runtime_health": ("runtime.health", "collect_runtime_health"),
+    # V1 archived types — kept for test compatibility until fully migrated
+    "HealthReport": ("runtime.sprint_scheduler_v1_archived", "HealthReport"),
 }
 
 

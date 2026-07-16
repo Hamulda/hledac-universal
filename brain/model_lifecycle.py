@@ -87,6 +87,7 @@ F186D CONTRACT HARDENING:
 
 
 import gc
+import msgspec
 import logging
 import os
 import threading

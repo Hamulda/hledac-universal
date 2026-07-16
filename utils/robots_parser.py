@@ -25,15 +25,13 @@ _MAX_CACHE_SIZE = 128
 _MAX_SITEMAP_SIZE = 2 * 1024 * 1024
 _MAX_SITEMAP_URLS = 200
 
-@dataclass(slots=True)
-class Rule:
+class Rule(msgspec.Struct):
     """Single robots.txt rule."""
     path: str
     allow: bool
     line_no: int
 
-@dataclass(frozen=True, slots=True)
-class RobotsDocument:
+class RobotsDocument(msgspec.Struct, frozen=True):
     """Parsed robots.txt document."""
     fetched_at: float
     ttl: float

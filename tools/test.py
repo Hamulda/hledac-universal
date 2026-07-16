@@ -37,8 +37,7 @@ class TestResult(NamedTuple):
     passed: bool
     error: str = ''
 
-@dataclass(slots=True)
-class BaselineResult:
+class BaselineResult(msgspec.Struct):
     profile: str
     commands: list[dict]
     passed: int

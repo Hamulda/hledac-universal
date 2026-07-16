@@ -74,8 +74,7 @@ MAX_PROPERTY_KEYS: int = 64
 _SCHEMA_TO_IOC_KIND: dict[str, str] = {'Person': 'identity', 'Organization': 'identity', 'LocalBusiness': 'identity', 'GovernmentOrganization': 'identity', 'NGO': 'identity', 'Corporation': 'identity', 'EducationalOrganization': 'identity', 'Article': 'document', 'NewsArticle': 'document', 'BlogPosting': 'document', 'ScholarlyArticle': 'document', 'Report': 'document', 'TechArticle': 'document', 'WebPage': 'document', 'Product': 'asset', 'Offer': 'asset', 'Vehicle': 'asset', 'CreativeWork': 'asset', 'Event': 'event', 'BusinessEvent': 'event', 'SocialEvent': 'event', 'Festival': 'event', 'Place': 'location', 'AdministrativeArea': 'location', 'Country': 'location', 'City': 'location', 'State': 'location', 'PostalAddress': 'location', 'WebSite': 'site', 'BreadcrumbList': 'site', 'ContactPoint': 'contact'}
 _DROPPED_PROPS: frozenset[str] = frozenset({'@context', 'potentialAction', 'subjectOf', 'mainEntityOfPage'})
 
-@dataclass(frozen=True, slots=True)
-class ExtractedEntity:
+class ExtractedEntity(msgspec.Struct, frozen=True):
     """A single structured entity extracted from a page."""
     entity_id: str
     entity_type: str
@@ -86,16 +85,14 @@ class ExtractedEntity:
     source_url: str
     extracted_at: str
 
-@dataclass(frozen=True, slots=True)
-class ExtractedRelation:
+class ExtractedRelation(msgspec.Struct, frozen=True):
     """A typed relation between two entities on the same page."""
     src_id: str
     dst_id: str
     relation: str
     source_url: str
 
-@dataclass(frozen=True, slots=True)
-class StructuredExtraction:
+class StructuredExtraction(msgspec.Struct, frozen=True):
     """Result of parsing one page's structured data."""
     entities: tuple[ExtractedEntity, ...]
     relations: tuple[ExtractedRelation, ...]

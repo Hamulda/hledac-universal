@@ -7,6 +7,7 @@ Accepts msgspec.Struct or Mapping input. Produces stable JSON-LD output
 with schema.org + ghost namespace context, ready for graph ingest and
 future MLX/Outlines synthesis.
 """
+import msgspec
 
 
 import asyncio
@@ -17,7 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
-from hledac.universal.utils.async_helpers import safe_gather_return_exceptions
+from hledac.universal.utils.async_helpers import parallel
 from ._shared import _iso_timestamp, _safe_str, normalize_export_input  # noqa: E402  # F4.3 deduplication
 
 try:
@@ -534,9 +535,10 @@ async def _maybe_sign_jsonld_async(obj: dict[str, Any]) -> dict[str, Any]:
     Returns obj unchanged if PQ unavailable or signing fails.
     """
     try:
-        # F314: migrated asyncio.gather -> safe_gather_return_exceptions
-        results = await safe_gather_return_exceptions(_get_pq_backend_async(), label="jsonld_exporter:pq_backend")
-        error_results = [r for r in results if isinstance(r, Exception)]
+        # F314: migrated asyncio.gather -> parallel(policy='collect')
+        _result = await parallel([_get_pq_backend_async()], taskgroup=True, policy='collect', ctx="jsonld_exporter:pq_backend")
+        results = _result.ok
+        error_results = _result.errors
         if error_results:
             return obj
 

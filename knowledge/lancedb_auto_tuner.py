@@ -50,6 +50,7 @@ import logging
 import os
 import time
 from dataclasses import asdict, dataclass
+import msgspec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 if TYPE_CHECKING:
@@ -76,8 +77,7 @@ SEARCH_MS_EXCESSIVE: float = 50.0
 M1_RSS_GUARD_BYTES: int = int(5.5 * 1024 ** 3)
 MAX_BRUTE_FORCE_ROWS: int = 10000
 
-@dataclass(frozen=True, slots=True)
-class TuneResult:
+class TuneResult(msgspec.Struct, frozen=True):
     """Outcome of a single auto-tune attempt (immutable, log-friendly)."""
     success: bool
     triggered: bool
@@ -95,8 +95,7 @@ class TuneResult:
         """True iff the partition count was actually modified."""
         return self.triggered and self.success and (self.new_partitions != self.old_partitions or self.new_num_sub_vectors != self.old_num_sub_vectors)
 
-@dataclass(frozen=True, slots=True)
-class TuneState:
+class TuneState(msgspec.Struct, frozen=True):
     """Persistent state — JSON-serialized to ``state_path`` for cross-session."""
     last_tune_at: float = 0.0
     last_num_partitions: int = DEFAULT_NUM_PARTITIONS

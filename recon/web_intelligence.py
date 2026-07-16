@@ -65,8 +65,7 @@ class OperationStatus(Enum):
     FAILED = 'failed'
     CANCELLED = 'cancelled'
 
-@dataclass(slots=True)
-class IntelligenceTarget:
+class IntelligenceTarget(msgspec.Struct):
     """Unified intelligence target configuration."""
     target_id: str
     name: str
@@ -79,16 +78,14 @@ class IntelligenceTarget:
     compliance_level: str = 'strict'
     stealth_level: str = 'high'
 
-@dataclass(frozen=True, slots=True)
-class TechIntelligence:
+class TechIntelligence(msgspec.Struct, frozen=True):
     """Tech stack intelligence inferred from job postings."""
     detected_technologies: dict[str, int]
     hiring_patterns: list[str]
     seniority_distribution: dict[str, int]
     inferred_pain_points: list[str]
 
-@dataclass(slots=True)
-class IntelligenceResult:
+class IntelligenceResult(msgspec.Struct):
     """Comprehensive intelligence result."""
     operation_id: str
     target_id: str

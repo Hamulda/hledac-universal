@@ -25,8 +25,7 @@ import itertools
 from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok
 _counter = itertools.count()
 
-@dataclass(slots=True)
-class _Subscriber:
+class _Subscriber(msgspec.Struct):
     """Single subscriber entry with bounded inbox queue."""
     agent_id: str
     queue: asyncio.Queue[dict[str, Any]]
@@ -222,8 +221,7 @@ class _InMemoryMessaging:
         """Unregister agent."""
         safe_create_task(self._broker.unsubscribe(agent_id), name='comm_layer:unregister_agent')
 
-@dataclass(order=True, slots=True)
-class _BatchItem:
+class _BatchItem(msgspec.Struct):
     """Batch item with priority for queue ordering."""
     priority: float = field(default=0.0)
     counter: int = field(default=0, compare=True)
@@ -232,8 +230,7 @@ class _BatchItem:
     future: asyncio.Future = field(default=None, compare=False)
     wait_since: float = field(default_factory=time.time, compare=False)
 
-@dataclass(slots=True)
-class ModelQuery:
+class ModelQuery(msgspec.Struct):
     """Model query with metadata."""
     query_id: str
     prompt: str
@@ -242,8 +239,7 @@ class ModelQuery:
     use_cache: bool
     timestamp: float
 
-@dataclass(frozen=True, slots=True)
-class CacheEntry:
+class CacheEntry(msgspec.Struct, frozen=True):
     """Cache entry for model responses."""
     key: str
     response: str
@@ -268,8 +264,7 @@ try:
 except ImportError:
     HAS_EMERGENT = False
 
-@dataclass(frozen=True, slots=True)
-class MessageContext:
+class MessageContext(msgspec.Struct, frozen=True):
     """Message context for routing."""
     sender_id: str
     priority: MessagePriority

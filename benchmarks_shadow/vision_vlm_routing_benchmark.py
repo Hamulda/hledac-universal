@@ -34,8 +34,7 @@ class Route(Enum):
     SKIP_DUE_TO_MEMORY = 'skip_due_to_memory'
     UNSUPPORTED = 'unsupported'
 
-@dataclass(slots=True)
-class RoutingCase:
+class RoutingCase(msgspec.Struct):
     name: str
     image_bytes: bytes
     ocr_sufficient: bool

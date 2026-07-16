@@ -24,6 +24,7 @@ from collections import OrderedDict, defaultdict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+import msgspec
 from datetime import datetime
 from difflib import SequenceMatcher
 from enum import Enum
@@ -63,8 +64,7 @@ class DeduplicationStrategy(Enum):
     METADATA = 'metadata'
     HYBRID = 'hybrid'
 
-@dataclass(slots=True)
-class DeduplicationConfig:
+class DeduplicationConfig(msgspec.Struct):
     """Configuration for deduplication engine."""
     semantic_threshold: float = 0.85
     content_threshold: float = 0.9
@@ -85,8 +85,7 @@ class DeduplicationConfig:
     enable_monitoring: bool = True
     log_level: str = 'INFO'
 
-@dataclass(slots=True)
-class QueryItem:
+class QueryItem(msgspec.Struct):
     """Item for deduplication processing."""
     id: str
     title: str
@@ -102,16 +101,28 @@ class QueryItem:
         combined = f'{self.title}{self.content}'
         return xxh3_64_hex(combined)[:12]
 
-@dataclass(slots=True)
-class SimilarityScore:
+class SimilarityScore(msgspec.Struct):
     """Similarity score with details."""
     score: float
     strategy: DeduplicationStrategy
     confidence: float
     details: dict[str, Any] = field(default_factory=dict)
 
-@dataclass(slots=True)
-class DeduplicationMatch:
+class DeduplicationStats(msgspec.Struct):
+    """Statistics for deduplication."""
+    total_items_processed: int = 0
+    items_kept: int = 0
+    items_removed: int = 0
+    processing_time: float = 0.0
+    memory_peak_mb: float = 0.0
+    semantic_comparisons: int = 0
+    content_comparisons: int = 0
+    metadata_comparisons: int = 0
+    cache_hits: int = 0
+    cache_misses: int = 0
+
+
+class DeduplicationMatch(msgspec.Struct):
     """Match between two items."""
     original_item: QueryItem
     matched_item: QueryItem
@@ -119,8 +130,8 @@ class DeduplicationMatch:
     match_type: DeduplicationStrategy
     decision: str = 'pending'
 
-@dataclass(slots=True)
-class DeduplicationResult:
+
+class DeduplicationResult(msgspec.Struct):
     """Result of deduplication process."""
     original_items: list[QueryItem]
     unique_items: list[QueryItem]
@@ -135,20 +146,6 @@ class DeduplicationResult:
         if not self.original_items:
             return 0.0
         return len(self.duplicates_removed) / len(self.original_items)
-
-@dataclass(slots=True)
-class DeduplicationStats:
-    """Statistics for deduplication."""
-    total_items_processed: int = 0
-    items_kept: int = 0
-    items_removed: int = 0
-    processing_time: float = 0.0
-    memory_peak_mb: float = 0.0
-    semantic_comparisons: int = 0
-    content_comparisons: int = 0
-    metadata_comparisons: int = 0
-    cache_hits: int = 0
-    cache_misses: int = 0
 
 class BaseDeduplicator(ABC):
     """Abstract base class for deduplicators."""
@@ -862,8 +859,7 @@ class DeduplicationEngine:
         self.metadata_dedup.executor.shutdown(wait=False)
         self.logger.info('DeduplicationEngine thread pools closed (non-blocking)')
 
-@dataclass(slots=True)
-class DomainStats:
+class DomainStats(msgspec.Struct):
     """Per-domain statistiky pro yield tracking a domain diversity - M1 8GB."""
     domain: str
     requests: int = 0

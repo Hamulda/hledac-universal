@@ -70,8 +70,7 @@ def _try_import_rust_engine() -> bool:
     except ImportError as exc:
         raise IOCooccurrenceEngineUnavailable(f'Rust co-occurrence engine unavailable. Build rust_extensions: cd rust_extensions && cargo build --release. Original error: {exc}') from exc
 
-@dataclass(slots=True)
-class CoOccurrencePair:
+class CoOccurrencePair(msgspec.Struct):
     """A co-occurrence relationship between two IOCs."""
     ioc_a: str
     ioc_b: str
@@ -83,8 +82,7 @@ class CoOccurrencePair:
     last_seen: float = 0.0
     score: float = 0.0
 
-@dataclass(slots=True)
-class SpeculativeEdge:
+class SpeculativeEdge(msgspec.Struct):
     """A speculative IOC connection for prefetch."""
     source_ioc: str
     source_type: str
@@ -296,8 +294,7 @@ def _extract_iocs_python(payload: str) -> list[tuple[str, str]]:
         iocs.append((m.group(), 'cve'))
     return iocs
 
-@dataclass(slots=True)
-class PrefetcherStats:
+class PrefetcherStats(msgspec.Struct):
     """Statistics for the speculative prefetcher."""
     edges_received: int = 0
     prefetch_dispatched: int = 0

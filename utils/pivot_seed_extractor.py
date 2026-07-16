@@ -10,6 +10,7 @@ No network, no ML, no heavy imports.
 
 import re
 from dataclasses import dataclass
+import msgspec
 from typing import Final
 
 __all__ = [
@@ -28,8 +29,7 @@ MAX_SEEDS: Final[int] = 256
 # ----------------------------------------------------------------------
 # Dataclasses
 # ----------------------------------------------------------------------
-@dataclass(frozen=True, slots=True)
-class PivotSeed:
+class PivotSeed(msgspec.Struct, frozen=True):
     """A single pivot seed extracted from feed payload text."""
 
     value: str
@@ -39,8 +39,7 @@ class PivotSeed:
     reason: str
 
 
-@dataclass(frozen=True, slots=True)
-class PivotSeedExtractionResult:
+class PivotSeedExtractionResult(msgspec.Struct, frozen=True):
     """Result of a pivot seed extraction run."""
 
     seeds: tuple[PivotSeed, ...]

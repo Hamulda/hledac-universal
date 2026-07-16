@@ -11,6 +11,7 @@ Single-source-of-truth for these helpers:
 - _iso_timestamp()
 - normalize_export_input()
 """
+import msgspec
 
 from datetime import UTC, datetime
 from typing import Any, Mapping, cast

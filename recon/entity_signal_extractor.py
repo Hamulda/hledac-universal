@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 import msgspec
 from datetime import datetime
 from typing import Any
-from hledac.universal.utils.async_helpers import safe_gather_shielded
+from hledac.universal.utils.async_helpers import parallel
 from hledac.universal.runtime.worker_pool import RustWorkerPool
 logger = logging.getLogger(__name__)
 _NUM_EXTRACTION_WORKERS: int = 2
@@ -50,8 +50,7 @@ _DOMAIN_HANDLE_RE = re.compile('\\b([a-zA-Z0-9][a-zA-Z0-9_.-]{2,20})@([a-zA-Z0-9
 _HANDLE_RE = re.compile('@([a-zA-Z0-9][a-zA-Z0-9_.-]{1,30})')
 _URL_HOST_RE = re.compile('https?://([a-zA-Z0-9][a-zA-Z0-9-]*\\.[a-zA-Z]{2,})')
 
-@dataclass(slots=True)
-class ExtractedEntity:
+class ExtractedEntity(msgspec.Struct):
     """A single extracted entity from a finding."""
     entity_type: str
     value: str
@@ -60,8 +59,7 @@ class ExtractedEntity:
     finding_id: str
     confidence: float
 
-@dataclass(frozen=True, slots=True)
-class EntitySignalProfile:
+class EntitySignalProfile(msgspec.Struct, frozen=True):
     """
     Simplified identity profile for entity signal extraction.
 
@@ -261,7 +259,7 @@ async def extract_entities_from_findings_async(findings: list[Any], max_profiles
         async with semaphore:
             return await asyncio.to_thread(_extract_chunk, chunk)
     tasks = [_run_chunk_with_sem(chunk) for chunk in chunks]
-    gathered = await safe_gather_shielded(*tasks, label='entity_extraction', logger_instance=logger)
+    gathered = await parallel(tasks, taskgroup=True, policy='collect', ctx='entity_extraction', logger_instance=logger)
     all_results: list[tuple[str, Any, ExtractedEntity]] = []
     for chunk_results in gathered.ok:
         all_results.extend(chunk_results)

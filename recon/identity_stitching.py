@@ -249,8 +249,7 @@ except ImportError:
     RelationshipType = None
 logger = logging.getLogger(__name__)
 
-@dataclass(slots=True)
-class UsernameEntry:
+class UsernameEntry(msgspec.Struct):
     """Represents a username on a specific platform."""
     platform: str
     username: str
@@ -359,8 +358,7 @@ class IdentityMatch:
         """Convert match to dictionary."""
         return {'profile_a': self.profile_a, 'profile_b': self.profile_b, 'match_score': self.match_score, 'match_signals': self.match_signals, 'confidence': self.confidence, 'evidence': self.evidence}
 
-@dataclass(frozen=True, slots=True)
-class StitchedIdentity:
+class StitchedIdentity(msgspec.Struct, frozen=True):
     """
     Represents a stitched identity combining multiple profiles.
 

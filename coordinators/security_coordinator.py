@@ -36,8 +36,7 @@ class SecurityLevel(Enum):
     HIGH = 3
     MAXIMUM = 4
 
-@dataclass(slots=True)
-class SecurityContext:
+class SecurityContext(msgspec.Struct):
     """Security context for operations."""
     operation_id: str
     security_level: SecurityLevel
@@ -47,8 +46,7 @@ class SecurityContext:
     zkp_operations: list[str] = field(default_factory=list)
     audit_log: list[dict[str, Any]] = field(default_factory=list)
 
-@dataclass(frozen=True, slots=True)
-class SecurityResult:
+class SecurityResult(msgspec.Struct, frozen=True):
     """Result of security operation."""
     operation_type: str
     success: bool
@@ -832,7 +830,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             Response with content, status code, and timing
         """
         import asyncio
-        import random
+        import secrets
         import time
         start_time = time.time()
         try:
@@ -840,7 +838,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                 import numpy as np
                 delay = np.random.weibull(jitter_shape) * jitter_scale
             except ImportError:
-                delay = random.uniform(min_delay, max_delay)
+                delay = secrets.SystemRandom().uniform(min_delay, max_delay)
             delay = max(min_delay, min(delay, max_delay))
             await asyncio.sleep(delay)
             try:

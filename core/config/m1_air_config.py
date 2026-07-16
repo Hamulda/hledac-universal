@@ -20,6 +20,7 @@ References:
 
 
 from dataclasses import dataclass, field
+import msgspec
 from typing import ClassVar
 
 
@@ -27,8 +28,7 @@ from typing import ClassVar
 # M1AirConfig — frozen hardware profile for MacBook Air M1 8GB UMA
 # ─────────────────────────────────────────────────────────────────────────────
 
-@dataclass(frozen=True, slots=True)
-class M1AirConfig:
+class M1AirConfig(msgspec.Struct, frozen=True):
     """
     Immutable M1 8GB UMA hardware profile.
 

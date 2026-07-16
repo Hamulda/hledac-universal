@@ -24,8 +24,7 @@ class ValidationSeverity(Enum):
     ERROR = 'error'
     CRITICAL = 'critical'
 
-@dataclass(slots=True)
-class ValidationError:
+class ValidationError(msgspec.Struct):
     """Structured validation error information."""
     field: str
     message: str

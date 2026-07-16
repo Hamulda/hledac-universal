@@ -17,6 +17,7 @@ Integration order:
     4. camoufox/nodriver only if explicitly enabled and available
 """
 import asyncio
+import msgspec
 import msgspec.json as _json
 import sys
 import time
@@ -49,8 +50,7 @@ class MACOS_WEBKIT_REASONS:
     SUCCESS = 'macos_webkit_success'
     MAX_BYTES_EXCEEDED = 'macos_webkit_max_bytes_exceeded'
 
-@dataclass(frozen=True, slots=True)
-class WebKitRenderResult:
+class WebKitRenderResult(msgspec.Struct, frozen=True):
     """Result of a WKWebView render attempt.
 
     Always returned (never raises) — callers check .ok before using .html.

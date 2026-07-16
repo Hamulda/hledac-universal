@@ -14,6 +14,7 @@ NO production code is modified by this probe.
 Tests only probe/analysis code; Pydantic/msgspec schemas are NOT modified.
 """
 import sys
+import msgspec
 import time
 import typing
 from dataclasses import dataclass

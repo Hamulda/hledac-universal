@@ -88,8 +88,7 @@ RECENCY_BONUS_PER_CYCLE = 0.05
 RECENCY_BONUS_MAX = 0.3
 NOVELTY_BONUS = 0.15
 
-@dataclass(slots=True)
-class _SourceSignal:
+class _SourceSignal(msgspec.Struct):
     """Per-source signal tracking (bounded)."""
     feed_url: str
     fetched: int = 0

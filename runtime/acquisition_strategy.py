@@ -345,8 +345,7 @@ class AcquisitionLanePlan(msgspec.Struct, frozen=True):
     concurrency: int = 2
     risk_level: str = RiskLevel.MEDIUM
 
-@dataclass(frozen=True, slots=True)
-class AcquisitionContext:
+class AcquisitionContext(msgspec.Struct, frozen=True):
     """Derived flags bundle for lane planning — constructed once per _build_plan_impl call."""
     query: str
     duration_s: float
@@ -561,8 +560,7 @@ class NonfeedSeedContext:
         """Return counts by non-empty seed kind."""
         return {k: len(v) for k, v in [('domains', self.domains), ('ips', self.ips), ('urls', self.urls), ('hashes', self.hashes), ('cves', self.cves)] if v}
 
-@dataclass(slots=True)
-class AcquisitionStrategySnapshot:
+class AcquisitionStrategySnapshot(msgspec.Struct):
     """Full acquisition strategy snapshot for one sprint/cycle."""
     query: str = ''
     duration_s: float = 0.0

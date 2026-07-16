@@ -21,8 +21,7 @@ from typing import Any
 import msgspec
 logger = logging.getLogger(__name__)
 
-@dataclass(slots=True)
-class UnicodeConfig:
+class UnicodeConfig(msgspec.Struct):
     """Configuration for Unicode attack analysis."""
     detect_zero_width: bool = True
     detect_homoglyphs: bool = True
@@ -64,8 +63,7 @@ class NormalizationFinding(msgspec.Struct):
     anomaly_type: str
     char_code: str = ''
 
-@dataclass(slots=True)
-class UnicodeAnalysisResult:
+class UnicodeAnalysisResult(msgspec.Struct):
     """Complete result of Unicode attack analysis."""
     zero_width_findings: list[ZeroWidthFinding] = field(default_factory=list)
     homoglyph_findings: list[HomoglyphFinding] = field(default_factory=list)

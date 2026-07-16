@@ -16,10 +16,10 @@ Design:
 """
 import asyncio
 from dataclasses import dataclass
+import msgspec
 from typing import Any
 
-@dataclass(slots=True)
-class LaneResult:
+class LaneResult(msgspec.Struct):
     lane: str
     attempted: bool
     skipped: bool

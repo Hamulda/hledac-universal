@@ -25,8 +25,7 @@ class SanityVerdict(Enum):
     SANITY_FAIL_BENCHMARK_SHAPE_GAP = 'SANITY_FAIL_BENCHMARK_SHAPE_GAP'
     SANITY_FAIL_RESEARCH_QUALITY = 'SANITY_FAIL_RESEARCH_QUALITY'
 
-@dataclass(slots=True)
-class BenchmarkSurface:
+class BenchmarkSurface(msgspec.Struct):
     """Parsed benchmark surface."""
     run_quality_verdict: str | None = None
     live_kpi: dict[str, Any] | None = None
@@ -42,8 +41,7 @@ class BenchmarkSurface:
     research_quality: dict[str, Any] | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
-@dataclass(frozen=True, slots=True)
-class ValidatorSurface:
+class ValidatorSurface(msgspec.Struct, frozen=True):
     """Parsed validator surface."""
     live_kpi: dict[str, Any] | None = None
     acquisition_report: dict[str, Any] | None = None
@@ -52,8 +50,7 @@ class ValidatorSurface:
     source_family_outcomes: list[dict[str, Any]] | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
-@dataclass(frozen=True, slots=True)
-class TraceSurface:
+class TraceSurface(msgspec.Struct, frozen=True):
     """Parsed trace surface."""
     verdict: str | None = None
     stage: str | None = None
@@ -64,8 +61,7 @@ class TraceSurface:
     raw_internal: dict[str, Any] | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
-@dataclass(frozen=True, slots=True)
-class QualitySurface:
+class QualitySurface(msgspec.Struct, frozen=True):
     """Parsed research quality surface."""
     quality_gate: str | None = None
     grade: str | None = None
@@ -82,8 +78,7 @@ class QualitySurface:
     nonfeed_clues_without_acceptance: bool | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
-@dataclass(frozen=True, slots=True)
-class SanityResult:
+class SanityResult(msgspec.Struct, frozen=True):
     verdict: SanityVerdict = SanityVerdict.SANITY_PASS
     checks: dict[str, bool] = field(default_factory=dict)
     disagreements: list[str] = field(default_factory=list)

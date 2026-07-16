@@ -38,6 +38,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
+import msgspec
 from enum import StrEnum
 from typing import Any
 logger = logging.getLogger(__name__)
@@ -66,8 +67,7 @@ RDAP_DOMAIN_BOOTSTRAP: list[str] = ['https://rdap.org/domain/', 'https://rdap.ve
 WHOIS_FALLBACK_SERVERS: dict[str, str] = {'com': 'whois.verisign-grs.com', 'net': 'whois.verisign-grs.com', 'org': 'whois.pir.org', 'io': 'whois.nic.io', 'co': 'whois.nic.co', 'info': 'whois.afilias.net', 'biz': 'whois.biz', 'us': 'whois.nic.us', 'uk': 'whois.nic.uk', 'de': 'whois.denic.de', 'fr': 'whois.nic.fr', 'eu': 'whois.eu', 'nl': 'whois.sidn.nl', 'ru': 'whois.tcinet.ru', 'jp': 'whois.jprs.jp', 'cn': 'whois.cnnic.cn'}
 HISTORICAL_APIS: dict[str, str] = {'whoisxmlapi': 'https://www.whoisxmlapi.com/WHOISAPI/V1/', 'whoiswhoisxml': 'https://www.whoiswhoisxmlapi.com/api/1.0/', 'domainiq': 'https://www.domainiq.com/api/', 'whoisology': 'https://whoisology.com/api/'}
 
-@dataclass(slots=True)
-class WhoisResult:
+class WhoisResult(msgspec.Struct):
     """Structured WHOIS/RDAP result."""
     domain: str
     registrar: str | None = None

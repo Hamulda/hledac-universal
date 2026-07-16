@@ -29,7 +29,7 @@ fail-safe (legacy fallback na jakoukoli chybu).
 """
 import asyncio
 import threading
-from hledac.universal.utils.async_helpers import safe_gather_return_exceptions
+from hledac.universal.utils.async_helpers import parallel
 import logging
 from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
@@ -157,7 +157,8 @@ class PipelinedIngestor:
         duckdb_future = loop.run_in_executor(self._store._duckdb_arrow_executor, _call_async_arrow_wrapper, self._store, findings)
         wal_ok_or_exc: bool | Any
         duckdb_result: list[Any] | Any
-        gathered: list[Any] = await safe_gather_return_exceptions(wal_future, duckdb_future, label='pipelined_ingestor:wal_duckdb')
+        _result = await parallel([wal_future, duckdb_future], taskgroup=True, policy='collect', ctx='pipelined_ingestor:wal_duckdb')
+        gathered = _result.ok
         wal_ok_or_exc, duckdb_result = gathered
         if isinstance(wal_ok_or_exc, Exception):
             logger.warning('[PIPELINE] WAL executor raised %s, falling back to legacy', type(wal_ok_or_exc).__name__)

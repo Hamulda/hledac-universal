@@ -10,6 +10,7 @@ import asyncio
 import logging
 import time as time_mod
 from dataclasses import dataclass, field
+import msgspec
 try:
     import orjson
 except ImportError:
@@ -30,8 +31,7 @@ _MAX_REQUESTS_PER_SPRINT = 3
 _SOURCE_TYPE = 'commoncrawl_cdx'
 _WAYBACK_BASE_URL = 'https://web.archive.org'
 
-@dataclass(slots=True)
-class CCSearchResult:
+class CCSearchResult(msgspec.Struct):
     """
     Single row from CommonCrawl CDX.
 
@@ -80,8 +80,7 @@ class CCSearchResult:
             logger.debug(f'[commoncrawl] to_canonical_finding failed: {e}')
             return None
 
-@dataclass(frozen=True, slots=True)
-class CommonCrawlResult:
+class CommonCrawlResult(msgspec.Struct, frozen=True):
     """Result of a CommonCrawl fetch (mirrors CDXDeepSearchResult)."""
     query: str
     match_type: str = 'domain'

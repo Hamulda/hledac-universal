@@ -13,6 +13,8 @@ M1 8GB: All layer I/O is lazy — no heavy imports at module load.
 import asyncio
 import logging
 import socket
+
+import msgspec
 from abc import abstractmethod
 from collections.abc import Callable, Coroutine, Set
 from dataclasses import dataclass, field
@@ -107,8 +109,7 @@ class LayerContext:
         """Cancellation event for this sprint."""
         return self._meta.get('cancel_event', asyncio.Event())
 
-@dataclass(slots=True)
-class LayerEvent:
+class LayerEvent(msgspec.Struct):
     """Event that propagates through the LayerStack."""
     type: str
     data: dict[str, Any] = field(default_factory=dict)

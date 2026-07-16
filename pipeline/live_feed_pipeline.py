@@ -1627,7 +1627,7 @@ async def _wayback_resolve(wayback_session: httpx.AsyncClient, entry_url: str) -
             article_text = _strip_html_tags_from_text(text)
             if not article_text:
                 return ("", False, article_decode_replacement_count)
-            return (article_text.strip(), True, article_decode_replacement_count)
+            return (article_text.strip(), decode_replaced, article_decode_replacement_count)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -1733,7 +1733,7 @@ async def _fetch_with_wayback_fallback(
                 article_text = _strip_html_tags_from_text(text)
                 if not article_text:
                     return ("", False, article_decode_replacement_count)
-                return (article_text.strip(), True, article_decode_replacement_count)
+                return (article_text.strip(), decode_replaced, article_decode_replacement_count)
             except asyncio.CancelledError:
                 raise
             except Exception:

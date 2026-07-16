@@ -17,6 +17,7 @@ from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+import msgspec
 from typing import Any
 logger = logging.getLogger(__name__)
 _mlx: Any | None = None
@@ -31,8 +32,7 @@ def _get_mlx() -> Any | None:
             _mlx = None
     return _mlx
 
-@dataclass(slots=True)
-class ModelEntry:
+class ModelEntry(msgspec.Struct):
     """ISSUE #15: Přidána weakref pro referenční počítání."""
     model: Any
     tokenizer: Any | None = None
@@ -42,8 +42,7 @@ class ModelEntry:
     ref_count: int = 1  # ISSUE #15: Reference count pro pool management
     weak_ref: Any = None  # ISSUE #15: weakref pro GC-safe referenci
 
-@dataclass(slots=True)
-class MLXModelPoolConfig:
+class MLXModelPoolConfig(msgspec.Struct):
     budget_gb: float = 4.0
     min_eviction_interval_s: float = 1.0
     auto_clear_cache: bool = True

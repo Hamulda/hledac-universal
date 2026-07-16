@@ -21,6 +21,7 @@ import msgspec
 from enum import Enum
 from typing import Any
 from .base import UniversalCoordinator
+from hledac.universal.utils.async_helpers import bounded_parallel_map
 logger = logging.getLogger(__name__)
 try:
     from hledac.universal.utils.html_text_fast import html_to_text_fast
@@ -42,8 +43,7 @@ class OutputFormat(Enum):
     JSON = 'json'
     TEXT = 'text'
 
-@dataclass(slots=True)
-class ValidationResult:
+class ValidationResult(msgspec.Struct):
     """Result of validation operation."""
     valid: bool
     field: str
@@ -51,8 +51,7 @@ class ValidationResult:
     warnings: list[str] = field(default_factory=list)
     severity: ValidationSeverity = ValidationSeverity.INFO
 
-@dataclass(frozen=True, slots=True)
-class CleaningResult:
+class CleaningResult(msgspec.Struct, frozen=True):
     """Result of content cleaning."""
     success: bool
     content: str
@@ -341,11 +340,13 @@ class UniversalValidationCoordinator(UniversalCoordinator):
         Returns:
             List of cleaning results
         """
-        results = []
-        for html in html_list:
-            result = await self.clean_html(html, output_format)
-            results.append(result)
-        return results
+        raw = await bounded_parallel_map(
+            html_list,
+            lambda h: self.clean_html(h, output_format),
+            concurrency=12,
+            ctx="validation_coordinator.clean_html_batch",
+        )
+        return [r for r in raw if r is not None]
 
     def get_validation_stats(self) -> dict[str, Any]:
         """Get validation statistics."""

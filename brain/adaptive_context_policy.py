@@ -16,12 +16,12 @@ pressure response across all advisory layers.
 This module is stdlib-first with optional psutil support.
 """
 from dataclasses import dataclass
+import msgspec
 _MEMORY_THRESHOLD_REDUCED = 2048
 _MEMORY_THRESHOLD_MINIMAL = 1332
 _MEMORY_THRESHOLD_REJECT = 1024
 
-@dataclass(frozen=True, slots=True)
-class ContextBudgetDecision:
+class ContextBudgetDecision(msgspec.Struct, frozen=True):
     """Result of a context budget decision."""
     mode: str
     max_prompt_chars: int

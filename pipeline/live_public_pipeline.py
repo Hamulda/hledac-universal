@@ -9,6 +9,7 @@ No LLM calls. No AO. No new storage schema.
 All heavy I/O (HTML parsing, pattern scanning) offloaded via asyncio.to_thread().
 """
 from __future__ import annotations
+import msgspec
 
 
 
@@ -796,8 +797,7 @@ def _extract_domain_from_query(query: str) -> str | None:
 from dataclasses import dataclass  # noqa: E402
 
 
-@dataclass(frozen=True, slots=True)
-class FetchPolicy:
+class FetchPolicy(msgspec.Struct, frozen=True):
     """Bounded fetch policy for canonical public sprint."""
     use_js: bool = False
     use_doh: bool = False
@@ -2725,8 +2725,7 @@ async def async_run_live_public_pipeline(
     # Each engine is a dataclass with async run() method that encapsulates a
     # logical phase of the pipeline. Backward compatible — same inputs/outputs.
 
-    @dataclass(slots=True)
-    class _DiscoveryEngine:
+    class _DiscoveryEngine(msgspec.Struct):
         """
         Engine 1: Handles all discovery-related logic.
 

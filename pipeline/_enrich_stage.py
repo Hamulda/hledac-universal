@@ -19,6 +19,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from ._stage_protocol import BoundedStageQueue, Stage, StageContext
+from utils.async_helpers import parallel, safe_create_task  # ISSUE-006, E4: parallel() + OTel trace context
 
 if TYPE_CHECKING:
     pass
@@ -125,22 +126,32 @@ class EnrichStage:
                         self._enrich_one(pr, hits, ctx)
                         for pr, hits in batch
                     ]
-                    results: list[Any] = await asyncio.gather(*tasks, return_exceptions=True)
+                    gather_result = await parallel(tasks, policy="collect")
 
-                # AIMD feedback + output
+                # AIMD feedback + output — ISSUE-2: concurrent queue.put() with gather
+                # BoundedStageQueue.put() is now serialized via asyncio.Lock (fix applied
+                # in _stage_protocol.py), so gather is safe and eliminates N yield-points.
                 batch_success = 0
-                batch_fail = 0
-                for result in results:
-                    if isinstance(result, Exception):
+                batch_fail = len(gather_result.errors)
+                pending_puts: list[asyncio.Task[bool]] = []
+                for _exc in gather_result.errors:
+                    metrics.record_error()
+                for item in gather_result.ok:
+                    if isinstance(item, Exception):
                         batch_fail += 1
                         metrics.record_error()
                         continue
-                    findings: list[Any] = result
+                    findings: list[Any] = item
                     if findings:
                         batch_success += 1
+                        # Fire all puts concurrently — BoundedStageQueue.put() is
+                        # now serialized, so concurrent gather is safe.
                         for finding in findings:
-                            await output_queue.put(finding)
+                            pending_puts.append(safe_create_task(output_queue.put(finding)))
                     metrics.record_processed()
+
+                if pending_puts:
+                    await parallel(pending_puts, policy="log")
 
                 success_count += batch_success
                 fail_count += batch_fail
@@ -211,6 +222,8 @@ class EnrichStage:
                 except asyncio.CancelledError:
                     raise
                 except Exception:
+                    logger.debug("EnrichStage._enrich_one hit error: %r", exc_info=True)
+                    ctx.get_metrics(self.name).record_error()
                     continue
 
             return findings

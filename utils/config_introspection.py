@@ -9,6 +9,7 @@ without hasattr/try-except boilerplate.
 Public API — no leading underscore. Follows utils/ PEP 810 lazy loading.
 """
 from __future__ import annotations
+import msgspec
 
 __all__ = ["safe_attr_get"]
 

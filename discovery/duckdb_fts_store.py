@@ -25,6 +25,7 @@ import os
 import time
 import uuid
 from dataclasses import dataclass, field
+import msgspec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str, loads as _msgspec_loads
@@ -39,8 +40,7 @@ BM25_K = 60
 _WAL_SUFFIX = '.wal'
 _WAL_MAX_SIZE_MB = 64
 
-@dataclass(slots=True)
-class FTSDocument:
+class FTSDocument(msgspec.Struct):
     """Jeden dokument k indexaci."""
     doc_id: str
     title: str = ''
@@ -50,8 +50,7 @@ class FTSDocument:
     fetched_at: float = field(default_factory=time.time)
     metadata_json: str = '{}'
 
-@dataclass(slots=True)
-class FTSSearchResult:
+class FTSSearchResult(msgspec.Struct):
     """Jeden vysledek FTS dotazu."""
     doc_id: str
     title: str

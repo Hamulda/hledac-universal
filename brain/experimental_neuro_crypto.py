@@ -294,8 +294,7 @@ class EntropyPool:
         self._reseed_count += 1
         logger.debug(f'EntropyPool reseeded (count: {self._reseed_count})')
 
-@dataclass(slots=True)
-class SNNEncryptedContainer:
+class SNNEncryptedContainer(msgspec.Struct):
     """Container for SNN-based encrypted data with neural signatures."""
     ciphertext: bytes
     neural_signature: np.ndarray

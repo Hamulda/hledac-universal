@@ -33,6 +33,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
+import msgspec
 from typing import Any, TYPE_CHECKING
 
 # TYPE_CHECKING guards for type hints only — actual imports are lazy inside functions
@@ -83,8 +84,7 @@ def _get_rust_aggregator() -> Any:
 
 # ── Metric instruments cache ────────────────────────────────────────────────────
 
-@dataclass(slots=True)
-class _MetricInstruments:
+class _MetricInstruments(msgspec.Struct):
     """Cached OTel metric instruments for one metric name."""
     counter_values: dict[str, tuple[int, int]]  # name → (count, bytes)
     histogram_values: dict[str, dict[str, int]]  # name → {p50, p95, p99, ...}

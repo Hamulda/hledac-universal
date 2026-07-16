@@ -29,8 +29,7 @@ from .quantum_safe import EncryptedContainer, QuantumSafeVault, SecurityLevel
 from .stealth_communicator import StealthCommunicator
 logger = logging.getLogger(__name__)
 
-@dataclass(slots=True)
-class DeepSecurityConfig:
+class DeepSecurityConfig(msgspec.Struct):
     """Konfigurace pro deep research security"""
     security_level: SecurityLevel = SecurityLevel.HIGH
     privacy_level: str = 'maximum'

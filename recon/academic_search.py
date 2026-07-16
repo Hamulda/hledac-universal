@@ -69,8 +69,7 @@ class SourceConfig:
             env_key = f'{self.name.upper()}_API_KEY'
             self.api_key = __import__('os').getenv(env_key)
 
-@dataclass(slots=True)
-class SearchResult:
+class SearchResult(msgspec.Struct):
     """A single search result."""
     title: str
     url: str
@@ -84,8 +83,7 @@ class SearchResult:
     def to_dict(self) -> dict[str, Any]:
         return {'title': self.title, 'url': self.url, 'snippet': self.snippet, 'source': self.source, 'result_type': self.result_type.name, 'metadata': self.metadata, 'relevance_score': self.relevance_score, 'timestamp': self.timestamp.isoformat()}
 
-@dataclass(frozen=True, slots=True)
-class SourceResult:
+class SourceResult(msgspec.Struct, frozen=True):
     """Results from a single source."""
     source_name: str
     results: list[SearchResult]
@@ -94,8 +92,7 @@ class SourceResult:
     success: bool
     error_message: str | None = None
 
-@dataclass(frozen=True, slots=True)
-class AcademicSearchResult:
+class AcademicSearchResult(msgspec.Struct, frozen=True):
     """Complete academic search result."""
     original_query: str
     all_results: list[SearchResult]
@@ -131,8 +128,7 @@ class QueryAnalysis:
         words = self.original_query.lower().split()
         return [w for w in words if w not in stop_words and len(w) > 2]
 
-@dataclass(slots=True)
-class SourcePerformance:
+class SourcePerformance(msgspec.Struct):
     """Performance metrics for a source."""
     source_name: str
     total_requests: int = 0

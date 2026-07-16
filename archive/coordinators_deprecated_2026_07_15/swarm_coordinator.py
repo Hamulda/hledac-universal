@@ -41,8 +41,7 @@ class SwarmState(Enum):
     DIVERSE = 'diverse'
     COORDINATED = 'coordinated'
 
-@dataclass(slots=True)
-class SwarmMetrics:
+class SwarmMetrics(msgspec.Struct):
     """Metrics for swarm behavior analysis."""
     diversity: float = 0.0
     convergence: float = 0.0
@@ -53,8 +52,7 @@ class SwarmMetrics:
     performance: float = 0.0
     fault_tolerance: float = 1.0
 
-@dataclass(frozen=True, slots=True)
-class AdaptiveStrategy:
+class AdaptiveStrategy(msgspec.Struct, frozen=True):
     """Adaptive strategy configuration."""
     name: str
     description: str
@@ -64,8 +62,7 @@ class AdaptiveStrategy:
     priority: int = 1
     cooldown: float = 10.0
 
-@dataclass(frozen=True, slots=True)
-class SwarmAgent:
+class SwarmAgent(msgspec.Struct, frozen=True):
     """Individual swarm agent."""
     agent_id: str
     position: list[float] = field(default_factory=list)
@@ -77,8 +74,7 @@ class SwarmAgent:
     findings: list[dict[str, Any]] = field(default_factory=list)
     current_task: str | None = None
 
-@dataclass(frozen=True, slots=True)
-class SwarmNode:
+class SwarmNode(msgspec.Struct, frozen=True):
     """
     P2P Research Swarm Node.
 
@@ -118,8 +114,7 @@ class SwarmNode:
         self.is_online = is_healthy
         return is_healthy
 
-@dataclass(frozen=True, slots=True)
-class SwarmTask:
+class SwarmTask(msgspec.Struct, frozen=True):
     """
     P2P Swarm Task with priority and consensus tracking.
 
@@ -142,8 +137,7 @@ class SwarmTask:
         """Enable priority queue comparison."""
         return self.priority < other.priority
 
-@dataclass(frozen=True, slots=True)
-class ConsensusProposal:
+class ConsensusProposal(msgspec.Struct, frozen=True):
     """
     Consensus mechanism for swarm decisions.
 

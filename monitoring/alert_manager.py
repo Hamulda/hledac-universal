@@ -15,6 +15,7 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
+import msgspec
 from enum import Enum
 from collections.abc import Callable
 import psutil
@@ -26,8 +27,7 @@ class AlertSeverity(Enum):
     CRITICAL = 'critical'
     INFO = 'info'
 
-@dataclass(frozen=True, slots=True)
-class Alert:
+class Alert(msgspec.Struct, frozen=True):
     """Structured alert — immutable, hashable."""
     alert_id: str
     severity: AlertSeverity

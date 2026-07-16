@@ -7,6 +7,7 @@ Never raises — all exceptions caught and surfaced as availability=False.
 import logging
 import sys
 from dataclasses import dataclass
+import msgspec
 
 logger = logging.getLogger(__name__)
 
@@ -17,8 +18,7 @@ _PROBED: bool | None = None
 _EXT: object | None = None
 
 
-@dataclass(frozen=True, slots=True)
-class ProbeResult:
+class ProbeResult(msgspec.Struct, frozen=True):
     """Frozen result of the Rust extension probe."""
 
     available: bool
