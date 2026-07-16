@@ -2259,6 +2259,7 @@ def normalize_passive_dns_query(base_query: str, seed_context: NonfeedSeedContex
     indicators = ips + domains
     if indicators:
         return indicators[0]
+    # All three sources exhausted — this is genuinely empty
     logger.warning('passive_dns empty_query: seed_domains=%s, seed_ips=%s, raw_query=%r, extracted_ips=%r, extracted_domains=%r', len(seed_context.domains) if seed_context else 0, len(seed_context.ips) if seed_context else 0, base_query, ips, domains)
     return ''
 

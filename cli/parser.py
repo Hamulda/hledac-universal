@@ -181,7 +181,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     Dead legacy symbols retained in __main__.py for regression safety:
         _run_sprint_mode, _run_async_main, run_warmup, _run_public_passive_once,
-        _run_observed_default_feed_batch_once, ObservedRunReport, _UmaSampler
+        _run_observed_default_feed_batch_once
     """
     import argparse as _argparse
 
@@ -319,8 +319,12 @@ def _dispatch_sprint(args: argparse.Namespace) -> int:
             asyncio.run(dry_run_sprint(query=target, duration_s=duration))
         else:
             root_flags = SprintFlags(force=force)
-            asyncio.run(
-                run_sprint(
+            # F350M-R ISSUE #4: Pass shutdown_event so run_sprint can do cooperative
+            # shutdown when asyncio.run() default SIGINT handler fires.
+            shutdown_event = asyncio.Event()
+
+            async def _run_with_shutdown() -> None:
+                await run_sprint(
                     query=target,
                     duration_s=duration,
                     export_dir=export_dir,
@@ -330,8 +334,10 @@ def _dispatch_sprint(args: argparse.Namespace) -> int:
                     windup_lead_s=windup_lead,
                     acquisition_profile=profile,
                     flags=root_flags,
+                    shutdown_event=shutdown_event,
                 )
-            )
+
+            asyncio.run(_run_with_shutdown())
         return 0
     except (NameError, AttributeError, ImportError):
         raise  # propagate to main() for code=3

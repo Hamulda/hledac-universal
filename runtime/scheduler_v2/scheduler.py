@@ -527,28 +527,16 @@ class SprintSchedulerV2:
                     _pivot_plan = plan_lanes_for_pivot_seeds(_seed_dicts)
                     _pivot_lanes = getattr(_pivot_plan, "items", None)
 
-                    # Build NonfeedSeedContext from pivot plan items for CT/WAYBACK/PDNS lanes
+                    # Build NonfeedSeedContext from pivot plan items for CT/WAYBACK/PDNS/DOH lanes.
+                    # Only domains are used by prelude lanes (IPs/URLs from pivot seeds are not
+                    # consumed by any prelude lane — DOH uses pivot_doh_items directly).
                     _ctx_domains = tuple(
                         i.seed_value
                         for i in (_pivot_lanes or [])
                         if getattr(i, "seed_type", None) == "domain"
                     )
-                    _ctx_ips = tuple(
-                        i.seed_value
-                        for i in (_pivot_lanes or [])
-                        if getattr(i, "seed_type", None) in ("ip", "ipv4")
-                    )
-                    _ctx_urls = tuple(
-                        i.seed_value
-                        for i in (_pivot_lanes or [])
-                        if getattr(i, "seed_type", None) == "url"
-                    )
-                    if _ctx_domains or _ctx_ips or _ctx_urls:
-                        _seed_ctx = NonfeedSeedContext(
-                            domains=_ctx_domains,
-                            ips=_ctx_ips,
-                            urls=_ctx_urls,
-                        )
+                    if _ctx_domains:
+                        _seed_ctx = NonfeedSeedContext(domains=_ctx_domains)
         except Exception:
             _pivot_lanes = None  # fail-safe: prelude works without pivot lanes
             _seed_ctx = None

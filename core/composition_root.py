@@ -45,20 +45,83 @@ def install_signal_handler(
     """
     Install SIGINT/SIGTERM handlers that set shutdown_event.
 
-    Returns a callable that RESTORES original signal handlers — call from finally.
+    F350M-R ISSUE #4: Uses loop.add_signal_handler() (Python 3.10+)
+    for native asyncio signal handling. Falls back to signal.signal()
+    for older Python or environments where add_signal_handler raises.
+
+    Returns a callable that RESTORES previous signal handlers — call from finally.
     """
-    original_handlers: dict[int, Any] = {}
+    # F350M-R ISSUE #4: Track which mechanism is used so restore() knows how to clean up
+    _prev_int: Any = None
+    _prev_term: Any = None
+    _using_add_signal_handler: bool = False
 
-    def _handler(signum: int, frame: Any) -> None:
-        logger.info("[SIGNAL] Received signal %d, initiating graceful shutdown", signum)
-        shutdown_event.set()
+    def _handler() -> None:
+        """No-arg callback for loop.add_signal_handler()."""
+        logger.info("[SIGNAL] Received signal — cooperative shutdown")
+        try:
+            shutdown_event.set()
+        except Exception:  # noqa: BLE001
+            pass
 
+    def _fallback_handler(signum: int, _frame: Any) -> None:
+        """Two-arg handler for signal.signal() fallback."""
+        sig_name = (
+            getattr(signal.Signals, "SIGINT", None) and signal.Signals(signum).name
+            if hasattr(signal, "Signals")
+            else str(signum)
+        )
+        logger.info(f"[SIGNAL] Received {sig_name} — cooperative shutdown")
+        try:
+            if loop.is_running() and not loop.is_closed():
+                loop.call_soon_threadsafe(shutdown_event.set)
+            else:
+                shutdown_event.set()
+        except Exception:  # noqa: BLE001
+            pass
+
+    # F350M-R ISSUE #4: Prefer loop.add_signal_handler() (Python 3.10+)
     for sig in (signal.SIGINT, signal.SIGTERM):
-        original_handlers[sig] = signal.signal(sig, _handler)
+        try:
+            loop.add_signal_handler(sig, _handler)
+            _using_add_signal_handler = True
+        except (NotImplementedError, AttributeError, OSError, RuntimeError) as e:
+            # NotImplementedError: signals not available in this env (e.g. some CI)
+            # RuntimeError: called from non-main thread
+            # AttributeError: older Python without add_signal_handler
+            # OSError: system-level failure
+            logger.warning(f"[SIGNAL] add_signal_handler unavailable for {sig}: {e}")
+            try:
+                # Fallback to legacy signal.signal() from main thread
+                prev = signal.signal(sig, _fallback_handler)
+                if sig == signal.SIGINT:
+                    _prev_int = prev
+                else:
+                    _prev_term = prev
+            except (OSError, TypeError) as e2:
+                logger.warning(f"[SIGNAL] signal.signal() also failed for {sig}: {e2}")
+
+    if _using_add_signal_handler:
+        logger.info("[SIGNAL] SIGINT/SIGTERM handlers installed via add_signal_handler")
+    else:
+        logger.info("[SIGNAL] SIGINT/SIGTERM handlers installed via signal.signal() (fallback)")
 
     def restore() -> None:
-        for sig, handler in original_handlers.items():
-            signal.signal(sig, handler)
+        """Restore previous signal handlers."""
+        if _using_add_signal_handler:
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                try:
+                    loop.remove_signal_handler(sig)
+                except (OSError, RuntimeError) as e:
+                    logger.warning(f"[SIGNAL] remove_signal_handler failed for {sig}: {e}")
+        else:
+            try:
+                if _prev_int is not None:
+                    signal.signal(signal.SIGINT, _prev_int)
+                if _prev_term is not None:
+                    signal.signal(signal.SIGTERM, _prev_term)
+            except Exception:  # noqa: BLE001
+                pass
 
     return restore
 

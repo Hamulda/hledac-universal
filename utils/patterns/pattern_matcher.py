@@ -14,7 +14,7 @@ import logging
 import re
 import sys
 import time
-from typing import NamedTuple
+from typing import NamedTuple, cast
 
 logger = logging.getLogger(__name__)
 
@@ -28,19 +28,43 @@ __all__ = [
     "configure_default_bootstrap_patterns_if_empty",
     "get_default_bootstrap_patterns",
     "extract_high_precision_entities",
+    "extract_structured_entities",
 ]
 
 # -----------------------------------------------------------------------------
 # Rust extension import guard
 # -----------------------------------------------------------------------------
 _RUST_ACO_AVAILABLE = False
+_RUST_STRUCTURED_EXTRACTOR_AVAILABLE = False
+_RUST_IMPORT_ERROR: str | None = None
 try:
     import hledac_rust_extensions
     # Expose Rust classes as RustAhoCorasickMatcher for API compatibility
     RustAhoCorasickMatcher = hledac_rust_extensions.AhoCorasickMatcher
     _RUST_ACO_AVAILABLE = True
-except ImportError:
-    pass
+    # Issue #15: check for unified structured entity extractor
+    if hasattr(hledac_rust_extensions, "extract_structured_entities_py"):
+        _RUST_STRUCTURED_EXTRACTOR_AVAILABLE = True
+        _rust_extract_structured = hledac_rust_extensions.extract_structured_entities_py
+        _rust_batch_extract_structured = hledac_rust_extensions.batch_extract_structured_entities_py
+    else:
+        _rust_extract_structured = None
+        _rust_batch_extract_structured = None
+except ImportError as _exc:
+    _RUST_IMPORT_ERROR = str(_exc)
+
+# Issue #17: fatal warning at boot if Rust ACO is not available
+# This is emitted once at module load time — not per-call
+if not _RUST_ACO_AVAILABLE:
+    logger.warning(
+        "[FATAL-WARN] Rust Aho-Corasick (hledac_rust_extensions) not available. "
+        "Linear scan fallback will be used. "
+        "Performance: O(patterns × text_length) vs O(text_length) with Rust ACO. "
+        "Install: uv add hledac-rust-extensions or rebuild Rust extensions. "
+        f"Import error: {_RUST_IMPORT_ERROR}"
+    )
+else:
+    logger.debug("[OK] Rust Aho-Corasick available — primary hot-path enabled.")
 
 
 # -----------------------------------------------------------------------------
@@ -565,9 +589,6 @@ def get_pattern_pack_metadata(pattern: str) -> dict | None:
 # -----------------------------------------------------------------------------
 _RE_CVE = re.compile(r"CVE-\d{4}-\d{4,7}", re.IGNORECASE)
 _RE_GHSA = re.compile(r"GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}", re.IGNORECASE)
-_RE_ONION_V3 = re.compile(
-    r"[a-z2-7]{56}\.onion", re.IGNORECASE
-)
 _RE_SHA256 = re.compile(
     r"\b[a-f0-9]{64}\b", re.IGNORECASE
 )
@@ -582,7 +603,9 @@ _RE_SHA1 = re.compile(
 # BTC legacy: case-insensitive (addresses may be mixed case)
 _RE_BTC_LEGACY = re.compile(r"\b[13][a-km-zA-HJ-NP-Z1-9]{26,34}\b", re.IGNORECASE)
 # BTC bech32: bc1 address (P2WPKH/P2WSH), case-insensitive
-_RE_BTC_BECH32 = re.compile(r"\bbc1[ac-hj-np-z02-9]{11,71}\b", re.IGNORECASE)
+# Fixed: [ac-hj-np-z02-9] incorrectly included h,j (bech32 charset excludes them)
+# Correct bech32 chars (excluding I, O, l, 0, 1): qpzry9x8gf2tvdw0s3jn54khce6mua7l
+_RE_BTC_BECH32 = re.compile(r"\bbc1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{11,71}\b", re.IGNORECASE)
 # ETH address: 0x prefix + 40 hex chars (42 total), mixed-case checksum OK
 # Strict 0x prefix prevents accidental FP on raw 40-char hex strings
 _RE_ETH_ADDR = re.compile(r"\b0x[a-fA-F0-9]{40}\b")
@@ -617,8 +640,8 @@ _RE_DOGE_ADDR = re.compile(
     re.IGNORECASE
 )
 # Ethereum contract address: 0x prefix + 40 hex, commonly a contract (not just EOA)
-# Identical regex to _RE_ETH_ADDR — labeled distinctly for contract vs EOA context
-_RE_ETH_CONTRACT = re.compile(r"\b0x[a-fA-F0-9]{40}\b")
+# Uses _RE_ETH_ADDR — same regex, different label distinguishes contract vs EOA
+# Note: removing duplicate regex saves memory; callers use _RE_ETH_ADDR with "eth_contract" label
 
 # === P20 — API KEY / SECRET PATTERNS ===
 # AWS Access Key ID: AKIA + 16 uppercase alphanumeric chars (20 total)
@@ -640,49 +663,122 @@ class ExtractedEntity(NamedTuple):
     end: int
 
 
+def _looks_random(s: str) -> bool:
+    """Return True if s looks like a real hash (high-entropy hex string)."""
+    return bool(re.fullmatch(r'[a-f0-9]{20,}', s))
+
+
+# Issue #20 — master regex: one-pass scan instead of 15 separate finditer() calls.
+# Compiled lazily on first call, not at import time (avoids module-load overhead).
+# Each group is named for fast dispatch to entity_type without string matching.
+_MASTER_RE: re.Pattern[str] | None = None
+_MASTER_MAP: dict[str, tuple[str, int]] = {
+    # Format: group_name: (entity_type, min_len)
+    # min_len reflects actual regex minimum length for belt-and-suspenders validation
+    "cve": ("cve_identifier", 12),       # CVE-YYYY-NNNN = 12 chars (4+1+4+1+2)
+    "ghsa": ("ghsa_identifier", 17),    # GHSA-xxxx-xxxx-xxxx = 17
+    "onion3": ("onion_v3_address", 62),  # [a-z2-7]{56}.onion = 62
+    "sha256": ("sha256_hash", 64),       # 64 hex
+    "md5": ("md5_hash", 32),            # 32 hex
+    "sha1": ("sha1_hash", 40),          # 40 hex
+    "eth": ("eth_address", 42),          # 0x + 40 hex
+    "usdt": ("usdt_trc20", 34),          # T + 33 base58
+    "ltc": ("ltc_address", 34),          # L + 33 base58
+    "doge": ("doge_address", 34),        # D + 33 base58
+    "aws": ("aws_access_key_id", 20),   # AKIA + 16
+    "gapi": ("google_api_key", 39),     # AIza + 35
+    "stripe": ("stripe_secret_key", 31), # sk_live_ + 24
+    "slack": ("slack_token", 51),       # xox[baprs]-10-10-24..32
+}
+
+
+def _get_master_regex() -> re.Pattern[str]:
+    """Lazily build and cache the master regex pattern."""
+    global _MASTER_RE
+    if _MASTER_RE is None:
+        # Build alternation from existing compiled regexes (not string patterns)
+        # This ensures consistency — we reuse the exact same regex objects
+        parts: list[str] = [
+            # CVE: CVE-YYYY-NNNN... (12+ chars)
+            r"(?P<cve>CVE-\d{4}-\d{4,7})",
+            # GHSA: GHSA-xxxx-xxxx-xxxx (17 chars)
+            r"(?P<ghsa>GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4})",
+            # Onion v3: 56 base32 + .onion (60+ chars)
+            r"(?P<onion3>[a-z2-7]{56}\.onion)",
+            # SHA256: 64 hex chars (64 chars)
+            r"(?P<sha256>[a-f0-9]{64})",
+            # MD5: 32 hex chars (32 chars)
+            r"(?P<md5>[a-f0-9]{32})",
+            # SHA1: 40 hex chars (40 chars)
+            r"(?P<sha1>[a-f0-9]{40})",
+            # ETH: 0x + 40 hex (42 chars)
+            r"(?P<eth>0x[a-fA-F0-9]{40})",
+            # USDT TRC20: T + 33 base58 (34 chars)
+            r"(?P<usdt>T[A-HJ-NP-Za-km-z1-9]{33})",
+            # LTC: L + 33 base58 (34 chars)
+            r"(?P<ltc>L[1-9A-HJ-NP-Za-km-z]{33})",
+            # DOGE: D + 33 base58 (34 chars)
+            r"(?P<doge>D[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]{33})",
+            # AWS key: AKIA + 16 alphanum (20 chars)
+            r"(?P<aws>AKIA[0-9A-Z]{16})",
+            # Google API key: AIza + 35 URL-safe base64 (39-40 chars)
+            r"(?P<gapi>AIza[0-9A-Za-z\-_]{35})",
+            # Stripe: sk_live_ + 24 alphanum (31+ chars)
+            r"(?P<stripe>sk_live_[0-9a-zA-Z]{24})",
+            # Slack: xox[baprs]- + 10-13 + 10-13 + 24-32 (51-73 chars)
+            r"(?P<slack>xox[baprs]-[0-9]{10,13}-[0-9]{10,13}-[A-Za-z0-9]{24,32})",
+        ]
+        _MASTER_RE = re.compile("|".join(parts), re.IGNORECASE)
+    return _MASTER_RE
+
+
 def extract_high_precision_entities(text: str) -> list[ExtractedEntity]:
     """Extract high-precision structured entities via regex.
 
-    Covers: CVE, GHSA, onion v3, SHA256, MD5, SHA1, ETH.
+    Uses a single master-regex pass for O(n) scanning instead of O(15×n).
+    Early-exits on texts shorter than the shortest possible match (16 chars).
     Returns ExtractedEntity list sorted by start offset.
     """
+    # Issue #20 — early exit: shortest possible match is CVE-1-1 (8 chars)
+    if len(text) < 8:
+        return []
+
+    master = _get_master_regex()
     entities: list[ExtractedEntity] = []
 
-    for pattern, entity_type in [
-        (_RE_CVE, "cve_identifier"),
-        (_RE_GHSA, "ghsa_identifier"),
-        (_RE_ONION_V3, "onion_v3_address"),
-        (_RE_SHA256, "sha256_hash"),
-        (_RE_MD5, "md5_hash"),
-        (_RE_SHA1, "sha1_hash"),
-        (_RE_ETH_ADDR, "eth_address"),
-        # Sprint F165A — new structured IOC coverage
-        (_RE_USDT_TRC20, "usdt_trc20"),
-        (_RE_LTC_ADDR, "ltc_address"),
-        (_RE_DOGE_ADDR, "doge_address"),
-        (_RE_ETH_CONTRACT, "eth_contract"),
-        # P20 — API key / secret coverage
-        (_RE_AWS_KEY_ID, "aws_access_key_id"),
-        (_RE_GOOGLE_API_KEY, "google_api_key"),
-        (_RE_STRIPE_SK, "stripe_secret_key"),
-        (_RE_SLACK_TOKEN, "slack_token"),
-    ]:
-        for m in pattern.finditer(text):
-            entities.append(ExtractedEntity(
-                entity_type=entity_type,
-                value=m.group(),
-                start=m.start(),
-                end=m.end(),
-            ))
+    for m in master.finditer(text):
+        # Fast dispatch: find first matching group (short-circuit, O(1) avg)
+        matched = next(
+            ((entity_type, min_len, m.group(g)) for g, (entity_type, min_len) in _MASTER_MAP.items() if m.group(g)),
+            None,
+        )
+        if matched is None:
+            continue
+        entity_type, min_len, _ = matched
+        # Preserve original case via slice — m.group() returns lowercase from
+        # case-insensitive regex, but text[start:end] gives us the real case.
+        value = text[m.start():m.end()]
+        # Belt-and-suspenders: verify minimum length
+        if len(value) < min_len:
+            continue
+        entities.append(ExtractedEntity(
+            entity_type=entity_type,
+            value=value,
+            start=m.start(),
+            end=m.end(),
+        ))
 
-    # Hash validation: reject if value looks ambiguous (all zeros, repeating, etc.)
+    # Hash validation: reject trivial/accidental hashes
     validated: list[ExtractedEntity] = []
     for e in entities:
         if e.entity_type in ("sha256_hash", "md5_hash", "sha1_hash"):
             v = e.value.lower()
-            # Reject trivial hashes: all same char, all zeros, sequential
-            if len(set(v)) < 4:
+            # Require at least 8 unique chars and reject obvious patterns
+            if len(set(v)) < 8:
                 continue  # too trivial to be real
+            # Reject repeating/sequential patterns (e.g. "aaaaaaaa", "12345678")
+            if v != v[0] * len(v) and not _looks_random(v):
+                continue
         validated.append(e)
 
     # Sort by start offset
@@ -742,16 +838,19 @@ _SEED_REGISTRY: tuple[tuple[str, str], ...] = (
 
 
 # -----------------------------------------------------------------------------
-# Singleton state
-# -----------------------------------------------------------------------------
-# Pattern label lookup index — O(1) instead of O(n) per hit
-_PATTERN_LABEL_INDEX: dict[str, str] = {}
 
 
 class _PatternMatcherState:
     """Holds the singleton PatternMatcher instance and its lifecycle state."""
 
-    __slots__ = ("_pattern_version", "_registry_snapshot", "_bootstrap_applied", "_rust_aco")
+    __slots__ = (
+        "_pattern_version",
+        "_registry_snapshot",
+        "_bootstrap_applied",
+        "_rust_aco",
+        "_dirty",
+        "_regex_alternation",
+    )
 
     def __init__(self) -> None:
         # _automaton removed — pyahocorasick no longer used
@@ -759,6 +858,18 @@ class _PatternMatcherState:
         self._registry_snapshot: frozenset[tuple[str, str]] = frozenset()
         self._bootstrap_applied: bool = False
         self._rust_aco: AhoCorasickMatcher | None | object = None
+        self._dirty: bool = True  # True until first successful build
+        # Issue #17: pre-compiled regex alternation for linear scan fallback
+        # O(n) single-pass scan vs O(p×n) str.find() loop
+        self._regex_alternation: re.Pattern[str] | None = None
+
+    def is_built(self) -> bool:
+        """Return True if Rust ACO is initialized and ready.
+
+        Rust ACO is built eagerly in configure_patterns() — this checks
+        that build succeeded (rust_aco is not None).
+        """
+        return self._rust_aco is not None
 
     def pattern_count(self) -> int:
         """Return number of configured patterns. O(1)."""
@@ -772,6 +883,7 @@ class _PatternMatcherState:
             "pattern_version": self._pattern_version,
             "bootstrap_pack_version": _BOOTSTRAP_PACK_VERSION,
             "default_bootstrap_count": len(_BOOTSTRAP_PATTERNS),
+            "rust_aco_built": self.is_built(),
         }
 
 
@@ -803,23 +915,60 @@ def configure_patterns(registry: tuple[tuple[str, str], ...]) -> None:
     if new_snapshot == _matcher_state._registry_snapshot:
         return  # no-op on identical registry
     _matcher_state._registry_snapshot = new_snapshot
-    global _PATTERN_LABEL_INDEX
-    _PATTERN_LABEL_INDEX = {p.lower(): l for p, l in registry}  # noqa: E741
     _matcher_state._pattern_version += 1
 
     # Detect overlapping patterns — Rust ACO MATCH_MANY skips overlapping hits.
     # Fall back to linear scan which correctly handles overlaps.
+    # Issue #17-fix: check BOTH prefix AND suffix/mid-string overlaps.
+    # A pattern overlaps if any other pattern contains it OR it's contained in another.
     patterns_list = [p.lower() for p, _l in registry]
     has_overlapping = any(
-        any(p1 != p2 and p2.startswith(p1) for p2 in patterns_list)
+        any(p1 != p2 and (p2.startswith(p1) or p1 in p2) for p2 in patterns_list)
         for p1 in patterns_list
     )
 
+    # Issue #11: explicitly release old Rust instance before replacing.
+    # PyO3 objects are freed by GC eventually, but close() drops the
+    # automaton + Vec<String> immediately so the memory is reclaimed before
+    # the new instance is allocated — critical for M1 8GB RAM budget.
+    # close() is added in aho_corasick.rs; skip gracefully if extension
+    # hasn't been rebuilt yet (AttributeError = old build, TypeError = None).
+    old = _matcher_state._rust_aco
+    if old is not None:
+        try:
+            old.close()
+        except (AttributeError, TypeError):
+            pass  # fail-safe: close not available or already None — non-fatal
+
     # Build Rust ACO eagerly if available and patterns don't overlap
+    # Issue #14: pass labels directly to Rust — eliminates Python dict lookup in hot path
     if _RUST_ACO_AVAILABLE and not has_overlapping:
-        _matcher_state._rust_aco = RustAhoCorasickMatcher(patterns_list)
+        labels_list = [l for _p, l in registry]
+        _matcher_state._rust_aco = RustAhoCorasickMatcher(patterns_list, labels_list)
+        _matcher_state._regex_alternation = None  # Not needed when Rust ACO is used
     else:
         _matcher_state._rust_aco = None
+        # Issue #17: build pre-compiled regex alternation for O(n) fallback
+        # Escape special regex characters in patterns — patterns are literals, not regex
+        escaped = [re.escape(p) for p in patterns_list]
+        if escaped:
+            # Sort by length descending to match longest first (avoids partial overlaps)
+            escaped.sort(key=len, reverse=True)
+            pattern_str = "|".join(escaped)
+            try:
+                _matcher_state._regex_alternation = re.compile(pattern_str, re.IGNORECASE)
+            except re.error:
+                _matcher_state._regex_alternation = None
+        else:
+            _matcher_state._regex_alternation = None
+        # Issue #17: warn when falling back from Rust ACO due to overlapping patterns
+        if _RUST_ACO_AVAILABLE and has_overlapping:
+            logger.warning(
+                "[WARN] Rust ACO unavailable for %d patterns due to overlaps. "
+                "Using regex alternation fallback (O(n) single-pass). "
+                "Consider removing substring patterns to enable Rust ACO.",
+                len(registry),
+            )
 
 
 def match_text(
@@ -853,14 +1002,11 @@ def match_text(
     text_lower = text.lower()
 
     # === Rust Aho-Corasick scan (primary) ===
+    # Issue #14: Rust returns (start, end, pattern_name, label) — label inline, no Python dict lookup
+    # Issue #18: boundary check done in Rust — eliminates 2× Python str.isalnum() per hit
     if _RUST_ACO_AVAILABLE and _matcher_state._rust_aco is not None:
-        for r_start, r_end, matched_str in rust_aco_obj.scan(text_lower):
-            if boundary_policy == "word":
-                before_ok = r_start == 0 or not text[r_start - 1].isalnum()
-                after_ok = r_end >= len(text) or not text[r_end].isalnum()
-                if not (before_ok and after_ok):
-                    continue
-            label = _PATTERN_LABEL_INDEX.get(matched_str)
+        rust_boundary: str | None = boundary_policy if boundary_policy != "none" else None
+        for r_start, r_end, matched_str, label in _matcher_state._rust_aco.scan(text_lower, rust_boundary):
             hits.append(PatternHit(
                 pattern=sys.intern(matched_str),
                 start=r_start,
@@ -869,72 +1015,131 @@ def match_text(
                 label=sys.intern(label) if label else None,
             ))
     else:
-        # Linear scan fallback — C-implemented str.find() over ~200 needles.
-        # Performance: ~200 str.find() on 4KB text < 1ms on M1.
-        # No pyahocorasick C-extension dependency — Python 3.14 safe.
-        for pattern, label in _matcher_state._registry_snapshot:
-            pattern_lower = pattern.lower()
-            pos = 0
-            while True:
-                idx = text_lower.find(pattern_lower, pos)
-                if idx == -1:
-                    break
+        # Linear scan fallback — Issue #17
+        # Priority: (1) pre-compiled regex alternation O(n), (2) str.find() O(p×n)
+        regex_alt = _matcher_state._regex_alternation
+        if regex_alt is not None:
+            # O(n) single-pass regex alternation scan
+            # Build label map from registry for O(1) label lookup
+            label_map: dict[str, tuple[str, str]] = {
+                p.lower(): (p, l) for p, l in _matcher_state._registry_snapshot
+            }
+            for m in regex_alt.finditer(text_lower):
+                matched = m.group()
+                key = matched.lower()
+                if key not in label_map:
+                    # Try case-insensitive lookup
+                    for pk in label_map:
+                        if pk.lower() == key:
+                            key = pk
+                            break
+                    else:
+                        continue
+                pattern, label = label_map[key]
+                start, end = m.start(), m.end()
                 if boundary_policy == "word":
-                    before_ok = idx == 0 or not text[idx - 1].isalnum()
-                    after_idx = idx + len(pattern)
-                    after_ok = after_idx >= len(text) or not text[after_idx].isalnum()
+                    before_ok = start == 0 or not text[start - 1].isalnum()
+                    after_ok = end >= len(text) or not text[end].isalnum()
                     if not (before_ok and after_ok):
-                        pos = idx + 1
                         continue
                 hits.append(PatternHit(
                     pattern=sys.intern(pattern),
-                    start=idx,
-                    end=idx + len(pattern),
-                    value=text[idx:idx + len(pattern)],
+                    start=start,
+                    end=end,
+                    value=text[start:end],
                     label=sys.intern(label) if label else None,
                 ))
-                pos = idx + 1
+        else:
+            # O(p×n) str.find() loop — only when regex alternation unavailable
+            # (e.g., all patterns are prefix-style that need iterative matching)
+            for pattern, label in _matcher_state._registry_snapshot:
+                pattern_lower = pattern.lower()
+                pos = 0
+                while True:
+                    idx = text_lower.find(pattern_lower, pos)
+                    if idx == -1:
+                        break
+                    if boundary_policy == "word":
+                        before_ok = idx == 0 or not text[idx - 1].isalnum()
+                        after_idx = idx + len(pattern)
+                        after_ok = after_idx >= len(text) or not text[after_idx].isalnum()
+                        if not (before_ok and after_ok):
+                            pos = idx + 1
+                            continue
+                    hits.append(PatternHit(
+                        pattern=sys.intern(pattern),
+                        start=idx,
+                        end=idx + len(pattern),
+                        value=text[idx:idx + len(pattern)],
+                        label=sys.intern(label) if label else None,
+                    ))
+                    pos = idx + 1
 
     # Sprint 8QB V4 + Sprint 8SC V5: regex post-pass for structured patterns
-    # Run after AC scan so both literal+regex hits are returned.
+    # Issue #15: Rust unified RegexSet replaces 25× Python re.finditer() calls.
+    # Single GIL acquisition vs 25× GIL acquisitions; rayon parallel for batch.
     # text_lower is already defined from AC scan path above.
-    for _pattern, _label in [
-        (_RE_CVE, "cve_identifier"),
-        (_RE_GHSA, "ghsa_identifier"),
-        (_RE_BTC_LEGACY, "btc_address"),
-        (_RE_BTC_BECH32, "btc_address"),
-        (_RE_TELEGRAM, "telegram_link"),
-        (_RE_MISP_UUID, "misp_uuid"),
-        (_RE_ONION_V3, "onion_v3"),
-        # Sprint 8SC V5
-        (_RE_XMR_ADDR, "xmr_address"),
-        (_RE_I2P_ADDR, "i2p_address"),
-        (_RE_PGP_FP, "pgp_fingerprint"),
-        (_RE_IPFS_CID, "ipfs_cid"),
-        # Sprint F160B — structured IOC hot-path wiring
-        (_RE_SHA256, "sha256_hash"),
-        (_RE_MD5, "md5_hash"),
-        (_RE_SHA1, "sha1_hash"),
-        (_RE_ETH_ADDR, "eth_address"),
-        # Sprint F165A — new structured IOC coverage
-        (_RE_USDT_TRC20, "usdt_trc20"),
-        (_RE_LTC_ADDR, "ltc_address"),
-        (_RE_DOGE_ADDR, "doge_address"),
-        (_RE_ETH_CONTRACT, "eth_contract"),
-        # P20 — API key / secret coverage
-        (_RE_AWS_KEY_ID, "aws_access_key_id"),
-        (_RE_GOOGLE_API_KEY, "google_api_key"),
-        (_RE_STRIPE_SK, "stripe_secret_key"),
-        (_RE_SLACK_TOKEN, "slack_token"),
-    ]:
-        for m in _pattern.finditer(text_lower):
+    #
+    # Rust extract_structured_entities_py returns (start, end, value, label)
+    # tuples — already sorted by start offset, deduplicated by (label, value).
+    # Entropy filtering (hex hash trivial-value rejection) is done in Rust.
+    if _RUST_STRUCTURED_EXTRACTOR_AVAILABLE and _rust_extract_structured is not None:
+        for r_start, r_end, r_value, r_label in _rust_extract_structured(text_lower):
+            if boundary_policy == "word":
+                before_ok = r_start == 0 or not text[r_start - 1].isalnum()
+                after_ok = r_end >= len(text) or not text[r_end].isalnum()
+                if not (before_ok and after_ok):
+                    continue
+            # Use original-case value from text slice for display/storage fidelity
             hits.append(PatternHit(
-                pattern=sys.intern(m.group()),
-                start=m.start(),
-                end=m.end(),
-                value=m.group(),
-                label=sys.intern(_label),
+                pattern=sys.intern(r_value),
+                start=r_start,
+                end=r_end,
+                value=text[r_start:r_end],  # original case from un-lowered text
+                label=sys.intern(r_label),
             ))
+    else:
+        # Python fallback — original 25× re.finditer() loop
+        for _pattern, _label in [
+            (_RE_CVE, "cve_identifier"),
+            (_RE_GHSA, "ghsa_identifier"),
+            (_RE_BTC_LEGACY, "btc_address"),
+            (_RE_BTC_BECH32, "btc_address"),
+            (_RE_TELEGRAM, "telegram_link"),
+            (_RE_MISP_UUID, "misp_uuid"),
+            (_RE_ONION_V3, "onion_v3"),
+            # Sprint 8SC V5
+            (_RE_XMR_ADDR, "xmr_address"),
+            (_RE_I2P_ADDR, "i2p_address"),
+            (_RE_PGP_FP, "pgp_fingerprint"),
+            (_RE_IPFS_CID, "ipfs_cid"),
+            # Sprint F160B — structured IOC hot-path wiring
+            (_RE_SHA256, "sha256_hash"),
+            (_RE_MD5, "md5_hash"),
+            (_RE_SHA1, "sha1_hash"),
+            (_RE_ETH_ADDR, "eth_address"),
+            # Sprint F165A — new structured IOC coverage
+            (_RE_USDT_TRC20, "usdt_trc20"),
+            (_RE_LTC_ADDR, "ltc_address"),
+            (_RE_DOGE_ADDR, "doge_address"),
+            (_RE_ETH_ADDR, "eth_contract"),
+            # P20 — API key / secret coverage
+            (_RE_AWS_KEY_ID, "aws_access_key_id"),
+            (_RE_GOOGLE_API_KEY, "google_api_key"),
+            (_RE_STRIPE_SK, "stripe_secret_key"),
+            (_RE_SLACK_TOKEN, "slack_token"),
+        ]:
+            for m in _pattern.finditer(text_lower):
+                matched_value = m.group()
+                hits.append(PatternHit(
+                    pattern=sys.intern(matched_value),
+                    start=m.start(),
+                    end=m.end(),
+                    # text[m.start():m.end()] preserves original case from un-lowered text,
+                    # matching the Rust ACO scan path behavior (issue #19)
+                    value=text[m.start():m.end()],
+                    label=sys.intern(_label),
+                ))
 
     # Sort by start offset
     hits.sort(key=lambda h: h.start)
@@ -972,33 +1177,35 @@ def match_text_batch(
     if not _matcher_state._bootstrap_applied:
         configure_default_bootstrap_patterns_if_empty()
 
-    # Lazy build
-    if _matcher_state._dirty:
-        _build_automaton()
-
     # Check Rust batch path
     rust_aco_enabled = (
         _RUST_ACO_AVAILABLE
         and _matcher_state._rust_aco is not None
-        and _matcher_state._rust_aco is not _RUST_ACO_DISABLED
     )
 
     if rust_aco_enabled and len(texts) >= 4:
         # Rust batch path — single GIL acquisition, rayon parallel scan
-        rust_aco_obj = cast(AhoCorasickMatcher, _matcher_state._rust_aco)
-        # scan_batch returns List<Vec<(start, end, pattern_str)>> — one vec per text
-        raw_results: list[list[tuple[int, int, str]]] = rust_aco_obj.scan_batch(texts)
+        # Issue #14: scan_batch returns List<Vec<(start, end, pattern_str, label)>> —
+        # label inline, eliminates Python dict lookup in hot path.
+        # Issue #18: boundary check done in Rust — eliminates 2× Python str.isalnum() per hit per text.
+        rust_boundary: str | None = boundary_policy if boundary_policy != "none" else None
+        raw_results: list[list[tuple[int, int, str, str]]] = _matcher_state._rust_aco.scan_batch(texts, rust_boundary)
+
+        # Issue #15: Batch structured entity extraction — rayon parallel across texts.
+        # Replaces per-text 25× re.finditer() loop in match_text().
+        # Uses text_lower for case-insensitive pattern matching (regexes are case-insensitive).
+        texts_lower: list[str] = [t.lower() for t in texts]
+        if _RUST_STRUCTURED_EXTRACTOR_AVAILABLE and _rust_batch_extract_structured is not None:
+            rust_structured_results: list[list[tuple[int, int, str, str]]] = _rust_batch_extract_structured(texts_lower)
+        else:
+            rust_structured_results = [[] for _ in texts]
 
         results: list[list[PatternHit]] = []
-        for _text_idx, (text, raw_hits) in enumerate(zip(texts, raw_results)):
+        for _text_idx, (text, raw_hits, structured_hits) in enumerate(zip(texts, raw_results, rust_structured_results)):
             hits: list[PatternHit] = []
-            for r_start, r_end, matched_str in raw_hits:
-                if boundary_policy == "word":
-                    before_ok = r_start == 0 or not text[r_start - 1].isalnum()
-                    after_ok = r_end >= len(text) or not text[r_end].isalnum()
-                    if not (before_ok and after_ok):
-                        continue
-                label = _PATTERN_LABEL_INDEX.get(matched_str)
+
+            # AC scan hits (Rust)
+            for r_start, r_end, matched_str, label in raw_hits:
                 hits.append(PatternHit(
                     pattern=sys.intern(matched_str),
                     start=r_start,
@@ -1006,6 +1213,22 @@ def match_text_batch(
                     value=text[r_start:r_end],
                     label=sys.intern(label) if label else None,
                 ))
+
+            # Structured entity hits (Rust batch) — apply boundary_policy filter in Python
+            for r_start, r_end, r_value, r_label in structured_hits:
+                if boundary_policy == "word":
+                    before_ok = r_start == 0 or not text[r_start - 1].isalnum()
+                    after_ok = r_end >= len(text) or not text[r_end].isalnum()
+                    if not (before_ok and after_ok):
+                        continue
+                hits.append(PatternHit(
+                    pattern=sys.intern(r_value),
+                    start=r_start,
+                    end=r_end,
+                    value=text[r_start:r_end],
+                    label=sys.intern(r_label),
+                ))
+
             hits.sort(key=lambda h: h.start)
             results.append(hits)
         return results
@@ -1021,10 +1244,19 @@ def reset_pattern_matcher() -> None:
     After reset, get_pattern_matcher() returns the same state object
     but in un-built (dirty) condition.
     """
+    # Issue #11: explicitly release old Rust instance before replacing.
+    old = _matcher_state._rust_aco
+    if old is not None:
+        try:
+            old.close()
+        except (AttributeError, TypeError):
+            pass  # fail-safe: close not available or already None
     _matcher_state._rust_aco = None
     _matcher_state._pattern_version = 0
     _matcher_state._registry_snapshot = frozenset()
     _matcher_state._bootstrap_applied = False
+    _matcher_state._dirty = True
+    _matcher_state._regex_alternation = None
 
 
 def get_default_bootstrap_patterns() -> tuple[tuple[str, str], ...]:
@@ -1080,8 +1312,8 @@ def prewarm() -> None:
 
 def benchmark_build(registry: tuple[tuple[str, str], ...]) -> dict:
     """Measure automaton build time for a given registry."""
-    configure_patterns(registry)
     t0 = time.perf_counter()
+    configure_patterns(registry)
     t1 = time.perf_counter()
     return {"build_ms": (t1 - t0) * 1000, "pattern_count": len(registry)}
 

@@ -37,5 +37,5 @@
 ## Additional guidance
 
 - Preferred orientation doc: `README.md`.
-- Repository docs spotted: README.md.
+- Repository docs spotted: AGENTS.md, README.md.
 

@@ -1749,6 +1749,7 @@ async def run_sprint(
     rl_train_mode: bool = False,  # RL F257: QMIX training vs inference-only
     force: bool = False,  # F221-ABORT: override zero-active-budget pre-flight guard
     flags: SprintFlags | None = None,  # F26X-3/F260 fix: layer-injection flag bundle
+    shutdown_event: asyncio.Event | None = None,  # F350M-R ISSUE #4: cooperative shutdown event
 ) -> None:
     """
     Run a full sprint lifecycle with UMA monitoring and delta reporting.
@@ -1758,10 +1759,19 @@ async def run_sprint(
     All report truth surfaces (canonical_run_summary, runtime_truth, timing_truth,
     checkpoint_zero_category, observed_run_tuple) are derived here.
     No alternate or residual path may claim canonical_sprint_owner = "core.__main__.run_sprint".
+
+    F350M-R ISSUE #4: If shutdown_event is provided, installs SIGINT/SIGTERM handlers
+    that set the event (cooperative shutdown) when asyncio.run() is the caller
+    (i.e., no external signal handler was installed via _install_signal_handler_for_loop).
     """
     # Sprint 8SA: Phase timing instrumentation
     _phase_times: dict[str, float] = {}
     _phase_times["BOOT"] = time.monotonic()
+
+    # F350M-R ISSUE #4: Cooperative shutdown — install signal handler in-loop
+    # when run_sprint is called directly via asyncio.run() (cli/parser path)
+    # instead of via _run_sprint_loop which handles signals externally.
+    _cancel_event: asyncio.Event = shutdown_event if shutdown_event is not None else asyncio.Event()
 
     # M218A: GC tuning for M1 UMA stability — runs once per process
     _gc_telemetry = _configure_gc_for_sprint()
@@ -2208,7 +2218,35 @@ async def run_sprint(
         try:
             # STEP 4 F350M-R: SprintSchedulerV2.run() signature — query only.
             # lifecycle, duckdb_store, ct_log_client wired via inject_* methods above.
-            result = await scheduler.run(query)
+            # F350M-R ISSUE #4: Cooperative shutdown — race scheduler.run() vs _cancel_event.wait()
+            # When SIGINT arrives via asyncio.run() default handler (cli/parser path),
+            # _cancel_event is set → cancels scheduler gracefully instead of loop.stop() hard-abort.
+            _cancel_waiter = asyncio.create_task(_cancel_event.wait())
+            _scheduler_waiter = asyncio.create_task(scheduler.run(query))
+            done, pending = await asyncio.wait(
+                [_scheduler_waiter, _cancel_waiter],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            # If we won the race (scheduler done), get result
+            if _scheduler_waiter in done:
+                result = _scheduler_waiter.result()
+                # Cancel the cancel waiter since we finished normally
+                _cancel_waiter.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await _cancel_waiter
+            else:
+                # Cancel event fired — cooperative shutdown triggered
+                _scheduler_waiter.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await _scheduler_waiter
+                # F350M-R ISSUE #4: Return soft-fail result for cooperative shutdown
+                from hledac.universal.runtime.scheduler_result import (
+                    SprintSchedulerResult,
+                )
+                _sf = SprintSchedulerResult()
+                _sf.scheduler_exit_path = "cooperative_shutdown"
+                _sf.scheduler_exit_reason = "SIGINT/SIGTERM received via shutdown_event"
+                result = _sf
         except Exception as _fatal_exc:
             logger.exception("SprintScheduler.run() raised; returning soft-fail result")
             try:
@@ -3323,41 +3361,83 @@ def _install_signal_handler_for_loop(
 
     Returns a cleanup function that restores previous signal handlers.
     Handler is idempotent, fail-soft, never calls loop.stop().
+
+    F350M-R ISSUE #4 FIX: Uses loop.add_signal_handler() (Python 3.10+)
+    for native asyncio signal handling. Falls back to signal.signal()
+    for older Python or environments where add_signal_handler raises.
     """
     _prev_int: Callable[[int, Any], Any] | None = None
     _prev_term: Callable[[int, Any], Any] | None = None
+    _using_add_signal_handler: bool = False
 
-    def _handler(signum: int, frame: Any) -> None:
+    def _handler() -> None:
+        """No-arg callback for loop.add_signal_handler()."""
+        logging.info("[SIGNAL] Received — cooperative shutdown")
+        try:
+            shutdown_event.set()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _fallback_handler(signum: int, _frame: Any) -> None:
+        """Two-arg handler for signal.signal() fallback."""
         sig_name = (
             getattr(signal.Signals, "SIGINT", None) and signal.Signals(signum).name
             if hasattr(signal, "Signals")
             else str(signum)
-        )  # noqa: E501
+        )
         logging.info(f"[SIGNAL] Received {sig_name} — cooperative shutdown")
         try:
             if loop.is_running() and not loop.is_closed():
                 loop.call_soon_threadsafe(shutdown_event.set)
             else:
-                # Loop not running — set event directly
                 shutdown_event.set()
         except Exception:  # noqa: BLE001
             pass
 
-    try:
-        _prev_int = signal.signal(signal.SIGINT, _handler)
-        _prev_term = signal.signal(signal.SIGTERM, _handler)
-        logging.info("[SIGNAL] SIGINT/SIGTERM handlers installed")
-    except (ImportError, AttributeError, OSError, TypeError) as e:
-        logging.warning(f"[SIGNAL] Signal handlers not available: {e}")
+    # F350M-R ISSUE #4: Prefer loop.add_signal_handler() (Python 3.10+)
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, _handler)
+            _using_add_signal_handler = True
+        except (NotImplementedError, AttributeError, OSError, RuntimeError) as e:
+            # NotImplementedError: signals not available in this env (e.g. some CI)
+            # RuntimeError: called from non-main thread
+            # AttributeError: older Python without add_signal_handler
+            # OSError: system-level failure
+            logging.warning(f"[SIGNAL] add_signal_handler unavailable for {sig}: {e}")
+            try:
+                # Fallback to legacy signal.signal() from main thread
+                prev = signal.signal(sig, _fallback_handler)
+                if sig == signal.SIGINT:
+                    _prev_int = prev
+                else:
+                    _prev_term = prev
+            except (OSError, TypeError) as e2:
+                logging.warning(f"[SIGNAL] signal.signal() also failed for {sig}: {e2}")
+
+    if _using_add_signal_handler:
+        logging.info("[SIGNAL] SIGINT/SIGTERM handlers installed via add_signal_handler")
+    else:
+        logging.info("[SIGNAL] SIGINT/SIGTERM handlers installed via signal.signal() (fallback)")
 
     def _restore() -> None:
-        try:
-            if _prev_int is not None:
-                signal.signal(signal.SIGINT, _prev_int)
-            if _prev_term is not None:
-                signal.signal(signal.SIGTERM, _prev_term)
-        except Exception:  # noqa: BLE001
-            pass
+        """Restore previous signal handlers."""
+        if _using_add_signal_handler:
+            # With add_signal_handler, we must remove the handler
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                try:
+                    loop.remove_signal_handler(sig)
+                except (OSError, RuntimeError) as e:
+                    logging.warning(f"[SIGNAL] remove_signal_handler failed for {sig}: {e}")
+        else:
+            # Restore previous handlers from signal.signal() fallback
+            try:
+                if _prev_int is not None:
+                    signal.signal(signal.SIGINT, _prev_int)
+                if _prev_term is not None:
+                    signal.signal(signal.SIGTERM, _prev_term)
+            except Exception:  # noqa: BLE001
+                pass
 
     return _restore
 

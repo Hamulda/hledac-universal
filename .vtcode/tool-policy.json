@@ -9,15 +9,18 @@
     "apply_patch": "prompt",
     "exec_command": "allow",
     "write_stdin": "allow",
+    "load_skill": "allow",
+    "memory": "allow",
+    "start_planning": "prompt",
+    "code_search": "allow",
+    "web_fetch": "prompt",
     "web_search": "prompt",
     "task_tracker": "prompt",
     "finish_planning": "prompt",
-    "memory": "allow",
-    "code_search": "allow",
     "request_user_input": "allow",
-    "mcp": "allow",
-    "start_planning": "prompt",
-    "web_fetch": "prompt"
+    "load_skill_resource": "allow",
+    "list_skills": "allow",
+    "mcp": "allow"
   },
   "constraints": {},
   "mcp": {
@@ -163,8 +166,18 @@
     "providers": {}
   },
   "approval_cache": {
-    "allowed": [],
-    "prefixes": [],
+    "allowed": [
+      "shell-pattern:ls|sandbox_permissions=\"use_default\"|additional_permissions=null",
+      "shell-pattern:ls",
+      "ls -la /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal|sandbox_permissions=\"use_default\"|additional_permissions=null",
+      "ls -la /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal"
+    ],
+    "prefixes": [
+      "ls -la|sandbox_permissions=\"use_default\"|additional_permissions=null",
+      "ls|sandbox_permissions=\"use_default\"|additional_permissions=null",
+      "ls",
+      "ls -la"
+    ],
     "regexes": []
   }
 }

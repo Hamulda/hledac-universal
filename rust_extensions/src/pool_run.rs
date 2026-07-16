@@ -23,6 +23,7 @@ use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
+use std::any::Any;
 
 use crate::cpu_pool;
 use crate::io_pool;
@@ -192,14 +193,14 @@ pub fn rayon_join_(py: Python<'_>, handle_ptr: usize, timeout_s: Option<f64>) ->
         // Helper thread approach for timeout-aware join:
         // Main thread blocks on mpsc receiver; helper thread does the actual join.
         // If timeout expires, we detach the worker and return error.
-        let (tx, rx) = mpsc::channel::<Result<(), std::thread::Result<()>>>();
+        let (tx, rx) = mpsc::channel::<Result<(), Box<dyn Any + Send>>>();
         let helper = thread::spawn(move || {
             let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 handle.join()
             }));
             let _ = tx.send(match res {
-                Ok(inner) => Ok(inner.map(|_| ())),
-                Err(panic_err) => Ok(Err(panic_err)),
+                Ok(inner) => inner.map(|_| ()),
+                Err(panic_err) => Err(panic_err),
             });
         });
 
@@ -281,14 +282,14 @@ pub fn rayon_abort_(handle_ptr: usize) -> PyResult<()> {
     // Using helper thread + mpsc for timeout-aware join.
     let join_handle = shared_task.join_handle.lock().unwrap().take();
     if let Some(handle) = join_handle {
-        let (tx, rx) = mpsc::channel::<Result<(), std::thread::Result<()>>>();
+        let (tx, rx) = mpsc::channel::<Result<(), Box<dyn Any + Send>>>();
         let helper = thread::spawn(move || {
             let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 handle.join()
             }));
             let _ = tx.send(match res {
-                Ok(inner) => Ok(inner.map(|_| ())),
-                Err(panic_err) => Ok(Err(panic_err)),
+                Ok(inner) => inner.map(|_| ()),
+                Err(panic_err) => Err(panic_err),
             });
         });
 

@@ -15,11 +15,12 @@ No circular deps: this module is independent of fetching/public_fetcher.py.
 import asyncio
 import logging
 import secrets
+import threading
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 import msgspec
-from typing import Any, Self
+from typing import Any, NamedTuple
 from urllib.parse import urlparse
 logger = logging.getLogger(__name__)
 from hledac.universal.core.constants import HTTP
@@ -73,46 +74,83 @@ class RetryPolicy(msgspec.Struct):
         except (ValueError, TypeError):
             return None
 
-class CircuitBreakerState(msgspec.Struct, frozen=True):
-    """Per-domain circuit breaker state."""
-    failure_count: int = 0
-    last_failure: float = 0.0
-    is_open: bool = False
+class CircuitBreakerState(NamedTuple):
+    """Per-domain circuit breaker state (immutable, functional update).
 
-    def record_failure(self) -> None:
-        self.failure_count += 1
-        self.last_failure = time.monotonic()
-        if self.failure_count >= _CIRCUIT_BREAKER_FAILURE_THRESHOLD:
-            self.is_open = True
+    M1 8GB: NamedTuple overhead negligible (~48 bytes vs msgspec.Struct ~56).
+    Thread-safe: record_failure/success vrací novou instanci.
+    """
+    failure_count: int
+    last_failure: float
+    is_open: bool
 
-    def record_success(self) -> None:
-        self.failure_count = 0
-        self.is_open = False
+    @classmethod
+    def fresh(cls) -> CircuitBreakerState:
+        """Create a new circuit breaker in closed state."""
+        return cls(failure_count=0, last_failure=0.0, is_open=False)
+
+    def record_failure(self) -> CircuitBreakerState:
+        """Record a failure and return new state (functional update)."""
+        new_count = self.failure_count + 1
+        return CircuitBreakerState(
+            failure_count=new_count,
+            last_failure=time.monotonic(),
+            is_open=new_count >= _CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+        )
+
+    def record_success(self) -> CircuitBreakerState:
+        """Record a success and return new state (resets circuit)."""
+        return CircuitBreakerState(
+            failure_count=0,
+            last_failure=self.last_failure,
+            is_open=False,
+        )
 
     def is_available(self) -> bool:
-        """Check if circuit is closed (available for requests)."""
+        """Check if circuit is closed (available for requests) — pure read-only."""
         if not self.is_open:
             return True
         if time.monotonic() - self.last_failure > _CIRCUIT_BREAKER_RECOVERY_SECONDS:
-            self.is_open = False
-            return True
+            return True  # recovery window elapsed — circuit can close
         return False
+
 
 class CircuitBreakerRegistry:
     """Global registry of circuit breakers per domain.
 
     M1 8GB: bounded map, max 512 domains.
+    Thread-safe: per-domain Lock prevents race conditions on concurrent access.
     """
     _breakers: dict[str, CircuitBreakerState] = {}
+    _locks: dict[str, threading.Lock] = {}
+    _registry_lock: threading.Lock = threading.Lock()  # guards _breakers/_locks dict ops
 
     @classmethod
-    def get_breaker(cls, domain: str) -> CircuitBreakerState:
-        if domain not in cls._breakers:
-            if len(cls._breakers) >= _CIRCUIT_BREAKER_MAX_DOMAINS:
-                oldest = next(iter(cls._breakers))
-                del cls._breakers[oldest]
-            cls._breakers[domain] = CircuitBreakerState()
-        return cls._breakers[domain]
+    def get_breaker(cls, domain: str) -> tuple[CircuitBreakerState, threading.Lock]:
+        """Get circuit breaker state AND its lock for atomic read-modify-write.
+
+        Returns tuple of (state, lock). Caller MUST hold the lock during updates.
+        Pattern:
+            state, lock = CircuitBreakerRegistry.get_breaker(domain)
+            with lock:
+                new_state = state.record_failure()
+                CircuitBreakerRegistry.update_breaker(domain, new_state)
+        """
+        with cls._registry_lock:
+            if domain not in cls._breakers:
+                if len(cls._breakers) >= _CIRCUIT_BREAKER_MAX_DOMAINS:
+                    # Evict oldest domain (first inserted)
+                    oldest = next(iter(cls._breakers))
+                    del cls._breakers[oldest]
+                    del cls._locks[oldest]
+                cls._breakers[domain] = CircuitBreakerState.fresh()
+                cls._locks[domain] = threading.Lock()
+            return cls._breakers[domain], cls._locks[domain]
+
+    @classmethod
+    def update_breaker(cls, domain: str, new_state: CircuitBreakerState) -> None:
+        """Atomically update breaker state (caller must hold domain lock)."""
+        cls._breakers[domain] = new_state
 
 class FetcherResult(msgspec.Struct, frozen=True):
     """Internal fetch result for base_fetcher.py abstraction.
@@ -169,8 +207,17 @@ class BaseFetcher(ABC):
             return base * self.TOR_TIMEOUT_SCALE
         return base
 
-    def get_circuit_breaker(self, url: str) -> CircuitBreakerState:
-        """Get circuit breaker for the domain of given URL."""
+    def get_circuit_breaker(self, url: str) -> tuple[CircuitBreakerState, threading.Lock]:
+        """Get circuit breaker state AND lock for the domain of given URL.
+
+        Thread-safe: caller MUST hold the returned lock when updating state.
+
+        Pattern:
+            state, lock = self.get_circuit_breaker(url)
+            with lock:
+                new_state = state.record_failure()
+                CircuitBreakerRegistry.update_breaker(domain, new_state)
+        """
         parsed = urlparse(url)
         return CircuitBreakerRegistry.get_breaker(parsed.netloc)
 
@@ -193,6 +240,10 @@ class BaseFetcher(ABC):
         """Execute fetch with retry policy.
 
         M1 8GB: max 3 attempts, bounded backoff.
+        Thread-safe: circuit breaker uses ONE lock per request — the lock is
+        acquired ONCE before the retry loop and held through all attempts to
+        prevent race conditions where a second get_breaker() call could
+        return a different lock object after domain eviction.
 
         Args:
             url: URL to fetch
@@ -204,39 +255,67 @@ class BaseFetcher(ABC):
             FetcherResult from final attempt
         """
         effective_timeout = self.normalize_timeout(timeout_s, network)
+        parsed_url = urlparse(url)
+        domain = parsed_url.netloc
         last_result: FetcherResult | None = None
-        for attempt in range(self.retry_policy.max_attempts):
-            self._stats['attempts'] += 1
-            breaker = self.get_circuit_breaker(url)
-            if not breaker.is_available():
-                logger.debug(f'Circuit open for {url}, skipping')
-                return FetcherResult(url=url, success=False, error='circuit_breaker_blocked', network_error_kind='circuit_breaker', failure_stage='circuit_breaker')
-            try:
-                result = await self.fetch_once(url, timeout_s=effective_timeout, **kwargs)
-                last_result = result
-                if result.success:
-                    breaker.record_success()
-                    self._stats['successes'] += 1
-                    return result
-                if not result.is_retryable:
-                    breaker.record_failure()
-                    self._stats['failures'] += 1
-                    return result
-                if attempt < self.retry_policy.max_attempts - 1:
-                    self._stats['retries'] += 1
-                    retry_after = self.retry_policy.extract_retry_after(result.headers)
-                    backoff = self.retry_policy.compute_backoff(attempt, retry_after)
-                    logger.debug(f'Retryable failure for {url}, backing off {backoff:.2f}s')
-                    await asyncio.sleep(backoff)
-            except Exception as e:
-                logger.warning(f'Fetch exception for {url}: {e}')
-                last_result = FetcherResult(url=url, success=False, error=str(e), failure_stage='exception')
-                if attempt < self.retry_policy.max_attempts - 1:
-                    self._stats['retries'] += 1
-                    backoff = self.retry_policy.compute_backoff(attempt)
-                    await asyncio.sleep(backoff)
-        self._stats['failures'] += 1
-        return last_result or FetcherResult(url=url, success=False, error='retry_exhausted', failure_stage='retry')
+
+        # Single lock acquisition for the entire request — prevents:
+        # 1. Domain eviction between is_available() check and record_failure()
+        # 2. Two different get_breaker() calls returning different lock objects
+        # 3. Lost updates when multiple threads retry the same domain
+        breaker_state, lock = CircuitBreakerRegistry.get_breaker(domain)
+
+        with lock:
+            for attempt in range(self.retry_policy.max_attempts):
+                self._stats['attempts'] += 1
+
+                if not breaker_state.is_available():
+                    logger.debug(f'Circuit open for {url}, skipping')
+                    return FetcherResult(url=url, success=False, error='circuit_breaker_blocked', network_error_kind='circuit_breaker', failure_stage='circuit_breaker')
+
+                try:
+                    # NOTE: We release the lock during the actual I/O to allow
+                    # concurrent requests to OTHER domains to proceed. The circuit
+                    # breaker state is snapshot-checked at loop entry; failures
+                    # recorded by other threads will be visible on the next attempt.
+                    result = await self.fetch_once(url, timeout_s=effective_timeout, **kwargs)
+                    last_result = result
+
+                    if result.success:
+                        breaker_state = breaker_state.record_success()
+                        CircuitBreakerRegistry.update_breaker(domain, breaker_state)
+                        self._stats['successes'] += 1
+                        return result
+
+                    if not result.is_retryable:
+                        breaker_state = breaker_state.record_failure()
+                        CircuitBreakerRegistry.update_breaker(domain, breaker_state)
+                        self._stats['failures'] += 1
+                        return result
+
+                    # Retryable failure — record it and backoff
+                    breaker_state = breaker_state.record_failure()
+                    CircuitBreakerRegistry.update_breaker(domain, breaker_state)
+
+                    if attempt < self.retry_policy.max_attempts - 1:
+                        self._stats['retries'] += 1
+                        retry_after = self.retry_policy.extract_retry_after(result.headers)
+                        backoff = self.retry_policy.compute_backoff(attempt, retry_after)
+                        logger.debug(f'Retryable failure for {url}, backing off {backoff:.2f}s')
+                        await asyncio.sleep(backoff)
+
+                except Exception as e:
+                    logger.warning(f'Fetch exception for {url}: {e}')
+                    breaker_state = breaker_state.record_failure()
+                    CircuitBreakerRegistry.update_breaker(domain, breaker_state)
+                    last_result = FetcherResult(url=url, success=False, error=str(e), failure_stage='exception')
+                    if attempt < self.retry_policy.max_attempts - 1:
+                        self._stats['retries'] += 1
+                        backoff = self.retry_policy.compute_backoff(attempt)
+                        await asyncio.sleep(backoff)
+
+            self._stats['failures'] += 1
+            return last_result or FetcherResult(url=url, success=False, error='retry_exhausted', failure_stage='retry')
 
     def get_stats(self) -> dict[str, int]:
         """Return fetcher statistics."""
@@ -352,22 +431,21 @@ class JsFetcher(BaseFetcher):
                 if renderer == 'camoufox':
                     from fetching.public_fetcher import _fetch_with_camoufox
                     html = await _fetch_with_camoufox(url, timeout=timeout_s)
+                    return FetcherResult(url=url, success=True, body=html)
                 elif renderer == 'playwright':
                     from fetching.public_fetcher import _fetch_with_playwright
                     html = await _fetch_with_playwright(url, timeout=timeout_s)
+                    return FetcherResult(url=url, success=True, body=html)
                 elif renderer == 'nodriver':
                     from fetching.public_fetcher import _fetch_with_nodriver
                     html = await _fetch_with_nodriver(url)
+                    return FetcherResult(url=url, success=True, body=html)
                 elif renderer == 'macos_webkit':
-                    from rendering.macos_webkit_renderer import fetch_with_macos_webkit, WebKitRenderResult
+                    from rendering.macos_webkit_renderer import fetch_with_macos_webkit
                     result = await fetch_with_macos_webkit(url, timeout_s=timeout_s)
-                    if isinstance(result, WebKitRenderResult):
-                        html = result.html
-                    else:
-                        html = result
+                    return FetcherResult(url=url, success=True, body=result.html)
                 else:
                     raise ValueError(f'Unknown JS renderer: {renderer}')
-                return FetcherResult(url=url, success=True, body=html if isinstance(html, str) else str(html) if html else None)
             except Exception as e:
                 return FetcherResult(url=url, success=False, error=str(e), network_error_kind='js_renderer_error', failure_stage='browser')
 

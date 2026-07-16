@@ -16,6 +16,7 @@ import hashlib
 import logging
 import threading
 from pathlib import Path
+from typing import Any
 import numpy as np
 from hledac.universal.utils.cache import PyCacheDict
 logger = logging.getLogger(__name__)
@@ -206,14 +207,42 @@ class UnifiedEmbeddingManager:
                 mid = (n + 1) // 2
                 chunk_a = texts[:mid]
                 chunk_b = texts[mid:]
-                results_a, results_b = await asyncio.gather(asyncio.to_thread(encode_chunk, chunk_a), asyncio.to_thread(encode_chunk, chunk_b))
-                return list(results_a) + list(results_b)
+                gathered = await asyncio.gather(
+                    asyncio.to_thread(encode_chunk, chunk_a),
+                    asyncio.to_thread(encode_chunk, chunk_b),
+                    return_exceptions=True,
+                )
+                # I6/I7: CancelledError / BaseException re-raised, regular exceptions
+                # fall through to the outer except Exception handler (fail-fast semantics)
+                errors: list[BaseException] = []
+                ok_results: list[Any] = []
+                for item in gathered:
+                    if isinstance(item, BaseException):
+                        errors.append(item)
+                    else:
+                        ok_results.append(item)
+                if errors:
+                    # Re-raise first BaseException (fail-fast)
+                    raise errors[0]
+                return list(ok_results[0]) + list(ok_results[1])
             else:
                 chunk_size = (n + 3) // 4
                 chunks = [texts[i:i + chunk_size] for i in range(0, n, chunk_size)]
-                chunk_results = await asyncio.gather(*[asyncio.to_thread(encode_chunk, chunk) for chunk in chunks])
+                gathered = await asyncio.gather(
+                    *[asyncio.to_thread(encode_chunk, chunk) for chunk in chunks],
+                    return_exceptions=True,
+                )
+                errors: list[BaseException] = []
+                ok_results: list[Any] = []
+                for item in gathered:
+                    if isinstance(item, BaseException):
+                        errors.append(item)
+                    else:
+                        ok_results.append(item)
+                if errors:
+                    raise errors[0]
                 embeddings: list[list[float]] = []
-                for result in chunk_results:
+                for result in ok_results:
                     embeddings.extend(result)
                 return embeddings
         except Exception as e:

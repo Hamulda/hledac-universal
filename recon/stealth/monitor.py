@@ -19,7 +19,7 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, UTC
-from typing import Any
+from typing import Any, cast
 
 from ._models import (
     Alert,
@@ -36,7 +36,7 @@ from ._models import (
     _crawler_domain_allowed,
 )
 
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.async_helpers import parallel, safe_create_task
 
 logger = logging.getLogger(__name__)
 
@@ -239,11 +239,12 @@ class StreamingMonitor:
                     )
                 ]
                 if sources_to_check:
-                    tasks = [
-                        self._check_source_with_semaphore(source)
-                        for source in sources_to_check
-                    ]
-                    await asyncio.gather(*tasks, return_exceptions=True)
+                    await parallel(
+                        cast("list[Any]", [self._check_source_with_semaphore(source) for source in sources_to_check]),
+                        policy="log",
+                        ctx="streaming_monitor:check_sources",
+                        logger_instance=logger,
+                    )
                 self._check_count += 1
                 if self._check_count >= self.MEMORY_CLEANUP_INTERVAL:
                     await self._cleanup_memory()

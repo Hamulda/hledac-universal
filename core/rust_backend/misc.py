@@ -387,8 +387,12 @@ class _RustAhoDomain:
     def __init__(self, ext: hledac_rust_extensions) -> None:
         self._ext = ext
 
-    def AhoCorasickMatcher(self, patterns: list[str]) -> Any:
-        return self._ext.AhoCorasickMatcher(patterns)
+    def AhoCorasickMatcher(self, patterns: list[str], labels: list[str] | None = None) -> Any:
+        # Issue #14: labels parameter for inline label return (zero-copy hot path).
+        # labels=None is backward-compat shim — avoids breaking callers that don't pass it.
+        if labels is None:
+            return self._ext.AhoCorasickMatcher(patterns)
+        return self._ext.AhoCorasickMatcher(patterns, labels)
 
     def aho_search(self, matcher: Any, text: str) -> list[tuple[int, int, str]]:
         # Rust AhoCorasickMatcher.scan() returns same format as Python aho_search()
