@@ -1,9 +1,14 @@
 {
-  "curationsSinceDream": 0,
+  "curationsSinceDream": 1,
   "lastDreamAt": "2026-07-16T11:34:27.486Z",
   "lastDreamLogId": "drm-1784201356655",
   "pendingMerges": [],
-  "staleSummaryPaths": [],
+  "staleSummaryPaths": [
+    {
+      "enqueuedAt": 1784220109380,
+      "path": "data/duckdb_store/issue_032_write_serialization_fix.md"
+    }
+  ],
   "totalDreams": 4,
   "version": 1
 }

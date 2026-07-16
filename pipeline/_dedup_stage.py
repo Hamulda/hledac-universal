@@ -87,7 +87,8 @@ class DedupStage:
                 try:
                     if input_queue is None:
                         break
-                    url = await asyncio.wait_for(input_queue.get(), timeout=5.0)
+                    async with asyncio.timeout(5.0):
+                        url = await input_queue.get()
                 except asyncio.TimeoutError:
                     if input_queue is not None and input_queue.is_empty():
                         break

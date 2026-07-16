@@ -129,8 +129,9 @@ class PipelinedIngestor:
                 finally:
                     q_ref.task_done()
             await q.put(None)
-            loop = asyncio.get_running_loop()
-            task = loop.create_task(_storage_task(chunk_findings, list(range(chunk_start, chunk_end)), q))
+            # F350M-R ISSUE #31: safe_create_task with eager_start=True (WAL Arrow storage is hot path)
+            from utils.async_helpers import safe_create_task
+            task = safe_create_task(_storage_task(chunk_findings, list(range(chunk_start, chunk_end)), q), eager_start=True)
             pending_tasks.append((list(range(chunk_start, chunk_end)), task))
         for _indices, task in pending_tasks:
             try:

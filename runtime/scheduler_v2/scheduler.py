@@ -1109,7 +1109,8 @@ class SprintSchedulerV2:
             try:
                 from runtime.duckdb_store import DuckDBShadowStore
                 if isinstance(duckdb_store, DuckDBShadowStore):
-                    await asyncio.wait_for(duckdb_store.aclose(), timeout=timeout_s)
+                    async with asyncio.timeout(timeout_s):
+                        await duckdb_store.aclose()
             except Exception as e:
                 _sys.stdout.write(f"[aclean] duckdb_store close error: {e}\n")
                 _sys.stdout.flush()
@@ -1118,7 +1119,8 @@ class SprintSchedulerV2:
         evidence_log = getattr(self, '_evidence_log', None)
         if evidence_log is not None:
             try:
-                await asyncio.wait_for(evidence_log.aclose(), timeout=timeout_s)
+                async with asyncio.timeout(timeout_s):
+                    await evidence_log.aclose()
             except Exception as e:
                 _sys.stdout.write(f"[aclean] evidence_log close error: {e}\n")
                 _sys.stdout.flush()

@@ -316,7 +316,8 @@ def _dispatch_sprint(args: argparse.Namespace) -> int:
 
     try:
         if dry_run:
-            asyncio.run(dry_run_sprint(query=target, duration_s=duration))
+            with asyncio.Runner() as runner:
+                runner.run(dry_run_sprint(query=target, duration_s=duration))
         else:
             root_flags = SprintFlags(force=force)
             # F350M-R ISSUE #4: Pass shutdown_event so run_sprint can do cooperative
@@ -337,7 +338,8 @@ def _dispatch_sprint(args: argparse.Namespace) -> int:
                     shutdown_event=shutdown_event,
                 )
 
-            asyncio.run(_run_with_shutdown())
+            with asyncio.Runner() as runner:
+                runner.run(_run_with_shutdown())
         return 0
     except (NameError, AttributeError, ImportError):
         raise  # propagate to main() for code=3
@@ -361,7 +363,8 @@ def _dispatch_pivot(args: argparse.Namespace) -> int:
 
     logger.info("[CLI] pivot: delegating to core.__main__.run_semantic_pivot()")
     try:
-        asyncio.run(run_semantic_pivot(query=target, top_k=k))
+        with asyncio.Runner() as runner:
+            runner.run(run_semantic_pivot(query=target, top_k=k))
         return 0
     except Exception as e:
         logger.error("[CLI] pivot failed: %s", e, exc_info=True)
@@ -380,7 +383,8 @@ def _dispatch_ct(args: argparse.Namespace) -> int:
 
     logger.info("[CLI] ct: delegating to core.__main__.run_ct_pivot()")
     try:
-        asyncio.run(run_ct_pivot(domain=target))
+        with asyncio.Runner() as runner:
+            runner.run(run_ct_pivot(domain=target))
         return 0
     except Exception as e:
         logger.error("[CLI] ct failed: %s", e, exc_info=True)

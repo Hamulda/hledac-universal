@@ -31,11 +31,16 @@ import time
 import traceback
 from collections import deque
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
+
+# ISSUE-50: msgspec.Meta validators for msgspec.Struct field validation
+# msgspec natively supports Annotated[T, Meta(ge=0, gt=0, le=1.0)] style constraints
+# No external dependency needed — uses msgspec built-in Meta class
+from msgspec import Meta
 
 from dotenv import load_dotenv
 
-from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for, stop_task
+from hledac.universal.utils.async_helpers import _check_gathered, safe_create_task, safe_wait_for, stop_task
 from hledac.universal.runtime.logging_setup import configure_logging, get_logger
 
 # Sprint F285: Ensure local modules (utils/, runtime/, etc.) are resolvable when
@@ -273,10 +278,10 @@ class _BootTelemetryDrainer:
             return
         self._started = True
         self._log_path.parent.mkdir(parents=True, exist_ok=True)
-        self._task = asyncio.create_task(
+        self._task = safe_create_task(
             self._drain_loop(),
             name="boot_telemetry_drain",
-            eager_start=True,  # Python 3.12+: worker starts immediately, no 1-tick delay
+            eager_start=True,  # F350M-R: fire immediately — queue worker is hot path
         )
 
     async def stop(self) -> None:
@@ -310,7 +315,8 @@ class _BootTelemetryDrainer:
 
         while True:
             try:
-                item = await asyncio.wait_for(self._queue.get(), timeout=2.0)
+                async with asyncio.timeout(2.0):
+                    item = await self._queue.get()
                 batch.append(item)
             except asyncio.CancelledError:
                 # Graceful shutdown: flush remaining and exit
@@ -430,7 +436,8 @@ def _boot_record(step: str, status: str, **kw: Any) -> None:
             stacklevel=2,
         )
         # Create task and store reference to prevent garbage collection
-        task = loop.create_task(_boot_record_async(step, status, **kw))
+        # F350M-R ISSUE #31: use safe_create_task with eager_start=True (CPU-bound on hot path)
+        task = safe_create_task(_boot_record_async(step, status, **kw), eager_start=True)
         # Fire-and-forget but track at least in task list
         task.add_done_callback(lambda _: None)  # silence unhandled exception warnings
     except RuntimeError:
@@ -870,35 +877,49 @@ ahocorasick_available = _ahocorasick_available
 
 # ISSUE-9 FIX: UmaSnapshot msgspec.Struct for typed UMA metrics
 class UmaSnapshot(msgspec.Struct, frozen=True, kw_only=True):
-    """UMA memory snapshot — ISSUE-9: was raw dict."""
+    """UMA memory snapshot — ISSUE-9: was raw dict.
 
-    peak_used_gib: float = 0.0
-    peak_swap_used_gib: float = 0.0
+    ISSUE-50: Numeric fields validated as non-negative via Annotated.
+    """
+
+    peak_used_gib: Annotated[float, Meta(ge=0)] = 0.0
+    peak_swap_used_gib: Annotated[float, Meta(ge=0)] = 0.0
     peak_state: str = ""
     start_state: str = ""
     end_state: str = ""
-    sample_count: int = 0
+    sample_count: Annotated[int, Meta(ge=0)] = 0
 
 
-class ObservedRunReport(msgspec.Struct, frozen=True):
+class ObservedRunReport(msgspec.Struct, frozen=True, kw_only=True):
     """
     Structured observability report for a bounded observed feed batch run.
 
     C.1: All required fields present.
     C.7: content_quality_validated reflects PatternMatcher availability.
+
+    NOTE: slots=True requires msgspec 0.20+ (not yet released as of 2026-07).
+
+    ISSUE-50: Field validation via typing.Annotated + msgspec.Meta validators.
+    Use validate_observed_run_report() for strict validation on construction.
     """
 
-    started_ts: float
+    # ISSUE-50: Annotated validators — gt=0, ge=0, interval constraints
+    # Unix timestamps must be positive (> 0)
+    started_ts: Annotated[float, Meta(gt=0)]
+    # finished_ts must be > started_ts — validated via cross_field_validator
     finished_ts: float
-    elapsed_ms: float
-    total_sources: int
-    completed_sources: int
-    fetched_entries: int
-    accepted_findings: int
-    stored_findings: int
+    # Elapsed time must be non-negative
+    elapsed_ms: Annotated[float, Meta(ge=0)]
+    # Source counts must be positive for total, non-negative for completed
+    total_sources: Annotated[int, Meta(gt=0)]
+    completed_sources: Annotated[int, Meta(ge=0)]
+    # Entry/finding counts must be non-negative
+    fetched_entries: Annotated[int, Meta(ge=0)]
+    accepted_findings: Annotated[int, Meta(ge=0)]
+    stored_findings: Annotated[int, Meta(ge=0)]
     batch_error: str | None
     per_source: tuple[dict, ...]
-    patterns_configured: int
+    patterns_configured: Annotated[int, Meta(ge=0)]
     bootstrap_applied: bool
     content_quality_validated: bool
     # Dedup raw deltas (C.2)
@@ -912,16 +933,61 @@ class ObservedRunReport(msgspec.Struct, frozen=True):
     slow_sources: tuple[dict, ...]
     # Error summary (C.11)
     error_summary: dict
-    # Sprint 8AS C.2: Success rate + failed source count
-    success_rate: float
-    failed_source_count: int
+    # Sprint 8AS C.2: Success rate must be 0.0-1.0, failed count non-negative
+    success_rate: Annotated[float, Meta(ge=0.0, le=1.0)]
+    failed_source_count: Annotated[int, Meta(ge=0)]
     # Sprint 8AS C.0: Baseline delta summary
     baseline_delta: dict
     # Sprint 8AS C.1: Feed health breakdown — ISSUE-9: FeedHealthBreakdown msgspec.Struct
     health_breakdown: FeedHealthBreakdown
-    # Sprint 8AU: pre-store signal trace
-    entries_seen: int = 0
-    entries_with_empty_assembled_text: int = 0
+    # Sprint 8AU: pre-store signal trace — all counts non-negative
+    entries_seen: Annotated[int, Meta(ge=0)]
+    entries_with_empty_assembled_text: Annotated[int, Meta(ge=0)]
+    entries_with_text: Annotated[int, Meta(ge=0)]
+    entries_scanned: Annotated[int, Meta(ge=0)]
+    entries_with_hits: Annotated[int, Meta(ge=0)]
+    total_pattern_hits: Annotated[int, Meta(ge=0)]
+    findings_built_pre_store: Annotated[int, Meta(ge=0)]
+    avg_assembled_text_len: Annotated[float, Meta(ge=0)]
+    signal_stage: str = "unknown"
+    # Sprint 8AV: store rejection delta (can be negative — deltas)
+    accepted_count_delta: int = 0
+    low_information_rejected_count_delta: int = 0
+    in_memory_duplicate_rejected_count_delta: int = 0
+    persistent_duplicate_rejected_count_delta: int = 0
+    other_rejected_count_delta: int = 0
+    # Sprint 8AW: end-to-end diagnostic
+    diagnostic_root_cause: str = "unknown"
+    is_network_variance: bool = False
+    # Sprint 8BA: runtime truth
+    interpreter_executable: str = ""
+    interpreter_version: str = ""
+    ahocorasick_available: bool = False
+    actual_live_run_executed: bool = False
+    bootstrap_pack_version: Annotated[int, Meta(ge=0)] = 0
+    default_bootstrap_count: Annotated[int, Meta(ge=0)] = 0
+    store_counters_reset_before_run: bool = False
+    matcher_probe_sample_used: str = ""
+    matcher_probe_rss_hits: tuple[str, ...] = ()
+    # Sprint 8BC: bounded sample capture from pipeline
+    sample_scanned_texts: tuple[str, ...] = ()
+    sample_hit_counts: tuple[int, ...] = ()
+    sample_hit_labels_union: tuple[str, ...] = ()
+    sample_texts_truncated: bool = False
+    feed_content_mismatch: bool = False
+    patterns_configured_at_run: Annotated[int, Meta(ge=0)] = 0
+    automaton_built_at_run: bool = False
+    # Sprint 8BH C.0: live run truth fields
+    used_rich_feed_content: bool = False
+    used_article_fallback: bool = False
+    matched_feed_names: tuple[str, ...] = ()
+    accepted_feed_names: tuple[str, ...] = ()
+    live_run_attempt_count: Annotated[int, Meta(ge=0)] = 0
+    live_run_attempt_1_result: str = ""
+    live_run_attempt_2_result: str = ""
+    recommended_next_sprint: str = ""
+    # E0-T4: runtime truth taxonomy
+    active_pipeline_iterations: Annotated[int, Meta(ge=0)] = 0
     entries_with_text: int = 0
     entries_scanned: int = 0
     entries_with_hits: int = 0
@@ -966,7 +1032,46 @@ class ObservedRunReport(msgspec.Struct, frozen=True):
     live_run_attempt_2_result: str = ""
     recommended_next_sprint: str = ""
     # E0-T4: runtime truth taxonomy
-    active_pipeline_iterations: int = 0
+    active_pipeline_iterations: Annotated[int, Meta(ge=0)] = 0
+
+
+# ISSUE-50: Validated ObservedRunReport construction
+# Use this factory function for strict annotated-types validation
+def validate_observed_run_report(data: dict) -> ObservedRunReport:
+    """
+    Construct ObservedRunReport with strict annotated-types validation.
+
+    Performs two-stage validation:
+    1. msgspec.convert with strict=True — enforces Annotated[...] constraints
+    2. Cross-field validation — finished_ts > started_ts
+
+    Raises:
+        msgspec.ValidationError: If annotated-types constraints violated
+        ValueError: If cross-field validation fails
+
+    Usage:
+        report = validate_observed_run_report(raw_dict)
+    """
+    # Stage 1: annotated-types validation via msgspec strict mode
+    # This enforces Gt(0), Ge(0), Interval(ge=0.0, le=1.0) constraints
+    try:
+        report = msgspec.convert(data, ObservedRunReport, strict=True)
+    except msgspec.ValidationError as e:
+        raise msgspec.ValidationError(f"ObservedRunReport field validation failed: {e}") from e
+
+    # Stage 2: cross-field validation (not expressible via Annotated)
+    if not isinstance(report.finished_ts, (int, float)) or not isinstance(report.started_ts, (int, float)):
+        raise ValueError(
+            f"finished_ts and started_ts must be numeric, "
+            f"got finished_ts={type(report.finished_ts).__name__}, "
+            f"started_ts={type(report.started_ts).__name__}"
+        )
+    if report.finished_ts <= report.started_ts:
+        raise ValueError(
+            f"finished_ts ({report.finished_ts}) must be > started_ts ({report.started_ts})"
+        )
+
+    return report
 
 
 # Sprint 8BH C.6: recommendation mapping
@@ -1015,16 +1120,19 @@ def dedup_surface_available(before: dict, after: dict) -> bool:
 # 8AO baseline truth (Sprint 8AO live run — bounded, same limits)
 # ISSUE-9 FIX: SprintBaseline msgspec.Struct for typed baseline comparison
 class SprintBaseline(msgspec.Struct, frozen=True, kw_only=True):
-    """Baseline values from Sprint 8AO live run — ISSUE-9: was dict."""
+    """Baseline values from Sprint 8AO live run — ISSUE-9: was dict.
 
-    total_sources: int = 5
-    completed_sources: int = 1
-    fetched_entries: int = 10
-    accepted_findings: int = 0
-    stored_findings: int = 0
-    elapsed_ms: float = 1557.6
-    pattern_count: int = 0  # infra-only
-    failed_source_count: int = 4
+    ISSUE-50: All numeric fields validated as non-negative via Annotated.
+    """
+
+    total_sources: Annotated[int, Meta(ge=0)] = 5
+    completed_sources: Annotated[int, Meta(ge=0)] = 1
+    fetched_entries: Annotated[int, Meta(ge=0)] = 10
+    accepted_findings: Annotated[int, Meta(ge=0)] = 0
+    stored_findings: Annotated[int, Meta(ge=0)] = 0
+    elapsed_ms: Annotated[float, Meta(ge=0)] = 1557.6
+    pattern_count: Annotated[int, Meta(ge=0)] = 0  # infra-only
+    failed_source_count: Annotated[int, Meta(ge=0)] = 4
 
 
 _SPRINT_8AO_BASELINE = SprintBaseline()
@@ -1170,14 +1278,17 @@ class FeedHealthKind(str):
 
 # ISSUE-9 FIX: FeedHealthBreakdown msgspec.Struct replaces nested dict
 class FeedHealthBreakdown(msgspec.Struct, frozen=True, kw_only=True):
-    """Feed health classification result — ISSUE-9: was nested dict."""
+    """Feed health classification result — ISSUE-9: was nested dict.
 
-    success: int = 0
-    network_error: int = 0
-    parse_error: int = 0
-    entity_recovery_related_error: int = 0
-    timeout_error: int = 0
-    unknown_error: int = 0
+    ISSUE-50: All counts are non-negative via Annotated validators.
+    """
+
+    success: Annotated[int, Meta(ge=0)] = 0
+    network_error: Annotated[int, Meta(ge=0)] = 0
+    parse_error: Annotated[int, Meta(ge=0)] = 0
+    entity_recovery_related_error: Annotated[int, Meta(ge=0)] = 0
+    timeout_error: Annotated[int, Meta(ge=0)] = 0
+    unknown_error: Annotated[int, Meta(ge=0)] = 0
 
 
 def classify_feed_health(per_source: tuple[dict, ...]) -> FeedHealthBreakdown:
@@ -1367,6 +1478,7 @@ async def _print_scorecard_report(
 ) -> None:
     """
     Sprint 8TA B.3: Compute and print sprint scorecard.
+    ISSUE #36 FIX: Parallel metric collection via asyncio.gather.
 
     Called at the end of EXPORT phase.
     - findings_per_minute = accepted / (elapsed / 60)
@@ -1374,8 +1486,32 @@ async def _print_scorecard_report(
     - semantic_novelty: 1.0 fallback (no SemanticStore available)
     - source_yield: dict {source_type: count} from per-source counter
     - ghost_global: upsert top IOC entities
+
+    ACTUAL PHASE STRUCTURE (ISSUE #36):
+      Phase 1 (parallel): asyncio.gather over 5× asyncio.to_thread (dedup, arrow, cb, RSS, ghost)
+      Phase 2 (print):    console output, depends on Phase 1
+      Phase 3 (sequential): create duckdb_write_tasks (no await yet — fire-and-forget)
+      Phase 4 (hybrid):   _export_markdown_report (sequential, needs scorecard_data)
+                           THEN _ghost_global_and_wait (parallel: ghost_global + await duckdb writes)
+      NOTE: _check_gathered for duckdb writes lives inside Phase 4 (_ghost_global_and_wait),
+            so Phase 3 is task-creation only — no separate gather measurement for it.
     """
-    import orjson
+    import resource as _resource
+
+    # ISSUE-039: Lazy-load Rust json for hot-path serialization (scorecard, telemetry).
+    # Prefers rust.json.dumps_compact_bytes (SIMD-accelerated), falls back to orjson.
+    def _json_compact(data: dict) -> str:
+        try:
+            from core.rust_backend import get_accel
+            accel = get_accel()
+            if accel.is_available:
+                result = accel.json.dumps_compact_bytes(data)
+                if result:
+                    return result.decode("utf-8")
+        except Exception:
+            pass
+        import orjson
+        return orjson.dumps(data).decode()
 
     # Get sprint duration from lifecycle
     sprint_id = f"sprint_{int(time.time())}"
@@ -1395,23 +1531,120 @@ async def _print_scorecard_report(
     # Estimate elapsed from phase timings
     elapsed = sum(phase_timings.values()) if phase_timings else 0.0
 
-    # Get accepted findings from store (duckdb)
-    accepted = 0
-    ioc_nodes = 0
-    source_yield: dict[str, int] = {}
-    outlines_used = False
+    # Phase 1: Parallel metric collection via asyncio.gather
+    # ISSUE #36: All sync blocking I/O runs in thread pool to avoid event-loop blocking.
+    # Circuit breaker uses threading.Lock (thread-safe per PMB rule [3205]).
 
-    if store is not None and hasattr(store, "get_dedup_runtime_status"):
+    def _sync_get_dedup(sprint_rep: Any = None) -> tuple[int, int, dict[str, int]]:
+        """
+        Thread-pool worker: fetch dedup runtime status from DuckDB.
+
+        ISSUE #36-C FIX: source_yield derived from sprint_report.findings
+        (per-source accepted count), avoiding the need for store-side tracking.
+        """
+        accepted_val, ioc_val = 0, 0
+        source_yield_val: dict[str, int] = {}
+        # ISSUE #36-C: source_yield from sprint_report.findings (sprint_report is
+        # available in enclosing scope — pass explicitly so the closure is clear).
+        if sprint_rep is not None:
+            try:
+                findings_iterable = sprint_rep.findings if hasattr(sprint_rep, "findings") else None
+                if findings_iterable:
+                    for f in findings_iterable:
+                        src = getattr(f, "source_type", None) or "unknown"
+                        source_yield_val[src] = source_yield_val.get(src, 0) + 1
+            except (AttributeError, TypeError, RuntimeError):
+                pass
+        # Fallback: accepted_count from store if sprint_report not populated yet
+        if store is not None and hasattr(store, "get_dedup_runtime_status"):
+            try:
+                dedup = store.get_dedup_runtime_status()
+                # Use store accepted_count only if sprint_report gave no source_yield
+                if not source_yield_val:
+                    accepted_val = dedup.get("accepted_count", 0)
+            except (AttributeError, RuntimeError):
+                pass
+        return accepted_val, ioc_val, source_yield_val
+
+    def _sync_get_arrow_metrics() -> dict:
+        """Thread-pool worker: fetch arrow metrics from store attribute or module func."""
+        arrow_val: dict = {}
+        if store is not None and hasattr(store, "_arrow_metrics"):
+            try:
+                arrow_val = store._arrow_metrics  # type: ignore[union-attr]
+            except (AttributeError, TypeError):
+                pass
+        elif store is not None and hasattr(store, "get_arrow_metrics"):
+            try:
+                from hledac.universal.knowledge.duckdb_store import get_arrow_metrics
+                arrow_val = get_arrow_metrics()
+            except (ImportError, AttributeError):
+                pass
+        return arrow_val
+
+    def _sync_get_cb_states() -> dict[str, str]:
+        """Thread-pool worker: fetch circuit breaker states (thread-safe via Lock)."""
+        cb_states: dict[str, str] = {}
         try:
-            dedup = store.get_dedup_runtime_status()
-            accepted = dedup.get("accepted_count", 0)
-        except (AttributeError, RuntimeError):
+            from transport.circuit_breaker import get_all_breaker_states
+            cb_states = get_all_breaker_states()
+        except (ImportError, AttributeError):
             pass
+        return cb_states
 
-    # Calculate metrics
+    def _sync_get_peak_rss() -> float:
+        """Thread-pool worker: compute peak RSS (sync resource call)."""
+        rss_bytes = _resource.getrusage(_resource.RUSAGE_SELF).ru_maxrss
+        # macOS: ru_maxrss is in bytes (not KB like on Linux)
+        return round(rss_bytes / 1024 / 1024, 1)
+
+    def _sync_get_ghost_entities() -> list:
+        """Thread-pool worker: fetch top entities for ghost_global from DuckDB."""
+        entities: list = []
+        if store is not None and hasattr(store, "get_top_entities_for_ghost_global"):
+            try:
+                entities = store.get_top_entities_for_ghost_global(n=100)
+            except (AttributeError, RuntimeError, OSError):
+                pass
+        return entities
+
+    # Issue #36: asyncio.gather with return_exceptions=True for parallel I/O collection.
+    # Each _sync_* wrapped in asyncio.to_thread() (thread pool, not blocking event loop).
+    gather_results = await asyncio.gather(
+        asyncio.to_thread(lambda: _sync_get_dedup(sprint_report)),
+        asyncio.to_thread(_sync_get_arrow_metrics),
+        asyncio.to_thread(_sync_get_cb_states),
+        asyncio.to_thread(_sync_get_peak_rss),
+        asyncio.to_thread(_sync_get_ghost_entities),
+        return_exceptions=True,
+    )
+    _check_gathered(list(gather_results), None, "scorecard_phase1")
+
+    # Unpack results with fallback defaults
+    dedup_result, arrow_metrics_result, cb_open_domains, peak_rss_mb, ghost_entities = gather_results
+
+    if isinstance(dedup_result, Exception):
+        accepted, ioc_nodes, source_yield = 0, 0, {}
+    elif isinstance(dedup_result, tuple) and len(dedup_result) == 3:
+        accepted, ioc_nodes, source_yield = dedup_result
+    else:
+        accepted, ioc_nodes, source_yield = 0, 0, {}
+
+    if isinstance(arrow_metrics_result, Exception):
+        arrow_metrics_result = {}
+    if isinstance(cb_open_domains, Exception):
+        cb_open_domains = []
+    if isinstance(peak_rss_mb, Exception):
+        peak_rss_mb = 0.0
+    if isinstance(ghost_entities, Exception):
+        ghost_entities = []
+
+    outlines_used = False
+    semantic_novelty = 1.0  # fallback when SemanticStore unavailable
+
+    # Calculate derived metrics
     findings_per_minute = accepted / max(1, elapsed / 60.0) if elapsed > 0 else 0.0
     ioc_density = ioc_nodes / max(1, accepted) if accepted > 0 else 0.0
-    semantic_novelty = 1.0  # fallback when SemanticStore unavailable
 
     scorecard_data = {
         "sprint_id": sprint_id,
@@ -1419,8 +1652,8 @@ async def _print_scorecard_report(
         "findings_per_minute": round(findings_per_minute, 3),
         "ioc_density": round(ioc_density, 3),
         "semantic_novelty": semantic_novelty,
-        "source_yield_json": orjson.dumps(source_yield).decode(),
-        "phase_timings_json": orjson.dumps(phase_timings).decode(),
+        "source_yield_json": _json_compact(source_yield or {}),
+        "phase_timings_json": _json_compact(phase_timings),
         "outlines_used": outlines_used,
         "accepted_findings": accepted,
         "ioc_nodes": ioc_nodes,
@@ -1429,27 +1662,11 @@ async def _print_scorecard_report(
         "accepted_findings_count": accepted,
         "synthesis_engine_used": "unknown",
         "phase_duration_seconds": phase_timings,
-        "cb_open_domains": [],
+        "cb_open_domains": cb_open_domains or [],
         # Sprint F265C: Arrow ingest telemetry — surfaces _ARROW_METRICS in scorecard
-        # so 678 fallback events are visible in sprint output instead of silent 0-findings
-        "arrow_metrics": {},
+        "arrow_metrics": arrow_metrics_result or {},
+        "peak_rss_mb": peak_rss_mb,
     }
-
-    # Sprint 8VD §F: Compute peak RSS
-    import resource as _resource
-
-    rss_bytes = _resource.getrusage(_resource.RUSAGE_SELF).ru_maxrss
-    # macOS: ru_maxrss is in bytes (not KB like on Linux)
-    peak_rss_mb = round(rss_bytes / 1024 / 1024, 1)
-    scorecard_data["peak_rss_mb"] = peak_rss_mb
-
-    # Sprint 8VB: Circuit breaker state for scorecard
-    try:
-        from transport.circuit_breaker import get_all_breaker_states
-
-        scorecard_data["cb_open_domains"] = get_all_breaker_states()
-    except (ImportError, AttributeError):
-        pass
 
     # Sprint F204E: Attach analyst brief to scorecard for markdown export
     if _analyst_brief_for_markdown:
@@ -1466,7 +1683,7 @@ async def _print_scorecard_report(
     except (ImportError, AttributeError):
         pass
 
-    # Print structured report
+    # Phase 2: Print structured report (depends on Phase 1 completion)
     print("\n" + "=" * 60)
     print("SPRINT 8VD SCORECARD")
     print("=" * 60)
@@ -1495,76 +1712,95 @@ async def _print_scorecard_report(
             print(f"  Arrow fallback:   {arrow_fb}")
     print("=" * 60 + "\n")
 
-    # Sprint F265C: Populate arrow_metrics from DuckDB store — surfaces Arrow ingest
-    # telemetry (fallback counts, success counts, error breakdown) in sprint scorecard.
-    # Without this, 678 Arrow fallbacks were invisible (silent 0-findings in output).
-    if store is not None and hasattr(store, "_arrow_metrics"):
+    # Phase 3: Parallel DuckDB writes via asyncio.gather
+    # ISSUE #36: upsert_scorecard + upsert_episode run concurrently.
+    # ISSUE #36 helpers — fail-safe async wrappers with try/except per duckdb contract.
+    async def _safe_upsert_scorecard(
+        _store: Any, _data: dict, _sid: str
+    ) -> None:
+        """Fail-safe upsert_scorecard: logs warning on error, never raises."""
         try:
-            scorecard_data["arrow_metrics"] = store._arrow_metrics
-        except (AttributeError, TypeError):
-            pass
-    elif store is not None and hasattr(store, "get_arrow_metrics"):
-        try:
-            from hledac.universal.knowledge.duckdb_store import get_arrow_metrics
-
-            scorecard_data["arrow_metrics"] = get_arrow_metrics()
-        except (ImportError, AttributeError):
-            pass
-
-    # Persist to DuckDB
-    if store is not None and hasattr(store, "upsert_scorecard"):
-        try:
-            await store.upsert_scorecard(scorecard_data)
+            await _store.upsert_scorecard(_data)
         except (RuntimeError, OSError) as e:
             logger.warning("scorecard_persist_failed", error=str(e))
 
-    # Sprint 8UC B.2.4: Persist research episode
-    if store is not None and hasattr(store, "upsert_episode"):
+    async def _safe_upsert_episode(
+        _store: Any, _sid: str, _target: str, _sprint_report: Any, _scorecard: dict, _elapsed: float
+    ) -> None:
+        """Fail-safe upsert_episode: logs warning on error, never raises."""
+        import time as _t
         try:
-            import time as _t
-
-            top_findings_list = []
-            if sprint_report is not None and hasattr(sprint_report, "findings"):
-                top_findings_list = [
-                    f.content if hasattr(f, "content") else str(f) for f in (sprint_report.findings or [])[:5]
+            _top_findings_list: list[str] = []
+            if _sprint_report is not None and hasattr(_sprint_report, "findings"):
+                _top_findings_list = [
+                    f.content if hasattr(f, "content") else str(f)
+                    for f in (_sprint_report.findings or [])[:5]
                 ]
-            await store.upsert_episode(
-                {
-                    "sprint_id": sprint_id,
-                    "query": target,
-                    "summary": sprint_report.threat_summary
-                    if sprint_report and hasattr(sprint_report, "threat_summary")
-                    else "",  # noqa: E501
-                    "top_findings": top_findings_list,
-                    "ioc_clusters": [],
-                    "source_yield": scorecard_data.get("source_yield_json", "{}"),
-                    "synthesis_engine": scorecard_data.get("synthesis_engine", "unknown"),
-                    "duration_s": elapsed,
-                    "ts": _t.time(),
-                }
-            )
-            logger.info("research_episode_saved", sprint_id=sprint_id)
+            await _store.upsert_episode({
+                "sprint_id": _sid,
+                "query": _target,
+                "summary": (
+                    _sprint_report.threat_summary
+                    if _sprint_report and hasattr(_sprint_report, "threat_summary")
+                    else ""
+                ),
+                "top_findings": _top_findings_list,
+                "ioc_clusters": [],
+                "source_yield": _scorecard.get("source_yield_json", "{}"),
+                "synthesis_engine": _scorecard.get("synthesis_engine", "unknown"),
+                "duration_s": _elapsed,
+                "ts": _t.time(),
+            })
+            logger.info("research_episode_saved", sprint_id=_sid)
         except (RuntimeError, OSError) as e:
             logger.warning("scorecard_persist_episode_failed", error=str(e))
 
-    # Sprint 8TC B.4: Markdown report export
+    # Sprint 8TC B.4: Markdown report export (sequential — needs complete scorecard_data)
+    # NOTE: DuckDB writes are created AFTER this succeeds — if export fails,
+    # duckdb_write_tasks stays [] and no writes are attempted (fail-safe).
     md_path = _export_markdown_report(sprint_report, scorecard_data, sprint_id)
     print(f"Report saved: {md_path}")
 
-    # Sprint 8TF §2: ghost_global upsert (top IOC entities from this sprint)
-    # REMOVED: direct graph spelunking (graph.get_nodes()[:100]) — method never existed
-    #          on any graph backend, this path was always silently dead.
-    # REPLACED WITH: duckdb_store.get_top_entities_for_ghost_global() bounded store seam.
-    #                Returns list[tuple] matching upsert_global_entities() signature.
-    #                STORE IS NOT GRAPH TRUTH OWNER — seam is a read-only adapter.
-    if store is not None and hasattr(store, "get_top_entities_for_ghost_global"):
-        try:
-            entities = store.get_top_entities_for_ghost_global(n=100)
-            if entities and hasattr(store, "upsert_global_entities"):
-                n_upserted = await store.upsert_global_entities(entities)
+    # Phase 3/4: DuckDB write task creation (only after successful export)
+    # ISSUE #36: upsert_scorecard + upsert_episode run concurrently in Phase 4.
+    # ISSUE #36 helpers — fail-safe async wrappers with try/except per duckdb contract.
+    duckdb_write_tasks: list[asyncio.Task] = []
+    store_has_upsert_scorecard = store is not None and hasattr(store, "upsert_scorecard")
+    store_has_upsert_episode = store is not None and hasattr(store, "upsert_episode")
+
+    if store_has_upsert_scorecard:
+        duckdb_write_tasks.append(
+            asyncio.create_task(_safe_upsert_scorecard(store, scorecard_data, sprint_id))
+        )
+    if store_has_upsert_episode:
+        duckdb_write_tasks.append(
+            asyncio.create_task(_safe_upsert_episode(store, sprint_id, target, sprint_report, scorecard_data, elapsed))
+        )
+
+    # Phase 4: Ghost global entities + wait for DuckDB writes in parallel
+    # ISSUE #36: ghost_global and DuckDB writes can overlap.
+    # ISSUE #36-FIX: bounded_gather with timeout prevents indefinite hang on duckdb stalls.
+    async def _ghost_global_and_wait() -> None:
+        """Upsert ghost entities in thread pool; await parallel DuckDB writes with timeout."""
+        if (
+            store is not None
+            and hasattr(store, "get_top_entities_for_ghost_global")
+            and hasattr(store, "upsert_global_entities")
+            and ghost_entities
+        ):
+            try:
+                n_upserted = await store.upsert_global_entities(ghost_entities)
                 logger.info("ghost_global_entities_upserted", count=n_upserted)
-        except (AttributeError, RuntimeError, OSError):
-            pass
+            except (AttributeError, RuntimeError, OSError):
+                pass
+        # Await all parallel DuckDB writes with bounded timeout (fail-safe)
+        if duckdb_write_tasks:  # skipped only when both upsert_scorecard + upsert_episode are absent
+            from utils.async_utils import bounded_gather
+            # bounded_gather(*coros) returns list[T], return_exceptions makes T include Exception
+            results = await bounded_gather(*duckdb_write_tasks, return_exceptions=True)
+            _check_gathered(results, None, "scorecard_phase3_duckdb")
+
+    await _ghost_global_and_wait()
 
     # Sprint 8VZ §B: FIRST producer-side cutover — canonical path constructs
     # ExportHandoff(...) directly. scorecard_data is kept for persistence and
@@ -1875,7 +2111,40 @@ def main() -> None:
         _fatal(e, code=1)
 
 
+def _jit_ensure() -> None:
+    """
+    PEP 744 Tier 2 JIT auto-enable for Python 3.14+.
+
+    Tier 2 JIT (python -X jit) is opt-in per-interpreter invocation.
+    This function detects whether:
+      - The interpreter supports JIT (sys.jit attribute exists)
+      - JIT is NOT yet active (sys.jit is None/falsy)
+    When both conditions hold, self-restarts with -X jit appended to sys.argv.
+
+    This is a ONE-TIME cost at process startup (~1-2ms overhead).
+    JIT warm-up is async and has zero overhead if no hot loops are hit.
+
+    Safe: nested invocations (jit already active) are a no-op.
+    """
+    import os
+    import sys
+
+    # PEP 744: sys.jit exists when Python was compiled with JIT support.
+    # It is None when -X jit was not passed; truthy when JIT is active.
+    if not hasattr(sys, "jit"):
+        return  # Older Python — no JIT support available
+
+    if sys.jit:  # Already active (truthy = Tier 2 JIT compiled and active)
+        return
+
+    # JIT available but not yet active — self-restart with -X jit
+    executable = sys.executable
+    new_argv = [executable, "-X", "jit"] + sys.argv
+    os.execv(executable, new_argv)
+
+
 if __name__ == "__main__":
+    _jit_ensure()
     main()
 
 

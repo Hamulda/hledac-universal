@@ -13,7 +13,7 @@ fetch logic to this coordinator.
 from __future__ import annotations
 import asyncio
 import ipaddress
-import json
+import orjson
 import os
 import secrets
 import socket
@@ -595,8 +595,8 @@ class FetchCoordinator(UniversalCoordinator):
         proxy_file = DB_ROOT / 'config' / 'proxies.json'
         if proxy_file.exists():
             try:
-                with open(proxy_file) as f:
-                    return json.load(f)
+                with open(proxy_file, 'rb') as f:
+                    return orjson.loads(f.read())
             except Exception:  # noqa: BLE001 — best-effort; proxy config load failure; returns empty dict
                 pass
         return {}

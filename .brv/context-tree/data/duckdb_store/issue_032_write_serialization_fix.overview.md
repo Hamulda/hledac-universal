@@ -1,0 +1,7 @@
+- DuckDB write serialization changed from separate _write_semaphore to shared executor pool with max_workers=4
+- WAL writes run in parallel; DuckDB writes run sequentially within the same shared pool
+- QualityAssessmentState was incorrectly in TYPE_CHECKING block only — fixed with lazy loader _get_QualityAssessmentState()
+- async_record_canonical_findings_batch now delegates to Arrow pipeline when writer is active
+- _DuckDBAsyncWriter class added as idle placeholder for future dedicated writer thread
+- Added _start_async_writer/_stop_async_writer lifecycle methods for async writer management
+- Data flow: batch request → check writer active → delegate to Arrow pipeline → WAL parallel → DuckDB sequential

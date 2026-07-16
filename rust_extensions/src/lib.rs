@@ -77,6 +77,7 @@ pub mod dedup_bloom;    // Distribuovaný BloomFilter s Count-Min Sketch
 pub mod rate_limit;     // ISSUE #016: NVD API rate limiter — token bucket + MPSC
 pub mod telemetry_agg;  // Real-time metrics aggregation
 pub mod health;         // Issue #22: health_check() endpoint
+pub mod circuit_breaker; // ISSUE-41: Lock-free per-domain circuit breaker with AtomicU32 + DashMap
 pub mod claims_extraction; // ISSUE-27: CPU-bound claims extraction (polarity, confidence, sentence split)
 pub mod sprint_policies;
 pub mod tls_metadata;    // Issue B5: TLS cert metadata — single Rust call replacing 5-level Python fallback
@@ -518,6 +519,26 @@ fn __version_info__() -> (u64, u64, u64) {
     _parse_version(env!("CARGO_PKG_VERSION"))
 }
 
+/// __abi_version() -> u32
+/// Returns the ABI version for Python-side compatibility checking.
+///
+/// ABI_VERSION increments whenever the Rust extension's public API changes
+/// in a backward-incompatible way (new required arguments, removed functions,
+/// changed return types, changed struct layouts). Python code should check
+/// this at import time and fail fast if the ABI version doesn't match.
+///
+/// bumping rule: increment on ANY public API change that breaks old callers
+/// minor bump (1→2): new optional API added, old callers still work
+/// major bump (2→3): API removed or changed, old callers MUST update
+///
+/// Current ABI version: 1
+const ABI_VERSION: u32 = 1;
+
+#[pyfunction]
+fn __abi_version__() -> u32 {
+    ABI_VERSION
+}
+
 #[pymodule]
 fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Expose package version for Python-side ABI compatibility checking (F275).
@@ -527,8 +548,14 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_function(wrap_pyfunction!(__version_info__, m)?)?;
+    // ABI version for backward-compatibility enforcement (ISSUE-040)
+    // Register ONLY as function — getattr(ext, "__abi_version__") returns the function
+    // object, so callable() check in Python handles this correctly.
+    // Constant registration is redundant and removed.
+    m.add_function(wrap_pyfunction!(__abi_version__, m)?)?;
 
     m.add_class::<aho_corasick::AhoCorasickMatcher>()?;
+    m.add_class::<aho_corasick::PatternHit>()?;  // Issue #37: zero-copy hit struct
     m.add_class::<bloom::BloomFilter>()?;
     // F266-U1: file-backed mmap Bloom filter (persists across restart).
     bloom::register(m)?;
@@ -726,6 +753,10 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // ISSUE-27: Claims extraction — CPU-bound sentence splitting, polarity, confidence.
     // Pre-compiled regexes via LazyLock, mixed_pool adaptive threading.
     claims_extraction::register_functions(m)?;
+
+    // ISSUE-41: Lock-free per-domain circuit breaker with AtomicU32 + DashMap.
+    // Replaces Python threading.Lock with Rust Atomics for M1 8GB high-concurrency safety.
+    circuit_breaker::register_functions(m)?;
 
     // ISSUE-026: Parallel text similarity clustering for temporal archaeologist.
     // Rayon-parallel trigram Jaccard grouping — replaces O(n²) serial _group_similar_snapshots.

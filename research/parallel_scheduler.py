@@ -284,7 +284,7 @@ class ParallelResearchScheduler:
 
         A3-11 REDESIGN: Fixed worker pool pattern replaces while+QueueEmpty.
         - N IO workers + M CPU workers as TaskGroup children
-        - Workers loop on their queue with asyncio.wait_for(timeout) — no QueueEmpty
+        - Workers loop on their queue with asyncio.timeout() — no QueueEmpty
         - Structured cancellation propagates naturally via TaskGroup hierarchy
         - Workers exit when: queue empty AND pending == 0
 
@@ -292,17 +292,18 @@ class ParallelResearchScheduler:
         """
         async with asyncio.TaskGroup() as tg:
             for i in range(self._max_io):
-                tg.create_task(self._io_worker_loop(), name=f"prs:io:{i}")
+                # F350M-R ISSUE #31: eager_start=True (IO worker loop is hot-path)
+                tg.create_task(self._io_worker_loop(), name=f"prs:io:{i}", eager_start=True)
             for i in range(self._max_cpu):
-                tg.create_task(self._cpu_worker_loop(), name=f"prs:cpu:{i}")
+                # F350M-R ISSUE #31: eager_start=True (CPU worker loop is hot-path)
+                tg.create_task(self._cpu_worker_loop(), name=f"prs:cpu:{i}", eager_start=True)
 
     async def _io_worker_loop(self) -> None:
         """IO worker — processes _io_queue until drained and pending == 0."""
         while not self._shutdown:
             try:
-                _, _, task = await asyncio.wait_for(
-                    self._io_queue.get(), timeout=0.5
-                )
+                async with asyncio.timeout(0.5):
+                    _, _, task = await self._io_queue.get()
             except asyncio.TimeoutError:
                 async with self._get_lock():
                     if self._pending == 0 and self._io_queue.empty():
@@ -316,9 +317,8 @@ class ParallelResearchScheduler:
         """CPU worker — processes _cpu_queue until drained and pending == 0."""
         while not self._shutdown:
             try:
-                _, _, task = await asyncio.wait_for(
-                    self._cpu_queue.get(), timeout=0.5
-                )
+                async with asyncio.timeout(0.5):
+                    _, _, task = await self._cpu_queue.get()
             except asyncio.TimeoutError:
                 async with self._get_lock():
                     if self._pending == 0 and self._cpu_queue.empty():
@@ -371,9 +371,8 @@ class ParallelResearchScheduler:
                 return e
 
         try:
-            result = await asyncio.wait_for(
-                asyncio.to_thread(_sync_wrapper), timeout=task.timeout
-            )
+            async with asyncio.timeout(task.timeout):
+                result = await asyncio.to_thread(_sync_wrapper)
             async with self._get_lock():
                 self._completed[task.task_id] = result
         except asyncio.CancelledError:

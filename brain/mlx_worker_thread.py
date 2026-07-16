@@ -7,7 +7,7 @@ Why this exists (Sprint P0-3):
     The current code uses `loop.run_in_executor(self._inference_executor, sync_fn)`
     to offload blocking mlx_lm.generate() calls to a ThreadPoolExecutor.
     While the executor is non-blocking from the thread pool's perspective, the
-    main asyncio loop is parked in `await asyncio.wait_for(future, timeout=...)`
+    main asyncio loop is parked in `async with asyncio.timeout(delay): await future`
     for the entire inference duration (~1-30s for 50-200 tokens). During that
     window the main loop cannot service other coroutines (HTTP fetch, DB
     ingest, scheduled sidecars).
@@ -293,8 +293,9 @@ class MLXWorkerThread:
             self._peak_inflight = self._inflight_count
         try:
             bridge = asyncio.wrap_future(cf_future)
-            return await asyncio.wait_for(bridge, timeout=timeout)
-        except TimeoutError:
+            async with asyncio.timeout(timeout):
+                return await bridge
+        except asyncio.TimeoutError:
             try:
                 cf_future.cancel()
             except Exception:

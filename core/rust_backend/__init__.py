@@ -109,10 +109,13 @@ class AccelInfo(msgspec.Struct, frozen=True):
     available: bool
     version_str: str
     version_tuple: tuple[int, int, int]
+    abi_version: int  # ISSUE-040: ABI version from Rust extension (0 = unknown/unavailable)
     backend: str  # "rust" | "python"
 
     @property
     def is_compatible(self) -> bool:
+        # NOTE: version_tuple checked by ProbeResult at probe time;
+        # AccelInfo.backend=="rust" means Rust was selected AND passed compatibility.
         return self.backend == "rust"
 
 
@@ -177,6 +180,7 @@ class AccelBackend:
             available=p.available,
             version_str=p.version_str,
             version_tuple=p.version_tuple,
+            abi_version=p.abi_version,
             backend="rust" if p.available else "python",
         )
 

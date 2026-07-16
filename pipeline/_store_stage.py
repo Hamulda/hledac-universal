@@ -83,7 +83,8 @@ class StoreStage:
                 try:
                     if input_queue is None:
                         break
-                    finding = await asyncio.wait_for(input_queue.get(), timeout=2.0)
+                    async with asyncio.timeout(2.0):
+                        finding = await input_queue.get()
                 except asyncio.TimeoutError:
                     # Periodic flush
                     if self._batch:

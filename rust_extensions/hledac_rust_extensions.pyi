@@ -1160,6 +1160,15 @@ def batch_serde_json_compact_sorted(items: list[str]) -> list[str]:
     """Batch compact serialize with sorted keys."""
     ...
 
+# ISSUE-039: orjson-compatible dict→bytes API for hot-path serialization (scorecard, telemetry)
+def serde_json_dumps_compact_bytes(data: dict[str, Any], py: object) -> bytes:
+    """Compact serialize Python dict → bytes. Drop-in for orjson.dumps(data)."""
+    ...
+
+def serde_json_dumps_pretty_bytes(data: dict[str, Any], sort_keys: bool, py: object) -> bytes:
+    """Pretty-print Python dict → bytes. Drop-in for orjson.dumps(data, option=orjson.OPT_INDENT_2)."""
+    ...
+
 # Telemetry aggregator factory (rust_extensions/src/telemetry_agg.rs)
 
 def create_telemetry_aggregator() -> TelemetryAggregator:

@@ -58,7 +58,7 @@ import uuid
 from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Iterator, Literal, cast
 import aiosqlite
 import msgspec
 import orjson
@@ -1709,6 +1709,57 @@ class EvidenceLog:
             results = results[:limit]
         return results
 
+    def get_summary_lines(self, last_n: int=10) -> Iterator[str]:
+        """
+        ISSUE-34: Lazy generator version of get_summary — yields lines one by one.
+
+        For live ticker / UI streaming: yield each line via asyncio.Queue
+        instead of building entire string in memory.
+
+        Args:
+            last_n: Počet posledních událostí k zahrnutí
+
+        Yields:
+            Formátované řádky shrnutí
+        """
+        yield '=' * 60
+        yield 'EVIDENCE LOG SUMMARY'
+        yield '=' * 60
+        yield ''
+        yield f'Run ID: {self._run_id}'
+        yield f'Total Events: {self.size}'
+        yield f'Created: {self._created_at.isoformat()}'
+        yield ''
+        yield 'Event Counts by Type:'
+        for event_type, indices in self._index_by_type.items():
+            count = len(indices)
+            if count > 0:
+                yield f'  {event_type}: {count}'
+        yield ''
+        yield '-' * 40
+        yield f'Last {last_n} Events (newest first):'
+        yield '-' * 40
+        # Slice deque directly — materialize only the needed slice (not full list)
+        start = max(0, len(self._log) - last_n)
+        recent = list(self._log)[start:]  # deque doesn't support slicing
+        for i, event in enumerate(reversed(recent), 1):
+            timestamp = datetime.fromtimestamp(event.timestamp, UTC).strftime('%H:%M:%S')
+            # Parse only fields we need, not the whole payload
+            try:
+                payload_dict = orjson.loads(event.payload) if event.payload else None
+            except Exception:
+                payload_dict = None
+            payload_summary = self._summarize_payload(payload_dict)
+            yield f'{i}. [{timestamp}] {event.event_type.upper()} (conf: {event.confidence:.2f})'
+            yield f'   {payload_summary}'
+            if event.source_ids:
+                sources_str = ', '.join(event.source_ids[:3])
+                if len(event.source_ids) > 3:
+                    sources_str += f' (+{len(event.source_ids) - 3} more)'
+                yield f'   Sources: {sources_str}'
+            yield ''
+        yield '=' * 60
+
     def get_summary(self, last_n: int=10) -> str:
         """
         Vytvoří shrnutí logu pro Hermes.
@@ -1721,29 +1772,24 @@ class EvidenceLog:
         Returns:
             Formátovaný string shrnutí
         """
-        lines = ['=' * 60, 'EVIDENCE LOG SUMMARY', '=' * 60, '', f'Run ID: {self._run_id}', f'Total Events: {self.size}', f'Created: {self._created_at.isoformat()}', '', 'Event Counts by Type:']
-        for event_type, indices in self._index_by_type.items():
-            count = len(indices)
-            if count > 0:
-                lines.append(f'  {event_type}: {count}')
-        lines.extend(['', '-' * 40, f'Last {last_n} Events (newest first):', '-' * 40])
-        recent_events = list(self._log)[-last_n:] if len(self._log) >= last_n else list(self._log)
-        recent_events = list(reversed(recent_events))
-        for i, event in enumerate(recent_events, 1):
-            timestamp = datetime.fromtimestamp(event.timestamp, UTC).strftime('%H:%M:%S')
-            payload_summary = self._summarize_payload(orjson.loads(event.payload) if event.payload else {})
-            lines.append(f'{i}. [{timestamp}] {event.event_type.upper()} (conf: {event.confidence:.2f})')
-            lines.append(f'   {payload_summary}')
-            if event.source_ids:
-                sources_str = ', '.join(event.source_ids[:3])
-                if len(event.source_ids) > 3:
-                    sources_str += f' (+{len(event.source_ids) - 3} more)'
-                lines.append(f'   Sources: {sources_str}')
-            lines.append('')
-        lines.extend(['=' * 60])
-        return '\n'.join(lines)
+        return '\n'.join(self.get_summary_lines(last_n))
 
-    def _summarize_payload(self, payload: dict[str, Any], max_length: int=60) -> str:
+    async def stream_summary_to_queue(self, queue: asyncio.Queue[str], last_n: int = 10) -> None:
+        """
+        ISSUE-34: Stream summary lines to an asyncio.Queue for live UI ticker.
+
+        Each line is put on the queue as it is generated, enabling real-time
+        display without building the entire string in memory first.
+
+        Args:
+            queue: asyncio.Queue to stream lines into
+            last_n: Number of recent events to include
+        """
+        for line in self.get_summary_lines(last_n):
+            await queue.put(line)
+        await queue.put("")  # Empty string: end of stream sentinel
+
+    def _summarize_payload(self, payload: dict[str, Any] | None, max_length: int=60) -> str:
         """Vytvoří stručné shrnutí payloadu"""
         if not payload:
             return '(no payload)'

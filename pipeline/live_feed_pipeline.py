@@ -2515,7 +2515,7 @@ async def async_run_live_feed_pipeline(
         # Stage 1: bounded parallel fetch + pattern scan for all non-skipped entries
         entry_tasks = [_process_entry(idx, entry, entry_url) for idx, entry, entry_url in prefilted]
         build = await parallel(
-            entry_tasks, concurrency=_MAX_FEED_PATTERN_TASKS, policy="collect", ctx="live_feed_pipeline:entry_processing"
+            entry_tasks, concurrency=_MAX_FEED_PATTERN_TASKS, policy="collect", taskgroup=True, ctx="live_feed_pipeline:entry_processing"
         )
         results_raw = build.ok
 
@@ -3363,6 +3363,7 @@ async def async_run_feed_source_batch(
                 all_tasks,
                 concurrency=effective_concurrency,
                 policy="collect",
+                taskgroup=True,  # ISSUE #33: Python 3.11+ structured concurrency
                 ctx="live_feed_pipeline:3071",
             )
             ok_results, err_results = _build.ok, list(_build.errors)

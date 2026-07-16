@@ -75,6 +75,7 @@ __all__ = [
     "get_breaker",
     "get_transport_event_callback",
     "record_failure",
+    "rust_circuit_is_open",
     "set_transport_event_callback",
 ]
 
@@ -184,7 +185,7 @@ def _metrics_safe_increment(metric_name: str) -> None:
         pass  # noqa: BLE001
 
 
-class CircuitBreakerSnapshot(msgspec.Struct, frozen=True):
+class CircuitBreakerSnapshot(msgspec.Struct, frozen=True, kw_only=True):
     """Immutable snapshot of circuit breaker state for diagnostics."""
 
     domain: str
@@ -196,7 +197,7 @@ class CircuitBreakerSnapshot(msgspec.Struct, frozen=True):
     warmup_failure_count: int = 0
 
 
-class CircuitDecision(msgspec.Struct, frozen=True):
+class CircuitDecision(msgspec.Struct, frozen=True, kw_only=True):
     """Decision returned when checking a domain circuit breaker."""
 
     allowed: bool
@@ -496,6 +497,89 @@ class CircuitBreaker(msgspec.Struct):
 # E5 FIX: OrderedDict → PyCacheDict — replaces cachetools.LRUCache.
 # LRU-ordered registry: thread-safe via PyCacheDict RLock, eviction automatic.
 from hledac.universal.utils.cache import PyCacheDict
+
+# ISSUE-41: Rust-backed lock-free circuit breaker — hot-path fast check
+# Lazy import to avoid early extension load
+_rust_cb = None
+
+
+def _get_rust_cb():
+    """Lazy load Rust circuit breaker functions."""
+    global _rust_cb
+    if _rust_cb is None:
+        try:
+            from hledac_rust_extensions import (
+                circuit_breaker_is_open,
+                circuit_breaker_record_success,
+                circuit_breaker_record_failure,
+                circuit_breaker_half_open_probe,
+                circuit_breaker_clear_all,
+                circuit_breaker_get_stats,
+            )
+
+            _rust_cb = {
+                "is_open": circuit_breaker_is_open,
+                "record_success": circuit_breaker_record_success,
+                "record_failure": circuit_breaker_record_failure,
+                "half_open_probe": circuit_breaker_half_open_probe,
+                "clear_all": circuit_breaker_clear_all,
+                "get_stats": circuit_breaker_get_stats,
+            }
+        except ImportError:
+            _rust_cb = {}
+    return _rust_cb
+
+
+def rust_circuit_is_open(domain: str) -> bool | None:
+    """Fast-path lock-free circuit check via Rust.
+
+    Returns:
+        True if circuit is OPEN (blocked)
+        False if circuit is CLOSED or HALF_OPEN (allowed)
+        None if Rust circuit breaker unavailable (fallback to Python)
+    """
+    cb = _get_rust_cb()
+    if not cb:
+        return None
+    try:
+        return cb["is_open"](domain)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def rust_circuit_record_success(domain: str) -> None:
+    """Record success in Rust circuit breaker — resets failure count.
+
+    ISSUE-41: Called alongside Python CircuitBreaker.record_success()
+    to keep both in sync. Rust is authoritative for is_open() checks.
+    """
+    if not domain:
+        return
+    cb = _get_rust_cb()
+    if not cb:
+        return
+    try:
+        cb["record_success"](domain)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def rust_circuit_record_failure(domain: str, is_timeout: bool = False) -> None:
+    """Record failure in Rust circuit breaker — trips after threshold.
+
+    ISSUE-41: Called alongside Python CircuitBreaker.record_failure()
+    to keep both in sync. Rust is authoritative for is_open() checks.
+    """
+    if not domain:
+        return
+    cb = _get_rust_cb()
+    if not cb:
+        return
+    try:
+        cb["record_failure"](domain, is_timeout)
+    except Exception:  # noqa: BLE001
+        pass
+
 
 _BREAKERS: PyCacheDict[str, CircuitBreaker] = PyCacheDict(maxsize=MAX_TRACKED_DOMAINS)
 # ISSUE-010 FIX preserved: atomic get_breaker() still needs lock for compound ops

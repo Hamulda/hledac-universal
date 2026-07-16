@@ -384,7 +384,8 @@ class RustWorkerPool:
                     raise
 
             if timeout is not None:
-                return await asyncio.wait_for(_await_result(), timeout=timeout)
+                async with asyncio.timeout(timeout):
+                    return await _await_result()
             return await _await_result()
 
         finally:

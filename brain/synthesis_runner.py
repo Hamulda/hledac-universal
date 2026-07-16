@@ -948,20 +948,21 @@ class SynthesisRunner:
 
         try:
             async with asyncio.TaskGroup() as tg:
+                # F350M-R ISSUE #31: eager_start=True (parallel discovery is hot path)
                 # Task 1: Model discovery (I/O — file scan or HTTP download)
-                tg_model = tg.create_task(self._ensure_model(), name="syn:model")
+                tg_model = tg.create_task(self._ensure_model(), name="syn:model", eager_start=True)
                 # Task 2: STIX context (async DB export)
-                tg_stix = tg.create_task(self._build_stix_context(), name="syn:stix")
+                tg_stix = tg.create_task(self._build_stix_context(), name="syn:stix", eager_start=True)
                 # Task 3: Episode context (DB query, conditional)
                 if self._duckdb_store is not None:
                     tg_ep = tg.create_task(
-                        self._build_episode_context(self._duckdb_store, query), name="syn:ep"
+                        self._build_episode_context(self._duckdb_store, query), name="syn:ep", eager_start=True
                     )
                 else:
                     tg_ep = None
                 # Task 4: RAG retrieval (I/O — vector search)
                 tg_rag = tg.create_task(
-                    self._rag_query_safe(query, findings), name="syn:rag"
+                    self._rag_query_safe(query, findings), name="syn:rag", eager_start=True
                 )
         except ExceptionGroup as eg:
             logger.debug("[SYNTHESIS] Parallel discovery partial failure: %s", eg)
@@ -1375,16 +1376,17 @@ class SynthesisRunner:
         """
         try:
             async with asyncio.TaskGroup() as tg:
+                # F350M-R ISSUE #31: eager_start=True (race tasks are hot path)
                 tg_xgr = tg.create_task(
-                    self._run_xgrammar_generation(prompt), name="race:xgrammar"
+                    self._run_xgrammar_generation(prompt), name="race:xgrammar", eager_start=True
                 )
                 tg_stream = tg.create_task(
                     self._run_streaming_generation(prompt, json_schema=OSINT_JSON_SCHEMA),
-                    name="race:streaming"
+                    name="race:streaming", eager_start=True
                 )
                 tg_constrained = tg.create_task(
                     self._lifecycle.structured_generate(prompt, OSINT_JSON_SCHEMA),
-                    name="race:constrained"
+                    name="race:constrained", eager_start=True
                 )
         except ExceptionGroup as eg:
             # All three failed

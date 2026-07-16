@@ -30,7 +30,7 @@ GHOST_INVARIANTS enforced:
 import asyncio
 
 import msgspec
-import json
+import orjson
 import msgspec.json as _json
 try:
     from hledac.universal.utils.source_types import SourceType as _SourceType
@@ -139,7 +139,7 @@ async def _evidence_triage_runner(findings: list, store: DuckDBShadowStore, quer
         if not hasattr(finding, 'payload_text') or not finding.payload_text:
             continue
         try:
-            payload = json.loads(finding.payload_text)
+            payload = orjson.loads(finding.payload_text)
             if isinstance(payload, dict) and 'triage' in payload:
                 triage_count += 1
         except Exception:

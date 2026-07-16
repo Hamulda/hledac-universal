@@ -298,7 +298,8 @@ class MLXModelPool:
                 except Exception as ex:
                     logger.debug(f'[MLX_POOL] Preload failed for {model_id}: {ex}')
 
-            task = asyncio.create_task(_preload_task())
+            # F350M-R ISSUE #31: use safe_create_task with eager_start=True (CPU-bound preload on hot path)
+            task = safe_create_task(_preload_task(), eager_start=True)
             # ISSUE #15: Uložíme Task pro případné zrušení
             # Non-slotted dict pro dynamické atributy (objekt nemá __slots__)
             try:

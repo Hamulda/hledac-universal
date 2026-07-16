@@ -18,7 +18,11 @@ Unique Features Integrated:
 """
 import importlib
 import logging
+import secrets
 import time
+
+# Crypto-safe RNG singleton — F350M-R
+_RNG = secrets.SystemRandom()
 from dataclasses import dataclass, field
 import msgspec
 from enum import Enum
@@ -838,7 +842,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                 import numpy as np
                 delay = np.random.weibull(jitter_shape) * jitter_scale
             except ImportError:
-                delay = secrets.SystemRandom().uniform(min_delay, max_delay)
+                delay = _RNG.uniform(min_delay, max_delay)
             delay = max(min_delay, min(delay, max_delay))
             await asyncio.sleep(delay)
             try:

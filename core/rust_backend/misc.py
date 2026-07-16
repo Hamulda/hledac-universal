@@ -590,6 +590,13 @@ class _RustJsonDomain:
     def batch_compact_sorted(self, items: list[dict]) -> list[str]:
         return self._ext.batch_compact_sorted(items)
 
+    # ISSUE-039: orjson-compatible dict→bytes API for hot paths (scorecard, telemetry)
+    def dumps_compact_bytes(self, data: dict) -> bytes:
+        return self._ext.serde_json_dumps_compact_bytes(data)
+
+    def dumps_pretty_bytes(self, data: dict, sort_keys: bool = False) -> bytes:
+        return self._ext.serde_json_dumps_pretty_bytes(data, sort_keys)
+
 
 class _PythonJsonDomain:
     """Python fallback for JSON operations using stdlib json (Rust msgspec is primary)."""
@@ -627,6 +634,15 @@ class _PythonJsonDomain:
     @staticmethod
     def batch_compact_sorted(items: list[dict]) -> list[str]:
         return [_json.dumps(item, sort_keys=True) for item in items]
+
+    # ISSUE-039: orjson-compatible dict→bytes fallback
+    @staticmethod
+    def dumps_compact_bytes(data: dict) -> bytes:
+        return _json.dumps(data).encode("utf-8")
+
+    @staticmethod
+    def dumps_pretty_bytes(data: dict, sort_keys: bool = False) -> bytes:
+        return _json.dumps(data, indent=2, sort_keys=sort_keys).encode("utf-8")
 
 
 # =============================================================================

@@ -734,7 +734,7 @@ async def async_fetch_feed_entries(feed_url: str, max_entries: int=50, timeout_s
     from hledac.universal.fetching.public_fetcher import async_fetch_public_text
     retrieved_ts = time.time()
     try:
-        result = await async_fetch_public_text(feed_url, timeout_s=timeout_s, max_bytes=max_bytes)
+        result = await async_fetch_public_text(feed_url, timeout_s=timeout_s, max_bytes=max_bytes, bypass_circuit_breaker=True)
     except CancelledError:
         raise
     if result.error or result.text is None:
@@ -1047,7 +1047,7 @@ async def async_discover_feed_urls(page_url: str, timeout_s: float=35.0, max_byt
     """
     from hledac.universal.fetching.public_fetcher import async_fetch_public_text
     try:
-        result = await async_fetch_public_text(page_url, timeout_s=timeout_s, max_bytes=max_bytes)
+        result = await async_fetch_public_text(page_url, timeout_s=timeout_s, max_bytes=max_bytes, bypass_circuit_breaker=True)
     except CancelledError:
         raise
     if result.error or result.text is None:

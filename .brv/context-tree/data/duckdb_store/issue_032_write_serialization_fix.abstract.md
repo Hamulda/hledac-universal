@@ -1,0 +1,1 @@
+DuckDB write serialization was refactored to use a shared executor pool (max_workers=4) instead of a separate semaphore, enabling parallel WAL writes while maintaining sequential DuckDB writes, with QualityAssessmentState fixed via lazy loader and a _DuckDBAsyncWriter class prepared for future use.

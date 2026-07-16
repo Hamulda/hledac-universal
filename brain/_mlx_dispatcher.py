@@ -778,7 +778,8 @@ class MLXDispatcher:
             except Exception as e:
                 logger.debug(f'[MLXDispatcher] Preload failed for {model_id}: {e}')
 
-        ctx._preload_tasks[model_id] = asyncio.create_task(_preload())
+        # F350M-R ISSUE #31: use safe_create_task with eager_start=True (CPU-bound preload on hot path)
+        ctx._preload_tasks[model_id] = safe_create_task(_preload(), eager_start=True)
 
     # ── Priority-based eviction helpers ───────────────────────────────────────
 

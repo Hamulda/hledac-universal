@@ -6,9 +6,9 @@ Sprint F206K: Optional HTTPX HTTP/2 clearnet lane.
 
 AUTHORITY (F206K):
   This module provides the LAZY HTTPX client singleton surface.
-  HTTPX is optional — project imports and runs even if h2 is not installed.
+  HTTPX is optional — project imports and runs even if HTTP/2 is not available.
   HTTP/2 is activated only when:
-    1. httpx + h2 are installed
+    1. httpx >= 0.28.0 is installed (bundles h2 internally)
     2. Transport policy selects HTTPX H2 lane
     3. Target is clearnet (no Tor/I2P/Freenet)
 
@@ -18,12 +18,16 @@ TRANSPORT WORLD CLASSIFICATION (F206K):
   - aiohttp_socks WORLD: ProxyConnector for Tor/I2P (existing darknet path)
   - curl_cffi WORLD: JA3 fingerprint spoofing — SEPARATE plane, not unified
 
+ISSUE #42 FIX:
+  httpx >= 0.28.0 bundles h2 internally — no separate `h2` package needed.
+  The old `import h2` check is obsolete. HTTP/2 is enabled by default.
+
 INVARIANTS:
   [H2-I1] Lazy import — httpx NOT imported at module level
   [H2-I2] Lazy init — client created on first await, not at import
   [H2-I3] Idempotent — repeated awaits return same instance
-  [H2-I4] Fail-soft disabled — h2 missing → _httpx_h2_enabled = False
-  [H2-I5] Connector limits: limit=25, limit_per_host=10 (API batch friendly)
+  [H2-I4] Fail-soft disabled — httpx unavailable → _httpx_h2_enabled = False
+  [H2-I5] Connector limits delegated to session_pool (unified_transport.py)
   [H2-I6] No top-level network side effects at import time
   [H2-I7] CancelledError propagates (not swallowed)
   [H2-I8] HTTPX client closed ONLY via close_httpx_client_async()
@@ -50,11 +54,14 @@ _httpx_import_error: str | None = None
 
 def _check_httpx_h2_capability() -> bool:
     """
-    Check if httpx with HTTP/2 (h2) support is available.
+    Check if httpx with HTTP/2 support is available.
     Called lazily on first use — not at import time.
 
+    ISSUE #42 FIX: httpx >= 0.28.0 bundles h2 internally.
+    No separate `h2` package needed. HTTP/2 is enabled by default.
+
     Returns:
-        True if httpx >= 0.27.0 AND h2 is installed
+        True if httpx >= 0.28.0 is installed
         False otherwise (fail-soft, project still works)
     """
     global _httpx_h2_enabled, _httpx_import_error
@@ -70,17 +77,23 @@ def _check_httpx_h2_capability() -> bool:
         logger.debug(f"[HTTPX] {_httpx_import_error}")
         return False
 
-    # httpx available — check h2 (HTTP/2 support)
+    # httpx available — verify version >= 0.28.0 (bundles h2 internally)
     try:
-        import h2  # noqa: F401  # h2
-    except ImportError:
-        _httpx_import_error = "h2 not installed (httpx[http2] required for HTTP/2)"
+        version = httpx.__version__
+        major, minor = map(int, version.split('.')[:2])
+        # Pre-1.0 versioning: (major, minor) < (0, 28) means too old
+        if (major, minor) < (0, 28):
+            _httpx_import_error = f"httpx {version} too old (>=0.28.0 required for bundled HTTP/2)"
+            logger.debug(f"[HTTPX] {_httpx_import_error}")
+            return False
+    except (ValueError, IndexError) as e:
+        _httpx_import_error = f"httpx version parse error: {version!r} ({e})"
         logger.debug(f"[HTTPX] {_httpx_import_error}")
         return False
 
-    # Both available — version check passed (h2 import is the real gate)
+    # Version OK — HTTP/2 is bundled and enabled by default in httpx >= 0.28.0
     _httpx_h2_enabled = True
-    logger.debug(f"[HTTPX] HTTP/2 capability detected (httpx={httpx.__version__})")
+    logger.debug(f"[HTTPX] HTTP/2 capability detected (httpx={version}, h2 bundled)")
     return True
 
 
@@ -138,7 +151,10 @@ def is_httpx_h2_enabled() -> bool:
     """
     Check if HTTPX HTTP/2 lane is available.
     Can be called at any time — no side effects.
+    Cached after first successful check.
     """
+    if _httpx_h2_enabled or _httpx_import_error is not None:
+        return _httpx_h2_enabled
     return _check_httpx_h2_capability()
 
 

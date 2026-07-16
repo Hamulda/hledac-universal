@@ -464,21 +464,22 @@ class DarkWebCrawler:
             start_time = time.time()
             async with asyncio.timeout(120.0):
                 resp = await session.get(url, follow_redirects=True)
-                response_time = (time.time() - start_time) * 1000
-                if resp.status_code != 200:
-                    logger.warning(f'HTTP {resp.status_code} for {url}')
-                    return None
-                html = resp.text
-                content = self._parse_content(url, html)
-                content.response_time_ms = response_time
-                self.stats['pages_crawled'] += 1
-                self.stats['bitcoin_addresses'] += len(content.cryptocurrency_addresses.get('bitcoin', []))
-                self.stats['monero_addresses'] += len(content.cryptocurrency_addresses.get('monero', []))
-                self.stats['pgp_keys_found'] += len(content.pgp_blocks)
-                self._bounded_insert_discovered_service(url, HiddenService(address=url, onion_type=OnionType.V3, source=DarkWebSource.TOR_ONION, is_online=True, response_time_ms=response_time))
-                self._bounded_insert_content_cache(url, content)
-                await asyncio.sleep(self.request_delay)
-                return content
+                async with resp:
+                    response_time = (time.time() - start_time) * 1000
+                    if resp.status_code != 200:
+                        logger.warning(f'HTTP {resp.status_code} for {url}')
+                        return None
+                    html = resp.text
+                    content = self._parse_content(url, html)
+                    content.response_time_ms = response_time
+                    self.stats['pages_crawled'] += 1
+                    self.stats['bitcoin_addresses'] += len(content.cryptocurrency_addresses.get('bitcoin', []))
+                    self.stats['monero_addresses'] += len(content.cryptocurrency_addresses.get('monero', []))
+                    self.stats['pgp_keys_found'] += len(content.pgp_blocks)
+                    self._bounded_insert_discovered_service(url, HiddenService(address=url, onion_type=OnionType.V3, source=DarkWebSource.TOR_ONION, is_online=True, response_time_ms=response_time))
+                    self._bounded_insert_content_cache(url, content)
+                    await asyncio.sleep(self.request_delay)
+                    return content
         except asyncio.TimeoutError:
             logger.warning(f'Timeout fetching {url}')
             return None

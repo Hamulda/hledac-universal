@@ -823,7 +823,7 @@ def _build_sfo_list(r: AcqReportPayload) -> list[dict[str, Any]]:
     return canonicalize_source_family_outcomes(sfo_list)
 
 
-def acq_payload_to_dict(result: Any, scheduler: Any, query: str, duration_s: float) -> dict[str, Any]:
+def acq_payload_to_dict(result: Any, scheduler: Any, query: str, _duration_s: float) -> dict[str, Any]:
     """
     [Issue #9] Schema-driven acquisition payload.
 
@@ -940,9 +940,9 @@ def acq_payload_to_dict(result: Any, scheduler: Any, query: str, duration_s: flo
         }
 
     # ── 9. Canonical build_acquisition_report — single try/except ──────────────
-    acq_report: dict[str, Any] = {}
+    __acq_report: dict[str, Any] = {}
     try:
-        acq_report = build_acquisition_report(
+        _acq_report = build_acquisition_report(
             plan=plan,
             terminality=term_rep,
             nonfeed_plan_debug=nd,
@@ -1052,17 +1052,17 @@ def acq_payload_to_dict(result: Any, scheduler: Any, query: str, duration_s: flo
         )
         # Post-processing
         # [ISSUE-007] Avoid unnecessary list() wrapping — fields are already correct type
-        acq_report["acquisition_profile_input"] = None
-        acq_report["acquisition_profile_effective"] = acq_effective
-        acq_report["acquisition_profile_normalized"] = False
-        acq_report["budget_violations"] = r.budget_violations
-        acq_report["return_guard_block_reason"] = r.return_guard_block_reason or ""
-        acq_report["ct_quarantine_count"] = r.ct_quarantine_count
-        acq_report["ct_quarantine_samples"] = r.ct_quarantine_samples
-        acq_report = reconcile_lane_detail_fields(acq_report)
-        acq_report = complete_source_family_outcomes_from_lane_details(acq_report)
-        acq_report = complete_source_family_outcomes_from_prelude(acq_report)
-        if not acq_report.get("seed_context_available"):
+        _acq_report["acquisition_profile_input"] = None
+        _acq_report["acquisition_profile_effective"] = acq_effective
+        _acq_report["acquisition_profile_normalized"] = False
+        _acq_report["budget_violations"] = r.budget_violations
+        _acq_report["return_guard_block_reason"] = r.return_guard_block_reason or ""
+        _acq_report["ct_quarantine_count"] = r.ct_quarantine_count
+        _acq_report["ct_quarantine_samples"] = r.ct_quarantine_samples
+        _acq_report = reconcile_lane_detail_fields(_acq_report)
+        _acq_report = complete_source_family_outcomes_from_lane_details(_acq_report)
+        _acq_report = complete_source_family_outcomes_from_prelude(_acq_report)
+        if not _acq_report.get("seed_context_available"):
             has_seeds = (
                 r.pivot_seed_domains
                 or r.pivot_seed_ips
@@ -1071,13 +1071,13 @@ def acq_payload_to_dict(result: Any, scheduler: Any, query: str, duration_s: flo
                 or r.pivot_seed_cves
             )
             if has_seeds:
-                acq_report["seed_context_available"] = True
-                acq_report["seed_context_propagated"] = r.seed_context_propagated
-                if not acq_report.get("seed_context_skip_reason"):
-                    acq_report["seed_context_skip_reason"] = ""
+                _acq_report["seed_context_available"] = True
+                _acq_report["seed_context_propagated"] = r.seed_context_propagated
+                if not _acq_report.get("seed_context_skip_reason"):
+                    _acq_report["seed_context_skip_reason"] = ""
             else:
-                if not acq_report.get("seed_context_skip_reason"):
-                    acq_report["seed_context_skip_reason"] = "no_runtime_pivot_seeds"
+                if not _acq_report.get("seed_context_skip_reason"):
+                    _acq_report["seed_context_skip_reason"] = "no_runtime_pivot_seeds"
 
     except Exception as _exc:
         logger.exception(
@@ -1088,8 +1088,8 @@ def acq_payload_to_dict(result: Any, scheduler: Any, query: str, duration_s: flo
         # 80-field structure that build_acquisition_report() would return — but
         # without retyping every field.  Then overlay only the 4 fallback-specific
         # overrides and fall through to the shared post-processing pipeline.
-        acq_report = msgspec.to_dict(r)
-        acq_report.update(
+        _acq_report = msgspec.to_dict(r)
+        _acq_report.update(
             schema_version=f"{ACQUISITION_REPORT_SCHEMA_VERSION}-fallback",
             fallback_reason=f"canonical_build_failed: {_exc}",
             acquisition_report_fallback_used=True,
@@ -1114,17 +1114,17 @@ def acq_payload_to_dict(result: Any, scheduler: Any, query: str, duration_s: flo
         )
         # ── 9b. Fallback path: post-processing (mirrors success path lines 1046-1072) ─
         # [ISSUE-007] Avoid unnecessary list() wrapping — fields are already correct type
-        acq_report["acquisition_profile_input"] = None
-        acq_report["acquisition_profile_effective"] = acq_effective
-        acq_report["acquisition_profile_normalized"] = False
-        acq_report["budget_violations"] = r.budget_violations
-        acq_report["return_guard_block_reason"] = r.return_guard_block_reason or ""
-        acq_report["ct_quarantine_count"] = r.ct_quarantine_count
-        acq_report["ct_quarantine_samples"] = r.ct_quarantine_samples
-        acq_report = reconcile_lane_detail_fields(acq_report)
-        acq_report = complete_source_family_outcomes_from_lane_details(acq_report)
-        acq_report = complete_source_family_outcomes_from_prelude(acq_report)
-        if not acq_report.get("seed_context_available"):
+        _acq_report["acquisition_profile_input"] = None
+        _acq_report["acquisition_profile_effective"] = acq_effective
+        _acq_report["acquisition_profile_normalized"] = False
+        _acq_report["budget_violations"] = r.budget_violations
+        _acq_report["return_guard_block_reason"] = r.return_guard_block_reason or ""
+        _acq_report["ct_quarantine_count"] = r.ct_quarantine_count
+        _acq_report["ct_quarantine_samples"] = r.ct_quarantine_samples
+        _acq_report = reconcile_lane_detail_fields(_acq_report)
+        _acq_report = complete_source_family_outcomes_from_lane_details(_acq_report)
+        _acq_report = complete_source_family_outcomes_from_prelude(_acq_report)
+        if not _acq_report.get("seed_context_available"):
             has_seeds = (
                 r.pivot_seed_domains
                 or r.pivot_seed_ips
@@ -1133,17 +1133,17 @@ def acq_payload_to_dict(result: Any, scheduler: Any, query: str, duration_s: flo
                 or r.pivot_seed_cves
             )
             if has_seeds:
-                acq_report["seed_context_available"] = True
-                acq_report["seed_context_propagated"] = r.seed_context_propagated
-                if not acq_report.get("seed_context_skip_reason"):
-                    acq_report["seed_context_skip_reason"] = ""
+                _acq_report["seed_context_available"] = True
+                _acq_report["seed_context_propagated"] = r.seed_context_propagated
+                if not _acq_report.get("seed_context_skip_reason"):
+                    _acq_report["seed_context_skip_reason"] = ""
             else:
-                if not acq_report.get("seed_context_skip_reason"):
-                    acq_report["seed_context_skip_reason"] = "no_runtime_pivot_seeds"
+                if not _acq_report.get("seed_context_skip_reason"):
+                    _acq_report["seed_context_skip_reason"] = "no_runtime_pivot_seeds"
 
     # ── 10. Return canonical wrapper ─────────────────────────────────────────────
     return {
-        "acquisition_report": acq_report,
+        "acquisition_report": _acq_report,
         "acquisition_terminality_checked": r.acquisition_terminality_checked,
         "acquisition_terminality_satisfied": r.acquisition_terminality_satisfied,
         "acquisition_terminality_missing_lanes": r.acquisition_terminality_missing_lanes,
@@ -1742,7 +1742,7 @@ async def run_sprint(
     deep_probe_enabled: bool = False,
     deep_research: bool = False,  # F11: enhanced deep research advisory
     extreme_mode: bool = False,  # F11: EXHAUSTIVE depth for deep research
-    no_communication: bool = False,  # F26X-3: opt-out of CommunicationLayer injection
+    _no_communication: bool = False,  # F26X-3: opt-out of CommunicationLayer injection
     ui_mode: bool = False,
     windup_lead_s: float | None = None,
     acquisition_profile: str | None = None,  # F223A: explicit profile override
@@ -2118,7 +2118,7 @@ async def run_sprint(
         logger.warning(f"[F11C] EvidenceLog wiring failed (non-fatal): {_elog_err}")
 
     # Sprint F153: Lifecycle receives explicit runtime params — duration authority propagated
-    lifecycle = SprintLifecycleManager(
+    _lifecycle = SprintLifecycleManager(
         sprint_duration_s=float(duration_s),
         windup_lead_s=config.windup_lead_s,
     )
@@ -2221,9 +2221,10 @@ async def run_sprint(
             # F350M-R ISSUE #4: Cooperative shutdown — race scheduler.run() vs _cancel_event.wait()
             # When SIGINT arrives via asyncio.run() default handler (cli/parser path),
             # _cancel_event is set → cancels scheduler gracefully instead of loop.stop() hard-abort.
-            _cancel_waiter = asyncio.create_task(_cancel_event.wait())
-            _scheduler_waiter = asyncio.create_task(scheduler.run(query))
-            done, pending = await asyncio.wait(
+            # F350M-R ISSUE #31: safe_create_task with eager_start=True (hot-path startup)
+            _cancel_waiter = safe_create_task(_cancel_event.wait(), eager_start=True)
+            _scheduler_waiter = safe_create_task(scheduler.run(query), eager_start=True)
+            done, _pending = await asyncio.wait(
                 [_scheduler_waiter, _cancel_waiter],
                 return_when=asyncio.FIRST_COMPLETED,
             )
@@ -3387,10 +3388,14 @@ def _install_signal_handler_for_loop(
         )
         logging.info(f"[SIGNAL] Received {sig_name} — cooperative shutdown")
         try:
-            if loop.is_running() and not loop.is_closed():
+            # Always call set() directly — it is async-signal-safe (Python 3.10+).
+            # call_soon_threadsafe is a bonus to wake the loop promptly if it is
+            # running.  Removing the is_running() check eliminates the
+            # race: loop could close between the check and call_soon_threadsafe,
+            # leaving the callback pending but the event never set.
+            if loop.is_running():
                 loop.call_soon_threadsafe(shutdown_event.set)
-            else:
-                shutdown_event.set()
+            shutdown_event.set()
         except Exception:  # noqa: BLE001
             pass
 
@@ -3479,7 +3484,6 @@ def _run_sprint_loop(args: argparse.Namespace) -> None:
     asyncio.set_event_loop(loop)
     shutdown_event = asyncio.Event()
     restore_signals = _install_signal_handler_for_loop(loop, shutdown_event)
-    done: set = set()
     pending: set = set()
     try:
         sprint_task = loop.create_task(
@@ -3742,11 +3746,13 @@ def _main_dispatch() -> None:
         return
 
     if args.ct_pivot:
-        asyncio.run(run_ct_pivot(args.ct_pivot))
+        with asyncio.Runner() as runner:
+            runner.run(run_ct_pivot(args.ct_pivot))
     elif args.sprint:
         _run_sprint_loop(args)
     elif args.pivot:
-        asyncio.run(run_semantic_pivot(args.pivot, top_k=args.pivot_k))
+        with asyncio.Runner() as runner:
+            runner.run(run_semantic_pivot(args.pivot, top_k=args.pivot_k))
     else:
         print("Hledac Sprint 8RA Runner")
         print("  python -m hledac.universal.runtime.sprint_entrypoint --sprint --query '...' --duration 1800")

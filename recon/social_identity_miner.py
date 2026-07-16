@@ -274,7 +274,8 @@ class SocialIdentityMiner:
             if not payload:
                 return []
             try:
-                env = json.loads(payload)
+                import orjson as _orjson
+                env = _orjson.loads(payload)
                 for key in ('urls', 'links', 'extracted_urls', 'url_list'):
                     if key in env and isinstance(env[key], list):
                         urls.extend((str(u) for u in env[key] if isinstance(u, str)))

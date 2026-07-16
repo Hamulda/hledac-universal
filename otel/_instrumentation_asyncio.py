@@ -76,7 +76,7 @@ def current_otel_context() -> dict[str, Any] | None:
     """
     return _current_task_context.get()
 
-def create_task_with_context(coro: Any, *, name: str | None=None, eager_start: bool=False, otel_trace: bool=True) -> asyncio.Task[Any]:
+def create_task_with_context(coro: Any, *, name: str | None=None, eager_start: bool=True, otel_trace: bool=True) -> asyncio.Task[Any]:
     """
     Create an asyncio.Task with OTel trace context propagation.
 

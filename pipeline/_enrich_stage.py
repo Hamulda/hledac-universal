@@ -107,7 +107,8 @@ class EnrichStage:
                     try:
                         if input_queue is None:
                             break
-                        item = await asyncio.wait_for(input_queue.get(), timeout=0.1)
+                        async with asyncio.timeout(0.1):
+                            item = await input_queue.get()
                         batch.append(item)
                     except asyncio.TimeoutError:
                         break

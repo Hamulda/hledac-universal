@@ -280,21 +280,23 @@ class UnifiedResourceManager:
 
     def _on_success(self, task_type: str) -> None:
         """AIMD success feedback."""
+        # F350M-R ISSUE #31: safe_create_task with eager_start=True (AIMD feedback is hot path)
         if task_type == 'cpu':
-            asyncio.create_task(self._enrich_controller.on_success())
+            safe_create_task(self._enrich_controller.on_success(), eager_start=True)
         elif task_type == 'io':
-            asyncio.create_task(self._extract_controller.on_success())
+            safe_create_task(self._extract_controller.on_success(), eager_start=True)
         else:
-            asyncio.create_task(self._fetch_controller.on_success())
+            safe_create_task(self._fetch_controller.on_success(), eager_start=True)
 
     def _on_failure(self, task_type: str) -> None:
         """AIMD failure feedback."""
+        # F350M-R ISSUE #31: safe_create_task with eager_start=True (AIMD feedback is hot path)
         if task_type == 'cpu':
-            asyncio.create_task(self._enrich_controller.on_failure())
+            safe_create_task(self._enrich_controller.on_failure(), eager_start=True)
         elif task_type == 'io':
-            asyncio.create_task(self._extract_controller.on_failure())
+            safe_create_task(self._extract_controller.on_failure(), eager_start=True)
         else:
-            asyncio.create_task(self._fetch_controller.on_failure())
+            safe_create_task(self._fetch_controller.on_failure(), eager_start=True)
 
     # -------------------------------------------------------------------------
     # Convenience methods

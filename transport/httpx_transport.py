@@ -21,6 +21,7 @@ F206AF INVARIANTS:
 
 
 import asyncio
+import functools
 import ipaddress
 import logging
 import os
@@ -217,6 +218,7 @@ _KNOWN_API_HOST_SUFFIXES: frozenset[str] = frozenset({
 })
 
 
+@functools.lru_cache(maxsize=2048)
 def _is_api_like_url(url: str) -> bool:
     """
     Return True if URL looks like an API/CDN/structured endpoint.

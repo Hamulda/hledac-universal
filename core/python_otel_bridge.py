@@ -298,8 +298,9 @@ class OtelBridge:
 
         self._running = True
         try:
-            loop = asyncio.get_running_loop()
-            self._export_task = loop.create_task(self._periodic_export_loop())
+            # F350M-R ISSUE #31: safe_create_task with eager_start=True (export loop is hot path)
+            from utils.async_helpers import safe_create_task
+            self._export_task = safe_create_task(self._periodic_export_loop(), name='otel_bridge.export', eager_start=True)
             logger.info(f"[otel_bridge] Started with interval={self._interval_ms}ms")
         except RuntimeError:
             # No running loop — start in thread

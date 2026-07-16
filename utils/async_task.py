@@ -61,8 +61,11 @@ from typing import Any, Awaitable
 from .async_helpers import safe_gather_fire_and_forget
 logger = logging.getLogger(__name__)
 
-def safe_create_task(coro: Any, *, name: str | None=None, eager_start: bool=False) -> asyncio.Task:
-    """Safe task creation wrapper — imports safe_create_task from async_helpers."""
+def safe_create_task(coro: Any, *, name: str | None=None, eager_start: bool=True) -> asyncio.Task:
+    """Safe task creation wrapper — imports safe_create_task from async_helpers.
+
+    F350M-R ISSUE #31: eager_start=True default matches async_helpers.safe_create_task.
+    """
     from .async_helpers import safe_create_task as _impl
     return _impl(coro, name=name, eager_start=eager_start)
 

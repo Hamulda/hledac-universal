@@ -129,7 +129,7 @@ def safe_create_task(
     coro: Any,
     *,
     name: str | None = None,
-    eager_start: bool = False,
+    eager_start: bool = True,  # F350M-R: default=True eliminates 1-tick delay on 3.12+
     # E4: OTel trace context propagation — delegated to otel._instrumentation_asyncio
     otel_trace: bool = True,
 ) -> asyncio.Task[Any]:

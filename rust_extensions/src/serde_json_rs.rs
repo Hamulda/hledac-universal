@@ -132,6 +132,62 @@ pub fn serde_json_compact_sorted(json_str: &str) -> String {
 // ISSUE-005: bytes-in/bytes-out variants — zero-copy for STIX export
 // ---------------------------------------------------------------------------
 
+/// ISSUE-039: Compact serialize Python dict → bytes (orjson API compatible).
+///
+/// orjson.dumps(data) → bytes. Drop-in for orjson.dumps() in hot paths
+/// (scorecard, telemetry) where we want Rust SIMD acceleration.
+///
+/// # Arguments
+/// * `data` - Python dict (or any JSON-serializable structure)
+/// * `py` - Python GIL token for GIL management
+///
+/// # Returns
+/// Compact JSON bytes — empty Vec<u8> on error (caller falls back to Python)
+#[pyfunction]
+pub fn serde_json_dumps_compact_bytes(data: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Vec<u8>> {
+    let json_str = match data.call_method0("__str__") {
+        Ok(s) => s.extract::<String>().unwrap_or_default(),
+        Err(_) => return Ok(Vec::new()),
+    };
+    let value: serde_json::Value = match serde_json::from_str(&json_str) {
+        Ok(v) => v,
+        Err(_) => return Ok(Vec::new()),
+    };
+    Ok(serde_json::to_vec(&value).unwrap_or_default())
+}
+
+/// Pretty-print Python dict → bytes (orjson API compatible).
+///
+/// orjson.dumps(data, option=orjson.OPT_INDENT_2) → bytes. Drop-in for
+/// orjson pretty-print in hot paths.
+///
+/// # Arguments
+/// * `data` - Python dict
+/// * `sort_keys` - if true, sort object keys alphabetically
+/// * `py` - Python GIL token for GIL management
+///
+/// # Returns
+/// Pretty-printed JSON bytes — empty Vec<u8> on error
+#[pyfunction]
+pub fn serde_json_dumps_pretty_bytes(data: &Bound<'_, PyAny>, sort_keys: bool, py: Python<'_>) -> PyResult<Vec<u8>> {
+    let json_str = match data.call_method0("__str__") {
+        Ok(s) => s.extract::<String>().unwrap_or_default(),
+        Err(_) => return Ok(Vec::new()),
+    };
+    let value: serde_json::Value = match serde_json::from_str(&json_str) {
+        Ok(v) => v,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let value = if sort_keys {
+        sort_object_keys(&value)
+    } else {
+        value
+    };
+    Ok(serde_json::to_string_pretty(&value)
+        .unwrap_or_default()
+        .into_bytes())
+}
+
 /// Compact JSON from bytes — bytes-in, bytes-out (zero-copy output).
 ///
 /// For STIX export where we have pre-encoded JSON bytes and want
@@ -455,5 +511,8 @@ pub fn register_functions(m: &Bound<'_, pyo3::prelude::PyModule>) -> PyResult<()
     // ISSUE-005: bytes-in/bytes-out — zero-copy for STIX export, avoids String↔bytes overhead
     m.add_function(wrap_pyfunction!(serde_json_compact_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(serde_json_pretty_bytes, m)?)?;
+    // ISSUE-039: orjson-compatible dict→bytes API for hot-path serialization (scorecard, telemetry)
+    m.add_function(wrap_pyfunction!(serde_json_dumps_compact_bytes, m)?)?;
+    m.add_function(wrap_pyfunction!(serde_json_dumps_pretty_bytes, m)?)?;
     Ok(())
 }

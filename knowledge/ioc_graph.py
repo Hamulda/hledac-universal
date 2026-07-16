@@ -16,7 +16,7 @@ Schema:
 PIVOT:  MATCH (n:IOC)-[r*1..2]-(m:IOC) WHERE n.value=$v AND n.ioc_type=$t RETURN m, r
 """
 import asyncio
-import json
+import orjson
 import re
 import time
 import uuid
@@ -552,7 +552,7 @@ class IOCGraph:
                         obj = stix2.Indicator(id=f'indicator--{uuid.uuid5(uuid.NAMESPACE_URL, node_id)}', name=f'Onion: {value}', pattern=f"[url:value = 'http://{value}/']", pattern_type='stix', valid_from=valid_from, confidence=conf)
                     else:
                         continue
-                    objects.append(json.loads(obj.serialize()))
+                    objects.append(orjson.loads(obj.serialize()))
                 except Exception as e:
                     import logging
                     logging.warning(f'STIX build failed for {node_id}: {e}')

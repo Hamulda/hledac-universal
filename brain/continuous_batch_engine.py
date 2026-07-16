@@ -86,7 +86,9 @@ class ContinuousBatchEngine:
         if self._running:
             return
         self._running = True
-        self._worker_task = asyncio.create_task(self._run_worker())
+        # F350M-R ISSUE #31: safe_create_task with eager_start=True (MLX worker loop is hot path)
+        from utils.async_helpers import safe_create_task
+        self._worker_task = safe_create_task(self._run_worker(), name='continuous_batch.worker', eager_start=True)
 
     async def stop(self) -> None:
         """Stop the continuous batch worker."""
@@ -267,7 +269,8 @@ class ContinuousBatchEngine:
 
                 while len(batch) < MAX_BATCH_SIZE and time.monotonic() < deadline:
                     try:
-                        req = await asyncio.wait_for(self._queue.get(), timeout=0.05)
+                        async with asyncio.timeout(0.05):
+                            req = await self._queue.get()
                         batch.append(req)
                     except asyncio.TimeoutError:
                         break

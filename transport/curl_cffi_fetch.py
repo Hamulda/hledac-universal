@@ -13,6 +13,7 @@ Architecture (Issue 3.5 consolidation):
 """
 
 import asyncio
+import functools
 import itertools
 import logging
 import threading
@@ -790,6 +791,7 @@ def _make_error_result(
 # Rate limiting is now enforced at the canonical entry point so that
 # every fetch path (public_fetcher, fetch_coordinator, base_fetcher,
 # stealth_browser) is automatically rate-limited without per-caller wrapping.
+@functools.lru_cache(maxsize=2048)
 def _extract_domain_from_url(url: str) -> str:
     """Extract effective domain from URL for rate-limiter bucketing."""
     try:

@@ -73,10 +73,14 @@ def install_signal_handler(
         )
         logger.info(f"[SIGNAL] Received {sig_name} — cooperative shutdown")
         try:
-            if loop.is_running() and not loop.is_closed():
+            # Always call set() directly — it is async-signal-safe (Python 3.10+).
+            # call_soon_threadsafe is a bonus to wake the loop promptly if it is
+            # running.  Removing the is_running()+is_closed() check eliminates the
+            # race: loop could close between the check and call_soon_threadsafe,
+            # leaving the callback pending but the event never set.
+            if loop.is_running():
                 loop.call_soon_threadsafe(shutdown_event.set)
-            else:
-                shutdown_event.set()
+            shutdown_event.set()
         except Exception:  # noqa: BLE001
             pass
 
@@ -206,7 +210,7 @@ async def _run_sprint_task(
     sprint_task = safe_create_task(sprint_coro, name="composition_root:sprint")
     sig_task = safe_create_task(shutdown_event.wait(), name="composition_root:shutdown_signal")
 
-    done, pending = await asyncio.wait(
+    done, _ = await asyncio.wait(
         [sprint_task, sig_task],
         return_when=asyncio.FIRST_COMPLETED,
     )
@@ -332,7 +336,11 @@ def shutdown_runtime(
     Graceful shutdown: cancel sprint task, drain pending tasks, close loop.
     """
     restore_signals()
-    shutdown_event.set()
+    # Idempotent: skip if already set (signal handler already set it).
+    # threading.Event.set() is async-signal-safe, so this is guaranteed
+    # to succeed even if called from signal handler context.
+    if not shutdown_event.is_set():
+        shutdown_event.set()
 
     if not sprint_task.done():
         sprint_task.cancel()
@@ -367,7 +375,7 @@ async def _cancel_all_tasks(timeout_s: float = 5.0) -> None:
         return
     for t in pending:
         t.cancel()
-    done, stragglers = await asyncio.wait(
+    _, stragglers = await asyncio.wait(
         pending, timeout=timeout_s, return_when=asyncio.ALL_COMPLETED
     )
     for t in stragglers:

@@ -141,14 +141,17 @@ def set_run_id(run_id: str) -> None:
     global _run_id
     _run_id = run_id
 
+# Module-level RNG — non-security sampling, random is 30× faster than secrets
+import random as _random_module
+_RANDOM = _random_module.Random()
+
 def _should_sample() -> bool:
     """Determine if this event should be sampled."""
     if not TRACE_ENABLED:
         return False
     if TRACE_SAMPLE_RATE >= 1.0:
         return True
-    import secrets
-    return secrets.SystemRandom().random() < TRACE_SAMPLE_RATE
+    return _RANDOM.random() < TRACE_SAMPLE_RATE
 
 def trace_event(
     component: str,

@@ -173,10 +173,8 @@ class _TokenBucket:
                 # This is the correct pattern - wait() inside the lock
                 condition = self._get_condition()
                 try:
-                    await asyncio.wait_for(
-                        condition.wait(),
-                        timeout=min(remaining, 0.1),
-                    )
+                    async with asyncio.timeout(min(remaining, 0.1)):
+                        await condition.wait()
                 except asyncio.TimeoutError:
                     pass  # Timeout expired, loop will re-check tokens
                 except asyncio.CancelledError:
@@ -256,7 +254,7 @@ class PassiveDNSResolver:
             try:
                 params = {'name': name, 'type': rdtype}
                 resp = await session.get(url, params=params, timeout=httpx.Timeout(10.0), headers={'Accept': 'application/dns-json'})
-                try:
+                async with resp:
                     if resp.status_code >= 500:
                         if _retry_i < _MAX_DOH_RETRIES:
                             await asyncio.sleep(_DOH_RETRY_DELAY_S * 2 ** _retry_i)
@@ -265,8 +263,6 @@ class PassiveDNSResolver:
                     if resp.status_code != 200:
                         return []
                     data = await resp.json()
-                finally:
-                    await resp.aclose()
             except Exception as e:
                 if _retry_i < _MAX_DOH_RETRIES:
                     await asyncio.sleep(_DOH_RETRY_DELAY_S * 2 ** _retry_i)

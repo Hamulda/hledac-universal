@@ -46,7 +46,7 @@ import time
 from dataclasses import dataclass, field
 import msgspec
 from typing import Any
-from utils.async_helpers import safe_wait_for
+from utils.async_helpers import safe_create_task, safe_wait_for
 logger = logging.getLogger(__name__)
 
 # Issue #042: M1 8GB tuned generational GC thresholds.
@@ -326,12 +326,9 @@ def start_pressure_relief_loop(interval_s: float=_PRESSURE_RELIEF_INTERVAL_S) ->
     global _pressure_relief_task, _pressure_relief_stop
     if _pressure_relief_task is not None and (not _pressure_relief_task.done()):
         return _pressure_relief_task
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return None
+    # F350M-R ISSUE #31: safe_create_task handles loop detection internally
     _pressure_relief_stop = asyncio.Event()
-    _pressure_relief_task = loop.create_task(_pressure_relief_loop(interval_s), name='memory_cycle.pressure_relief')
+    _pressure_relief_task = safe_create_task(_pressure_relief_loop(interval_s), name='memory_cycle.pressure_relief', eager_start=True)
     logger.debug('[memory_cycle] pressure_relief loop started (interval=%.0fs)', interval_s)
     return _pressure_relief_task
 
@@ -414,12 +411,9 @@ def start_gc_background_loop(interval_s: float=_GC_BACKGROUND_INTERVAL_S) -> asy
     global _gc_background_task, _gc_background_stop
     if _gc_background_task is not None and (not _gc_background_task.done()):
         return _gc_background_task
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return None
+    # F350M-R ISSUE #31: safe_create_task handles loop detection internally
     _gc_background_stop = asyncio.Event()
-    _gc_background_task = loop.create_task(_gc_background_loop(interval_s), name='memory_cycle.gc_background')
+    _gc_background_task = safe_create_task(_gc_background_loop(interval_s), name='memory_cycle.gc_background', eager_start=True)
     logger.debug('[memory_cycle] gc_background loop started (interval=%.0fs)', interval_s)
     return _gc_background_task
 

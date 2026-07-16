@@ -120,7 +120,9 @@ class _ShadowRecorder:
             except RuntimeError:
                 return
             self._worker_started = True
-            loop.create_task(self._worker())
+            # F350M-R ISSUE #31: safe_create_task with eager_start=True (analytics worker is hot path)
+            from utils.async_helpers import safe_create_task
+            safe_create_task(self._worker(), name='analytics_hook.worker', eager_start=True)
 
     def enqueue(self, record: dict[str, Any]) -> None:
         """

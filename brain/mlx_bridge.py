@@ -336,8 +336,10 @@ async def stream_with_prefetch(
     # Start prefetch task if prompt provided
     prefetch_task = None
     if prefetch_prompt:
-        prefetch_task = asyncio.create_task(
-            _prefetch_kv_cache(engine, prefetch_prompt)
+        # F350M-R ISSUE #31: safe_create_task with eager_start=True (KV cache prefetch is hot path)
+        from utils.async_helpers import safe_create_task
+        prefetch_task = safe_create_task(
+            _prefetch_kv_cache(engine, prefetch_prompt), eager_start=True
         )
 
     # Stream current prompt

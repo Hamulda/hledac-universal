@@ -52,6 +52,8 @@ import os
 import pathlib
 from typing import TYPE_CHECKING, Any
 
+import aiofiles  # F350M-R: ISSUE-045 — native async file I/O, no thread pool overhead
+
 # Sprint F214Q / F271E: Re-export narrative_builder helpers for formatters.py
 # compat. narrative_builder.py holds TEMPORARY stubs (Sprint F232A) for
 # functions that will be re-implemented in the components package. Until then
@@ -781,10 +783,13 @@ async def export_partial_sprint(
 
         compressed = compression.zstd.compress(_text_data.encode("utf-8"))
         partial_path_zst = partial_path.with_suffix(".json.zst")
-        partial_path_zst.write_bytes(compressed)
+        async with aiofiles.open(partial_path_zst, "wb") as f:
+            await f.write(compressed)
         logger.info(f"[PARTIAL-EXPORT] {partial_path_zst} — findings={finding_count} (zstd sidecar)")
         # Always write .json for backward compatibility with existing readers
-        await asyncio.to_thread(partial_path.write_text, _text_data)
+        # F350M-R ISSUE-045: aiofiles — true async I/O, no thread pool overhead
+        async with aiofiles.open(partial_path, "w", encoding="utf-8") as f:
+            await f.write(_text_data)
     except Exception as ex:
         logger.warning(f"[PARTIAL-EXPORT] write failed (non-fatal): {ex}")
 
@@ -1198,9 +1203,12 @@ async def _generate_next_sprint_seeds(
         import compression.zstd
 
         seeds_zst = seeds_path.with_suffix(".json.zst")
-        seeds_zst.write_bytes(compression.zstd.compress(_seeds_bytes, level=3))
+        async with aiofiles.open(seeds_zst, "wb") as f:
+            await f.write(compression.zstd.compress(_seeds_bytes, level=3))
         logger.info(f"[EXPORT] {len(seeds)} seeds ({next_seeds_source}) → {seeds_zst} (zstd sidecar)")
-        await asyncio.to_thread(seeds_path.write_text, _seeds_text, encoding="utf-8")
+        # F350M-R ISSUE-045: aiofiles — true async I/O, no thread pool overhead
+        async with aiofiles.open(seeds_path, "w", encoding="utf-8") as f:
+            await f.write(_seeds_text)
         logger.info(
             f"[EXPORT] {len(seeds)} seeds ({next_seeds_source}) ({', '.join(_seed_type_counts(seeds))}) → {seeds_path}"
         )  # noqa: E501
@@ -1215,8 +1223,11 @@ async def _generate_next_sprint_seeds(
         import compression.zstd
 
         seeds_zst = seeds_path.with_suffix(".json.zst")
-        seeds_zst.write_bytes(compression.zstd.compress(_empty_text.encode("utf-8"), level=3))
-        await asyncio.to_thread(seeds_path.write_text, _empty_text, encoding="utf-8")
+        async with aiofiles.open(seeds_zst, "wb") as f:
+            await f.write(compression.zstd.compress(_empty_text.encode("utf-8"), level=3))
+        # F350M-R ISSUE-045: aiofiles — true async I/O, no thread pool overhead
+        async with aiofiles.open(seeds_path, "w", encoding="utf-8") as f:
+            await f.write(_empty_text)
 
     return seeds_path
 

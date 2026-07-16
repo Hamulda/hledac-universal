@@ -149,6 +149,12 @@
       "type": "context"
     },
     {
+      "importance": 50,
+      "path": "data/duckdb_store/issue_032_write_serialization_fix.md",
+      "tokens": 554,
+      "type": "context"
+    },
+    {
       "abstractPath": "data/duckdb_store/query_cache_ioc_extraction.abstract.md",
       "abstractTokens": 48,
       "importance": 50,
@@ -319,57 +325,21 @@
       "type": "context"
     },
     {
-      "abstractPath": "memory/resource_governor/rust_mpsc_architecture_issue_007.abstract.md",
-      "abstractTokens": 65,
-      "importance": 50,
-      "path": "memory/resource_governor/rust_mpsc_architecture_issue_007.md",
-      "tokens": 65,
-      "type": "context"
-    },
-    {
-      "abstractPath": "testing/conftest/pytest_infrastructure_and_fixtures.abstract.md",
-      "abstractTokens": 55,
-      "importance": 50,
-      "path": "testing/conftest/pytest_infrastructure_and_fixtures.md",
-      "tokens": 55,
-      "type": "context"
-    },
-    {
-      "importance": 50,
-      "path": "testing/exit_codes/context.md",
-      "tokens": 92,
-      "type": "context"
-    },
-    {
       "abstractPath": "testing/exit_codes/exit_code_testing.abstract.md",
       "abstractTokens": 0,
       "importance": 50,
       "path": "testing/exit_codes/exit_code_testing.md",
       "tokens": 0,
       "type": "context"
-    },
-    {
-      "importance": 50,
-      "path": "testing/memory_leaks/context.md",
-      "tokens": 107,
-      "type": "context"
-    },
-    {
-      "abstractPath": "testing/memory_leaks/f350m_r_memory_leak_fixes.abstract.md",
-      "abstractTokens": 54,
-      "importance": 50,
-      "path": "testing/memory_leaks/f350m_r_memory_leak_fixes.md",
-      "tokens": 54,
-      "type": "context"
     }
   ],
-  "generated_at": "2026-07-16T11:34:27.482Z",
+  "generated_at": "2026-07-16T16:41:49.419Z",
   "lane_tokens": {
-    "contexts": 3808,
+    "contexts": 3989,
     "stubs": 0,
     "summaries": 1831
   },
-  "source_fingerprint": "f4a4baee0ff559a05ea3bbf5075be2c2c2d87209cbc939f5644b69f56b952d24",
-  "total_tokens": 5639,
+  "source_fingerprint": "e97428a3f0f65a2fb0d975d334290434291271522854750ac096f7460871f370",
+  "total_tokens": 5820,
   "version": 1
 }

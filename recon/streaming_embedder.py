@@ -20,7 +20,7 @@ ISSUE #022 FIXES:
 ISSUE #016 FIXES:
 4. SAFE CREATE_TASK: safe_create_task propagates OTel trace context (trace_id,
    span_id) into child tasks via contextvars — distributed tracing works.
-5. WAIT_TIMEOUT: asyncio.wait_for(pending.wait(), timeout=300.0) hard-caps
+5. WAIT_TIMEOUT: asyncio.timeout(300.0) hard-caps
    each batch wait at 5 min — prevents Metal pipeline stalls from growing
    the pending set indefinitely on M1 8GB.
 
@@ -392,18 +392,16 @@ class StreamingEmbedder:
                 break
 
             # Wait for at least one to complete
-            # ISSUE #016 (CRITICAL): asyncio.wait_for timeout prevents indefinite
+            # ISSUE #016 (CRITICAL): asyncio.timeout (PEP 654) prevents indefinite
             # growth of pending set when a batch stalls (e.g. Metal pipeline stall
-            # on M1). However, when timeout fires, asyncio.wait() is cancelled and
-            # all its tracked tasks get CancelledError — they land in the done set
-            # returned by asyncio.wait() BUT our code never awaits them, causing
-            # a resource leak. We must explicitly await the done set on timeout.
-            # Uses asyncio.FIRST_COMPLETED — wait_for is the async timeout wrapper.
+            # on M1). When timeout fires, asyncio.wait() is cancelled and all its
+            # tracked tasks get CancelledError — they land in the done set returned
+            # by asyncio.wait() BUT our code never awaits them, causing a resource
+            # leak. We must explicitly await the done set on timeout.
+            # Uses asyncio.FIRST_COMPLETED — asyncio.timeout wraps the wait() call.
             try:
-                done, pending = await asyncio.wait_for(
-                    asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED),
-                    timeout=300.0,  # 5 min hard cap per batch (ISSUE #016)
-                )
+                async with asyncio.timeout(300.0):  # 5 min hard cap per batch (ISSUE #016)
+                    done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
             except asyncio.TimeoutError:
                 # ISSUE #016 CRITICAL FIX: timeout fired — awaiting the done set
                 # (cancelled tasks) is required to clean up Task callbacks and
@@ -519,10 +517,8 @@ class StreamingEmbedder:
                 break
 
             try:
-                done, pending = await asyncio.wait_for(
-                    asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED),
-                    timeout=300.0,
-                )
+                async with asyncio.timeout(300.0):
+                    done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
             except asyncio.TimeoutError:
                 for t in done:
                     try:

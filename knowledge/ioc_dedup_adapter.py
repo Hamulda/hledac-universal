@@ -24,7 +24,7 @@ PERSISTENCE:
 M1 8GB: Rust AHashMap (50k capacity) ≈ 5-8 MB resident
 """
 import atexit
-import json
+import orjson
 import logging
 import weakref
 from dataclasses import dataclass
@@ -172,7 +172,7 @@ class IocDedupStorePythonFallback:
     def to_bytes(self) -> bytes:
         """Serialize state to bytes (compatible with Rust get_state_bytes)."""
         data = {'entries': {k: {'nv': v.normalized_value, 'it': v.ioc_type, 'fs': v.first_seen_sprint, 'ls': v.last_seen_sprint, 'oc': v.occurrence_count, 'cm': v.confidence_max} for k, v in self._entries.items()}, 'cs': self._current_sprint, 'ts': self._total_seen, 'td': self._total_deduped}
-        return json.dumps(data, separators=(',', ':')).encode('utf-8')
+        return orjson.dumps(data, option=orjson.OPT_SORT_KEYS)
 
     def clear(self) -> None:
         self._entries.clear()
@@ -379,8 +379,7 @@ class IocDedupAdapter:
                 else:
                     raise ImportError('ioc_dedup_from_bytes not available')
             else:
-                import json
-                parsed = json.loads(data.decode('utf-8'))
+                parsed = orjson.loads(data)
                 fallback = IocDedupStorePythonFallback(sprint_id=parsed.get('cs', 0))
                 fallback._entries = {}
                 for k, v in parsed.get('entries', {}).items():

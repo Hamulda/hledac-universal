@@ -5,23 +5,27 @@ M1 8GB safe: bounded retry loop, no unbounded growth.
 
 Architecture:
 - RetryPolicy: bounded exponential backoff, Retry-After support
-- CircuitBreakerState/Registry: per-domain circuit breaker, max 512 domains
+- CircuitBreakerState/CircuitBreakerCache: per-domain circuit breaker, max 512 domains, LRU eviction
 - BaseFetcher: ABC with retry loop, timeout normalization, stats
 - CurlCFFIFetcher / AiohttpFetcher / HybridFetcher / TorCurlCFFIFetcher / I2PCurlCFFIFetcher / JsFetcher
 - FetchRouter: central routing, converts to FetchResult
 
 No circular deps: this module is independent of fetching/public_fetcher.py.
 """
+from __future__ import annotations
+
 import asyncio
 import logging
 import secrets
 import threading
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from collections import OrderedDict
 import msgspec
-from typing import Any, NamedTuple
-from urllib.parse import urlparse
+from typing import Any, NamedTuple, Self
+
+from hledac.universal.transport.url_utils import cached_urlparse
+
 logger = logging.getLogger(__name__)
 from hledac.universal.core.constants import HTTP
 _RETRYABLE_STATUS_CODES: frozenset[int] = HTTP().retryable
@@ -85,22 +89,22 @@ class CircuitBreakerState(NamedTuple):
     is_open: bool
 
     @classmethod
-    def fresh(cls) -> CircuitBreakerState:
+    def fresh(cls) -> Self:
         """Create a new circuit breaker in closed state."""
         return cls(failure_count=0, last_failure=0.0, is_open=False)
 
-    def record_failure(self) -> CircuitBreakerState:
+    def record_failure(self) -> Self:
         """Record a failure and return new state (functional update)."""
         new_count = self.failure_count + 1
-        return CircuitBreakerState(
+        return CircuitBreakerState(  # type: ignore
             failure_count=new_count,
             last_failure=time.monotonic(),
             is_open=new_count >= _CIRCUIT_BREAKER_FAILURE_THRESHOLD,
         )
 
-    def record_success(self) -> CircuitBreakerState:
+    def record_success(self) -> Self:
         """Record a success and return new state (resets circuit)."""
-        return CircuitBreakerState(
+        return CircuitBreakerState(  # type: ignore
             failure_count=0,
             last_failure=self.last_failure,
             is_open=False,
@@ -115,42 +119,64 @@ class CircuitBreakerState(NamedTuple):
         return False
 
 
-class CircuitBreakerRegistry:
-    """Global registry of circuit breakers per domain.
+class CircuitBreakerCache:
+    """Global circuit breaker cache per domain.
 
-    M1 8GB: bounded map, max 512 domains.
-    Thread-safe: per-domain Lock prevents race conditions on concurrent access.
+    M1 8GB: bounded OrderedDict, max 512 domains.
+    Thread-safe: per-entry lock stored alongside state — single atomic dict operation.
+
+    LRU eviction: move_to_end() on access preserves recency order.
+    When full, popitem(last=False) evicts the least-recently-used domain.
+
+    Invariant: _data key → (state, lock) — both stored together, never out of sync.
     """
-    _breakers: dict[str, CircuitBreakerState] = {}
-    _locks: dict[str, threading.Lock] = {}
-    _registry_lock: threading.Lock = threading.Lock()  # guards _breakers/_locks dict ops
+    __slots__ = ('_data', '_lock')
 
-    @classmethod
-    def get_breaker(cls, domain: str) -> tuple[CircuitBreakerState, threading.Lock]:
+    _data: OrderedDict[str, tuple[CircuitBreakerState, threading.Lock]]
+    _lock: threading.Lock
+
+    def __init__(self) -> None:
+        self._data = OrderedDict()
+        self._lock = threading.Lock()
+
+    def get_breaker(self, domain: str) -> tuple[CircuitBreakerState, threading.Lock]:
         """Get circuit breaker state AND its lock for atomic read-modify-write.
 
         Returns tuple of (state, lock). Caller MUST hold the lock during updates.
+        LRU: access refreshes recency — most-recently-used survives eviction.
+
         Pattern:
-            state, lock = CircuitBreakerRegistry.get_breaker(domain)
+            state, lock = cache.get_breaker(domain)
             with lock:
                 new_state = state.record_failure()
-                CircuitBreakerRegistry.update_breaker(domain, new_state)
+                cache.update_breaker(domain, new_state)
         """
-        with cls._registry_lock:
-            if domain not in cls._breakers:
-                if len(cls._breakers) >= _CIRCUIT_BREAKER_MAX_DOMAINS:
-                    # Evict oldest domain (first inserted)
-                    oldest = next(iter(cls._breakers))
-                    del cls._breakers[oldest]
-                    del cls._locks[oldest]
-                cls._breakers[domain] = CircuitBreakerState.fresh()
-                cls._locks[domain] = threading.Lock()
-            return cls._breakers[domain], cls._locks[domain]
+        with self._lock:
+            if domain in self._data:
+                # LRU touch — promote to most-recently-used
+                self._data.move_to_end(domain)
+                return self._data[domain]
+            # Evict LRU domain when at capacity
+            if len(self._data) >= _CIRCUIT_BREAKER_MAX_DOMAINS:
+                self._data.popitem(last=False)  # O(1) LRU eviction
+            self._data[domain] = (CircuitBreakerState.fresh(), threading.Lock())
+            return self._data[domain]
 
-    @classmethod
-    def update_breaker(cls, domain: str, new_state: CircuitBreakerState) -> None:
+    def update_breaker(self, domain: str, new_state: CircuitBreakerState) -> None:
         """Atomically update breaker state (caller must hold domain lock)."""
-        cls._breakers[domain] = new_state
+        with self._lock:
+            if domain in self._data:
+                _old_state, lock = self._data[domain]
+                self._data[domain] = (new_state, lock)
+
+    def clear(self) -> None:
+        """Clear all circuit breaker state (testing only)."""
+        with self._lock:
+            self._data.clear()
+
+
+# Module-level singleton — shared across all BaseFetcher subclasses
+_circuit_breaker_cache = CircuitBreakerCache()
 
 class FetcherResult(msgspec.Struct, frozen=True):
     """Internal fetch result for base_fetcher.py abstraction.
@@ -218,8 +244,8 @@ class BaseFetcher(ABC):
                 new_state = state.record_failure()
                 CircuitBreakerRegistry.update_breaker(domain, new_state)
         """
-        parsed = urlparse(url)
-        return CircuitBreakerRegistry.get_breaker(parsed.netloc)
+        parsed = cached_urlparse(url)
+        return _circuit_breaker_cache.get_breaker(parsed.netloc)
 
     @abstractmethod
     async def fetch_once(self, url: str, **kwargs) -> FetcherResult:
@@ -255,7 +281,7 @@ class BaseFetcher(ABC):
             FetcherResult from final attempt
         """
         effective_timeout = self.normalize_timeout(timeout_s, network)
-        parsed_url = urlparse(url)
+        parsed_url = cached_urlparse(url)
         domain = parsed_url.netloc
         last_result: FetcherResult | None = None
 
@@ -263,7 +289,7 @@ class BaseFetcher(ABC):
         # 1. Domain eviction between is_available() check and record_failure()
         # 2. Two different get_breaker() calls returning different lock objects
         # 3. Lost updates when multiple threads retry the same domain
-        breaker_state, lock = CircuitBreakerRegistry.get_breaker(domain)
+        breaker_state, lock = _circuit_breaker_cache.get_breaker(domain)
 
         with lock:
             for attempt in range(self.retry_policy.max_attempts):
@@ -274,28 +300,30 @@ class BaseFetcher(ABC):
                     return FetcherResult(url=url, success=False, error='circuit_breaker_blocked', network_error_kind='circuit_breaker', failure_stage='circuit_breaker')
 
                 try:
-                    # NOTE: We release the lock during the actual I/O to allow
-                    # concurrent requests to OTHER domains to proceed. The circuit
-                    # breaker state is snapshot-checked at loop entry; failures
-                    # recorded by other threads will be visible on the next attempt.
+                    # NOTE: The lock is held for the ENTIRE retry loop for this domain
+                    # (including await fetch_once and await asyncio.sleep). This serialises
+                    # retries for the SAME domain — but domains are independent, so
+                    # concurrent requests to OTHER domains proceed unaffected.
+                    # Other threads calling get_breaker(same domain) will block here
+                    # until the loop exits or the domain's lock is released.
                     result = await self.fetch_once(url, timeout_s=effective_timeout, **kwargs)
                     last_result = result
 
                     if result.success:
                         breaker_state = breaker_state.record_success()
-                        CircuitBreakerRegistry.update_breaker(domain, breaker_state)
+                        _circuit_breaker_cache.update_breaker(domain, breaker_state)
                         self._stats['successes'] += 1
                         return result
 
                     if not result.is_retryable:
                         breaker_state = breaker_state.record_failure()
-                        CircuitBreakerRegistry.update_breaker(domain, breaker_state)
+                        _circuit_breaker_cache.update_breaker(domain, breaker_state)
                         self._stats['failures'] += 1
                         return result
 
                     # Retryable failure — record it and backoff
                     breaker_state = breaker_state.record_failure()
-                    CircuitBreakerRegistry.update_breaker(domain, breaker_state)
+                    _circuit_breaker_cache.update_breaker(domain, breaker_state)
 
                     if attempt < self.retry_policy.max_attempts - 1:
                         self._stats['retries'] += 1
@@ -307,7 +335,7 @@ class BaseFetcher(ABC):
                 except Exception as e:
                     logger.warning(f'Fetch exception for {url}: {e}')
                     breaker_state = breaker_state.record_failure()
-                    CircuitBreakerRegistry.update_breaker(domain, breaker_state)
+                    _circuit_breaker_cache.update_breaker(domain, breaker_state)
                     last_result = FetcherResult(url=url, success=False, error=str(e), failure_stage='exception')
                     if attempt < self.retry_policy.max_attempts - 1:
                         self._stats['retries'] += 1
@@ -467,7 +495,7 @@ class FetchRouter:
 
     def _classify_url(self, url: str) -> str:
         """Classify URL by network type."""
-        parsed = urlparse(url)
+        parsed = cached_urlparse(url)
         netloc = parsed.netloc.lower()
         if netloc.endswith(('.onion', '.onion.ws', '.onion.ly')):
             return 'tor'

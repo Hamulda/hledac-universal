@@ -25,6 +25,7 @@ import concurrent.futures
 import importlib.util
 import os
 import re
+import secrets
 import threading
 import time
 import urllib.parse
@@ -723,8 +724,7 @@ def _compute_backoff_seconds(retry_after: float | None, attempt: int, *, jitter:
     else:
         base = min(2.0 ** (attempt + 1), 8.0)
     if jitter:
-        import secrets
-        return min(8.0, secrets.SystemRandom().uniform(0.0, max(base, _prev_sleep) * 3.0))
+        return min(8.0, _JITTER_RNG.uniform(0.0, max(base, _prev_sleep) * 3.0))
     return base
 
 def _build_retry_error(status_code: int, retry_after: float | None) -> str:
@@ -1283,10 +1283,12 @@ async def _maybe_renew_tor_circuit() -> None:
     if _SESSION_MGR._tor_request_count == 0:
         await _renew_tor_circuit()
 
+# Crypto-safe jitter — reused across retries (F350M-R)
+_JITTER_RNG = secrets.SystemRandom()
+
 async def _jitter_delay() -> None:
     """Apply random jitter before request (Tor/stealth anti-correlation)."""
-    import secrets
-    await asyncio.sleep(secrets.SystemRandom().uniform(JITTER_MIN_S, JITTER_MAX_S))
+    await asyncio.sleep(_JITTER_RNG.uniform(JITTER_MIN_S, JITTER_MAX_S))
 
 async def _close_tor_session() -> None:
     """Close the Tor session (for cleanup)."""
@@ -2026,7 +2028,7 @@ async def _playwright_locked(url: str, timeout: float) -> str:
             await browser.close()
         await _cooldown_after_browser_stop()
 
-async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: int=MAX_BYTES_DEFAULT, use_stealth: bool=False, use_js: bool=False, use_doh: bool=False, js_confidence: float=0.8, priority: int=5) -> FetchResult:
+async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: int=MAX_BYTES_DEFAULT, use_stealth: bool=False, use_js: bool=False, use_doh: bool=False, js_confidence: float=0.8, priority: int=5, bypass_circuit_breaker: bool=False) -> FetchResult:
     """
     Fetch a public URL using the shared aiohttp session.
 
@@ -2083,18 +2085,30 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
         logger.debug('URL classification failed (non-fatal): {_e}', _e=_e)
     _circuit_breaker_domain: str = _url_host
     _circuit_breaker: CircuitBreaker | None = None
-    try:
-        if _circuit_breaker_domain:
-            _circuit_breaker = get_breaker(_circuit_breaker_domain)
-            if _circuit_breaker is None:
-                _circuit_breaker = None
-            else:
-                decision = _circuit_breaker.check_circuit()
-                if not decision.allowed:
+    # ISSUE #33: Feed sources have per-source asyncio.timeout — domain circuit breaker
+    # is redundant and can block all sources from same domain. Bypass for feed paths.
+    # ISSUE-41: Rust fast-path — lock-free atomic check before Python CircuitBreaker
+    if not bypass_circuit_breaker:
+        try:
+            if _circuit_breaker_domain:
+                # Fast-path: try Rust lock-free circuit breaker first
+                from transport.circuit_breaker import rust_circuit_is_open, rust_circuit_record_success, rust_circuit_record_failure
+                _rust_open = rust_circuit_is_open(_circuit_breaker_domain)
+                if _rust_open is True:
+                    # Circuit open in Rust — return blocked immediately
                     elapsed_ms = (time.monotonic() - t0) * 1000
-                    return FetchResult(url=url, final_url=url, status_code=0, content_type='', text=None, fetched_bytes=0, declared_length=-1, elapsed_ms=elapsed_ms, error=f'circuit_breaker_open:{decision.state}:{decision.reason}', failure_stage='circuit_breaker', selected_transport='httpx_h2', transport_policy_reason='clearnet_default')
-    except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-        logger.debug('Circuit breaker check failed (non-fatal): {e}', e=e)
+                    return FetchResult(url=url, final_url=url, status_code=0, content_type='', text=None, fetched_bytes=0, declared_length=-1, elapsed_ms=elapsed_ms, error='circuit_breaker_open:rust_fast_path', failure_stage='circuit_breaker', selected_transport='httpx_h2', transport_policy_reason='clearnet_default')
+                elif _rust_open is None:
+                    # Rust unavailable — fall back to Python CircuitBreaker
+                    _circuit_breaker = get_breaker(_circuit_breaker_domain)
+                    if _circuit_breaker is not None:
+                        decision = _circuit_breaker.check_circuit()
+                        if not decision.allowed:
+                            elapsed_ms = (time.monotonic() - t0) * 1000
+                            return FetchResult(url=url, final_url=url, status_code=0, content_type='', text=None, fetched_bytes=0, declared_length=-1, elapsed_ms=elapsed_ms, error=f'circuit_breaker_open:{decision.state}:{decision.reason}', failure_stage='circuit_breaker', selected_transport='httpx_h2', transport_policy_reason='clearnet_default')
+                # Rust returned False (circuit closed) — continue to fetch
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+            logger.debug('Circuit breaker check failed (non-fatal): {e}', e=e)
     max_bytes = _compute_effective_max_bytes(max_bytes)
     _router_decision: TransportDecision = route_transport(url, use_stealth=use_stealth, use_js=use_js, cache_safe=False, retry_after_status=None, suggested_timeout_s=timeout_s, suggested_max_bytes=max_bytes, suggested_concurrency=None, preclassified_kind=_url_kind, preclassified_host=_url_host)
     _router_lane = _router_decision.lane
@@ -2460,6 +2474,7 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
                                         _tc.fallback_count += 1
                         if _circuit_breaker and _is_retryable_status(last_status_code):
                             _circuit_breaker.record_failure(failure_kind=str(last_status_code))
+                            rust_circuit_record_failure(_circuit_breaker_domain, is_timeout=False)
                             last_error = _build_retry_error(last_status_code, retry_after)
                             if attempt < MAX_RETRIES:
                                 retry_after = _extract_retry_after(resp.headers)
@@ -2635,6 +2650,7 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
                         elapsed_ms = (time.monotonic() - t0) * 1000
                         if _circuit_breaker and last_status_code >= 200 and (last_status_code < 300):
                             _circuit_breaker.record_success()
+                            rust_circuit_record_success(_circuit_breaker_domain)
                         redirected, redirect_target = _derive_redirect_fields(url, final_url)
                         _actual_transport = 'httpx_h2' if _use_httpx_h2 else 'httpx_h2'
                         _fallback_info: str | None = None
@@ -2663,6 +2679,7 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
             elapsed_ms = (time.monotonic() - t0) * 1000
             if _circuit_breaker:
                 _circuit_breaker.record_failure(is_timeout=True, failure_kind='timeout')
+                rust_circuit_record_failure(_circuit_breaker_domain, is_timeout=True)
             if _curl_fallback_reason:
                 pass
             elif _httpx_fallback_reason == 'httpx_h2_fallback':
@@ -2682,6 +2699,7 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
             elapsed_ms = (time.monotonic() - t0) * 1000
             if _circuit_breaker:
                 _circuit_breaker.record_failure(failure_kind='fetch_error')
+                rust_circuit_record_failure(_circuit_breaker_domain, is_timeout=False)
             err_str = f'fetch_error;{type(exc).__name__};{exc}'
             failure_stage, network_error_kind = _derive_failure_stage_and_network_kind(err_str)
             body_read_error = failure_stage in ('body', 'size')
