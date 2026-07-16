@@ -997,10 +997,12 @@ def rayon_submit(pool_type: str, n_items: int, func: Callable[..., Any], args: t
     """
     ...
 
-def rayon_join(handle: int, /) -> Any:
+def rayon_join(handle: int, timeout: float | None = None, /) -> Any:
     """Wait for a rayon_submit task to complete and return the Python result.
 
     handle: opaque handle from rayon_submit
+    timeout: optional timeout in seconds (default None = wait forever)
+    Returns None on timeout (caller should retry or abort).
     Raises RuntimeError if handle already joined or was aborted.
     """
     ...

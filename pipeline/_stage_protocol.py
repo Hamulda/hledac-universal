@@ -39,7 +39,7 @@ T_out = TypeVar("T_out")
 # ----------------------------------------------------------------------
 
 
-class StageMetrics(msgspec.Struct):
+class StageMetrics(msgspec.Struct, gc=False):
     """
     Per-stage metrics for observability.
 
@@ -95,7 +95,7 @@ class StageMetrics(msgspec.Struct):
 # ----------------------------------------------------------------------
 
 
-class StageContext(msgspec.Struct):
+class StageContext(msgspec.Struct, gc=False):
     """
    Sdílený kontext mezi všemi stages.
 
@@ -255,7 +255,7 @@ class Stage(Generic[T_in, T_out], Protocol):
 # ----------------------------------------------------------------------
 
 
-class StageResult(msgspec.Struct):
+class StageResult(msgspec.Struct, gc=False):
     """Výsledek běhu jedné stage pro telemetry."""
     stage_name: str
     processed: int = 0

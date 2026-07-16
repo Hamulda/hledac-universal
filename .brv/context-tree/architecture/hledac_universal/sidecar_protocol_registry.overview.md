@@ -1,0 +1,12 @@
+- F350M-R sidecar architecture documented with 17 adapters and registry mechanics
+- Registry provides auto-registration via @SidecarRegistry.register decorator, lazy imports, memory admission, and discovery
+- Memory admission controlled via GovernorDecision.sidecar_admission with ram_budget_mb checked before every run
+- Prewarm API enables parallel initialization to reduce startup overhead
+- 17 adapters include: fediverse, dht, academic, alt_protocols, leak_sentinel, tvnews, federated_research, passive_fingerprint, passive_tech_stack, social_identity_surface, identity_stitching, temporal_archaeology, lancedb_rag, github_gist, whois, threat_intel, shadow_walker
+- Priority 7 adapters (lancedb_rag, threat_intel) run early; academic adapter skips in aggressive mode saving ~50s
+- Env var pattern: ^HLEDAC_ENABLE_\w+$ enables individual adapters; required fields: sidecar_id, env_gate, ram_budget_mb
+- Key files: runtime/sidecar_protocol.py, runtime/sidecar_protocol_adapters.py
+- Lazy imports for expensive modules (GLiNER, cryptography) avoid 200+ms boot cost
+- Instance caching enabled via _cached_instances after first successful instantiation
+- Rules: GHOST_INVARIANTS wraps all methods fail-safe; no blocking ops in async context
+- Example finding output: {"source_type": "fediverse", "ioc_type": "domain", "ioc_value": "example.com", "confidence": 0.85}

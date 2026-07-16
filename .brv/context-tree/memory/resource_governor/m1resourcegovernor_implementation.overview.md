@@ -1,0 +1,7 @@
+- **State machine**: NORMAL->ELEVATED->CRITICAL->EMERGENCY->CIRED with dual-channel TTL hysteresis for state transitions
+- **Memory budget**: M1 8GB configured at 5632 MB; swap tiers: clean (<3GiB), diagnostic (3-5GiB), hard_block (>6GiB)
+- **Swap detection**: Threshold at >3.8 GiB triggers swap_detected flag
+- **Lock ordering**: Mandatory ascending order (MPC=1, IO_LATCH=2, TELEMETRY=3, DECISION=4) to prevent deadlocks
+- **Thresholds**: Thermal limit 82.0°C; GC triggers at RSS ratio > 0.75; state transitions at 70%/85% dwell times
+- **Thread safety**: Uses ContextVar per-key locks for concurrent access safety
+- **TTL policies**: I/O-only (0.5s), fetch_limit (5s), block_model_load (30s)

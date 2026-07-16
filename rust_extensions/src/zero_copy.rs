@@ -30,7 +30,7 @@ use crate::gil::release_gil;
 use crate::mixed_pool;
 
 // Shared NEON histogram and entropy from quality_gate (avoids duplicate SIMD code)
-use crate::quality_gate::{compute_histogram_neon, entropy_from_histogram, ENTROPY_NEON_THRESHOLD};
+use crate::_entropy::{compute_histogram_neon, entropy_from_histogram, ENTROPY_NEON_THRESHOLD};
 
 // ---------------------------------------------------------------------------
 // Constants

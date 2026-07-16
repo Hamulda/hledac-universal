@@ -1,0 +1,1 @@
+Rust MPSC architecture uses crossbeam bounded channels with 2048 slots for batch communication between Python and Rust, enabling zero-copy msgspec encoding and ~1µs/event performance, but requires #[pyclass(unsendable)] because Receiver<QueueItem> is not Send.

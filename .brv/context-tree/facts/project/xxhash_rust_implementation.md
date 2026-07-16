@@ -2,7 +2,7 @@
 title: xxHash Rust Implementation
 summary: xxhash-rust v0.8 with xxh3/const_xxh3/xxh64 features used for URL canonicalization and body hashing with NEON acceleration
 tags: []
-related: []
+related: [facts/project/hashing_facade_issue_2.md, facts/project/rust_extensions_overview.md]
 keywords: []
 createdAt: '2026-07-11T19:02:58.785Z'
 updatedAt: '2026-07-11T19:02:58.785Z'

@@ -1,0 +1,7 @@
+- **Priority Matrix (P0-P3)**: Systematic optimization ranking for M1 8GB UMA system across 9 items at 6 Meadows leverage levels (L4-L12)
+- **P0 Optimizations**: msgspec.Struct gc=False (~200 bytes saved per future instance) and CI enforcement of 10 GHOST_INVARIANTS via ruff/mypy plugins
+- **P1 Optimizations**: Per-lane RSS delta telemetry for ResourceGovernor visibility and Rust graph analytics (shortest_path, pagerank) with 10-100× speedup potential
+- **P2 Optimizations**: evidence_quality telemetry (findings_with_citation/total_findings ratio) and adaptive ResourceGovernor thresholds based on swap history
+- **GHOST_INVARIANTS**: Two critical patterns documented — I6 (asyncio.gather must use return_exceptions=True) and I4 (mx.eval([]) must precede mx.metal.clear_cache())
+- **Current Limitations**: ResourceGovernor has fixed thresholds (0.5, 0.7, 0.85) and only sees aggregate 0.0-1.0 memory_pressure float from SidecarContext
+- **DuckDB Config**: MAX_CHUNK_SIZE=500, MAX_CHUNK_CONCURRENCY=2

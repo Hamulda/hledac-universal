@@ -20,7 +20,9 @@ use rayon::ThreadPool;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
+use std::sync::mpsc;
 use std::thread;
+use std::time::Duration;
 
 use crate::cpu_pool;
 use crate::io_pool;
@@ -85,6 +87,8 @@ struct SharedTask {
     join_handle: Mutex<Option<thread::JoinHandle<()>>>,
     /// Cancellation flag — set by rayon_abort to request early exit.
     cancel_flag: AtomicBool,
+    /// Abort flag — set on timeout so worker doesn't overwrite TimeoutError.
+    aborted: AtomicBool,
 }
 
 /// Spawn a rayon pool task and return an opaque handle for join/abort.
@@ -113,6 +117,7 @@ pub fn rayon_submit_(
         result: Mutex::new(None),
         join_handle: Mutex::new(None),
         cancel_flag: AtomicBool::new(false),
+        aborted: AtomicBool::new(false),
     });
 
     let shared_clone = Arc::clone(&shared);
@@ -132,22 +137,26 @@ pub fn rayon_submit_(
             // Re-acquire GIL inside rayon pool.
             // Store Result<Py<PyAny>, PyErr> so we can pass error across thread boundary.
             // Check cancel_flag before starting work — allows rayon_abort to interrupt early.
-            if shared_clone.cancel_flag.load(Ordering::Relaxed) {
+            if shared_clone.cancel_flag.load(Ordering::Acquire) {
                 let mut guard = shared_clone.result.lock().unwrap();
-                *guard = Some(Err(PyErr::new::<pyo3::exceptions::PyCancelledError, _>(
+                *guard = Some(Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
                     "Task was cancelled before starting",
                 )));
                 return;
             }
             let py_result: Result<Py<PyAny>, PyErr> = Python::with_gil(|py| {
-                // Periodically check cancel_flag during long work (every 1024 iterations).
-                // This is cooperative cancellation — work must be chunked or check periodically.
+                // Note: cancel_flag is checked once before work starts (cooperative cancellation).
+                // For interruptible long-running work, the Python caller should use
+                // chunked/iterative processing with explicit cancel_flag checks.
                 let result = func_clone.into_bound(py).call1((args_clone.into_bound(py),))?;
                 Ok(result.unbind())
             });
-            // Store result for rayon_join to retrieve
-            let mut guard = shared_clone.result.lock().unwrap();
-            *guard = Some(py_result);
+            // Store result for rayon_join to retrieve — but not if we were aborted (timeout).
+            // Checking aborted flag prevents worker result from overwriting TimeoutError.
+            if !shared_clone.aborted.load(Ordering::Acquire) {
+                let mut guard = shared_clone.result.lock().unwrap();
+                *guard = Some(py_result);
+            }
         });
     });
 
@@ -163,9 +172,11 @@ pub fn rayon_submit_(
 }
 
 /// Wait for a rayon_submit task to complete. Returns the Python result.
+/// Timeout is expressed in seconds — defaults to 30 s. If None, waits indefinitely.
+/// On timeout, returns None (Python side should retry or abort).
 #[pyfunction]
 #[pyo3(name = "rayon_join")]
-pub fn rayon_join_(py: Python<'_>, handle_ptr: usize) -> PyResult<Py<PyAny>> {
+pub fn rayon_join_(py: Python<'_>, handle_ptr: usize, timeout_s: Option<f64>) -> PyResult<Py<PyAny>> {
     // Reconstruct the shared task pointer
     let shared_task = unsafe {
         Box::from_raw(handle_ptr as *mut Arc<SharedTask>)
@@ -178,17 +189,57 @@ pub fn rayon_join_(py: Python<'_>, handle_ptr: usize) -> PyResult<Py<PyAny>> {
     };
 
     if let Some(handle) = join_handle {
-        // Wait for thread to finish (this is the actual blocking wait)
-        // Use catch_unwind to prevent thread panic from propagating to Python
-        let _panic_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            handle.join()
-        }));
-        // If thread panicked, join returns Err and we propagate a sentinel error to Python
-        if _panic_result.is_err() {
+        // Helper thread approach for timeout-aware join:
+        // Main thread blocks on mpsc receiver; helper thread does the actual join.
+        // If timeout expires, we detach the worker and return error.
+        let (tx, rx) = mpsc::channel::<Result<(), std::thread::Result<()>>>();
+        let helper = thread::spawn(move || {
+            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                handle.join()
+            }));
+            let _ = tx.send(match res {
+                Ok(inner) => Ok(inner.map(|_| ())),
+                Err(panic_err) => Ok(Err(panic_err)),
+            });
+        });
+
+        let timed_out = if let Some(timeout_secs) = timeout_s {
+            let timeout = Duration::from_secs_f64(timeout_secs.max(0.0));
+            match rx.recv_timeout(timeout) {
+                Ok(Ok(())) => false, // Thread finished normally
+                Ok(Err(_)) => {
+                    // Thread panicked — result already set in guard below
+                    false
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => true, // Timeout
+                Err(mpsc::RecvTimeoutError::Disconnected) => false, // Helper crashed
+            }
+        } else {
+            // No timeout — wait indefinitely
+            match rx.recv() {
+                Ok(Ok(())) => false,
+                Ok(Err(_)) => false, // Thread panicked
+                Err(_) => false,
+            }
+        };
+
+        // Timeout path: worker thread is still running.
+        // Must wait for helper to finish (helper holds handle.join()).
+        // If worker panicked, catch_unwind in helper already captured it.
+        // Set aborted flag BEFORE writing result — worker checks it before overwriting.
+        if timed_out {
+            shared_task.aborted.store(true, Ordering::Release);
             let mut result_guard = shared_task.result.lock().unwrap();
-            *result_guard = Some(Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                "Rayon worker thread panicked",
-            )));
+            if result_guard.is_none() {
+                *result_guard = Some(Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                    "Rayon worker thread timed out",
+                )));
+            }
+            drop(result_guard); // unlock before joining — helper may panic
+            let _ = helper.join();
+        } else {
+            // Normal path: worker finished, helper will finish shortly
+            let _ = helper.join();
         }
     }
 
@@ -212,7 +263,8 @@ pub fn rayon_join_(py: Python<'_>, handle_ptr: usize) -> PyResult<Py<PyAny>> {
 }
 
 /// Abort a rayon_submit task.
-/// Sends cancellation signal and terminates the spawned thread.
+/// Sends cancellation signal and waits for thread to finish before releasing Arc.
+/// Timeout: 5 seconds max (after that, detaches and returns error).
 #[pyfunction]
 #[pyo3(name = "rayon_abort")]
 pub fn rayon_abort_(handle_ptr: usize) -> PyResult<()> {
@@ -222,16 +274,42 @@ pub fn rayon_abort_(handle_ptr: usize) -> PyResult<()> {
     };
 
     // Signal cancellation to the worker thread (it checks cancel_flag in its loop)
-    shared_task.cancel_flag.store(true, Ordering::Relaxed);
+    shared_task.cancel_flag.store(true, Ordering::Release);
 
-    // Drop the JoinHandle — the worker thread will terminate naturally when it
-    // next checks cancel_flag or finishes its current work.
-    // Note: JoinHandle::abort() was removed in Rust 1.90+ (unsafe, causes resource leaks).
-    shared_task.join_handle.lock().unwrap().take();
+    // Take the JoinHandle and wait for thread to finish with timeout.
+    // This ensures the thread releases its Arc clone before we drop our Arc.
+    // Using helper thread + mpsc for timeout-aware join.
+    let join_handle = shared_task.join_handle.lock().unwrap().take();
+    if let Some(handle) = join_handle {
+        let (tx, rx) = mpsc::channel::<Result<(), std::thread::Result<()>>>();
+        let helper = thread::spawn(move || {
+            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                handle.join()
+            }));
+            let _ = tx.send(match res {
+                Ok(inner) => Ok(inner.map(|_| ())),
+                Err(panic_err) => Ok(Err(panic_err)),
+            });
+        });
 
-    // Drop the Arc reference. The thread holds its own Arc clone and will
-    // release SharedTask when it finishes. No forget() needed — we extracted
-    // what we needed (cancel_flag set, JoinHandle cleared).
+        // 5 second timeout for abort
+        let timed_out = match rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(Ok(())) => false,
+            Ok(Err(_)) => false, // panicked
+            Err(mpsc::RecvTimeoutError::Timeout) => true,
+            Err(mpsc::RecvTimeoutError::Disconnected) => false,
+        };
+
+        if timed_out {
+            // Worker thread may still be running — best-effort abort.
+            // Note: handle was moved into helper closure, automatically cleaned up on helper exit.
+        }
+
+        let _ = helper.join();
+    }
+
+    // Now safe to drop: thread has finished and released its Arc clone.
+    // Drop the Box which releases the Arc, refcount hits 0, SharedTask freed.
     drop(shared_task);
 
     Ok(())

@@ -175,13 +175,21 @@ async def _rayon_join_async(handle: int, timeout: float | None = None) -> Any:
     loop = asyncio.get_running_loop()
 
     def _join() -> Any:
-        return rayon_join(handle)
+        return rayon_join(handle, timeout)
 
     if timeout is None:
         return await loop.run_in_executor(None, _join)
 
-    async with asyncio.timeout(timeout):
+    # asyncio.timeout fires asyncio.CancelledError when deadline expires.
+    # rayon_join returns None on timeout (worker still running).
+    # We convert None → asyncio.TimeoutError so callers get proper exception.
+    try:
         return await loop.run_in_executor(None, _join)
+    except asyncio.CancelledError:
+        # asyncio.timeout deadline fired — rayon worker may still be running.
+        # rayon_join returned None. Convert to TimeoutError so caller
+        # can distinguish this from a normal None return (rare edge case).
+        raise asyncio.TimeoutError(f"rayon_join timed out after {timeout}s") from None
 
 
 async def to_thread_rayon(
@@ -242,7 +250,7 @@ async def to_thread_rayon(
         try:
             from hledac_rust_extensions import rayon_abort
             rayon_abort(handle)
-        except Exception:
+        except BaseException:
             pass  # Best-effort abort — don't mask the original exception
         raise
 

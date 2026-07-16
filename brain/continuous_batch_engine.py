@@ -240,7 +240,8 @@ class ContinuousBatchEngine:
         # Parallel ChatML formatting in thread pool (CPU-bound, ~0.01ms/prompt)
         loop = asyncio.get_running_loop()
         formatted_prompts = await asyncio.gather(
-            *[loop.run_in_executor(None, prep_one, p) for p in prompts]
+            *[loop.run_in_executor(None, prep_one, p) for p in prompts],
+            return_exceptions=True,
         )
 
         # Serial inference per prompt (Metal single-stream — GPU is bottleneck)

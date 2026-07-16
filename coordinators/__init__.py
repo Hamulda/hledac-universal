@@ -15,7 +15,7 @@ Domain Groups:
     - advanced: AdvancedResearch, Swarm, MetaReasoning, PrivacyEnhanced
     - optimization: Performance, Benchmark, Resource, ResearchOptimizer
     - infrastructure: Base, Registry, Mixins
-    - specialized: Fetch, Graph, Archive, Claims, Multimodal, Render, AgentCoordination
+    - specialized: Fetch, Graph, Archive, Multimodal, Render, AgentCoordination
 
 Legacy coordinators moved to legacy/coordinators/:
 - quantum_coordinator (moved 2025-02-14)

@@ -1,0 +1,1 @@
+This document defines a P0-P3 priority matrix for memory optimizations on an M1 8GB RAM system, with P0 items (msgspec gc=False, GHOST_INVARIANTS CI enforcement) being low-effort, high-impact changes that should be prioritized first.

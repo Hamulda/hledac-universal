@@ -48,6 +48,7 @@ pub mod metal_pattern_matcher;
 pub mod memory;
 pub mod ip_parse;
 pub mod quality_gate;
+pub mod _entropy; // Shared entropy helpers — broken out to avoid circular quality_gate ↔ zero_copy
 pub mod rolling_hash;
 pub mod signal_batch;
 pub mod simd_similarity;

@@ -24,7 +24,7 @@ Domain Groups:
     - advanced: AdvancedResearch, Swarm, MetaReasoning, PrivacyEnhanced
     - optimization: Performance, Benchmark, Resource, ResearchOptimizer
     - infrastructure: Base, Registry, Mixins
-    - specialized: Fetch, Graph, Archive, Claims, Multimodal, Render, AgentCoordination
+    - specialized: Fetch, Graph, Archive, Multimodal, Render, AgentCoordination
     - resource: (F320) Unified GC, backpressure, AIMD, M1 capacity (from resource_allocator/gc_policy/backpressure)
     - memory: (F320) ContextOptimization, MultiLevelCache (extracted from memory_coordinator)
 """
@@ -58,7 +58,7 @@ _DOMAIN_MODULES: dict[str, dict[str, str]] = {
         'FetchCoordinator': '.fetch_coordinator',
         'GraphCoordinator': '.graph_coordinator',
         'ArchiveCoordinator': '.archive_coordinator',
-        'ClaimsCoordinator': '.claims_coordinator',
+        # ClaimsCoordinator: ARCHIVED 2026-07-16 — no production wiring, missing ClaimClusterIndex/EvidencePacketStorage/_research_mgr dependencies
         'MultimodalCoordinator': '.multimodal_coordinator',
         'RenderCoordinator': '.render_coordinator',
         'AgentCoordinationEngine': '.agent_coordination_engine',

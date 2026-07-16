@@ -1,0 +1,1 @@
+The Sidecar Protocol Registry implements a lazy-loading, memory-aware adapter system for 17 sidecar modules with auto-registration, priority-based scheduling, and prewarm initialization to optimize resource usage and startup performance.

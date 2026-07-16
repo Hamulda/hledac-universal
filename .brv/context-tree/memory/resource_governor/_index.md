@@ -1,88 +1,108 @@
 ---
-children_hash: 9042a72c6b722b7211e581b6412a0c2615701a078c11c15a0d0039f47dfc77f5
-compression_ratio: 0.7109375
+children_hash: 505a504a834926d51d440d92d1d48665baa4ba0555b41a6ed97ff1a9e3c67aa2
+compression_ratio: 0.35247524752475246
 condensation_order: 1
-covers: [context.md, issue_007_mpsc_batch_send_optimization.md, uma_memory_management.md]
-covers_token_total: 1024
+covers: [context.md, issue_007_mpsc_batch_send_optimization.md, m1_8gb_ram_priority_optimizations.md, m1resourcegovernor_implementation.md, rust_mpsc_architecture_issue_007.md]
+covers_token_total: 2525
 summary_level: d1
-token_count: 728
+token_count: 890
 type: summary
 ---
 <think>
-The user wants me to create a structural summary at level d1 (domain level) from the provided knowledge entries about resource_governor. I need to:
+The user wants me to create a structural summary at level d1 (domain level) from the provided child entries. I need to:
 
-1. Preserve key facts, architectural decisions, and relationships
-2. Reference entry names for drill-down
-3. Target ~20-30% compression
-4. Output clean structured markdown
-5. NOT wrap in code blocks or XML tags
-6. NOT use any tools
+1. Analyze the child entries about resource_governor
+2. Preserve key facts, architectural decisions, and relationships
+3. Reference entry names for drill-down
+4. Target ~20-30% compression
+5. Output clean structured markdown
 
-Let me analyze the content:
-
-**Context Overview:** This domain covers memory/resource management including:
-- ResourceGovernor with UMA memory management
+Let me identify the key themes:
+- ResourceGovernor for M1 8GB RAM UMA system
 - MPSC batch send optimization (ISSUE-007)
-- Memory thresholds and concurrency control
+- Memory management with hysteresis state machine
+- Concurrency control with presets
+- Swap tiered policy
+- Dual-channel TTL cache
 
-**Key components:**
-1. issue_007_mpsc_batch_send_optimization.md - MPSC optimization details
-2. uma_memory_management.md - Memory management system
-3. context.md - Overview
+Key relationships:
+- issue_007_mpsc_batch_send_optimization.md ↔ rust_mpsc_architecture_issue_007.md
+- m1_8gb_ram_priority_optimizations.md ↔ m1resourcegovernor_implementation.md
+- m1resourcegovernor_implementation.md consolidated from uma_memory_management.md
 
-**Key facts to preserve:**
-- MPSC capacity: 2048 slots × 512B = ~1 MiB budget
-- Concurrency presets: emergency=0, critical=1, warn=3, soft_warn=5, ok=5
-- Hysteresis state machine prevents oscillation
-- Batch send reduces GIL from N× to 1×
-- #[pyclass(unsendable)] required for Receiver
+Key architectural decisions:
+- MPSC with 2048 slots × 512 bytes = ~1 MiB budget
+- 5-state machine (NORMAL→ELEVATED→CRITICAL→EMERGENCY→CIRED)
+- Zero-copy via msgspec.msgpack
+- #[pyclass(unsendable)] for Receiver
+- P0-P3 priority optimizations
 
-Let me create a concise structural summary.
+Let me write the summary.
 </think>
 
-# Memory Management and Resource Governor
+# resource_governor
 
-Domain covering memory allocation, concurrency control, and high-performance inter-process communication.
+## Overview
+Memory management system for M1 8GB Unified Memory Architecture (UMA) with priority-based optimizations, MPSC batch communication, and hysteresis-based concurrency control.
 
-## Core Components
+## Architecture
 
-### ResourceGovernor (memory/resource_governor/uma_memory_management)
-- Manages UMA memory with ratio-based adaptive thresholds across M1 8GB, M2 16GB, M3 24GB
-- Hysteresis state machine prevents oscillation between memory pressure states
-- Swap tiered policy calibrated per hardware configuration
+**5-State Hysteresis Machine**
+- States: NORMAL → ELEVATED → CRITICAL → EMERGENCY → CIRED
+- Flow: `memory_check → hysteresis_state → concurrency_adjust → action_take`
+- Dual-channel TTL cache with swap tiered policy
 
-### MPSC Batch Send Optimization (memory/resource_governor/issue_007_mpsc_batch_send_optimization)
-- Rust send_batch enables single Python→Rust call for N items
-- Reduces GIL acquisition overhead from N× to 1×
-- Memory budget: 2048 × 512B slots ≈ 1 MiB (2× evidence_log maxsize for headroom)
+**MPSC Batch Communication** (see: `issue_007_mpsc_batch_send_optimization.md`, `rust_mpsc_architecture_issue_007.md`)
+- Single Python→Rust call via `send_batch()` for N items
+- crossbeam bounded channel (2048 slots × 512 bytes = ~1 MiB budget)
+- Zero-copy encoding via `msgspec.msgpack.encode()`
+- Performance: ~1µs/event vs 5µs for N× individual calls
+- Two channels: `_mpsc` (no asyncio) and `_mpsc2` (asyncio integration)
 
-## Architecture Decisions
+## Concurrency Presets
 
-**Concurrency Presets:**
 | State | Workers | Fetch Limit |
-|-------|---------|--------------|
-| emergency | 0 | — |
-| critical | 1 | minimal |
+|-------|---------|-------------|
+| emergency | 0 | 0 |
+| critical | 1 | min |
 | warn | 3 | reduced |
-| soft_warn | 5 | moderate |
-| ok | 5 | full |
+| ok | 5 | normal |
 
-**MPSC Channel Design:**
-- Python holds cloned Senders; Rust holds single Receiver
-- Pipe delivers async wake-up to event loop
-- Receiver requires `#[pyclass(unsendable)]` (ISSUE-064)
-- Zero-copy bytes via msgspec.msgpack.encode()
+## Key Relationships
 
-**Key Constraints:**
-- Receiver<QueueItem> is NOT Send (Python object bound to Rust Receiver)
-- Each send() still does to_vec() internally (crossbeam requirement)
-- Backpressure via MPSC bounded capacity
+- `issue_007_mpsc_batch_send_optimization.md` documents Python wrapper and batch API
+- `rust_mpsc_architecture_issue_007.md` documents Rust channel architecture
+- `m1_8gb_ram_priority_optimizations.md` ranks optimizations P0-P3 by Meadows leverage
+- `m1resourcegovernor_implementation.md` consolidated from `uma_memory_management.md` (canonical source)
 
-## Key Files
-- `rust_extensions/src/mpsc_pool.rs` — MPSC implementation
-- `sprint_scheduler.py` — 3 call sites (I2P, steganography, graph_rag findings)
-- `evidence_log.py` — Evidence batching
+## P0-P3 Priority Matrix
 
-## Related Entries
-- `architecture/hledac_universal/` — Parent architecture
-- `memory/resource_governor/_index.md` — Detailed index
+**P0** (low effort, high impact):
+- `msgspec.Struct gc=False` on hot-path DTOs (~200B/future × N)
+- Enforce GHOST_INVARIANTS in CI via ruff/mypy plugins
+
+**P1**:
+- Per-lane RSS delta telemetry for ResourceGovernor visibility
+- Rust graph analytics (10-100× speedup over Python igraph)
+
+**P2**:
+- `evidence_quality` telemetry (findings_with_citation / total_findings)
+- Adaptive ResourceGovernor thresholds based on swap history
+
+**P3**:
+- DuckDB chunk tuning (MAX_CHUNK_SIZE=500, MAX_CHUNK_CONCURRENCY=2)
+
+## Critical Implementation Rules
+
+1. `Receiver<QueueItem>` is NOT Send — requires `#[pyclass(unsendable)]`
+2. GHOST_INVARIANTS I6: `asyncio.gather` must have `return_exceptions=True`
+3. GHOST_INVARIANTS I4: `mx.eval([])` must precede `mx.metal.clear_cache()`
+4. Capacity headroom: 2× evidence_log maxsize=500 (2048 slots)
+
+## Hardware Calibration
+
+| Config | Usable Memory |
+|--------|---------------|
+| M1 8GB | 6.25 GB |
+| M2 16GB | — |
+| M3 24GB | — |

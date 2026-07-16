@@ -1,0 +1,1 @@
+DuckPGQGraph is an analytics layer using DuckDB for IOC graph storage that supports path queries and recursive CTEs, with LanceDB reranking and LMDB hot-edges cache for fast performance.

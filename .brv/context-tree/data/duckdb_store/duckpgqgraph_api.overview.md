@@ -1,0 +1,10 @@
+- DuckPGQGraph (F226) is the analytics donor layer using DuckDB for graph storage, separate from IOCGraph (Kuzu) which is the truth store
+- Supports IOC/relation upsert, path queries, LanceDB reranking, and hot-edges LMDB cache for O(1) read path
+- Valid IOC types: ipv4, ipv6, domain, md5, sha1, sha256, email, cve, url, filename, registry_key, pending (regex-validated)
+- Key limits: MAX_GRAPH_ANALYTICS_NODES=500, MAX_GRAPH_ANALYTICS_TOP_K=10
+- upsert_ioc is idempotent (Rule 1) and returns True only if newly upserted, False if already existed or on error (Rule 2)
+- Unknown IOC types automatically map to "pending" for pattern discovery (F320 bug fix)
+- Dependencies: DuckDB, LanceDB for vector embeddings, MLXEmbeddingManager for M1 8GB-safe embeddings, LMDB for hot_edges_cache
+- GraphService wraps module-level DuckPGQGraph singleton with patchable _get_graph() for tests
+- Flow: upsert_ioc -> DuckDB insert (optional LanceDB embedding upsert); find_connected -> DuckPGQ recursive CTE -> LanceDB rerank
+- BUG-5 fix: uses get_running_loop() + create_task() for proper async handling

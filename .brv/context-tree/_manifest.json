@@ -3,25 +3,27 @@
     {
       "order": 3,
       "path": "_index.md",
-      "tokens": 809,
+      "tokens": 801,
       "type": "summary"
     },
     {
       "order": 2,
-      "path": "facts/_index.md",
-      "tokens": 757,
-      "type": "summary"
-    },
-    {
-      "order": 2,
-      "path": "testing/_index.md",
-      "tokens": 431,
+      "path": "data/_index.md",
+      "tokens": 1030,
       "type": "summary"
     },
     {
       "importance": 50,
       "path": "architecture/context.md",
       "tokens": 86,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/hledac_universal/brain_module_organization.abstract.md",
+      "abstractTokens": 46,
+      "importance": 50,
+      "path": "architecture/hledac_universal/brain_module_organization.md",
+      "tokens": 46,
       "type": "context"
     },
     {
@@ -55,6 +57,14 @@
       "type": "context"
     },
     {
+      "abstractPath": "architecture/hledac_universal/layer_protocol_and_layerstack.abstract.md",
+      "abstractTokens": 45,
+      "importance": 50,
+      "path": "architecture/hledac_universal/layer_protocol_and_layerstack.md",
+      "tokens": 45,
+      "type": "context"
+    },
+    {
       "abstractPath": "architecture/hledac_universal/project_documentation.abstract.md",
       "abstractTokens": 53,
       "importance": 50,
@@ -68,6 +78,14 @@
       "importance": 50,
       "path": "architecture/hledac_universal/rust_extensions_code_review.md",
       "tokens": 49,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/hledac_universal/sidecar_protocol_registry.abstract.md",
+      "abstractTokens": 59,
+      "importance": 50,
+      "path": "architecture/hledac_universal/sidecar_protocol_registry.md",
+      "tokens": 59,
       "type": "context"
     },
     {
@@ -123,11 +141,27 @@
       "type": "context"
     },
     {
+      "abstractPath": "data/duckdb_store/duckpgqgraph_api.abstract.md",
+      "abstractTokens": 47,
+      "importance": 50,
+      "path": "data/duckdb_store/duckpgqgraph_api.md",
+      "tokens": 47,
+      "type": "context"
+    },
+    {
       "abstractPath": "data/duckdb_store/query_cache_ioc_extraction.abstract.md",
       "abstractTokens": 48,
       "importance": 50,
       "path": "data/duckdb_store/query_cache_ioc_extraction.md",
       "tokens": 48,
+      "type": "context"
+    },
+    {
+      "abstractPath": "data/duckdb_store/walmanager.abstract.md",
+      "abstractTokens": 0,
+      "importance": 50,
+      "path": "data/duckdb_store/walmanager.md",
+      "tokens": 0,
       "type": "context"
     },
     {
@@ -152,6 +186,28 @@
       "importance": 50,
       "path": "facts/project/hledac_universal_claude_md.md",
       "tokens": 59,
+      "type": "context"
+    },
+    {
+      "abstractPath": "facts/project/parallel_async_helper.abstract.md",
+      "abstractTokens": 71,
+      "importance": 50,
+      "path": "facts/project/parallel_async_helper.md",
+      "tokens": 71,
+      "type": "context"
+    },
+    {
+      "importance": 50,
+      "path": "facts/project/pyo3-bridges-python-and-rust-across-all-performance-paths.md",
+      "tokens": 301,
+      "type": "context"
+    },
+    {
+      "abstractPath": "facts/project/rust_extensions_overview.abstract.md",
+      "abstractTokens": 52,
+      "importance": 50,
+      "path": "facts/project/rust_extensions_overview.md",
+      "tokens": 52,
       "type": "context"
     },
     {
@@ -185,6 +241,14 @@
       "type": "context"
     },
     {
+      "abstractPath": "knowledge_base/audit/documentation_coverage_assessment_2026_07_16.abstract.md",
+      "abstractTokens": 75,
+      "importance": 50,
+      "path": "knowledge_base/audit/documentation_coverage_assessment_2026_07_16.md",
+      "tokens": 75,
+      "type": "context"
+    },
+    {
       "abstractPath": "knowledge_base/audit/kb_audit_2026_07_11.abstract.md",
       "abstractTokens": 48,
       "importance": 50,
@@ -208,6 +272,24 @@
     },
     {
       "importance": 50,
+      "path": "memory/feature-flags-gate-memory-management-across-stack.md",
+      "tokens": 318,
+      "type": "context"
+    },
+    {
+      "importance": 50,
+      "path": "memory/gil-reduction-pattern-batch-operations-over-single-calls.md",
+      "tokens": 291,
+      "type": "context"
+    },
+    {
+      "importance": 50,
+      "path": "memory/m1-8gb-resource-optimization-spans-storage-hashing-and-ml.md",
+      "tokens": 296,
+      "type": "context"
+    },
+    {
+      "importance": 50,
       "path": "memory/resource_governor/context.md",
       "tokens": 72,
       "type": "context"
@@ -221,11 +303,35 @@
       "type": "context"
     },
     {
-      "abstractPath": "memory/resource_governor/uma_memory_management.abstract.md",
-      "abstractTokens": 57,
+      "abstractPath": "memory/resource_governor/m1_8gb_ram_priority_optimizations.abstract.md",
+      "abstractTokens": 58,
       "importance": 50,
-      "path": "memory/resource_governor/uma_memory_management.md",
-      "tokens": 57,
+      "path": "memory/resource_governor/m1_8gb_ram_priority_optimizations.md",
+      "tokens": 58,
+      "type": "context"
+    },
+    {
+      "abstractPath": "memory/resource_governor/m1resourcegovernor_implementation.abstract.md",
+      "abstractTokens": 66,
+      "importance": 50,
+      "path": "memory/resource_governor/m1resourcegovernor_implementation.md",
+      "tokens": 66,
+      "type": "context"
+    },
+    {
+      "abstractPath": "memory/resource_governor/rust_mpsc_architecture_issue_007.abstract.md",
+      "abstractTokens": 65,
+      "importance": 50,
+      "path": "memory/resource_governor/rust_mpsc_architecture_issue_007.md",
+      "tokens": 65,
+      "type": "context"
+    },
+    {
+      "abstractPath": "testing/conftest/pytest_infrastructure_and_fixtures.abstract.md",
+      "abstractTokens": 55,
+      "importance": 50,
+      "path": "testing/conftest/pytest_infrastructure_and_fixtures.md",
+      "tokens": 55,
       "type": "context"
     },
     {
@@ -257,13 +363,13 @@
       "type": "context"
     }
   ],
-  "generated_at": "2026-07-14T09:49:40.438Z",
+  "generated_at": "2026-07-16T11:34:27.482Z",
   "lane_tokens": {
-    "contexts": 2020,
+    "contexts": 3808,
     "stubs": 0,
-    "summaries": 1997
+    "summaries": 1831
   },
-  "source_fingerprint": "03a567e7bb31187945b446a0ef2fa31aebb90a298d4d501efb04d2b12a2b1b55",
-  "total_tokens": 4017,
+  "source_fingerprint": "f4a4baee0ff559a05ea3bbf5075be2c2c2d87209cbc939f5644b69f56b952d24",
+  "total_tokens": 5639,
   "version": 1
 }

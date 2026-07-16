@@ -1,98 +1,105 @@
 ---
-children_hash: 26b41ccaa37bc6180ddc3951eb36bdf19030bae4c69e1f6b15e27bc71538fcad
-compression_ratio: 0.4148314606741573
+children_hash: 9016201fc7e9260db3a1a0d8cb8f90b11c02cefe34e798b2d6f42207ad60582f
+compression_ratio: 0.316875
 condensation_order: 1
-covers: [context.md, duckdb_shadow_store.md, duckdb_shadow_store_extended.md, duckdb_thread_count_and_settings.md, query_cache_ioc_extraction.md]
-covers_token_total: 2225
+covers: [context.md, duckdb_shadow_store.md, duckdb_shadow_store_extended.md, duckdb_thread_count_and_settings.md, duckpgqgraph_api.md, query_cache_ioc_extraction.md, walmanager.md]
+covers_token_total: 3200
 summary_level: d1
-token_count: 923
+token_count: 1014
 type: summary
 ---
-<think>The user wants me to create a structural summary at level d1 from the provided knowledge entries about duckdb_store. I need to:
+<think>
+The user wants me to create a structural summary of the DuckDB store knowledge entries. I need to consolidate the key facts, architectural decisions, and relationships while referencing entry names for drill-down.
 
-1. Preserve key facts, architectural decisions, and relationships
-2. Reference entry names for drill-down
-3. Target ~20-30% compression
-4. Output clean structured markdown without code blocks or XML tags
-5. NOT use any tools
+Let me identify the key components:
 
-Let me synthesize the information from these entries:
+1. **3-tier facts hierarchy**: Sprint Facts, Shadow Findings, Cross-Sprint
+2. **IOC extraction**: 3-tier fallback chain with zero-copy Python path
+3. **Query cache**: L1/L2 two-tier system (500/5000 entries, 300s TTL)
+4. **DuckPGQGraph**: Graph analytics layer for IOC storage
+5. **WALManager**: LMDB-based write-ahead logging
+6. **DuckDB settings**: Thread count (2 optimal), memory (600MB-2GB), Arrow ingest
+7. **ParquetHistoryReader**: For 100GB+ lazy reads
+8. **DuckDB memory config for M1 8GB**: 600MB limit, 4 threads, 1GB temp
 
-**Key architectural elements:**
-- 3-tier facts hierarchy: Sprint Facts → Shadow Findings → Cross-Sprint
-- IOC extraction with 3-tier fallback chain
-- Two-tier L1/L2 query cache with LMDB persistence
-- DuckPGQGraph for IOC storage (F272)
-- ParquetHistoryReader for 100GB+ lazy reads
-- Arrow ingest for performance
-- DuckDBSettings configuration with env vars
+Key relationships:
+- duckdb_shadow_store -> ioc_extract -> query_cache
+- DuckPGQGraph uses DuckDB for storage, LanceDB for reranking
+- WALManager for crash recovery
 
-**Key facts to preserve:**
-- DuckDB memory: 600MB default, 4 threads, 1GB temp for M1 8GB
-- Thread count conflict: settings.py (2) overrides duckdb_store.py (4)
-- Query cache: L1=500 entries, L2=5000 entries, 300s TTL
-- Arrow ingest 1.5-2x faster than executemany
-- IOC extraction 3 tiers: zero-copy Python → Rayon PyO3 → Pure Python
-- Parquet reader: 100k rows/batch max
-
-Let me create a concise summary.
+Let me create a concise structural summary.
 </think>
-
-
 
 # duckdb_store
 
-DuckDB shadow analytics store with tiered facts hierarchy and IOC extraction pipeline.
+DuckDB shadow analytics store with tiered facts hierarchy, IOC extraction pipeline, and query caching.
 
 ## Architecture
 
-**3-Tier Facts Hierarchy:**
-- TIER1: Sprint Facts (sprint_delta, sprint_scorecard, source_hit_log)
-- TIER2: Shadow Findings (canonical_findings, shadow_runs)
-- TIER3: Cross-Sprint (temporal_events)
+**3-Tier Facts Hierarchy** (see `duckdb_shadow_store_extended.md`):
+- **TIER1**: Sprint Facts — `sprint_delta`, `sprint_scorecard`, `source_hit_log`
+- **TIER2**: Shadow Findings — `canonical_findings`, `shadow_runs`
+- **TIER3**: Cross-Sprint — `temporal_events` (append-only)
 
-**Query Cache (F320-2):** Two-tier L1/L2 with LMDB persistence
-- L1: 500-entry in-memory LRU, sub-millisecond hits
-- L2: 5000-entry LMDB (16MB map), 300s TTL
-- Invalidation on schema migration via `_invalidate_on_migration()`
+**Ingest Flow**: `EvidenceLog.append()` → `canonical_findings` → `shadow_runs` → `temporal_events`
+
+## IOC Extraction
+
+3-tier fallback chain (see `duckdb_shadow_store_extended.md`, `query_cache_ioc_extraction.md`):
+1. **Tier 1**: `batch_ioc_extract_unified_python` — zero-copy via `PyList::append` (fastest)
+2. **Tier 2**: `batch_ioc_extract_unified` — Rayon Vec return with PyO3 auto-convert
+3. **Tier 3**: `ioc_qs.extract_iocs_from_text` — pure Python fallback
+
+Valid IOC types: `ipv4|ipv6|domain|md5|sha1|sha256|email|cve|url|filename|registry_key|pending` (F320 unknown→pending)
+
+## Query Cache
+
+Two-tier L1/L2 system (see `duckdb_thread_count_and_settings.md`, `query_cache_ioc_extraction.md`):
+- **L1**: In-memory LRU, 500 entries, 300s TTL (sub-millisecond hits)
+- **L2**: LMDB persistent, 5000 entries, 300s TTL, 16MB map
 - Opt-in via `HLEDAC_DUCKDB_QUERY_CACHE=1` (default OFF)
 
-**IOC Extraction (F266-2.3):** 3-tier fallback chain
-1. Zero-copy Python via `PyList::append` → `batch_ioc_extract_unified_python`
-2. Rayon `Vec` return with PyO3 auto-convert → `batch_ioc_extract_unified`
-3. Pure Python fallback → `ioc_qs.extract_iocs_from_text`
+## DuckPGQGraph API
 
-**IOC Storage (F272):** DuckDB `ioc_graph` table removed; storage now via DuckPGQGraph (`graph/quantum_pathfinder.py`)
+Graph analytics donor layer (F226) wrapping DuckDB (see `duckpgqgraph_api.md`):
+- **upsert_ioc/upsert_relation**: Idempotent inserts with optional LanceDB embedding
+- **find_connected_batch**: DuckPGQ recursive CTE + LanceDB reranking
+- **Limits**: MAX_GRAPH_ANALYTICS_NODES=500, MAX_GRAPH_ANALYTICS_TOP_K=10
+- **Hot edges cache**: LMDB O(1) read path (F265-U6)
 
-**Ingest:** Arrow zero-copy (default ON) is 1.5-2× faster than executemany on M1 8GB; break-even at N=5-10 rows
+## WALManager
 
-**History Reads:** ParquetHistoryReader enables 100GB+ IOC history without OOM (100k rows/batch, zero-copy Arrow IPC→PyArrow→Polars)
+LMDB-based write-ahead logging (see `walmanager.md`):
+- **Namespaces**: `finding` (truth), `pending_duckdb_sync` (recovery), `deadletter_ingest` (failed writes)
+- **Bounds**: MAX_PENDING_SYNC_MARKERS=10000 (auto-eviction)
+- **Compaction**: 1-hour interval OR 5000 writes
+- Env: `HLEDAC_WAL_UNIFIED=1` enables `wal:finding:` prefix (F272)
 
-## Configuration
+## DuckDB Configuration (M1 8GB)
 
-| Setting | Default | Ceiling | Notes |
-|---------|---------|---------|-------|
-| threads | 2 | 4 | settings.py (2) overrides duckdb_store.py (4) |
-| memory_limit_gib | 2.0 | 4.0 | M1 8GB optimal |
-| in_process | True | — | Saves ~200MB RAM |
-| arrow_ingest | True | — | Zero-copy, 1.5-2× faster |
-| MAX_CHUNK_SIZE | 500 | — | With MAX_CHUNK_CONCURRENCY=2 |
+| Setting | Value | Env Var |
+|---------|-------|---------|
+| Threads | 2 (optimal) | `HLEDAC_DUCKDB_THREADS` |
+| Memory | 600MB limit, 2GB default | `HLEDAC_DUCKDB_MEMORY` |
+| Temp | 1GB | — |
+| In-process | True (saves ~200MB) | `HLEDAC_DUCKDB_INPROCESS` |
+| Arrow ingest | True (1.5-2× faster) | `HLEDAC_ARROW_INGEST` |
+| Chunk size | 500 | — |
+| Chunk concurrency | 2 | — |
 
-## Data Flow
+**Note**: Thread count conflict resolved — `settings.py` (2) overrides `duckdb_store.py` (4). Arrow ingest break-even at N=5-10 rows.
 
-```
-EvidenceLog.append() → sprint_delta/scorecard/hit_log → duckdb_store
-                                          ↓
-                                  canonical_findings → shadow_runs → temporal_events
-                                          ↓
-                              ioc_extract (3-tier fallback) → DuckPGQGraph
-                                          ↓
-                              query_cache (L1 → L2 → execute → Parquet)
-```
+## Large History Reads
 
-## Drill-Down References
+`ParquetHistoryReader` (see `duckdb_shadow_store_extended.md`):
+- 100GB+ IOC history without OOM
+- Zero-copy Arrow IPC → PyArrow → Polars
+- 100k rows/batch max
+- Columns: `id, query, source_type, confidence, ts, provenance_json`
 
-- **duckdb_shadow_store_extended.md** — Full facts hierarchy, IOC extraction tiers, query cache details
-- **duckdb_thread_count_and_settings.md** — Thread count conflict resolution, DuckDBSettings env vars
-- **query_cache_ioc_extraction.md** — Parquet row-group reader spec, IOC types (ipv4/ipv6/domain/md5/sha1/sha256/email/cve)
-- **duckdb_shadow_store.md** — Core architecture, DuckPGQGraph IOC storage
+## Key Files
+
+- `knowledge/duckdb_store.py` — DuckDBShadowStore
+- `knowledge/graph_service.py` — GraphService + DuckPGQGraph
+- `knowledge/wal.py` — WALManager
+- `config/settings.py` — DuckDBSettings

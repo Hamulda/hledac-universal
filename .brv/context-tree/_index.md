@@ -1,70 +1,81 @@
 ---
-children_hash: e5ffa8b97caefff72e70c96e1fd3f35b7963197382855fabfda8f4af214523bb
-compression_ratio: 0.39405747686312714
+children_hash: dd263e84c22eb1eb7668a4bf4ede9e5fd42dad7215382ffab74417c5fe8034f7
+compression_ratio: 0.1290478492025133
 condensation_order: 3
-covers: [facts/_index.md, memory/_index.md, testing/_index.md]
-covers_token_total: 2053
+covers: [architecture/_index.md, data/_index.md, facts/_index.md, knowledge_base/_index.md, memory/_index.md, testing/_index.md]
+covers_token_total: 6207
 summary_level: d3
-token_count: 809
+token_count: 801
 type: summary
 ---
 <think>
-The user has provided a detailed domain summary for the `architecture/` domain and its child topics. They want me to create a structural summary at level d1 (domain level) that synthesizes this information.
+The user wants me to create a structural summary at level d2 (topic level) for the conftest domain. I need to consolidate the child entries while preserving key facts, architectural decisions, and relationships. The summary should reference entry names for drill-down and target ~20-30% compression.
 
-Based on the input, I need to create a clean markdown summary that:
-1. Provides an overview of the architecture domain
-2. Condenses the child entries into a structural overview
-3. Preserves key relationships and architectural decisions
-4. Targets ~20-30% compression
+Let me analyze what I have:
 
-The child entries cover:
-- hledac_universal architecture (context.md, critical_invariants, http_3_lane_and_public_fetcher, sprint_lifecycle_pipeline)
-- transport_layers (http_3_lane_implementation)
-- DuckDB shadow stores
-- Resource governor
-- Sprint lifecycle and testing
+1. The domain is `testing/conftest/` with an abstract.md, overview.md, and context.md
+2. Key topics covered:
+   - pytest_infrastructure_and_fixtures (the main entry)
+   - Plus references to memory_leaks and exit_codes
 
-Let me create a clean d1 domain summary for `architecture/` that synthesizes this.
+From the provided context, I can see this covers:
+- 33 conftest.py fixtures
+- Session-scoped event loop (critical for M1 8GB)
+- Memory profiling with RSS+tracemalloc
+- MLX/Hermes/GraphService cleanup guards
+- Lazy load optimization for 27 modules
+- Centralized cleanup replaces 40+ scattered gc.collect()
+- Key conventions: asyncio_mode=auto, 30s timeout, 10% benchmark threshold
+- Mock factories save ~500KB RAM
+- 1238 test files
+
+I need to create a concise but complete summary that:
+- Preserves key facts and architectural decisions
+- References entry names for drill-down
+- Uses clean markdown format
+- Achieves ~20-30% compression
 </think>
 
-# Domain: architecture
+## Pytest Infrastructure and Fixtures
 
-## Overview
+### Overview
+33 conftest.py fixtures provide session-scoped event loop, memory profiling, MLX/Hermes/GraphService cleanup guards, lazy load optimization, and centralized cleanup for the test suite. Session-scoped event loop is critical for M1 8GB memory stability.
 
-Documents the system architecture for hledac.universal — an OSINT orchestrator that combines Python for orchestration with Rust extensions for performance-critical operations. Key architectural patterns include the 3-lane HTTP transport strategy, DuckDB shadow stores, adaptive resource management, and an iterative sprint lifecycle.
+### Core Architecture
 
-## Key Architectural Decisions
+**Session Fixtures:** `event_loop` (session-scoped), `duckdb_store`, `otel_tracer`
 
-**3-Lane HTTP Transport**: Implements layered fallback via `Http3Lane` trait. Primary cache lane uses Redis with sentinel support; secondary CDN lane handles static assets; tertiary public fetcher lane aggregates multiple sources. Circuit breaker adapts per-lane capacity based on success rates.
+**Memory Profiling:** `_session_tracer`, `memory_snapshot`, `memory_tracker`, `assert_memory_leak` — RSS + tracemalloc dual tracking
 
-**Rust Extensions via PyO3/Maturin**: Critical paths (hashing, network I/O) implemented in Rust and compiled to `hledac_cext-[sys].so`. macOS builds support both x64 and ARM64. Python async event loop integrates Rust futures.
+**Cleanup Guards (autouse, 8 total):**
+- `_memory_profiler_gc_sync` — sync before memory snapshots
+- `_hermes_cache_cleanup` — Hermes singleton cleanup
+- `_mlx_model_pool_cleanup` — MLX model pool cleanup
+- `_asyncio_task_leak_guard` — validates no leaked tasks
+- `_graph_service_session_cleanup` — GraphService session cleanup
+- `_gc_and_close_loops` — closes event loops
+- `_cleanup` — centralized 2-pass GC (mlx/duckdb/lmdb/heavy markers), replaces 40+ scattered `gc.collect()` calls
 
-**DuckDB Shadow Stores**: Analytics layer with query cache and IOC extraction. Thread count tuned per hardware (2 threads on 8GB M1 systems). Supports both in-memory and persistent modes.
+**Mock Factories:** `scheduler_mocks`, `lifecycle_mock`, base mock factories — spec-limited saves ~500KB session RAM
 
-**UMA Resource Governor**: Memory management using User Memory Allocator patterns with adaptive throttling. Hysteresis state machine (ok → soft_warn → warn → critical → emergency) controls concurrency presets and fetch limits.
+**Lazy Load:** `_LazyForceLoadFinder` prepended to `sys.meta_path` — tracks 27 hledac.universal subpackages for on-demand import
 
-**Sprint Lifecycle Pipeline**: Automated sprints drive continuous integration. Each sprint produces exit codes, memory leak validation, and feature flag evolution.
+### Conventions
+| Setting | Value |
+|---------|-------|
+| asyncio_mode | auto |
+| asyncio_default_fixture_loop_scope | session |
+| pytest-timeout | 30s |
+| benchmark threshold | 10% regression |
+| Mock library | pytest-mock |
 
-## Domain Relationships
+### Key Facts
+- 1238 test files, 33 fixtures
+- Session-scoped loop eliminates loop recreation overhead
+- Lazy load eliminates 27-module eager load at collection time
+- Mock factories spec-limited save ~30-50MB RAM
+- Centralized cleanup replaces 40+ scattered gc.collect() calls
 
-```
-architecture/
-├── hledac_universal/          # Parent architecture, critical invariants
-├── transport_layers/           # HTTP 3-lane implementation
-├── data/duckdb_store/          # DuckDB shadow stores (related domain)
-└── memory/resource_governor/   # Resource governor (related domain)
-```
-
-## Key Entries
-
-- `hledac_universal/` — System overview, HTTP transport, sprint lifecycle
-- `transport_layers/http_3_lane_implementation` — Lane trait and circuit breaker
-- `data/duckdb_store/` — Query cache, thread settings, IOC extraction
-- `memory/resource_governor/` — UMA memory management, adaptive scheduler
-
-## Entry Conventions
-
-- Rust extension source in `rust_extensions/src/`
-- Python entry point: `python -m hledac.universal`
-- DuckDB configured via `duckdb_config` section
-- Resource governor thresholds defined in `resource_governor.py`
+### Related Entries
+- `testing/memory_leaks/f350m_r_memory_leak_fixes` — memory leak fixes informed by this infrastructure
+- `testing/exit_codes/exit_code_testing` — exit code testing with 30s timeout convention

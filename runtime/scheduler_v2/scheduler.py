@@ -498,18 +498,73 @@ class SprintSchedulerV2:
 
         _t_prelude_start = _t.time()
 
+        # F220B FIX: Generate pivot lanes using plan_lanes_for_pivot_seeds.
+        # This restores the lane priority + reasoning that was lost when v2
+        # switched to seed forwarding without the planning step.
+        # v1 path: generate_pivot_candidates_from_query → plan_lanes_for_pivot_seeds → pivot_doh_items
+        #
+        # Also build NonfeedSeedContext from pivot plan items so CT/WAYBACK/PDNS
+        # prelude lanes can use domain/ip/url seeds via build_lane_query().
+        _pivot_lanes: Any = None
+        _seed_ctx: Any = None
+        try:
+            from hledac.universal.runtime.pivot_planner import (
+                generate_pivot_candidates_from_query as _gen_pivots,
+            )
+            from hledac.universal.pipeline.pivot_lane_planner import (
+                plan_lanes_for_pivot_seeds,
+            )
+            from hledac.universal.runtime.scheduler.lanes import NonfeedSeedContext
+
+            _pivot_seeds = _gen_pivots(query)
+            if _pivot_seeds:
+                _seed_dicts = [
+                    {"value": p.ioc_value, "seed_type": p.ioc_type}
+                    for p in _pivot_seeds
+                    if p.ioc_value and p.ioc_type
+                ]
+                if _seed_dicts:
+                    _pivot_plan = plan_lanes_for_pivot_seeds(_seed_dicts)
+                    _pivot_lanes = getattr(_pivot_plan, "items", None)
+
+                    # Build NonfeedSeedContext from pivot plan items for CT/WAYBACK/PDNS lanes
+                    _ctx_domains = tuple(
+                        i.seed_value
+                        for i in (_pivot_lanes or [])
+                        if getattr(i, "seed_type", None) == "domain"
+                    )
+                    _ctx_ips = tuple(
+                        i.seed_value
+                        for i in (_pivot_lanes or [])
+                        if getattr(i, "seed_type", None) in ("ip", "ipv4")
+                    )
+                    _ctx_urls = tuple(
+                        i.seed_value
+                        for i in (_pivot_lanes or [])
+                        if getattr(i, "seed_type", None) == "url"
+                    )
+                    if _ctx_domains or _ctx_ips or _ctx_urls:
+                        _seed_ctx = NonfeedSeedContext(
+                            domains=_ctx_domains,
+                            ips=_ctx_ips,
+                            urls=_ctx_urls,
+                        )
+        except Exception:
+            _pivot_lanes = None  # fail-safe: prelude works without pivot lanes
+            _seed_ctx = None
+
         # Run all prelude lanes concurrently (bounded concurrency = 5)
         _coros = [
             run_public_prelude_lane(query),
-            run_ct_prelude_lane(query, self._result, seed_context=None),
+            run_ct_prelude_lane(query, self._result, seed_context=_seed_ctx),
             run_wayback_prelude_lane(
-                query, self._result, _duckdb_raw, _t, seed_context=None
+                query, self._result, _duckdb_raw, _t, seed_context=_seed_ctx
             ),
             run_pdns_prelude_lane(
-                query, self._result, _duckdb_raw, _t, seed_context=None
+                query, self._result, _duckdb_raw, _t, seed_context=_seed_ctx
             ),
             run_doh_prelude_lane(
-                query, self._result, _duckdb_raw, _t, pivot_doh_items=None, seed_context=None
+                query, self._result, _duckdb_raw, _t, pivot_doh_items=_pivot_lanes, seed_context=_seed_ctx
             ),
         ]
 

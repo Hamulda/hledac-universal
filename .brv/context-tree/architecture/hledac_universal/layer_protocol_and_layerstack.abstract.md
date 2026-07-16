@@ -1,0 +1,1 @@
+LayerStack manages lifecycle (mount/unmount/on_event) with ordered event propagation and timeouts, supporting zero-copy UDS IPC via msgspec.msgpack for event-driven architecture.

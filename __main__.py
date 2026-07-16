@@ -2285,7 +2285,7 @@ def _fatal(exc: BaseException, code: int = 1) -> None:
         3   = programmer error / regression (NameError, ImportError, AttributeError)
         130 = SIGINT (KeyboardInterrupt)
     """
-    logger.critical("_MAIN_FATAL [exit=%d]: %s", code, exc, traceback=traceback.format_exc())
+    logger.critical("_MAIN_FATAL [exit=%d]: %s\n%s", code, exc, traceback.format_exc())
     sys.exit(code)
 
 

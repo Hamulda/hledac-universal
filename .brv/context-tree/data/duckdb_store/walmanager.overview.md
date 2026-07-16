@@ -1,0 +1,7 @@
+- **Architecture**: WALManager manages LMDB-based write-ahead logging with 3 namespaces (finding, pending_duckdb_sync, deadletter_ingest)
+- **Recovery flow**: finding write -> LMDB WAL -> DuckDB insert -> pending marker on failure -> recovery on restart
+- **Bounded pending markers**: MAX_PENDING_SYNC_MARKERS=10000 with automatic oldest-key eviction when bound reached
+- **Compaction triggers**: 1-hour interval (HLEDAC_WAL_COMPACT_INTERVAL_S=3600) OR 5000 writes (HLEDAC_WAL_COMPACT_WRITE_THRESHOLD=5000)
+- **Unified store mode**: wal:finding namespace prefix activated via HLEDAC_WAL_UNIFIED=1 env var
+- **Cleanup**: E4 cleanup using weakref.finalize with atexit fallback for graceful shutdown
+- **Key rule**: pending_duckdb_sync marker written ONLY when LMDB succeeds but DuckDB fails

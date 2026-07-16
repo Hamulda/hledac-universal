@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 import msgspec
 from typing import Any, Callable, Final
 
-class OwnedResource(msgspec.Struct):
+class OwnedResource(msgspec.Struct, gc=False):
     """Explicit lifecycle: acquire → use → release. Zero weakref.
 
     Replaces weakref.WeakValueDictionary pattern with deterministic

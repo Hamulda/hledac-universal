@@ -72,7 +72,7 @@ if TYPE_CHECKING:
     from hledac.universal.runtime.scheduler_v2 import SprintSchedulerV2 as SprintScheduler
 
 # Runtime imports — lightweight, fast-loading only
-from evidence_log import EvidenceLog
+from hledac.universal.evidence_log import EvidenceLog
 from hledac.universal.core import memory_cycle as _memory_cycle  # F266-U2/U3
 from hledac.universal.core.resource_governor import (
     CLEAN_SWAP_MAX_GIB,

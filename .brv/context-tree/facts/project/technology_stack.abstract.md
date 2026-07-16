@@ -1,1 +1,1 @@
-Hledac is a Python 3.14 project with a Rust backend via PyO3, using MLX for Apple Silicon ML, DuckDB/LanceDB/LMDB for storage, and key dependencies including mlx-lm for LLM inference, yara-python for pattern matching, and igraph for graph operations.
+hledac-universal v18.0.0 is a Python 3.14 application with Rust PyO3 extensions, MLX for Apple Silicon ML inference, DuckDB/LanceDB/LMDB storage, stealth HTTP via curl-cffi, built with maturin and tested with pytest on M1 Apple Silicon (darwin + arm64).

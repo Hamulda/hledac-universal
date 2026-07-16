@@ -1,0 +1,9 @@
+- 33 conftest.py fixtures organized into 7 categories: session-scoped (event_loop, duckdb_store, otel_tracer), memory profiling (_session_tracer, memory_snapshot, memory_tracker, assert_memory_leak), async loop guard (_gc_and_close_loops), MLX/Hermes/GraphService cleanup guards, centralized _cleanup, mock factories, and lazy load (_LazyForceLoadFinder)
+- Session-scoped event loop is critical for M1 8GB to avoid loop recreation overhead; asyncio_default_fixture_loop_scope MUST be set to session
+- Memory profiling tracks RSS (Resident Set Size) and tracemalloc snapshots; assert_memory_leak is a standalone helper function, not a fixture
+- Lazy load optimization with _LazyForceLoadFinder meta_path finder enables on-demand import of 27 hledac.universal subpackages, eliminating eager load at collection time
+- Centralized _cleanup replaces 40+ scattered gc.collect() calls across 7+ test files; uses 2-pass GC for mlx/duckdb/lmdb/heavy markers, 1-pass otherwise
+- Base mock factories (scheduler_mocks, lifecycle_mock, base mocks) save ~500KB session RAM via spec-limited MagicMock/AsyncMock instances
+- MLX/Hermes cleanup includes _memory_profiler_gc_sync, _hermes_cache_cleanup, _mlx_model_pool_cleanup, _asyncio_task_leak_guard, and _graph_service_session_cleanup guards
+- Key dependencies: pytest-asyncio with asyncio_mode=auto, pytest-timeout (30s default), pytest-benchmark (10% regression threshold), pytest-mock
+- Test count: 1238 test files in project; mock lifecycle management saves ~30-50MB RAM overall

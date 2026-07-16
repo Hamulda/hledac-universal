@@ -1,0 +1,1 @@
+Rust extensions architecture with 30+ modules uses crossbeam-channel MPSC pool with ARM LSE atomics for ~2-5ns sends, replacing asyncio.Queue with ~1 MiB memory budget and feature-gated compilation via pyo3.

@@ -62,7 +62,7 @@ from typing import Any, Literal, cast
 import aiosqlite
 import msgspec
 import orjson
-from core.env_config import ENV
+from hledac.universal.core.env_config import ENV
 from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
 
 # ISSUE-11: ThreadPoolExecutor for GIL-free SQLite writes
@@ -107,7 +107,7 @@ except ImportError:
         return False
 logger = logging.getLogger(__name__)
 
-class EvidenceEvent(msgspec.Struct, frozen=False):
+class EvidenceEvent(msgspec.Struct, frozen=False, gc=False):
     """
     Událost v evidence logu — msgspec.Struct pro 10× rychlejší (de)serializaci.
 

@@ -1676,3 +1676,24 @@ def set_thread_qos(qos_level: int) -> None:
         libc.syscall(366, qos_level, 0)
     except Exception as exc:
         logger.debug(f"[QoS] pthread_set_qos_class_self_np failed (non-macOS or permission): {exc}")
+
+
+def get_lane_ram_budget(lane_id: str) -> int:
+    """
+    P1-03: Get RAM budget for an acquisition lane by its identifier.
+
+    Surfaces per-lane memory cost to ResourceGovernor consumers so that
+    lane scheduling decisions can account for memory pressure.
+
+    Args:
+        lane_id: Lane identifier string (e.g. "BGP", "SHODAN", "CT").
+
+    Returns:
+        RAM budget in MB (M1 8GB calibrated), defaults to 30MB for unknown lanes.
+    """
+    try:
+        from runtime.acquisition.lane_constants import get_lane_ram_budget as _get
+
+        return _get(lane_id)
+    except Exception:
+        return 30

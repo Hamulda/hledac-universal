@@ -33,7 +33,8 @@ from typing import TYPE_CHECKING
 from urllib.parse import parse_qsl, urlencode, urlparse
 
 if TYPE_CHECKING:
-    from .duckdb_store import CanonicalFinding, FindingQualityDecision
+    from .duckdb_store import CanonicalFinding
+    from ._quality_types import FindingQualityDecision
 
 __all__ = [
     "QualityRejectionRecord",

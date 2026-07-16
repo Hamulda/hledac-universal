@@ -1,0 +1,1 @@
+Pytest conftest.py defines 33 fixtures including session-scoped asyncio loop, memory profiling, MLX/Hermes cleanup guards, and lazy load optimization that eliminates 27-module eager loading to improve M1 8GB performance.

@@ -1,50 +1,158 @@
 ---
-children_hash: d67c6b3fad6577ad13852562995c706bf03ea52b4134acaa8fa5fc10b3dd74c2
-compression_ratio: 0.9175757575757576
+children_hash: 8ce516e29ec8ee95105d8a3a14f2d174e68caabf71e9b8b4459a0694ae4b2883
+compression_ratio: 0.9168384879725086
 condensation_order: 2
 covers: [project/_index.md]
-covers_token_total: 825
+covers_token_total: 1455
 summary_level: d2
-token_count: 757
+token_count: 1334
 type: summary
 ---
 <think>
-The user wants me to create a structural summary at the domain level (d1) for the `facts/project/` domain. They've provided the child entries and want me to synthesize them into a coherent domain summary that condenses the information while preserving key facts, relationships, and patterns.
+The user wants me to create a structural summary at level d1 from the provided knowledge entries. These are all in the `facts/project` domain. Let me analyze the entries and create a cohesive summary.
 
-Let me create a clean markdown summary that:
-1. Provides an overview of the domain
-2. Condenses the child entries into a structural overview
-3. Preserves key relationships
-4. Targets ~20-30% compression
-5. Is clean structured markdown with no code blocks or XML tags
+Key themes across entries:
+1. **Hledac Universal** - an OSINT orchestrator project
+2. **Hardware context** - MacBook Air M1 8GB UMA
+3. **Technology stack** - Python 3.14, MLX, DuckDB, Rust extensions via PyO3
+4. **Storage** - DuckDB, LMDB, LanceDB trinity
+5. **Rust extensions** - 30+ modules, MPSC pool, crossbeam channels
+6. **Concurrency** - parallel() helper, asyncio patterns
+7. **Hashing** - xxhash facade replacing hashlib
+8. **Configuration** - environment gates, memory limits, feature flags
+9. **Conventions/Invariants** - 10 critical rules for stability
+
+Let me create a well-structured summary that:
+- Preserves key facts and architectural decisions
+- References entry names for drill-down
+- Targets ~20-30% token compression
+- Uses clean markdown
 </think>
 
-# facts/project Domain Summary
+# facts/project — Project Core Facts
 
-## Domain Overview
+Core project knowledge for Hledac Universal OSINT orchestrator running on MacBook Air M1 8GB UMA.
 
-Contains project configuration, architecture decisions, and technology stack knowledge for the Hledac Universal OSINT orchestrator system. This domain serves as the authoritative reference for technology choices, configuration constants, and core project conventions.
+## Hardware & Platform
 
-## Core Technology Stack
+- **M1 8GB** Apple Silicon (darwin + arm64 only)
+- **UMA hard cap**: ~6.25GB total budget with swap_detected threshold at 3.8 GiB
 
-- **Language**: Python 3.14 with Rust via PyO3 for performance-critical paths
-- **ML**: MLX for Apple Silicon acceleration, mlx-lm for inference tasks
-- **Storage**: DuckDB (analytics/queries), LanceDB (vector operations), LMDB (bulk key-value)
-- **Automation**: nodriver for browser automation, yara-python for pattern matching
-- **Graph**: igraph for network analysis and graph operations
+## Technology Stack
 
-## Configuration Constants
+| Component | Technology |
+|-----------|------------|
+| Language | Python 3.14 + Rust PyO3 backend |
+| ML | MLX with Hermes-3-Llama-3.2-3B-4bit |
+| Storage | DuckDB (~600MB limit), LanceDB (vectors), LMDB (KV) |
+| HTTP | curl-cffi (stealth/JA3) + aioquic (HTTP/3) |
+| Serialization | msgspec for zero-copy encoding |
+| Build | maturin, uv for dependency management |
 
-DuckDB memory capped at 600MB with 2 threads (optimized for 8GB M1 systems). Shodan API rate limit set to 360 requests per 10 seconds. Feature gates controlled via environment variables: `HLEDAC_ARROW_INGEST`, `HLEDAC_DUCKDB_QUERY_CACHE`, `HLEDAC_DUCKDB_RAMDISK_TEMP`, `HLEDAC_ARROW_MIN_BATCH=5`. Known issue: evidence_log timeout mismatch between configured 1000ms and actual 30000ms.
+See: `technology_stack.md`, `rust_extensions_overview.md`
 
-## Architecture Patterns
+## Storage Trinity
 
-Dual HTTP/3 strategy using curl_cffi for fallback and aioquic for native QUIC. Centralized hashing facade at `utils/hashing.py` with xxh3_64_hex, batch_xxh3_64_hex, sha256_hex, and blake3_64_hex functions. Rust xxhash-rust v0.8 with xxh3/const_xxh3/xxh64 features provides M1 NEON SIMD acceleration. Canonical URL processing uses rayon 2-thread parallelism.
+**DuckDB** (analytics SQL) → **LMDB** (key-value) → **LanceDB** (ANN embeddings)
 
-## Entry Conventions
+Canonical write path: `async_ingest_findings_batch()`. LMDB bulk via `cursor.putmulti()`.
 
-Standard entry point: `python -m hledac.universal --sprint "QUERY" [--duration SECS]`. Async patterns: use asyncio.gather with return_exceptions=True, never time.sleep() in async contexts, call mx.eval([]) before clear_cache(). Storage patterns: DuckDB writes via async_ingest_findings_batch(), LMDB bulk operations via cursor.putmulti(). Use RotatingBloomFilter for deduplication. Crypto-grade hashing reserved for forensics/security/stealth/vault use cases.
+## Rust Extensions Architecture
 
-## Key Relationships
+30+ modules in `rust_extensions/src/` built via PyO3/Maturin:
 
-The technology stack provides the foundation for all architectural decisions. The hashing facade depends on xxhash-rust implementation for performance. Project conventions documented in hledac_universal_claude_md reference settings validated by configuration_constants. The 10x speedup expectation for hashing operations relies on Rust NEON SIMD acceleration via xxhash-rust and BLAKE3-64 on M1 hardware.
+| Subsystem | Key Files |
+|-----------|-----------|
+| Concurrency | `mpsc_pool.rs` — crossbeam MPSC replaces asyncio.Queue(maxsize=500) |
+| Bloom filters | `bloom.rs`, `dedup_bloom.rs` |
+| Processing | `content_hasher.rs`, `claims_extraction.rs`, `url_ops.rs` |
+| I/O | `arrow_batch_builder.rs` |
+
+**MPSC Pool**: 2048 slots × 512B ≈ 1 MiB budget. Uses ARM LSE atomics (ldadd, cas) for ~2-5ns/send.
+
+See: `rust_extensions_overview.md`, `xxhash_rust_implementation.md`
+
+## Hashing Infrastructure
+
+**ISSUE #2**: Centralized `utils/hashing.py` facade replaces hashlib bottleneck.
+
+| Function | Use Case |
+|----------|----------|
+| `xxh3_64_hex` | Single-item hot paths |
+| `batch_xxh3_64_hex` | Bulk operations |
+| `sha256_hex`, `blake3_64_hex` | Compatibility |
+
+**Migrated**: 7 calls in `deduplication.py`, 1 blake2b in `url_dedup.py`.
+
+**Preserved crypto-grade**: forensics, security, stealth, vault layers.
+
+Performance: ~10x via Rust NEON SIMD.
+
+See: `hashing_facade_issue_2.md`, `xxhash_rust_implementation.md`
+
+## Async Concurrency
+
+**`parallel()`** in `utils/async_helpers.py` — replaces deprecated `bounded_gather`.
+
+| Policy | Behavior |
+|--------|----------|
+| `raise` | Propagate first exception |
+| `first` | Return first result |
+| `collect` (default) | Gather all results + errors |
+| `log` | Silent error absorption |
+
+Key invariants: I6 (CancelledError re-raised), I7 (BaseException re-raised), I8 (Exception per policy).
+
+See: `parallel_async_helper.md`
+
+## Configuration & Feature Flags
+
+**Environment Gates**:
+- `HLEDAC_ARROW_INGEST=ON`, `HLEDAC_DUCKDB_QUERY_CACHE=OFF`
+- `HLEDAC_DUCKDB_RAMDISK_TEMP=None`, `HLEDAC_ARROW_MIN_BATCH=5`
+- `HLEDAC_RG_USE_RATIOS=0` (absolute GiB mode)
+
+**Resource Limits**:
+
+| Setting | Value |
+|---------|-------|
+| DuckDB memory | 600MB |
+| DuckDB max temp | 1GB |
+| DuckDB threads | 2 (M1 optimal) |
+| Shodan rate | 360/10 (36 req/10s) |
+
+**Bug**: evidence_log busy_timeout mismatch (1000ms configured vs 30000ms actual).
+
+See: `configuration_constants.md`
+
+## Critical Invariants (10 Rules for M1 Stability)
+
+1. No bare `except:` — always `except Exception:`
+2. `asyncio.gather` always with `return_exceptions=True`
+3. `mx.eval([])` before `mx.metal.clear_cache()`
+4. DuckDB writes ONLY through `async_ingest_findings_batch()`
+5. LMDB bulk via `cursor.putmulti()` — never per-item
+6. Fail-safe everywhere — sidecars return `[]` on errors
+7. No `time.sleep()` in async — use `asyncio.sleep()`
+8. No `asyncio.run()` in ThreadPoolExecutor — use `loop.run_until_complete()`
+9. Use `RotatingBloomFilter` not `ScalableBloomFilter`
+10. `sys.exit()` propagates verbatim
+
+See: `hledac_universal_claude_md.md`
+
+## Sprint Lifecycle
+
+`SprintScheduler.run()` → `run_prelude` → `run_acquisition_lanes` → `run_advisory_runner` → `_accumulate_findings_to_graph` → `run_winddown` → `DuckDB async_ingest_findings_batch`
+
+Entry: `python -m hledac.universal --sprint "QUERY" [--duration SECS] [--aggressive]`
+
+## Test Baseline
+
+- `test_sprint_scheduler.py`: ~89 tests
+- `test_hledac_rust_extensions.py`: ~64 tests
+- F206 probe: 200+ tests
+- Benchmark threshold: >10% regression fails
+
+## PyO3 FFI Strategy
+
+Single consistent Python↔Rust boundary across all performance paths: hashing facade, MPSC batch sends, crossbeam interop. See: `pyo3-bridges-python-and-rust-across-all-performance-paths.md`

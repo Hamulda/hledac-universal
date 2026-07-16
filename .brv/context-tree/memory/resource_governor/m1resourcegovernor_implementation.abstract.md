@@ -1,0 +1,1 @@
+M1ResourceGovernor implements a five-state memory pressure state machine (NORMAL→ELEVATED→CRITICAL→EMERGENCY→CIRED) with dual-channel TTL hysteresis, ConcurrencyPreset calibration, ContextVar thread-safety, and tiered swap policies for M1 8GB UMA memory management.

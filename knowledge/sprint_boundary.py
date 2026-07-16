@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .duckdb_store import _DuckDBQueryCache
+    from ._query_cache import _DuckDBQueryCache
 
 
 class SprintBoundaryCoordinator:

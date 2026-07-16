@@ -1,0 +1,7 @@
+- 30+ Rust source modules in rust_extensions/src/ organized by function: async execution, data structures, processing, I/O, and concurrency
+- MPSC pool replaces asyncio.Queue(maxsize=500) using crossbeam bounded channel with ARM LSE atomics achieving ~2-5ns per send on aarch64
+- Memory budget of 2048 slots × 512B ≈ 1 MiB with bounded(N) ring buffer that never grows
+- Feature flags: default=core, ml=macOS only, graph, data, advanced, full=CICD
+- Key dependencies: pyo3 0.23 with extension-module and abi3-py39, crossbeam-channel 0.5, duckdb 1, xxhash-rust 0.8, metal 0.33
+- #[pyclass(unsendable)] required for non-Send types like Receiver<QueueItem>; add_sender() pushes cloned sender
+- Flow: Python async thread → crossbeam MPSC bounded channel → pipe wake-up fd → asyncio.Event → recv_batch drain

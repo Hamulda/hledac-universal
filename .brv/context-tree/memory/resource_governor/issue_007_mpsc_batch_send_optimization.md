@@ -2,7 +2,7 @@
 title: ISSUE-007 MPSC Batch Send Optimization
 summary: 'ISSUE-007: MPSC batch send optimization using Rust send_batch - single Python→Rust call for N items, memory budget 1 MiB (2048×512B slots), addresses GIL acquisition overhead'
 tags: []
-related: [memory/resource_governor/uma_memory_management.md]
+related: [memory/resource_governor/uma_memory_management.md, memory/resource_governor/rust_mpsc_architecture_issue_007.md]
 keywords: []
 createdAt: '2026-07-14T09:33:22.786Z'
 updatedAt: '2026-07-14T09:33:22.786Z'

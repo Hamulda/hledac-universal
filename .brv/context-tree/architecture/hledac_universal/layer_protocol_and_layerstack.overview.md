@@ -1,0 +1,7 @@
+- Layer Protocol defines mount/unmount/on_event interface as runtime_checkable, with timeouts 30s/10s/30s respectively
+- LayerStack manages lifecycle and event propagation in mount order; unmount rolls back in reverse order on failure
+- Event propagation stops if a layer returns None or sets halted=True, with layers cached via lru_cache(maxsize=1) singleton pattern
+- SprintScheduler instantiates LayerStack; LayerContext provides service registry using __slots__ for memory efficiency
+- UDS Protocol uses msgspec.msgpack for zero-copy IPC via Unix Domain Socket
+- LayerStack uses asyncio.Lock for thread-safe mount/unmount operations
+- Notable patterns: mount timeout 30s with rollback, unmount timeout 10s best-effort, on_event timeout 30s per layer

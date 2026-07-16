@@ -1,5 +1,7 @@
-- **Core language**: Python 3.14 with Rust backend via PyO3 extensions for performance-critical code
-- **ML framework**: MLX used for Apple Silicon machine learning; mlx-lm for LLM inference
-- **Storage layers**: DuckDB (analytical queries), LanceDB (vector storage), LMDB (key-value storage)
-- **Notable dependencies**: orjson (JSON serialization), curl_cffi (HTTP client), nodriver (browser automation), yara-python (pattern matching), igraph (graph operations), msgspec (serialization), pybloom_live (bloom filters), psutil (system monitoring)
-- **Document source**: Derived from pyproject.toml with timestamp 2026-07-11
+- **Core Stack**: Python 3.14 (>=3.14,<3.15) with Rust backend via PyO3, built using maturin develop --release
+- **ML Inference**: MLX for Apple Silicon (mlx-embeddings only for darwin); mlx-lm 0.31.x has transformers version metadata bug (specifies >=5.0.0 but works with 4.x/5.x)
+- **Storage**: DuckDB for analytics (~600MB memory limit on 8GB M1), LanceDB for vectors, LMDB for KV store
+- **HTTP**: curl-cffi for stealth HTTP with JA3 fingerprinting; httpx >=0.28.0,<0.30.0 required for stable HTTP/2 (aioquic http3 adds 50-80MB resident memory)
+- **Testing Rules**: pytest-asyncio with session-scoped event loop (required for F350M-R compatibility); pytest-benchmark fails at >10% regression; pytest-mock saves 30-50MB via MagicMock lifecycle
+- **Platform**: M1 Apple Silicon only (darwin + arm64); uvloop provides ~2x I/O-bound speedup via kqueue
+- **Rules**: asyncio.run() forbidden outside __main__, tools/, tests/; BLE001 ruff rule deferred (P1-01 audit in progress, see Issue #32)

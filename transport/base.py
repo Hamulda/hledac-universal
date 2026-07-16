@@ -317,10 +317,10 @@ def __getattr__(name: str):
     if name in ('should_use_httpx_h2', 'fetch_via_httpx_h2'):
         from . import httpx_transport
         return getattr(httpx_transport, name)
-    if name in ('should_use_curl_cffi', 'fetch_via_curl_cffi', 'fetch_via_tor_curl_cffi'):
+    if name == 'should_use_curl_cffi':
         from . import curl_cffi_transport
-        if name == 'should_use_curl_cffi':
-            return curl_cffi_transport.should_use_curl_cffi
+        return curl_cffi_transport.should_use_curl_cffi
+    if name in ('fetch_via_curl_cffi', 'fetch_via_tor_curl_cffi'):
         from . import curl_cffi_fetch
         return getattr(curl_cffi_fetch, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

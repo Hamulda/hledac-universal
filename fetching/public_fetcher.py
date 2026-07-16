@@ -98,22 +98,41 @@ def _classify_url_cached(url: str) -> tuple[str, str]:
 def _python_classify_url(url: str) -> tuple[str, str]:
     """Pure-Python URL classifier — no cache, no Rust, no side effects.
 
-    Exact equivalent of what Rust backend computes for classify_url.
+    Must stay in sync with rust_backend/url.py._python_classify_url.
+    Delta (beyond the Rust path): VCS, social, document, storage classification.
     Used as fallback when Rust is unavailable or as Python-only path
     in _batch_classify_url_cached. Never raises.
     """
     try:
         parsed = urllib.parse.urlparse(url)
-        host = (parsed.hostname or '').lower()
-        if not host:
+        netloc = parsed.netloc.lower()
+        if not netloc:
             return ('malformed', '')
-        if host.endswith('.onion'):
-            return ('onion', host)
-        if host.endswith('.i2p'):
-            return ('i2p', host)
-        if 'freenet' in host or 'hyphanet' in host:
-            return ('freenet', host)
-        return ('clearnet', host)
+        # VCS hosting
+        if any(k in netloc for k in ("github.com", "gitlab.com", "bitbucket.org")):
+            return ("code", "vcs")
+        # Social platforms
+        if any(k in netloc for k in ("twitter.com", "x.com", "mastodon.social")):
+            return ("social", "twitter")
+        if any(k in netloc for k in ("reddit.com", "old.reddit.com")):
+            return ("social", "reddit")
+        # Document URLs
+        if parsed.path.endswith((".pdf", ".doc", ".docx")):
+            return ("document", "file")
+        # Cloud storage
+        if any(k in netloc for k in ("drive.google.com", "dropbox.com", "onedrive.live.com")):
+            return ("storage", "cloud")
+        # Darknet before clearnet
+        if netloc.endswith(".onion"):
+            return ("onion", netloc)
+        if netloc.endswith(".i2p"):
+            return ("i2p", netloc)
+        if 'freenet' in netloc or 'hyphanet' in netloc:
+            return ("freenet", netloc)
+        # Clearnet: http/https URLs that aren't special categories
+        if parsed.scheme in ("http", "https"):
+            return ("clearnet", netloc.removeprefix("www."))
+        return ("unknown", netloc)
     except Exception:  # noqa: BLE001 — best-effort fallback; parse failure returns default
         return ('malformed', '')
 
@@ -2230,7 +2249,7 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
                 except (ValueError, TypeError):
                     _curl_declared_length = -1
             if _curl_bytes:
-                _curl_text, _curl_decode_replaced, _curl_decode_replacement_count = _try_decode(_curl_bytes)
+                _curl_text, _curl_decode_replaced, _curl_decode_replacement_count, _curl_decode_codec = _try_decode(_curl_bytes)
             else:
                 _curl_text = None
             if _curl_text and _needs_js_fetch(_curl_text, url=url, content_length=len(_curl_bytes), declared_length=_curl_declared_length):
@@ -2310,7 +2329,7 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
             _tor_curl_decode_replacement_count = 0
             _tor_curl_error = _tor_curl_result.get('error', None)
             if _tor_curl_bytes:
-                _tor_curl_text, _tor_curl_decode_replaced, _tor_curl_decode_replacement_count = _try_decode(_tor_curl_bytes)
+                _tor_curl_text, _tor_curl_decode_replaced, _tor_curl_decode_replacement_count, _tor_curl_decode_codec = _try_decode(_tor_curl_bytes)
             else:
                 _tor_curl_text = None
             elapsed_ms = (time.monotonic() - t0) * 1000
@@ -2422,7 +2441,7 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
                                             _esc_decode_replacement_count = 0
                                             if _esc_bytes:
                                                 _esc_charset = parse_charset_from_content_type(_esc_result.get('content_type', ''))
-                                                _esc_text, _esc_decode_replaced, _esc_decode_replacement_count = _try_decode_with_charset(_esc_bytes, http_charset=_esc_charset)
+                                                _esc_text, _esc_decode_replaced, _esc_decode_replacement_count, _esc_decode_codec = _try_decode_with_charset(_esc_bytes, http_charset=_esc_charset)
                                             else:
                                                 _esc_text = None
                                             _esc_elapsed_ms = (time.monotonic() - t0) * 1000
@@ -2517,7 +2536,7 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
                             try:
                                 body_bytes = outcome.body
                                 _charset_hint = parse_charset_from_content_type(content_type)
-                                text, decode_replaced, decode_replacement_count = _try_decode_with_charset(body_bytes, http_charset=_charset_hint)
+                                text, decode_replaced, decode_replacement_count, decode_codec = _try_decode_with_charset(body_bytes, http_charset=_charset_hint)
                                 if text and ENV.get_bool('HLEDAC_ENABLE_CONTENT_LAYER'):
                                     try:
                                         from layers import get_content_layer

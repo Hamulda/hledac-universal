@@ -1,0 +1,6 @@
+- **Purpose**: parallel() is a unified async concurrency helper that replaces 4 deprecated functions (bounded_gather, safe_gather_strict, safe_gather_ok, safe_gather_fire_and_forget)
+- **Exception Policies**: Supports 4 policies — raise, first, collect (default), log — governing how exceptions are routed
+- **Concurrency Control**: Uses semaphore-based concurrency limiting; taskgroup backend available for Python 3.11+
+- **Invariants**: I6 (CancelledError always re-raised), I7 (BaseException always re-raised), I8 (Exception routed per policy)
+- **Return Type**: Returns ParallelResult dataclass with ok, errors, re_raised fields
+- **Backends**: asyncio.TaskGroup for taskgroup=True (3.11+); asyncio.timeout for timeout handling; falls back to gather+semaphore on older Python

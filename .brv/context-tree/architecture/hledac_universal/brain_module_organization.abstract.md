@@ -1,0 +1,1 @@
+PEP 562 facade pattern with lazy imports reduces brain module cold import time from ~9.7s to ~150ms, enabling 12 deferred engines including Hermes3Engine with MLX/Apple Silicon support.

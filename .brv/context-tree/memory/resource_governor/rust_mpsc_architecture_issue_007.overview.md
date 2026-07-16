@@ -1,0 +1,7 @@
+- Uses crossbeam MPSC bounded channel with 2048 slot capacity for batch communication between Python and Rust
+- Implements send_batch() for single Python→Rust call with N items, achieving ~1µs/event vs 5µs for N× individual calls
+- Zero-copy encoding via msgspec.msgpack; total memory budget ~1 MiB (2048 slots × 512 bytes per slot)
+- ISSUE-064: Added #[pyclass(unsendable)] annotation because Receiver<QueueItem> is NOT Send-safe
+- Two MPSC channels: _mpsc (capacity=2048, asyncio_fallback=False) for main batch path, _mpsc2 (capacity=2048, asyncio_fallback=True) for asyncio events
+- Flow: Python append() x N → send_batch() → crossbeam MPSC → recv_batch() → SQLite BLOB insert
+- Backpressure managed via MPSC bounded capacity; MPSCPool must stay in originating Python async thread

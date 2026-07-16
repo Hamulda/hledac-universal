@@ -1,0 +1,1 @@
+parallel() is a unified async concurrency helper that replaces multiple deprecated gather functions, providing 4 exception policies (raise/first/collect/log), concurrency control via semaphore, and taskgroup backend, returning ParallelResult with I6/I7/I8 exception routing invariants.
