@@ -151,8 +151,8 @@ async def _identity_stitching_runner(findings: list, store: DuckDBShadowStore, q
     if not findings or store is None:
         return None
     try:
-        from hledac.universal.intelligence.entity_signal_extractor import extract_entities_from_findings_async
-        from hledac.universal.intelligence.identity_stitching_canonical import create_identity_stitching_adapter
+        from hledac.universal.intel.entity_signal_extractor import extract_entities_from_findings_async
+        from hledac.universal.intel.identity_stitching_canonical import create_identity_stitching_adapter
     except Exception:
         return None
     try:
@@ -173,7 +173,7 @@ async def _pattern_mining_runner(findings: list, store: DuckDBShadowStore, query
     if not findings or store is None:
         return None
     try:
-        from hledac.universal.intelligence.pattern_mining_canonical import create_pattern_mining_adapter
+        from hledac.universal.intel.pattern_mining_canonical import create_pattern_mining_adapter
     except Exception:
         return None
     try:
@@ -242,7 +242,7 @@ async def _wayback_diff_runner(findings: list, store: DuckDBShadowStore, query: 
     if not findings or store is None:
         return None
     try:
-        from hledac.universal.intelligence.wayback_diff_miner import WaybackDiffMiner
+        from hledac.universal.intel.wayback_diff_miner import WaybackDiffMiner
     except Exception:
         return None
     try:
@@ -275,7 +275,7 @@ async def _social_identity_surface_runner(findings: list, store: DuckDBShadowSto
     if not findings or store is None:
         return None
     try:
-        from hledac.universal.intelligence.social_identity_miner import create_social_identity_miner_adapter
+        from hledac.universal.intel.social_identity_miner import create_social_identity_miner_adapter
     except Exception:
         return None
     try:
@@ -290,7 +290,7 @@ async def _kill_chain_tagging_runner(findings: list, store: DuckDBShadowStore, q
     if not findings or store is None:
         return None
     try:
-        from hledac.universal.intelligence.kill_chain_tagger import create_kill_chain_tagger
+        from hledac.universal.intel.kill_chain_tagger import create_kill_chain_tagger
     except Exception:
         return None
     try:
@@ -331,7 +331,7 @@ async def _embedding_runner(findings: list, store: DuckDBShadowStore, query: str
         _sidecarlogger.debug('[embedding] early-return: findings=%d store=%s', len(findings) if findings else 0, 'None' if store is None else type(store).__name__)
         return 0
     try:
-        from hledac.universal.intelligence.streaming_embedder import StreamingEmbedder
+        from hledac.universal.intel.streaming_embedder import StreamingEmbedder
     except Exception:
         _sidecarlogger.debug('embedding_runner: StreamingEmbedder import failed')
         return 0
@@ -398,7 +398,8 @@ async def _banner_grab_runner(findings: list, store: DuckDBShadowStore, query: s
 
             async def _query_one(target: str) -> list:
                 return await adapter.query(target)
-            batches = await bounded_parallel_map(targets[:20], _query_one, concurrency=5, ctx='banner_grab')
+            from hledac.universal.core.concurrency_registry import concurrency_budget, ConcurrencyCategory
+            batches = await bounded_parallel_map(targets[:20], _query_one, concurrency=lambda: concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL), ctx='banner_grab')
             for batch in batches:
                 if batch is not None:
                     derived_findings.extend(batch)
@@ -434,7 +435,7 @@ async def _ipv6_recon_runner(findings: list, store: DuckDBShadowStore, query: st
 
             async def _query_one(target: str) -> list:
                 return await adapter.query(target)
-            batches = await bounded_parallel_map(targets[:20], _query_one, concurrency=5, ctx='ipv6_recon')
+            batches = await bounded_parallel_map(targets[:20], _query_one, concurrency=lambda: concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL), ctx='ipv6_recon')
             for batch in batches:
                 if batch is not None:
                     derived_findings.extend(batch)
@@ -460,7 +461,7 @@ async def _network_intel_runner(findings: list, store: DuckDBShadowStore, query:
         return None
     targets = targets[:MAX_RECON_TARGETS]
     try:
-        from hledac.universal.intelligence.network_reconnaissance import NetworkReconnaissance
+        from hledac.universal.intel.network_reconnaissance import NetworkReconnaissance
         from hledac.universal.runtime.source_finding_bridge import network_recon_result_to_findings
     except Exception:
         return None
@@ -474,7 +475,7 @@ async def _network_intel_runner(findings: list, store: DuckDBShadowStore, query:
                 if results:
                     return network_recon_result_to_findings(target, results)
                 return []
-            batches = await bounded_parallel_map(targets, _recon_one, concurrency=3, ctx='network_intel')
+            batches = await bounded_parallel_map(targets, _recon_one, concurrency=lambda: concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL), ctx='network_intel')
             for batch in batches:
                 if batch is not None:
                     derived_findings.extend(batch)

@@ -183,6 +183,7 @@ fn scan_entries_parallel(
 
 #[pyfunction]
 pub fn feed_entry_pipeline(
+    _py: Python<'_>,
     raw_xml: String,
     max_entries: usize,
     patterns: Vec<String>,
@@ -191,7 +192,11 @@ pub fn feed_entry_pipeline(
     let seen_guids: Mutex<HashSet<u64>> = Mutex::new(HashSet::new());
     let entries = parse_rss_xml(&raw_xml);
     if entries.is_empty() { return Vec::new(); }
-    let results = scan_entries_parallel(&entries, &patterns, &labels, &seen_guids, max_entries);
+    // Release GIL during rayon parallel scan — rayon threads are pure Rust,
+    // no Python callbacks. Allows concurrent HTTP I/O on other threads.
+    let results = _py.allow_threads(|| {
+        scan_entries_parallel(&entries, &patterns, &labels, &seen_guids, max_entries)
+    });
     results.into_iter().map(|r| {
         let combined_hits = r.combined_hits.into_iter().map(|h| (h.start, h.end, h.pattern, h.label, h.value)).collect();
         (r.entry_idx, r.entry_url, combined_hits, 0, 0, r.assembly_phase)
@@ -200,14 +205,36 @@ pub fn feed_entry_pipeline(
 
 #[pyfunction]
 pub fn feed_batch_pipeline(
+    _py: Python<'_>,
     feeds: Vec<(String, usize)>,
     patterns: Vec<String>,
     labels: Vec<String>,
 ) -> Vec<Vec<(usize, String, Vec<(usize, usize, String, String, String)>, usize, usize, String)>> {
     let patterns_clone = patterns.clone();
     let labels_clone = labels.clone();
-    feeds.into_par_iter().map(|(xml, max_entries)| {
-        feed_entry_pipeline(xml, max_entries, patterns_clone.clone(), labels_clone.clone())
+    // Release GIL during rayon parallel feed processing — each feed calls
+    // feed_entry_pipeline (which also uses allow_threads internally).
+    _py.allow_threads(|| {
+        feeds.into_par_iter().map(|(xml, max_entries)| {
+            feed_entry_pipeline_xml(&xml, max_entries, &patterns_clone, &labels_clone)
+        }).collect()
+    })
+}
+
+// Internal non-PyO3 version — called from feed_batch_pipeline within allow_threads scope.
+fn feed_entry_pipeline_xml(
+    raw_xml: &str,
+    max_entries: usize,
+    patterns: &[String],
+    labels: &[String],
+) -> Vec<(usize, String, Vec<(usize, usize, String, String, String)>, usize, usize, String)> {
+    let seen_guids: Mutex<HashSet<u64>> = Mutex::new(HashSet::new());
+    let entries = parse_rss_xml(raw_xml);
+    if entries.is_empty() { return Vec::new(); }
+    let results = scan_entries_parallel(&entries, patterns, labels, &seen_guids, max_entries);
+    results.into_iter().map(|r| {
+        let combined_hits = r.combined_hits.into_iter().map(|h| (h.start, h.end, h.pattern, h.label, h.value)).collect();
+        (r.entry_idx, r.entry_url, combined_hits, 0, 0, r.assembly_phase)
     }).collect()
 }
 

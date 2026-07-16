@@ -59,7 +59,7 @@ except ImportError:
     mx = None
 import numpy as np
 from hledac.universal.federated.sketches import CountMinSketch, SimHashSketch
-from hledac.universal.intelligence.relationship_discovery import RelationshipDiscoveryEngine
+from hledac.universal.intel.relationship_discovery import RelationshipDiscoveryEngine
 from hledac.universal.knowledge.pq_index import PQIndex
 from hledac.universal.prefetch.prefetch_cache import PrefetchCache
 from hledac.universal.research.parallel_scheduler import ParallelResearchScheduler

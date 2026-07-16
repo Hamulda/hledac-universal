@@ -14,6 +14,8 @@ Tier: 3 (experimental)
 import asyncio
 import hashlib
 import logging
+
+from hledac.universal.utils.locks import LazyAsyncioLock
 import os
 import time
 from typing import TYPE_CHECKING
@@ -46,7 +48,7 @@ def _make_node_id() -> str:
 # KademliaNode lifecycle (process-global singleton)
 # ---------------------------------------------------------------------------
 _node_instance: KademliaNode | None = None
-_node_lock = asyncio.Lock()
+_node_lock = LazyAsyncioLock()
 
 
 async def _get_dht_node() -> KademliaNode | None:

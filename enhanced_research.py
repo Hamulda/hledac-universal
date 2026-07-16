@@ -791,7 +791,9 @@ class UnifiedResearchEngine:
             if not emails and (not domains):
                 return []
             hunter = await self._get_data_leak_hunter()
-            raw_alerts = await bounded_parallel_map(emails[:3], lambda e: hunter.check_target(e, 'email'), concurrency=3, ctx='data_leak_email')
+            # F1 FIX: use lambda pattern for dynamic UMA-aware concurrency
+            from hledac.universal.core.concurrency_registry import concurrency_budget, ConcurrencyCategory
+            raw_alerts = await bounded_parallel_map(emails[:3], lambda e: hunter.check_target(e, 'email'), concurrency=lambda: concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL), ctx='data_leak_email')
             for alerts in raw_alerts:
                 if alerts is None:
                     continue
@@ -1363,7 +1365,7 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
         queries = await self.expand_research_query(query, domain)
         all_results: dict[str, list[dict[str, Any]]] = {}
         if search_func:
-            search_results = await bounded_parallel_map(queries[:3], search_func, concurrency=3, ctx='search_queries')
+            search_results = await bounded_parallel_map(queries[:3], search_func, concurrency=lambda: concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL), ctx='search_queries')
             for results in search_results:
                 if results is None:
                     continue
@@ -1473,7 +1475,7 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
             variations = [query]
         if self.rag is not None:
             try:
-                rag_results_list = await bounded_parallel_map(variations[:3], lambda v: self.rag.retrieve(v, top_k=5), concurrency=3, ctx='rag_retrieval')
+                rag_results_list = await bounded_parallel_map(variations[:3], lambda v: self.rag.retrieve(v, top_k=5), concurrency=lambda: concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL), ctx='rag_retrieval')
                 for rag_results in rag_results_list:
                     if rag_results is not None:
                         results.extend(rag_results)
@@ -1557,7 +1559,7 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
             except Exception as e:
                 logger.warning(f'Failed to read {url}: {e}')
             return (url, [])
-        results = await chunked_taskgroup(urls, _read_one, batch_size=5, concurrency=3, ctx='deep_read')
+        results = await chunked_taskgroup(urls, _read_one, batch_size=5, concurrency=lambda: concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL), ctx='deep_read')
         contents = []
         urls_read = []
         for url, result_contents in results:

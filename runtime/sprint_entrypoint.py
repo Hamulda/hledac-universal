@@ -1978,6 +1978,11 @@ async def run_sprint(
     # Idempotent — skips if HLEDAC_PREENABLE_DONE=1 already set.
     start_prewarm_if_needed()
 
+    # F3: IOC pattern prewarm — background-thread Rust ACO build (8-25ms off critical path).
+    # Gate: HLEDAC_PATTERN_WARMUP=1 (default ON). Fire-and-forget like MLX prewarm.
+    from hledac.universal.utils.patterns.pattern_matcher import prewarm as prewarm_patterns
+    prewarm_patterns()
+
     # Circuit breaker reset — sync work offloaded to thread pool
     _cb_reset_done = False
 
@@ -2137,6 +2142,11 @@ async def run_sprint(
         logger=logger,
     )
 
+    # E2: Wire sprint cancel_event to EvidenceLog for lifecycle-bound shutdown.
+    # Ensures EvidenceLog workers exit cleanly when sprint lifecycle ends, even if
+    # aclose() is never called explicitly by the lifecycle TEARDOWN phase.
+    scheduler.inject_cancel_event(_cancel_event)
+
     # F228F CRITICAL: duckdb_store already injected by apply_injections above.
     # The explicit inject_duckdb_store(store) call is now handled inside apply_injections.
 
@@ -2179,7 +2189,7 @@ async def run_sprint(
     try:
         from pathlib import Path
 
-        from hledac.universal.intelligence.ct_log_client import CTLogClient
+        from hledac.universal.intel.ct_log_client import CTLogClient
 
         _ct_cache = Path.home() / ".hledac" / "ct_cache"
         _ct_cache.mkdir(parents=True, exist_ok=True)
@@ -3291,7 +3301,7 @@ async def run_sprint(
 async def run_ct_pivot(domain: str) -> None:
     """Run CT log pivot for a single domain."""
     # Sprint F500I: Lazy import — CTLogClient and TorTransport only needed for CT pivot
-    from hledac.universal.intelligence.ct_log_client import CTLogClient
+    from hledac.universal.intel.ct_log_client import CTLogClient
     from hledac.universal.transport.tor_transport import TorTransport
 
     ct_client = CTLogClient(TOR_ROOT.parent / "cache" / "crt")

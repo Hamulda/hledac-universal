@@ -73,7 +73,7 @@ async def async_transform[T, R](
         from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
 
         semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
-        pending: list[asyncio.Task[typing.Any]] = []
+        pending: set[asyncio.Task[typing.Any]] = set()
 
         async def transform_with_sem(item: T) -> R:
             async with semaphore:
@@ -82,21 +82,25 @@ async def async_transform[T, R](
                     return await val
                 return val
 
-        async for item in source:
-            task = safe_create_task(transform_with_sem(item))
-            pending.append(task)
-            if len(pending) >= concurrency:
-                done, pending_set = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                pending = list(pending_set)
-                for d in done:
-                    try:
-                        yield d.result()
-                    except Exception:
-                        pass
-        if pending:
-            results = await safe_gather_ok(*pending, label="async_generators:pending")
-            for r in results:
-                if not isinstance(r, Exception):
+        async with asyncio.TaskGroup() as tg:
+            async for item in source:
+                task = tg.create_task(transform_with_sem(item), eager_start=True)
+                pending.add(task)
+                if len(pending) >= concurrency:
+                    done, _ = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                    for d in done:
+                        pending.discard(d)
+                        try:
+                            yield d.result()
+                        except Exception:
+                            pass
+            # Drain all remaining tasks with gather — runs inside the TaskGroup
+            # scope so all tasks complete before cancellation on scope exit.
+            remaining = await asyncio.gather(*pending, return_exceptions=True)
+            for r in remaining:
+                if isinstance(r, Exception):
+                    pass
+                else:
                     yield r
 
 

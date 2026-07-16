@@ -13,6 +13,8 @@ Model conversion (torch→CoreML) stays in py3.12 subprocess via CoreMLServiceMa
 import asyncio
 import logging
 import threading
+
+from hledac.universal.utils.locks import LazyAsyncioLock
 from pathlib import Path
 from typing import Any
 import numpy as np
@@ -37,7 +39,7 @@ _MODELS_DIR.mkdir(parents=True, exist_ok=True)
 _MLPACKAGE_PATH = _MODELS_DIR / 'bge-small-ane.mlpackage'
 _ONNX_FALLBACK_PATH = _MODELS_DIR / 'bge-small-ort.onnx'
 _coreml_embedder_instance: CoreMLEmbedder | None = None
-_coreml_embedder_lock = asyncio.Lock()
+_coreml_embedder_lock = LazyAsyncioLock()
 _thread_local = threading.local()
 
 async def get_coreml_embedder() -> CoreMLEmbedder:

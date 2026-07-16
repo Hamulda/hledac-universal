@@ -58,6 +58,8 @@ INVARIANTS:
 import asyncio
 import fnmatch
 import logging
+
+from hledac.universal.utils.locks import LazyAsyncioLock
 from dataclasses import dataclass
 import msgspec
 from enum import Enum
@@ -543,7 +545,7 @@ class StorageRouter:
 # ── Module-level singleton ─────────────────────────────────────────────────────
 
 _router: StorageRouter | None = None
-_router_lock = asyncio.Lock()
+_router_lock = LazyAsyncioLock()
 
 async def get_storage_router(governor: M1ResourceGovernor | None=None) -> StorageRouter:
     """Get or create the global StorageRouter singleton."""

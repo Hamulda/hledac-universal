@@ -14,7 +14,7 @@ async def wayback_cdx_lookup(url_or_host: str, limit: int = 10, timeout_s: float
     REMOVAL CONDITION: HE-003 (F025_SOURCE_TRANSPORT) — fetch_coordinator přejde na
     archive_discovery.wayback_cdx_lookup() přímo; pak odstranit tuto vrstvu.
     """
-    from hledac.universal.intelligence.archive_discovery import (
+    from hledac.universal.intel.archive_discovery import (
         wayback_cdx_lookup as _canonical_lookup,
     )
 

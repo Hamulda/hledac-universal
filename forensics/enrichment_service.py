@@ -31,16 +31,14 @@ M1 8GB: All heavy dependencies (PIL, pypdf, docx, mutagen) are lazy-loaded
 inside enrichment methods. Max 500MB memory per extraction.
 """
 import asyncio
-import concurrent.futures
 import hashlib
 import logging
 import socket
 import ssl
-from dataclasses import dataclass
 import msgspec
 from pathlib import Path
 from typing import Any
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel
 log = logging.getLogger(__name__)
 _EXTERNAL_LOOKUP_TIMEOUT: float = 5.0
 _MetadataExtractor: type | None = None
@@ -49,6 +47,28 @@ _SteganalysisResult: type | None = None
 _STEGANOGRAPHY_AVAILABLE = False
 _DigitalGhostResult: type | None = None
 _DIGITAL_GHOST_AVAILABLE = False
+# ISSUE-045-A4: hoisted IOC extractor import (was inside enrich() loop)
+_IOCExtractor: Any = None
+_IOC_EXTRACTOR_AVAILABLE = False
+
+
+def _lazy_load_ioc_extractor() -> None:
+    """Load IOC extractor module lazily on first use. Called at module level."""
+    global _IOCExtractor, _IOC_EXTRACTOR_AVAILABLE
+    if _IOCExtractor is not None:
+        return
+    try:
+        from forensics.ioc_extractor import ioc_extract_to_canonical_findings
+        from forensics.ioc_extractor import ioc_extract_to_canonical_findings_bulk
+
+        _IOCExtractor = {
+            "single": ioc_extract_to_canonical_findings,
+            "bulk": ioc_extract_to_canonical_findings_bulk,
+        }
+        _IOC_EXTRACTOR_AVAILABLE = True
+    except ImportError:
+        _IOCExtractor = None
+        _IOC_EXTRACTOR_AVAILABLE = False
 
 def _lazy_load_modules() -> None:
     """Load forensics modules lazily on first use."""
@@ -218,7 +238,7 @@ class ForensicsEnricher:
 
     M1 8GB: Extractor uses streaming for large files, bounded memory.
     """
-    __slots__ = tuple(('_cache_path', '_enable_audio', '_enable_gps', '_enable_video', '_extractor', '_ghost_executor', '_initialized', '_lock'))
+    __slots__ = tuple(('_cache_path', '_enable_audio', '_enable_gps', '_enable_video', '_extractor', '_initialized', '_lock'))
 
     def __init__(self, cache_path: str | None=None, enable_gps: bool=True, enable_audio: bool=True, enable_video: bool=False):
         """
@@ -237,7 +257,6 @@ class ForensicsEnricher:
         self._enable_video = enable_video
         self._initialized = False
         self._lock = asyncio.Lock()
-        self._ghost_executor: concurrent.futures.ThreadPoolExecutor | None = None
 
     async def _ensure_initialized(self) -> None:
         """Ensure extractor is initialized (idempotent)."""
@@ -247,6 +266,7 @@ class ForensicsEnricher:
             if self._initialized and self._extractor is not None:
                 return
             _lazy_load_modules()
+            _lazy_load_ioc_extractor()  # ISSUE-045-A4: hoist IOC extractor to module level
             if _MetadataExtractor is not None:
                 self._extractor = _MetadataExtractor(cache_path=self._cache_path, enable_exif=True, enable_gps=self._enable_gps, enable_reverse_geocode=False, enable_audio=self._enable_audio, enable_video=self._enable_video, calculate_hashes=True)
                 await self._extractor.initialize()
@@ -257,26 +277,26 @@ class ForensicsEnricher:
         await self._ensure_initialized()
 
     async def close(self) -> None:
-        """Close extractor and cleanup resources."""
+        """Close extractor and cleanup resources.
+
+        Note: _ghost_executor migrated to domain_executors nlp pool (ISSUE-049).
+        Shared executor is shutdown via atexit.register(shutdown_all) in domain_executors.
+        """
         async with self._lock:
             if self._extractor is not None:
                 await self._extractor.close()
                 self._extractor = None
-            if self._ghost_executor is not None:
-                self._ghost_executor.shutdown(wait=False)
-                self._ghost_executor = None
             self._initialized = False
 
     async def _run_ghost_analysis_async(self, file_path: str) -> dict[str, Any]:
         """Async wrapper for sync _run_ghost_analysis via ThreadPoolExecutor.
 
         Issue #13: runs in executor to avoid blocking the event loop.
-        M1 8GB: max_workers=2 keeps CPU utilization bounded.
+        Issue #049: executor migrated to domain_executors nlp pool (shared, bounded).
         """
-        if self._ghost_executor is None:
-            self._ghost_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix='ghost_')
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(self._ghost_executor, _run_ghost_analysis, file_path)
+        from hledac.universal.utils.domain_executors import get_nlp_executor
+        return await loop.run_in_executor(get_nlp_executor(), _run_ghost_analysis, file_path)
 
     async def enrich(self, finding: Any) -> dict[str, Any] | None:
         """
@@ -309,7 +329,7 @@ class ForensicsEnricher:
         if not file_path:
             domain = _extract_domain_from_url(payload_text)
         finding_id = getattr(finding, 'finding_id', 'unknown')
-        enrichment: dict[str, Any] = {'finding_id': finding_id, 'file_path': file_path, 'metadata': None, 'steganography': None, 'ghosts': None, 'enrichment_available': False}
+        enrichment: dict[str, Any] = {'finding_id': finding_id, 'file_path': file_path, 'metadata': None, 'steganography': None, 'ghosts': None, 'enrichment_available': False, '_payload_text': payload_text or ''}
         forensics_result = ForensicsResult(finding_id=finding_id, file_path=file_path, enrichment_available=False)
         if file_path and self._extractor is not None:
             if _file_has_forensics_support(file_path):
@@ -392,24 +412,6 @@ class ForensicsEnricher:
                             forensics_result.enrichment_available = True
                 except Exception:
                     pass
-        try:
-            from forensics.ioc_extractor import ioc_extract_to_canonical_findings
-            ioc_text_parts: list[str] = []
-            if payload_text:
-                ioc_text_parts.append(str(payload_text)[:8192])
-            if x_originating_ip:
-                ioc_text_parts.append(str(x_originating_ip))
-            ioc_text = '\n'.join(ioc_text_parts) if ioc_text_parts else ''
-            if ioc_text:
-                finding_id = getattr(finding, 'finding_id', None) or 'unknown'
-                finding_query = getattr(finding, 'query', '') or ''
-                ioc_findings = ioc_extract_to_canonical_findings(text=ioc_text, source_finding_id=str(finding_id)[:128], query=str(finding_query)[:512])
-                if ioc_findings:
-                    enrichment['_ioc_canonical_findings'] = ioc_findings
-                    enrichment['ioc_findings'] = [{'finding_id': getattr(cf, 'finding_id', ''), 'ioc_type': (getattr(cf, 'payload_text', '') or '').split(';', 1)[0].replace('ioc_type=', '').strip(), 'value': (getattr(cf, 'payload_text', '') or '').split(';', 1)[1].replace('value=', '').strip() if ';' in (getattr(cf, 'payload_text', '') or '') else ''} for cf in ioc_findings]
-                    forensics_result.enrichment_available = True
-        except Exception as exc:
-            log.debug('Forensics IOC sub-step failed for %s: %s', finding_id, exc)
         if any((v is not None for k, v in enrichment.items() if k not in ('finding_id', 'file_path', 'enrichment_available'))):
             enrichment['enrichment_available'] = True
             forensics_result.enrichment_available = True
@@ -425,6 +427,10 @@ class ForensicsEnricher:
     async def enrich_batch(self, findings: list[Any]) -> dict[str, dict[str, Any]]:
         """
         Enrich multiple findings concurrently.
+
+        ISSUE-045-A4: IOC extraction runs as a PARALLEL bulk step after
+        the per-finding enrichment loop, using ioc_extract_to_canonical_findings_bulk()
+        with Rust arrow_batch_builder (5-10x faster than sequential per-finding).
 
         Args:
             findings: List of CanonicalFinding objects.
@@ -448,14 +454,109 @@ class ForensicsEnricher:
                     log.debug('Batch enrichment failed for %s: %s', finding_id, exc)
                     return (finding_id, None)
         tasks = [enrich_one(f) for f in findings]
-        results = await safe_gather_ok(*tasks, label='enrichment_service:540')
+        results = await parallel(tasks, policy="log", concurrency=8, ctx="enrichment_service:540")
         out = {}
-        for item in results:
+        for item in results.ok:
             if isinstance(item, Exception):
                 continue
             fid, enrich_data = item
             if enrich_data is not None:
                 out[fid] = enrich_data
+
+        # ISSUE-045-A4: bulk IOC extraction — parallel across all findings
+        # Runs AFTER enrichment so we have payload_text + x_originating_ip per finding.
+        # Uses ioc_extract_to_canonical_findings_bulk with Rust arrow path.
+        if _IOC_EXTRACTOR_AVAILABLE and _IOCExtractor is not None and out:
+            try:
+                # Build a finding_id → query lookup map once (O(n), not O(n²))
+                fid_to_query: dict[str, str] = {}
+                for f in findings:
+                    fid = getattr(f, 'finding_id', None)
+                    if fid:
+                        fid_to_query[fid] = getattr(f, 'query', '') or ''
+
+                # Build bulk inputs from successful enrichments
+                texts: list[str] = []
+                source_finding_ids: list[str] = []
+                queries: list[str] = []
+                finding_ids_ordered: list[str] = []
+                for fid, enrich_data in out.items():
+                    payload_text = enrich_data.get('_payload_text', '')
+                    x_originating_ip = (
+                        enrich_data.get('x_originating_ip_enrichment', {})
+                        .get('ip', '')
+                    )
+                    ioc_text_parts: list[str] = []
+                    if payload_text:
+                        ioc_text_parts.append(str(payload_text)[:8192])
+                    if x_originating_ip:
+                        ioc_text_parts.append(str(x_originating_ip))
+                    ioc_text = '\n'.join(ioc_text_parts) if ioc_text_parts else ''
+                    if ioc_text:
+                        orig_query = fid_to_query.get(fid, '')
+                        texts.append(ioc_text)
+                        source_finding_ids.append(str(fid)[:128])
+                        queries.append(str(orig_query)[:512])
+                        finding_ids_ordered.append(fid)
+
+                if texts:
+                    bulk_fn = _IOCExtractor.get('bulk')
+                    if bulk_fn is None:
+                        # Fallback: single function
+                        single_fn = _IOCExtractor.get('single')
+                        if single_fn is not None:
+
+                            async def ioc_one(text: str, sfid: str, q: str) -> tuple[str, list[Any]]:
+                                # ISSUE-045-A4: sync Rust fn must run off event loop
+                                iocs = await asyncio.to_thread(single_fn, text=text, source_finding_id=sfid, query=q)
+                                return (sfid, iocs)
+
+                            ioc_tasks = [
+                                ioc_one(texts[i], source_finding_ids[i], queries[i])
+                                for i in range(len(texts))
+                            ]
+                            ioc_results = await parallel(
+                                ioc_tasks, policy="log", concurrency=8, ctx="enrichment_service:ioc_bulk"
+                            )
+                            for item in ioc_results.ok:
+                                if isinstance(item, Exception):
+                                    continue
+                                sfid, ioc_list = item
+                                if sfid in out and ioc_list:
+                                    out[sfid]['_ioc_canonical_findings'] = ioc_list
+                                    out[sfid]['ioc_findings'] = [
+                                        {
+                                            'finding_id': getattr(cf, 'finding_id', ''),
+                                            'ioc_type': (getattr(cf, 'payload_text', '') or '').split(';', 1)[0].replace('ioc_type=', '').strip(),
+                                            'value': (getattr(cf, 'payload_text', '') or '').split(';', 1)[1].replace('value=', '').strip() if ';' in (getattr(cf, 'payload_text', '') or '') else ''
+                                        }
+                                        for cf in ioc_list
+                                    ]
+                                    out[sfid]['enrichment_available'] = True
+                    else:
+                        # Rust arrow_batch_builder path — single call for all texts
+                        # ISSUE-045-A4: sync Rust FFI must run off event loop
+                        all_ioc_lists = await asyncio.to_thread(
+                            bulk_fn,
+                            texts=texts,
+                            source_finding_ids=source_finding_ids,
+                            queries=queries,
+                        )
+                        for i, sfid in enumerate(finding_ids_ordered):
+                            if sfid in out and all_ioc_lists[i]:
+                                out[sfid]['_ioc_canonical_findings'] = all_ioc_lists[i]
+                                out[sfid]['ioc_findings'] = [
+                                    {
+                                        'finding_id': getattr(cf, 'finding_id', ''),
+                                        'ioc_type': (getattr(cf, 'payload_text', '') or '').split(';', 1)[0].replace('ioc_type=', '').strip(),
+                                        'value': (getattr(cf, 'payload_text', '') or '').split(';', 1)[1].replace('value=', '').strip() if ';' in (getattr(cf, 'payload_text', '') or '') else ''
+                                    }
+                                    for cf in all_ioc_lists[i]
+                                ]
+                                out[sfid]['enrichment_available'] = True
+            except Exception as exc:
+                log.debug('Batch IOC extraction failed: %s', exc)
+
         return out
 
     def _score_foca_findings(self, enrichment: dict[str, Any] | None) -> float:
@@ -743,16 +844,10 @@ def _bound_enrichment_for_payload(enrichment: dict[str, Any]) -> str:
     """
     if not isinstance(enrichment, dict):
         return ''
-    try:
-        import orjson
+    import orjson
 
-        def _dumps(v):
-            return orjson.dumps(v).decode('utf-8', errors='replace')
-    except ImportError:
-        import json
-
-        def _dumps(v):
-            return json.dumps(v, ensure_ascii=False)
+    def _dumps(v):
+        return orjson.dumps(v).decode('utf-8', errors='replace')
     bounded: dict[str, Any] = {}
     keys = list(enrichment.keys())
     for i, k in enumerate(keys):

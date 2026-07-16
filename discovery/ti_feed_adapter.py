@@ -580,7 +580,9 @@ async def scrape_pastebin_for_keyword(keyword: str, max_pastes: int=10) -> list[
         paste_urls = paste_urls[:max_pastes]
         # F350M-R: Parallel batch fetch — replaces sequential await loop.
         # Original: 1 URL × 1s sleep = N seconds serial. New: N URLs in one
-        # asyncio.gather with concurrency=3 (Pastebin rate-limit friendly).
+        # asyncio.gather with concurrency=None (UMA-aware via ConcurrencyBudgetRegistry).
+        # F1 FIX: concurrency=None → dynamic limit adapts to Pastebin WARN/CRITICAL
+        # states automatically (PASTE_SCRAPE category: OK=4, WARN=2, CRITICAL=1).
         from hledac.universal.fetching.public_fetcher import async_fetch_public_text_batch
 
         batch_results = await async_fetch_public_text_batch(
@@ -592,7 +594,7 @@ async def scrape_pastebin_for_keyword(keyword: str, max_pastes: int=10) -> list[
             use_doh=False,
             js_confidence=0.0,
             priority=5,
-            concurrency=3,  # Pastebin rate-limit friendly
+            concurrency=None,  # F1 FIX: UMA-aware via ConcurrencyBudgetRegistry
         )
         for raw_url, fetch_result in zip(paste_urls, batch_results):
             try:
@@ -804,7 +806,7 @@ class WaybackArchiveAdapter(SourceAdapter):
         if limit is None:
             limit = self.HARD_LIMIT
         limit = min(max(limit, 1), self.HARD_LIMIT)
-        from hledac.universal.intelligence.archive_discovery import ArchiveDiscovery, ArchiveResult
+        from hledac.universal.intel.archive_discovery import ArchiveDiscovery, ArchiveResult
         entries: list[NormalizedEntry] = []
         try:
             discovery = ArchiveDiscovery()
@@ -896,7 +898,7 @@ async def _handle_github_dork(task, scheduler):
 
 @register_task('shodan_enrich')
 async def _handle_shodan_enrich(task, scheduler):
-    from hledac.universal.intelligence.shodan_wrapper import search_shodan_to_findings
+    from hledac.universal.intel.shodan_wrapper import search_shodan_to_findings
     findings, raw_results = await search_shodan_to_findings(query=task.ioc_value, limit=10)
     if raw_results:
         await scheduler._buffer_ioc_pivot('ipv4', task.ioc_value, 0.8)
@@ -1385,7 +1387,7 @@ async def _handle_cve_to_github(task, scheduler):
     from github_dork (generic code search) — search_cve uses the
     `language:Python OR language:C exploit OR poc` query template scoped to a CVE.
     """
-    from hledac.universal.intelligence.exposure_clients import GitHubCodeSearchClient
+    from hledac.universal.intel.exposure_clients import GitHubCodeSearchClient
     from hledac.universal.paths import CACHE_ROOT
     try:
         cache_dir = CACHE_ROOT / 'github_cve'

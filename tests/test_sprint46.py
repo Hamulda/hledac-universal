@@ -10,6 +10,7 @@ import asyncio
 import tempfile
 from unittest.mock import AsyncMock, mock_open, patch
 
+import lmdb
 import pytest
 
 # Lazy import: lmdb loaded only when tests that need it actually run
@@ -32,7 +33,6 @@ class TestSprint46:
                 sm = SessionManager(env)
                 await sm.save_session("example.com", {"cookie": "abc123"}, {"X-Custom": "value"})
                 session = await sm.get_session("example.com")
-                self.assertIsNotNone(session)  # original assertion preserved
                 assert session is not None
                 assert session["cookies"]["cookie"] == "abc123"
                 assert session["headers"]["X-Custom"] == "value"
@@ -45,9 +45,8 @@ class TestSprint46:
                 sm = SessionManager(env)
                 await sm.save_session("test.com", {"session": "xyz789"})
                 session = await sm.get_session("test.com")
-                self.assertIsNotNone(session)  # original assertion preserved
                 assert session is not None
-                self.assertEqual(session["cookies"]["session"], "xyz789")
+                assert session["cookies"]["session"] == "xyz789"
 
     @pytest.mark.asyncio
     async def test_credential_rotation(self):
@@ -58,7 +57,7 @@ class TestSprint46:
                 await sm.save_session("example.com", {"auth": "token1"})
                 await sm.rotate_credentials("example.com")
                 session = await sm.get_session("example.com")
-                self.assertIsNone(session)
+                assert session is None
 
     # === Part B - Paywall Bypass ===
 
@@ -66,37 +65,37 @@ class TestSprint46:
         """Should detect NYT paywall."""
         pb = PaywallBypass()
         html = '<div class="gateway">Subscribe to continue reading</div>'
-        self.assertEqual(pb.detect(html), "nytimes")
+        assert pb.detect(html) == "nytimes"
 
     def test_paywall_detection_wsj(self):
         """Should detect WSJ paywall."""
         pb = PaywallBypass()
         html = '<section class="wsj-paywall">Subscriber exclusive content</section>'
-        self.assertEqual(pb.detect(html), "wsj")
+        assert pb.detect(html) == "wsj"
 
     def test_paywall_detection_medium(self):
         """Should detect Medium paywall."""
         pb = PaywallBypass()
         html = '<span class="member-only">Member-only story</span>'
-        self.assertEqual(pb.detect(html), "medium")
+        assert pb.detect(html) == "medium"
 
     def test_paywall_no_detection(self):
         """Should return None for normal content."""
         pb = PaywallBypass()
         html = "<p>Regular article content here...</p>"
-        self.assertIsNone(pb.detect(html))
+        assert pb.detect(html) is None
 
     @pytest.mark.asyncio
     async def test_archive_is(self):
         """Archive.is should return content."""
         pb = PaywallBypass()
-        self.assertTrue(asyncio.iscoroutinefunction(pb.fetch_via_archive))
+        assert asyncio.iscoroutinefunction(pb.fetch_via_archive)
 
     @pytest.mark.asyncio
     async def test_12ft_io(self):
         """12ft.io should return content."""
         pb = PaywallBypass()
-        self.assertTrue(asyncio.iscoroutinefunction(pb.fetch_via_12ft))
+        assert asyncio.iscoroutinefunction(pb.fetch_via_12ft)
 
     # === Part C - OSINT Frameworks ===
 
@@ -106,7 +105,7 @@ class TestSprint46:
         runner = OSINTFrameworkRunner()
         with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError):
             results = await runner.run_theharvester("test.com")
-            self.assertEqual(results, [])
+            assert results == []
 
     @pytest.mark.asyncio
     async def test_theharvester_output_parsing(self):
@@ -137,9 +136,9 @@ class TestSprint46:
             )
             mock_exec.return_value = proc
             findings = await runner.run_sherlock("testuser")
-            self.assertEqual(len(findings), 2)
-            self.assertEqual(findings[0]["url"], "https://twitter.com/testuser")
-            self.assertEqual(findings[0]["source"], "sherlock")
+            assert len(findings) == 2
+            assert findings[0]["url"] == "https://twitter.com/testuser"
+            assert findings[0]["source"] == "sherlock"
 
     @pytest.mark.asyncio
     async def test_sherlock_not_installed(self):
@@ -147,7 +146,7 @@ class TestSprint46:
         runner = OSINTFrameworkRunner()
         with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError):
             results = await runner.run_sherlock("testuser")
-            self.assertEqual(results, [])
+            assert results == []
 
     @pytest.mark.asyncio
     async def test_osint_findings_structure(self):
@@ -159,9 +158,9 @@ class TestSprint46:
             mock_exec.return_value = proc
             findings = await runner.run_sherlock("user")
             for finding in findings:
-                self.assertIn("type", finding)
-                self.assertIn("url", finding)
-                self.assertIn("source", finding)
+                assert "type" in finding
+                assert "url" in finding
+                assert "source" in finding
 
     # === Part D - Darknet ===
 
@@ -169,49 +168,49 @@ class TestSprint46:
     async def test_tor_proxy(self):
         """Tor proxy connector should work."""
         try:
-            from aiohttp_socks import ProxyConnector
+            from httpx_socks import AsyncProxyTransport
         except ImportError:
-            pytest.skip("aiohttp_socks not available")
-        connector = ProxyConnector.from_url("socks5://127.0.0.1:9050")
-        self.assertIsNotNone(connector)
+            pytest.skip("httpx-socks not available")
+        transport = AsyncProxyTransport.from_url("socks5://127.0.0.1:9050", rdns=True)
+        assert transport is not None
 
     @pytest.mark.asyncio
     async def test_i2p_socket(self):
         """I2P socket should be configurable."""
         try:
-            from aiohttp_socks import ProxyConnector
+            from httpx_socks import AsyncProxyTransport
         except ImportError:
-            pytest.skip("aiohttp_socks not available")
-        connector = ProxyConnector.from_url("socks5://127.0.0.1:4444")
-        self.assertIsNotNone(connector)
+            pytest.skip("httpx-socks not available")
+        transport = AsyncProxyTransport.from_url("socks5://127.0.0.1:4444", rdns=True)
+        assert transport is not None
 
     @pytest.mark.asyncio
     async def test_liboqs_fallback(self):
         """liboqs should fallback gracefully if not installed."""
         dc = DarknetConnector()
         result = await dc.try_liboqs_handshake("example.com")
-        self.assertIsInstance(result, bool)
+        assert isinstance(result, bool)
 
     @pytest.mark.asyncio
     async def test_fetch_onion_requires_onion(self):
         """fetch_onion should only work for .onion URLs."""
         dc = DarknetConnector()
         result = await dc.fetch_onion("https://example.com")
-        self.assertIsNone(result)
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_fetch_i2p_requires_i2p(self):
         """fetch_i2p should only work for .i2p URLs."""
         dc = DarknetConnector()
         result = await dc.fetch_i2p("https://example.com")
-        self.assertIsNone(result)
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_darknet_not_available(self):
         """Should handle missing darknet tools gracefully."""
         dc = DarknetConnector()
         result = await dc.fetch_via_tor("http://example.onion")
-        self.assertIsNone(result)
+        assert result is None
 
 
 if __name__ == "__main__":

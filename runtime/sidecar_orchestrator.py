@@ -901,7 +901,7 @@ class SidecarOrchestrator:
 
         # Issue #15 review: init service once before loop (was N× getattr inside loop)
         try:
-            from hledac.universal.intelligence.target_memory_service import (
+            from hledac.universal.intel.target_memory_service import (
                 TargetMemoryService,
                 TargetMemoryUpdate,
             )
@@ -956,7 +956,7 @@ class SidecarOrchestrator:
     async def _run_bgp_advisory_sidecar(self) -> None:
         """F234: BGP advisory sidecar for ASN/path analysis. Fail-soft."""
         try:
-            from hledac.universal.intelligence.bgp_advisor_adapter import (
+            from hledac.universal.intel.bgp_advisor_adapter import (
                 create_bgp_advisor_adapter,
             )
             adapter = create_bgp_advisor_adapter()
@@ -967,7 +967,7 @@ class SidecarOrchestrator:
     async def _run_wayback_cdx_deep_sidecar(self) -> None:
         """F234: Deep Wayback CDX analysis for URL history. Fail-soft."""
         try:
-            from hledac.universal.intelligence.wayback_cdx_deep_adapter import (
+            from hledac.universal.intel.wayback_cdx_deep_adapter import (
                 create_wayback_cdx_deep_adapter,
             )
             adapter = create_wayback_cdx_deep_adapter()

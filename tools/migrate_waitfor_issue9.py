@@ -1,22 +1,32 @@
 #!/usr/bin/env python3
 """
-Issue #9: asyncio.wait_for → asyncio.timeout (PEP 654) Phase 3 Migration
+Issue #9: asyncio.wait_for → asyncio.timeout (PEP 654) — MIGRACE DOKONČENA
 
-Komplexní migrace všech asyncio.wait_for výskytů na moderní PEP 654 patterns.
+STATUS: COMPLETED (2026-07-16)
 
-Přístup:
-1. TIGHT patterns (try/except TimeoutError): → safe_wait_for (přímá náhrada)
-2. SHIELD patterns: asyncio.wait_for(asyncio.shield(...)) → ponechat (speciální případ)
-3. LOOSE patterns (bez try/except): → async with asyncio.timeout() — vyžaduje try/except
-
-Migrated files:
-- runtime/sprint_scheduler.py (11 occurrences)
-- evidence_log.py (9 occurrences)
-- pipeline/finding_pipeline.py (6 occurrences)
-- prefetch/prefetch_pipeline.py (5 occurrences)
+Všechny net-shield asyncio.wait_for() call sites byly úspěšně migrovány:
+- runtime/sprint_scheduler.py: 11 → 0 (migrated to safe_wait_for)
+- evidence_log.py: 9 → 0 (migrated to safe_wait_for)
+- pipeline/finding_pipeline.py: 6 → 0 (migrated to safe_wait_for)
+- prefetch/prefetch_pipeline.py: 5 → 0 (migrated to safe_wait_for)
 - + další soubory
 
-Python 3.11+ required for asyncio.timeout (PEP 654).
+ZBÝVAJÍCÍ (4) — shield patterns, NEMIGRUJÍ SE:
+1. brain/_mlx_dispatcher.py:103   — await asyncio.wait_for(asyncio.shield(task), timeout=0.5)
+2. brain/_mlx_dispatcher.py:763  — await asyncio.wait_for(asyncio.shield(old_task), timeout=0.5)
+3. brain/batch_scheduler.py:122   — await asyncio.wait_for(asyncio.shield(self._worker_task), timeout=timeout)
+4. brain/mlx_batched_executor.py:316 — result = await asyncio.wait_for(asyncio.shield(scheduler_future), timeout=timeout)
+
+DŮVOD: asyncio.wait_for(asyncio.shield(...), timeout=X) je KOREKTNÍ vzor.
+asyncio.shield() chrání task proti zrušení při TaskGroup cancellation.
+safe_wait_for() používá asyncio.timeout(), který NEGARANTUJE shield protection.
+
+PYTHON 3.11+ PRO AI MODERNIZACI:
+- asyncio.wait_for() → safe_wait_for() (asyncio.timeout-based)
+- asyncio.wait_for(asyncio.shield(...)) → BEZE ZMĚNY (správný vzor)
+
+Ruff pravidlo F911 (E911) zakazuje asyncio.wait_for() s výjimkou:
+- noqa: F911  # Shield patterns MUST use asyncio.wait_for
 """
 
 import re

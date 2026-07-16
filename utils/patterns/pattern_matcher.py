@@ -12,8 +12,10 @@ pyahocorasick C-extension NOT required — avoids Python 3.14 compatibility risk
 
 import functools
 import logging
+import os
 import re
 import sys
+import threading
 import time
 from typing import NamedTuple, cast
 
@@ -26,6 +28,7 @@ __all__ = [
     "match_text",
     "match_text_batch",
     "reset_pattern_matcher",
+    "prewarm",
     "configure_default_bootstrap_patterns_if_empty",
     "get_default_bootstrap_patterns",
     "extract_high_precision_entities",
@@ -849,9 +852,10 @@ class _PatternMatcherState:
         "_registry_snapshot",
         "_bootstrap_applied",
         "_rust_aco",
-        "_dirty",
         "_regex_alternation",
         "_label_map_cache",  # Issue #35: cache label_map to avoid per-call dict allocation
+        "_prewarm_lock",
+        "_prewarm_done",  # F3-OPT: set True after prewarm thread completes
     )
 
     def __init__(self) -> None:
@@ -860,13 +864,18 @@ class _PatternMatcherState:
         self._registry_snapshot: frozenset[tuple[str, str]] = frozenset()
         self._bootstrap_applied: bool = False
         self._rust_aco: AhoCorasickMatcher | None | object = None
-        self._dirty: bool = True  # True until first successful build
         # Issue #17: pre-compiled regex alternation for linear scan fallback
         # O(n) single-pass scan vs O(p×n) str.find() loop
         self._regex_alternation: re.Pattern[str] | None = None
         # Issue #35: cached label_map for regex fallback path — avoids per-call
         # dict allocation (O(p) inserts per match_text call with regex fallback)
         self._label_map_cache: dict[str, tuple[str, str]] | None = None
+        # F3: lock guards prewarm thread vs configure_patterns() vs match_text() races
+        self._prewarm_lock: threading.Lock = threading.Lock()
+        # F3-OPT: set True after prewarm thread completes build.
+        # configure_patterns checks this BEFORE acquiring lock to skip the
+        # redundant acquire→compare-snapshot→release cycle when prewarm finished.
+        self._prewarm_done: bool = False
 
     def is_built(self) -> bool:
         """Return True if Rust ACO is initialized and ready.
@@ -962,18 +971,49 @@ def get_pattern_matcher() -> _PatternMatcherState:
     return _matcher_state
 
 
-def configure_patterns(registry: tuple[tuple[str, str], ...]) -> None:
+def configure_patterns(registry: tuple[tuple[str, str], ...], *, _from_prewarm: bool = False) -> None:
     """Update the active pattern registry.
 
     Args:
         registry: Tuple of (pattern, label) pairs.
                   Pass _SEED_REGISTRY for test seeding.
                   Pass () to clear all patterns.
+        _from_prewarm: Internal flag — when True, skip the _prewarm_lock
+                       acquisition (prewarm thread holds it for the full build).
     """
     new_snapshot = frozenset(registry)
     if new_snapshot == _matcher_state._registry_snapshot:
         return  # no-op on identical registry
-    _matcher_state._registry_snapshot = new_snapshot
+
+    # F3-OPT: if prewarm thread already completed the same build, skip lock entirely.
+    # _prewarm_done is set True only when prewarm built _BOOTSTRAP_PATTERNS successfully.
+    # This eliminates one redundant acquire→compare→release cycle per first match_text call.
+    if (
+        not _from_prewarm
+        and not _matcher_state._prewarm_done
+    ):
+        acquired = _matcher_state._prewarm_lock.acquire(timeout=30.0)
+        if not acquired:
+            logger.warning("[PATTERNS] configure_patterns: lock timeout — skipping (prewarm may be stuck)")
+            return
+        try:
+            # Re-check after acquiring — another caller may have configured between
+            # our initial check above and lock acquisition
+            if new_snapshot != _matcher_state._registry_snapshot:
+                _configure_patterns_impl(registry)
+        finally:
+            _matcher_state._prewarm_lock.release()
+    elif not _from_prewarm:
+        # prewarm already done with same patterns — _registry_snapshot already set;
+        # _configure_patterns_impl would be a no-op but skip the lock entirely
+        pass
+    else:
+        _configure_patterns_impl(registry)
+
+
+def _configure_patterns_impl(registry: tuple[tuple[str, str], ...]) -> None:
+    """Core pattern configuration — caller must hold _prewarm_lock."""
+    _matcher_state._registry_snapshot = frozenset(registry)
     _matcher_state._pattern_version += 1
 
     # Issue #35-fix: O(n log n) overlap detection via sorted neighbor check.
@@ -1000,7 +1040,7 @@ def configure_patterns(registry: tuple[tuple[str, str], ...]) -> None:
     # Build Rust ACO eagerly if available and patterns don't overlap
     # Issue #14: pass labels directly to Rust — eliminates Python dict lookup in hot path
     if _RUST_ACO_AVAILABLE and not has_overlapping:
-        labels_list = [l for _p, l in registry]
+        labels_list = [label for _p, label in registry]
         _matcher_state._rust_aco = RustAhoCorasickMatcher(patterns_list, labels_list)
         _matcher_state._regex_alternation = None  # Not needed when Rust ACO is used
     else:
@@ -1021,7 +1061,7 @@ def configure_patterns(registry: tuple[tuple[str, str], ...]) -> None:
         # Issue #35: build cached label_map for regex fallback path
         # Cached here (once per configure) instead of per match_text() call
         _matcher_state._label_map_cache = {
-            p.lower(): (p, l) for p, l in registry
+            p.lower(): (p, label) for p, label in registry
         } if registry else None
         # Issue #17: warn when falling back from Rust ACO due to overlapping patterns
         if _RUST_ACO_AVAILABLE and has_overlapping:
@@ -1252,7 +1292,7 @@ def match_text_batch(
             rust_structured_results = [[] for _ in texts]
 
         results: list[list[PatternHit]] = []
-        for _text_idx, (text, raw_hits, structured_hits) in enumerate(zip(texts, raw_results, rust_structured_results)):
+        for _text_idx, (text, raw_hits, structured_hits) in enumerate(zip(texts, raw_results, rust_structured_results, strict=False)):
             hits: list[PatternHit] = []
 
             # AC scan hits (Rust) — Issue #37-FIX: Rust PatternHit used directly.
@@ -1300,9 +1340,9 @@ def reset_pattern_matcher() -> None:
     _matcher_state._pattern_version = 0
     _matcher_state._registry_snapshot = frozenset()
     _matcher_state._bootstrap_applied = False
-    _matcher_state._dirty = True
     _matcher_state._regex_alternation = None
     _matcher_state._label_map_cache = None
+    _matcher_state._prewarm_done = False  # F3-OPT: reset so prewarm can run again after reset
 
 
 def get_default_bootstrap_patterns() -> tuple[tuple[str, str], ...]:
@@ -1338,14 +1378,61 @@ def configure_default_bootstrap_patterns_if_empty() -> bool:
 
 def prewarm() -> None:
     """
-    Eagerly initialize the pattern matcher before first use.
+    Eagerly initialize the pattern matcher before first use — F3.
 
-    Called during sprint initialization to ensure Rust AhoCorasickMatcher
-    is built before the first match_text() call.
+    Spawns a background thread that holds _prewarm_lock through the full
+    Rust Aho-Corasick build, then releases it. If another caller tries
+    configure_patterns() or match_text() before prewarm finishes, it blocks
+    on _prewarm_lock, ensuring a fully-built automaton is visible to all.
 
-    No-op if registry is empty or if Rust ACO already available.
+    Gate: HLEDAC_PATTERN_WARMUP=1 (default ON, opt-out via =0).
+
+    Thread-safe via threading.Lock — prewarm thread holds the lock for the
+    entire build, other callers block until it's released.
+
+    No-op if registry already populated (bootstrap already applied) or if
+    HLEDAC_PATTERN_WARMUP=0.
     """
-    configure_default_bootstrap_patterns_if_empty()
+    # F3: opt-out gate — default ON
+    if os.environ.get("HLEDAC_PATTERN_WARMUP", "1") == "0":
+        return
+    if _matcher_state._registry_snapshot:
+        return  # already bootstrapped — no-op
+    if not _RUST_ACO_AVAILABLE:
+        return  # nothing to warm — Rust ACO unavailable
+
+    def _prewarm_thread() -> None:
+        """Thread target: hold lock through entire Rust ACO build."""
+        # F3: check Rust availability BEFORE acquiring lock — avoid lock leak if import fails.
+        # Import here (not at module level) keeps lazy import semantics.
+        if not _RUST_ACO_AVAILABLE:
+            logger.debug("[PATTERNS] prewarm: Rust ACO unavailable — skipping")
+            return
+        acquired = _matcher_state._prewarm_lock.acquire(timeout=30.0)
+        if not acquired:
+            logger.warning("[PATTERNS] prewarm: lock timeout — skipping")
+            return
+        try:
+            # F3-FIX: _from_prewarm=True is MANDATORY here.
+            # Without it, configure_patterns() would try to re-acquire _prewarm_lock
+            # (which we already hold), causing a deadlock.
+            # Also skip configure_default_bootstrap_patterns_if_empty() — go direct
+            # to avoid the bootstrap_applied double-set complexity.
+            if not _matcher_state._registry_snapshot:
+                _configure_patterns_impl(_BOOTSTRAP_PATTERNS)
+                _matcher_state._bootstrap_applied = True
+                _matcher_state._prewarm_done = True  # F3-OPT: signal completion to skip redundant lock acquire
+                logger.info(f"[PATTERNS] prewarm built {len(_BOOTSTRAP_PATTERNS)} patterns")
+            else:
+                logger.debug("[PATTERNS] prewarm: registry already populated")
+        except Exception as exc:
+            logger.warning(f"[PATTERNS] prewarm failed: {exc}")
+        finally:
+            _matcher_state._prewarm_lock.release()
+
+    t = threading.Thread(target=_prewarm_thread, daemon=True, name="pattern-prewarm")
+    t.start()
+    logger.debug("[PATTERNS] prewarm thread started")
 
 
 

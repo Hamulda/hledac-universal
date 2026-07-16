@@ -31,6 +31,8 @@ use std::ptr::NonNull;
 use parking_lot::RwLock;
 use xxhash_rust::xxh3::{xxh3_64, xxh3_64_with_seed};
 
+use crate::gil::release_gil;
+
 /// MADV_NOCACHE (Darwin value 11): prevent mmap pages from residing in
 /// the unified page cache — critical so BloomFilter bitmap pages do NOT
 /// count against Metal's memory budget on M1 8GB UMA.
@@ -184,8 +186,9 @@ impl BloomFilter {
     /// the shared bitmap. M1 8GB bounded: rayon pool is short-lived
     /// per call, no persistent threads.
     ///
-    /// Fail-soft: if the rayon join fails (OOM, thread panic), falls
-    /// back to sequential processing item-by-item.
+    /// ISSUE-D1: Releases GIL during rayon parallel scope so other Python
+    /// coroutines can make progress on this thread while we hash.
+    /// CONC-SEQ-006: Bitmap mutation is serial ( rayon join must complete first).
     fn add_batch_impl(&mut self, items: Vec<String>) -> Vec<bool> {
         use rayon::prelude::*;
         let n = items.len();
@@ -194,14 +197,20 @@ impl BloomFilter {
         }
 
         // Parallel: hash all items in parallel, collect indices per item.
-        let results: Vec<(Vec<usize>, bool)> = items
-            .par_iter()
-            .map(|item| {
-                let indices = self.compute_indices(item);
-                let is_new = indices.iter().any(|&idx| !self.check_bit(idx));
-                (indices, is_new)
+        // ISSUE-D1: py.allow_threads() enables true parallelism — rayon workers
+        // don't block the GIL, so asyncio coroutines on the same thread can progress.
+        let results: Vec<(Vec<usize>, bool)> = Python::with_gil(|py| {
+            release_gil(py, || {
+                items
+                    .par_iter()
+                    .map(|item| {
+                        let indices = self.compute_indices(item);
+                        let is_new = indices.iter().any(|&idx| !self.check_bit(idx));
+                        (indices, is_new)
+                    })
+                    .collect()
             })
-            .collect();
+        });
 
         // Sequential merge into bitmap (bitmap access must be serial).
         for (indices, _is_new) in &results {
@@ -287,7 +296,7 @@ impl BloomFilter {
     /// M1 8GB: rayon short-lived pool, no persistent threads.
     /// ~10-50× faster than sequential Python `contains()` calls due to:
     ///   - Parallel xxHash3-64 hashing via rayon
-    ///   - No GIL release needed (read-only, no Python objects)
+    ///   - ISSUE-D1: GIL released via py.allow_threads() so asyncio coroutines can progress
     ///   - Sequential bitmap probe after parallel hash phase
     fn contains_batch(&self, items: Vec<String>) -> Vec<bool> {
         use rayon::prelude::*;
@@ -296,12 +305,18 @@ impl BloomFilter {
         }
 
         // Parallel: hash all items, collect contains result per item.
-        items
-            .par_iter()
-            .map(|item| {
-                self.__contains__(item)
+        // ISSUE-D1: py.allow_threads() enables true parallelism — rayon workers
+        // don't block the GIL, so asyncio coroutines can make progress.
+        Python::with_gil(|py| {
+            release_gil(py, || {
+                items
+                    .par_iter()
+                    .map(|item| {
+                        self.__contains__(item)
+                    })
+                    .collect()
             })
-            .collect()
+        })
     }
 }
 
@@ -777,6 +792,7 @@ impl MmapBloomFilter {
     /// Uses `rayon` for parallel xxHash3-64 hashing. Bitmap merge is
     /// serial (write lock). M1 8GB bounded. msync is called once at the end.
     /// CONC-SEQ-006 P1: Now Sync via RwLock, can run hash phase in parallel.
+    /// ISSUE-D1: GIL released during Phase 1 parallel hash so asyncio coroutines can progress.
     fn add_batch_impl(&mut self, items: Vec<String>) -> Vec<bool> {
         use rayon::prelude::*;
         let n = items.len();
@@ -785,18 +801,23 @@ impl MmapBloomFilter {
         }
 
         // Phase 1: parallel xxHash3-64 hashing (read-only, safe with RwLock read guard).
+        // ISSUE-D1: py.allow_threads() enables true rayon parallelism.
         let ptr_guard = self.ptr.read();
-        let results: Vec<(Vec<usize>, bool)> = items
-            .par_iter()
-            .map(|item| {
-                let indices: Vec<usize> = self.indices(item).collect();
-                let is_new = indices.iter().any(|&idx| {
-                    // SAFETY: idx is in-bounds, ptr_guard ensures bitmap is valid.
-                    unsafe { self.check_bit_unchecked(idx) }
-                });
-                (indices, is_new)
+        let results: Vec<(Vec<usize>, bool)> = Python::with_gil(|py| {
+            release_gil(py, || {
+                items
+                    .par_iter()
+                    .map(|item| {
+                        let indices: Vec<usize> = self.indices(item).collect();
+                        let is_new = indices.iter().any(|&idx| {
+                            // SAFETY: idx is in-bounds, ptr_guard ensures bitmap is valid.
+                            unsafe { self.check_bit_unchecked(idx) }
+                        });
+                        (indices, is_new)
+                    })
+                    .collect()
             })
-            .collect();
+        });
         drop(ptr_guard); // Release read guard before write
 
         // Phase 2: sequential bitmap mutation (write lock held briefly).
@@ -871,6 +892,7 @@ impl MmapBloomFilter {
     /// is now Sync via parking_lot::RwLock<NonNull<u64>>. Phase1: parallel
     /// xxHash3-64 hashing (SIMD on M1). Phase2: sequential bitmap probe.
     /// ISSUE-7 fix: check_indices() avoids per-item Vec<usize> allocation.
+    /// ISSUE-D1: GIL released via py.allow_threads() so asyncio coroutines can progress.
     /// ~3-5× faster than serial for large batches.
     fn contains_batch(&self, items: Vec<String>) -> Vec<bool> {
         use rayon::prelude::*;
@@ -882,13 +904,18 @@ impl MmapBloomFilter {
         // using bitmap through this guard (RwLockReadGuard is Send+Sync).
         // ISSUE-7 fix: use check_indices() instead of contains() to avoid
         // Vec<usize> allocation per item in the hot path.
+        // ISSUE-D1: py.allow_threads() enables true rayon parallelism.
         let _ptr_guard = self.ptr.read();
-        items
-            .par_iter()
-            .map(|item| {
-                self.check_indices(self.indices(item))
+        Python::with_gil(|py| {
+            release_gil(py, || {
+                items
+                    .par_iter()
+                    .map(|item| {
+                        self.check_indices(self.indices(item))
+                    })
+                    .collect()
             })
-            .collect()
+        })
     }
 
     /// Atomic check-and-add batch — returns (seen_before, is_new) per item.
@@ -911,28 +938,33 @@ impl MmapBloomFilter {
 
         // Phase 1 — parallel: hash all items, collect seen_before / is_new flags.
         // Single iteration: compute both flags in one pass over indices (ISSUE-7 optimization).
+        // ISSUE-D1: py.allow_threads() enables true rayon parallelism.
         let ptr_guard = self.ptr.read();
-        let results: Vec<(Vec<usize>, bool, bool)> = items
-            .par_iter()
-            .map(|item| {
-                let indices: Vec<usize> = self.indices(item).collect();
-                let mut seen_before = false;
-                let mut is_new = false;
-                for &idx in &indices {
-                    let set = unsafe { self.check_bit_unchecked(idx) };
-                    if set {
-                        seen_before = true;
-                    } else {
-                        is_new = true;
-                    }
-                    // Early exit: both flags known
-                    if seen_before && is_new {
-                        break;
-                    }
-                }
-                (indices, seen_before, is_new)
+        let results: Vec<(Vec<usize>, bool, bool)> = Python::with_gil(|py| {
+            release_gil(py, || {
+                items
+                    .par_iter()
+                    .map(|item| {
+                        let indices: Vec<usize> = self.indices(item).collect();
+                        let mut seen_before = false;
+                        let mut is_new = false;
+                        for &idx in &indices {
+                            let set = unsafe { self.check_bit_unchecked(idx) };
+                            if set {
+                                seen_before = true;
+                            } else {
+                                is_new = true;
+                            }
+                            // Early exit: both flags known
+                            if seen_before && is_new {
+                                break;
+                            }
+                        }
+                        (indices, seen_before, is_new)
+                    })
+                    .collect()
             })
-            .collect();
+        });
         drop(ptr_guard); // Release read guard before write
 
         // Phase 2 — sequential: mutate bitmap, update counters.
@@ -1106,9 +1138,14 @@ impl RotatingMmapBloomFilter {
     ///
     /// Returns `Vec<bool>` — one entry per input item.
     /// CONC-SEQ-006 P1: Now uses par_iter because MmapBloomFilter is Sync.
+    /// ISSUE-D1: GIL released via py.allow_threads() so asyncio coroutines can progress.
     fn contains_batch(&self, items: Vec<String>) -> Vec<bool> {
         use rayon::prelude::*;
-        items.par_iter().map(|item| self.contains(item)).collect()
+        Python::with_gil(|py| {
+            release_gil(py, || {
+                items.par_iter().map(|item| self.contains(item)).collect()
+            })
+        })
     }
 
     /// Rotate: active → previous (read-only), previous → active (reopened fresh).

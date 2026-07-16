@@ -27,6 +27,8 @@ Invariant:
 import asyncio
 import logging
 import time
+
+from hledac.universal.utils.locks import LazyAsyncioLock
 from collections import OrderedDict
 from dataclasses import dataclass
 import msgspec
@@ -250,7 +252,7 @@ class _CurlCffiPool:
 _httpx_pool = _HttpxPool()
 _curl_pool = _CurlCffiPool()
 _initialized = False
-_init_lock = asyncio.Lock()
+_init_lock = LazyAsyncioLock()
 
 # Issue #010: DNS prefetch cache — LRU-bounded, zero network at import
 class _DnsCache:

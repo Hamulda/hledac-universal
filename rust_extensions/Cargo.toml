@@ -9,7 +9,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 aho-corasick = "1.1"
-pyo3 = { version = "0.23", features = ["extension-module", "abi3-py39"] }
+pyo3 = { version = "0.23", features = ["extension-module"] }
 rayon = "1.12"
 regex = "1.11"
 regex-automata = { version = "=0.4.15", default-features = false, features = ["meta"] }
@@ -22,7 +22,7 @@ aes-gcm = "0.10"
 pbkdf2 = { version = "0.12", features = ["simple"] }
 rand = "0.8"
 ahash = "0.8"
-parking_lot = "0.12.5"
+parking_lot = "0.12"
 memchr = "2.7"
 memmap2 = "0.9"
 blake2 = "0.10"
@@ -33,52 +33,72 @@ libc = "0.2"
 serde_json = "1"
 crossbeam-channel = "0.5"
 dashmap = "6"
-lazy_static = "1.4"
-duckdb = "1"
+duckdb = { version = "1", optional = true }
 ipnetwork = "0.20"
 # ISSUE-014: Missing crates that were used but not declared
 bincode = { version = "2.0", features = ["derive", "serde"] }
 zstd = "0.13"
 dirs = "5"
 
-[target.'cfg(target_os = "macos")'.dependencies]
-metal = "0.33"
 
+# ---------------------------------------------------------------------------
+# Feature flags — TRUE conditional compilation (D3 fix)
+# ---------------------------------------------------------------------------
+# Modules gated by a feature are compiled ONLY when that feature is enabled.
+# See lib.rs for #[cfg(feature)] guards on module declarations.
+#
+# Dev shortcut (fastest): --no-default-features --features ""  (core only, ~5× faster)
+# Core + data build:      default (core + data, DuckDB wired)
+# Full build:             --features "full"  (everything, ~3× compile time)
+#
+# Python fallbacks exist for ALL optional modules:
+#   duckdb modules → Python duckdb via DuckDBShadowStore
+#   graph_traverse → sequential Python traversal
+#
 # ISSUE-021: Feature flags for selective compilation (M1 8GB compile time optimization)
-# Usage: cargo build --features "core,ml" or maturin build --features "core,ml"
-[features]
-default = ["core"]  # Always-on baseline for Python fallback compatibility
 
-# Core: IOC extraction, URL ops, hashing, compression, HTML parsing
-# Required by all Python call sites (bloom, url_dedup, rolling_hash, health, pattern_matcher)
+[features]
+# Default = core + data (DuckDB wired) — standard Hledac build
+# Metal GPU removed D6: gpu_batch_keyword_scan() was never called in production.
+# CPU fallback via Aho-Corasick + rayon is sufficient for all workloads.
+default = ["core", "data"]
+
+# core: IOC extraction, URL ops, hashing, compression, HTML parsing
+# Always compiled. No heavy deps. Available even with --no-default-features.
 core = [
     "bloom",
-    "hash",           # content_hasher, xxhash, blake2/3
-    "regex",          # aho_corasick, quality_gate, claims_extraction
-    "url",            # url_ops, url_engine
+    "hash",
+    "regex",
+    "url",
     "html_parse",
-    "compression",    # compress (lz4/zstd)
-    "crypto",         # sha2, crypto_accelerate
-    "text_processing", # text_norm, simhash_ext
-    "ioc_processing", # ioc_extract, ioc_dedup, ioc_cooccurrence
-    "validation",     # int_counter_layout, telemetry_agg
-    "pools",          # pool_run, adaptive_scheduler
+    "compression",
+    "crypto",
+    "text_processing",
+    "ioc_processing",
+    "validation",
+    "pools",
 ]
 
-# ML: Metal compute, embedding index, MLX bridge
-# M1 GPU acceleration (metal=macOS only)
-ml = ["metal_compute", "embedding_index", "mlx_bridge"]
+# data: DuckDB integration — Arrow batch, async queries, graph traversal
+# Python fallback: DuckDBShadowStore.async_ingest_findings_batch via Python duckdb
+# Adds: duckdb crate (~20 MB compile, ~15 MB resident)
+data = [
+    "duckdb",
+    "arrow_batch_builder",
+    "async_query",
+    "data",
+    "graph_traverse",
+]
 
-# Graph: Graph traversal, LSH index, hot edges
-# For knowledge graph operations
-graph = ["graph_traverse", "lsh_index", "hot_edges"]
 
-# Data: DuckDB integration, Arrow batch building
-# For database operations
-data = ["duckdb", "arrow_batch_builder", "async_query"]
+# graph: Graph analytics (LSH index, hot edges) — no heavy deps, pure Rust
+graph = [
+    "lsh_index",
+    "hot_edges",
+]
 
-# Advanced: Feed pipeline, federated learning, pattern matching
-# Optional for specialized workloads (modules always compiled, features are no-op stubs)
+# advanced: Feed pipeline, federated learning, pattern matching
+# Pure Rust, no heavy deps — always compiled in full builds
 advanced = [
     "feed_pipeline",
     "federated_qtable",
@@ -87,8 +107,11 @@ advanced = [
     "graph_cache",
 ]
 
-# Individual feature stubs — modules are always compiled (no conditional compilation)
-# These exist only to satisfy Cargo feature resolution
+# full: All features (development/CI only, ~3× compile time vs core-only)
+full = ["core", "data", "graph", "advanced"]
+
+# Individual module features — satisfy Cargo feature resolution (empty stubs)
+# The actual gating is done via #[cfg(feature)] in lib.rs, not these stubs.
 feed_pipeline = []
 federated_qtable = []
 signal_batch = []
@@ -105,7 +128,6 @@ text_processing = []
 ioc_processing = []
 validation = []
 pools = []
-metal_compute = []
 embedding_index = []
 mlx_bridge = []
 graph_traverse = []
@@ -115,14 +137,17 @@ duckdb = []
 arrow_batch_builder = []
 async_query = []
 
-# Full: All features (development/CI only, ~3× compile time)
-full = ["core", "ml", "graph", "data", "advanced"]
-
-[target.'cfg(target_os = "macos")'.features]
-ml = ["metal_compute", "embedding_index", "mlx_bridge"]
-
-[target.'cfg(not(target_os = "macos"))'.features]
-ml = []  # Metal unavailable on non-macOS
+# ---------------------------------------------------------------------------
+# Build profiles
+# ---------------------------------------------------------------------------
+# [profile.dev] opt-level = 1  →  ~3-5× faster incremental compiles on M1
+# Reason: opt-level 3 (default release) compiles ~3 s per changed file;
+#         opt-level 1 compiles ~0.5 s, same correctness, much faster iteration.
+# [profile.release] stays opt-level 3 (thin LTO) for production performance.
+[profile.dev]
+opt-level = 1          # Fast dev iteration — same correctness, 3-5× faster
+debug = false          # No debug info in dev (faster link)
+lto = false           # No LTO in dev (faster incremental links)
 
 [profile.release]
 opt-level = 3

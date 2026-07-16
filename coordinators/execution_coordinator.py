@@ -620,7 +620,10 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
         if not plan:
             return {'success': True, 'steps_executed': 0, 'successful_steps': 0, 'failed_steps': 0, 'results': []}
         step_coros = [self.execute_action(s.get('action', 'search'), s.get('payload', {})) for s in plan]
-        result = await parallel(step_coros, concurrency=3, policy="collect", ctx='execution_coordinator.execute_plan')
+        # F1 FIX: execution steps use SCRAPE_GENERAL for dynamic UMA-aware concurrency
+        from core.concurrency_registry import concurrency_budget, ConcurrencyCategory
+        exec_concurrency = await concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL)
+        result = await parallel(step_coros, concurrency=exec_concurrency, policy="collect", ctx='execution_coordinator.execute_plan')
         results = result.ok
         self._load_factor = min(1.0, len(results) / 10)
         return {'success': all((r.get('success', False) for r in results)), 'steps_executed': len(results), 'successful_steps': sum((1 for r in results if r.get('success'))), 'failed_steps': sum((1 for r in results if not r.get('success'))), 'results': results}

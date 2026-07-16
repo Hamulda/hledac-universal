@@ -30,8 +30,8 @@ import msgspec
 
 import asyncio
 import hashlib
-import json
 import logging
+import orjson
 import math
 import os
 import re
@@ -541,7 +541,7 @@ class MetadataCache:
                 ))
             await io_bound(lambda: self._conn.execute(
                 'INSERT OR REPLACE INTO metadata_cache (file_hash, mod_time, file_size, metadata, extracted_at) VALUES (?, ?, ?, ?, ?)',
-                (file_hash, mod_time, file_size, json.dumps(metadata), datetime.now(UTC).timestamp())
+                (file_hash, mod_time, file_size, orjson.dumps(metadata).decode('utf-8'), datetime.now(UTC).timestamp())
             ))
             await io_bound(lambda: self._conn.commit())
 

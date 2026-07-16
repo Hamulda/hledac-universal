@@ -16,7 +16,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Import tested classes
-from hledac.universal.intelligence.document_intelligence import StegdetectServer
+from hledac.universal.intel.document_intelligence import StegdetectServer
 from hledac.universal.layers.communication_layer import CommunicationLayer
 from hledac.universal.project_types import CommunicationConfig
 from hledac.universal.tools.osint_frameworks import OSINTFrameworkRunner

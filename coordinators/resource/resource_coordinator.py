@@ -43,8 +43,9 @@ import sys
 import threading
 import time as _time_module
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import msgspec
+from msgspec import field
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -225,10 +226,10 @@ class AIMDController(msgspec.Struct):
     success_threshold: int
     name: str
 
-    _window: float = field(init=False, default=1.0)
-    _successes: int = field(init=False, default=0)
-    _failures: int = field(init=False, default=0)
-    _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
+    _window: float = 1.0
+    _successes: int = 0
+    _failures: int = 0
+    _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _stats: dict[str, int] = field(
         default_factory=lambda: {
             "increases": 0,
@@ -237,7 +238,6 @@ class AIMDController(msgspec.Struct):
             "successes": 0,
             "failures": 0,
         },
-        init=False,
     )
 
     def __post_init__(self) -> None:
@@ -402,6 +402,14 @@ class BackpressureMonitor:
                 swap_detected=governor_decision.swap_detected,
             )
             if new_decision.uma_state != self._last_state:
+                # F1 FIX: propagate UMA state to ConcurrencyBudgetRegistry so all
+                # parallel() call sites globally respect the same memory pressure limits.
+                try:
+                    from core.concurrency_registry import ConcurrencyBudgetRegistry
+                    registry = await ConcurrencyBudgetRegistry.get_instance_async()
+                    await registry.adjust_for_state(new_decision.uma_state)
+                except Exception:
+                    pass  # fail-safe: registry errors never block backpressure decision
                 logger.info(
                     f"[BACKPRESSURE] uma_state: {self._last_state} → "
                     f"{new_decision.uma_state} "

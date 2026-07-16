@@ -5,16 +5,18 @@ Advanced security automation with threat intelligence and proactive defense
 import asyncio
 import hashlib
 import ipaddress
-import json
 import logging
 import re
 from collections import defaultdict
 from dataclasses import dataclass
 import msgspec
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 import yaml
+import httpx
+from cachetools import LRUCache
+
 logger = logging.getLogger(__name__)
 
 class ThreatIntelligence(msgspec.Struct):
@@ -52,15 +54,17 @@ class DefenseAction(msgspec.Struct, frozen=True):
 
 class ThreatIntelligenceAutomation:
     """Advanced threat intelligence and automated security system"""
-    __slots__ = tuple(('active_alerts', 'blocked_entities', 'config', 'config_path', 'defense_actions', 'threat_intel_db', 'threat_sources', 'vulnerability_cache'))
+    __slots__ = tuple(('active_alerts', 'blocked_entities', 'config', 'config_path', 'defense_actions', 'threat_intel_db', 'threat_sources', 'vulnerability_cache', 'ml_models'))  # [C3] added ml_models to __slots__
+
+    MAX_DEFENSE_ACTIONS = 10_000  # [C1] cap to prevent unbounded list growth
 
     def __init__(self, config_path: str='config/security_enhancements.yaml'):
         self.config_path = Path(config_path)
-        self.threat_intel_db = {}
+        self.threat_intel_db: LRUCache[str, ThreatIntelligence] = LRUCache(maxsize=50_000)  # [B2] threat DB cap, bounded eviction
         self.active_alerts = {}
-        self.defense_actions = []
-        self.blocked_entities = defaultdict(set)
-        self.vulnerability_cache = {}
+        self.defense_actions: list[DefenseAction] = []  # [C1] bounded list
+        self.blocked_entities: dict[str, set[str]] = {'ips': set(), 'domains': set(), 'rate_limited': set()}  # [C2] bounded sets
+        self.vulnerability_cache: LRUCache[str, dict] = LRUCache(maxsize=10_000)  # [B1] CVE hot-path cap, bounded eviction
         self.config = self._load_config()
         self.threat_sources = self._initialize_threat_sources()
         self._initialize_ml_models()
@@ -76,7 +80,7 @@ class ThreatIntelligenceAutomation:
 
     def _default_config(self) -> dict[str, Any]:
         """Default security configuration"""
-        return {'threat_intelligence': {'enabled': True, 'sources': ['abuse.ch', 'virustotal', 'alienvault'], 'update_interval': 3600, 'retention_days': 90, 'confidence_threshnew': 0.7}, 'automated_defense': {'enabled': True, 'block_suspicious_ips': True, 'rate_limit_offenders': True, 'auto_patch_vulnerabilities': False, 'isolate_compromised_systems': True, 'defense_timeout': 300}, 'monitoring': {'log_analysis': True, 'network_monitoring': True, 'behavior_analysis': True, 'anomaly_detection': True}}
+        return {'threat_intelligence': {'enabled': True, 'sources': ['abuse.ch', 'virustotal', 'alienvault'], 'update_interval': 3600, 'retention_days': 90, 'confidence_threshold': 0.7}, 'automated_defense': {'enabled': True, 'block_suspicious_ips': True, 'rate_limit_offenders': True, 'auto_patch_vulnerabilities': False, 'isolate_compromised_systems': True, 'defense_timeout': 300}, 'monitoring': {'log_analysis': True, 'network_monitoring': True, 'behavior_analysis': True, 'anomaly_detection': True}}
 
     def _initialize_threat_sources(self) -> dict[str, dict[str, Any]]:
         """Initialize threat intelligence sources"""
@@ -121,14 +125,14 @@ class ThreatIntelligenceAutomation:
     async def _gather_malware_domains(self, source_name: str, config: dict[str, Any]):
         """Gather malware domain intelligence"""
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(config['url'], timeout=aiohttp.ClientTimeout(total=30)) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        for entry in data:
-                            threat = ThreatIntelligence(threat_id=f"{source_name}_{hashlib.md5(entry.get('domain', '').encode()).hexdigest()[:8]}", threat_type='malware_domain', severity='high', source=source_name, indicators=[entry.get('domain', '')], description=entry.get('description', f"Malware domain: {entry.get('domain', '')}"), first_seen=datetime.fromisoformat(entry.get('first_seen', datetime.now(UTC).isoformat())), last_seen=datetime.fromisoformat(entry.get('last_seen', datetime.now(UTC).isoformat())), confidence=0.9, tags=['malware', 'domain', 'c2'])
-                            self.threat_intel_db[threat.threat_id] = threat
-                        logger.info(f'Updated {len(data)} malware domains from {source_name}')
+            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as session:
+                response = await session.get(config['url'])
+                if response.status_code == 200:
+                    data = response.json()
+                    for entry in data:
+                        threat = ThreatIntelligence(threat_id=f"{source_name}_{hashlib.md5(entry.get('domain', '').encode()).hexdigest()[:8]}", threat_type='malware_domain', severity='high', source=source_name, indicators=[entry.get('domain', '')], description=entry.get('description', f"Malware domain: {entry.get('domain', '')}"), first_seen=datetime.fromisoformat(entry.get('first_seen', datetime.now(UTC).isoformat())), last_seen=datetime.fromisoformat(entry.get('last_seen', datetime.now(UTC).isoformat())), confidence=0.9, tags=['malware', 'domain', 'c2'])
+                        self.threat_intel_db[threat.threat_id] = threat
+                    logger.info(f'Updated {len(data)} malware domains from {source_name}')
         except Exception as e:
             logger.error(f'Error gathering malware domains from {source_name}: {e}')
 
@@ -142,40 +146,40 @@ class ThreatIntelligenceAutomation:
             headers = {}
             if config.get('api_key'):
                 headers['X-OTX-API-KEY'] = config['api_key']
-            async with aiohttp.ClientSession(headers=headers) as session:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as session:
                 url = f"{config['url']}/pulses/subscribed"
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        for pulse in data.get('results', []):
-                            for indicator in pulse.get('indicators', []):
-                                threat = ThreatIntelligence(threat_id=f"{source_name}_{indicator.get('id', '')}", threat_type='ioc', severity=self._map_pulse_severity(pulse.get('TLP', 'white')), source=source_name, indicators=[indicator.get('indicator', '')], description=pulse.get('description', 'IOC indicator'), first_seen=datetime.fromisoformat(pulse.get('created', datetime.now(UTC).isoformat())), last_seen=datetime.now(UTC), confidence=0.8, tags=pulse.get('tags', []))
-                                self.threat_intel_db[threat.threat_id] = threat
-                        logger.info(f"Updated {len(data.get('results', []))} IOC pulses from {source_name}")
+                response = await session.get(url, headers=headers)
+                if response.status_code == 200:
+                    data = response.json()
+                    for pulse in data.get('results', []):
+                        for indicator in pulse.get('indicators', []):
+                            threat = ThreatIntelligence(threat_id=f"{source_name}_{indicator.get('id', '')}", threat_type='ioc', severity=self._map_pulse_severity(pulse.get('TLP', 'white')), source=source_name, indicators=[indicator.get('indicator', '')], description=pulse.get('description', 'IOC indicator'), first_seen=datetime.fromisoformat(pulse.get('created', datetime.now(UTC).isoformat())), last_seen=datetime.now(UTC), confidence=0.8, tags=pulse.get('tags', []))
+                            self.threat_intel_db[threat.threat_id] = threat
+                    logger.info(f"Updated {len(data.get('results', []))} IOC pulses from {source_name}")
         except Exception as e:
             logger.error(f'Error gathering IOC indicators from {source_name}: {e}')
 
     async def _gather_vulnerabilities(self, source_name: str, config: dict[str, Any]):
         """Gather vulnerability intelligence"""
         try:
-            async with aiohttp.ClientSession() as session:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as session:
                 url = f"{config['url']}?resultsPerPage=50"
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        for cve in data.get('vulnerabilities', []):
-                            cve_id = cve.get('cve', {}).get('id', '')
-                            indicators = [cve_id]
-                            for affected in cve.get('configurations', []):
-                                for product in affected.get('nodes', []):
-                                    if 'cpeMatch' in product:
-                                        for match in product['cpeMatch']:
-                                            cpe = match.get('criteria', '')
-                                            if cpe:
-                                                indicators.append(cpe)
-                            threat = ThreatIntelligence(threat_id=f'{source_name}_{cve_id}', threat_type='vulnerability', severity=self._map_cvss_severity(cve.get('metrics', {}).get('cvssMetricV2', [])), source=source_name, indicators=indicators, description=cve.get('descriptions', [{}])[0].get('value', ''), first_seen=datetime.fromisoformat(cve.get('published', datetime.now(UTC).isoformat())), last_seen=datetime.fromisoformat(cve.get('lastModified', datetime.now(UTC).isoformat())), confidence=1.0, tags=['vulnerability', 'cve'])
-                            self.threat_intel_db[threat.threat_id] = threat
-                        logger.info(f"Updated {len(data.get('vulnerabilities', []))} CVEs from {source_name}")
+                response = await session.get(url)
+                if response.status_code == 200:
+                    data = response.json()
+                    for cve in data.get('vulnerabilities', []):
+                        cve_id = cve.get('cve', {}).get('id', '')
+                        indicators = [cve_id]
+                        for affected in cve.get('configurations', []):
+                            for product in affected.get('nodes', []):
+                                if 'cpeMatch' in product:
+                                    for match in product['cpeMatch']:
+                                        cpe = match.get('criteria', '')
+                                        if cpe:
+                                            indicators.append(cpe)
+                        threat = ThreatIntelligence(threat_id=f'{source_name}_{cve_id}', threat_type='vulnerability', severity=self._map_cvss_severity(cve.get('metrics', {}).get('cvssMetricV2', [])), source=source_name, indicators=indicators, description=cve.get('descriptions', [{}])[0].get('value', ''), first_seen=datetime.fromisoformat(cve.get('published', datetime.now(UTC).isoformat())), last_seen=datetime.fromisoformat(cve.get('lastModified', datetime.now(UTC).isoformat())), confidence=1.0, tags=['vulnerability', 'cve'])
+                        self.threat_intel_db[threat.threat_id] = threat
+                    logger.info(f"Updated {len(data.get('vulnerabilities', []))} CVEs from {source_name}")
         except Exception as e:
             logger.error(f'Error gathering vulnerabilities from {source_name}: {e}')
 
@@ -319,6 +323,8 @@ class ThreatIntelligenceAutomation:
                     logger.error(f'Error executing defense for alert {alert_id}: {e}')
                     alert.status = 'failed'
         await self._cleanup_new_alerts()
+        await self._cleanup_old_threats()  # [B2] evict stale threats from threat_intel_db
+        await self._cleanup_blocked_entities()  # [C2] trim blocked_entities if over capacity
 
     async def _execute_defense_action(self, alert: SecurityAlert):
         """Execute automated defense action"""
@@ -333,6 +339,9 @@ class ThreatIntelligenceAutomation:
             await self._enhance_monitoring(alert)
         defense_action = DefenseAction(action_id=f"defense_{alert.alert_id}_{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}", action_type=action_type, target=','.join(alert.threat_intelligence.indicators), confidence=alert.threat_intelligence.confidence, impact='medium', rollback_possible=True, duration=timedelta(hours=24))
         self.defense_actions.append(defense_action)
+        # [C1] trim if over capacity
+        if len(self.defense_actions) > self.MAX_DEFENSE_ACTIONS:
+            self.defense_actions = self.defense_actions[-self.MAX_DEFENSE_ACTIONS:]
         logger.info(f'Defense action executed: {action_type}')
 
     async def _block_malicious_entities(self, alert: SecurityAlert):
@@ -401,6 +410,30 @@ class ThreatIntelligenceAutomation:
             del self.active_alerts[alert_id]
         if new_alerts:
             logger.info(f'Cleaned up {len(new_alerts)} new alerts')
+
+    async def _cleanup_old_threats(self):
+        """Clean up stale threats from threat_intel_db based on retention policy [B2]"""
+        retention_days = self.config['threat_intelligence']['retention_days']
+        cutoff_date = datetime.now(UTC) - timedelta(days=retention_days)
+        to_remove = [k for k, v in self.threat_intel_db.items() if v.last_seen < cutoff_date]
+        for k in to_remove:
+            del self.threat_intel_db[k]
+        if to_remove:
+            logger.info(f'Cleaned up {len(to_remove)} stale threats from threat_intel_db')
+
+    async def _cleanup_blocked_entities(self):
+        """Clean up blocked entities exceeding retention policy [C2]"""
+        retention_days = self.config['threat_intelligence']['retention_days']
+        # For blocked entities, we keep them for the retention period then evict
+        # Simple policy: if set exceeds 2x max expected, trim oldest
+        max_per_category = 50_000
+        for category in self.blocked_entities:
+            entities = self.blocked_entities[category]
+            if len(entities) > max_per_category:
+                # Keep only most recent entries (set ordering is insertion-order based)
+                to_keep = list(entities)[-max_per_category:]
+                self.blocked_entities[category] = set(to_keep)
+                logger.info(f'Trimmed {category}: {len(entities)} -> {len(self.blocked_entities[category])}')
 
     def generate_threat_intelligence_report(self, output_file: str='security_reports/threat_intelligence.json'):
         """Generate comprehensive threat intelligence report"""

@@ -56,6 +56,18 @@ logger = logging.getLogger(__name__)
 #   Lower gen-2 threshold = more frequent full sweeps, less RSS drift.
 _GC_THRESHOLD = (700, 10, 5)
 
+# B5: Dynamic GC thresholds keyed to UMA state.
+# Applied by M1ResourceGovernor.apply_decision() on state transitions.
+# More aggressive = lower numbers = more frequent collection.
+_GC_THRESHOLDS: dict[str, tuple[int, int, int]] = {
+    "ok": (700, 10, 5),        # baseline: tuned for M1 8GB
+    "soft_warn": (600, 8, 4),  # slightly tighter gen-2
+    "warn": (500, 6, 3),       # aggressive — frequent full sweeps
+    "critical": (400, 4, 2),    # very aggressive — near-OOM urgency
+    "emergency": (300, 2, 1),  # maximum pressure — gen-2 every cycle
+}
+_GC_THRESHOLD_CURRENT: str = "ok"
+
 # F266-U4: gc.freeze() requires Python 3.14.7+ (gilstate_tss_set regression fix)
 _GC_FREEZE_ENABLED: bool = sys.version_info >= (3, 14, 7)
 
@@ -102,6 +114,51 @@ def _apply_gc_config() -> None:
     _gc_configured = True
 
 
+# B5: Dynamic GC thresholds — called by M1ResourceGovernor on UMA state transitions.
+def _apply_gc_thresholds(state: str) -> None:
+    """
+    Apply GC generational thresholds for the given UMA state.
+
+    Idempotent — skips if already on the given state.
+    Fail-soft — logs and continues on any error.
+
+    After applying, if Python >= 3.14.7 and gc.freeze() is active,
+    a gen-2 collect + re-freeze is triggered to pin the new
+    "permanent" set under the tighter thresholds.
+
+    Args:
+        state: UMA state string — "ok" | "soft_warn" | "warn" | "critical" | "emergency".
+    """
+    global _GC_THRESHOLD_CURRENT
+    if state == _GC_THRESHOLD_CURRENT:
+        return
+    threshold = _GC_THRESHOLDS.get(state)
+    if threshold is None:
+        logger.debug("[memory_cycle] unknown UMA state %r for GC thresholds", state)
+        return
+    try:
+        _gc.set_threshold(*threshold)
+        logger.debug("[memory_cycle] gc.set_threshold%s for state=%s", threshold, state)
+    except Exception as exc:
+        logger.debug("[memory_cycle] gc.set_threshold failed: %s", exc)
+        return
+    old_state = _GC_THRESHOLD_CURRENT
+    _GC_THRESHOLD_CURRENT = state
+    # B5: After tightening thresholds, re-freeze to pin the new permanent set.
+    # Only do this when moving to more aggressive thresholds (lower numbers).
+    # State order: ok=0, soft_warn=1, warn=2, critical=3, emergency=4
+    state_order = list(_GC_THRESHOLDS.keys())
+    old_idx = state_order.index(old_state) if old_state in state_order else 0
+    new_idx = state_order.index(state) if state in state_order else 0
+    if new_idx > old_idx and _GC_FREEZE_ENABLED:
+        try:
+            _gc.collect(2)
+            _gc.freeze()
+            logger.debug("[memory_cycle] re-freeze after threshold tighten to %s", state)
+        except Exception as exc:
+            logger.debug("[memory_cycle] re-freeze after threshold tighten failed: %s", exc)
+
+
 # Issue #042: Call gc.set_threshold() + gc.freeze() at module import.
 # This ensures generational GC is tuned BEFORE any sprint code runs.
 _ensure_gc_configured()
@@ -131,13 +188,21 @@ class MemoryCycleStats(msgspec.Struct):
     pressure_relief_bytes_released: int = 0
     last_pressure_relief_monotonic: float = 0.0
     last_pressure_relief_error: str | None = None
-    platform: str = field(default_factory=lambda: sys.platform)
+    # Issue #042 / B5 fix: msgspec.Struct doesn't support default_factory on immutable str
+    # — initialise in __post_init__ instead
+    platform: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.platform:
+            object.__setattr__(self, 'platform', sys.platform)
+
+
 _stats = MemoryCycleStats(gc_freeze_supported=hasattr(_gc, 'freeze'), gc_gen0_collected=0, gc_gen1_collected=0, gc_gen2_collected=0, gc_gen2_collected_at_last_freeze=0, re_freeze_count=0, last_re_freeze_monotonic=0.0, gc_background_runs=0, last_gc_background_monotonic=0.0, last_gc_background_error=None, pressure_relief_runs=0, pressure_relief_bytes_released=0, last_pressure_relief_monotonic=0.0)
 
 def get_stats() -> dict[str, Any]:
     """Return a JSON-safe snapshot of memory_cycle state."""
     return {'gc_freeze_supported': _stats.gc_freeze_supported, 'gc_gen0_collected': _stats.gc_gen0_collected, 'gc_gen1_collected': _stats.gc_gen1_collected, 'gc_gen2_collected': _stats.gc_gen2_collected, 'gc_gen2_collected_at_last_freeze': _stats.gc_gen2_collected_at_last_freeze, 're_freeze_count': _stats.re_freeze_count, 'last_re_freeze_monotonic': _stats.last_re_freeze_monotonic, 'gc_background_runs': _stats.gc_background_runs, 'last_gc_background_monotonic': _stats.last_gc_background_monotonic, 'last_gc_background_error': _stats.last_gc_background_error, 'pressure_relief_runs': _stats.pressure_relief_runs, 'pressure_relief_bytes_released': _stats.pressure_relief_bytes_released, 'last_pressure_relief_monotonic': _stats.last_pressure_relief_monotonic, 'last_pressure_relief_error': _stats.last_pressure_relief_error, 'platform': _stats.platform}
-_GC_FREEZE_ENABLED: bool = sys.version_info >= (3, 14, 7)
+
 
 def _mlx_cache_clear_if_available() -> bool:
     """
@@ -194,7 +259,11 @@ def gc_cycle_maintain(*, force: bool=False) -> bool:
         return False
     now = time.monotonic()
     try:
-        gc_stats = _gc.get_stats()
+        # gc.get_stats() requires Python 3.14+; guard to avoid AttributeError on older versions
+        if hasattr(_gc, 'get_stats'):
+            gc_stats = _gc.get_stats()
+        else:
+            gc_stats = []
     except Exception as exc:
         logger.debug('[memory_cycle] gc.get_stats() failed: %s', exc)
         return False
@@ -377,10 +446,17 @@ async def _gc_background_loop(interval_s: float) -> None:
         while not _gc_background_stop.is_set():
             try:
                 _gc.collect(2)  # Full generational sweep
+                # F266-U2 + B5: re-freeze after every full gen-2 collect to pin
+                # the updated permanent set (same pattern as gc_cycle_maintain)
+                if _GC_FREEZE_ENABLED:
+                    try:
+                        _gc.freeze()
+                    except Exception as exc:
+                        logger.debug('[memory_cycle] gc_background freeze failed: %s', exc)
                 _stats.gc_background_runs += 1
                 _stats.last_gc_background_monotonic = time.monotonic()
                 logger.debug(
-                    '[memory_cycle] gc.collect(2) run #%d at %.0fs',
+                    '[memory_cycle] gc.collect(2)+freeze run #%d at %.0fs',
                     _stats.gc_background_runs,
                     _stats.last_gc_background_monotonic,
                 )

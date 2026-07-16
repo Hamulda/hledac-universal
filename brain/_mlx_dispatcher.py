@@ -40,7 +40,8 @@ import contextvars
 import logging
 import os
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from msgspec import field
 from pathlib import Path
 from typing import Any
 
@@ -100,7 +101,7 @@ async def _cancel_preload_task(model_id: str) -> None:
         if not task.done():
             task.cancel()
             try:
-                await asyncio.wait_for(asyncio.shield(task), timeout=0.5)
+                await asyncio.wait_for(asyncio.shield(task), timeout=0.5)  # noqa: F911  # Shield patterns MUST use asyncio.wait_for
             except (asyncio.CancelledError, asyncio.TimeoutError):
                 pass
 
@@ -760,7 +761,7 @@ class MLXDispatcher:
             if not old_task.done():
                 old_task.cancel()
                 try:
-                    await asyncio.wait_for(asyncio.shield(old_task), timeout=0.5)
+                    await asyncio.wait_for(asyncio.shield(old_task), timeout=0.5)  # noqa: F911  # Shield patterns MUST use asyncio.wait_for
                 except (asyncio.CancelledError, asyncio.TimeoutError):
                     pass
 

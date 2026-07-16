@@ -483,7 +483,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
             Archive search results
         """
         try:
-            from hledac.universal.intelligence.archive_discovery import ArchiveDiscovery, search_archives
+            from hledac.universal.intel.archive_discovery import ArchiveDiscovery, search_archives
             results = await search_archives(url)
             return {'success': True, 'source': 'archive_discovery', 'url': url, 'results': results, 'count': len(results)}
         except ImportError:

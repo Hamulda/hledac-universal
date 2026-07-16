@@ -119,7 +119,7 @@ class TestCertspotterFallbackOnCrtshOpen:
         """_fetch_ct_with_fallback returns (raw, provider) tuple with correct provider."""
         from pathlib import Path
 
-        from hledac.universal.intelligence.ct_log_client import CTLogClient
+        from hledac.universal.intel.ct_log_client import CTLogClient
 
         client = CTLogClient(cache_dir=Path(tempfile.mkdtemp()))
         mock_session = MagicMock()
@@ -143,7 +143,7 @@ class TestCertspotterFallbackOnCrtshOpen:
         """When crt.sh CB is OPEN, _fetch_ct_with_fallback falls through to certstream."""
         from pathlib import Path
 
-        from hledac.universal.intelligence.ct_log_client import CTLogClient
+        from hledac.universal.intel.ct_log_client import CTLogClient
 
         crtsh_breaker = get_breaker("crt.sh")
         crtsh_breaker.record_failure(failure_kind="test_error")

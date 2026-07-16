@@ -23,9 +23,12 @@ Anti-patterns:
 import asyncio
 import logging
 import re
+
+from hledac.universal.utils.locks import LazyAsyncioLock
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import msgspec
+from msgspec import field
 from typing import Any
 import httpx
 from hledac.universal.utils.async_helpers import safe_gather_ok
@@ -186,7 +189,7 @@ async def _scrape_rentry(raw_path: str, session: httpx.AsyncClient) -> str | Non
         return None
 _RATERLIMIT_S = 1.0
 _last_request: float = 0.0
-_rate_lock = asyncio.Lock()
+_rate_lock = LazyAsyncioLock()
 _MAX_PASTES_PER_SOURCE = 10
 _SCRAPE_CONCURRENCY = 5
 

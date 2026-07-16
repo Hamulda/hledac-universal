@@ -12,6 +12,8 @@ Anti-patterns:
 import asyncio
 import logging
 import re
+
+from hledac.universal.utils.locks import LazyAsyncioLock
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 import msgspec
@@ -42,7 +44,7 @@ _GITHUB_API = 'https://api.github.com'
 _GITHUB_SEARCH_API = 'https://api.github.com/search/code'
 _RATELIMIT_S = 6.0
 _last_request: float = 0.0
-_rate_lock = asyncio.Lock()
+_rate_lock = LazyAsyncioLock()
 
 async def _gh_search(q: str, session: httpx.AsyncClient, max_results: int=30) -> list[dict]:
     """Execute unauthenticated GitHub code search, return items list."""

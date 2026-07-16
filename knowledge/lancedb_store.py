@@ -18,6 +18,7 @@ Sprint 77: Embedding optimization (float16, writeback buffer, batched embedding,
 """
 import asyncio
 from hledac.universal.utils.async_helpers import safe_wait_for
+from hledac.universal.utils.locks import LazyAsyncioLock
 import contextlib
 import hashlib
 import logging
@@ -128,7 +129,7 @@ def _resolve_lancedb_cache_size() -> int:
 _WRITEBACK_MAX = 1000
 _WRITEBACK_BATCH_SIZE = 100
 _WRITE_QUEUE: asyncio.Queue[tuple[list[dict[str, Any]], float]] | None = None
-_WRITE_QUEUE_LOCK = asyncio.Lock()
+_WRITE_QUEUE_LOCK = LazyAsyncioLock()
 _WRITE_WORKER_TASK: asyncio.Task | None = None
 
 async def _get_write_queue() -> asyncio.Queue:
@@ -226,14 +227,14 @@ class LanceDBIdentityStore:
         self._mlx_ids = None
         self._mlx_id_to_idx = {}
         self._mlx_embeddings_total_count = 0
-        self._mlx_load_chunk_size = 10000
+        self._mlx_load_chunk_size = self._get_mlx_chunk_size()
 
     def _get_mlx_chunk_size(self) -> int:
         """
         Sprint #15: Adaptive chunk sizing based on current memory pressure.
 
-        Memoizes the result within a loading session — callers get a consistent
-        chunk size without re-sampling on every chunk iteration.
+        Returns the computed chunk size based on UMA state. The result is
+        cached in self._mlx_load_chunk_size by the caller (__init__).
 
         Returns:
             1_000 if state == "emergency" (minimal, fail-safe)
@@ -257,7 +258,7 @@ class LanceDBIdentityStore:
             return self._mlx_load_chunk_size
         except Exception:
             return self._mlx_load_chunk_size
-        self._binary_embeddings = None
+        return chunk_size
         self._colbert_reranker = None
         self._flashrank_ranker = None
         self._colbert_loaded = False
@@ -1661,7 +1662,7 @@ class SqliteVecIdentityStore:
         """Explicit init (optional). Stores are lazy inited on first use."""
         return await self._ensure_store()
 _identity_store: LanceDBIdentityStore | None = None
-_identity_store_lock = asyncio.Lock()
+_identity_store_lock = LazyAsyncioLock()
 
 async def get_identity_store() -> LanceDBIdentityStore:
     """Get or create the singleton identity store (async-safe).
@@ -1940,7 +1941,7 @@ class LanceDBAcademicStore:
             except Exception:
                 pass
 _academic_store: LanceDBAcademicStore | None = None
-_academic_store_lock = asyncio.Lock()
+_academic_store_lock = LazyAsyncioLock()
 
 async def get_academic_store() -> LanceDBAcademicStore:
     """Get or create the singleton academic store (async-safe)."""

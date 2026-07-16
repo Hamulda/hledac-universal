@@ -13,6 +13,8 @@ Always-on, bounded, fail-safe. M1 8GB UMA safe.
 import asyncio
 import logging
 import time
+
+from hledac.universal.utils.locks import LazyAsyncioLock
 from collections import deque
 from dataclasses import dataclass, field
 import msgspec
@@ -191,7 +193,7 @@ async def check_lock_contention_alert(tracker: LockContentionTracker) -> None:
     await am.emit(alert_id='duckdb_lock_contention_high', severity=AlertSeverity.CRITICAL, message=f'DuckDB lock contention at {rate:.1f} failures/sec (>{5.0}/sec threshold) — consider scaling to subprocess', metric_value=rate, threshold=5.0, cooldown_s=_LOCK_CONTENTION_ALERT_COOLDOWN_S, tags=('duckdb', 'lock', 'contention', 'subprocess'))
 _CB_OPEN_ALERT_COOLDOWN_S = 60.0
 _cb_open_since: dict[str, float] = {}
-_cb_open_since_lock = asyncio.Lock()
+_cb_open_since_lock = LazyAsyncioLock()
 
 async def check_circuit_breaker_alert(domain: str, is_open: bool, recovery_timeout: float) -> None:
     """

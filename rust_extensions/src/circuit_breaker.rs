@@ -36,7 +36,7 @@ use dashmap::DashMap;
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // ---------------------------------------------------------------------------
@@ -154,20 +154,30 @@ impl DomainState {
 // Global Circuit Breaker Registry
 // ---------------------------------------------------------------------------
 
-lazy_static::lazy_static! {
-    static ref CIRCUIT_BREAKERS: DashMap<String, Arc<DomainState>> = DashMap::new();
-}
+static CIRCUIT_BREAKERS: LazyLock<DashMap<String, Arc<DomainState>>> =
+    LazyLock::new(DashMap::new);
 
+/// D7: get_or_create_state — read-mosty optimization.
+///
+/// Hot path (cache HIT): DashMap::get() s &str — žiadna alokácia.
+/// Called on every fetch request (~100-1000× per sprint).
+///
+/// MISS path: entry() + VacantEntry::insert — single allocation.
 fn get_or_create_state(domain: &str) -> Arc<DomainState> {
-    use dashmap::mapref::entry::Entry;
-    match CIRCUIT_BREAKERS.entry(domain.to_string()) {
-        Entry::Occupied(e) => e.into_ref().clone(),
-        Entry::Vacant(e) => {
-            let state = Arc::new(DomainState::new());
-            e.insert(state.clone());
-            state
-        }
+    // D7: Fast path — read-only get() for existing entries.
+    // Avoids entry() shard-lock + to_string() allocation on every call.
+    // to_string() called ONLY on MISS path (single allocation, not per-call).
+    if let Some(state) = CIRCUIT_BREAKERS.get(domain) {
+        return state.clone();
     }
+
+    // MISS path — entry() acquires VacantEntry, insert() allocates once.
+    let state = Arc::new(DomainState::new());
+    CIRCUIT_BREAKERS
+        .entry(domain.to_string())
+        .insert(state.clone())
+        .or_insert_with(|| state.clone())
+        .clone()
 }
 
 // ---------------------------------------------------------------------------

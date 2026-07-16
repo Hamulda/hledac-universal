@@ -7,8 +7,10 @@ write path (duckdb_store.py) and must remain Kuzu-free.
 """
 
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import as_completed
 from re import compile as re_compile
+
+from hledac.universal.utils.domain_executors import get_semantic_executor
 
 # IOC type enumeration
 IOC_TYPES: frozenset[str] = frozenset(
@@ -76,17 +78,10 @@ def extract_iocs_from_text(
     return unique
 
 
-# Thread pool for parallel IOC extraction — M1 8GB: 4 workers
-# Lazily initialized to avoid import-time overhead
-_ioc_extractor: ThreadPoolExecutor | None = None
-
-
-def _get_ioc_extractor() -> ThreadPoolExecutor:
-    """Lazy singleton for IOC extractor thread pool."""
-    global _ioc_extractor
-    if _ioc_extractor is None:
-        _ioc_extractor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="ioc_extractor")
-    return _ioc_extractor
+# Thread pool for parallel IOC extraction — ISSUE-049: migrated to domain_executors
+# NOTE: In production, Rust SIMD path (ioc_extract_simd.rs) handles batches,
+# so this Python fallback is rarely used. The semantic pool (2 workers)
+# is sufficient for the fallback path.
 
 
 # IOC classification — seed vs discovered
@@ -160,7 +155,7 @@ def extract_iocs_batch(
     results: list[list[tuple[str, str]] | None] = [None] * len(items)
 
     futures = {
-        _get_ioc_extractor().submit(_extract_one, item): i for i, item in enumerate(items)
+        get_semantic_executor().submit(_extract_one, item): i for i, item in enumerate(items)
     }
     for future in as_completed(futures):
         idx = futures[future]

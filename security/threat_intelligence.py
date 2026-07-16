@@ -17,6 +17,7 @@ import os
 import re
 from pathlib import Path
 from typing import Any
+import httpx
 logger = logging.getLogger(__name__)
 
 def _looks_like_ip(s: str) -> bool:
@@ -223,17 +224,17 @@ class ThreatIntelligence:
                 pass
         if _looks_like_ip(ioc_str):
             try:
-                from fetching.public_fetcher import get_aiohttp_session
-                session = await get_aiohttp_session()
-                async with session.get('https://data.iana.org/rdap/ipv4.json', timeout=aiohttp.ClientTimeout(total=4)) as boot_resp:
-                    if boot_resp.status == 200:
-                        bootstrap = await boot_resp.json()
+                from network.session_runtime import async_get_httpx_session
+                session = await async_get_httpx_session()
+                async with session.get('https://data.iana.org/rdap/ipv4.json', timeout=httpx.Timeout(total=4)) as boot_resp:
+                    if boot_resp.status_code == 200:
+                        bootstrap = boot_resp.json()
                         rdap_base = self._rdap_find_base(ioc_str, bootstrap)
                     else:
                         rdap_base = 'https://rdap.arin.net/registry'
-                async with session.get(f'{rdap_base}/ip/{ioc_str}', timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
+                async with session.get(f'{rdap_base}/ip/{ioc_str}', timeout=httpx.Timeout(total=5)) as resp:
+                    if resp.status_code == 200:
+                        data = resp.json()
                         org = data.get('name', '')
                         country = data.get('country', '')
                         asn_info = [e.get('handle', '') for e in data.get('entities', [])]
@@ -242,11 +243,11 @@ class ThreatIntelligence:
                 pass
         if _looks_like_ip(ioc_str) and os.getenv('HLEDAC_ENABLE_BGPTOOLS', '1') != '0':
             try:
-                from fetching.public_fetcher import get_aiohttp_session
-                session = await get_aiohttp_session()
-                async with session.get(f'https://bgp.tools/prefix/{ioc_str}/json', headers={'User-Agent': 'hledac-security-research/1.0'}, timeout=aiohttp.ClientTimeout(total=4)) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
+                from network.session_runtime import async_get_httpx_session
+                session = await async_get_httpx_session()
+                async with session.get(f'https://bgp.tools/prefix/{ioc_str}/json', headers={'User-Agent': 'hledac-security-research/1.0'}, timeout=httpx.Timeout(total=4)) as resp:
+                    if resp.status_code == 200:
+                        data = resp.json()
                         asn = data.get('asn', '')
                         pfx = data.get('prefix', '')
                         name = data.get('name', '')

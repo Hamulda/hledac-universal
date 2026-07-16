@@ -25,6 +25,7 @@ GHOST_INVARIANTS:
 """
 import asyncio
 from utils.async_helpers import safe_gather_ok, parallel
+from hledac.universal.utils.async_helpers import retry_backoff_async
 import logging
 import time
 import httpx
@@ -43,6 +44,10 @@ _MAX_DOH_RETRIES: int = 2
 _DOH_RETRY_DELAY_S: float = 0.5
 from dataclasses import dataclass
 import msgspec
+
+class RetryableError(Exception):
+    """Signals a retriable error for retry_backoff_async."""
+
 
 class _ResolverHealth(msgspec.Struct):
     """Per-resolver health state for circuit breaker."""
@@ -249,27 +254,35 @@ class PassiveDNSResolver:
         cached = _doh_cache.get(name, rdtype, resolver)
         if cached is not None:
             return cached.get('answers', [])
+
         session = await self._ensure_session()
-        for _retry_i in range(_MAX_DOH_RETRIES + 1):
-            try:
-                params = {'name': name, 'type': rdtype}
-                resp = await session.get(url, params=params, timeout=httpx.Timeout(10.0), headers={'Accept': 'application/dns-json'})
-                async with resp:
-                    if resp.status_code >= 500:
-                        if _retry_i < _MAX_DOH_RETRIES:
-                            await asyncio.sleep(_DOH_RETRY_DELAY_S * 2 ** _retry_i)
-                            continue
-                        return []
-                    if resp.status_code != 200:
-                        return []
-                    data = await resp.json()
-            except Exception as e:
-                if _retry_i < _MAX_DOH_RETRIES:
-                    await asyncio.sleep(_DOH_RETRY_DELAY_S * 2 ** _retry_i)
-                    continue
-                logger.debug(f'[DoH] Query failed for {resolver}: {e}')
-                return []
-            break
+
+        # E1 fix: retry_backoff_async with jitter + proper CancelledError propagation
+        # instead of manual for-loop with asyncio.sleep
+        async def _fetch_once() -> dict:
+            params = {'name': name, 'type': rdtype}
+            resp = await session.get(url, params=params, timeout=httpx.Timeout(10.0), headers={'Accept': 'application/dns-json'})
+            async with resp:
+                if resp.status_code >= 500:
+                    raise RetryableError(f'HTTP {resp.status_code}')
+                if resp.status_code != 200:
+                    return {}
+                return await resp.json()
+
+        try:
+            data = await retry_backoff_async(
+                _fetch_once,
+                max_retries=_MAX_DOH_RETRIES,
+                base_delay=_DOH_RETRY_DELAY_S,
+                max_delay=30.0,
+                jitter=True,
+            )
+        except RetryableError as e:
+            logger.debug(f'[DoH] Query failed for {resolver}: {e}')
+            return []
+
+        if not data:
+            return []
         answers: list[str] = []
         for item in data.get('Answer', []) or []:
             answer_str = item.get('data', '')

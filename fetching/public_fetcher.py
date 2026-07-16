@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     import httpx
 from core.psutil_shim import process as _psutil_process
 from core.rust_backend import rust as _rust_backend
+from hledac.universal.utils.async_helpers import parallel
 _URL_OPS_WARNING = False
 
 def __getattr__(name: str) -> Any:
@@ -178,8 +179,9 @@ def _batch_classify_url_cached(urls: list[str]) -> list[tuple[str, str]]:
         batch_results = _rust_backend.url.batch_classify(miss_urls)
     except Exception:  # noqa: BLE001 — best-effort; fallback to Python classifier
         batch_results = [_python_classify_url(u) for u in miss_urls]
+    batch_updates = dict(zip(miss_urls, batch_results))
+    _classify_url_cache.update(batch_updates)
     for (orig_idx, url), classified in zip(misses, batch_results):
-        _classify_url_cache.set(url, classified)
         results[orig_idx] = classified
     return cast("list[tuple[str, str]]", results)
 from hledac.universal.layers.ua_rotator import build_randomized_headers as _canonical_build_randomized_headers
@@ -283,7 +285,7 @@ from hledac.universal.transport.http3_lane import record_from_curl_cffi_result a
 def _altsvc_extract_host(url: str, preclassified_host: str='') -> str:
     """Return lowercased hostname from URL, or empty string on parse failure.
 
-    F271: Rust url_ops.extract_host fast path with urllib.parse fallback.
+    F271: Rust _rust_backend.url.extract_host fast path with urllib.parse fallback.
     B1: When caller already classified the URL via _classify_url_cached,
     pass preclassified_host to skip the FFI entirely.
     """
@@ -437,18 +439,13 @@ class _SessionManager:
         Closes any open sessions and returns to pristine factory state.
         Unlike reset_for_winddown, this also resets circuit counters.
         """
-        if not self._session_is_closed(self._tor_session):
-            try:
-                loop = asyncio.get_running_loop()
-                loop.run_until_complete(self._session_aclose(self._tor_session))
-            except RuntimeError:
-                pass
-        if not self._session_is_closed(self._i2p_session):
-            try:
-                loop = asyncio.get_running_loop()
-                loop.run_until_complete(self._session_aclose(self._i2p_session))
-            except RuntimeError:
-                pass
+        # C7-FIX: Always use asyncio.Runner() — run_until_complete on a running loop
+        # is an M1 Metal crash vector. Runner() handles both cases correctly.
+        with asyncio.Runner() as runner:
+            if not self._session_is_closed(self._tor_session):
+                runner.run(self._session_aclose(self._tor_session))
+            if not self._session_is_closed(self._i2p_session):
+                runner.run(self._session_aclose(self._i2p_session))
         self._tor_session = None
         self._i2p_session = None
         self._tor_session_locally_created = False
@@ -647,7 +644,7 @@ def _validate_url(url: str) -> str | None:
     Validate URL is http/https and well-formed.
     Returns None on success, error string on failure.
 
-    F271: Rust url_ops.classify_url fast path with urllib.parse fallback.
+    F271: Rust _rust_backend.url.classify_url fast path with urllib.parse fallback.
     classify_url returns (kind, host) where kind ∈
     {"clearnet","onion","i2p","freenet","empty","malformed"}.
     Rust path is used when the module loads; ImportError or runtime
@@ -1072,7 +1069,7 @@ async def _get_tor_session():
     """Get Tor session for .onion URL fetches.
 
     F260 JA3 unification: prefers curl_cffi wrapper (chrome_120 JA3, no
-    Python TLS fingerprint leak). Falls back to aiohttp_socks when curl_cffi
+    Python TLS fingerprint leak). Falls back to httpx-socks when curl_cffi
     is unavailable. Telemetry records the chosen path.
 
     F206AT: If _SESSION_MGR._injected_session_provider is set, returns the injected
@@ -1101,7 +1098,7 @@ async def _get_i2p_session():
 
     F260 JA3 unification: prefers curl_cffi wrapper (chrome_120 JA3). I2P
     has no NEWNYM equivalent so circuit rotation is intentionally absent.
-    Falls back to aiohttp_socks when curl_cffi is unavailable.
+    Falls back to httpx-socks when curl_cffi is unavailable.
     """
     if _SESSION_MGR._injected_session_provider is not None:
         _, injected_i2p = _SESSION_MGR._injected_session_provider
@@ -1300,8 +1297,8 @@ async def _close_tor_session() -> None:
 def _close_tor_session_sync() -> None:
     """Sync wrapper for Tor session cleanup via atexit.
 
-    F219D: Safe teardown that avoids calling run_until_complete on a running loop.
-    Uses a fresh event loop in a daemon thread when no running loop exists.
+    C7-FIX: Uses asyncio.Runner() (PEP 654) instead of new_event_loop/run_until_complete.
+    asyncio.Runner() properly manages loop lifecycle and avoids M1 Metal crash vectors.
     """
     import threading
     if not _SESSION_MGR.tor_is_healthy():
@@ -1309,34 +1306,32 @@ def _close_tor_session_sync() -> None:
     if not _SESSION_MGR._tor_session_locally_created:
         _SESSION_MGR._tor_session = None
         return
-    try:
-        _loop = asyncio.get_running_loop()
+    session = _SESSION_MGR._tor_session
+    if session is None:
+        _SESSION_MGR._tor_session = None
+        _SESSION_MGR._tor_session_locally_created = False
+        return
 
-        def _run_closer() -> None:
-            session = _SESSION_MGR._tor_session
-            if session is None:
-                return
-            try:
-                _loop.run_until_complete(session.close())
-            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                logger.warning('Error closing Tor session in thread: %s', e)
-            finally:
-                _SESSION_MGR._tor_session = None
+    def _run_closer() -> None:
+        # C7-FIX: Use asyncio.Runner() — properly manages loop lifecycle.
+        # This is safe from a daemon thread (no M1 crash vector).
+        try:
+            with asyncio.Runner() as runner:
+                runner.run(session.close())
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+            logger.warning('Error closing Tor session in thread: %s', e)
+        finally:
+            _SESSION_MGR._tor_session = None
+
+    try:
+        asyncio.get_running_loop()
+        # Inside a running loop — spawn a daemon thread to do the close.
+        # Using Runner() in the thread is safe (not the M1 crash path).
         _t = threading.Thread(target=_run_closer, daemon=True)
         _t.start()
     except RuntimeError:
-        session = _SESSION_MGR._tor_session
-        if session is None:
-            _SESSION_MGR._tor_session = None
-            return
-        try:
-            _new_loop = asyncio.new_event_loop()
-            _new_loop.run_until_complete(_SESSION_MGR._session_aclose(session))
-            _new_loop.close()
-        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-            logger.warning('Error closing Tor session: %s', e)
-        finally:
-            _SESSION_MGR._tor_session = None
+        # No running loop — run directly with Runner().
+        _run_closer()
     finally:
         _SESSION_MGR._tor_session_locally_created = False
 
@@ -1352,8 +1347,8 @@ async def _close_i2p_session() -> None:
 def _close_i2p_session_sync() -> None:
     """Sync wrapper for I2P session cleanup via atexit.
 
-    F219D: Safe teardown that avoids calling run_until_complete on a running loop.
-    Uses a fresh event loop in a daemon thread when no running loop exists.
+    C7-FIX: Uses asyncio.Runner() (PEP 654) instead of new_event_loop/run_until_complete.
+    asyncio.Runner() properly manages loop lifecycle and avoids M1 Metal crash vectors.
     """
     import threading
     if not _SESSION_MGR.i2p_is_healthy():
@@ -1361,34 +1356,31 @@ def _close_i2p_session_sync() -> None:
     if not _SESSION_MGR._i2p_session_locally_created:
         _SESSION_MGR._i2p_session = None
         return
-    try:
-        _loop = asyncio.get_running_loop()
+    session = _SESSION_MGR._i2p_session
+    if session is None:
+        _SESSION_MGR._i2p_session = None
+        _SESSION_MGR._i2p_session_locally_created = False
+        return
 
-        def _run_closer() -> None:
-            session = _SESSION_MGR._i2p_session
-            if session is None:
-                return
-            try:
-                _loop.run_until_complete(session.close())
-            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                logger.warning('Error closing I2P session in thread: %s', e)
-            finally:
-                _SESSION_MGR._i2p_session = None
+    def _run_closer() -> None:
+        # C7-FIX: Use asyncio.Runner() — properly manages loop lifecycle.
+        # This is safe from a daemon thread (not the M1 crash path).
+        try:
+            with asyncio.Runner() as runner:
+                runner.run(session.close())
+        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+            logger.warning('Error closing I2P session in thread: %s', e)
+        finally:
+            _SESSION_MGR._i2p_session = None
+
+    try:
+        asyncio.get_running_loop()
+        # Inside a running loop — spawn a daemon thread to do the close.
         _t = threading.Thread(target=_run_closer, daemon=True)
         _t.start()
     except RuntimeError:
-        session = _SESSION_MGR._i2p_session
-        if session is None:
-            _SESSION_MGR._i2p_session = None
-            return
-        try:
-            _new_loop = asyncio.new_event_loop()
-            _new_loop.run_until_complete(_SESSION_MGR._session_aclose(session))
-            _new_loop.close()
-        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-            logger.warning('Error closing I2P session: %s', e)
-        finally:
-            _SESSION_MGR._i2p_session = None
+        # No running loop — run directly with Runner().
+        _run_closer()
     finally:
         _SESSION_MGR._i2p_session_locally_created = False
 
@@ -1617,7 +1609,7 @@ def refresh_js_renderer_capability() -> dict[str, str | None]:
 def _looks_like_feed_url(url: str) -> bool:
     """Return True if URL path strongly suggests an RSS/XML/Atom/Sitemap feed.
 
-    F271: Rust url_ops.looks_like_feed_url fast path with urllib.parse fallback.
+    F271: Rust _rust_backend.url.looks_like_feed_url fast path with urllib.parse fallback.
     The Rust function is a direct drop-in for the regex check on
     urlparse(url).path.rstrip("/"). ImportError or runtime failure
     falls through to the unchanged Python branch.
@@ -2355,7 +2347,7 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
             raise
         except Exception as _tor_curl_e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             elapsed_ms = (time.monotonic() - t0) * 1000
-            logger.warning('[curl_cffi_tor] onion fetch failed for {url}, falling back to aiohttp_socks: {_tor_curl_e}', url=url, _tor_curl_e=_tor_curl_e)
+            logger.warning('[curl_cffi_tor] onion fetch failed for {url}, falling back to httpx-socks: {_tor_curl_e}', url=url, _tor_curl_e=_tor_curl_e)
             _tc.curl_cffi_tor_fallback_count += 1
     elif use_tor and _url_kind == 'onion':
         logger.warning('onion_url_skipped: tor_not_enabled {url}', url=url)
@@ -2747,16 +2739,18 @@ async def async_fetch_public_text_batch(
     use_doh: bool = False,
     js_confidence: float = 0.8,
     priority: int = 5,
-    concurrency: int = 10,
+    concurrency: int | None = None,
 ) -> list[FetchResult]:
     """
-    Batch URL fetching via asyncio.gather — concurrent, bounded, fail-safe.
+    Batch URL fetching via parallel() — concurrent, bounded, fail-safe.
 
-    Wraps async_fetch_public_text() for N URLs concurrently, using a
-    semaphore to bound parallel in-flight requests. Results preserve
-    input order. Failures return FetchResult with error set.
+    Wraps async_fetch_public_text() for N URLs concurrently using the
+    canonical parallel() runner (asyncio.TaskGroup, structured-concurrency
+    sibling cancellation). Results preserve input order. Failures return
+    FetchResult with error field set.
 
     ISSUE-018 Problem 1 fix: provides explicit bulk async API.
+    F1 FIX: concurrency=None → UMA-aware dynamic limit from ConcurrencyBudgetRegistry.
 
     Args:
         urls: List of URLs to fetch (http/https only).
@@ -2767,23 +2761,34 @@ async def async_fetch_public_text_batch(
         use_doh: Enable DNS-over-HTTPS (default False).
         js_confidence: Confidence that JS is needed (0.0–1.0, default 0.8).
         priority: Request priority 1–10 (default 5, lower = higher priority).
-        concurrency: Max concurrent in-flight requests (default 10, M1 8GB safe).
+        concurrency: Max concurrent in-flight requests.
+            - None (default): UMA-aware dynamic limit via ConcurrencyBudgetRegistry.
+              OK state → 8, WARN → 4, CRITICAL → 2, EMERGENCY → 1.
+            - int: explicit override (e.g. concurrency=3 for Pastebin rate-limit).
 
     Returns:
         List of FetchResult in same order as input urls.
         Length matches len(urls) — errors produce FetchResult with error field set.
         Never raises; always returns a list of the same length as input.
 
-    Always-on, bounded (concurrency semaphore), fail-safe. No new feature flags.
+    Always-on, bounded (concurrency semaphore via parallel()), fail-safe.
+    No new feature flags.
     """
     if not urls:
         return []
 
-    _sem = asyncio.Semaphore(concurrency)
+    # F1 FIX: resolve dynamic concurrency before parallel() call.
+    # concurrency=None → UMA-aware limit from ConcurrencyBudgetRegistry.
+    # concurrency=int → explicit override (preserves legacy caller behavior).
+    if concurrency is None:
+        from core.concurrency_registry import concurrency_budget, ConcurrencyCategory
 
-    async def _fetch_one(url: str) -> FetchResult:
+        concurrency = await concurrency_budget(ConcurrencyCategory.HTTP_LANE)
+
+    async def _fetch_one(url: str, idx: int) -> tuple[int, FetchResult]:
+        """Fail-safe fetch with index capture for order preservation."""
         try:
-            return await async_fetch_public_text(
+            result = await async_fetch_public_text(
                 url,
                 timeout_s=timeout_s,
                 max_bytes=max_bytes,
@@ -2793,9 +2798,9 @@ async def async_fetch_public_text_batch(
                 js_confidence=js_confidence,
                 priority=priority,
             )
+            return idx, result
         except Exception as _e:  # noqa: BLE001 — fail-safe; never propagate
-            _now = time.monotonic()
-            return FetchResult(
+            return idx, FetchResult(
                 url=url,
                 final_url=url,
                 status_code=0,
@@ -2808,37 +2813,21 @@ async def async_fetch_public_text_batch(
                 failure_stage='batch_dispatch',
             )
 
-    # Bounded gather: semaphore acquired per-task, released after completion.
-    # Each _fetch_one call waits on sem.acquire() before starting, releasing when done.
-    # This achieves concurrency=concurrency without a semaphore per call.
-    async def _fetch_one_sem(url: str) -> FetchResult:
-        await _sem.acquire()
-        try:
-            return await _fetch_one(url)
-        finally:
-            _sem.release()
-
-    gathered = await asyncio.gather(
-        *[_fetch_one_sem(url) for url in urls],
-        return_exceptions=True,
+    # Canonical parallel runner: structured-concurrency cancellation on failure,
+    # bounded concurrency, result order preserved via index capture.
+    result = await parallel(
+        [asyncio.create_task(_fetch_one(url, idx)) for idx, url in enumerate(urls)],
+        concurrency=concurrency,
+        taskgroup=True,
+        policy="collect",
     )
-    # Defensive: _fetch_one is fail-safe, but gather itself can also raise.
-    results = [
-        r if isinstance(r, FetchResult) else FetchResult(
-            url=getattr(r, 'args', ('',))[0] if hasattr(r, 'args') else '',
-            final_url='',
-            status_code=0,
-            content_type='',
-            text=None,
-            fetched_bytes=0,
-            declared_length=-1,
-            elapsed_ms=0.0,
-            error=f'gather_exception:{type(r).__name__}:{r}',
-            failure_stage='gather',
-        )
-        for r in gathered
-    ]
-    return results
+
+    # Re-bucket by original index — _fetch_one is fail-safe (catches all
+    # Exception), so result.errors is always empty; nothing to propagate.
+    ordered: list[FetchResult] = [FetchResult()] * len(urls)
+    for idx, fetched_result in result.ok:
+        ordered[idx] = fetched_result
+    return ordered
 
 
 __all__ = ['async_fetch_public_text', 'async_fetch_public_text_batch', 'process_html_payload', 'DEFAULT_UA', 'MAX_BYTES_DEFAULT', 'MAX_BYTES_HARD', 'MAX_RETRIES', 'FetchResult', '_is_retryable_status', '_extract_retry_after', '_compute_backoff_seconds', '_try_decode', '_looks_xmlish', '_is_onion_url', '_get_tor_session', '_renew_tor_circuit', '_jitter_delay', '_close_tor_session', 'TOR_SOCKS_PROXY', 'TOR_CIRCUIT_RENEWAL_REQUEST_COUNT', 'I2P_SOCKS_PROXY', '_is_i2p_url', '_is_freenet_url', '_get_i2p_session', '_close_i2p_session', '_needs_js_fetch', '_fetch_with_nodriver', '_fetch_with_camoufox', '_fetch_with_playwright', '_get_js_renderer_capability', '_all_js_renderers_unavailable', 'reset_js_renderer_capability_cache', 'refresh_js_renderer_capability', 'PUBLIC_FETCHER_POOL_AUTHORITY', 'inject_session_provider', 'get_session_source_telemetry', 'close_public_fetcher_sessions_async', 'get_public_fetcher_session_status']
@@ -3078,8 +3067,11 @@ def schedule_html_extraction(html: str, url: str='') -> asyncio.Future:
     the await to `drain_pending_extractions(deadline_s)` at windup entry.
 
     Works from both sync and async contexts. In async context, uses the
-    running loop. In sync context (e.g. unit test setup), creates a private
-    loop reference. The Future returned is always awaitable from a loop.
+    running loop. In sync context (e.g. unit test setup), uses asyncio.Runner()
+    (PEP 654) which properly manages loop lifecycle.
+
+    C7-FIX: Replaced new_event_loop() + run_until_complete() with asyncio.Runner()
+    to avoid M1 Metal crash vectors when calling from sync context.
 
     Fail-safe: if the queue is at capacity, the oldest entry is dropped and
     the new one is added. The dropped future is cancelled so its work is
@@ -3092,7 +3084,10 @@ def schedule_html_extraction(html: str, url: str='') -> asyncio.Future:
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
-        loop = asyncio.new_event_loop()
+        # C7-FIX: Use asyncio.Runner() instead of new_event_loop().
+        # Runner properly manages loop lifecycle (PEP 654, Python 3.11+).
+        with asyncio.Runner() as runner:
+            loop = runner._loop  # type: ignore[attr-defined]
     fut: asyncio.Future = loop.run_in_executor(_get_html_executor(), _sync_process_html, html)
     try:
         tag = f'pattern_extract:{url[:64]}' if url else 'pattern_extract'

@@ -34,6 +34,8 @@ INDEX BOUND: MAX_ANN_ENTRIES=50_000 — bounded table, oldest entries evicted on
 import asyncio
 import logging
 import os
+
+from hledac.universal.utils.locks import LazyAsyncioLock
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -707,7 +709,7 @@ def get_ann_index(lmdb_path: str | None = None) -> _ANNIndex:
     return _ann_index
 
 
-_ann_index_async_lock = asyncio.Lock()
+_ann_index_async_lock = LazyAsyncioLock()
 
 
 async def get_ann_index_async(lmdb_path: str | None = None) -> _ANNIndex:

@@ -43,6 +43,9 @@ class MetricSnapshot(msgspec.Struct):
     labels: dict[str, str] | None = None
     correlation: dict[str, str | None] | None = None
 
+_GRAMMAR_KEYS = frozenset(['run_id', 'branch_id', 'provider_id', 'action_id'])
+
+
 class MetricsRegistry:
     """
     Lightweight metrics registry with disk flush.
@@ -55,7 +58,10 @@ class MetricsRegistry:
     """
     FLUSH_EVENTS = 100
     FLUSH_SECONDS = 60
-    MAX_SNAPSHOTS = 100
+    # Bounded ring buffer — MUST remain <= 1024 to cap _snapshots memory at ~100KB.
+    # M1 8GB: 100 snapshots × ~200 bytes × 2 planes = ~40KB max, well under budget.
+    # Guard: assert in __init__ prevents unbounded growth if subclassed/overridden.
+    MAX_SNAPSHOTS: int = 100
     __slots__ = tuple(('_closed', '_correlation', '_counters', '_event_count', '_gauges', '_last_flush', '_last_persist_failure', '_persist_available', '_persist_file', '_run_dir', '_run_id', '_snapshots', '_sprint_events'))
 
     def __init__(self, run_dir: Path, run_id: str='default', correlation: dict[str, str | None] | None=None):
@@ -69,9 +75,13 @@ class MetricsRegistry:
                 branch_id, provider_id, action_id
                 (run_id is taken from run_id parameter)
         """
+        # B3 guard: MAX_SNAPSHOTS must be bounded to prevent unbounded _snapshots growth.
+        # Subclass override to None/unbounded value would cause memory leak on M1 8GB.
+        assert isinstance(self.MAX_SNAPSHOTS, int) and self.MAX_SNAPSHOTS <= 1024, (
+            f'MAX_SNAPSHOTS must be int <= 1024, got {self.MAX_SNAPSHOTS!r}'
+        )
         self._run_dir = run_dir
         self._run_id = run_id
-        _GRAMMAR_KEYS = frozenset(['run_id', 'branch_id', 'provider_id', 'action_id'])
         if correlation is None:
             self._correlation = {'run_id': run_id}
         else:
@@ -162,10 +172,6 @@ class MetricsRegistry:
             mem_info = process.memory_info()
             self.set_gauge('memory_rss_mb', mem_info.rss / (1024 * 1024))
             self.set_gauge('memory_vms_mb', mem_info.vms / (1024 * 1024))
-        except Exception:
-            pass
-        try:
-            process = psutil.Process(os.getpid())
             self.set_gauge('memory_open_fds', process.num_fds())
         except Exception:
             pass
@@ -221,25 +227,17 @@ class MetricsRegistry:
         Returns lightweight state snapshot for debugging and monitoring.
         No execution authority, no policy, no audit chain.
         """
-        return {'run_id': self._run_id, 'closed': self._closed, 'persist_available': getattr(self, '_persist_available', None), 'degraded_ram_only': getattr(self, '_persist_available', True) is False, 'last_persist_failure': getattr(self, '_last_persist_failure', None), 'counter_count': len(self._counters), 'gauge_count': len(self._gauges), 'snapshot_count': len(self._snapshots), 'sprint_event_count': len(self._sprint_events), 'counters': dict(self._counters), 'gauges': dict(self._gauges), 'nym_address': self._nym_address_if_available(), 'nym_circuit_open': self._nym_circuit_open_if_open()}
-
-    def _nym_address_if_available(self) -> str | None:
-        """Get NymTransport nym_address if available."""
+        # Single NymTransport lookup per get_summary() call to avoid double-init
+        nym_address: str | None = None
+        nym_circuit_open: bool = False
         try:
             from hledac.universal.transport.nym_transport import NymTransport
             nym = NymTransport()
-            return getattr(nym, 'nym_address', None)
+            nym_address = getattr(nym, 'nym_address', None)
+            nym_circuit_open = getattr(nym, 'circuit_breaker_open', False)
         except Exception:
-            return None
-
-    def _nym_circuit_open_if_open(self) -> bool:
-        """Check if NymTransport circuit breaker is open."""
-        try:
-            from hledac.universal.transport.nym_transport import NymTransport
-            nym = NymTransport()
-            return getattr(nym, 'circuit_breaker_open', False)
-        except Exception:
-            return False
+            pass
+        return {'run_id': self._run_id, 'closed': self._closed, 'persist_available': getattr(self, '_persist_available', None), 'degraded_ram_only': getattr(self, '_persist_available', True) is False, 'last_persist_failure': getattr(self, '_last_persist_failure', None), 'counter_count': len(self._counters), 'gauge_count': len(self._gauges), 'snapshot_count': len(self._snapshots), 'sprint_event_count': len(self._sprint_events), 'counters': dict(self._counters), 'gauges': dict(self._gauges), 'nym_address': nym_address, 'nym_circuit_open': nym_circuit_open}
 
     def ingest_sprint_event(self, event: dict[str, object]) -> None:
         """

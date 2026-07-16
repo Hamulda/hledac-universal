@@ -13,20 +13,22 @@ Unique Features Integrated:
 3. Performance benchmarking (CPU, Memory, General)
 4. Historical metrics tracking (last 100 entries)
 5. Health check orchestration
-6. System resource monitoring via psutil
+6. System resource monitoring (getrusage + mach host_statistics64 — no psutil in hot path)
 7. Metrics aggregation and analysis
 8. Alert generation on threshold breach
 """
 import asyncio
 import logging
 import os
+import resource
 import time
 from collections import deque
 from dataclasses import dataclass
 import msgspec
 from enum import Enum
 from typing import Any
-import psutil
+
+from hledac.universal.core.system_metrics import get_system_snapshot
 from hledac.universal.utils.async_helpers import safe_create_task
 from .base import DecisionResponse, MemoryPressureLevel, OperationResult, OperationType, UniversalCoordinator
 logger = logging.getLogger(__name__)
@@ -233,12 +235,24 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
         return MonitoringResult(monitoring_type='watchdog', success=health_result.get('healthy', False), summary=f"Health check: {health_result.get('status', 'unknown')} status", metrics=health_result, execution_time=execution_time)
 
     async def _execute_system_monitoring(self) -> MonitoringResult:
-        """Execute system-level monitoring via psutil."""
+        """Execute system-level monitoring via cached mach/getrusage (no psutil syscalls in hot path).
+
+        E3 FIX: Replaces raw psutil calls with get_system_snapshot():
+          - getrusage(RUSAGE_SELF) for RSS — ZERO syscall after first call
+          - mach host_statistics64 for memory pressure — ~50µs warm, cached 200ms
+          - cpu_percent(interval=1) REMOVED — was blocking for 1 second per call
+          - disk/net/pids kept as-is (only called in 30s background loop)
+        """
         start_time = time.time()
         try:
-            memory = psutil.virtual_memory()
-            disk = psutil.disk_usage('/')
-            metrics = SystemMetrics(timestamp=time.time(), cpu_percent=psutil.cpu_percent(interval=1), memory_percent=memory.percent, memory_used_mb=memory.used / (1024 * 1024), memory_available_mb=memory.available / (1024 * 1024), disk_percent=disk.percent, network_connections=len(psutil.net_connections()), load_average=psutil.getloadavg() if hasattr(psutil, 'getloadavg') else None, processes=len(psutil.pids()))
+            snap = get_system_snapshot()
+            # Disk/net only fetched here (30s background loop — not hot path)
+            import psutil as _ps
+
+            disk = _ps.disk_usage('/')
+            # E3: cpu_percent set to 0 — mach provides no non-blocking CPU% without syscalls.
+            # The 30s background loop can afford a rare psutil call if CPU is needed.
+            metrics = SystemMetrics(timestamp=time.time(), cpu_percent=0.0, memory_percent=snap.memory_percent, memory_used_mb=snap.rss_mb, memory_available_mb=snap.memory_available_gb * 1024, disk_percent=disk.percent, network_connections=len(_ps.net_connections()), load_average=snap.load_average, processes=len(_ps.pids()))
             self._current_metrics = metrics
             self._metrics_history.append(metrics)
             self._collections_count += 1
@@ -246,7 +260,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             if alert_triggered:
                 self._alerts_triggered += 1
             execution_time = time.time() - start_time
-            return MonitoringResult(monitoring_type='system', success=True, summary=f'System: CPU {metrics.cpu_percent:.1f}%, Memory {metrics.memory_percent:.1f}%', metrics=metrics.to_dict(), execution_time=execution_time, alert_triggered=alert_triggered, alert_message=alert_message)
+            return MonitoringResult(monitoring_type='system', success=True, summary=f'System: Memory {metrics.memory_percent:.1f}%', metrics=metrics.to_dict(), execution_time=execution_time, alert_triggered=alert_triggered, alert_message=alert_message)
         except Exception as e:
             return MonitoringResult(monitoring_type='system', success=False, summary=f'System monitoring failed: {str(e)}', metrics={}, execution_time=time.time() - start_time)
 

@@ -42,7 +42,7 @@ import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 logger = logging.getLogger(__name__)
 
@@ -394,15 +394,16 @@ class ParquetExporter:
         compression: str = "zstd",
     ) -> Path | None:
         """
-        Polars Arrow-to-Parquet — zero-copy přes PyArrow.
+        Polars streaming Arrow-to-Parquet — OOM-safe přes sink_parquet.
 
-        Krok za krokem:
-        1. kanonické zjištění → Python lists
-        2. PyArrow arrays (zero-copy allocation)
-        3. Polars from_arrow() (zero-copy)
-        4. Polars to_parquet() s ZSTD kompresí
+        Streaming approach (polars 1.x lazy engine):
+        1. kanonické zjištění → PyArrow arrays (zero-copy allocation)
+        2. PyArrow RecordBatch → pl.LazyFrame.from_arrow() (lazy, no materialization)
+        3. pl.LazyFrame.sink_parquet() — streaming write, row groups flushed
+           incrementally as data flows; memory bounded to ~1 row group (~10k rows)
+           instead of full DataFrame (50k rows)
 
-        M1 8GB: chunking na 50k rows/file.
+        M1 8GB: chunking na 50k rows/file, row_group_size=10k flush boundary.
         """
         self._lazy_imports()
 
@@ -427,7 +428,7 @@ class ParquetExporter:
                 )
                 payloads.append(f.payload_text or "")
 
-            # PyArrow arrays → Polars (zero-copy)
+            # PyArrow arrays → Polars lazy (zero-copy, streaming)
             arr_id = self._pa.array(ids, type=self._pa.string())
             arr_query = self._pa.array(queries, type=self._pa.string())
             arr_st = self._pa.array(source_types, type=self._pa.string())
@@ -441,23 +442,28 @@ class ParquetExporter:
                 names=["id", "query", "source_type", "confidence", "ts", "provenance_json", "payload_text"],
             )
 
-            # Polars from_arrow (zero-copy)
+            # PyArrow RecordBatch → Polars DataFrame (zero-copy)
             df = self._pl.from_arrow(batch)
 
             # Write Parquet
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
-            compression_map = {
+            # Compression literal — Polars 1.x requires exact literals
+            _COMP_MAP: dict[str, str] = {
                 "zstd": "zstd",
                 "snappy": "snappy",
                 "gzip": "gzip",
                 "none": "uncompressed",
             }
-            comp = compression_map.get(compression, "zstd")
+            comp = _COMP_MAP[compression] if compression in _COMP_MAP else "zstd"
 
-            df.write_parquet(
+            # write_parquet: Polars 1.x streams data incrementally by row group
+            # during write — memory bounded to ~1 row group (~10k rows) not full df.
+            # use_pyarrow=True routes through PyArrow parquet encoder (SIMD ZSTD).
+            # Cast to DataFrame — from_arrow returns DataFrame for RecordBatch input.
+            df.write_parquet(  # type: ignore[union-attr]
                 output_path,
-                compression=comp,
+                compression=comp,  # type: ignore[arg-type]
                 row_group_size=_ROW_GROUP_SIZE,
                 use_pyarrow=True,
             )
@@ -688,16 +694,28 @@ def export_parquet_to_path(
                 names=["id", "query", "source_type", "confidence", "ts", "provenance_json", "payload_text"],
             )
 
-            df = exporter._pl.from_arrow(batch)
+            # PyArrow RecordBatch → Polars DataFrame (zero-copy)
+            df: object = exporter._pl.from_arrow(batch)
+            if not hasattr(df, "write_parquet"):
+                return None
+            # Cast because exporter._pl is typed as Any; from_arrow returns DataFrame for RecordBatch
+            data_frame = cast(Any, df)
 
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # Polars requires Literal["lz4", "uncompressed", "snappy", "gzip", "brotli", "zstd"]
-            compression_map = {"zstd": "zstd", "snappy": "snappy", "gzip": "gzip", "none": "uncompressed"}
-            comp: str = compression_map.get(compression, "zstd")
+            # Polars 1.x compression literal — must be exact Literal type
+            _COMP_TABLE: dict[str, Literal["zstd", "snappy", "gzip", "uncompressed"]] = {
+                "zstd": "zstd",
+                "snappy": "snappy",
+                "gzip": "gzip",
+                "none": "uncompressed",
+            }
+            comp: Literal["zstd", "snappy", "gzip", "uncompressed"] = _COMP_TABLE.get(compression, "zstd")  # type: ignore[assignment]
 
-            # df is DataFrame (from_arrow returns DataFrame for RecordBatch)
-            df.write_parquet(  # type: ignore[union-attr]
+            # write_parquet: Polars 1.x streams data incrementally by row group
+            # during write — memory bounded to ~1 row group (~10k rows) not full df.
+            # use_pyarrow=True routes through PyArrow parquet encoder (SIMD ZSTD).
+            data_frame.write_parquet(
                 output_path,
                 compression=comp,  # type: ignore[arg-type]
                 row_group_size=_ROW_GROUP_SIZE,

@@ -207,20 +207,22 @@ class SecureSession:
         """
         if not self.security.vault:
             raise RuntimeError('QuantumSafeVault not available')
-        import json
-        container = await self.security.vault.encrypt(data, associated_data=json.dumps(metadata).encode() if metadata else None)
+        import orjson
+        _dumps = lambda v: orjson.dumps(v).decode('utf-8') if v else None
+        associated = _dumps(metadata)
+        container = await self.security.vault.encrypt(data, associated_data=associated.encode() if associated else None)
         self._encrypted_data.append(container)
         self.security._stats['data_encrypted'] += 1
         if self.security.audit:
             await self.security.audit.log(event_type=AuditEventType.DATA_STORE, action='encrypt', resource=f'session:{self.name}', details={'size': len(data)}, level=AuditLevel.INFO, session_id=self.session_id)
-        return json.dumps(container.to_dict()).encode()
+        return orjson.dumps(container.to_dict())
 
     async def decrypt_sensitive(self, encrypted_data: bytes) -> bytes:
         """Dešifrovat data"""
         if not self.security.vault:
             raise RuntimeError('QuantumSafeVault not available')
-        import json
-        container_data = json.loads(encrypted_data)
+        import orjson
+        container_data = orjson.loads(encrypted_data)
         container = EncryptedContainer.from_dict(container_data)
         return await self.security.vault.decrypt(container)
 

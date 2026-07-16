@@ -229,16 +229,16 @@ class IsolatedInterpreter:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            loop = asyncio.new_event_loop()
+            # C7-FIX: Use asyncio.Runner() instead of new_event_loop/run_until_complete.
+            # Avoids M1 Metal crash vector. Runner handles loop lifecycle automatically.
+            with asyncio.Runner() as runner:
+                result = runner.run(self.run_async(func, *args, **kwargs))
+            # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
             try:
-                return loop.run_until_complete(self.run_async(func, *args, **kwargs))
-            finally:
-                loop.close()
-                # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
-                try:
-                    gc.collect()
-                except Exception:
-                    pass
+                gc.collect()
+            except Exception:
+                pass
+            return result
         return asyncio.run_coroutine_threadsafe(self.run_async(func, *args, **kwargs), loop).result()
 
     def __enter__(self) -> 'IsolatedInterpreter':
@@ -326,16 +326,16 @@ class IsolatedInterpreterPool:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            loop = asyncio.new_event_loop()
+            # C7-FIX: Use asyncio.Runner() instead of new_event_loop/run_until_complete.
+            # Avoids M1 Metal crash vector. Runner handles loop lifecycle automatically.
+            with asyncio.Runner() as runner:
+                result = runner.run(self.run_async(func, *args, **kwargs))
+            # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
             try:
-                return loop.run_until_complete(self.run_async(func, *args, **kwargs))
-            finally:
-                loop.close()
-                # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
-                try:
-                    gc.collect()
-                except Exception:
-                    pass
+                gc.collect()
+            except Exception:
+                pass
+            return result
         return asyncio.run_coroutine_threadsafe(self.run_async(func, *args, **kwargs), loop).result()
 
     def close_all(self) -> None:
@@ -404,16 +404,16 @@ class IsolatedDuckDBExecutor:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            loop = asyncio.new_event_loop()
+            # C7-FIX: Use asyncio.Runner() instead of new_event_loop/run_until_complete.
+            # Avoids M1 Metal crash vector. Runner handles loop lifecycle automatically.
+            with asyncio.Runner() as runner:
+                result = runner.run(self.execute_query_async(query_func, *args, **kwargs))
+            # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
             try:
-                return loop.run_until_complete(self.execute_query_async(query_func, *args, **kwargs))
-            finally:
-                loop.close()
-                # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
-                try:
-                    gc.collect()
-                except Exception:
-                    pass
+                gc.collect()
+            except Exception:
+                pass
+            return result
         else:
             return asyncio.run_coroutine_threadsafe(self.execute_query_async(query_func, *args, **kwargs), loop).result()
 
@@ -473,16 +473,16 @@ class IsolatedMLXExecutor:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            loop = asyncio.new_event_loop()
+            # C7-FIX: Use asyncio.Runner() instead of new_event_loop/run_until_complete.
+            # Avoids M1 Metal crash vector. Runner handles loop lifecycle automatically.
+            with asyncio.Runner() as runner:
+                result = runner.run(self.run_inference_async(inference_func, *args, **kwargs))
+            # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
             try:
-                return loop.run_until_complete(self.run_inference_async(inference_func, *args, **kwargs))
-            finally:
-                loop.close()
-                # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
-                try:
-                    gc.collect()
-                except Exception:
-                    pass
+                gc.collect()
+            except Exception:
+                pass
+            return result
         else:
             return asyncio.run_coroutine_threadsafe(self.run_inference_async(inference_func, *args, **kwargs), loop).result()
 
@@ -542,16 +542,16 @@ class IsolatedEvidenceBatchWriter:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            loop = asyncio.new_event_loop()
+            # C7-FIX: Use asyncio.Runner() instead of new_event_loop/run_until_complete.
+            # Avoids M1 Metal crash vector. Runner handles loop lifecycle automatically.
+            with asyncio.Runner() as runner:
+                result = runner.run(self.process_batch_async(process_func, items, *args, **kwargs))
+            # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
             try:
-                return loop.run_until_complete(self.process_batch_async(process_func, items, *args, **kwargs))
-            finally:
-                loop.close()
-                # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
-                try:
-                    gc.collect()
-                except Exception:
-                    pass
+                gc.collect()
+            except Exception:
+                pass
+            return result
         else:
             return asyncio.run_coroutine_threadsafe(self.process_batch_async(process_func, items, *args, **kwargs), loop).result()
 

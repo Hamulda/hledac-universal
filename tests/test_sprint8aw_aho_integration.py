@@ -25,7 +25,7 @@ import sys
 # Add universal to path for direct imports
 sys.path.insert(0, "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 
-from intelligence.document_intelligence import (
+from hledac.universal.intel.document_intelligence import (
     PDFAnalyzer,
 )
 from hledac.universal.utils.aho_extractor import (

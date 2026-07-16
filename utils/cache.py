@@ -20,7 +20,6 @@ Never use this for coroutine objects — use async_lru from cachetools instead.
 
 import threading
 import time
-import weakref
 from collections import OrderedDict
 from typing import Any, TypeVar
 
@@ -154,6 +153,34 @@ class PyCacheDict[K, V]:
 
     def __setitem__(self, key: K, value: V) -> None:
         self.set(key, value)
+
+    def update(self, batch: dict[K, V]) -> None:
+        """
+        Bulk-insert key-value pairs in one lock acquisition.
+
+        For keys that already exist: update value + refresh TTL.
+        For new keys: evict LRU entries to make room, then insert.
+
+        Thread-safe. Silently skips on error (fail-safe).
+        """
+        if not batch:
+            return
+        try:
+            with self._lock:
+                now = time.monotonic()
+                for key, value in batch.items():
+                    # If key exists: update + refresh TTL
+                    if key in self._data:
+                        self._data[key] = (value, now)
+                        self._data.move_to_end(key)
+                    else:
+                        # Evict oldest until we have space (LRU eviction)
+                        while len(self._data) >= self._maxsize:
+                            self._data.popitem(last=False)
+                            self._evictions += 1
+                        self._data[key] = (value, now)
+        except Exception:
+            pass
 
     def touch(self, key: K) -> bool:
         """
@@ -469,6 +496,36 @@ class AsyncPyCacheDict[K, V]:
         except Exception:
             return False
 
+    async def update(self, batch: dict[K, V]) -> None:
+        """
+        Bulk-insert key-value pairs in one lock acquisition.
+
+        For keys that already exist: update value + refresh TTL.
+        For new keys: evict LRU entries to make room, then insert.
+
+        Async-safe. Silently skips on error (fail-safe).
+        """
+        if not batch:
+            return
+        try:
+            lock = await self._get_lock()
+            async with lock:
+                now = time.monotonic()
+                for key, value in batch.items():
+                    if key in self._data:
+                        self._data[key] = (value, now)
+                        self._data.move_to_end(key)
+                        self._wvd_set(key, value)
+                    else:
+                        while len(self._data) >= self._maxsize:
+                            evicted_key, _ = self._data.popitem(last=False)
+                            self._wvd_delete(evicted_key)
+                            self._evictions += 1
+                        self._data[key] = (value, now)
+                        self._wvd_set(key, value)
+        except Exception:
+            pass
+
     async def touch(self, key: K) -> bool:
         """Refresh TTL for an existing key. Async-safe."""
         try:
@@ -485,6 +542,7 @@ class AsyncPyCacheDict[K, V]:
                     return False
                 self._data[key] = (entry[0], time.monotonic())
                 self._data.move_to_end(key)
+                self._wvd_set(key, entry[0])
                 return True
         except Exception:
             return False
@@ -631,7 +689,7 @@ class BoundedLoRACache:
 
     def __init__(self, maxsize: int = 2) -> None:
         self._maxsize: int = max(1, maxsize)
-        self._data: OrderedDict[str, tuple[Any, Any, float]] = OrderedDict()
+        self._data: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
         self._lock = threading.Lock()
         self._hits: int = 0
         self._misses: int = 0
@@ -665,17 +723,16 @@ class BoundedLoRACache:
         """
         try:
             with self._lock:
-                now = time.monotonic()
                 # Update existing entry — refresh LRU
                 if key in self._data:
-                    self._data[key] = (value[0], value[1], now)
+                    self._data[key] = value
                     self._data.move_to_end(key)
                     return True
                 # Evict oldest until we have space
                 while len(self._data) >= self._maxsize:
                     self._data.popitem(last=False)
                     self._evictions += 1
-                self._data[key] = (value[0], value[1], now)
+                self._data[key] = value
                 return True
         except Exception:
             return False
@@ -762,42 +819,43 @@ class BoundedLoRACache:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# GenerationalCache — 3-generation WeakRef LRU with age-based eviction
+# GenerationalCache — 3-generation dict LRU with age-based eviction
 # ─────────────────────────────────────────────────────────────────────────────
 #
 # Memory management upgrade (ISSUE-ZOOMOUT 2026-07-16):
 #   • 3 generations: gen0 (youngest) → gen1 → gen2 (oldest)
-#   • Each generation is a WeakValueDictionary — entries auto-GC'd when
-#     memory pressure causes Python to collect the value objects
+#   • Each generation is a regular dict — values are held strongly.
+#     Use refcount_check=True to detect orphaned entries (refcount≤baseline)
+#     and evict them before age-based eviction kicks in.
 #   • New entries land in gen0; when gen0 fills its maxsize, the oldest
 #     25% is promoted to gen1; gen1 → gen2 follows the same rule
 #   • Eviction policy: gen2 (oldest) evicted first, then gen1, then gen0
 #   • Optional refcount threshold: entries with refcount ≤ baseline can be
 #     force-evicted before age-based eviction kicks in
 #
-# M1 8GB: generational WVD means numpy array / embedding values that are
-# only held by the cache are collected before pressure events, preventing
-# the allocator from hitting OOM before Python's gc kicks in.
+# M1 8GB: refcount_check=True detects numpy array / embedding values that
+# are only held by the cache (refcount=1) and evicts them before memory
+# pressure events, preventing the allocator from hitting OOM.
 #
 # Usage:
 #     cache = GenerationalCache(maxsize_per_gen=1024, refcount_check=True)
 #     cache.set("key", heavy_numpy_array)
-#     val = cache.get("key")           # returns None if GC'd
+#     val = cache.get("key")           # returns None on miss
 #     cache.promote("key")             # move to next older generation
 #     cache.evict_low_refcount()       # force-evict orphaned entries
 
 
 class GenerationalCache[K, V]:
     """
-    3-Generation WeakRef cache with age-based eviction.
+    3-Generation dict cache with age-based eviction.
 
     Eviction order: gen2 (oldest) → gen1 → gen0 (youngest).
-    Each generation is a WeakValueDictionary so values are auto-GC'd
-    by Python's cyclic garbage collector when memory pressure rises.
+    Each generation is a regular dict — values are held strongly.
+    Use refcount_check=True to detect orphaned entries (refcount≤baseline)
+    and evict them before age-based eviction.
 
     Invariants:
         - maxsize enforced per generation
-        - weak references: values GC'd by Python when unreferenced elsewhere
         - age-based eviction: oldest generation evicted first
         - optional refcount threshold: force-evict entries with refcount≤baseline
         - fail-safe: any error returns None/False, never raises
@@ -837,9 +895,9 @@ class GenerationalCache[K, V]:
         self._refcount_check: bool = refcount_check
         self._refcount_baseline: int = refcount_baseline
         # gen0 = youngest, gen2 = oldest
-        self._gen0: weakref.WeakValueDictionary[K, V] = weakref.WeakValueDictionary()
-        self._gen1: weakref.WeakValueDictionary[K, V] = weakref.WeakValueDictionary()
-        self._gen2: weakref.WeakValueDictionary[K, V] = weakref.WeakValueDictionary()
+        self._gen0: dict[K, V] = {}
+        self._gen1: dict[K, V] = {}
+        self._gen2: dict[K, V] = {}
         self._lock = threading.RLock()
         self._hits: int = 0
         self._misses: int = 0
@@ -848,31 +906,29 @@ class GenerationalCache[K, V]:
 
     # ── internal helpers ────────────────────────────────────────────────────
 
-    def _refcount(self, key: K, gen: weakref.WeakValueDictionary[K, V]) -> int:
+    def _refcount(self, key: K, gen: dict[K, V]) -> int:
         """Return sys.getrefcount for an entry in the given generation."""
         try:
             import sys
             val = gen.get(key)
             if val is None:
                 return 0
-            # +1 because the getrefcount itself holds a temporary reference
+            # -1 because getrefcount includes this call's temporary reference
             return sys.getrefcount(val) - 1
         except Exception:
             return 0
 
-    def _is_orphaned(self, key: K, gen: weakref.WeakValueDictionary[K, V]) -> bool:
+    def _is_orphaned(self, key: K, gen: dict[K, V]) -> bool:
         """Return True if entry's refcount suggests it's only held by the cache."""
         if not self._refcount_check:
             return False
         return self._refcount(key, gen) <= self._refcount_baseline
 
-    def _gens(self) -> list[tuple[int, weakref.WeakValueDictionary[K, V]]]:
+    def _gens(self) -> list[tuple[int, dict[K, V]]]:
         """Return generations in eviction order (oldest first)."""
         return [(2, self._gen2), (1, self._gen1), (0, self._gen0)]
 
-    def _evict_from_gen(
-        self, gen: weakref.WeakValueDictionary[K, V], count: int
-    ) -> int:
+    def _evict_from_gen(self, gen: dict[K, V], count: int) -> int:
         """Evict up to `count` entries from a generation. Returns count evicted."""
         evicted = 0
         try:
@@ -959,17 +1015,16 @@ class GenerationalCache[K, V]:
         """
         Get value by key. Checks gen0 → gen1 → gen2 (youngest first).
 
-        Thread-safe. Returns None on miss (including GC'd entries).
+        Thread-safe. Returns None on miss.
         """
         try:
             with self._lock:
                 for gen in (self._gen0, self._gen1, self._gen2):
                     if key in gen:
-                        val = gen[key]  # WVD lookup — returns None if GC'd
-                        if val is not None:
-                            self._hits += 1
-                            # Note: no promotion on read (preserves generational age)
-                            return val
+                        val = gen[key]
+                        self._hits += 1
+                        # Note: no promotion on read (preserves generational age)
+                        return val
                 self._misses += 1
                 return None
         except Exception:
@@ -1000,6 +1055,35 @@ class GenerationalCache[K, V]:
                 return True
         except Exception:
             return False
+
+    def update(self, batch: dict[K, V]) -> None:
+        """
+        Bulk-insert key-value pairs.
+
+        For keys that already exist: remove from all gens first, then re-insert.
+        For new keys: standard generational insertion (lands in gen0).
+
+        Thread-safe. Silently skips on error (fail-safe).
+        """
+        if not batch:
+            return
+        try:
+            with self._lock:
+                for key, value in batch.items():
+                    # Remove existing from any gen
+                    for gen in (self._gen0, self._gen1, self._gen2):
+                        if key in gen:
+                            del gen[key]
+                    # Evict to make room
+                    if len(self._gen2) >= self._maxsize:
+                        self._evict_from_gen(self._gen2, max(1, self._maxsize // 4))
+                    if len(self._gen1) >= self._maxsize:
+                        self._promote_gen1_to_gen2()
+                    if len(self._gen0) >= self._maxsize:
+                        self._promote_gen0_to_gen1()
+                    self._gen0[key] = value
+        except Exception:
+            pass
 
     def promote(self, key: K) -> bool:
         """
@@ -1075,7 +1159,7 @@ class GenerationalCache[K, V]:
 
     @property
     def size(self) -> int:
-        """Total entries across all generations (approximate — WVD may differ)."""
+        """Total entries across all generations."""
         try:
             with self._lock:
                 return len(self._gen0) + len(self._gen1) + len(self._gen2)
@@ -1183,7 +1267,6 @@ class RefcountEvictionCache[K, V]:
         "_orphaned_total",
         "_refcount_baseline",
         "_refcount_check",
-        "_refs",
         "_set_counter",
     )
 
@@ -1211,7 +1294,6 @@ class RefcountEvictionCache[K, V]:
         self._gen0: dict[K, V] = {}
         self._gen1: dict[K, V] = {}
         self._gen2: dict[K, V] = {}
-        self._refs: dict[K, int] = {}  # last known refcount per key
         self._lock = threading.RLock()
         self._hits: int = 0
         self._misses: int = 0
@@ -1259,7 +1341,6 @@ class RefcountEvictionCache[K, V]:
                     break
                 key = next(iter(gen))
                 del gen[key]
-                self._refs.pop(key, None)
                 self._evictions += 1
                 evicted += 1
         except Exception:
@@ -1331,6 +1412,33 @@ class RefcountEvictionCache[K, V]:
         except Exception:
             return False
 
+    def update(self, batch: dict[K, V]) -> None:
+        """
+        Bulk-insert key-value pairs.
+
+        For keys that already exist: remove from all gens first, then re-insert.
+        For new keys: standard insertion (lands in gen0).
+
+        Thread-safe. Silently skips on error (fail-safe).
+        """
+        if not batch:
+            return
+        try:
+            with self._lock:
+                for key, value in batch.items():
+                    # Remove existing from any gen
+                    for gen in (self._gen0, self._gen1, self._gen2):
+                        if key in gen:
+                            del gen[key]
+                    self._make_room()
+                    self._gen0[key] = value
+                self._set_counter += len(batch)
+                # Periodic generational promotion every 8 sets
+                if self._set_counter % 8 == 0:
+                    self._promote_generations()
+        except Exception:
+            pass
+
     def _promote_generations(self) -> None:
         """Promote oldest 25% of each generation to the next older generation."""
         try:
@@ -1395,7 +1503,6 @@ class RefcountEvictionCache[K, V]:
                     if key in gen:
                         try:
                             del gen[key]
-                            self._refs.pop(key, None)
                             self._evictions += 1
                             self._evict_orphaned_total += 1
                             evicted += 1
@@ -1427,7 +1534,6 @@ class RefcountEvictionCache[K, V]:
                 self._gen0.clear()
                 self._gen1.clear()
                 self._gen2.clear()
-                self._refs.clear()
                 self._hits = 0
                 self._misses = 0
                 self._evictions = 0

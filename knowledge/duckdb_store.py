@@ -2322,35 +2322,6 @@ class DuckDBShadowStore:
                 _logger.error(f"[D7] DuckDB bulk insert failed: {type(e).__name__}: {e}")
                 return 0
 
-        def insert_findings_bulk_as_tuples(self, rows: list[list]) -> int:
-            """
-            Bulk insert shadow findings from pre-built tuple rows.
-            MUST be called on the worker thread.
-            Returns number of successfully inserted records.
-            """
-            import logging as _logging
-
-            _logger = _logging.getLogger(__name__)
-            if not rows:
-                return 0
-            conn = self._conn()
-            if conn is None:
-                return 0
-            try:
-                stmt = self._get_insert_stmt(conn)
-
-                def _do(c: Any) -> None:
-                    if stmt is not None:
-                        stmt.executemany(rows)
-                    else:
-                        c.executemany(self._SQL_INSERT_SHADOW_FINDING, rows)
-
-                self._with_transaction(conn, _do)
-                return len(rows)
-            except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
-                _logger.error(f"[D7] DuckDB bulk-as-tuples insert failed: {type(e).__name__}: {e}")
-                return 0
-
         @contextmanager
         def _wal_delete_mode(self):
             """
@@ -2451,11 +2422,14 @@ class DuckDBShadowStore:
                     reg_name = f"finding_arrow_batch_{_uuid.uuid4().hex[:12]}"
                     conn.register(reg_name, table)
                     try:
+                        # B1-FIX: MERGE replaces 2× INSERT round-trips with 1.
+                        # Handles both PK (id) and UK (query, source_type) conflicts.
+                        # DuckDB supports MERGE since v0.10.0; this codebase requires v1.0+ (F275).
                         conn.execute(
-                            f"INSERT INTO canonical_findings (id, query, source_type, confidence, ts, provenance_json) SELECT id, query, source_type, confidence, ts, provenance_json FROM {reg_name} ON CONFLICT (id) DO NOTHING"
-                        )
-                        conn.execute(
-                            f"INSERT INTO canonical_findings (id, query, source_type, confidence, ts, provenance_json) SELECT id, query, source_type, confidence, ts, provenance_json FROM {reg_name} ON CONFLICT (query, source_type) DO NOTHING"
+                            f"MERGE INTO canonical_findings AS target USING {reg_name} AS source\n"
+                            f"ON target.id = source.id\n"
+                            f"WHEN NOT MATCHED THEN INSERT (id, query, source_type, confidence, ts, provenance_json)\n"
+                            f"VALUES (source.id, source.query, source.source_type, source.confidence, source.ts, source.provenance_json)"
                         )
                     finally:
                         try:
@@ -5489,10 +5463,11 @@ class DuckDBShadowStore:
                     return ret
                 self._wal_manager = WALManager(wal_path=str(_wal_root / "shadow_wal.lmdb"))
                 self._wal_manager.initialize()
-            items = []
-            for f in findings:
-                key = f"finding:{f.finding_id}"
-                wal_payload = {
+            # B2-FIX: pre-allocate items list — avoids O(n) list reallocation.
+            n = len(findings)
+            items: list[tuple[str, dict]] = [None] * n  # type: ignore[assignment]
+            for i, f in enumerate(findings):
+                items[i] = (f"finding:{f.finding_id}", {
                     "id": f.finding_id,
                     "query": f.query,
                     "source_type": f.source_type,
@@ -5500,8 +5475,7 @@ class DuckDBShadowStore:
                     "ts": f.ts,
                     "provenance": f.provenance,
                     "payload_text": f.payload_text,
-                }
-                items.append((key, wal_payload))
+                })
             if items:
                 loop = asyncio.get_running_loop()
                 lmdb_ok = await loop.run_in_executor(
@@ -5530,7 +5504,8 @@ class DuckDBShadowStore:
                 _logger.error(f"[D7-arrow] DuckDB Arrow failed: {duckdb_err}")
                 duckdb_all_ok = False
             elif duckdb_count < len(findings):
-                duckdb_all_ok = True
+                _logger.error(f"[D7-arrow] Partial DuckDB Arrow insert: {duckdb_count}/{len(findings)}")
+                duckdb_all_ok = False
             else:
                 duckdb_all_ok = True
         except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
@@ -5735,7 +5710,7 @@ class DuckDBShadowStore:
         elif duckdb_count < len(findings):
             self._arrow_metrics["arrow_partial_duplicates"] += 1
             _logger.debug(
-                f"[D7-arrow] Duplicate suppression: {duckdb_count}/{len(findings)} inserted (rest were deduplicated by ON CONFLICT)"
+                f"[D7-arrow] DuckDB MERGE deduplication: {duckdb_count}/{len(findings)} inserted (rest were deduplicated by MERGE)"
             )
             duckdb_all_ok = True
         else:
@@ -6226,220 +6201,6 @@ class DuckDBShadowStore:
             )
         except (OSError, RuntimeError) as e:
             logger.warning(f"[DUCKDB] insert_hypothesis_tracking failed: {e}")
-
-    def _finding_id_of(self, f: CanonicalFinding | dict) -> str:
-        """Extract finding_id from CanonicalFinding or dict, safely."""
-        if isinstance(f, CanonicalFinding):
-            return f.finding_id
-        return str(f.get("finding_id", f.get("id", "")))
-
-    async def async_bulk_insert_findings(self, findings: list[CanonicalFinding | dict]) -> list[ActivationResult]:
-        """
-        Sprint F800A: Controller-facing async adapter for bulk findings insert.
-
-        Accepts CanonicalFinding instances OR plain dicts (controller dict format).
-        Dicts are converted to CanonicalFinding before delegating to the existing
-        async_record_canonical_findings_batch truth path.
-
-        Thread-safe, non-blocking - delegates to async_record_canonical_findings_batch
-        which uses the single-worker executor.
-
-        Args:
-            findings: List of CanonicalFinding or dict with keys:
-                      finding_id, query, source_type, confidence, ts, provenance.
-
-        Returns:
-            list[ActivationResult] - 1:1 mapping, len(results) == len(findings).
-            Empty list if input is empty or store is closed.
-        """
-        if not findings:
-            return []
-        if not self._initialized or self._closed:
-            return [
-                ActivationResult(
-                    finding_id=self._finding_id_of(f),
-                    lmdb_success=False,
-                    duckdb_success=None,
-                    lmdb_key=f"finding:{self._finding_id_of(f)}",
-                    desync=False,
-                    error="store closed or not initialized",
-                    accepted=False,
-                )
-                for f in findings
-            ]
-        canonical_findings: list[CanonicalFinding] = []
-        for f in findings:
-            if isinstance(f, CanonicalFinding):
-                canonical_findings.append(f)
-            elif isinstance(f, dict):
-                try:
-                    provenance: tuple[str, ...] = ()
-                    raw_prov = f.get("provenance")
-                    if raw_prov:
-                        if isinstance(raw_prov, (list, tuple)):
-                            provenance = tuple((str(v) for v in raw_prov))
-                        elif isinstance(raw_prov, str):
-                            try:
-                                decoded = msgspec.json.decode(raw_prov.encode())
-                                if isinstance(decoded, list):
-                                    provenance = tuple((str(v) for v in decoded))
-                            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                                provenance = ()
-                    canonical_findings.append(
-                        CanonicalFinding(
-                            finding_id=str(f.get("finding_id", f.get("id", ""))),
-                            query=str(f.get("query", "")),
-                            source_type=str(f.get("source_type", "")),
-                            confidence=float(f.get("confidence", 0.0)),
-                            ts=float(f.get("ts", 0.0)),
-                            provenance=provenance,
-                            payload_text=f.get("payload_text"),
-                        )
-                    )
-                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                    continue
-            else:
-                continue
-        if not canonical_findings:
-            return [
-                ActivationResult(
-                    finding_id=self._finding_id_of(f),
-                    lmdb_success=False,
-                    duckdb_success=None,
-                    lmdb_key=f"finding:{self._finding_id_of(f)}",
-                    desync=False,
-                    error="unconvertible input",
-                    accepted=False,
-                )
-                for f in findings
-            ]
-        raw_results = await self.async_record_canonical_findings_batch(canonical_findings)
-        normalized: list[ActivationResult] = []
-        for r in raw_results:
-            if isinstance(r, dict) and "finding_id" in r:
-                normalized.append(
-                    ActivationResult(
-                        finding_id=str(r.get("finding_id", "")),
-                        lmdb_success=bool(r.get("lmdb_success")),
-                        duckdb_success=r.get("duckdb_success"),
-                        lmdb_key=str(r.get("lmdb_key", "")),
-                        desync=bool(r.get("desync")),
-                        error=r.get("error"),
-                        accepted=bool(r.get("accepted", r.get("lmdb_success", False))),
-                    )
-                )
-            else:
-                normalized.append(
-                    ActivationResult(
-                        finding_id="",
-                        lmdb_success=False,
-                        duckdb_success=None,
-                        lmdb_key="",
-                        desync=False,
-                        error="unexpected result type",
-                        accepted=False,
-                    )
-                )
-        return normalized
-
-    def _canonical_findings_batch_to_activation_results(self, findings: list[CanonicalFinding]) -> list[dict]:
-        """
-        Sync batch: CanonicalFinding list -> list[dict] (not ActivationResult, avoid circular import).
-
-        Returns one dict per finding in input order.
-        LMDB WAL uses msgspec.json.encode for provenance serialization.
-        DuckDB insert uses tuple rows (list of lists).
-        """
-        import logging as _logging
-
-        _logger = _logging.getLogger(__name__)
-        results: list[dict] = []
-        if not findings:
-            return results
-        logger.debug(
-            "[F276-INGEST] entry n=%d  _initialized=%s  _closed=%s  _startup_ready=%s",
-            len(findings),
-            getattr(self, "_initialized", None),
-            getattr(self, "_closed", None),
-            getattr(self, "_startup_ready", None)
-            and (
-                getattr(self._startup_ready, "is_set", None)()
-                if callable(getattr(self._startup_ready, "is_set", None))
-                else False
-            ),
-        )
-        lmdb_ok = False
-        try:
-            if not hasattr(self, "_wal_manager") or self._wal_manager is None:
-                _wal_root = self._db_path.parent if self._db_path else None
-                if _wal_root is None:
-                    _logger.error("[F276-INGEST] _db_path is None - WAL root unavailable, cannot persist findings")
-                    for f in findings:
-                        results.append(
-                            {
-                                "finding_id": f.finding_id,
-                                "lmdb_success": False,
-                                "duckdb_success": None,
-                                "error": "no wal root",
-                            }
-                        )
-                    return results
-                self._wal_manager = WALManager(wal_path=str(_wal_root / "shadow_wal.lmdb"))
-                self._wal_manager.initialize()
-            items = []
-            for f in findings:
-                key = f"finding:{f.finding_id}"
-                wal_payload = {
-                    "id": f.finding_id,
-                    "query": f.query,
-                    "source_type": f.source_type,
-                    "confidence": f.confidence,
-                    "ts": f.ts,
-                    "provenance": f.provenance,
-                    "payload_text": f.payload_text,
-                }
-                items.append((key, wal_payload))
-            if items:
-                lmdb_ok = self._wal_manager.wal_put_many(items) if hasattr(self._wal_manager, "wal_put_many") else False
-                if not lmdb_ok:
-                    _logger.warning(f"[Sprint 8P] Batch WAL failed for {len(items)} items")
-                    for f in findings:
-                        results.append(
-                            {
-                                "finding_id": f.finding_id,
-                                "lmdb_success": False,
-                                "duckdb_success": None,
-                                "error": "lmdb batch failed",
-                            }
-                        )
-                    return results
-        except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
-            _logger.error(f"[Sprint 8P] Batch WAL exception: {e}")
-            for f in findings:
-                results.append(
-                    {"finding_id": f.finding_id, "lmdb_success": False, "duckdb_success": None, "error": str(e)}
-                )
-            return results
-        try:
-            rows: list[list] = []
-            for f in findings:
-                provenance_json = _msgspec_encode(f.provenance).decode()
-                rows.append([f.finding_id, f.query, f.source_type, f.confidence, f.ts, provenance_json])
-            inserted = self._sync_insert_findings_bulk_as_tuples(rows)
-            duckdb_all_ok = inserted >= len(findings)
-            if inserted < len(findings):
-                _logger.error(f"[Sprint 8P] Partial DuckDB batch: {inserted}/{len(findings)}")
-        except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
-            _logger.error(f"[Sprint 8P] Batch DuckDB exception: {e}, LMDB preserved")
-            duckdb_all_ok = False
-        for _i, f in enumerate(findings):
-            duckdb_success = duckdb_all_ok
-            results.append(
-                {"finding_id": f.finding_id, "lmdb_success": lmdb_ok, "duckdb_success": duckdb_success, "error": None}
-            )
-        logger.debug("[F276-INGEST] exit n=%d  lmdb_ok=%s  duckdb_ok=%s", len(results), lmdb_ok, duckdb_all_ok)
-        return results
-
     def _extract_url_from_provenance(self, provenance: tuple[str, ...]) -> str:
         """
         Sprint 8AK: Extract the first HTTP(S) URL from a provenance tuple.
@@ -7228,14 +6989,20 @@ class DuckDBShadowStore:
                     self._temporal_anonymizer = TemporalAnonymizer()
                 except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     _do_zero_attribution = False
-            if _do_zero_attribution:
-                _temporal_anonymizer = self._temporal_anonymizer
+            # B3-FIX: Vectorized decision extraction — eliminates per-iteration
+            # branching and decision lookup inside the loop body.
+            # Fallback path (_assess_finding_quality per finding) stays sequential
+            # because it is fail-open and non-vectorizable (stateful + exception-driven).
+            if _batch_rust_ok:
+                decisions: list[FindingQualityDecision] = chunk_decisions
+            else:
+                decisions = []
 
             for i_offset, f in enumerate(chunk_findings):
                 i = chunk_start + i_offset
                 try:
                     if _batch_rust_ok:
-                        if i_offset >= len(chunk_decisions):
+                        if i_offset >= len(decisions):
                             decision = FindingQualityDecision(
                                 accepted=False,
                                 reason="batch_incomplete",
@@ -7244,7 +7011,7 @@ class DuckDBShadowStore:
                                 source_quality=0.0,
                             )
                         else:
-                            decision = chunk_decisions[i_offset]
+                            decision = decisions[i_offset]
                     else:
                         decision = self._assess_finding_quality(f)
                 except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
@@ -7558,14 +7325,6 @@ class DuckDBShadowStore:
             result.append(item)
         return result
 
-    def _sync_insert_findings_bulk_as_tuples(self, rows: list[list]) -> int:
-        """
-        Sprint 8R: Bulk insert using list[tuple] with 6 columns (id, query, source_type, confidence, ts, provenance_json).  # noqa: E501
-        MUST be called on the worker thread.
-        Returns number of successfully inserted records.
-        """
-        return self._qe().insert_findings_bulk_as_tuples(rows)
-
     def _sync_record_canonical_findings_batch_arrow(self, findings: list[CanonicalFinding]) -> tuple[int, str | None]:
         """
         Sprint P0-4: Arrow zero-copy bulk insert for CanonicalFinding list.
@@ -7661,10 +7420,12 @@ class DuckDBShadowStore:
                     return False
                 self._wal_manager = WALManager(wal_path=str(_wal_root / "shadow_wal.lmdb"))
                 self._wal_manager.initialize()
-            items = []
-            for f in findings:
-                key = f"finding:{f.finding_id}"
-                wal_payload = {
+            # B2-FIX: pre-allocate items list — avoids O(n) list reallocation
+            # on each append() call when findings grows past CPython's 4× over-allocation.
+            n = len(findings)
+            items: list[tuple[str, dict]] = [None] * n  # type: ignore[assignment]
+            for i, f in enumerate(findings):
+                items[i] = (f"finding:{f.finding_id}", {
                     "id": f.finding_id,
                     "query": f.query,
                     "source_type": f.source_type,
@@ -7672,8 +7433,7 @@ class DuckDBShadowStore:
                     "ts": f.ts,
                     "provenance": f.provenance,
                     "payload_text": f.payload_text,
-                }
-                items.append((key, wal_payload))
+                })
             if items:
                 results = (
                     self._wal_manager.wal_put_many(items)
@@ -7720,21 +7480,25 @@ class DuckDBShadowStore:
         _logger = _logging.getLogger(__name__)
         if not findings:
             return []
-        ret: list[dict] = []
+        n = len(findings)
+        # B2-FIX: pre-allocate results list — avoids O(n) list reallocation
+        # in all 4 code paths (3 error + 1 success).
+        ret: list[dict] = [None] * n  # type: ignore[assignment]
         lmdb_ok = False
         try:
             if not hasattr(self, "_wal_manager") or self._wal_manager is None:
                 _wal_root = self._db_path.parent if self._db_path else None
                 if _wal_root is None:
-                    for _ in findings:
-                        ret.append({"lmdb_success": False, "duckdb_success": None, "error": "no wal root"})
+                    _logger.error("[Arrow-standalone] _db_path is None - WAL root unavailable")
+                    for i in range(n):
+                        ret[i] = {"lmdb_success": False, "duckdb_success": None, "error": "no wal root"}
                     return ret
                 self._wal_manager = WALManager(wal_path=str(_wal_root / "shadow_wal.lmdb"))
                 self._wal_manager.initialize()
-            items = []
-            for f in findings:
-                key = f"finding:{f.finding_id}"
-                wal_payload = {
+            # B2-FIX: pre-allocate items list — avoids O(n) list reallocation.
+            items: list[tuple[str, dict]] = [None] * n  # type: ignore[assignment]
+            for i, f in enumerate(findings):
+                items[i] = (f"finding:{f.finding_id}", {
                     "id": f.finding_id,
                     "query": f.query,
                     "source_type": f.source_type,
@@ -7742,37 +7506,37 @@ class DuckDBShadowStore:
                     "ts": f.ts,
                     "provenance": f.provenance,
                     "payload_text": f.payload_text,
-                }
-                items.append((key, wal_payload))
+                })
             if items:
                 lmdb_ok = self._wal_manager.wal_put_many(items) if hasattr(self._wal_manager, "wal_put_many") else False
                 if not lmdb_ok:
                     _logger.warning(f"[Arrow-standalone] WAL failed for {len(items)} items")
-                    for _ in findings:
-                        ret.append({"lmdb_success": False, "duckdb_success": None, "error": "lmdb batch failed"})
+                    for i in range(len(items)):
+                        ret[i] = {"lmdb_success": False, "duckdb_success": None, "error": "lmdb batch failed"}
                     return ret
         except Exception as e:  # noqa: BLE001 — best-effort; Arrow/Parquet operation; non-critical
             _logger.error(f"[Arrow-standalone] WAL exception: {e}")
-            for _ in findings:
-                ret.append({"lmdb_success": False, "duckdb_success": None, "error": str(e)})
+            for i in range(n):
+                ret[i] = {"lmdb_success": False, "duckdb_success": None, "error": str(e)}
             return ret
         duckdb_count, duckdb_err = self._sync_record_canonical_findings_batch_arrow(findings)
         if duckdb_err is not None:
             _logger.error(f"[Arrow-standalone] DuckDB Arrow failed: {duckdb_err}")
             duckdb_all_ok = False
         elif duckdb_count < len(findings):
+            _logger.debug(
+                f"[Arrow-standalone] DuckDB MERGE deduplication: {duckdb_count}/{len(findings)} inserted (rest were deduplicated by MERGE)"
+            )
             duckdb_all_ok = True
         else:
             duckdb_all_ok = True
-        for f in findings:
-            ret.append(
-                {
-                    "finding_id": f.finding_id,
-                    "lmdb_success": lmdb_ok,
-                    "duckdb_success": duckdb_all_ok,
-                    "error": duckdb_err,
-                }
-            )
+        for i, f in enumerate(findings):
+            ret[i] = {
+                "finding_id": f.finding_id,
+                "lmdb_success": lmdb_ok,
+                "duckdb_success": duckdb_all_ok,
+                "error": duckdb_err,
+            }
         return ret
 
     async def aclose(self) -> None:

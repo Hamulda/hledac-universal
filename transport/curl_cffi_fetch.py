@@ -23,6 +23,7 @@ from collections import deque
 from typing import Any
 
 from hledac.universal.core.constants import M1_BOUNDS
+from hledac.universal.utils.locks import LazyAsyncioLock
 from hledac.universal.core.env_config import ENV
 
 # Issue 10.2: canonical UA — injects JA3-consistent User-Agent header
@@ -127,7 +128,7 @@ _CURL_CFFI_LOCK = threading.Lock()
 # max 3 profiles as specified
 _MAX_CURL_CFFI_PROFILES = 3
 _curl_cffi_sessions: dict[str, Any] = {}
-_curl_cffi_lock = asyncio.Lock()
+_curl_cffi_lock = LazyAsyncioLock()
 _curl_cffi_profiles_order: deque[str] = deque()  # track access order for LRU via popleft()
 
 # F273H: Per-host session cache — host -> (session, last_access_monotonic, profile)

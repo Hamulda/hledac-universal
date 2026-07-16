@@ -72,8 +72,9 @@ PROD_DIRS = [
     "utils",
 ]
 
-# Files / functions where ``asyncio.run`` is documented-safe. Each entry is
-# (path, qualname-or-None) — None means the whole file is allowed.
+# Files / functions where ``asyncio.run``, ``asyncio.new_event_loop``, or
+# ``loop.run_until_complete`` is documented-safe. Each entry is (path, qualname-or-None)
+# — None means the whole file is allowed.
 ALLOWED: list[tuple[Path, str | None]] = [
     # Top-level CLI entry — runs once, no nested loop possible.
     (REPO_ROOT / "__main__.py", None),
@@ -99,6 +100,56 @@ ALLOWED: list[tuple[Path, str | None]] = [
     # execution_optimizer fix uses ``run_until_complete`` not ``asyncio.run``;
     # but it has a top-level test entry. Allow.
     (REPO_ROOT / "utils" / "execution_optimizer.py", "main"),
+    # C7 LEGITIMATE: Sync-to-async bridge in composition root.
+    # build_runtime/run_runtime/shutdown_runtime are the main entry points that
+    # create and manage the event loop - they are NOT called from within a running loop.
+    (REPO_ROOT / "core" / "composition_root.py", "build_runtime"),
+    (REPO_ROOT / "core" / "composition_root.py", "run_runtime"),
+    (REPO_ROOT / "core" / "composition_root.py", "shutdown_runtime"),
+    # C7 LEGITIMATE: Sprint entrypoint - main runtime controller.
+    (REPO_ROOT / "runtime" / "sprint_entrypoint.py", "_run_sprint_loop"),
+    # C7 LEGITIMATE: Pipelined ingestor - creates dedicated loop for Arrow IPC.
+    (REPO_ROOT / "knowledge" / "pipelined_ingestor.py", "_get_or_create_arrow_loop"),
+    (REPO_ROOT / "knowledge" / "pipelined_ingestor.py", "_call_async_arrow_wrapper"),
+    # C7 LEGITIMATE: Finding pipeline sync wrapper.
+    (REPO_ROOT / "runtime" / "finding_pipeline.py", "_sync_ingest_wrapper"),
+    (REPO_ROOT / "runtime" / "finding_pipeline.py", "enqueue_batch_sync"),
+    # C7 LEGITIMATE: Runtime prewarm daemon - creates dedicated loop per thread.
+    (REPO_ROOT / "runtime" / "prewarm_daemon.py", "_thread_run"),
+    (REPO_ROOT / "runtime" / "prewarm_daemon.py", "stop"),
+    # C7 LEGITIMATE: Graph adapter stats methods.
+    (REPO_ROOT / "runtime" / "adapters" / "graph_adapter.py", "stats"),
+    (REPO_ROOT / "runtime" / "adapters" / "graph_adapter.py", "graph_stats"),
+    # C7 LEGITIMATE: Memory embedder cache init - __init__ context only.
+    (REPO_ROOT / "core" / "embeddings" / "cache.py", None),
+    # C7 LEGITIMATE: Quantum crypto backend init - __init__ context only.
+    (REPO_ROOT / "security" / "quantum_resistant_crypto.py", None),
+    # C7 LEGITIMATE: HTN planner decomposition - creates dedicated loop for sync planner.
+    (REPO_ROOT / "planning" / "htn_planner.py", "plan_with_epistemic_cost"),
+    # C7 LEGITIMATE: Evidence log init.
+    (REPO_ROOT / "runtime" / "sprint_entrypoint_injections.py", "_evidence_log_init"),
+    # C7 LEGITIMATE: Fetching session manager reset.
+    (REPO_ROOT / "fetching" / "_session_mgr.py", "reset_session_manager"),
+    (REPO_ROOT / "fetching" / "_session_mgr.py", "reset_all_session_managers"),
+    # C7 LEGITIMATE: Prewarm pool - sync nested function creates its own loop
+    # in a worker thread (via asyncio.to_thread), which is the correct pattern.
+    (REPO_ROOT / "transport" / "prewarm_pool.py", "_probe_warm"),
+    # C7 LEGITIMATE: Document intelligence - runs async forensics in dedicated thread
+    # with its own event loop, avoiding M1 crash from nested loops.
+    (REPO_ROOT / "recon" / "document_intelligence.py", "_run_async"),
+    (REPO_ROOT / "recon" / "document_intelligence.py", "_run_forensics_async"),
+    # C7 LEGITIMATE: CoreML embedder - per-thread event loop via threading.local()
+    # (M1-safe: loop.run_until_complete() in worker thread, never asyncio.run()).
+    (REPO_ROOT / "brain" / "coreml_embedder.py", "embed"),
+    # C7 LEGITIMATE: MLX worker thread - dedicated event loop per worker thread
+    # for MLX Metal stream context isolation (avoids Stream(gpu,1) not in thread error).
+    (REPO_ROOT / "brain" / "mlx_worker_thread.py", "_run_loop"),
+    # C7 LEGITIMATE: Prewarm pool - nested sync helper runs coroutine via
+    # dedicated event loop in worker thread (via asyncio.to_thread).
+    (REPO_ROOT / "transport" / "prewarm_pool.py", "_do_probe_blocking"),
+    # C7 LEGITIMATE: DNS tunnel executor - thread-safe creation with try/finally
+    # cleanup guard, prevents event loop leak on M1 8GB.
+    (REPO_ROOT / "tools" / "executor.py", "_get_dns_tunnel_executor"),
 ]
 
 
@@ -340,6 +391,73 @@ class TestAsyncioRunAudit:
         assert not violations, (
             "CLAUDE.md invariant #4 violated: session_event_loop.run_until_complete() in ThreadPoolExecutor-submitted "
             "callable.\n"
+            + "\n".join(
+                f"  {p.relative_to(REPO_ROOT)}:{ln}  {msg}" for p, ln, msg in violations
+            )
+        )
+
+    def test_no_new_event_loop_in_async_context(self, session_event_loop: asyncio.AbstractEventLoop):
+        """No ``asyncio.new_event_loop()`` call may appear inside an ``async def``
+        or be used unsafely in a running loop context without M1-SAFE guard.
+
+        C7-FIX: Use ``asyncio.Runner()`` (PEP 654) instead of bare
+        ``asyncio.new_event_loop()`` when bridging from sync to async.
+        """
+        violations: list[tuple[Path, int, str]] = []
+        for py in _all_python_files():
+            try:
+                tree = ast.parse(py.read_text(encoding="utf-8", errors="replace"))
+            except SyntaxError:
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                func = node.func
+                # Detect asyncio.new_event_loop() or loop.run_until_complete()
+                is_new_event_loop = (
+                    isinstance(func, ast.Attribute)
+                    and isinstance(func.value, ast.Name)
+                    and func.value.id == "asyncio"
+                    and func.attr == "new_event_loop"
+                )
+                is_run_until_complete = (
+                    isinstance(func, ast.Attribute)
+                    and isinstance(func.value, ast.Name)
+                    and func.value.id in ("loop", "_loop")
+                    and func.attr == "run_until_complete"
+                )
+                if not (is_new_event_loop or is_run_until_complete):
+                    continue
+
+                qualname = _resolve_qualname(node, tree)
+                if _is_allowed(py, qualname):
+                    continue
+
+                # Check for M1-SAFE guard comment nearby
+                lines = py.read_text(encoding="utf-8", errors="replace").split('\n')
+                start = max(0, node.lineno - 20)
+                end = min(len(lines), node.lineno + 5)
+                context = '\n'.join(lines[start:end])
+                has_m1_safe = any(
+                    marker in context
+                    for marker in ["M1-SAFE", "C7-FIX", "get_running_loop", "RuntimeError", "asyncio.Runner"]
+                )
+                if has_m1_safe:
+                    continue
+
+                # Check if inside async def
+                if _is_in_asyncdef(node, tree):
+                    violations.append(
+                        (
+                            py,
+                            node.lineno,
+                            f"asyncio.new_event_loop() or loop.run_until_complete() inside async def "
+                            f"({qualname or '?'}) — nested event loop risk",
+                        )
+                    )
+
+        assert not violations, (
+            "C7 invariant violated: asyncio.new_event_loop()/run_until_complete() in async context.\n"
             + "\n".join(
                 f"  {p.relative_to(REPO_ROOT)}:{ln}  {msg}" for p, ln, msg in violations
             )

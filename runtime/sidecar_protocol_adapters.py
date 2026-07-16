@@ -364,7 +364,7 @@ class LeakSentinelSidecarAdapter(BaseSidecarAdapter):
             return []
 
         try:
-            from hledac.universal.intelligence.leak_sentinel import (
+            from hledac.universal.intel.leak_sentinel import (
                 LeakSentinelAdapter,
             )
         except Exception:
@@ -548,7 +548,7 @@ class PassiveFingerprintSidecarAdapter(BaseSidecarAdapter):
 
     async def run_async(self, ctx: SidecarContext) -> list[Any]:
         try:
-            from hledac.universal.intelligence.passive_fingerprint import (
+            from hledac.universal.intel.passive_fingerprint import (
                 create_passive_fingerprint_adapter,
             )
         except Exception:
@@ -591,7 +591,7 @@ class PassiveTechStackSidecarAdapter(BaseSidecarAdapter):
 
     async def run_async(self, ctx: SidecarContext) -> list[Any]:
         try:
-            from hledac.universal.intelligence.passive_fingerprint import (
+            from hledac.universal.intel.passive_fingerprint import (
                 create_passive_tech_stack_adapter,
             )
         except Exception:
@@ -636,7 +636,7 @@ class SocialIdentityMinerSidecarAdapter(BaseSidecarAdapter):
 
     async def run_async(self, ctx: SidecarContext) -> list[Any]:
         try:
-            from hledac.universal.intelligence.social_identity_miner import (
+            from hledac.universal.intel.social_identity_miner import (
                 create_social_identity_miner_adapter,
             )
         except Exception:
@@ -919,7 +919,7 @@ class WhoisSidecarAdapter(BaseSidecarAdapter):
             return []
 
         try:
-            from hledac.universal.intelligence.whois_service import (
+            from hledac.universal.intel.whois_service import (
                 WhoisService,
             )
         except Exception:
@@ -931,7 +931,7 @@ class WhoisSidecarAdapter(BaseSidecarAdapter):
             hist_api = _os.environ.get("HLEDAC_WHOIS_API")
             hist_key = _os.environ.get("HLEDAC_WHOIS_API_KEY")
             if hist_api and hist_key:
-                from hledac.universal.intelligence.whois_service import (
+                from hledac.universal.intel.whois_service import (
                     configure_historical_api,
                 )
                 configure_historical_api(hist_api, hist_key)

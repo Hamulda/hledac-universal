@@ -105,14 +105,20 @@ async def _bounded_gather_pairs(
     pairs: list[tuple[str, str]],
     threshold: float,
     compute_fn,  # (str, str) -> IdentityMatch
-    concurrency: int = 10,
+    concurrency: int | None = None,
 ) -> list[IdentityMatch]:
     """O(α(N)) parallel pairwise — ISSUE-005: bounded_parallel_map refactor.
+    F1 FIX: concurrency=None → UMA-aware dynamic limit via ConcurrencyBudgetRegistry.
 
     Replaces asyncio.gather + _check_gathered with bounded_parallel_map
     for cleaner API and proper GHOST I6/I7 exception routing.
     """
     from utils.async_helpers import bounded_parallel_map
+    from core.concurrency_registry import concurrency_budget, ConcurrencyCategory
+
+    # F1 FIX: resolve dynamic concurrency before bounded_parallel_map call.
+    if concurrency is None:
+        concurrency = await concurrency_budget(ConcurrencyCategory.SOCIAL_MINE)
 
     async def _compute_pair(pair: tuple[str, str]) -> IdentityMatch:
         return compute_fn(pair[0], pair[1])
@@ -910,12 +916,13 @@ class IdentityStitchingEngine:
                 if match.match_score >= threshold:
                     matches.append(match)
         else:
-            # Async bounded gather — concurrency=10, M1-safe
+            # F1 FIX: concurrency=None → UMA-aware via ConcurrencyBudgetRegistry
+            # (SOCIAL_MINE: OK=4, WARN=2, CRITICAL=1, EMERGENCY=1)
             matches = await _bounded_gather_pairs(
                 pairs,
                 threshold,
                 lambda a, b: self.compute_match(self._profiles[a], self._profiles[b]),
-                concurrency=10,
+                concurrency=None,  # F1 FIX: dynamic UMA-aware limit
             )
 
         matches.sort(key=lambda m: m.match_score, reverse=True)

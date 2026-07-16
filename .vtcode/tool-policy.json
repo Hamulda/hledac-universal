@@ -170,13 +170,23 @@
       "shell-pattern:ls|sandbox_permissions=\"use_default\"|additional_permissions=null",
       "shell-pattern:ls",
       "ls -la /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal|sandbox_permissions=\"use_default\"|additional_permissions=null",
-      "ls -la /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal"
+      "ls -la /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal",
+      "pwd '&&' ls -la|sandbox_permissions=\"use_default\"|additional_permissions=null",
+      "pwd '&&' ls -la",
+      "pwd|sandbox_permissions=\"use_default\"|additional_permissions=null",
+      "pwd",
+      "ls -la|sandbox_permissions=\"use_default\"|additional_permissions=null",
+      "ls -la"
     ],
     "prefixes": [
       "ls -la|sandbox_permissions=\"use_default\"|additional_permissions=null",
       "ls|sandbox_permissions=\"use_default\"|additional_permissions=null",
       "ls",
-      "ls -la"
+      "ls -la",
+      "pwd -la|sandbox_permissions=\"use_default\"|additional_permissions=null",
+      "pwd|sandbox_permissions=\"use_default\"|additional_permissions=null",
+      "pwd",
+      "pwd -la"
     ],
     "regexes": []
   }

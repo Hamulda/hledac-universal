@@ -28,24 +28,27 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
+from hledac.universal.utils.domain_executors import get_html_executor
+
 if TYPE_CHECKING:
     pass
 
 # -----------------------------------------------------------------------
-# Module-level state
+# Module-level state — migrated to domain_executors (ISSUE-049)
 # -----------------------------------------------------------------------
 _POOL: ThreadPoolExecutor | None = None
-_MAX_WORKERS: int = 2  # M1 8GB conservative
 
 
 def _get_pool() -> ThreadPoolExecutor:
-    """Get or create the shared thread pool (lazy initialization)."""
+    """Get or create the shared thread pool (lazy initialization).
+
+    ISSUE-049: Now delegates to domain_executors.get_html_executor().
+    The module-level singleton is kept for backward compatibility with
+    call sites that import _get_pool directly.
+    """
     global _POOL
     if _POOL is None:
-        _POOL = ThreadPoolExecutor(
-            max_workers=_MAX_WORKERS,
-            thread_name_prefix="html_parse",
-        )
+        _POOL = get_html_executor()
     return _POOL
 
 
@@ -173,10 +176,11 @@ async def parse_html_text(html: str) -> str:
 def get_pool_stats() -> dict:
     """Return pool statistics for telemetry."""
     global _POOL
+    _DEFAULT_WORKERS = 2  # M1 8GB conservative default
     if _POOL is None:
-        return {"pool_type": "ThreadPool", "pool_initialized": False, "max_workers": _MAX_WORKERS}
+        return {"pool_type": "ThreadPool", "pool_initialized": False, "max_workers": _DEFAULT_WORKERS}
     return {
         "pool_type": "ThreadPool",
         "pool_initialized": True,
-        "max_workers": getattr(_POOL, "_max_workers", _MAX_WORKERS),
+        "max_workers": getattr(_POOL, "_max_workers", _DEFAULT_WORKERS),
     }

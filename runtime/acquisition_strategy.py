@@ -1827,7 +1827,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
         rejected_count = 0
         sample_rejections: tuple = ()
         try:
-            from hledac.universal.intelligence.wayback_diff_miner import WaybackDiffMiner as _WDM
+            from hledac.universal.intel.wayback_diff_miner import WaybackDiffMiner as _WDM
             if not callable(_WDM):
                 raise ImportError('WaybackDiffMiner not callable')
         except Exception as _exc:
@@ -1904,7 +1904,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
         start = time.monotonic()
         try:
             async with asyncio.timeout(plan.timeout_s):
-                from hledac.universal.intelligence.academic_search import AcademicSearchEngine, SearchResult
+                from hledac.universal.intel.academic_search import AcademicSearchEngine, SearchResult
                 from hledac.universal.runtime.source_finding_bridge import academic_results_to_findings
                 engine = AcademicSearchEngine(enable_expansion=False)
                 try:
@@ -1997,7 +1997,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
         start = time.monotonic()
         try:
             async with asyncio.timeout(plan.timeout_s):
-                from hledac.universal.intelligence.open_source_collectors import get_open_source_collectors
+                from hledac.universal.intel.open_source_collectors import get_open_source_collectors
                 collector = get_open_source_collectors()
                 results = await collector.gather_all(query)
                 all_findings: list = []
@@ -2033,7 +2033,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
             return AcquisitionLaneOutcome(lane=AcquisitionLane.DOH, enabled=plan.enabled, attempted=False, source_family='doh', error='empty_domain', doh_query=domain)
         try:
             async with asyncio.timeout(plan.timeout_s):
-                from hledac.universal.intelligence.doh_lane import DOHAdapter
+                from hledac.universal.intel.doh_lane import DOHAdapter
                 from hledac.universal.runtime.source_finding_bridge import doh_results_to_findings
                 adapter = DOHAdapter()
                 session = await async_get_httpx_session()
@@ -2058,7 +2058,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
         start = time.monotonic()
         try:
             async with asyncio.timeout(plan.timeout_s):
-                from hledac.universal.intelligence.blockchain_analyzer import BlockchainForensics
+                from hledac.universal.intel.blockchain_analyzer import BlockchainForensics
                 wallets = _extract_crypto_from_query(query)
                 accepted = 0
                 total_tx = 0
@@ -2097,7 +2097,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
         start = time.monotonic()
         try:
             async with asyncio.timeout(plan.timeout_s):
-                from hledac.universal.intelligence.shodan_lane import ShodanLane
+                from hledac.universal.intel.shodan_lane import ShodanLane
                 lane_obj = ShodanLane()
                 findings = await lane_obj.query(query)
                 if findings and graph_accumulator is not None:
@@ -2116,7 +2116,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
         start = time.monotonic()
         try:
             async with asyncio.timeout(plan.timeout_s):
-                from hledac.universal.intelligence.censys_lane import CensysLane
+                from hledac.universal.intel.censys_lane import CensysLane
                 lane_obj = CensysLane()
                 findings = await lane_obj.query(query)
                 if findings and graph_accumulator is not None:
@@ -2135,7 +2135,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
         start = time.monotonic()
         try:
             async with asyncio.timeout(plan.timeout_s):
-                from hledac.universal.intelligence.greynoise_lane import GreyNoiseLane
+                from hledac.universal.intel.greynoise_lane import GreyNoiseLane
                 lane_obj = GreyNoiseLane()
                 findings = await lane_obj.query(query)
                 if findings and graph_accumulator is not None:
@@ -2241,7 +2241,7 @@ async def run_enabled_acquisition_lanes_streaming(snapshot, query: str, store, u
             start = __import__('time').monotonic()
             try:
                 async with _asyncio.timeout(plan.timeout_s):
-                    from hledac.universal.intelligence.wayback_diff_miner import WaybackDiffMiner
+                    from hledac.universal.intel.wayback_diff_miner import WaybackDiffMiner
                     shaped_query = build_lane_query(query, AcquisitionLane.WAYBACK, seed_context)
                     shaped_query_str = shaped_query if isinstance(shaped_query, str) else query
                     miner = WaybackDiffMiner()

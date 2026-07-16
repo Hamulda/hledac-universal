@@ -97,7 +97,7 @@ async def run_wayback_prelude_lane(query: str, result: Any, duckdb_store: Any, t
 
     Bounded: no hard timeout, writes to duckdb_store via bg_tasks.
     """
-    from hledac.universal.intelligence.wayback_diff_miner import WaybackDiffMiner
+    from hledac.universal.intel.wayback_diff_miner import WaybackDiffMiner
     from hledac.universal.runtime.acquisition_strategy import AcquisitionLane
     from hledac.universal.runtime.source_finding_bridge import wayback_results_to_findings
     _wb_query = _build_lane_query(query, AcquisitionLane.WAYBACK, seed_context=seed_context)
@@ -186,7 +186,7 @@ async def run_doh_prelude_lane(query: str, result: Any, duckdb_store: Any, time_
         return LaneResult(lane='DOH', attempted=False, skipped=True)
     _doh_adapter = None
     try:
-        from hledac.universal.intelligence.doh_lane import DOHAdapter
+        from hledac.universal.intel.doh_lane import DOHAdapter
         _doh_adapter = DOHAdapter()
     except Exception as _init_exc:
         result.doh_terminal_stage = 'dependency_missing'

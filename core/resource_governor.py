@@ -30,39 +30,35 @@ import sys
 import threading
 import time
 from collections.abc import Callable
-from enum import Enum, IntEnum
+from enum import Enum, IntEnum, StrEnum
 from typing import Any, TypeVar
+import msgspec
 
 _KT = TypeVar("_KT")
 _VT = TypeVar("_VT")
-import msgspec
 
 from hledac.universal.utils.async_helpers import safe_create_task, stop_task
 
-if True:
-    from enum import StrEnum
 
-    class UMAState(StrEnum):
-        """
-        Sprint F289: SSOT UMA state labels as Python 3.11+ StrEnum.
+class UMAState(StrEnum):
+    """
+    Sprint F289: SSOT UMA state labels as Python 3.11+ StrEnum.
 
-        Benefits over plain str constants:
-        - `is` comparison (identity, not equality) — faster and explicit
-        - Auto-complete in IDEs, static type checkers understand it
-        - Exhaustive match statement coverage at compile time
-        - No runtime overhead (StrEnum = str subclass, zero-cost abstraction)
+    Benefits over plain str constants:
+    - `is` comparison (identity, not equality) — faster and explicit
+    - Auto-complete in IDEs, static type checkers understand it
+    - Exhaustive match statement coverage at compile time
+    - No runtime overhead (StrEnum = str subclass, zero-cost abstraction)
 
-        Values match string constants: UMA_STATE_OK, UMA_STATE_WARN, etc.
-        Keep using string literals for serialization (DuckDB, JSON, LMDB).
-        """
+    Values match string constants: UMA_STATE_OK, UMA_STATE_WARN, etc.
+    Keep using string literals for serialization (DuckDB, JSON, LMDB).
+    """
 
-        OK = "ok"
-        SOFT_WARN = "soft_warn"
-        WARN = "warn"
-        CRITICAL = "critical"
-        EMERGENCY = "emergency"
-else:
-    UMAState = str
+    OK = "ok"
+    SOFT_WARN = "soft_warn"
+    WARN = "warn"
+    CRITICAL = "critical"
+    EMERGENCY = "emergency"
 
 
 class LockOrder(IntEnum):
@@ -766,7 +762,7 @@ class M1ResourceGovernor:
     _last_evaluated_memory_ratio: float = 0.0
     _decision_lock_factory: threading.Lock = threading.Lock()
     _decision_lock: asyncio.Lock | None = None
-    __slots__ = tuple(("_hysteresis", "_legacy_cache_ttl_s", "_mpc_controller"))
+    __slots__ = ("_hysteresis", "_legacy_cache_ttl_s", "_mpc_controller")
 
     def __init__(self, cache_ttl_s: float = 5.0):
         self._legacy_cache_ttl_s = cache_ttl_s
@@ -887,6 +883,7 @@ class M1ResourceGovernor:
         Aplikuje:
         - _io_only_latch (hysteresis state)
         - telemetry (pro monitoring/alerting)
+        - B5: dynamic GC thresholds via memory_cycle._apply_gc_thresholds()
         """
         try:
             global _io_only_latch
@@ -896,6 +893,12 @@ class M1ResourceGovernor:
             with _UMA_TELEMETRY_LOCK:
                 last_state = _telemetry["last_state"]
             _record_transition(last_state, current_latch, decision.io_only)
+        except Exception:
+            pass
+        # B5: propagate UMA state to memory_cycle for dynamic GC thresholds
+        try:
+            from hledac.universal.core.memory_cycle import _apply_gc_thresholds
+            _apply_gc_thresholds(decision.uma_state)
         except Exception:
             pass
 
@@ -1038,7 +1041,7 @@ class ResourceGovernor:
         """
 
         class _Reservation:
-            __slots__ = tuple(("cost", "gov", "prio"))
+            __slots__ = ("cost", "gov", "prio")
 
             def __init__(self, gov, cost, prio):
                 self.gov = gov

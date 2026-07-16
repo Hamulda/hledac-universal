@@ -42,6 +42,8 @@ import logging
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from hledac.universal.utils.locks import LazyAsyncioLock
+
 if TYPE_CHECKING:
     import httpx
     from httpx import AsyncClient
@@ -77,12 +79,12 @@ _CONNECT_TIMEOUT_S = 5.0
 # =============================================================================
 
 _httpx_client: httpx.AsyncClient | None = None
-_httpx_lock = asyncio.Lock()
+_httpx_lock = LazyAsyncioLock()
 
 # ISSUE-007: SOCKS5 httpx clients — one per proxy URL (bounded cache)
 # ISSUE-080: cache_key changed from str to tuple(proxy_url, rdns)
 _httpx_socks_clients: dict[tuple[str, bool], httpx.AsyncClient] = {}
-_httpx_socks_lock = asyncio.Lock()
+_httpx_socks_lock = LazyAsyncioLock()
 
 
 # =============================================================================

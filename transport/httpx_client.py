@@ -15,7 +15,7 @@ AUTHORITY (F206K):
 TRANSPORT WORLD CLASSIFICATION (F206K):
   - HTTPX H2 WORLD: HTTP/2-capable httpx for clearnet API/same-host batch
   - aiohttp WORLD: plain TCPConnector (existing hot-path)
-  - aiohttp_socks WORLD: ProxyConnector for Tor/I2P (existing darknet path)
+  - httpx-socks WORLD: AsyncProxyTransport for Tor/I2P (existing darknet path)
   - curl_cffi WORLD: JA3 fingerprint spoofing — SEPARATE plane, not unified
 
 ISSUE #42 FIX:

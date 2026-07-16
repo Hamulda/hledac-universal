@@ -55,7 +55,7 @@ class TestStealthCrawlerFix:
 
     def test_fetch_html_sync_returns_string_not_coroutine(self):
         """_fetch_html should return str | None, not a coroutine"""
-        from hledac.universal.intelligence.stealth_crawler import StealthCrawler
+        from hledac.universal.intel.stealth_crawler import StealthCrawler
 
         crawler = StealthCrawler()
 
@@ -73,7 +73,7 @@ class TestStealthCrawlerFix:
 
     def test_search_duckduckgo_returns_list_not_coroutine(self):
         """_search_duckduckgo should return List[SearchResult], not a coroutine"""
-        from hledac.universal.intelligence.stealth_crawler import StealthCrawler
+        from hledac.universal.intel.stealth_crawler import StealthCrawler
 
         crawler = StealthCrawler()
 

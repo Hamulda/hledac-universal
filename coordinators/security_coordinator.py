@@ -482,7 +482,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             Resurrection result with content and metadata
         """
         try:
-            from hledac.universal.intelligence.archive_discovery import ArchiveResurrector
+            from hledac.universal.intel.archive_discovery import ArchiveResurrector
             resurrector = ArchiveResurrector()
             await resurrector.initialize()
             parsed_date = None
@@ -521,7 +521,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             Leak check results with alerts
         """
         try:
-            from hledac.universal.intelligence.data_leak_hunter import DataLeakHunter
+            from hledac.universal.intel.data_leak_hunter import DataLeakHunter
             hunter = DataLeakHunter()
             await hunter.initialize()
             await hunter.add_target(target, target_type)
@@ -556,7 +556,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             Scraping result with content
         """
         try:
-            from hledac.universal.intelligence.stealth_crawler import StealthWebScraper
+            from hledac.universal.intel.stealth_crawler import StealthWebScraper
             scraper = StealthWebScraper()
             await scraper.initialize()
             result = await scraper.scrape(url=url, headers=None, use_proxy=protection_bypass)
@@ -857,12 +857,13 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                 elapsed = time.time() - start_time
                 return {'success': True, 'url': url, 'status_code': resp.status_code, 'content': resp.text[:5000] if hasattr(resp, 'text') else '', 'headers': dict(resp.headers) if hasattr(resp, 'headers') else {}, 'elapsed_seconds': elapsed, 'jitter_delay': delay, 'impersonate': impersonate, 'method': 'curl_cffi'}
             except ImportError:
-                from fetching.public_fetcher import get_aiohttp_session
-                session = await get_aiohttp_session()
+                from network.session_runtime import async_get_httpx_session
+                import httpx
+                session = await async_get_httpx_session()
                 async with session.request(method, url, headers=headers, **kwargs) as resp:
-                    content = await resp.text()
+                    content = resp.text
                     elapsed = time.time() - start_time
-                    return {'success': True, 'url': url, 'status_code': resp.status, 'content': content[:5000], 'headers': dict(resp.headers), 'elapsed_seconds': elapsed, 'jitter_delay': delay, 'impersonate': None, 'method': 'httpx'}
+                    return {'success': True, 'url': url, 'status_code': resp.status_code, 'content': content[:5000], 'headers': dict(resp.headers), 'elapsed_seconds': elapsed, 'jitter_delay': delay, 'impersonate': None, 'method': 'httpx'}
         except Exception as e:
             elapsed = time.time() - start_time
             logger.error(f'Stealth request failed for {url}: {e}')

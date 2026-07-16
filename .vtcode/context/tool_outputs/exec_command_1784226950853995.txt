@@ -1,0 +1,201 @@
+
+    F320-ISSUE12: Replaces asyncio.Queue in the SQLite flush path.
+    - send() is non-blocking, lock-free, ~2-5ns via ARM LSE atomics
+    - recv_batch() drains the Rust MPSC channel directly
+
+    M1 8GB: ~1 MiB total (2048 slots × 512B), negligible overhead.
+    """
+    __slots__ = tuple(('_impl', '_pool', '_queue', '_sender_ptr', '_wake_fd', 'fallback'))
+
+    def __init__(self, capacity: int=2048, asyncio_fallback: bool=False) -> None:
+        """Initialize MPSC pool.
+
+        Args:
+            capacity: Max queue depth (default 2048, 2× asyncio.Queue maxsize=500)
+            asyncio_fallback: If True, create asyncio.Queue fallback (for JSONL path).
+                             If False, fallback is None (SQLite path doesn't need async).
+        """
+        self._pool: Any = None
+        self._queue: asyncio.Queue[bytes] | None = None
+        self._sender_ptr: int = 0
+        self._wake_fd: int = -1
+        self.fallback: bool = True
+        self._impl: str = 'asyncio'
+        self._init_rust(capacity, asyncio_fallback)
+
+    def _init_rust(self, capacity: int, asyncio_fallback: bool) -> None:
+        try:
+            from hledac_rust_extensions import MPSCPool as _MPSC
+            pool = _MPSC(capacity=capacity)
+            sender_ptr = pool.add_sender()
+            wake_fd = pool.wake_fd()
+            self._pool = pool
+            self._sender_ptr = sender_ptr
+            self._wake_fd = wake_fd
+            self.fallback = False
+            self._impl = 'rust'
+        except Exception:
+            self._pool = None
+            self._sender_ptr = 0
+            self._wake_fd = -1
+            if asyncio_fallback:
+                self._queue = asyncio.Queue(maxsize=capacity)
+            else:
+                self._queue = None
+            self.fallback = True
+            self._impl = 'asyncio'
+
+    def send(self, item: bytes) -> bool:
+        """Send raw bytes to the pool. Non-blocking (Rust) or blocking (asyncio).
+
+        ISSUE-006: bytes-only — serialization is caller's responsibility.
+        This eliminates the redundant orjson.dumps() that _RustMPSC did internally.
+        """
+        if self._impl == 'rust' and self._pool is not None:
+            try:
+                return self._pool.send(self._sender_ptr, item)
+            except Exception:
+                return False
+        elif self._queue is not None:
+            try:
+                self._queue.put_nowait(item)
+                return True
+            except asyncio.QueueFull:
+                return False
+        return False
+
+    def send_batch(self, items: list[bytes]) -> int:
+        """Send multiple items via a single Rust send_batch() call.
+
+        ISSUE-007 FIX: Single Python→Rust call for N items — reduces GIL
+        acquisition overhead from N× to 1× for the MPSC send phase.
+        Falls back to sequential put_nowait() in asyncio fallback path.
+
+        Returns:
+            Number of items successfully sent.
+        """
+        if not items:
+            return 0
+        if self._impl == "rust" and self._pool is not None:
+            try:
+                # PyO3: list[bytes] → Vec<&[u8]>
+                return self._pool.send_batch(self._sender_ptr, items)
+            except Exception:
+                return 0
+        elif self._queue is not None:
+            sent = 0
+            for item in items:
+                try:
+                    self._queue.put_nowait(item)
+                    sent += 1
+                except asyncio.QueueFull:
+                    break
+            return sent
+        return 0
+
+    async def send_async(self, item: bytes) -> bool:
+        """Async send — blocks if queue is full (used by worker)."""
+        if self._impl == 'rust' and self._pool is not None:
+            return self.send(item)
+        elif self._queue is not None:
+            try:
+                self._queue.put_nowait(item)
+                return True
+            except asyncio.QueueFull:
+                return False
+        return False
+
+    def recv_batch(self, max_items: int | None=None) -> list[bytes]:
+        """Drain up to max_items as raw bytes (non-blocking).
+
+        ISSUE-006: Returns bytes directly — caller deserializes only when needed.
+        SQLite path now uses _flush_batch_bytes() for zero-copy BLOB insert.
+        """
+        if self._impl == 'rust' and self._pool is not None:
+            try:
+                return self._pool.recv_batch(max_items)
+            except Exception:
+                return []
+        elif self._queue is not None:
+            batch = []
+            while len(batch) < (max_items or 9999):
+                try:
+                    batch.append(self._queue.get_nowait())
+                except asyncio.QueueEmpty:
+                    break
+            return batch
+        return []
+
+    def wake_fd(self) -> int:
+        """Pipe read fd for asyncio reader registration."""
+        return self._wake_fd
+
+    def len(self) -> int:
+        if self._impl == 'rust' and self._pool is not None:
+            return self._pool.len()
+        elif self._queue is not None:
+            return self._queue.qsize()
+        return 0
+
+    def is_empty(self) -> bool:
+        if self._impl == 'rust' and self._pool is not None:
+            return self._pool.is_empty()
+        elif self._queue is not None:
+            return self._queue.empty()
+        return True
+
+    @property
+    def has_async_queue(self) -> bool:
+        """True when asyncio.Queue fallback is active (Rust unavailable)."""
+        return self._queue is not None
+
+class EvidenceLog:
+    """
+    Append-only log pro ukládání důkazů - M1 8GB RAM optimized.
+
+    Tato třída implementuje:
+    - Append-only zápis (nikdy nemazat)
+    - Ring buffer v RAM (max 100 událostí) pro M1 optimalizaci
+    - Automatická JSONL persistencer na disk
+    - Content hash pro každou událost
+    - Trimmované payloady (žádné fulltexty v RAM)
+    - Dotazování podle typu a confidence
+    - Shrnutí pro Hermes (ne celý raw log)
+    """
+    __slots__ = ('_run_id', '_log', '_index_by_type', '_index_by_source', '_created_at', '_frozen', '_closed', '_total_count', '_dropped_count', '_seq', '_chain_head', '_genesis_hash', '_encrypt_at_rest', '_encryption_key', '_cipher', '_enable_persist', '_persist_path', '_persist_file', '_persist_path_str', '_mpsc', '_mpsc2', '_flush_task', '_async_write_queue', '_async_write_task', '_mpsc2_reader', '_db_path', '_db', '_initialized', '_arrow_path', '_arrow_writer', '_arrow_schema', '_closing', '_manifest_dirty', '_flush_shutdown', '_async_write_shutdown', '_loop', '_silent_failure', '_sample_rate', '_duckdb_conn', '_duckdb_enabled')
+    MAX_RAM_EVENTS = 50
+    MAX_PAYLOAD_PREVIEW = 200
+    JSONL_ROTATE_SIZE = 10 * 1024 * 1024
+    _FSYNC_EVERY_N_EVENTS = 25
+    _MANIFEST_EVERY_N_EVENTS = 100
+    _SQLITE_BATCH_SIZE = 500
+    _SQLITE_FLUSH_INTERVAL = 1.5
+    _ASYNC_WRITE_QUEUE_MAXSIZE = 500
+
+    def __init__(self, run_id: str, persist_path: Path | None=None, enable_persist: bool=True, encrypt_at_rest: bool=False, silent_failure: bool=False, sample_rate: float=1.0):
+        """
+        Inicializuje EvidenceLog.
+
+        Args:
+            run_id: Unikátní ID běhu výzkumu
+            persist_path: Cesta pro JSONL persistenci (None = auto)
+            enable_persist: Zda povolit persistenci na disk
+            encrypt_at_rest: Zda šifrovat data na disku
+            silent_failure: If True, all append() calls become no-ops without I/O.
+                          Use for pre-flight / dry-run modes.
+            sample_rate: Sampling rate for non-error events (Phase4: 0.10 = 10%).
+                        Errors are always logged regardless of sampling.
+        """
+        import os
+        self._run_id: str = run_id
+        self._silent_failure: bool = silent_failure
+        self._sample_rate: float = ENV.get_float('HLEDAC_EVIDENCE_SAMPLE_RATE', default=sample_rate)
+        self._log: deque = deque(maxlen=self.MAX_RAM_EVENTS)
+        self._index_by_type: dict[str, deque[int]] = {'tool_call': deque(maxlen=self.MAX_RAM_EVENTS), 'observation': deque(maxlen=self.MAX_RAM_EVENTS), 'synthesis': deque(maxlen=self.MAX_RAM_EVENTS), 'error': deque(maxlen=self.MAX_RAM_EVENTS), 'decision': deque(maxlen=self.MAX_RAM_EVENTS), 'evidence_packet': deque(maxlen=self.MAX_RAM_EVENTS)}
+        self._index_by_source: dict[str, deque[int]] = {}
+        self._created_at: datetime = datetime.now(UTC)
+        self._frozen: bool = False
+        self._closed: bool = False
+        self._total_count: int = 0
+        self._dropped_count: int = 0
+        self._seq: int = 0

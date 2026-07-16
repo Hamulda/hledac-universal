@@ -1265,7 +1265,7 @@ async def _search_wayback_cdx(
     AUTHORITY: archive_discovery.wayback_cdx_lookup() je search-shaped canonical.
     REMOVAL CONDITION: po přechodu všech call-sites na archive_discovery.wayback_cdx_lookup().
     """
-    from hledac.universal.intelligence.archive_discovery import wayback_cdx_lookup
+    from hledac.universal.intel.archive_discovery import wayback_cdx_lookup
 
     snapshots = await wayback_cdx_lookup(url_pattern, limit=max_results, timeout_s=20.0)
     # Převod z wayback_cdx_lookup format na _search_wayback_cdx format

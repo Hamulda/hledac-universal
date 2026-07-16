@@ -88,10 +88,11 @@ _DOMAIN_PRESETS: dict[str, int] = {
     "metadata": 2,  # metadata processing
     "dns": 1,        # DNS/mlx operations
     "parallel": 3,  # general parallel execution
-    "nlp": 2,       # GLiNER2, fast-langdetect
-    "vision": 2,     # PyMuPDF, vision encoder
+    "nlp": 2,       # GLiNER2, fast-langdetect, ghost forensics (ISSUE-049)
+    "vision": 2,     # PyMuPDF, vision encoder, CoreML (ISSUE-049)
     "embed": 1,      # MLX embed sync bridge
     "storage": 2,   # DuckDB sync adapter
+    "captcha": 1,    # PIL CAPTCHA image analysis (ISSUE-049)
     "exposure_db": 1,  # LMDB single-writer for exposure cache (ISSUE-027)
     "default": 2,    # unmapped fallback
 }
@@ -271,3 +272,13 @@ def get_vision_executor() -> ThreadPoolExecutor:
 def get_exposure_db_executor() -> ThreadPoolExecutor:
     """LMDB single-writer executor for exposure cache (ISSUE-027)."""
     return get_or_create("exposure_db")
+
+
+def get_captcha_executor() -> ThreadPoolExecutor:
+    """PIL CAPTCHA image analysis pool (1 worker — I/O + minimal CPU)."""
+    return get_or_create("captcha")
+
+
+def get_nlp_executor() -> ThreadPoolExecutor:
+    """NLP pool: GLiNER2, fast-langdetect, ghost forensics analysis."""
+    return get_or_create("nlp")

@@ -16,7 +16,7 @@ if str(_root) not in sys.path:
 
 import asyncio  # noqa: E402
 
-import aiohttp  # noqa: E402
+import httpx  # noqa: E402
 
 from recon.wayback_cdx import (  # noqa: E402
     CDX_API,
@@ -115,7 +115,7 @@ def run_tests():
 
     # Test 9: cdx_deep_search (live network)
     async def test_cdx():
-        async with aiohttp.ClientSession() as session:
+        async with httpx.AsyncClient() as session:
             results = await cdx_deep_search("example.com", session, match_type="domain", limit=20)
         assert isinstance(results, list)
         for r in results:
@@ -126,7 +126,7 @@ def run_tests():
 
     # Test 10: cdx_deep_search_batch
     async def test_batch_fn():
-        async with aiohttp.ClientSession() as session:
+        async with httpx.AsyncClient() as session:
             results = await cdx_deep_search_batch(
                 ["example.com", "google.com"],
                 session,

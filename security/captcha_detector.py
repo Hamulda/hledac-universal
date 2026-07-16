@@ -8,18 +8,11 @@ GHOST_INVARIANTS:
 - Phase 1: PIL-only heuristics (no VisionEncoder, no coremltools model)
 """
 import re
-from concurrent.futures import ThreadPoolExecutor
+from hledac.universal.utils.domain_executors import get_captcha_executor
 try:
     from PIL import Image
 except ImportError:
     Image = None
-_PIL_EXECUTOR: ThreadPoolExecutor | None = None
-
-def _get_pil_executor() -> ThreadPoolExecutor:
-    global _PIL_EXECUTOR
-    if _PIL_EXECUTOR is None:
-        _PIL_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix='captcha_pil')
-    return _PIL_EXECUTOR
 
 def _analyze_pil_sync(image_bytes: bytes) -> float:
     """Analyze PIL image properties — runs in executor thread."""
@@ -69,7 +62,7 @@ class CaptchaDetector:
                 return True
             if len(image_bytes) > 50000:
                 return False
-            executor = _get_pil_executor()
+            executor = get_captcha_executor()
             future = executor.submit(_analyze_pil_sync, image_bytes)
             try:
                 score = future.result(timeout=2.0)

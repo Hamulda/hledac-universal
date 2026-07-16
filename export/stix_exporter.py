@@ -19,7 +19,7 @@ Otherwise the builtins path produces plain dicts that are syntactically
 STIX-compatible and pass basic shape validation.
 """
 import asyncio
-from hledac.universal.utils.async_helpers import safe_gather, parallel
+from hledac.universal.utils.async_helpers import parallel, parallel
 from ._shared import _iso_timestamp, _safe_str, _utc_now, normalize_export_input
 import os
 import uuid
@@ -147,8 +147,8 @@ async def collect_cti_export_inputs(report: dict[str, Any], store: Any) -> CTIEx
     async def _get_identity_candidates() -> tuple[dict[str, Any], ...]:
         cands = report.get('identity_candidates') or []
         return tuple(cands) if isinstance(cands, (list, tuple)) else ()
-    from hledac.universal.utils.async_helpers import safe_gather, parallel
-    _result = await safe_gather(_fetch_findings(), _get_identity_candidates(), label='collect_cti_export_inputs')
+    from hledac.universal.utils.async_helpers import parallel, parallel
+    _result = await parallel(_fetch_findings(), _get_identity_candidates(), label='collect_cti_export_inputs')
     ok = _result.ok
     findings_result = ok[0] if ok and ok[0] is not None else []
     identity_candidates = ok[1] if len(ok) > 1 and isinstance(ok[1], tuple) else ()

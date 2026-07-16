@@ -82,11 +82,10 @@ def _check_cryptokit() -> bool:
                 timeout=5,
             )
 
-        loop = asyncio.new_event_loop()
-        try:
-            result = loop.run_until_complete(_check())
-        finally:
-            loop.close()
+        # C7-FIX: Use asyncio.Runner() instead of new_event_loop/run_until_complete.
+        # Avoids M1 Metal crash vector when called from async context.
+        with asyncio.Runner() as runner:
+            result = runner.run(_check())
 
         if result.returncode == 0:
             import msgspec.json as _json
@@ -222,11 +221,10 @@ class LootManager:
             async def _run_encrypt() -> subprocess.CompletedProcess:
                 return await asyncio.to_thread(subprocess.run, cmd, input=zip_data, capture_output=True, timeout=30)
 
-            loop = asyncio.new_event_loop()
-            try:
-                result = loop.run_until_complete(_run_encrypt())
-            finally:
-                loop.close()
+            # C7-FIX: Use asyncio.Runner() instead of new_event_loop/run_until_complete.
+            # Avoids M1 Metal crash vector when called from async context.
+            with asyncio.Runner() as runner:
+                result = runner.run(_run_encrypt())
 
             os.unlink(temp_path)
             if result.returncode != 0:
@@ -439,11 +437,10 @@ class LootManager:
             async def _run_decrypt() -> subprocess.CompletedProcess:
                 return await asyncio.to_thread(subprocess.run, cmd, capture_output=True, timeout=30)
 
-            loop = asyncio.new_event_loop()
-            try:
-                result = loop.run_until_complete(_run_decrypt())
-            finally:
-                loop.close()
+            # C7-FIX: Use asyncio.Runner() instead of new_event_loop/run_until_complete.
+            # Avoids M1 Metal crash vector when called from async context.
+            with asyncio.Runner() as runner:
+                result = runner.run(_run_decrypt())
 
             os.unlink(temp_path)
             if result.returncode != 0:

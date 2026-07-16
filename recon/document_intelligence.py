@@ -20,6 +20,8 @@ M1 Optimized: Streaming processing, MLX-accelerated where possible
 """
 import asyncio
 import concurrent.futures
+
+from hledac.universal.utils.locks import LazyAsyncioLock
 from utils.domain_executors import get_parallel_executor
 import hashlib
 import io
@@ -40,7 +42,7 @@ logger = logging.getLogger(__name__)
 # M1 8GB: ProcessPoolExecutor for CPU-bound forensics (max 2 workers to avoid RAM pressure)
 # Shared across all DeepForensicsAnalyzer instances via module-level singleton
 _forensics_pool: concurrent.futures.Executor | None = None
-_forensics_pool_lock = asyncio.Lock()
+_forensics_pool_lock = LazyAsyncioLock()
 
 
 def _get_forensics_pool() -> concurrent.futures.Executor:

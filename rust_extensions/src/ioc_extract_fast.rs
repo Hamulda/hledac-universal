@@ -23,6 +23,8 @@ use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use regex::{Regex, RegexSet};
 use std::collections::HashSet;
 
+use crate::gil::release_gil;
+
 /// Maximum texts per batch (M1 8GB memory guard)
 const BATCH_MAX_TEXTS: usize = 1000;
 
@@ -336,7 +338,7 @@ pub fn extract_structured_entities(text: &str) -> Vec<(usize, usize, String, Str
 /// Batch extract structured entities with rayon parallelization.
 ///
 /// M1 8GB: adaptive 1-2 threads, 1000 text batch limit.
-/// GIL is held by calling Python thread; rayon workers run without GIL on pure Rust work.
+/// GIL is released via allow_threads so rayon workers don't block other coroutines.
 pub fn batch_extract_structured_entities(
     texts: Vec<String>,
 ) -> Vec<Vec<(usize, usize, String, String)>> {
@@ -347,19 +349,23 @@ pub fn batch_extract_structured_entities(
     let texts: Vec<String> = texts.into_iter().take(BATCH_MAX_TEXTS).collect();
     let n = texts.len();
 
-    // rayon parallel scan — GIL is NOT held by rayon workers (pure Rust regex on &str)
-    // Python::with_gil ensures GIL is held by caller before/after pool.install()
-    crate::mixed_pool(n).install(|| {
-        texts
-            .par_iter()
-            .map(|text| {
-                if text.len() > TEXT_MAX_BYTES {
-                    extract_structured_entities(&text[..TEXT_MAX_BYTES])
-                } else {
-                    extract_structured_entities(text)
-                }
+    // Release GIL during rayon parallel scan — rayon workers are pure Rust (no Python objects).
+    // GIL is reacquired automatically when the closure returns.
+    Python::with_gil(|py| {
+        release_gil(py, || {
+            crate::mixed_pool(n).install(|| {
+                texts
+                    .par_iter()
+                    .map(|text| {
+                        if text.len() > TEXT_MAX_BYTES {
+                            extract_structured_entities(&text[..TEXT_MAX_BYTES])
+                        } else {
+                            extract_structured_entities(text)
+                        }
+                    })
+                    .collect()
             })
-            .collect()
+        })
     })
 }
 
@@ -405,17 +411,23 @@ pub fn batch_ioc_extract_unified(texts: Vec<String>) -> Vec<Vec<(String, String)
     let texts: Vec<String> = texts.into_iter().take(BATCH_MAX_TEXTS).collect();
     let n = texts.len();
 
-    // adaptive 1-2 threads: n < 64 → 1 thread (no pool overhead); n ≥ 64 → 2 threads (P-core ceiling)
-    crate::mixed_pool(n).install(|| {
-        texts.par_iter()
-            .map(|text| {
-                if text.len() > TEXT_MAX_BYTES {
-                    extract_iocs_from_text(&text[..TEXT_MAX_BYTES])
-                } else {
-                    extract_iocs_from_text(text)
-                }
+    // Release GIL during rayon parallel scan — rayon workers are pure Rust (no Python objects).
+    // GIL is reacquired automatically when the closure returns.
+    Python::with_gil(|py| {
+        release_gil(py, || {
+            // adaptive 1-2 threads: n < 64 → 1 thread (no pool overhead); n ≥ 64 → 2 threads (P-core ceiling)
+            crate::mixed_pool(n).install(|| {
+                texts.par_iter()
+                    .map(|text| {
+                        if text.len() > TEXT_MAX_BYTES {
+                            extract_iocs_from_text(&text[..TEXT_MAX_BYTES])
+                        } else {
+                            extract_iocs_from_text(text)
+                        }
+                    })
+                    .collect()
             })
-            .collect()
+        })
     })
 }
 
@@ -432,18 +444,21 @@ pub fn batch_ioc_extract_unified_python<'py>(
     let texts: Vec<String> = texts.into_iter().take(BATCH_MAX_TEXTS).collect();
     let n = texts.len();
 
-    // Phase 1: rayon-parallel extraction — pure Rust, no Python objects
-    let rust_results: Vec<Vec<(String, String)>> = crate::mixed_pool(n).install(|| {
-        texts
-            .par_iter()
-            .map(|text| {
-                if text.len() > TEXT_MAX_BYTES {
-                    extract_iocs_from_text(&text[..TEXT_MAX_BYTES])
-                } else {
-                    extract_iocs_from_text(text)
-                }
-            })
-            .collect()
+    // Phase 1: rayon-parallel extraction — pure Rust, no Python objects.
+    // Release GIL so rayon workers don't block other coroutines.
+    let rust_results: Vec<Vec<(String, String)>> = release_gil(py, || {
+        crate::mixed_pool(n).install(|| {
+            texts
+                .par_iter()
+                .map(|text| {
+                    if text.len() > TEXT_MAX_BYTES {
+                        extract_iocs_from_text(&text[..TEXT_MAX_BYTES])
+                    } else {
+                        extract_iocs_from_text(text)
+                    }
+                })
+                .collect()
+        })
     });
 
     // Phase 2: build Python objects AFTER rayon completes (GIL block, no rayon active)

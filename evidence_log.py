@@ -48,11 +48,13 @@ M1 8GB Optimalizace:
 from __future__ import annotations
 import asyncio
 import concurrent.futures
+import contextlib
 import hashlib
 import logging
 import os
 import secrets
 import threading
+import atexit
 import time
 import uuid
 from collections import deque
@@ -70,6 +72,70 @@ from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
 _evidence_sqlite_executor: concurrent.futures.ThreadPoolExecutor | None = None
 _duckdb_executor: concurrent.futures.ThreadPoolExecutor | None = None
 _arrow = None
+
+
+def _ensure_duckdb_executor() -> concurrent.futures.ThreadPoolExecutor:
+    """Lazily create and return the DuckDB write executor (singleton)."""
+    global _duckdb_executor
+    if _duckdb_executor is None:
+        _duckdb_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix='evidence_duckdb',
+        )
+    return _duckdb_executor
+
+
+def _ensure_evidence_sqlite_executor() -> concurrent.futures.ThreadPoolExecutor:
+    """Lazily create and return the SQLite write executor (singleton)."""
+    global _evidence_sqlite_executor
+    if _evidence_sqlite_executor is None:
+        _evidence_sqlite_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix='evidence_sqlite',
+        )
+    return _evidence_sqlite_executor
+
+
+def _shutdown_executor_guarded(
+    ex: concurrent.futures.ThreadPoolExecutor, *, timeout_s: float = 2.0
+) -> None:
+    """Graceful shutdown with bounded timeout, then force-fallback.
+
+    Python 3.12+ has shutdown(timeout=...) natively, but we implement our own
+    timeout via a thread join to stay compatible with Python <3.12.
+    """
+    try:
+        # Graceful: wait up to timeout_s for in-flight writes to finish.
+        # Thread.join() is interruptible, so this won't wait forever.
+        t = threading.Thread(target=lambda: ex.shutdown(wait=True, cancel_futures=False), daemon=True)
+        t.start()
+        t.join(timeout=timeout_s)
+        if t.is_alive():
+            # Timed out → force cancel remaining work
+            ex.shutdown(wait=False, cancel_futures=True)
+    except Exception:
+        # Any error → force shutdown
+        try:
+            ex.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            pass  # Best-effort at interpreter exit
+
+
+def _shutdown_executors() -> None:
+    """Shutdown module-global executors at interpreter exit.
+
+    B4 FIX: Module-global ThreadPoolExecutors (_evidence_sqlite_executor,
+    _duckdb_executor) are lazily initialized and were never shut down.
+    Multiple imports during a long sprint left idle threads around.
+    This function is registered via atexit to ensure clean shutdown.
+
+    Each executor gets a bounded graceful shutdown (2s) before force-kill.
+    """
+    for ex in (_evidence_sqlite_executor, _duckdb_executor):
+        if ex is None:
+            continue
+        _shutdown_executor_guarded(ex, timeout_s=2.0)
+
+
+atexit.register(_shutdown_executors)
 
 def _get_arrow():
     """Lazy Arrow IPC loader — only loads pyarrow if HLEDAC_ARROW_EVIDENCE=1."""
@@ -253,8 +319,16 @@ class _RustMPSCBytes:
     - recv_batch() drains the Rust MPSC channel directly
 
     M1 8GB: ~1 MiB total (2048 slots × 512B), negligible overhead.
+
+    D4 FIX: Lazy retry with exponential backoff.
+    - If Rust extension is not available at init time (e.g. maturin develop
+      hasn't run yet), the asyncio fallback is used temporarily.
+    - A retry is scheduled via call_later() — attempts to re-import the Rust
+      extension every 5s/10s/20s/40s/60s (exponential backoff, capped at 60s).
+    - On success: silently switches to Rust MPSC, asyncio.Queue is abandoned.
+    - This enables "maturin develop" mid-process workflow without restart.
     """
-    __slots__ = tuple(('_impl', '_pool', '_queue', '_sender_ptr', '_wake_fd', 'fallback'))
+    __slots__ = tuple(('_impl', '_pool', '_queue', '_sender_ptr', '_wake_fd', 'fallback', '_retry_handle', '_retry_delay', '_capacity', '_asyncio_fallback', '_pending_retry'))
 
     def __init__(self, capacity: int=2048, asyncio_fallback: bool=False) -> None:
         """Initialize MPSC pool.
@@ -270,6 +344,11 @@ class _RustMPSCBytes:
         self._wake_fd: int = -1
         self.fallback: bool = True
         self._impl: str = 'asyncio'
+        self._retry_handle: asyncio.TimerHandle | None = None  # Scheduled retry timer
+        self._retry_delay: float = 5.0  # seconds, exponential backoff
+        self._capacity: int = capacity
+        self._asyncio_fallback: bool = asyncio_fallback
+        self._pending_retry: bool = False  # True when a retry is scheduled
         self._init_rust(capacity, asyncio_fallback)
 
     def _init_rust(self, capacity: int, asyncio_fallback: bool) -> None:
@@ -283,6 +362,13 @@ class _RustMPSCBytes:
             self._wake_fd = wake_fd
             self.fallback = False
             self._impl = 'rust'
+            # Rust is now available — cancel any pending retry
+            if self._retry_handle is not None:
+                try:
+                    self._retry_handle.cancel()
+                except Exception:
+                    pass
+                self._retry_handle = None
         except Exception:
             self._pool = None
             self._sender_ptr = 0
@@ -293,13 +379,119 @@ class _RustMPSCBytes:
                 self._queue = None
             self.fallback = True
             self._impl = 'asyncio'
+            # D4 FIX: Schedule lazy retry — Rust extension may be built mid-process
+            self._schedule_retry()
+
+    def _schedule_retry(self) -> None:
+        """Schedule a retry attempt to re-import Rust extension.
+
+        Uses exponential backoff: 5s → 10s → 20s → 40s → 60s (cap).
+        Cancel previous retry if one is scheduled (call_later is idempotent per loop).
+        """
+        # Don't reschedule if already pending or not in fallback
+        if self._pending_retry or not self.fallback:
+            return
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running event loop yet — mark pending, will be triggered on first send/recv
+            self._pending_retry = True
+            return
+
+        # Cancel any existing retry
+        if self._retry_handle is not None:
+            try:
+                self._retry_handle.cancel()
+            except Exception:
+                pass
+            self._retry_handle = None
+
+        def _retry_callback() -> None:
+            """Retry Rust import — called from event loop."""
+            self._retry_handle = None
+            self._pending_retry = False
+            try:
+                self._do_retry_init()
+            except Exception:
+                pass  # Will reschedule if still in fallback
+
+        try:
+            # call_later is safe — if loop is closed, callback simply doesn't fire
+            self._retry_handle = loop.call_later(
+                self._retry_delay, _retry_callback
+            )
+            self._pending_retry = True
+            # Exponential backoff: double delay, cap at 60s
+            self._retry_delay = min(self._retry_delay * 2, 60.0)
+        except Exception:
+            # Loop might be closing — mark pending for next send/recv
+            self._pending_retry = True
+
+    def _do_retry_init(self) -> None:
+        """Attempt to re-initialize Rust MPSC.
+
+        Called by retry callback. If Rust is now available, switches over.
+        Otherwise, reschedules another retry at the current backoff delay.
+        """
+        if not self.fallback:
+            # Already using Rust — nothing to do
+            self._pending_retry = False
+            return
+
+        try:
+            # Use importlib to re-import (avoids cached failed import)
+            import importlib
+            import hledac_rust_extensions as ext  # type: ignore[import]
+            importlib.reload(ext)
+
+            from hledac_rust_extensions import MPSCPool as _MPSC  # type: ignore[import]
+            pool = _MPSC(capacity=self._capacity)
+            sender_ptr = pool.add_sender()
+            wake_fd = pool.wake_fd()
+
+            # Success — switch to Rust MPSC
+            old_queue = self._queue
+            self._pool = pool
+            self._sender_ptr = sender_ptr
+            self._wake_fd = wake_fd
+            self.fallback = False
+            self._impl = 'rust'
+            self._queue = None  # Abandon asyncio.Queue
+            self._pending_retry = False
+
+            # Drain any items that accumulated in asyncio.Queue into Rust MPSC
+            if old_queue is not None:
+                drained: list[bytes] = []
+                while True:
+                    try:
+                        drained.append(old_queue.get_nowait())
+                    except asyncio.QueueEmpty:
+                        break
+                if drained:
+                    for item in drained:
+                        self._pool.send(self._sender_ptr, item)
+                    logger.debug(f'[_RustMPSC] Switched to Rust MPSC, drained {len(drained)} items from asyncio.Queue')
+
+            logger.info(f'[_RustMPSC] Rust MPSC now available — switched from asyncio fallback')
+        except Exception:
+            # Still not available — schedule another retry
+            self._pending_retry = True
+            self._schedule_retry()
 
     def send(self, item: bytes) -> bool:
         """Send raw bytes to the pool. Non-blocking (Rust) or blocking (asyncio).
 
         ISSUE-006: bytes-only — serialization is caller's responsibility.
         This eliminates the redundant orjson.dumps() that _RustMPSC did internally.
+
+        D4 FIX: If _pending_retry is True (retry scheduled but no event loop yet),
+        try to re-initialize Rust MPSC synchronously on first send().
         """
+        # D4 FIX: Sync retry on first send if pending but no event loop was available
+        if self._pending_retry and self._impl != 'rust':
+            self._do_retry_init()
+
         if self._impl == 'rust' and self._pool is not None:
             try:
                 return self._pool.send(self._sender_ptr, item)
@@ -359,7 +551,13 @@ class _RustMPSCBytes:
 
         ISSUE-006: Returns bytes directly — caller deserializes only when needed.
         SQLite path now uses _flush_batch_bytes() for zero-copy BLOB insert.
+
+        D4 FIX: If _pending_retry is True, try to re-initialize Rust MPSC on first recv.
         """
+        # D4 FIX: Sync retry on first recv if pending but no event loop was available
+        if self._pending_retry and self._impl != 'rust':
+            self._do_retry_init()
+
         if self._impl == 'rust' and self._pool is not None:
             try:
                 return self._pool.recv_batch(max_items)
@@ -411,7 +609,7 @@ class EvidenceLog:
     - Dotazování podle typu a confidence
     - Shrnutí pro Hermes (ne celý raw log)
     """
-    __slots__ = ('_run_id', '_log', '_index_by_type', '_index_by_source', '_created_at', '_frozen', '_closed', '_total_count', '_dropped_count', '_seq', '_chain_head', '_genesis_hash', '_encrypt_at_rest', '_encryption_key', '_cipher', '_enable_persist', '_persist_path', '_persist_file', '_persist_path_str', '_mpsc', '_mpsc2', '_flush_task', '_async_write_queue', '_async_write_task', '_mpsc2_reader', '_db_path', '_db', '_initialized', '_arrow_path', '_arrow_writer', '_arrow_schema', '_closing', '_manifest_dirty', '_flush_shutdown', '_async_write_shutdown', '_loop', '_silent_failure', '_sample_rate', '_duckdb_conn', '_duckdb_enabled')
+    __slots__ = ('_run_id', '_log', '_index_by_type', '_index_by_source', '_created_at', '_frozen', '_closed', '_total_count', '_dropped_count', '_seq', '_chain_head', '_genesis_hash', '_encrypt_at_rest', '_encryption_key', '_cipher', '_enable_persist', '_persist_path', '_persist_file', '_persist_path_str', '_mpsc', '_mpsc2', '_flush_task', '_async_write_queue', '_async_write_task', '_mpsc2_reader', '_db_path', '_db', '_initialized', '_arrow_path', '_arrow_writer', '_arrow_schema', '_closing', '_manifest_dirty', '_flush_shutdown', '_async_write_shutdown', '_cancel_event', '_cancel_watcher_task', '_loop', '_silent_failure', '_sample_rate', '_duckdb_conn', '_duckdb_enabled')
     MAX_RAM_EVENTS = 50
     MAX_PAYLOAD_PREVIEW = 200
     JSONL_ROTATE_SIZE = 10 * 1024 * 1024
@@ -421,7 +619,7 @@ class EvidenceLog:
     _SQLITE_FLUSH_INTERVAL = 1.5
     _ASYNC_WRITE_QUEUE_MAXSIZE = 500
 
-    def __init__(self, run_id: str, persist_path: Path | None=None, enable_persist: bool=True, encrypt_at_rest: bool=False, silent_failure: bool=False, sample_rate: float=1.0):
+    def __init__(self, run_id: str, persist_path: Path | None=None, enable_persist: bool=True, encrypt_at_rest: bool=False, silent_failure: bool=False, sample_rate: float=1.0, cancel_event: asyncio.Event | None=None):
         """
         Inicializuje EvidenceLog.
 
@@ -434,6 +632,11 @@ class EvidenceLog:
                           Use for pre-flight / dry-run modes.
             sample_rate: Sampling rate for non-error events (Phase4: 0.10 = 10%).
                         Errors are always logged regardless of sampling.
+            cancel_event: Optional asyncio.Event wired to sprint lifecycle shutdown.
+                        When set, a background watcher auto-triggers aclose() when the
+                        event is set — ensuring EvidenceLog workers exit cleanly even
+                        when aclose() is not called explicitly by the lifecycle.
+                        E2: Replaces bare asyncio.Event() pattern with lifecycle binding.
         """
         import os
         self._run_id: str = run_id
@@ -493,8 +696,14 @@ class EvidenceLog:
         self._arrow_schema: Any = None
         self._closing = False
         self._manifest_dirty: bool = False
+        # E2: Bare asyncio.Event() replaced with lifecycle-bound shutdown via cancel_event.
+        # _flush_shutdown and _async_write_shutdown are still used by aclose() to signal
+        # workers to drain, but a watcher on cancel_event auto-triggers aclose() when
+        # the sprint lifecycle ends (even if aclose() is never called explicitly).
         self._flush_shutdown: asyncio.Event = asyncio.Event()
         self._async_write_shutdown: asyncio.Event = asyncio.Event()
+        self._cancel_event: asyncio.Event | None = cancel_event
+        self._cancel_watcher_task: asyncio.Task | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         # ISSUE-11: DuckDB Arrow IPC support
         self._duckdb_conn: Any = None
@@ -605,7 +814,28 @@ class EvidenceLog:
         except Exception as _write_task_err:
             logger.warning(f'[F290] Async write worker task creation failed (non-fatal): {_write_task_err}')
             self._async_write_task = None
-        self._initialized = True
+        # E2: Start cancel watcher — triggers aclose() when lifecycle cancel_event is set.
+        # This ensures workers exit cleanly even when aclose() is not called explicitly.
+        self._start_cancel_watcher()
+
+    def inject_cancel_event(self, cancel_event: asyncio.Event) -> None:
+        """
+        E2: Wire an external cancel_event to EvidenceLog.
+
+        When cancel_event is set (sprint lifecycle shutdown), the internal watcher
+        auto-triggers aclose(), ensuring workers exit cleanly even when aclose()
+        is not called explicitly by the lifecycle.
+
+        Safe to call multiple times (only first call takes effect).
+        Idempotent: passing the same event multiple times is a no-op.
+        """
+        if self._cancel_event is not None:
+            return  # Already wired
+        self._cancel_event = cancel_event
+        # If already initialized, start the watcher immediately;
+        # otherwise it will be started by initialize() which calls _start_cancel_watcher().
+        if self._initialized:
+            self._start_cancel_watcher()
 
     async def _init_db(self) -> None:
         """Initialize SQLite database with WAL mode OR DuckDB Arrow IPC.
@@ -642,9 +872,7 @@ class EvidenceLog:
                 ''')
                 self._duckdb_enabled = True
                 logger.info(f'[DuckDB] Arrow IPC evidence enabled: {self._db_path}')
-                # Initialize thread pool executor for GIL-free writes
-                if _duckdb_executor is None:
-                    _duckdb_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix='evidence_duckdb')
+                _ensure_duckdb_executor()
             except Exception as _duck_err:
                 logger.warning(f'[DuckDB] Failed to initialize, falling back to SQLite: {_duck_err}')
                 self._duckdb_enabled = False
@@ -676,9 +904,7 @@ class EvidenceLog:
                 )
             ''')
             await self._db.commit()
-            # ISSUE-11: Thread pool executor for GIL-free SQLite writes
-            if _evidence_sqlite_executor is None:
-                _evidence_sqlite_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix='evidence_sqlite')
+            _ensure_evidence_sqlite_executor()
 
         arrow_loader = _get_arrow()
         if arrow_loader:
@@ -980,11 +1206,7 @@ class EvidenceLog:
                 logger.warning(f'[_flush_duckdb_batch] DuckDB executemany failed: {e}')
 
         try:
-            if _duckdb_executor is None:
-                _duckdb_executor = concurrent.futures.ThreadPoolExecutor(
-                    max_workers=1, thread_name_prefix='evidence_duckdb',
-                )
-            await loop.run_in_executor(_duckdb_executor, _duckdb_insert_records)
+            await loop.run_in_executor(_ensure_duckdb_executor(), _duckdb_insert_records)
         except Exception as e:
             logger.warning(f'[_flush_duckdb_batch] executor failed: {e}')
             # Fallback: direct SQLite
@@ -1038,9 +1260,7 @@ class EvidenceLog:
                 logger.warning(f'[_flush_sqlite_batch] SQLite insert failed: {e}')
 
         try:
-            if _evidence_sqlite_executor is None:
-                _evidence_sqlite_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix='evidence_sqlite')
-            await loop.run_in_executor(_evidence_sqlite_executor, _sqlite_insert)
+            await loop.run_in_executor(_ensure_evidence_sqlite_executor(), _sqlite_insert)
         except Exception as e:
             logger.warning(f'[_flush_sqlite_batch] executor failed: {e}')
 
@@ -1909,6 +2129,41 @@ class EvidenceLog:
             logger.error(f'Failed to write manifest: {e}')
             return None
 
+    def _start_cancel_watcher(self) -> None:
+        """
+        E2: Start a background watcher that auto-triggers aclose() when cancel_event is set.
+
+        This bridges the bare asyncio.Event() pattern to the sprint lifecycle:
+        - When cancel_event is set (lifecycle shutdown), the watcher calls aclose()
+        - Ensures EvidenceLog workers exit cleanly even when aclose() is never called
+          explicitly by the lifecycle TEARDOWN phase.
+        - Fail-safe: any exception is caught and logged; watcher task is cancelled in aclose().
+        """
+        if self._cancel_event is None:
+            return
+        if self._cancel_watcher_task is not None and not self._cancel_watcher_task.done():
+            return
+
+        async def _watch_cancel() -> None:
+            try:
+                await self._cancel_event.wait()
+            except asyncio.CancelledError:
+                return
+            except Exception as _wait_err:
+                logger.debug('[E2] cancel_event.wait() failed: %s', _wait_err)
+                return
+            # Cancel event was set — trigger aclose if not already closing/closed
+            if not self._closing and not self._closed:
+                try:
+                    await self.aclose()
+                except Exception as _aclose_err:
+                    logger.debug('[E2] aclose() from cancel watcher failed: %s', _aclose_err)
+
+        try:
+            self._cancel_watcher_task = safe_create_task(_watch_cancel(), name='_cancel_watcher')
+        except Exception as _watch_err:
+            logger.debug('[E2] Failed to start cancel watcher: %s', _watch_err)
+
     async def aclose(self) -> None:
         """
         Async cleanup: shutdown flush worker, close SQLite, close persist file.
@@ -1921,6 +2176,17 @@ class EvidenceLog:
         if self._closed:
             return
         self._closing = True
+        # E2: Cancel the lifecycle watcher — aclose() is now the owner of shutdown.
+        if self._cancel_watcher_task is not None and not self._cancel_watcher_task.done():
+            self._cancel_watcher_task.cancel()
+            try:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await asyncio.wait_for(self._cancel_watcher_task, timeout=2.0)
+            except (TimeoutError, asyncio.CancelledError):
+                pass
+            except Exception:
+                pass
+            self._cancel_watcher_task = None
         if self._flush_shutdown:
             self._flush_shutdown.set()
         if self._flush_task:
@@ -1980,8 +2246,14 @@ class EvidenceLog:
         if mpsc2_drained and self._persist_file:
             try:
                 # Write remaining mpsc2 items (JSONL path) before closing
-                _combined = b''.join(mpsc2_drained)
-                self._persist_file.write(_combined)
+                # _persist_file is text-mode (encoding='utf-8') when not encrypting,
+                # so decode bytes to str before writing
+                if self._encrypt_at_rest:
+                    _combined = b''.join(mpsc2_drained)
+                    self._persist_file.write(_combined)
+                else:
+                    for item in mpsc2_drained:
+                        self._persist_file.write(item.decode('utf-8', errors='replace'))
                 self._persist_file.flush()
             except Exception as e:
                 logger.warning(f'Failed to flush mpsc2 remaining items: {e}')

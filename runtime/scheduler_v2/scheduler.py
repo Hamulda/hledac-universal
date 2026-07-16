@@ -832,6 +832,13 @@ class SprintSchedulerV2:
             # Set both public (SprintContext) and private (_CycleState) fields
             object.__setattr__(self, '_ctx', self._ctx.with_cycle(evidence_log=elog))
 
+    # E2: Wire sprint cancel_event to EvidenceLog for lifecycle-bound shutdown.
+    def inject_cancel_event(self, cancel_event: asyncio.Event) -> None:
+        """Inject the sprint cancel_event so EvidenceLog can watch it."""
+        _elog_raw = self._evidence_log.value if self._evidence_log else None
+        if _elog_raw is not None and hasattr(_elog_raw, 'inject_cancel_event'):
+            _elog_raw.inject_cancel_event(cancel_event)
+
     def inject_policy_manager(self, policy_manager: Any) -> None:
         object.__setattr__(self, '_policy_manager', policy_manager)
         # PolicyManager is not a SprintContext service; no ctx update needed

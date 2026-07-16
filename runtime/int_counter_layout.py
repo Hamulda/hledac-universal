@@ -404,6 +404,92 @@ def build_layout_from_dataclass_int_fields(
     return IntCounterLayout(field_names)
 
 
+def compute_updated_source_weights_from_feedback(
+    source_quality_feedback: dict[str, dict[str, int]],
+    current_weights: dict[str, float],
+    default_weight: float = 1.0,
+) -> dict[str, float]:
+    """
+    Compute updated source weights from per-source quality feedback using Rust NEON.
+
+    D5 Fix: Routes `_source_quality_feedback` data through `batch_compute_scores`
+    (Rust NEON SIMD) instead of the pure-Python fallback in sprint_scheduler_v1_archived.
+
+    Args:
+        source_quality_feedback: Dict mapping feed_url → {"fetched": int, "accepted": int}
+        current_weights: Dict mapping source_type → current weight (f32)
+        default_weight: Fallback weight when source not in current_weights
+
+    Returns:
+        Updated weights dict (same keys as current_weights, updated in-place)
+    """
+    if not _RUST_AVAILABLE or batch_compute_scores is None:
+        return _python_fallback_weights(source_quality_feedback, current_weights)
+
+    stats_list: list[dict[str, float]] = []
+    source_types: list[str] = []
+    for feed_url, fb in source_quality_feedback.items():
+        total = fb.get("fetched", 0)
+        accepted = fb.get("accepted", 0)
+        if total == 0:
+            continue
+        source_type = feed_url  # caller maps feed_url→source_type before calling
+        current = current_weights.get(source_type, default_weight)
+        source_types.append(source_type)
+        stats_list.append({
+            "fetched": float(total),
+            "accepted": float(accepted),
+            "current_weight": current,
+            "novelty": False,
+        })
+
+    if not stats_list:
+        return current_weights
+
+    try:
+        new_weights: list[float] = batch_compute_scores(stats_list)
+        for i, source_type in enumerate(source_types):
+            current_weights[source_type] = new_weights[i]
+    except Exception:
+        # Fail-soft: fall back to Python if Rust fails at runtime
+        return _python_fallback_weights(source_quality_feedback, current_weights)
+
+    return current_weights
+
+
+def _python_fallback_weights(
+    source_quality_feedback: dict[str, dict[str, int]],
+    source_weights: dict[str, float],
+    default_weight: float = 1.0,
+) -> dict[str, float]:
+    """
+    Pure-Python source weight adaptation — mirrors F199A rules exactly.
+
+    Used when Rust `batch_compute_scores` is unavailable or fails.
+    Matches: ratio>=0.7→delta 1.10, >=0.4→1.05, >=0.15→1.00, <0.15→0.95.
+    Clamped to [0.3, 2.5].
+    """
+    for feed_url, fb in source_quality_feedback.items():
+        total = fb.get("fetched", 0)
+        accepted = fb.get("accepted", 0)
+        if total == 0:
+            continue
+        source_type = feed_url
+        current = source_weights.get(source_type, default_weight)
+        ratio = accepted / total
+        if ratio >= 0.7:
+            delta = 1.1
+        elif ratio >= 0.4:
+            delta = 1.05
+        elif ratio >= 0.15:
+            delta = 1.0
+        else:
+            delta = 0.95
+        new_weight = max(0.3, min(2.5, current * delta))
+        source_weights[source_type] = new_weight
+    return source_weights
+
+
 __all__ = [
     "IntCounterLayout",
     "build_layout_from_dataclass_int_fields",
@@ -417,6 +503,8 @@ __all__ = [
     # Sprint P2-2: NEON-accelerated signal aggregation
     "batch_compute_scores",
     "batch_aggregate_signals",
+    # D5 Fix: wired source quality feedback → Rust NEON scoring
+    "compute_updated_source_weights_from_feedback",
 ]
 
 

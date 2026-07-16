@@ -296,7 +296,8 @@ class SprintAdvisoryRunner:
                     hermes_outputs = []
                     for row in rows:
                         try:
-                            payload = json.loads(row[0])
+                            import orjson
+                            payload = orjson.loads(row[0])
                             hermes_outputs.append(HermesInferenceOutput.from_dict(payload))
                         except Exception:
                             pass

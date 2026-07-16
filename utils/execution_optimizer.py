@@ -324,6 +324,8 @@ class ParallelExecutionOptimizer:
     def _determine_optimal_workers(self, tasks: list[Any], task_type: TaskType) -> int:
         """Determine optimal number of workers based on task type and system resources"""
         cpu_count = multiprocessing.cpu_count()
+        # E3 FIX: virtual_memory().total is stable system-wide (total RAM never changes at runtime).
+        # Called only during worker-sizing decisions, not per-task — not a hot path.
         memory_gb = psutil.virtual_memory().total / 1024 ** 3
         if task_type == TaskType.CPU_INTENSIVE:
             return min(cpu_count, self.config['execution']['max_workers'])
@@ -707,7 +709,16 @@ class ParallelExecutionOptimizer:
                 _start_time = stored.get('ts', datetime.now(UTC))
             else:
                 _start_time = group.created_at
-            metrics = TaskMetrics(task_id=group_id, task_type=TaskType.MIXED, start_time=_start_time, end_time=datetime.now(UTC), cpu_usage=psutil.cpu_percent(), memory_usage=psutil.virtual_memory().percent / 100, execution_time=execution_time, success=True, parallel_group=group_id)
+            # E3 FIX: use cached system_snapshot instead of raw psutil calls
+            # cpu_percent removed — was non-blocking but still ~µs overhead per call
+            # memory from mach host_statistics64 via get_system_snapshot (cached, zero-syscall warm)
+            try:
+                from hledac.universal.core.system_metrics import get_system_snapshot
+                snap = get_system_snapshot()
+                memory_usage = snap.memory_percent / 100.0
+            except Exception:
+                memory_usage = 0.0
+            metrics = TaskMetrics(task_id=group_id, task_type=TaskType.MIXED, start_time=_start_time, end_time=datetime.now(UTC), cpu_usage=0.0, memory_usage=memory_usage, execution_time=execution_time, success=True, parallel_group=group_id)
             self.task_history.append(metrics)
 
     def get_performance_statistics(self) -> dict[str, Any]:
@@ -733,14 +744,14 @@ class ParallelExecutionOptimizer:
         logger.info(f'Performance report exported to {filepath}')
 
     async def cleanup(self):
-        """Clean up resources"""
+        """Clean up resources.
+
+        Note: thread_pool is a shared domain_executor (ISSUE-049: get_parallel_executor).
+        Do NOT call shutdown() — shared executor lifetime is managed by
+        atexit.register(shutdown_all) in domain_executors.
+        """
         await self._concurrency_controller.stop_monitoring()
-        if self.thread_pool:
-            try:
-                await asyncio.to_thread(self.thread_pool.shutdown, wait=True)
-            except Exception as exc:
-                logger.debug('[optimizer] thread_pool.shutdown failed: %s', exc)
-            self.thread_pool = None
+        self.thread_pool = None  # type: ignore[assignment]
         logger.info('Parallel execution optimizer cleaned up')
 
 class LoadBalancer:
@@ -762,8 +773,22 @@ class ResourceMonitor:
     """Resource monitoring for optimization"""
 
     async def get_current_resources(self) -> dict[str, float]:
-        """Get current system resources"""
-        return {'cpu_usage': psutil.cpu_percent() / 100, 'memory_usage': psutil.virtual_memory().percent / 100, 'available_memory_gb': psutil.virtual_memory().available / 1024 ** 3, 'cpu_count': multiprocessing.cpu_count()}
+        """Get current system resources.
+
+        E3 FIX: uses get_system_snapshot() — mach host_statistics64 cached,
+        no raw psutil syscalls in this hot path.
+        """
+        try:
+            from hledac.universal.core.system_metrics import get_system_snapshot
+            snap = get_system_snapshot()
+            return {
+                'cpu_usage': 0.0,  # Not available from mach without blocking call
+                'memory_usage': snap.memory_percent / 100.0,
+                'available_memory_gb': snap.memory_available_gb,
+                'cpu_count': multiprocessing.cpu_count(),
+            }
+        except Exception:
+            return {'cpu_usage': 0.0, 'memory_usage': 0.0, 'available_memory_gb': 0.0, 'cpu_count': multiprocessing.cpu_count()}
 
 class ResourceType(Enum):
     """Types of system resources."""
@@ -1169,12 +1194,19 @@ class MemoryAwareScheduler:
         self._semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
 
     async def schedule(self, task_id: str, task_func: Callable, estimated_memory_mb: float=100):
-        """Schedule task with memory awareness."""
-        if PSUTIL_AVAILABLE:
-            current_memory = psutil.virtual_memory().percent
-            if current_memory > self.max_memory_percent:
-                logger.warning(f'Memory high ({current_memory:.1f}%), throttling task {task_id}')
+        """Schedule task with memory awareness.
+
+        E3 FIX: uses cached get_system_snapshot() instead of raw psutil.virtual_memory()
+        which was called on every scheduled task (hot path).
+        """
+        try:
+            from hledac.universal.core.system_metrics import get_system_snapshot
+            snap = get_system_snapshot()
+            if snap.memory_percent > self.max_memory_percent:
+                logger.warning(f'Memory high ({snap.memory_percent:.1f}%), throttling task {task_id}')
                 await asyncio.sleep(1)
+        except Exception:
+            pass  # fail-safe: proceed without blocking
         async with self._semaphore:
             self.active_tasks[task_id] = {'start_time': time.time(), 'estimated_memory': estimated_memory_mb}
             try:

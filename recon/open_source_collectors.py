@@ -37,6 +37,8 @@ import logging
 import re
 import time
 from collections import OrderedDict
+
+from hledac.universal.utils.locks import LazyAsyncioLock
 from dataclasses import dataclass, field
 import msgspec
 from typing import TYPE_CHECKING
@@ -528,7 +530,7 @@ async def search_paste_sites(query: str, max_results: int=MAX_PASTE_RESULTS) -> 
     return findings[:max_results]
 _USENET_RATE_LIMIT_S = 2.0
 _last_usenet_request: float = 0.0
-_usenet_rate_lock = asyncio.Lock()
+_usenet_rate_lock = LazyAsyncioLock()
 
 async def search_usenet(query: str, max_results: int=MAX_USENET_ARTICLES) -> list[UsenetArticle]:
     """Search Usenet archives via Google Groups and GMane."""
@@ -603,7 +605,7 @@ async def search_usenet(query: str, max_results: int=MAX_USENET_ARTICLES) -> lis
     return articles[:max_results]
 _MATRIX_RATE_LIMIT_S = 2.0
 _last_matrix_request: float = 0.0
-_matrix_rate_lock = asyncio.Lock()
+_matrix_rate_lock = LazyAsyncioLock()
 
 async def search_matrix(query: str, max_results: int=MAX_CHAT_MESSAGES) -> list[ChatMessage]:
     """Search public Matrix rooms."""
@@ -667,7 +669,7 @@ async def search_matrix(query: str, max_results: int=MAX_CHAT_MESSAGES) -> list[
     return messages[:max_results]
 _ACADEMIC_RATE_LIMIT_S = 2.0
 _last_academic_request: float = 0.0
-_academic_rate_lock = asyncio.Lock()
+_academic_rate_lock = LazyAsyncioLock()
 
 async def search_academic(query: str, max_results: int=MAX_ACADEMIC_PAPERS) -> list[AcademicPaper]:
     """Search academic preprint servers."""
@@ -767,7 +769,7 @@ async def search_academic(query: str, max_results: int=MAX_ACADEMIC_PAPERS) -> l
     return papers[:max_results]
 _SEC_RATE_LIMIT_S = 1.0
 _last_sec_request: float = 0.0
-_sec_rate_lock = asyncio.Lock()
+_sec_rate_lock = LazyAsyncioLock()
 
 async def search_sec_edgar(query: str, max_results: int=MAX_SEC_FILINGS) -> list[EdgarFiling]:
     """Search SEC EDGAR full-text filings via EFTS API."""
@@ -796,7 +798,7 @@ async def search_sec_edgar(query: str, max_results: int=MAX_SEC_FILINGS) -> list
     return filings[:max_results]
 _COURT_RATE_LIMIT_S = 2.0
 _last_court_request: float = 0.0
-_court_rate_lock = asyncio.Lock()
+_court_rate_lock = LazyAsyncioLock()
 
 async def search_court_records(query: str, max_results: int=MAX_COURT_CASES) -> list[CourtCase]:
     """Search federal court cases via CourtListener API."""

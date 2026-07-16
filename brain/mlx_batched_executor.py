@@ -313,7 +313,7 @@ class MLXBatchedExecutor:
             self._stats['submits'] += 1
             timeout = max(5.0 * DEFAULT_FLUSH_INTERVAL_S, 10.0)
             try:
-                result = await asyncio.wait_for(asyncio.shield(scheduler_future), timeout=timeout)
+                result = await asyncio.wait_for(asyncio.shield(scheduler_future), timeout=timeout)  # noqa: F911  # Shield patterns MUST use asyncio.wait_for
             except TimeoutError:
                 if scheduler_future.done() and (not scheduler_future.cancelled()):
                     result = scheduler_future.result()

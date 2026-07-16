@@ -41,11 +41,12 @@ _CIRCUIT_BREAKER_RECOVERY_SECONDS: float = 30.0
 # Crypto-safe jitter — F350M-R
 _JITTER_RNG = secrets.SystemRandom()
 
-class RetryPolicy(msgspec.Struct):
+class RetryPolicy(msgspec.Struct, frozen=True):
     """Bounded retry policy for fetch operations.
 
     M1 8GB: max_attempts=3 keeps memory bounded.
     Exponential backoff capped at 8s prevents thundering herd.
+    NOTE: frozen=True ensures immutability — shared instances are safe.
     """
     max_attempts: int = _RETRY_MAX_ATTEMPTS
     backoff_base: float = _RETRY_BACKOFF_BASE

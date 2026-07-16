@@ -27,6 +27,7 @@ Usage:
 
 import asyncio
 import contextvars
+import httpx
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -154,13 +155,13 @@ class SessionManager:
     )
 
     def __init__(self) -> None:
-        self._tor_session: aiohttp.ClientSession | None = None
-        self._i2p_session: aiohttp.ClientSession | None = None
+        self._tor_session: httpx.AsyncClient | None = None
+        self._i2p_session: httpx.AsyncClient | None = None
         self._tor_request_count: int = 0
         self._tor_lock: asyncio.Lock | None = None
         self._i2p_lock: asyncio.Lock | None = None
         self._locally_created: dict[str, bool] = {"tor": False, "i2p": False}
-        self._injected_provider: tuple[aiohttp.ClientSession | None, aiohttp.ClientSession | None] | None = None
+        self._injected_provider: tuple[httpx.AsyncClient | None, httpx.AsyncClient | None] | None = None
 
     # ---------------------------------------------------------------------------
     # Lazy lock helpers (ISSUE-014: asyncio.Lock() at __init__ time fails on macOS)
@@ -184,8 +185,8 @@ class SessionManager:
 
     def inject_provider(
         self,
-        tor_session: aiohttp.ClientSession | None,
-        i2p_session: aiohttp.ClientSession | None,
+        tor_session: httpx.AsyncClient | None,
+        i2p_session: httpx.AsyncClient | None,
     ) -> None:
         """F206AT: Inject canonical session provider (seam for FetchCoordinator)."""
         if tor_session is None and i2p_session is None:
@@ -198,7 +199,7 @@ class SessionManager:
     @property
     def injected_provider(
         self,
-    ) -> tuple[aiohttp.ClientSession | None, aiohttp.ClientSession | None] | None:
+    ) -> tuple[httpx.AsyncClient | None, httpx.AsyncClient | None] | None:
         return self._injected_provider
 
     # ---------------------------------------------------------------------------
@@ -216,7 +217,7 @@ class SessionManager:
     # Tor session
     # ---------------------------------------------------------------------------
 
-    async def get_tor_session(self) -> aiohttp.ClientSession | _TorCurlCffiWrapper:
+    async def get_tor_session(self) -> httpx.AsyncClient | _TorCurlCffiWrapper:
         """Get or create Tor session (lazy, thread-safe).
 
         Priority:
@@ -227,7 +228,7 @@ class SessionManager:
         # 1. Injected provider
         if self._injected_provider is not None:
             tor_sess, _ = self._injected_provider
-            if tor_sess is not None and not tor_sess.closed:
+            if tor_sess is not None and not tor_sess.is_closed:
                 self._update_telemetry("tor", "injected")
                 return tor_sess
 
@@ -242,14 +243,15 @@ class SessionManager:
         except Exception:  # noqa: BLE001
             pass
 
-        # 3. Fallback: aiohttp_socks
+        # 3. Fallback: httpx-socks
         async with self._get_tor_lock():
-            if self._tor_session is None or self._tor_session.closed:
-                from aiohttp_socks import ProxyConnector
+            if self._tor_session is None or self._tor_session.is_closed:
+                from httpx_socks import AsyncProxyTransport
 
-                tor_socks_proxy = "socks5h://127.0.0.1:9050"
-                connector = ProxyConnector.from_url(tor_socks_proxy, rdns=True)
-                self._tor_session = aiohttp.ClientSession(connector=connector)
+                transport = AsyncProxyTransport.from_url("socks5h://127.0.0.1:9050", rdns=True)
+                limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
+                timeout = httpx.Timeout(connect=60.0, read=120.0, write=20.0, pool=30.0)
+                self._tor_session = httpx.AsyncClient(transport=transport, limits=limits, timeout=timeout, trust_env=False)
                 self._locally_created["tor"] = True
                 self._update_telemetry("tor", "local_tor")
         return self._tor_session
@@ -258,7 +260,7 @@ class SessionManager:
     # I2P session
     # ---------------------------------------------------------------------------
 
-    async def get_i2p_session(self) -> aiohttp.ClientSession | _I2pCurlCffiWrapper:
+    async def get_i2p_session(self) -> httpx.AsyncClient | _I2pCurlCffiWrapper:
         """Get or create I2P session (lazy, thread-safe).
 
         Priority:
@@ -269,7 +271,7 @@ class SessionManager:
         # 1. Injected provider
         if self._injected_provider is not None:
             _, i2p_sess = self._injected_provider
-            if i2p_sess is not None and not i2p_sess.closed:
+            if i2p_sess is not None and not i2p_sess.is_closed:
                 self._update_telemetry("i2p", "injected")
                 return i2p_sess
 
@@ -284,14 +286,15 @@ class SessionManager:
         except Exception:  # noqa: BLE001
             pass
 
-        # 3. Fallback: aiohttp_socks
+        # 3. Fallback: httpx-socks
         async with self._get_i2p_lock():
-            if self._i2p_session is None or self._i2p_session.closed:
-                from aiohttp_socks import ProxyConnector
+            if self._i2p_session is None or self._i2p_session.is_closed:
+                from httpx_socks import AsyncProxyTransport
 
-                i2p_socks_proxy = "socks5://127.0.0.1:7654"
-                connector = ProxyConnector.from_url(i2p_socks_proxy, rdns=True)
-                self._i2p_session = aiohttp.ClientSession(connector=connector)
+                transport = AsyncProxyTransport.from_url("socks5://127.0.0.1:7654", rdns=True)
+                limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
+                timeout = httpx.Timeout(connect=60.0, read=120.0, write=20.0, pool=30.0)
+                self._i2p_session = httpx.AsyncClient(transport=transport, limits=limits, timeout=timeout, trust_env=False)
                 self._locally_created["i2p"] = True
                 self._update_telemetry("i2p", "local_i2p")
         return self._i2p_session
@@ -315,7 +318,7 @@ class SessionManager:
 
         if self._tor_session is not None and self._locally_created.get("tor"):
             try:
-                await self._tor_session.close()
+                await self._tor_session.aclose()
                 results["tor"] = "closed"
             except Exception as e:
                 results["tor"] = f"error: {e}"
@@ -324,7 +327,7 @@ class SessionManager:
 
         if self._i2p_session is not None and self._locally_created.get("i2p"):
             try:
-                await self._i2p_session.close()
+                await self._i2p_session.aclose()
                 results["i2p"] = "closed"
             except Exception as e:
                 results["i2p"] = f"error: {e}"
@@ -337,10 +340,10 @@ class SessionManager:
         """Get session status for debugging/monitoring."""
         return {
             "tor_session_exists": self._tor_session is not None,
-            "tor_session_closed": self._tor_session.closed if self._tor_session else None,
+            "tor_session_closed": self._tor_session.is_closed if self._tor_session else None,
             "tor_locally_created": self._locally_created.get("tor"),
             "i2p_session_exists": self._i2p_session is not None,
-            "i2p_session_closed": self._i2p_session.closed if self._i2p_session else None,
+            "i2p_session_closed": self._i2p_session.is_closed if self._i2p_session else None,
             "i2p_locally_created": self._locally_created.get("i2p"),
             "injected_provider_active": self._injected_provider is not None,
             "tor_request_count": self._tor_request_count,

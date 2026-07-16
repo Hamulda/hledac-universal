@@ -37,7 +37,15 @@ try:
     HTML_TEXT_FAST_AVAILABLE = True
 except ImportError:
     HTML_TEXT_FAST_AVAILABLE = False
-    html_to_text_fast = None
+    html_to_text_fast: Any = None
+
+# F4: nh3 Rust HTML sanitizer — 9× faster than BS4, 4 MB RSS, M1-safe.
+try:
+    import nh3 as _nh3
+    NH3_AVAILABLE = True
+except ImportError:
+    _nh3 = None
+    NH3_AVAILABLE = False
 
 class OutputFormat(Enum):
     """Supported output formats."""
@@ -55,120 +63,139 @@ class CleaningResult(msgspec.Struct):
 
 class SimpleHTMLCleaner:
     """
-    BeautifulSoup-based HTML cleaner as fallback.
+    HTML cleaner with tiered extraction (F4: nh3 + selectolax).
 
-    Fast and memory-efficient without ML dependencies.
+    Replaces BeautifulSoup4 (~2 MB RSS, ~40 ms cold import) with:
+      - nh3 (Rust) for TEXT: 9× faster than BS4, 4 MB RSS, M1-safe
+      - selectolax for MARKDOWN/JSON: CSS selectors, pure Python
+
+    Tier-1 extraction order for TEXT:
+      1. html_to_text_fast  — selectolax wrapper, fastest
+      2. nh3.clean(tags=set()) — F4: Rust sanitizer fallback
+    Tier-2 for MARKDOWN / JSON:
+      3. selectolax.parser  — CSS selectors
+      4. stdlib regex fallback
     """
-    __slots__ = tuple(('_bs4',))
+    __slots__ = tuple(('_parser_class',))
 
     def __init__(self):
-        """Initialize SimpleHTMLCleaner."""
-        self._bs4 = None
-        self._init_bs4()
+        """Initialize SimpleHTMLCleaner with selectolax."""
+        self._parser_class: type | None = None
+        self._init_selectolax()
 
-    def _init_bs4(self):
-        """Initialize BeautifulSoup lazily."""
+    def _init_selectolax(self) -> None:
+        """Initialize selectolax lazily."""
         try:
-            from bs4 import BeautifulSoup
-            self._bs4 = BeautifulSoup
+            from selectolax.parser import HTMLParser
+            self._parser_class = HTMLParser
         except ImportError:
-            logger.warning('BeautifulSoup not available')
+            logger.warning('selectolax not available')
 
-    def _remove_unwanted_tags(self, soup: Any) -> Any:
-        """Remove script, style, nav, footer elements."""
-        for tag in soup(['script', 'style', 'nav', 'footer', 'header', 'aside', 'iframe']):
-            tag.decompose()
-        return soup
+    def _remove_unwanted_tags(self, tree: Any) -> Any:
+        """Remove script, style, nav, footer elements (no-op — done upstream by _simplify_html)."""
+        return tree
 
-    def _extract_text(self, soup: Any) -> str:
-        """Extract clean text from soup."""
-        text = soup.get_text(separator=' ', strip=True)
-        text = re.sub('\\s+', ' ', text)
-        return text.strip()
+    def _extract_text(self, tree: Any) -> str:
+        """Extract clean text from selectolax tree."""
+        body = tree.css_first('body') or tree
+        text = body.text_content(separator=' ', default='')
+        return re.sub(r'\s+', ' ', text).strip()
 
-    def _to_markdown(self, soup: Any) -> str:
-        """Convert HTML to Markdown format."""
-        lines = []
-        for elem in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol', 'li', 'a', 'strong', 'em']):
-            text = elem.get_text(strip=True)
-            if not text:
-                continue
-            tag = elem.name.lower()
-            if tag.startswith('h'):
-                level = int(tag[1])
-                lines.append(f"{'#' * level} {text}")
-            elif tag == 'p':
-                lines.append(text)
-            elif tag in ['ul', 'ol']:
-                lines.append(text)
-            elif tag == 'li':
-                lines.append(f'- {text}')
-            elif tag == 'a':
-                href = elem.get('href', '')
-                if href:
-                    lines.append(f'[{text}]({href})')
-                else:
+    def _to_markdown(self, tree: Any) -> str:
+        """Convert HTML to Markdown format using selectolax CSS selectors."""
+        lines: list[str] = []
+        for tag in ('h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol', 'li', 'a', 'strong', 'em'):
+            for node in tree.css(tag):
+                text = node.text(strip=True)
+                if not text:
+                    continue
+                if isinstance(tag, str) and tag.startswith('h'):
+                    level = int(tag[-1])  # 'h1'→'1', 'h2'→'2', … always safe
+                    lines.append(f"{'#' * level} {text}")
+                elif tag == 'p':
                     lines.append(text)
-            elif tag == 'strong':
-                lines.append(f'**{text}**')
-            elif tag == 'em':
-                lines.append(f'*{text}*')
+                elif tag in ('ul', 'ol'):
+                    pass  # structural, handled by li
+                elif tag == 'li':
+                    lines.append(f'- {text}')
+                elif tag == 'a':
+                    href = node.attributes.get('href', '')
+                    if href:
+                        lines.append(f'[{text}]({href})')
+                    else:
+                        lines.append(text)
+                elif tag == 'strong':
+                    lines.append(f'**{text}**')
+                elif tag == 'em':
+                    lines.append(f'*{text}*')
         return '\n\n'.join(lines)
 
-    def _to_json(self, soup: Any) -> str:
-        """Convert HTML to structured JSON format."""
-        import json
-        data = {'title': '', 'headings': [], 'paragraphs': [], 'links': [], 'lists': []}
-        title = soup.find('h1')
-        if title:
-            data['title'] = title.get_text(strip=True)
-        for h in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
-            data['headings'].append({'level': int(h.name[1]), 'text': h.get_text(strip=True)})
-        for p in soup.find_all('p'):
-            text = p.get_text(strip=True)
+    def _to_json(self, tree: Any) -> str:
+        """Convert HTML to structured JSON format using selectolax CSS selectors."""
+        data: dict[str, Any] = {'title': '', 'headings': [], 'paragraphs': [], 'links': [], 'lists': []}
+        title_node = tree.css_first('h1')
+        if title_node is not None:
+            data['title'] = title_node.text(strip=True)
+        for h in tree.css('h1,h2,h3,h4,h5,h6'):
+            level = int(h.tag[1])  # 'h1'→1, 'h2'→2, … always safe since tag is h1-h6
+            data['headings'].append({'level': level, 'text': h.text(strip=True)})
+        for p in tree.css('p'):
+            text = p.text(strip=True)
             if text and len(text) > 20:
                 data['paragraphs'].append(text)
-        for a in soup.find_all('a', href=True):
-            data['links'].append({'text': a.get_text(strip=True), 'url': a['href']})
-        for ul in soup.find_all(['ul', 'ol']):
-            items = [li.get_text(strip=True) for li in ul.find_all('li')]
+        for a in tree.css('a[href]'):
+            data['links'].append({'text': a.text(strip=True), 'url': a.attributes['href']})
+        for ul in tree.css('ul,ol'):
+            items = [li.text(strip=True) for li in ul.css('li') if li.text(strip=True)]
             if items:
-                data['lists'].append({'type': ul.name, 'items': items})
+                data['lists'].append({'type': ul.tag, 'items': items})
         return _msgspec_dumps_str(data, ensure_ascii=False, indent=2)
 
     def clean(self, html: str, output_format: OutputFormat=OutputFormat.MARKDOWN) -> CleaningResult:
         """
-        Clean HTML using BeautifulSoup.
+        Clean HTML using nh3 (tier-1) or selectolax (tier-2).
 
-        Args:
-            html: Raw HTML string
-            output_format: Desired output format
-
-        Returns:
-            CleaningResult with cleaned content
+        Tier-1 extraction order for TEXT:
+          1. html_to_text_fast  — selectolax wrapper, fastest
+          2. nh3.clean_text()   — F4: Rust sanitizer, 9× faster than BS4, 4 MB RSS
+        Tier-2 for MARKDOWN / JSON:
+          3. selectolax.parser  — CSS selectors
+          4. stdlib regex fallback
         """
-        if self._bs4 is None:
-            return CleaningResult(success=False, content='', format=output_format, error='BeautifulSoup not available')
-        if output_format == OutputFormat.TEXT and HTML_TEXT_FAST_AVAILABLE:
-            try:
-                content = html_to_text_fast(html)
-                return CleaningResult(success=True, content=content, format=output_format, metadata={'method': 'html_text_fast'})
-            except Exception as e:
-                logger.warning('html_to_text_fast failed for TEXT, falling back to BeautifulSoup: %s', e)
+        if output_format == OutputFormat.TEXT:
+            # Tier-1: html_text_fast (selectolax wrapper)
+            if HTML_TEXT_FAST_AVAILABLE:
+                try:
+                    content = html_to_text_fast(html)
+                    return CleaningResult(success=True, content=content, format=output_format, metadata={'method': 'html_text_fast'})
+                except Exception as e:
+                    logger.warning('html_to_text_fast failed for TEXT, falling back to nh3: %s', e)
+            # Tier-1.5: F4 — nh3 Rust sanitizer (9× faster than BS4)
+            # nh3.clean(tags=set()) strips ALL tags + scripts/styles → plain text
+            if NH3_AVAILABLE:
+                try:
+                    content = _nh3.clean(html, tags=set())
+                    content = re.sub(r'\s+', ' ', content).strip()
+                    if content:
+                        return CleaningResult(success=True, content=content, format=output_format, metadata={'method': 'nh3'})
+                except Exception as e:
+                    logger.warning('nh3.clean failed, falling back to selectolax: %s', e)
+        # Tier-2: selectolax for MARKDOWN/JSON or as fallback for TEXT
+        if self._parser_class is None:
+            return CleaningResult(success=False, content='', format=output_format, error='selectolax not available')
         try:
-            soup = self._bs4(html, 'html.parser')
-            soup = self._remove_unwanted_tags(soup)
+            tree = self._parser_class(html)
             if output_format == OutputFormat.TEXT:
-                content = self._extract_text(soup)
+                content = self._extract_text(tree)
             elif output_format == OutputFormat.MARKDOWN:
-                content = self._to_markdown(soup)
+                content = self._to_markdown(tree)
             elif output_format == OutputFormat.JSON:
-                content = self._to_json(soup)
+                content = self._to_json(tree)
             else:
-                content = self._extract_text(soup)
-            return CleaningResult(success=True, content=content, format=output_format, metadata={'method': 'beautifulsoup'})
+                content = self._extract_text(tree)
+            return CleaningResult(success=True, content=content, format=output_format, metadata={'method': 'selectolax'})
         except Exception as e:
-            logger.error(f'BeautifulSoup cleaning failed: {e}')
+            logger.error(f'selectolax cleaning failed: {e}')
             return CleaningResult(success=False, content='', format=output_format, error=str(e))
 
 class ResiliparseCleaner:
@@ -255,27 +282,27 @@ class ResiliparseCleaner:
 
 class ContentCleaner:
     """
-    HTML to Markdown/JSON converter using BeautifulSoup.
+    HTML to Markdown/JSON converter using selectolax.
 
     Optimized for M1 Silicon (8GB RAM).
     Lightweight, no ML model dependencies.
     """
-    __slots__ = tuple(('_default_format', '_fallback_to_bs4', '_simple_cleaner', '_use_mlx'))
+    __slots__ = tuple(('_default_format', '_fallback_to_selectolax', '_simple_cleaner', '_use_mlx'))
 
-    def __init__(self, use_mlx: bool=True, fallback_to_bs4: bool=True, default_format: OutputFormat=OutputFormat.MARKDOWN):
+    def __init__(self, use_mlx: bool=True, fallback_to_selectolax: bool=True, default_format: OutputFormat=OutputFormat.MARKDOWN):
         """
         Initialize ContentCleaner.
 
         Args:
             use_mlx: Whether to try MLX model first (deprecated, kept for compatibility)
-            fallback_to_bs4: Whether to fall back to BeautifulSoup
+            fallback_to_selectolax: Whether to fall back to selectolax-based cleaner
             default_format: Default output format
         """
         self._simple_cleaner: SimpleHTMLCleaner | None = None
         self._use_mlx = use_mlx
-        self._fallback_to_bs4 = fallback_to_bs4
+        self._fallback_to_selectolax = fallback_to_selectolax
         self._default_format = default_format
-        if fallback_to_bs4:
+        if fallback_to_selectolax:
             self._simple_cleaner = SimpleHTMLCleaner()
         logger.info('ContentCleaner initialized')
 
@@ -338,7 +365,7 @@ class ContentCleaner:
         if output_format is None:
             output_format = self._default_format
         simplified_html = self._simplify_html(raw_html)
-        if self._fallback_to_bs4 and self._simple_cleaner:
+        if self._fallback_to_selectolax and self._simple_cleaner:
             return self._simple_cleaner.clean(simplified_html, output_format)
         return CleaningResult(success=False, content='', format=output_format, error='No cleaning method available')
 
@@ -366,7 +393,7 @@ class ContentCleaner:
         Returns:
             Dictionary with status information
         """
-        return {'use_bs4': self._simple_cleaner is not None, 'fallback_to_bs4': self._fallback_to_bs4, 'default_format': self._default_format.value}
+        return {'use_selectolax': self._simple_cleaner is not None, 'fallback_to_selectolax': self._fallback_to_selectolax, 'default_format': self._default_format.value}
 _global_cleaner: ContentCleaner | None = None
 
 def get_content_cleaner() -> ContentCleaner:

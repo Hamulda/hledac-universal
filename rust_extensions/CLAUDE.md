@@ -6,9 +6,32 @@ Python/Rust extension via PyO3 (`cdylib`), build via `maturin develop` / `maturi
 ## Build
 ```bash
 cd rust_extensions
-maturin develop        # pro vývoj (instaluje do PYTHONPATH)
-maturin build          # wheel v target/maturin/
+
+# Standard build (default: core + data) — DuckDB wired
+maturin develop
+
+# Fast dev build (bez DuckDB, bez Metal) — ~5× rychlejší
+maturin develop --no-default-features --features ""
+
+# Full build (vše) — pouze CI
+maturin develop --features "full"
+
+# Release wheel
+maturin build --release
+maturin build --release --features "full"
 ```
+
+## Feature flags (D3 fix)
+
+| Příkaz | Kompiluje | Rychlost |
+|--------|-----------|----------|
+| `--no-default-features --features ""` | Pouze core moduly | ~5× rychlejší |
+| `default` (bez flagů) | core + data | Standard |
+| `--features "full"` | Všechny moduly | ~3× pomalejší |
+
+> **D6 (2026-07-16):** `ml` feature odstraněna — `metal` crate (~45s compile, ~3MB dylib) nebyl v produkci využíván. `gpu_batch_keyword_scan()` v `metal_pattern_matcher` nebyl nikdy volán. CPU fallback přes Aho-Corasick + rayon je dostatečný pro všechny workloady. Viz CLAUDE.md root sekce D6.
+
+Kompilace: `opt-level = 1` v `[profile.dev]` (3-5× rychlejší incremental builds na M1).
 
 ## Struktura
 ```

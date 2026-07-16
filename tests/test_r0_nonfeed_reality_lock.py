@@ -422,11 +422,11 @@ class TestWaybackAdapter:
     """Q4: Verify WaybackDiffMiner exists."""
 
     def test_wayback_diff_miner_exists(self):
-        from hledac.universal.intelligence.wayback_diff_miner import WaybackDiffMiner
+        from hledac.universal.intel.wayback_diff_miner import WaybackDiffMiner
         assert WaybackDiffMiner is not None
 
     def test_wayback_diff_result_to_findings_method(self):
-        from hledac.universal.intelligence.wayback_diff_miner import WaybackDiffResult
+        from hledac.universal.intel.wayback_diff_miner import WaybackDiffResult
         result = WaybackDiffResult(input_count=0, change_events=[])
         assert hasattr(result, "to_findings")
         assert callable(result.to_findings)

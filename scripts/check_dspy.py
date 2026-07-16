@@ -31,14 +31,11 @@ def main() -> int:
     try:
         import asyncio
 
-        import aiohttp
+        import httpx
         async def check_lm():
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    "http://localhost:8080/health",
-                    timeout=aiohttp.ClientTimeout(total=3)
-                ) as resp:
-                    return resp.status == 200
+            async with httpx.AsyncClient(timeout=httpx.Timeout(3.0)) as session:
+                resp = await session.get("http://localhost:8080/health")
+                return resp.status_code == 200
         lm_ok = asyncio.run(check_lm())
     except Exception as e:
         print(f"WARN: mlx_lm.server not reachable: {e}")

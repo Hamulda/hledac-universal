@@ -917,8 +917,8 @@ class QualityAssessor:
         fingerprint: str,
         duplicate: bool,
     ) -> FindingQualityDecision:
-        """Construct a FindingQualityDecision. Import lazily to avoid circular deps."""
-        from .duckdb_store import FindingQualityDecision
+        """Construct a FindingQualityDecision."""
+        from ._quality_types import FindingQualityDecision
 
         return FindingQualityDecision(
             accepted=accepted,

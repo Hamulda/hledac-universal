@@ -358,10 +358,10 @@ async def resolve_doh(domain: str, provider: str='cloudflare', session_provider:
                         logger.warning(f'DoH {_attempt_provider} failed for {domain}: HTTP {resp.status_code}')
                         return []
                     text = resp.text
-                    import json
+                    import orjson
                     try:
-                        data = json.loads(text)
-                    except (json.JSONDecodeError, Exception):
+                        data = orjson.loads(text)
+                    except (Exception,):
                         logger.warning(f'DoH {_attempt_provider} invalid JSON for {domain}')
                         return []
                 else:
@@ -375,10 +375,10 @@ async def resolve_doh(domain: str, provider: str='cloudflare', session_provider:
                         logger.warning(f'DoH {_attempt_provider} failed for {domain}: HTTP {resp.status_code}')
                         return []
                     text = resp.text
-                    import json
+                    import orjson
                     try:
-                        data = json.loads(text)
-                    except (json.JSONDecodeError, Exception):
+                        data = orjson.loads(text)
+                    except (Exception,):
                         logger.warning(f'DoH {_attempt_provider} invalid JSON for {domain}')
                         return []
             answers = data.get('Answer', []) if isinstance(data, dict) else []

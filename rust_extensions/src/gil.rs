@@ -1,6 +1,6 @@
 //! gil.rs — GIL token management for free-threaded Python compatibility
 //!
-//! # F5.2: PyO3 0.25 + free-threaded Python GIL handling
+//! # F5.2: PyO3 0.23 + free-threaded Python GIL handling
 //!
 //! ## Background
 //!
@@ -11,57 +11,38 @@
 //! Free-threaded Python (PEP 703) removes the GIL from CPython, enabling true
 //! multi-core parallelism. This requires:
 //!   1. Rust code to explicitly acquire GIL tokens where accessing Python objects
-//!   2. PyO3 0.27+ with `gil = "false"` feature to emit no-GIL code paths
+//!   2. PyO3 0.23+ with `gil = "false"` feature to emit no-GIL code paths
 //!
-//! ## PyO3 GIL Handling
+//! ## PyO3 GIL Handling (PyO3 0.23)
 //!
-//! In PyO3 0.25, ALL Python object access is implicitly GIL-protected when
+//! In PyO3 0.23, ALL Python object access is implicitly GIL-protected when
 //! called from Python (the GIL is held by the calling Python thread).
 //!
-//! Inside `#[pyfunction]`, the `py: Python<'_>` parameter represents the GIL
-//! token already held by that thread. You can:
-//!   - Use `py.allow_threads()` to temporarily release GIL during CPU-intensive work
-//!   - Use `Python::with_gil()` for scoped GIL acquisition
+//! Inside `#[pyfunction]` / `#[pymethods]`, you can use:
+//!   - `py.allow_threads()` to temporarily release GIL during CPU-intensive work
+//!   - `Python::with_gil()` for scoped GIL acquisition
 //!
 //! ## Key Invariants
 //!
-//! - `#[pyfunction]` entry points receive `py: Python<'_>` parameter — already GIL-held
-//! - Inside `pool.install()` (rayon), we use `Python::with_gil()` — GIL acquired per-call
+//! - `#[pyfunction]` entry points may receive `py: Python<'_>` parameter — already GIL-held
+//! - Inside `pool.install()` (rayon), use `Python::with_gil()` + `release_gil()`
 //! - Inside Rust-only code (no Python objects), no GIL needed even in free-threaded
 //! - SIMD/hot path (`quality_gate`, `simhash_ext`, `simd_similarity`) operates on
 //!   raw data (f32, u8, u64) — no Python objects, no GIL needed
-//!
-//! ## Issue #19: GIL-Free DuckDB Batch Iteration
-//!
-//! DuckDB queries via PyO3 hold GIL during result iteration. To avoid blocking
-//! the asyncio event loop, DuckDB operations run on ThreadPoolExecutor (run_in_executor).
-//! GIL is released on worker threads, but result iteration still happens under GIL.
-//!
-//! Cutting-edge solution: GIL-free iteration using PyO3's ` gil = "false"` feature
-//! (available in PyO3 0.29+). When enabled, PyO3 emits code that does NOT
-//! automatically acquire GIL, allowing explicit control via Python::with_gil().
-//!
-//! NOTE: allow_threads() is NOT in PyO3 0.29 public API. The pattern:
-//!   py.allow_threads(move || { ... })
-//! requires PyO3 internals. Workaround: use ThreadPoolExecutor batching
-//! to amortize GIL acquisition overhead (Python-side fix in duckdb_store.py).
-//!
-//! For Python 3.14+ with free-threaded build (Py_GIL_DISABLED=1), GIL is
-//! never held, enabling true parallel DuckDB iteration.
 //!
 //! ## allow_threads Strategy (PyO3 Version Matrix)
 //!
 //! | PyO3 | allow_threads | Strategy |
 //! |------|---------------|----------|
-//! | 0.27 | py.allow_threads() | ✓ Public API, compile-time available |
-//! | 0.29 | REMOVED | Drop GIL token explicitly (not available in public API) |
+//! | 0.23 | py.allow_threads() | ✓ Public API, compile-time available |
+//! | 0.28 | py.allow_threads() | ✓ Still available, #[deprecated] |
+//! | 0.29 | REMOVED | Drop GIL token explicitly (not in public API) |
 //! | 0.30+ | gil="false" feature | Free-threaded, no GIL token needed |
 //!
 //! Implementation: `is_gil_enabled()` probes allow_threads availability at module
 //! init time (cached). `release_gil()` uses it for safe GIL release in hot paths.
 //!
-//! PyO3 0.27 is pinned in Cargo.toml — allow_threads IS available at compile time.
-//! The #[deprecated] lint is suppressed per-call, not a build break.
+//! PyO3 0.23 is pinned in Cargo.toml — py.allow_threads() IS available.
 
 use pyo3::prelude::*;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -156,9 +137,14 @@ pub fn is_gil_enabled() -> bool {
 /// This is the CORRECT way to release GIL for CPU-intensive Rust work
 /// that is called from Python's asyncio ThreadPoolExecutor.
 ///
-/// - PyO3 0.27 + standard Python: releases GIL → true parallelism
-/// - PyO3 0.29+ (if ever built): no-op (allow_threads removed)
+/// - PyO3 0.23 + standard Python: releases GIL → true parallelism
 /// - Free-threaded Python: no-op (GIL never held)
+///
+/// # Safety
+///
+/// The closure MUST NOT access any Python objects (no `Py<...>` types,
+/// no `&str` that might be Python-allocated, no `String` from Python).
+/// The `R: pyo3::marker::Ungil` bound enforces this.
 #[inline]
 pub fn release_gil<F, R>(py: Python<'_>, f: F) -> R
 where
@@ -166,10 +152,11 @@ where
     R: pyo3::marker::Ungil,
 {
     if is_gil_enabled() {
-        // Note: GIL release not supported in this PyO3 version
-        // Just call f() directly - GIL will be held
-        f()
+        // PyO3 0.23: py.allow_threads() releases GIL, runs closure, reacquires GIL.
+        // Other Python coroutines can make progress on this thread while we run.
+        py.allow_threads(f)
     } else {
+        // Free-threaded Python: no GIL to release, just run directly.
         f()
     }
 }

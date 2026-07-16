@@ -554,12 +554,16 @@ pub fn batch_compute_scores(
     }
 
     // Dispatch: NEON on aarch64, scalar elsewhere.
-    #[cfg(target_arch = "aarch64")]
-    let results = unsafe {
-        compute_scores_neon_inner(&fetched, &accepted, &current_weights, &novelty)
-    };
-    #[cfg(not(target_arch = "aarch64"))]
-    let results = compute_scores_scalar(&fetched, &accepted, &current_weights, &novelty);
+    // Release GIL — NEON/scalar are pure CPU work, no Python callbacks.
+    let results = _py.allow_threads(|| {
+        #[cfg(target_arch = "aarch64")]
+        let r = unsafe {
+            compute_scores_neon_inner(&fetched, &accepted, &current_weights, &novelty)
+        };
+        #[cfg(not(target_arch = "aarch64"))]
+        let r = compute_scores_scalar(&fetched, &accepted, &current_weights, &novelty);
+        r
+    });
 
     Ok(results)
 }
@@ -618,13 +622,16 @@ pub fn batch_aggregate_signals(
         weight_vec.push(w);
     }
 
-    // Use NEON aggregation on aarch64.
-    #[cfg(target_arch = "aarch64")]
-    let result = unsafe {
-        aggregate_signals_neon(&signal_vecs, &weight_vec, normalize)
-    };
-    #[cfg(not(target_arch = "aarch64"))]
-    let result = aggregate_signals_inner(&signal_vecs, &weight_vec, normalize);
+    // Use NEON aggregation on aarch64, release GIL during pure-Rust computation.
+    let result = _py.allow_threads(|| {
+        #[cfg(target_arch = "aarch64")]
+        let r = unsafe {
+            aggregate_signals_neon(&signal_vecs, &weight_vec, normalize)
+        };
+        #[cfg(not(target_arch = "aarch64"))]
+        let r = aggregate_signals_inner(&signal_vecs, &weight_vec, normalize);
+        r
+    });
 
     if result.is_empty() && !signal_vecs.is_empty() && !weight_vec.is_empty() {
         // Fallback to scalar if NEON returned empty erroneously.

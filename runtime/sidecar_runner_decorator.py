@@ -12,7 +12,7 @@ Pattern (before → after):
     async def _xxx_runner(findings, store, query):
         if not findings or store is None: return
         try:
-            from hledac.universal.intelligence.xxx import create_xxx_adapter
+            from hledac.universal.intel.xxx import create_xxx_adapter
         except Exception: return
         try:
             adapter = create_xxx_adapter()

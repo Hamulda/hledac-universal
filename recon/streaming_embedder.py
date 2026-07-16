@@ -68,7 +68,6 @@ from hledac.universal.runtime.worker_pool import run_in_pool
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-    from hledac.universal.utils.async_helpers import safe_create_task
 
 logger = logging.getLogger(__name__)
 
@@ -362,82 +361,80 @@ class StreamingEmbedder:
         for i in range(0, len(norm_texts), batch_size):
             chunks.append((i, min(i + batch_size, len(norm_texts))))
 
-        # Phase 4: Concurrent batch execution with sliding window
+        # Phase 4: Concurrent batch execution with sliding window via TaskGroup
+        # PEP 654 asyncio.TaskGroup gives structured concurrency: when the scope
+        # exits (abort/timeout/error), ALL pending child tasks are cancelled
+        # automatically — no more manual drain loops, no more orphan task leaks.
+        #
+        # Sliding window: external pending set tracks live child tasks.
+        # asyncio.wait(FIRST_COMPLETED) handles the completion detection.
+        # TaskGroup scope handles automatic cancellation of all pending on exit.
         pending: set[asyncio.Task[tuple[list[str], np.ndarray]]] = set()
         chunk_idx: int = 0
 
-        while chunk_idx < len(chunks) or pending:
-            # Check abort flag
-            if self._abort:
-                logger.debug("[StreamingEmbed] aborting due to memory pressure")
-                break
+        async def launch_batch(idx: int) -> tuple[list[str], np.ndarray]:
+            start, end = chunks[idx]
+            return await self._embed_single_batch(all_ids[start:end], norm_texts[start:end])
 
-            # Launch new tasks up to CONCURRENT_BATCHES
-            while (
-                len(pending) < CONCURRENT_BATCHES
-                and chunk_idx < len(chunks)
-            ):
-                start, end = chunks[chunk_idx]
-                chunk_ids = all_ids[start:end]
-                chunk_texts = norm_texts[start:end]
+        try:
+            async with asyncio.TaskGroup() as tg:
+                while chunk_idx < len(chunks) or pending:
+                    if self._abort:
+                        logger.debug("[StreamingEmbed] aborting due to memory pressure")
+                        break
 
-                task = safe_create_task(
-                    self._embed_single_batch(chunk_ids, chunk_texts),
-                    name=f"streaming_embed.batch_{chunk_idx}",
-                )
-                pending.add(task)
-                chunk_idx += 1
+                    # Fill pipeline up to CONCURRENT_BATCHES
+                    while (
+                        len(pending) < CONCURRENT_BATCHES
+                        and chunk_idx < len(chunks)
+                    ):
+                        batch_task = tg.create_task(
+                            launch_batch(chunk_idx),
+                            name=f"streaming_embed.batch_{chunk_idx}",
+                            eager_start=True,
+                        )
+                        pending.add(batch_task)
+                        chunk_idx += 1
 
-            if not pending:
-                break
+                    if not pending:
+                        break
 
-            # Wait for at least one to complete
-            # ISSUE #016 (CRITICAL): asyncio.timeout (PEP 654) prevents indefinite
-            # growth of pending set when a batch stalls (e.g. Metal pipeline stall
-            # on M1). When timeout fires, asyncio.wait() is cancelled and all its
-            # tracked tasks get CancelledError — they land in the done set returned
-            # by asyncio.wait() BUT our code never awaits them, causing a resource
-            # leak. We must explicitly await the done set on timeout.
-            # Uses asyncio.FIRST_COMPLETED — asyncio.timeout wraps the wait() call.
-            try:
-                async with asyncio.timeout(300.0):  # 5 min hard cap per batch (ISSUE #016)
-                    done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-            except asyncio.TimeoutError:
-                # ISSUE #016 CRITICAL FIX: timeout fired — awaiting the done set
-                # (cancelled tasks) is required to clean up Task callbacks and
-                # prevent resource leak. Then cancel any stragglers in pending.
-                for t in done:
+                    # Wait for at least one batch to complete (FIRST_COMPLETED)
                     try:
-                        await t
-                    except asyncio.CancelledError:
-                        pass
-                for t in pending:
-                    t.cancel()
-                if pending:
-                    await asyncio.wait(pending, return_when=asyncio.ALL_COMPLETED)
-                raise
+                        async with asyncio.timeout(300.0):  # 5 min hard cap per batch
+                            done, pending = await asyncio.wait(
+                                pending, return_when=asyncio.FIRST_COMPLETED
+                            )
+                    except asyncio.TimeoutError:
+                        # TaskGroup scope will cancel all remaining children automatically
+                        raise
 
-            for completed in done:
-                try:
-                    ids, embs = await completed
-                    if ids and embs is not None and len(embs) == len(ids):
-                        yield (ids, embs)
-                except Exception as e:
-                    logger.debug(f"[StreamingEmbed] batch error: {e}")
+                    # Yield completed batch(es)
+                    for completed in done:
+                        try:
+                            ids, embs = await completed
+                            if ids and embs is not None and len(embs) == len(ids):
+                                yield (ids, embs)
+                        except Exception as e:
+                            logger.debug(f"[StreamingEmbed] batch error: {e}")
 
-            # Memory sampling at natural yield points
-            self._sample_counter += 1
-            if self._sample_counter >= _SAMPLE_INTERVAL:
-                self._sample_counter = 0
-                if not self._ram_guard_ok():
-                    self._abort = True
-                    logger.warning(
-                        "[StreamingEmbed] memory pressure detected, aborting after remaining batches"
-                    )
-                    # Cancel remaining pending
-                    for task in pending:
-                        task.cancel()
-                    break
+                    # Memory sampling at natural yield points
+                    self._sample_counter += 1
+                    if self._sample_counter >= _SAMPLE_INTERVAL:
+                        self._sample_counter = 0
+                        if not self._ram_guard_ok():
+                            self._abort = True
+                            logger.warning(
+                                "[StreamingEmbed] memory pressure detected, aborting after remaining batches"
+                            )
+                            # TaskGroup will cancel remaining children on scope exit
+                            break
+        except* asyncio.TimeoutError:
+            # Structured cancellation already applied by TaskGroup
+            pass
+        except* asyncio.CancelledError:
+            # Propagate upward (abort path)
+            raise
 
     async def _embed_single_batch(
         self,
@@ -484,60 +481,59 @@ class StreamingEmbedder:
         if norm_texts is None:
             norm_texts = all_texts
 
-        # ISSUE #016 (HIGH): Fallback uses serial loop — refactor to concurrent
-        # pattern for consistency with _embed_concurrent. Safe to use
-        # safe_create_task here too for trace context.
+        # Concurrent fallback — same TaskGroup pattern as _embed_concurrent.
+        # Structured concurrency ensures all pending tasks are cancelled
+        # automatically on scope exit (abort/timeout/error).
         chunks: list[tuple[int, int]] = []
         for i in range(0, len(norm_texts), batch_size):
             chunks.append((i, min(i + batch_size, len(norm_texts))))
 
+        # Phase 4: TaskGroup with structured concurrency — same pattern as _embed_concurrent
         pending: set[asyncio.Task[tuple[list[str], np.ndarray]]] = set()
         chunk_idx: int = 0
 
-        while chunk_idx < len(chunks) or pending:
-            if self._abort:
-                for t in pending:
-                    t.cancel()
-                break
+        async def launch_batch(idx: int) -> tuple[list[str], np.ndarray]:
+            start, end = chunks[idx]
+            return await self._embed_single_batch(all_ids[start:end], norm_texts[start:end])
 
-            while len(pending) < CONCURRENT_BATCHES and chunk_idx < len(chunks):
-                start, end = chunks[chunk_idx]
-                chunk_ids = all_ids[start:end]
-                chunk_texts = norm_texts[start:end]
+        try:
+            async with asyncio.TaskGroup() as tg:
+                while chunk_idx < len(chunks) or pending:
+                    if self._abort:
+                        logger.debug("[StreamingEmbed] fallback aborting due to memory pressure")
+                        break
 
-                from hledac.universal.utils.async_helpers import safe_create_task
-                task = safe_create_task(
-                    self._embed_single_batch(chunk_ids, chunk_texts),
-                    name=f"streaming_embed.fallback_batch_{chunk_idx}",
-                )
-                pending.add(task)
-                chunk_idx += 1
+                    while len(pending) < CONCURRENT_BATCHES and chunk_idx < len(chunks):
+                        batch_task = tg.create_task(
+                            launch_batch(chunk_idx),
+                            name=f"streaming_embed.fallback_batch_{chunk_idx}",
+                            eager_start=True,
+                        )
+                        pending.add(batch_task)
+                        chunk_idx += 1
 
-            if not pending:
-                break
+                    if not pending:
+                        break
 
-            try:
-                async with asyncio.timeout(300.0):
-                    done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-            except asyncio.TimeoutError:
-                for t in done:
                     try:
-                        await t
-                    except asyncio.CancelledError:
-                        pass
-                for t in pending:
-                    t.cancel()
-                if pending:
-                    await asyncio.wait(pending, return_when=asyncio.ALL_COMPLETED)
-                raise
+                        async with asyncio.timeout(300.0):
+                            done, pending = await asyncio.wait(
+                                pending, return_when=asyncio.FIRST_COMPLETED
+                            )
+                    except asyncio.TimeoutError:
+                        raise
 
-            for completed in done:
-                try:
-                    ids, embs = await completed
-                    if ids and embs is not None and len(embs) == len(ids):
-                        yield (ids, embs)
-                except Exception as e:
-                    logger.debug(f"[StreamingEmbed] fallback batch error: {e}")
+                    for completed in done:
+                        try:
+                            ids, embs = await completed
+                            if ids and embs is not None and len(embs) == len(ids):
+                                yield (ids, embs)
+                        except Exception as e:
+                            logger.debug(f"[StreamingEmbed] fallback batch error: {e}")
+        except* asyncio.TimeoutError:
+            pass
+        except* asyncio.CancelledError:
+            raise
 
     # -------------------------------------------------------------------------
     # Backward-compat: serial path (used by _embed_fallback above)
@@ -549,9 +545,9 @@ class StreamingEmbedder:
         batch_size: int,
     ) -> AsyncIterator[tuple[list[str], np.ndarray]]:
         """
-        Serial chunked embedder — DEPRECATED, use _embed_concurrent.
+        Serial chunked embedder — DEPRECATED, delegates to _embed_concurrent.
 
-        ISSUE #016 CLEANUP: Kept for backward compatibility only.
+        Kept for backward compatibility only.
         """
         import warnings
         warnings.warn(

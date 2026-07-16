@@ -16,6 +16,8 @@ import msgspec
 import asyncio
 import hashlib
 import html.parser
+
+from hledac.universal.utils.locks import LazyAsyncioLock
 import msgspec.json as _json
 import logging
 import os
@@ -2447,7 +2449,7 @@ async def _inject_commoncrawl_hits(
 _ONION_HIT_MAX = 5
 _ONION_CIRCUIT_FAIL_LIMIT = 3
 _onion_circuit_state = {"failures": 0, "opened_at": 0.0}
-_onion_circuit_lock = asyncio.Lock()
+_onion_circuit_lock = LazyAsyncioLock()
 
 
 def _onion_circuit_is_open() -> bool:
@@ -3148,7 +3150,7 @@ async def async_run_live_public_pipeline(
                         return 0, 0
                     _target = _match.group()
                     logger.info(f"[P20] PastebinMonitor targeting: {_target}")
-                    from hledac.universal.intelligence.pastebin_monitor import run as _pastebin_run
+                    from hledac.universal.intel.pastebin_monitor import run as _pastebin_run
                     _paste_findings = await _pastebin_run(_target)
                     _pastebin_count = 0
                     if _paste_findings:
@@ -3176,7 +3178,7 @@ async def async_run_live_public_pipeline(
                         _pastebin_count = len(_p20_findings)
 
                     _org = _match.group().rsplit(".", 1)[0]
-                    from hledac.universal.intelligence.github_secret_scanner import search_org_secrets
+                    from hledac.universal.intel.github_secret_scanner import search_org_secrets
                     _gh_count = 0
                     try:
                         _gh_results = await search_org_secrets(_org)

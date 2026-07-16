@@ -28,8 +28,11 @@ pub mod regex_lz4; // LZ4-compressed pattern store for 10k+ patterns
 pub mod content_hasher;
 pub mod crypto_accelerate;
 pub mod adaptive_scheduler;
+#[cfg(feature = "data")]
 pub mod async_query; // ISSUE-013: std::thread + rayon pool pro async Rust DuckDB queries
+#[cfg(feature = "data")]
 pub mod graph_traverse;
+#[cfg(feature = "graph")]
 pub mod hot_edges_rs;
 pub mod html_parse;
 pub mod int_counter_layout;
@@ -43,19 +46,23 @@ pub mod ioc_extract_simd; // R4.3: SIMD IOC extraction via regex-automata build_
 pub mod ioc_cooccurrence_rs; // Issue 4.1: Rust HashMap<->BitSet co-occurrence engine
 pub mod lmdb_dht; // ISSUE-004: Rust LMDB backend for DHT — eliminates asyncio.to_thread overhead
 pub mod madvise;
-pub mod metal_compute;
-pub mod metal_pattern_matcher;
+// D6: metal_compute and metal_pattern_matcher removed — metal crate (~45s compile, ~3MB dylib)
+// was never used in production (gpu_batch_keyword_scan was defined but never called).
+// CPU fallback via Aho-Corasick + rayon is sufficient for all workloads.
 pub mod memory;
 pub mod ip_parse;
 pub mod quality_gate;
 pub mod _entropy; // Shared entropy helpers — broken out to avoid circular quality_gate ↔ zero_copy
 pub mod rolling_hash;
+#[cfg(feature = "advanced")]
 pub mod signal_batch;
 pub mod simd_similarity;
 pub mod simhash_ext;
+#[cfg(feature = "graph")]
 pub mod lsh_index; // F320+: LSH index for O(1) near-duplicate detection at scale
 pub mod text_norm;
 pub mod feed_decision;
+#[cfg(feature = "advanced")]
 pub mod feed_pipeline;
 pub mod pipeline_compose; // Multi-stage pipeline operators via rayon
 pub mod xml_sanitize;
@@ -65,14 +72,18 @@ pub mod url_set;
 pub mod xxhash_ext;
 pub mod zero_copy;
 pub mod serde_json_rs;
+#[cfg(feature = "data")]
 pub mod arrow_batch_builder;
 pub mod parquet_reader; // F320+: Lazy parquet reader — paginated Arrow, 100GB+ IOC history bez OOM
 pub mod spsc_queue;
 pub mod mpsc_pool; // Bounded MPSC pool — replaces asyncio.Queue in evidence_log
+#[cfg(feature = "advanced")]
 pub mod federated_qtable; // ISSUE-23: Rust Q-table with rayon parallel batch updates
 pub mod simd; // ISSUE-023: Modular SIMD — NEON on M1, scalar fallback
 pub mod hnsw; // ISSUE-023: Unified HNSW module — index.rs + py_api.rs
+#[cfg(feature = "advanced")]
 pub mod graph_cache;    // TinyLFU LRU cache pro graph operations
+#[cfg(feature = "advanced")]
 pub mod dedup_bloom;    // Distribuovaný BloomFilter s Count-Min Sketch
 pub mod rate_limit;     // ISSUE #016: NVD API rate limiter — token bucket + MPSC
 pub mod telemetry_agg;  // Real-time metrics aggregation
@@ -85,6 +96,7 @@ pub mod gil;            // F5.2: GIL management — std::thread + rayon pools (n
 pub mod pool_run;      // Rayon pool runners — Python-callable cpu/io/mixed pool execute
 pub mod mlx_bridge;    // ISSUE #015: MLX async token streaming bridge + adaptive buffering
 pub mod collections;    // Bounded ring buffers — recent_iocs ring, M1 8GB safe
+#[cfg(feature = "data")]
 pub mod data;           // DuckDB bridge — isolated module for future cdylib extraction
 pub mod text_similarity; // ISSUE-026: Parallel text similarity clustering for temporal archaeologist
 
@@ -596,6 +608,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     simhash_ext::register_functions(m)?;
 
     // F320+: LSH index for O(1) near-duplicate detection at scale
+    #[cfg(feature = "graph")]
     lsh_index::register_functions(m)?;
 
     // xxHash3-64 for non-cryptographic content hashing (dedup keys, cache IDs)
@@ -634,6 +647,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     int_counter_layout::register_functions(m)?;
 
     // HotEdgeCounterRust — in-memory L1 write buffer for hot edge counts.
+    #[cfg(feature = "graph")]
     hot_edges_rs::register_functions(m)?;
 
     // F265B-IV: Telemetry aggregator — counters, histograms, gauges for sprint reporting
@@ -679,6 +693,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Sprint P2-1: Parallel DuckPGQ graph traversal via rayon.
     // batch_graph_traverse: parallel across root IOCs, rayon ThreadPool.
     // Each worker opens its own read-only DuckDB connection (thread-safe).
+    #[cfg(feature = "data")]
     graph_traverse::register_functions(m)?;
 
     // Sprint F266: Streaming HTML parsing via lol_html — link/email/title/meta extraction.
@@ -690,6 +705,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Sprint P2-2: Batch signal aggregation — ARM NEON-accelerated source weight
     // computation and signal vector aggregation for F199A reward-driven adaptation.
     // Fallback: scalar Rust on non-aarch64.
+    #[cfg(feature = "advanced")]
     signal_batch::register_functions(m)?;
 
     // PAR-1 P1: SIMD-accelerated batch cosine similarity for embedding re-ranking.
@@ -716,6 +732,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // F266-ZC: Arrow ArrayBuilder batch construction for CanonicalFinding.
     // Replaces 6× Python list-comprehension loops with single-pass Rust.
     // IPC RecordBatchStream bytes → pa.ipc.open_stream() zero-copy deserialize.
+    #[cfg(feature = "data")]
     arrow_batch_builder::register(m)?;
 
     // F350+: LZ4-compressed pattern store for 10k+ patterns (M1 8GB RAM optimization).
@@ -729,11 +746,11 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     pool_run::register_functions(m)?;
 
     // ISSUE-23: Rust-backed FederatedQTable with rayon parallel batch updates.
+    #[cfg(feature = "advanced")]
     federated_qtable::register(m)?;
 
-    // R4.2: Metal-accelerated batch pattern matching for IoC scanning.
-    // Falls back to Rust NEON Aho-Corasick when Metal unavailable.
-    metal_pattern_matcher::register_functions(m)?;
+    // D6: metal_pattern_matcher removed — gpu_batch_keyword_scan() was never called in production.
+    // CPU Aho-Corasick fallback in rust ioc_extract/ioc_extract_fast is sufficient.
 
     // ISSUE-023: Rust HNSW ANN bridge for LanceDB — unified hnsw module.
     // PyHNSWBridge: entity ID → node ID mapping for LanceDBIdentityStore
@@ -742,9 +759,11 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<hnsw::py_api::PyHNSWIndex>()?;
 
     // R4.4: TinyLFU LRU cache for cross-worker graph results.
+    #[cfg(feature = "advanced")]
     m.add_class::<graph_cache::PyGraphLRUCache>()?;
 
     // R4.5: Distribuovaný BloomFilter s Count-Min Sketch.
+    #[cfg(feature = "advanced")]
     m.add_class::<dedup_bloom::PyDistributedBloomFilter>()?;
 
     // Issue #22: Health endpoint
@@ -764,6 +783,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // ISSUE-013: Async Rust DuckDB queries via std::thread + rayon pool.
     // rust_async_query() se volá z Python asyncio přes asyncio.to_thread().
+    #[cfg(feature = "data")]
     async_query::register(m)?;
 
     // ISSUE #014: Multi-stage pipeline operators via rayon — zero-copy Arc<T> between stages.
@@ -778,6 +798,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     mlx_bridge::register(m)?;
 
     // DuckDB bridge — isolated module for future cdylib extraction (saves ~8 MB .dylib)
+    #[cfg(feature = "data")]
     data::register_functions(m)?;
 
     // ISSUE-6: Bounded ring buffers — recent_iocs ring, M1 8GB safe
@@ -785,6 +806,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // C3: Feed decision classifiers — pure functions for feed signal classification.
     feed_decision::register_functions(m)?;
-feed_pipeline::register(m)?;
+    #[cfg(feature = "advanced")]
+    feed_pipeline::register(m)?;
 Ok(())
 }

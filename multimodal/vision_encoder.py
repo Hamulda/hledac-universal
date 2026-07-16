@@ -2,6 +2,7 @@ import asyncio
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
+from hledac.universal.utils.domain_executors import get_vision_executor
 from pathlib import Path
 import numpy as np
 from hledac.universal.core.resource_governor import Priority, ResourceGovernor
@@ -56,7 +57,14 @@ _MODEL_CACHE_DIR = Path('~/.hledac/models').expanduser()
 _MOBILE_NET_MODEL_PATH = _MODEL_CACHE_DIR / 'vision_encoder.mlpackage'
 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
 _IMAGE_SEMAPHORE = get_semaphore_for_testing(ConcurrencyCategory.GRAPH_RAG)
-_COREML_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix='coreml_vision')
+_COREML_EXECUTOR: ThreadPoolExecutor | None = None
+
+def _get_coreml_executor() -> ThreadPoolExecutor:
+    """Lazily-initialized CoreML vision executor (ISSUE-049: migrated to domain_executors)."""
+    global _COREML_EXECUTOR
+    if _COREML_EXECUTOR is None:
+        _COREML_EXECUTOR = get_vision_executor()
+    return _COREML_EXECUTOR
 IMAGE_VECTOR_DIM = 1024
 _MOBILE_NET_RAW_DIM = 960
 
@@ -133,7 +141,7 @@ class VisionEncoder:
 
                 def _load():
                     return MLModel(str(model_file), compute_units=ct_mod.ComputeUnit.ALL)
-                self._model = await loop.run_in_executor(_COREML_EXECUTOR, _load)
+                self._model = await loop.run_in_executor(_get_coreml_executor(), _load)
                 spec = self._model.get_spec()
                 self._input_name = spec.description.input[0].name
                 self._output_name = spec.description.output[0].name
@@ -194,7 +202,7 @@ class VisionEncoder:
             input_dict = {input_name: preprocessed}
             out_dict = model.predict(input_dict)
             return np.array(out_dict[output_name])
-        return await asyncio.get_running_loop().run_in_executor(_COREML_EXECUTOR, _inference)
+        return await asyncio.get_running_loop().run_in_executor(_get_coreml_executor(), _inference)
 
     @staticmethod
     def _phash_deterministic(image_bytes: bytes, out_dim: int=IMAGE_VECTOR_DIM) -> np.ndarray:

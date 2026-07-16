@@ -111,13 +111,14 @@ class ConcurrencyBudgetRegistry:
     _instance: ConcurrencyBudgetRegistry | None = None
     _init_guard: threading.Lock = threading.Lock()
     _async_lock: asyncio.Lock | None = None
-    __slots__ = tuple(('_budgets', '_governor', '_stats', '_uma_state'))
+    __slots__ = tuple(('_budgets', '_governor', '_stats', '_uma_state', '_semaphores'))
 
     def __init__(self) -> None:
         self._budgets: dict[ConcurrencyCategory, ConcurrencyBudget] = {}
         self._governor: M1ResourceGovernor | None = None
         self._uma_state: str = 'OK'
         self._stats: dict[ConcurrencyCategory, dict[str, int]] = {}
+        self._semaphores: dict[ConcurrencyCategory, asyncio.Semaphore] = {}  # F1 FIX: init here (was set dynamically in get())
         for category, limits in _CONCURRENCY_LIMITS.items():
             self._budgets[category] = ConcurrencyBudget(category=category, ok_limit=limits[0], warn_limit=limits[1], critical_limit=limits[2], emergency_limit=limits[3])
             self._stats[category] = {'acquired': 0, 'released': 0, 'rejected': 0}
@@ -177,12 +178,9 @@ class ConcurrencyBudgetRegistry:
         Thread-safety: dict.get() is atomic in CPython (GIL).
         Lazy creation: double-checked locking with dict.get() for miss → atomic insert.
         """
-        if hasattr(self, '_semaphores'):
-            sem = self._semaphores.get(category)
-            if sem is not None:
-                return sem
-        else:
-            self._semaphores: dict[ConcurrencyCategory, asyncio.Semaphore] = {}
+        sem = self._semaphores.get(category)
+        if sem is not None:
+            return sem
         budget = self._budgets.get(category)
         limit = budget.ok_limit if budget else 5
         new_sem = asyncio.Semaphore(limit)
@@ -259,6 +257,45 @@ async def get_budget(category: ConcurrencyCategory) -> asyncio.Semaphore:
     """Get Semaphore for category (async init required)."""
     registry = await ConcurrencyBudgetRegistry.get_instance_async()
     return registry.get(category)
+
+
+async def concurrency_budget(
+    category: ConcurrencyCategory,
+) -> int:
+    """
+    Get dynamic concurrency limit for category — respects UMA state.
+
+    F1 FIX: Replaces hardcoded concurrency values with UMA-aware limits.
+    Wraps registry.get() to extract the current semaphore limit, which is
+    already state-adjusted by adjust_for_state().
+
+    Usage:
+        # In parallel() call sites:
+        concurrency = await concurrency_budget(ConcurrencyCategory.PASTE_SCRAPE)
+
+        # Or with a callable for lazy evaluation (future-proofing):
+        concurrency = await concurrency_budget(ConcurrencyCategory.HTTP_LANE)
+
+    Returns the current limit for the category (OK/WARN/CRITICAL/EMERGENCY
+    adaptive value from ConcurrencyBudgetRegistry).
+    """
+    registry = await ConcurrencyBudgetRegistry.get_instance_async()
+    sem = registry.get(category)
+    return sem._value  # type: ignore[return-value]
+
+
+async def concurrency_budget_for(
+    category: ConcurrencyCategory,
+) -> int:
+    """
+    Alias for concurrency_budget — exists for Callble[[], Awaitable[int]] compatibility.
+
+    When used as `concurrency=lambda: concurrency_budget_for(ConcurrencyCategory.HTTP_LANE)`,
+    the lambda is called at runtime and the returned int is used directly as concurrency.
+    """
+    return await concurrency_budget(category)
+
+
 _SEMAPHORE_CACHE: dict[ConcurrencyCategory, asyncio.Semaphore] = {}
 _SEMAPHORE_CACHE_LOCK: threading.Lock = threading.Lock()
 

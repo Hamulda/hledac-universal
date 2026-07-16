@@ -110,8 +110,9 @@ dependencies = [
     # ── Parsing / web scraping ────────────────────────────────────────────────
     # selectolax PRIMARY: fast, pure Python, CSS selectors (M1 8GB friendly).
     # lxml FALLBACK: only for complex XPath queries (selectolax cannot do //a/@href).
+    # nh3 (F4): Rust HTML sanitizer, 9× faster than BS4, 4 MB RSS, M1-safe.
+    "nh3>=0.2.21",
     "selectolax>=0.4.10",
-    "beautifulsoup4>=4.14.3",
     "lxml>=6.1.1",
     "markdownify",
     # ── Dokumenty / OCR ───────────────────────────────────────────────────────
@@ -167,6 +168,8 @@ dependencies = [
     # Audit [ml] extra: transformers>=5.10.2 (5.x), dspy>=3.2.1, outlines>=1.3.0,
     # flashrank>=0.2.10 — none require pydantic; uv.lock confirms pydantic 2.x only.
     "pydantic>=2.10.0,<3.0.0",
+    # B1: LRUCache for bounded vulnerability_cache (CVE hot-path, M1 8GB safe)
+    "cachetools>=7.1.4",
     "pyyaml>=6.0",
     "defusedxml",
     "diff-match-patch",
@@ -195,7 +198,7 @@ otel = [
     "opentelemetry-instrumentation-asyncpg[observability]>=0.47b0",
     "logfire[observability]>=2.0.0",
     "structlog>=24.0.0,<25.0.0",
-    "cachetools>=7.1.4",
+    # cachetools promoted to core deps (B1 fix: LRUCache for vulnerability_cache)
     "roampal>=0.5.7",
 ]
 # Issue 10: observability extras — OTLP + profiling
@@ -327,6 +330,10 @@ ignore = ["E501", "F821", "B027"]  # BLE001: P1-01 audit in progress — see Iss
 # E911: P1-1 custom — forbid asyncio.run() outside allowed entry points.
 # Allowed: __main__, tools/, tests/. Use: grep -rn 'asyncio\.run(' ... | grep -v __main__ | grep -v 'tools/' | grep -v 'tests/'
 # CI: run `grep -rn 'asyncio\.run(' runtime intelligence brain knowledge prefetch cli layers transport network export report rendering coordinators/ 2>/dev/null | grep -v __main__ | grep -v tools/ | grep -v tests/` — expect 0 matches.
+# F911: asyncio.wait_for ban — use safe_wait_for() from utils.async_helpers instead.
+# EXCEPTION: asyncio.wait_for(asyncio.shield(...)) patterns MUST keep asyncio.wait_for
+# (shield requires wait_for's timeout-interrupt behavior; safe_wait_for uses asyncio.timeout
+# which doesn't guarantee shield protection). Each shield site has inline noqa: F911.
 
 [tool.ruff.lint.per-file-ignores]
 # stubs/ – Apple/CoreML framework .pyi binding files; preserve original names
@@ -371,6 +378,11 @@ ignore = ["E501", "F821", "B027"]  # BLE001: P1-01 audit in progress — see Iss
 # ── P1-01: archived / large monolithic files ──────────────────────────────────
 # runtime/sprint_scheduler_v1_archived.py — F350M-R refactor archive (inactive)
 "runtime/sprint_scheduler_v1_archived.py" = ["BLE001"]
+# ── C1: JSON stdlib ban in hot-path (CI check) ──────────────────────────────────
+# CI: rg -n '^(from json import|import json)' --type py core/ runtime/ fetching/
+#     knowledge/ transport/ brain/ coordinators/ forensics/ security/ evidence_log.py
+#     | rg -v 'per-file-ignores' — expect 0 matches
+#     M1 8GB: orjson is 5-20× faster than stdlib json
 # knowledge/duckdb_store.py — cold-path DB init/setup; hot-path uses ExceptionPolicy
 "knowledge/duckdb_store.py" = ["BLE001"]
 # brain/deephermes3_engine.py — cold-path MLX init/load

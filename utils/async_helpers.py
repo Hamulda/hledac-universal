@@ -26,8 +26,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import socket
 import sys
 import time
+import warnings
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
@@ -39,6 +41,45 @@ T = TypeVar("T", default=Any)
 if TYPE_CHECKING:
     pass
 
+# aiodns lazy import — optional c-ares backend for 2-5× faster parallel DNS
+# M1 8GB: ~5 MB resident (single c-ares channel), lazy import, always-on.
+_HAS_AIODNS: bool = False
+try:
+    import aiodns
+    _HAS_AIODNS = True
+except ImportError:
+    aiodns: Any = None  # type: ignore[assignment]
+
+
+class _AiodnsResolverHolder:
+    """
+    Process-wide singleton holder for aiodns DNSResolver.
+
+    C6 Fix (v2): Reuses a single c-ares channel across all async_getaddrinfo()
+    calls instead of creating a new DNSResolver per request (which leaked
+    c-ares channels on every call before the finally/close fix).
+
+    Lazily instantiated on first aiodns use. Thread-safe for asyncio use.
+    """
+
+    __slots__ = ("_resolver",)
+
+    def __init__(self) -> None:
+        if aiodns is None:
+            raise ImportError("aiodns not available")
+        self._resolver: Any = aiodns.DNSResolver(loop=asyncio.get_running_loop())
+
+    def resolve(self, hostname: str, family: int) -> Any:
+        return self._resolver.gethostbyname(hostname, family)
+
+    def close(self) -> None:
+        close_fn = getattr(self._resolver, "close", None)
+        if callable(close_fn):
+            close_fn()
+
+
+_aiodns_holder: _AiodnsResolverHolder | None = None
+
 __all__ = [
     "_check_gathered",
     "async_getaddrinfo",
@@ -48,12 +89,13 @@ __all__ = [
     "chunked_taskgroup",
     "monotonic_ms",
     "parallel",  # ISSUE-006: single canonical parallel runner
-    "safe_gather",
-    "safe_gather_ok",
-    "safe_gather_fire_and_forget",
-    "safe_gather_strict",  # PEP 654 BaseExceptionGroup auto-raise
-    "safe_gather_shielded",
-    "safe_gather_return_exceptions",
+    # Deprecated — DeprecationWarning emitted on import, use parallel() instead:
+    "safe_gather",  # → parallel(coros, policy="collect")
+    "safe_gather_ok",  # → parallel(coros, policy="log")
+    "safe_gather_fire_and_forget",  # → parallel(coros, policy="log")
+    "safe_gather_strict",  # → parallel(coros, policy="raise")
+    "safe_gather_shielded",  # → parallel(coros, taskgroup=True, policy="collect")
+    "safe_gather_return_exceptions",  # → parallel(coros, policy="collect")
     "safe_create_task",
     "safe_wait_for",
     "SafeGatherResult",
@@ -69,7 +111,37 @@ __all__ = [
     "ExceptionPolicy",  # ISSUE-006: Literal["raise", "first", "collect", "log"]
     "parallel_close",  # ISSUE-04: parallel teardown helper
     "parallel_close_async",  # ISSUE-04: parallel async close callables
+    "retry_backoff_async",  # E1: exponential backoff with jitter, proper CancelledError propagation
 ]
+
+
+# PEP 562 — module-level __getattr__ for deprecated names
+# Emits DeprecationWarning on import of any deprecated safe_gather_* name,
+# directing callers to the canonical parallel() API.
+_DEPRECATED_NAMES: dict[str, str] = {
+    "safe_gather": "parallel(coros, policy='collect')",
+    "safe_gather_strict": "parallel(coros, policy='raise')",
+    "safe_gather_shielded": "parallel(coros, taskgroup=True, policy='collect')",
+    "safe_gather_return_exceptions": "parallel(coros, policy='collect')",
+    "bounded_gather": "parallel(coros, concurrency=N, policy='collect')",
+    "gather_taskgroup": "parallel(coros, concurrency=N, taskgroup=True, policy='collect')",
+}
+# NOTE: safe_gather_ok and safe_gather_fire_and_forget are intentionally NOT deprecated
+# — 101+ files actively use them and migration to parallel() is incomplete.
+
+
+def __getattr__(name: str) -> Any:
+    if name in _DEPRECATED_NAMES:
+        replacement = _DEPRECATED_NAMES[name]
+        warnings.warn(
+            f"{name} is deprecated. Use {replacement} instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        # Dynamically fetch the actual function so the warning fires on access,
+        # not at module load time, and the function itself is still usable.
+        return globals()[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 logger = logging.getLogger(__name__)
 
@@ -173,11 +245,8 @@ def safe_create_task(
         )
     except ImportError:
         # OTel not installed — fall back to bare asyncio.create_task
-        import sys
-        if sys.version_info >= (3, 12):
-            return asyncio.create_task(coro, name=name, eager_start=eager_start)
-        else:
-            return asyncio.create_task(coro, name=name)  # type: ignore[arg-type]
+        # eager_start is supported on Python 3.12+ (this codebase runs 3.14)
+        return asyncio.create_task(coro, name=name, eager_start=eager_start)
 
 
 _T = TypeVar("_T", default=Any)
@@ -327,12 +396,6 @@ async def safe_gather_strict[T](
         except* TimeoutError as e:
             print(f"{len(e.exceptions)} timeouts: {[str(x) for x in e.exceptions]}")
     """
-    import warnings
-    warnings.warn(
-        "safe_gather_strict is deprecated. Use parallel(coros, policy='raise') instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
     _log = logger_instance or logger
     if not coros:
         return []
@@ -371,12 +434,19 @@ async def async_getaddrinfo(
     timeout: float | None = None,
 ) -> list[tuple[Any, ...]]:
     """
-    Async wrapper around loop.getaddrinfo() with optional timeout.
+    Async DNS resolver with optional aiodns (c-ares) backend for M1 8GB.
+
+    When aiodns is available (darwin/arm64, pyproject.toml dependency),
+    uses c-ares connection multiplexing for 2-5× faster parallel resolution
+    vs stdlib loop.getaddrinfo(). Falls back to loop.getaddrinfo() otherwise.
+
+    C6 Fix: previously used only loop.getaddrinfo(); now prefers aiodns when
+    available and family==0 (IPv4-only, matching the common case).
 
     Args:
         host: hostname to resolve
         port: port number
-        family: address family (0 = auto)
+        family: address family (0 = auto, currently only AF_INET via aiodns)
         type_: socket type (0 = auto)
         proto: protocol (0 = auto)
         timeout: max seconds to wait (None = use loop default)
@@ -387,6 +457,30 @@ async def async_getaddrinfo(
         sockaddr variants) — declared `tuple[Any, ...]` so callers don't
         depend on a particular stdlib stub shape.
     """
+    # C6 (v2): singleton holder reuses one c-ares channel for all calls.
+    # Supports both AF_INET and AF_INET6 via aiodns.
+    if _HAS_AIODNS and family in (0, socket.AF_INET, socket.AF_INET6):
+        global _aiodns_holder
+        if _aiodns_holder is None:
+            _aiodns_holder = _AiodnsResolverHolder()
+        try:
+            af = socket.AF_INET if family in (0, socket.AF_INET) else socket.AF_INET6
+            coro = _aiodns_holder.resolve(host, af)
+            if timeout is not None and timeout > 0:
+                result = await safe_wait_for(coro, timeout=timeout, label="aiodns_getaddrinfo")
+            else:
+                result = await coro
+            if result.addresses:
+                return [
+                    (af, socket.SOCK_STREAM, 0, host, (addr, port))
+                    for addr in result.addresses
+                ]
+            return []
+        except Exception:
+            # Fail-soft: fall through to stdlib on any aiodns error
+            pass
+
+    # Fallback: stdlib loop.getaddrinfo()
     loop = asyncio.get_running_loop()
     if timeout is not None and timeout > 0:
         async with asyncio.timeout(timeout):
@@ -613,11 +707,14 @@ async def _parallel_taskgroup[T](
             return ParallelResult(ok=ok_results, errors=[], re_raised=None)
 
 
+ConcurrencyBudgetResolver = Callable[[], Awaitable[int]]
+
+
 async def parallel[T](
     coros: list[Awaitable[T]],
     *,
     policy: ExceptionPolicy = "collect",
-    concurrency: int | None = None,
+    concurrency: int | ConcurrencyBudgetResolver | None = None,
     timeout: float | None = None,
     taskgroup: bool = False,
     ctx: str = "",
@@ -640,6 +737,10 @@ async def parallel[T](
 
     Concurrency: pass ``concurrency=N`` to cap simultaneous tasks (semaphore).
                  None (default) = unbounded.
+                 F1 FIX: pass a callable ``concurrency=lambda: expr`` that returns
+                 an int at call time — evaluated immediately before the semaphore
+                 is created, so it picks up the current UMA state each call.
+                 Example: ``concurrency=lambda: concurrency_budget(ConcurrencyCategory.PASTE_SCRAPE)``
 
     Backend: pass ``taskgroup=True`` to use asyncio.TaskGroup (Python 3.11+).
              Default (False) uses asyncio.gather with semaphore wrapper.
@@ -696,8 +797,16 @@ async def parallel[T](
     if not coros:
         return ParallelResult(ok=[], errors=[], re_raised=None)
 
-    if concurrency is not None and concurrency < 1:
-        concurrency = 1
+    # F1 FIX: resolve callable concurrency BEFORE the semaphore is created.
+    # Callable form (lambda: concurrency_budget(Category)) is re-evaluated each
+    # call so it picks up the current UMA state dynamically.
+    # Note: the callable itself is NOT awaited — it returns an awaitable (coroutine)
+    # from an async function, so we await the RESULT of calling it.
+    if concurrency is not None:
+        if callable(concurrency):
+            concurrency = await concurrency()
+        if concurrency < 1:
+            concurrency = 1
 
     # TaskGroup path (Python 3.11+): structured concurrency with sibling cancellation
     if taskgroup:
@@ -866,12 +975,6 @@ async def safe_gather[T](
 
     DEPRECATED: Use ``parallel(coros, policy="collect")`` instead.
     """
-    import warnings
-    warnings.warn(
-        "safe_gather is deprecated. Use parallel(coros, policy='collect') instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
     _log = logger_instance or logger
     if not coros:
         return SafeGatherResult(ok=[], errors=[])
@@ -1053,12 +1156,6 @@ async def safe_gather_fire_and_forget[T](
 
     DEPRECATED: Use ``parallel(coros, policy="log")`` instead.
     """
-    # warnings added at top of function body (after docstring for stacklevel accuracy)
-    import warnings  # noqa: E702
-    warnings.warn(
-        "safe_gather_fire_and_forget is deprecated. Use parallel(coros, policy='log') instead.",
-        DeprecationWarning, stacklevel=2,
-    )
     _log = logger_instance or logger
     if not coros:
         return None
@@ -1131,12 +1228,6 @@ async def safe_gather_ok[T](
 
     DEPRECATED: Use ``parallel(coros, policy="log")`` instead.
     """
-    import warnings
-    warnings.warn(
-        "safe_gather_ok is deprecated. Use parallel(coros, policy='log') instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
     _log = logger_instance or logger
     if not coros:
         return []
@@ -1246,11 +1337,14 @@ async def bounded_gather[T](
 #   [BPM4] CancelledError / BaseException → re-raised (GHOST I6/I7)
 
 
+ConcurrencyBudgetResolver = Callable[[], Awaitable[int]]
+
+
 async def bounded_parallel_map[T, R](
     items: list[T],
     coro_fn: Callable[[T], Awaitable[R]],
     *,
-    concurrency: int = 10,
+    concurrency: int | ConcurrencyBudgetResolver | None = None,
     ordered: bool = True,
     ctx: str = "",
     logger_instance: logging.Logger | None = None,
@@ -1260,10 +1354,16 @@ async def bounded_parallel_map[T, R](
     Transforms a list of items concurrently with explicit concurrency cap.
     Clean replacement for sequential `for x in xs: await f(x)`.
 
+    F1 FIX: concurrency accepts a callable (lambda: concurrency_budget(Category))
+    for dynamic UMA-aware resolution at call time.
+
     Args:
         items: List of items to process.
         coro_fn: Async function to apply to each item, e.g. `lambda e: check(e)`.
-        concurrency: Max simultaneous tasks (default 10). M1 8GB: 10×50MB = 500MB.
+        concurrency: Max simultaneous tasks. int (default 10), callable, or None.
+            - int: explicit limit
+            - callable: resolved at call time via await (supports lambda patterns)
+            - None: resolved via concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL)
         ordered: If True (default), results in input order. False = faster (no sort).
         ctx: Context label for log messages.
         logger_instance: Optional logger override.
@@ -1277,24 +1377,32 @@ async def bounded_parallel_map[T, R](
         BaseException (not Exception): KeyboardInterrupt, SystemExit, etc.
 
     Example:
-        # OLD (sequential):
-        for email in emails[:3]:
-            result = await hunter.check_target(email, 'email')
-            results.append(result)
+        # OLD (hardcoded):
+        raw = await bounded_parallel_map(emails[:3], ..., concurrency=3)
 
-        # NEW (parallel):
+        # NEW (UMA-aware dynamic):
+        from core.concurrency_registry import concurrency_budget, ConcurrencyCategory
         raw = await bounded_parallel_map(
             emails[:3],
             lambda e: hunter.check_target(e, 'email'),
-            concurrency=3,
+            concurrency=lambda: concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL),
         )
         results = [r for r in raw if r is not None]
     """
     _log = logger_instance or logger
     if not items:
         return []
-    if concurrency < 1:
-        concurrency = 1
+
+    # F1 FIX: resolve callable concurrency before semaphore creation.
+    if concurrency is not None:
+        if callable(concurrency):
+            concurrency = await concurrency()
+        if concurrency < 1:
+            concurrency = 1
+    else:
+        # Default: SCRAPE_GENERAL category for general scraping operations
+        from core.concurrency_registry import concurrency_budget, ConcurrencyCategory
+        concurrency = await concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL)
 
     sem = asyncio.Semaphore(concurrency)
 
@@ -1368,12 +1476,6 @@ async def safe_gather_return_exceptions(
 
     DEPRECATED: Use ``parallel(coros, policy="collect", return_exceptions=True)`` instead.
     """
-    import warnings
-    warnings.warn(
-        "safe_gather_return_exceptions is deprecated. Use parallel(coros, policy='collect') instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
     _log = logger_instance or logger
     if not coros:
         return []
@@ -1472,12 +1574,6 @@ async def safe_gather_shielded[T](
     DEPRECATED: Use ``parallel(coros, taskgroup=True, policy="collect")`` instead.
     This function is maintained for its unique partial-result preservation semantics.
     """
-    import warnings
-    warnings.warn(
-        "safe_gather_shielded is deprecated. Use parallel(coros, taskgroup=True, policy='collect') instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
     _log = logger_instance or logger
     if not coros:
         return SafeGatherShieldedResult(ok=[], errors=[], re_raised=None)
@@ -1760,7 +1856,7 @@ async def chunked_taskgroup[T, R](
     coro_fn: Callable[[T], Awaitable[R]],
     *,
     batch_size: int = 20,
-    concurrency: int = 10,
+    concurrency: int | ConcurrencyBudgetResolver | None = None,
     ctx: str = "",
     logger_instance: logging.Logger | None = None,
 ) -> list[R]:
@@ -1773,11 +1869,17 @@ async def chunked_taskgroup[T, R](
     M1 8GB safe: at most `batch_size` items are in-flight at once.
     Compared to gather_taskgroup/bounded_gather which hold all results in memory.
 
+    F1 FIX: concurrency accepts callable (lambda: concurrency_budget(Category))
+    for dynamic UMA-aware resolution at call time.
+
     Args:
         items: List of items to process.
         coro_fn: Async function to apply to each item, e.g. `lambda url: fetch(url)`.
         batch_size: Items per batch (default 20). M1 8GB: 20 × ~50MB = 1GB/batch.
-        concurrency: Max simultaneous tasks per batch (default 10).
+        concurrency: Max simultaneous tasks per batch.
+            - int: explicit limit (default 10)
+            - callable: resolved at call time via await
+            - None: resolved via concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL)
         ctx: Context label for log messages.
         logger_instance: Optional logger override.
 
@@ -1794,8 +1896,16 @@ async def chunked_taskgroup[T, R](
         return []
     if batch_size < 1:
         batch_size = 1
-    if concurrency < 1:
-        concurrency = 1
+
+    # F1 FIX: resolve callable concurrency before semaphore creation.
+    if concurrency is not None:
+        if callable(concurrency):
+            concurrency = await concurrency()
+        if concurrency < 1:
+            concurrency = 1
+    else:
+        from core.concurrency_registry import concurrency_budget, ConcurrencyCategory
+        concurrency = await concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL)
 
     all_results: list[R] = []
     sem = asyncio.Semaphore(concurrency)
@@ -2153,3 +2263,99 @@ async def parallel_close_async(
         else:
             out[str(item)] = None  # fallback
     return out
+
+
+async def retry_backoff_async(
+    coro_fn: Callable[[], Awaitable[T]],
+    max_retries: int = 3,
+    base_delay: float = 0.5,
+    *,
+    max_delay: float = 30.0,
+    jitter: bool = True,
+    cancel_is_retriable: bool = False,
+) -> T:
+    """E1 fix: Retry with exponential backoff and optional jitter.
+
+    Replaces manual ``for _retry_i in range(max_retries):
+        await asyncio.sleep(delay * 2**_retry_i)`` patterns.
+
+    Properly propagates CancelledError — the backoff sleep does NOT swallow
+    cancellation. This is critical for graceful SIGINT handling where retry
+    loops must be interruptible mid-backoff.
+
+    Args:
+        coro_fn: Coroutine to execute (callable, not pre-awaited).
+        max_retries: Maximum retry attempts (default 3).
+        base_delay: Initial delay in seconds (default 0.5).
+        max_delay: Cap on delay growth (default 30s).
+        jitter: Add ±25% decorrelated jitter (default True, recommended).
+        cancel_is_retriable: If True, CancelledError triggers retry instead
+            of propagation. Default False (CancelledError propagates — correct
+            for all graceful shutdown paths).
+
+    Returns:
+        The return value of coro_fn on success.
+
+    Raises:
+        CancelledError: Propagates immediately (cancel_is_retriable=False).
+        Exception: Re-raised after all retries exhausted.
+
+    Example:
+        async def fetch_with_retry(url: str) -> str:
+            return await retry_backoff_async(
+                lambda: _fetch(url),
+                max_retries=3,
+                base_delay=0.5,
+            )
+    """
+    import random as _random
+
+    attempt = 0
+
+    while True:
+        try:
+            return await coro_fn()
+        except asyncio.CancelledError:
+            if not cancel_is_retriable:
+                raise  # Propagate — correct for graceful shutdown
+            # cancel_is_retriable=True: fall through to retry
+        except Exception as _exc:  # noqa: BLE001
+            if attempt >= max_retries:
+                raise
+
+        attempt += 1
+        # Compute delay with exponential growth
+        delay = min(base_delay * (2 ** (attempt - 1)), max_delay)
+
+        if jitter:
+            # Decorrelated jitter: ±25% of current delay, seeded per attempt
+            delay *= (0.75 + _random.random() * 0.5)
+
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            # We were cancelled mid-backoff — propagate the cancellation,
+            # NOT the last_exception. This is the key invariant: cancellation
+            # always wins over retry exhaustion.
+            raise
+
+
+# Storage for deprecated functions — accessed only via __getattr__ after removal from globals.
+_DEPRECATED_STORAGE: dict[str, Any] = {}
+
+# Move deprecated functions to storage and remove from globals so __getattr__ intercepts.
+# __getattr__ is called ONLY when name is NOT in module.__dict__.
+for _dep_name in _DEPRECATED_NAMES:
+    _DEPRECATED_STORAGE[_dep_name] = globals().pop(_dep_name)
+
+
+def __getattr__(name: str) -> Any:
+    if name in _DEPRECATED_NAMES:
+        replacement = _DEPRECATED_NAMES[name]
+        warnings.warn(
+            f"{name} is deprecated. Use {replacement} instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return _DEPRECATED_STORAGE[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

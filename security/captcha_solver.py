@@ -114,7 +114,7 @@ class VisionCaptchaSolver:
     _cache_timestamps: dict[str, float] = {}
     CACHE_TTL = 3600
     MAX_CACHE_SIZE = 100
-    __slots__ = tuple(('_model', '_vn_model', 'model_path', 'use_ane'))
+    __slots__ = tuple(('_model', '_vn_model', 'model_path', 'use_ane', '_2captcha_api_key'))
 
     def __init__(self, model_path: str | None=None, use_ane: bool=True):
         """
@@ -180,7 +180,11 @@ class VisionCaptchaSolver:
         return self._result_cache[cache_key]
 
     def _set_cached_result(self, cache_key: str, result: object):
-        """Cache result with timestamp."""
+        """Cache result with timestamp. Existing keys are moved to end (LRU discipline)."""
+        if cache_key in self._result_cache:
+            # Existing key: move to end before updating (Python dict assignment
+            # does NOT automatically move existing keys to end in Python 3.7+)
+            self._result_cache.move_to_end(cache_key)
         while len(self._result_cache) >= self.MAX_CACHE_SIZE:
             oldest_key = next(iter(self._result_cache))
             del self._result_cache[oldest_key]
@@ -188,7 +192,7 @@ class VisionCaptchaSolver:
         self._result_cache[cache_key] = result
         self._cache_timestamps[cache_key] = time.time()
 
-    def solve_grid(self, image_bytes: bytes) -> list[int]:
+    def solve_grid(self, image_bytes: bytes) -> list[int] | None:
         """
         Solve grid CAPTCHA (e.g., "select all images with traffic lights").
 
@@ -292,31 +296,31 @@ class VisionCaptchaSolver:
             return None
         try:
             import base64
-            import httpx
+            from network.session_runtime import async_get_httpx_session
         except ImportError:
             logger.warning('httpx not available for 2captcha')
             return None
-        b64 = base64.b64encode(image_bytes).decode()
+        b64_data = base64.b64encode(image_bytes).decode()
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as session:
-                async with session.post('http://2captcha.com/in.php', data={'key': api_key, 'method': 'base64', 'body': b64}) as r:
-                    result = r.text
-                if not result.startswith('OK|'):
-                    logger.warning(f'2Captcha submit failed: {result}')
-                    return None
-                captcha_id = result.split('|')[1]
-                for _ in range(10):
-                    await asyncio.sleep(3)
-                    async with session.get(f'http://2captcha.com/res.php?key={api_key}&action=get&id={captcha_id}') as r:
-                        res = r.text
-                    if res.startswith('OK|'):
-                        solution = res.split('|')[1]
-                        logger.debug(f'2Captcha solved: {solution[:50]}...')
-                        return solution
-                    if res == 'CAPCHA_NOT_READY':
-                        continue
-                    logger.warning(f'2Captcha poll error: {res}')
-                    break
+            session = await async_get_httpx_session()
+            response = await session.post('http://2captcha.com/in.php', data={'key': api_key, 'method': 'base64', 'body': b64_data})
+            result = response.text  # httpx.Response.text is a property, not a method
+            if not result.startswith('OK|'):
+                logger.warning(f'2Captcha submit failed: {result}')
+                return None
+            captcha_id = result.split('|')[1]
+            for _ in range(10):
+                await asyncio.sleep(3)
+                poll_response = await session.get(f'http://2captcha.com/res.php?key={api_key}&action=get&id={captcha_id}')
+                res = poll_response.text  # httpx.Response.text is a property
+                if res.startswith('OK|'):
+                    solution = res.split('|')[1]
+                    logger.debug(f'2Captcha solved: {solution[:50]}...')
+                    return solution
+                if res == 'CAPCHA_NOT_READY':
+                    continue
+                logger.warning(f'2Captcha poll error: {res}')
+                break
         except Exception as e:
             logger.warning(f'2Captcha request failed: {e}')
         return None
