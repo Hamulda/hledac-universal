@@ -35,6 +35,7 @@ Design invariants
 
 import asyncio
 import contextvars
+import functools
 import logging
 import os
 import time
@@ -87,10 +88,19 @@ _pool_var: contextvars.ContextVar[dict[int, dict[str, Any]]] = contextvars.Conte
     "_pool", default={}
 )  # slot_idx -> {session, profile, warmed_at}
 _next_slot_var: contextvars.ContextVar[int] = contextvars.ContextVar("_next_slot", default=0)
-# _lock is kept as a true module-level global (not contextvar) because asyncio.Lock
-# is already task-local by design; storing it in a contextvar would give each task
-# its own lock, breaking synchronization across tasks.
-_lock: asyncio.Lock | None = None  # created lazily in async context
+
+
+@functools.cache
+def _get_lock() -> asyncio.Lock:
+    """Lazy singleton asyncio.Lock — functools.cache serializes init under a single internal lock.
+
+    Only one asyncio.Lock is ever created even under concurrent first-access.
+    asyncio.Lock is task-local by design; storing in a contextvar would give each
+    task its own lock, breaking synchronization across tasks.
+    """
+    return asyncio.Lock()
+
+
 _stats_var: contextvars.ContextVar[dict[str, int]] = contextvars.ContextVar(
     "_stats",
     default={
@@ -117,13 +127,6 @@ def _resolve_enabled() -> bool:
     Anything else (including unset) -> disabled.
     """
     return ENV.get_bool("HLEDAC_CURL_CFFI_PREWARM")
-
-
-def _get_lock() -> asyncio.Lock:
-    global _lock
-    if _lock is None:
-        _lock = asyncio.Lock()
-    return _lock
 
 
 def _is_session_stale(warmed_at: float | None) -> bool:

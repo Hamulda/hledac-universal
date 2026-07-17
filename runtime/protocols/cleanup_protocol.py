@@ -36,10 +36,11 @@ GHOST_INVARIANTS:
 
 import asyncio
 import logging
+import time
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    pass
+    from typing import ClassVar
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,96 @@ logger = logging.getLogger(__name__)
 # LMDB close: ~10ms
 # Only pathological cases (slow network, large pending batches) need more.
 DEFAULT_ACLOSE_TIMEOUT_S = 10.0
+
+# Telemetry labels for shutdown reason tracking (P1-9 acceptance criteria)
+_SHUTDOWN_NORMAL = "normal"
+_SHUTDOWN_TIMEOUT = "timeout"
+_SHUTDOWN_FORCE = "force"
+
+
+async def shutdown_aclose(
+    name: str,
+    coro: Any,
+    timeout_s: float = DEFAULT_ACLOSE_TIMEOUT_S,
+    _telemetry: Any = None,
+) -> None:
+    """
+    Canonical aclose wrapper: asyncio.wait_for + force-shutdown fallback.
+
+    This is the STANDARD implementation pattern for all aclose() methods.
+    Subclasses should NOT reimplement aclose() directly — instead they
+    implement _do_shutdown() (the actual cleanup logic) and call this
+    helper from their aclose() override.
+
+    Telemetry emitted (if _telemetry is set):
+        shutdown_reason: "normal" | "timeout" | "force"
+        shutdown_duration_ms: elapsed milliseconds
+
+    Args:
+        name: Human-readable name for logging (e.g. "DuckDBShadowStore")
+        coro: Awaitable — the cleanup coroutine (e.g. self._do_shutdown())
+        timeout_s: Maximum seconds to wait (default 10.0)
+        _telemetry: Optional telemetry-like duck-typed object with
+                    incr(metric, value) method (e.g. Prometheus Counter,
+                    structlog log, or no-op).
+                    Pass None to skip telemetry.
+
+    Force shutdown path:
+        After timeout, sends CancelledError into the coroutine and waits
+        up to 1.0s for graceful cancellation. If that also fails, the
+        force path is still considered complete (no SIGKILL in Python).
+
+    Usage:
+        class MyResource:
+            DEFAULT_TIMEOUT_S = 10.0
+
+            async def aclose(self, timeout_s: float | None = None) -> None:
+                timeout_s = timeout_s if timeout_s is not None else self.DEFAULT_TIMEOUT_S
+                await shutdown_aclose(
+                    name=type(self).__name__,
+                    coro=self._do_shutdown(),
+                    timeout_s=timeout_s,
+                    _telemetry=getattr(self, "_telemetry", None),
+                )
+    """
+    if timeout_s is None:
+        timeout_s = DEFAULT_ACLOSE_TIMEOUT_S
+
+    _emit = getattr(_telemetry, "incr", None) if _telemetry else None
+
+    start = time.monotonic()
+    reason: str = _SHUTDOWN_NORMAL
+
+    try:
+        await asyncio.wait_for(coro, timeout=timeout_s)
+    except asyncio.TimeoutError:
+        reason = _SHUTDOWN_TIMEOUT
+        logger.warning(
+            "[shutdown:force] %s aclose() timed out after %.1fs — forcing cancellation",
+            name,
+            timeout_s,
+        )
+        # Force path: give coroutine 1.0s to honour cancellation, then give up.
+        # No SIGKILL in Python — we can only close the coroutine and wait.
+        if hasattr(coro, "close"):
+            coro.close()  # type: ignore[union-attr]
+        await asyncio.sleep(1.0)  # Allow cancellation to propagate
+        reason = _SHUTDOWN_FORCE
+    except asyncio.CancelledError:
+        reason = _SHUTDOWN_FORCE
+        raise
+    finally:
+        elapsed_ms = (time.monotonic() - start) * 1000
+        if _emit:
+            _emit("shutdown_reason", 1.0, {"reason": reason, "component": name})
+            _emit("shutdown_duration_ms", elapsed_ms, {"reason": reason, "component": name})
+        else:
+            logger.debug(
+                "[shutdown] %s aclose() reason=%s duration_ms=%.1f",
+                name,
+                reason,
+                elapsed_ms,
+            )
 
 
 @runtime_checkable

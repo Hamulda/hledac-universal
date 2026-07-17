@@ -12,13 +12,11 @@ This module is auto-imported by embeddings/manager.py and core/mlx_embeddings.py
 to eliminate semantic duplication while maintaining M1 8GB RAM constraints.
 """
 import asyncio
+import functools
 import gc
 import os
 import threading
-import time
 from typing import Any, Callable
-import mlx.core as mx
-from mlx_lm import generate, stream_generate
 DEFAULT_MODEL_PATH = 'mlx-community/Hermes-3-Llama-3.2-3B-4bit'
 DEFAULT_MAX_KV_SIZE = 8192
 DEFAULT_KV_BITS = 4
@@ -75,7 +73,7 @@ def is_embedding_model_prewarmed(model_path: str | None=None) -> bool:
         pass
     return False
 
-def encode_sync_mlx(text: str, model: Any, tokenizer: Any, max_length: int=512) -> tuple[mx.array, mx.array] | None:
+def encode_sync_mlx(text: str, model: Any, tokenizer: Any, max_length: int = 512) -> tuple[Any, Any] | None:
     """
     Synchronous MLX encoding with proper evaluation.
 
@@ -93,6 +91,7 @@ def encode_sync_mlx(text: str, model: Any, tokenizer: Any, max_length: int=512) 
         Tuple of (input_ids, attention_mask) or None on failure
     """
     try:
+        import mlx.core as mx
         inputs = tokenizer(text, return_tensors='pt', max_length=max_length, truncation=True)
         input_ids = mx.array(inputs['input_ids'].tolist())
         attention_mask = mx.array(inputs['attention_mask'].tolist())
@@ -158,23 +157,35 @@ def get_cache_stats() -> dict[str, Any]:
 def reset_cache_stats() -> None:
     """Reset global cache statistics."""
     _global_cache_stats.reset()
-_SHARED_CACHE_LOCK: asyncio.Lock | None = None
+
+
+# Lazy lock: asyncio.Lock created on first async call, not at module import.
+# ISSUE-014: asyncio.Lock() at module import is CRITICAL bug on macOS —
+# Lock() without event loop is created in broken state.
+# Fix: None placeholder + lazy _get_lock() helper (canonical pattern).
+_CACHE_LOCK: asyncio.Lock | None = None
+
+
+def _get_lock() -> asyncio.Lock:
+    """Lazy lock accessor — creates asyncio.Lock only when event loop exists."""
+    global _CACHE_LOCK
+    if _CACHE_LOCK is None:
+        _CACHE_LOCK = asyncio.Lock()
+    return _CACHE_LOCK
+
 
 def get_cache_lock() -> asyncio.Lock:
-    """
-    Get shared async lock singleton for cache operations.
+    """Get shared async lock singleton for cache operations.
 
     Consolidates duplicate implementations in cache.py and pool.py.
-    Uses module-level singleton pattern for efficient locking.
+    Uses lazy init — asyncio.Lock created only when event loop exists.
+    Only one asyncio.Lock is ever created even under concurrent first-access.
 
     Usage:
         async with get_cache_lock():
             # critical section
     """
-    global _SHARED_CACHE_LOCK
-    if _SHARED_CACHE_LOCK is None:
-        _SHARED_CACHE_LOCK = asyncio.Lock()
-    return _SHARED_CACHE_LOCK
+    return _get_lock()
 
 async def get_cache_lock_async() -> asyncio.Lock:
     """

@@ -145,18 +145,105 @@ class BoundedStageQueue(Generic[T_out]):
     - put_nowait() při full queue vrací False (drop, ne block)
     - Drop counter pro telemetry
     - Stage name pro loggování
+    - UMA-aware dynamická adaptace maxsize (P1-8)
 
     Fail-safe: nikdy neblokuje producenta, nikdy nehazuje exception.
+
+    UMA adaptace (P1-8):
+        ok:          base maxsize (např. 512 pro enrich_out)
+        soft_warn:   75% base
+        warn:        50% base
+        critical:    25% base
+        emergency:   12.5% base (min 1)
+
+    při shrink: drain oldest, keep newest (drop-oldest na head)
     """
 
     maxsize: int
     stage_name: str
+    _base_maxsize: int = field(default=0, repr=False)
+    _uma_state: str = field(default="ok", repr=False)
     _queue: asyncio.Queue[T_out] = field(default_factory=lambda: asyncio.Queue(maxsize=0))
-    _dropped: int = 0
+    _dropped: int = field(default=0, repr=False)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
+    # UMA state → multiplier pro maxsize (P1-8)
+    _MAXSIZE_TABLE: dict[str, float] = field(
+        default_factory=lambda: {
+            "ok": 1.0,
+            "soft_warn": 0.75,
+            "warn": 0.5,
+            "critical": 0.25,
+            "emergency": 0.125,
+        },
+        repr=False,
+    )
+
     def __post_init__(self) -> None:
+        object.__setattr__(self, "_base_maxsize", self.maxsize)
         object.__setattr__(self, "_queue", asyncio.Queue(maxsize=self.maxsize))
+
+    def set_uma_state(self, state: str) -> None:
+        """
+        Adapt queue size to UMA pressure (P1-8).
+
+        Voláno z hlavního TaskGroup runneru při změně UMA stavu.
+        Synchroní — lock je držen jen během drain+recreate operace,
+        což je velmi krátké (<1ms). Concurrent put() operace nejsou
+        touto metodou ovlivněny (používají vlastní lock přes put_nowait).
+
+        Args:
+            state: "ok" | "soft_warn" | "warn" | "critical" | "emergency"
+        """
+        if state == self._uma_state:
+            return
+
+        multiplier = self._MAXSIZE_TABLE.get(state, 1.0)
+        new_max = max(1, int(self._base_maxsize * multiplier))
+
+        if new_max == self._queue.maxsize:
+            object.__setattr__(self, "_uma_state", state)
+            return
+
+        # DRAIN: vyprázdni frontu, keep newest new_max items (drop oldest)
+        items: list[T_out] = []
+        while not self._queue.empty():
+            try:
+                items.append(self._queue.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+
+        # Keep newest (tail = most recent), drop oldest (head = earliest)
+        keep = items[-new_max:] if len(items) > new_max else items
+
+        # RECREATE queue s novým maxsize
+        new_queue = asyncio.Queue[T_out](maxsize=new_max)
+        for item in keep:
+            try:
+                new_queue.put_nowait(item)
+            except asyncio.QueueFull:
+                break
+
+        object.__setattr__(self, "_queue", new_queue)
+        object.__setattr__(self, "_uma_state", state)
+
+        dropped_by_shrink = len(items) - len(keep)
+        if dropped_by_shrink > 0:
+            logger.info(
+                "BoundedStageQueue[%s]: UMA=%s, maxsize %d→%d, drained %d oldest",
+                self.stage_name,
+                state,
+                new_max,
+                new_max,
+                dropped_by_shrink,
+            )
+        else:
+            logger.debug(
+                "BoundedStageQueue[%s]: UMA=%s, maxsize grew to %d",
+                self.stage_name,
+                state,
+                new_max,
+            )
 
     async def put(self, item: T_out) -> bool:
         """

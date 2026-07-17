@@ -61,9 +61,9 @@ async def get_session(
         host: hostname/domain (e.g. "example.onion")
 
     Returns:
-        aiohttp.ClientSession if transport is available, None on any error.
-        For tor: returns the TorTransport singleton (session owned by transport).
-        For i2p: returns the lazy singleton from get_i2p_session().
+        httpx.AsyncClient if transport is available, None on any error.
+        For tor: returns the TorTransport._session_tor (httpx.AsyncClient, owned by transport).
+        For i2p: returns the lazy singleton from get_i2p_session() (httpx.AsyncClient).
     """
     if transport not in ("tor", "i2p"):
         return None
@@ -87,7 +87,7 @@ async def _get_tor_session(_host: str) -> Any | None:
             return None
         if not await _tor_is_running(tor):
             return None
-        # Return the actual aiohttp.ClientSession, not the TorTransport wrapper.
+        # Return the TorTransport._session_tor (httpx.AsyncClient, owned by transport).
         # TorTransport._session_tor is set in start() after connector init.
         return getattr(tor, "_session_tor", None)
     except Exception:

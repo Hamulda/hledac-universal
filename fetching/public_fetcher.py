@@ -2618,9 +2618,6 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
                                 _tc.js_renderer_count += 1
                                 _matched = tuple(((m.label or '') + '|' + m.pattern + '|' + m.value for m in js_matches or []))
                                 return FetchResult(url=url, final_url=url, status_code=200, content_type='text/html', text=js_text, fetched_bytes=len(js_html), declared_length=-1, elapsed_ms=elapsed_ms, error=None, selected_transport='js', transport_policy_reason='js_required', transport_counters=_tc, matched_patterns=_matched)
-                                if not js_html:
-                                    cap = _get_js_renderer_capability()
-                                    logger.warning('All JS renders failed for {url}, returning aiohttp result', url=url)
                         elapsed_ms = (time.monotonic() - t0) * 1000
                         if _circuit_breaker and last_status_code >= 200 and (last_status_code < 300):
                             _circuit_breaker.record_success()

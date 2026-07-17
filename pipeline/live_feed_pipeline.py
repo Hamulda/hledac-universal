@@ -263,6 +263,27 @@ class FeedPipelineRunResult(msgspec.Struct, frozen=True):
     telemetry: FeedSignalTelemetry | None = None
     # E2: Raw XML for fast path — enables single-call parse+scan+dedup
     raw_xml: str | None = None
+    # F164C: per-run dedup loss counter (hits filtered by per-entry dedup)
+    findings_lost_to_dedup: int = 0
+
+    @property
+    def ok(self) -> bool:
+        """True when the pipeline ran without a fatal error."""
+        return self.error is None
+
+    @classmethod
+    def empty(cls, feed_url: str = "") -> "FeedPipelineRunResult":
+        """Skipped feed — zero results, no error."""
+        return cls(
+            feed_url=feed_url,
+            fetched_entries=0,
+            accepted_findings=0,
+            stored_findings=0,
+            patterns_configured=0,
+            matched_patterns=0,
+            pages=(),
+            error=None,
+        )
 
 
 @dataclasses.dataclass(slots=True)

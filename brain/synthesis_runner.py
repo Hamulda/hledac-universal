@@ -2072,7 +2072,7 @@ class SynthesisRunner:
         for ep in episodes[:3]:
             findings_raw = ep.get("top_findings", "")
             try:
-                findings = orjson.loads(findings_raw) if isinstance(findings_raw, str) else findings_raw
+                findings = orjson.loads(findings_raw)
             except Exception:
                 findings = []
             ep_query = ep.get("query", "")[:60]

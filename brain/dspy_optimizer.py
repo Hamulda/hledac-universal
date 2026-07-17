@@ -118,7 +118,7 @@ class DSPyOptimizer:
     async def _optimize_loop(self):
         while not self._stop.is_set():
             await asyncio.sleep(self._optimization_interval)
-            if self._should_optimize():
+            if await asyncio.to_thread(self._should_optimize):
                 await self._run_optimization()
 
     async def _generate_synthetic_examples(self, limit: int=100) -> list[tuple]:

@@ -30,7 +30,9 @@ import sys
 import weakref
 
 from core.env_config import ENV
+from hledac.universal.runtime.protocols.cleanup_protocol import shutdown_aclose
 from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
+from hledac.universal.knowledge.duckdb_migrator import SchemaMigrator
 
 # OTEL instrumentation — strict import with fallback chain
 try:
@@ -1702,6 +1704,10 @@ class DuckDBShadowStore:
         "_pending_accepted_indices",
         "_batch_start_ts",
     )
+
+    # P1-9: Canonical aclose timeout — matches DEFAULT_ACLOSE_TIMEOUT_S.
+    DEFAULT_TIMEOUT_S = 10.0
+
     "DuckDB sidecar with RAMDISK-first / OPSEC-safe degraded mode."
 
     def __init__(
@@ -2253,6 +2259,16 @@ class DuckDBShadowStore:
                 self._configure_connection(setup_conn, runtime, is_read_only=_read_only_flag)
                 if not _read_only_flag:
                     _apply_schema(setup_conn, _SCHEMA_SQL)
+                    # P0-8: Run versioned migrations after init schema.
+                    # Bootstrap: if schema_version table is missing but other tables
+                    # exist (legacy DB from inline _SCHEMA_SQL era), version 1 is
+                    # treated as already applied so init schema is not re-run.
+                    # Invalidate query cache after migration: if _query_cache was
+                    # already initialized by a prior _init_connection call (reused store),
+                    # cached results from the old schema must be discarded.
+                    SchemaMigrator(setup_conn).migrate()
+                    if self._query_cache is not None:
+                        self._query_cache.invalidate()
             finally:
                 if setup_conn is not None:
                     try:
@@ -2341,8 +2357,16 @@ class DuckDBShadowStore:
 
     def _apply_schema_migrations(self) -> None:
         """
+        DEPRECATED — P0-8: replaced by SchemaMigrator.migrate() in _init_connection().
+
         ALTER TABLE ADD COLUMN for any sprint_delta columns missing from old DBs.
         DuckDB does not have IF NOT EXISTS for ALTER, so we catch and ignore errors.
+
+        NOTE: This method is NO LONGER CALLED. It is kept for backward compatibility
+        only. The canonical migration path is now:
+          1. _init_connection() calls _apply_schema(setup_conn, _SCHEMA_SQL)
+          2. _init_connection() then calls SchemaMigrator(setup_conn).migrate()
+          3. Caller of _init_connection() invalidates _query_cache after return
 
         Sprint F192F §2: findings_per_min -> findings_per_minute rename.
         Migration order matters - add new column first, then handle legacy column:
@@ -7962,9 +7986,9 @@ class DuckDBShadowStore:
             }
         return ret
 
-    async def aclose(self) -> None:
+    async def aclose(self, timeout_s: float | None = None) -> None:
         """
-        Async idempotent shutdown - canonical async cleanup path.
+        P1-9: Async idempotent shutdown with canonical timeout + force-shutdown pattern.
 
         Delegates to _do_sync_close(emergency=False) for shared synchronous cleanup,
         then performs async-only operations (bg task cancellation).
@@ -7973,6 +7997,14 @@ class DuckDBShadowStore:
         """
         if self._closed:
             return
+        await shutdown_aclose(
+            name="DuckDBShadowStore",
+            coro=self._do_shutdown(),
+            timeout_s=timeout_s if timeout_s is not None else self.DEFAULT_TIMEOUT_S,
+        )
+
+    async def _do_shutdown(self) -> None:
+        """Inner cleanup — called by aclose() via shutdown_aclose()."""
         if self._checkpoint_task is not None:
             self._checkpoint_task.cancel()
             self._checkpoint_task = None

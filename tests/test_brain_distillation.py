@@ -46,7 +46,7 @@ class TestDistillationEngine:
         _ = await engine.get_stats()
 
         chain = ["Step 1: Identify the country", "Step 2: Recall the capital"]
-        _ = await engine.score_chain("What is the capital of France?", chain)
+        _ = engine.score_chain("What is the capital of France?", chain)
         _ = await engine.train(n_epochs=5)
 
         await engine.cleanup()

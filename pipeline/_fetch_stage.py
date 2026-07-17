@@ -121,11 +121,12 @@ class FetchStage:
                 result = await self._fetch_one(url, ctx)
                 metrics.record_processed()
 
-                # AIMD feedback
+                # AIMD feedback — use ctx.uma_state for live UMA pressure (P1-8)
+                # on_failure() takes no args; uma_state context is read from ctx
                 if result is not None and not getattr(result, "error", None):
                     new_window, _ = await self._aimd.on_success()
                 else:
-                    new_window, _ = await self._aimd.on_failure(self._uma_state)
+                    new_window, _ = await self._aimd.on_failure()
 
                 # Update semaphore if window changed significantly
                 if abs(new_window - self._effective_concurrency) >= 1.0:

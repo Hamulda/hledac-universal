@@ -1676,7 +1676,13 @@ class SqliteVecIdentityStore:
         entities = [{'id': r.get('id') or r.get('item_id', ''), 'aliases': (r.get('metadata') or {}).get('aliases', []), 'similarity': r.get('similarity', 1.0 - r.get('distance', 1.0)), 'first_seen': now, 'last_seen': now, 'text': (r.get('metadata') or {}).get('aliases', [])} for r in results]
         try:
             from context_optimization.mmr import maximal_marginal_relevance
-            entities = maximal_marginal_relevance(candidates=entities, query_emb=query_emb, lambda_param=0.5, top_k=top_k)
+            import numpy as np
+            query_emb_np = np.array(query_emb, dtype='float32')
+            if query_emb_np.ndim == 1:
+                query_emb_np = query_emb_np.reshape(1, -1)
+            entity_vecs = [np.array([e.get('embedding', []) if isinstance(e.get('embedding'), list) else []], dtype='float32') for e in entities]
+            selected_indices = maximal_marginal_relevance(query_vector=query_emb_np, candidate_vectors=entity_vecs, top_k=top_k, lambda_param=0.5)
+            entities = [entities[i] for i in selected_indices]
         except Exception:
             pass
         return entities[:top_k]

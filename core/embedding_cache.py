@@ -104,23 +104,50 @@ class _L2Store:
         self._fp: Any = None  # open file handle
 
         # Memory-map or create
-        if path.exists():
-            self._mmap = self._open_mmap(path)
-        else:
-            self._fp = open(path, "w+b")
-            self._resize(self._max_items * self._entry_bytes)
-            self._mmap = mmap.mmap(self._fp.fileno(), 0)
+        # Fail-safe: any exception during init closes open fd before re-raising
+        try:
+            if path.exists():
+                self._mmap, self._fp = self._open_mmap(path)
+            else:
+                self._fp = open(path, "w+b")
+                try:
+                    self._resize(self._max_items * self._entry_bytes)
+                    self._mmap = mmap.mmap(self._fp.fileno(), 0)
+                except Exception:
+                    self._fp.close()
+                    self._fp = None
+                    raise
+        except BaseException:
+            # Clean up any partially-initialized state before re-raising
+            if self._mmap is not None:
+                try:
+                    self._mmap.close()
+                except Exception:
+                    pass
+                self._mmap = None
+            if self._fp is not None:
+                try:
+                    self._fp.close()
+                except Exception:
+                    pass
+                self._fp = None
+            raise
 
-    def _open_mmap(self, path: Path) -> mmap.mmap:
+    def _open_mmap(self, path: Path) -> tuple[mmap.mmap, Any]:
+        """Return both mmap and fp to keep them paired in instance state."""
         try:
             fp = open(path, "r+b")
-            return mmap.mmap(fp.fileno(), 0)
+            return mmap.mmap(fp.fileno(), 0), fp
         except OSError:
             # Corrupt — recreate
             path.unlink(missing_ok=True)
-            self._fp = open(path, "w+b")
-            self._resize(self._max_items * self._entry_bytes)
-            return mmap.mmap(self._fp.fileno(), 0)
+            fp = open(path, "w+b")
+            try:
+                self._resize(self._max_items * self._entry_bytes)
+                return mmap.mmap(fp.fileno(), 0), fp
+            except Exception:
+                fp.close()
+                raise
 
     def _resize(self, size: int) -> None:
         """Truncate file to size bytes."""
@@ -138,7 +165,11 @@ class _L2Store:
             if offset < 0:
                 return None
             data = mm[offset + 16 : offset + 16 + self._vec_bytes]
-            vec = np.frombuffer(data, dtype=np.float16).copy()  # copy out of mmap
+            # Zero-copy view into mmap. writeable=False prevents accidental
+            # in-place modification that would corrupt mmap data.
+            # RLock ensures atomicity; fixed file size ensures offset stability.
+            vec = np.frombuffer(data, dtype=np.float16)
+            vec.flags.writeable = False
             # Remove from free-list if present
             try:
                 self._free_offsets.remove(offset)
@@ -339,9 +370,11 @@ class EmbeddingCache:
             if not self._l1:
                 break
             self._evict_l1()
-        # Anonymous key — not re-fetchable by key (L2 already has it)
+        # Copy: L1 must not hold view into mmap (file compaction would
+        # invalidate the view). Anonymous key — not re-fetchable by key
+        # (L2 already has it by digest).
         key = f"_l2promo_{id(vec)}"
-        self._l1[key] = vec
+        self._l1[key] = vec.copy()
         self._l1_size += vec.nbytes
 
     def _evict_l1(self) -> None:
@@ -381,7 +414,10 @@ class EmbeddingCache:
         return self
 
     def __exit__(self, *_: object) -> None:
-        self.clear()
+        # Close L2 without deleting the backing file — caller may want to reuse it
+        if self._l2 is not None:
+            self._l2.close()
+            self._l2 = None
 
     # -------------------------------------------------------------------------
     # Compatibility helpers for SemanticDeduplicator

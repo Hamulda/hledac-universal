@@ -55,6 +55,7 @@ from dataclasses import dataclass, field
 import msgspec
 from typing import TYPE_CHECKING, Any
 
+from hledac.universal.runtime.protocols.cleanup_protocol import shutdown_aclose
 from hledac.universal.coordinators.aimd_controllers import (
     AIMDController,
     make_enrich_aimd,
@@ -402,8 +403,21 @@ class UnifiedResourceManager:
 
         return stats
 
+    # P1-9: Canonical aclose timeout — matches DEFAULT_ACLOSE_TIMEOUT_S.
+    DEFAULT_TIMEOUT_S = 10.0
+
     async def shutdown(self, timeout: float = 30.0) -> None:
-        """Graceful shutdown."""
+        """P1-9: Graceful shutdown with force-shutdown fallback."""
+        if self._shutdown:
+            return
+        await shutdown_aclose(
+            name="UnifiedResourceManager",
+            coro=self._do_shutdown(),
+            timeout_s=timeout,
+        )
+
+    async def _do_shutdown(self) -> None:
+        """Inner cleanup — called by shutdown() via shutdown_aclose()."""
         async with self._lock:
             self._shutdown = True
 
@@ -417,7 +431,7 @@ class UnifiedResourceManager:
             if self._active_tasks:
                 await asyncio.wait(
                     self._active_tasks.values(),
-                    timeout=timeout,
+                    timeout=30.0,
                     return_when=asyncio.ALL_COMPLETED,
                 )
 

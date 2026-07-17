@@ -52,9 +52,9 @@ def get_mx():
 _MLX_CACHE: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
 _MLX_CACHE_MAX = 2
 
-_MLX_CACHE_LOCK: asyncio.Lock | None = None
 _MLX_SEMAPHORE: asyncio.Semaphore | None = None
 _MLX_EVICT_LOCK = threading.Lock()
+_MLX_CACHE_LOCK = threading.RLock()  # Protects OrderedDict mutations
 
 _CACHE_HITS = 0
 _CACHE_MISSES = 0
@@ -75,15 +75,17 @@ def get_mlx_semaphore() -> asyncio.Semaphore:
 async def get_mlx_model(model_name: str) -> tuple[Any, Any]:
     """Get MLX LLM model and tokenizer from cache or load."""
     async with _get_cache_lock():
-        if model_name in _MLX_CACHE:
-            _MLX_CACHE.move_to_end(model_name)
-            global _CACHE_HITS
-            _CACHE_HITS += 1
-            logger.debug(f"MLX cache hit: {model_name}")
-            return _MLX_CACHE[model_name]
+        # Thread-lock protects OrderedDict mutation across asyncio.to_thread workers
+        with _MLX_CACHE_LOCK:
+            if model_name in _MLX_CACHE:
+                _MLX_CACHE.move_to_end(model_name)
+                global _CACHE_HITS
+                _CACHE_HITS += 1
+                logger.debug(f"MLX cache hit: {model_name}")
+                return _MLX_CACHE[model_name]
 
-        global _CACHE_MISSES
-        _CACHE_MISSES += 1
+            global _CACHE_MISSES
+            _CACHE_MISSES += 1
 
         try:
             from mlx_lm import load as mlx_load
@@ -92,10 +94,11 @@ async def get_mlx_model(model_name: str) -> tuple[Any, Any]:
                 mlx_load,
                 model_name,
             )
-            _MLX_CACHE[model_name] = (model, tokenizer)
-            if len(_MLX_CACHE) > _MLX_CACHE_MAX:
-                evicted_name, _ = _MLX_CACHE.popitem(last=False)
-                logger.info(f"MLX cache evicted: {evicted_name}")
+            with _MLX_CACHE_LOCK:
+                _MLX_CACHE[model_name] = (model, tokenizer)
+                if len(_MLX_CACHE) > _MLX_CACHE_MAX:
+                    evicted_name, _ = _MLX_CACHE.popitem(last=False)
+                    logger.info(f"MLX cache evicted: {evicted_name}")
 
             logger.info(f"MLX model loaded and cached: {model_name}")
             return model, tokenizer
@@ -105,7 +108,8 @@ async def get_mlx_model(model_name: str) -> tuple[Any, Any]:
 
 
 def clear_mlx_cache() -> None:
-    _MLX_CACHE.clear()
+    with _MLX_CACHE_LOCK:
+        _MLX_CACHE.clear()
     logger.info("MLX cache cleared")
 
 

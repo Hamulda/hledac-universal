@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 import msgspec
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, TypeVar, cast
 
+from hledac.universal.runtime.protocols.cleanup_protocol import shutdown_aclose
 from hledac.universal.coordinators.aimd_controllers import (
     AIMDController,
     make_enrich_aimd,
@@ -362,12 +363,24 @@ class UnifiedExecutor:
             'rayon_available': self._rayon_available,
         }
 
+    # P1-9: Canonical aclose timeout — matches DEFAULT_ACLOSE_TIMEOUT_S.
+    DEFAULT_TIMEOUT_S = 10.0
+
     async def shutdown(self, timeout: float = 10.0) -> None:
-        """Graceful shutdown."""
+        """P1-9: Graceful shutdown with force-shutdown fallback."""
+        if self._shutdown:
+            return
+        await shutdown_aclose(
+            name="UnifiedExecutor",
+            coro=self._do_shutdown(),
+            timeout_s=timeout,
+        )
+
+    async def _do_shutdown(self) -> None:
+        """Inner cleanup — called by shutdown() via shutdown_aclose()."""
         async with self._lock:
             self._shutdown = True
-
-        await asyncio.sleep(min(timeout, 0.1))  # Allow pending tasks to notice
+        await asyncio.sleep(0.1)  # Allow pending tasks to notice
         logger.info(f"[UnifiedExecutor] Shutdown complete")
 
 

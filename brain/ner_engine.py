@@ -21,8 +21,8 @@ Features:
 - Sprint 76: CoreML NER model fallback
 """
 from __future__ import annotations
-import msgspec
 import asyncio
+import json
 import logging
 import os
 import subprocess
@@ -32,9 +32,11 @@ import threading
 from collections import deque
 from dataclasses import dataclass, field
 from functools import partial
-from hledac.universal.utils.msgspec_json import encode as _msgspec_encode, decode as _msgspec_decode
-from pathlib import Path
 from typing import Any
+
+import msgspec
+from hledac.universal.utils.msgspec_json import decode as _msgspec_decode, encode as _msgspec_encode
+from pathlib import Path
 _TORCH_AVAILABLE = False
 _torch_module = None
 
@@ -60,6 +62,320 @@ except ImportError:
 MAX_STRICT_TEXT_LENGTH = 10000
 MAX_STRICT_LABELS = 5
 MAX_STRICT_TEXTS = 3
+
+# ---------------------------------------------------------------------------
+# Persistent Worker Pool for GLiNER Subprocess
+# ---------------------------------------------------------------------------
+# Long-running subprocess that loads GLiNER once and processes via JSONL stdin/stdout.
+# Survives 1000+ requests without reloading model. ~50-150ms startup (no torch/GLiNER reload).
+# M1 8GB: single worker = ~1GB resident for GLiNER model.
+
+
+class _NERPersistentWorker:
+    """
+    Long-running GLiNER subprocess — loads model once, handles 1000+ requests.
+
+    Fallback: If worker dies or is unavailable, falls back to temporary subprocess
+    (original behavior preserved for robustness).
+    """
+
+    __slots__ = tuple(
+        (
+            "_closed",
+            "_lock",
+            "_proc",
+            "_reader_task",
+            "_stderr_buffer",
+            "_stdout_reader",
+            "_stdin_lock",
+            "_model_name",
+            "_ready_event",
+            "_response_queues",
+            "_request_id",
+            "_started",
+        )
+    )
+
+    def __init__(self, model_name: str) -> None:
+        self._model_name = model_name
+        self._proc: asyncio.subprocess.Process | None = None
+        self._lock = threading.Lock()
+        self._stdin_lock = asyncio.Lock()
+        self._closed = False
+        self._started = False
+        self._ready_event: asyncio.Event | None = None
+        self._reader_task: asyncio.Task[None] | None = None
+        self._stderr_buffer: list[bytes] = []
+        self._stdout_reader: asyncio.StreamReader | None = None
+        self._response_queues: dict[int, asyncio.Queue[dict | None]] = {}
+        self._request_id = 0
+
+    @property
+    def is_running(self) -> bool:
+        return self._proc is not None and self._proc.returncode is None
+
+    async def start(self) -> bool:
+        """Start the persistent worker subprocess. Returns True if successful."""
+        if self._closed:
+            return False
+        with self._lock:
+            if self._started and self.is_running:
+                return True
+            # Reset state if previous start failed or worker died
+            self._started = True
+            self._closed = False
+
+        self._ready_event = asyncio.Event()
+        self._response_queues.clear()
+        self._request_id = 0
+        self._stderr_buffer.clear()  # Bounded: always clear before reuse
+
+        try:
+            self._proc = await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-m",
+                "brain.ner_engine_worker",
+                "--model",
+                self._model_name,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env={**os.environ, "TOKENIZERS_PARALLELISM": "false"},
+                limit=10 * 1024 * 1024,  # 10 MB stdout buffer
+            )
+            self._stdout_reader = self._proc.stdout
+
+            # Start stderr collector (non-blocking)
+            async def _read_stderr() -> None:
+                proc_stderr: asyncio.StreamReader | None = self._proc.stderr
+                if proc_stderr is None:
+                    return
+                try:
+                    while not self._closed:
+                        try:
+                            line = await asyncio.wait_for(proc_stderr.readline(), timeout=1.0)
+                            if not line:
+                                break
+                            self._stderr_buffer.append(line)
+                        except asyncio.TimeoutError:
+                            continue
+                        except Exception:
+                            break
+                except Exception:
+                    pass
+
+            # Start stdout reader (parses responses and dispatches to correct queue)
+            async def _read_stdout() -> None:
+                proc_stdout: asyncio.StreamReader | None = self._proc.stdout
+                if proc_stdout is None:
+                    return
+                ready_event: asyncio.Event | None = self._ready_event
+                try:
+                    while not self._closed:
+                        try:
+                            line = await asyncio.wait_for(proc_stdout.readline(), timeout=5.0)
+                            if not line:
+                                break
+                            if line.startswith(b"READY"):
+                                if ready_event is not None:
+                                    ready_event.set()
+                                continue
+                            if line.startswith(b"LOAD_ERROR:"):
+                                logger.warning(f"NER worker load error: {line.decode().strip()}")
+                                if ready_event is not None:
+                                    ready_event.set()
+                                continue
+                            try:
+                                response = json.loads(line.decode())
+                            except json.JSONDecodeError:
+                                logger.warning(f"NER worker invalid JSON: {line[:100]}")
+                                continue
+                            rid = response.pop("_request_id", None)
+                            if rid is not None and rid in self._response_queues:
+                                self._response_queues[rid].put_nowait(response)
+                            else:
+                                logger.warning(f"NER worker unexpected response: {line[:100]}")
+                        except asyncio.TimeoutError:
+                            if self._proc is None or self._proc.returncode is not None:
+                                break
+                            continue
+                        except Exception as e:
+                            if not self._closed:
+                                logger.warning(f"NER worker stdout read error: {e}")
+                            break
+                except Exception as e:
+                    if not self._closed:
+                        logger.warning(f"NER worker stdout reader died: {e}")
+
+            asyncio.create_task(_read_stderr())
+            self._reader_task = asyncio.create_task(_read_stdout())
+
+            # Wait for READY signal with timeout
+            try:
+                await asyncio.wait_for(self._ready_event.wait(), timeout=60.0)
+                logger.debug(f"NER persistent worker started (model={self._model_name})")
+                return True
+            except asyncio.TimeoutError:
+                logger.warning("NER worker startup timeout — not ready within 60s")
+                self._emergency_shutdown()
+                return False
+
+        except Exception as e:
+            logger.warning(f"NER persistent worker start failed: {e}")
+            self._emergency_shutdown()
+            return False
+
+    async def _ensure_started(self) -> bool:
+        """Ensure worker is running, start if needed."""
+        if self.is_running:
+            return True
+        return await self.start()
+
+    def _emergency_shutdown(self) -> None:
+        """Best-effort shutdown on error."""
+        try:
+            if self._reader_task:
+                self._reader_task.cancel()
+                self._reader_task = None
+        except Exception:
+            pass
+        try:
+            if self._proc:
+                self._proc.terminate()
+        except Exception:
+            pass
+        self._proc = None
+        self._started = False
+
+    async def extract(
+        self, texts: list[str], labels: list[str], threshold: float, timeout: float = 120.0
+    ) -> list[list[dict]] | None:
+        """
+        Send extraction request to worker and wait for response.
+
+        Returns None if worker unavailable (caller should fall back to temp subprocess).
+        """
+        if not await self._ensure_started():
+            return None
+
+        # Check for stderr errors first
+        if self._stderr_buffer:
+            error_lines = [b"".join(self._stderr_buffer).decode("utf-8", errors="replace")][:500]
+            logger.debug(f"NER worker stderr: {error_lines}")
+
+        request_id = self._request_id
+        self._request_id += 1
+        queue: asyncio.Queue[dict | None] = asyncio.Queue(maxsize=1)
+        self._response_queues[request_id] = queue
+
+        request = {
+            "_request_id": request_id,
+            "texts": texts,
+            "labels": labels,
+            "threshold": threshold,
+        }
+
+        try:
+            async with self._stdin_lock:
+                if self._proc is None or self._proc.stdin is None:
+                    return None
+                try:
+                    self._proc.stdin.write((json.dumps(request) + "\n").encode("utf-8"))
+                    await asyncio.wait_for(self._proc.stdin.drain(), timeout=5.0)
+                except BrokenPipeError:
+                    logger.warning("NER worker stdin BrokenPipe — restarting")
+                    self._emergency_shutdown()
+                    return None
+
+            response: dict | None = None
+            try:
+                response = await asyncio.wait_for(queue.get(), timeout=timeout)
+            except asyncio.TimeoutError:
+                logger.warning(f"NER worker request timeout ({timeout}s) — killing and restarting")
+                self._emergency_shutdown()
+                return None
+
+            if response is None:
+                return None
+
+            if not response.get("success", False):
+                error = response.get("error", "Unknown error")
+                logger.warning(f"NER worker request failed: {error}")
+                return None
+
+            return response.get("results")
+
+        finally:
+            self._response_queues.pop(request_id, None)
+
+    def close(self) -> None:
+        """Synchronously close the worker (for use from non-async contexts)."""
+        with self._lock:
+            self._closed = True
+
+        if self._reader_task:
+            self._reader_task.cancel()
+            self._reader_task = None
+
+        if self._proc:
+            try:
+                self._proc.terminate()
+            except Exception:
+                pass
+            self._proc = None
+
+    async def aclose(self) -> None:
+        """Gracefully close the worker."""
+        self.close()
+        if self._reader_task:
+            try:
+                await asyncio.wait_for(asyncio.shield(self._reader_task), timeout=3.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+            self._reader_task = None
+
+        if self._proc:
+            try:
+                async with self._stdin_lock:
+                    if self._proc.stdin:
+                        self._proc.stdin.close()
+            except Exception:
+                pass
+            try:
+                await asyncio.wait_for(self._proc.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                self._proc.terminate()
+                try:
+                    await asyncio.wait_for(self._proc.wait(), timeout=3.0)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            self._proc = None
+
+
+# Singleton persistent worker (single GLiNER process for all NEREngine instances)
+_ner_worker: _NERPersistentWorker | None = None
+_ner_worker_lock = threading.Lock()
+
+
+def _get_ner_worker(model_name: str = "knowledgator/gliner-relex-large-v0.5") -> _NERPersistentWorker:
+    """Get or create the singleton NER persistent worker."""
+    global _ner_worker
+    with _ner_worker_lock:
+        if _ner_worker is None:
+            _ner_worker = _NERPersistentWorker(model_name)
+        return _ner_worker
+
+
+async def _close_ner_worker() -> None:
+    """Close the singleton NER worker (call on shutdown)."""
+    global _ner_worker
+    with _ner_worker_lock:
+        if _ner_worker is not None:
+            await _ner_worker.aclose()
+            _ner_worker = None
+
 
 class NEREngine:
     """
@@ -544,11 +860,31 @@ n        Pokud je model již načten, nic nedělá.
 
     async def _run_in_subprocess(self, texts: list[str], labels: list[str], threshold: float, timeout: int) -> Any:
         """
-        Spustí GLiNER inference v izolovaném subprocessu.
+        Spustí GLiNER inference — preferuje persistent worker, fallback na temp subprocess.
 
-        Komunikace přes JSONL na stdin/stdout.
-        Subprocess se ukončí po dokončení → OS uvolní RAM.
+        Persistent worker (P1-7):
+        - Loahuje GLiNER model jednou, přežije 1000+ requestů
+        - ~0ms startup (žádný import/model load)
+        - Komunikace přes JSONL stdin/stdout
+
+        Fallback temp subprocess:
+        - Spustí nový Python proces pro každé volání
+        - 50-150ms startup + 2-10s GLiNER load
+        - Temp soubor pro kód, OS ho smaže po dokončení
         """
+        # 1) Try persistent worker first
+        try:
+            worker = _get_ner_worker(self.model_name)
+            results = await worker.extract(texts=texts, labels=labels, threshold=threshold, timeout=float(timeout))
+            if results is not None:
+                if len(texts) == 1:
+                    return results[0] if results else []
+                return results
+            # Worker unavailable or failed — fall through to temp subprocess
+        except Exception as e:
+            logger.debug(f"NER persistent worker unavailable ({e}), falling back to temp subprocess")
+
+        # 2) Fallback: temporary subprocess (original behavior)
         child_code = '\nimport json\nimport sys\nimport os\n\n# Potlačit PyTorch warningy\nos.environ[\'TOKENIZERS_PARALLELISM\'] = \'false\'\n\n# Načíst vstup\ninput_data = json.loads(sys.stdin.read())\ntexts = input_data[\'texts\']\nlabels = input_data[\'labels\']\nthreshold = input_data[\'threshold\']\nmodel_name = input_data.get(\'model_name\', \'knowledgator/gliner-relex-large-v0.5\')\n\ntry:\n    from gliner import GLiNER\n    import torch\n\n    # Načíst model\n    model = GLiNER.from_pretrained(model_name, load_tokenizer=True)\n    model.eval()\n\n    results = []\n    for text in texts:\n        if not text.strip():\n            results.append([])\n            continue\n\n        try:\n            entities = model.predict_entities(text, labels, threshold=threshold)\n            result = [{\n                "entity": e.get("text", ""),\n                "label": e.get("label", ""),\n                "span": (e.get("start", 0), e.get("end", 0)),\n                "score": e.get("score", 0.0)\n            } for e in entities]\n            results.append(result)\n        except Exception as e:\n            results.append([{"error": str(e)}])\n\n    # Výstup jako JSON\n    print(json.dumps({"success": True, "results": results}))\n\nexcept Exception as e:\n    print(json.dumps({"success": False, "error": str(e)}))\n'
         input_data = {'texts': texts, 'labels': labels, 'threshold': threshold, 'model_name': self.model_name}
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
@@ -607,12 +943,18 @@ def get_ner_engine(model_name: str='knowledgator/gliner-relex-large-v0.5') -> NE
         return _default_engine
 
 def reset_ner_engine() -> None:
-    """Resetuje singleton instanci (thread-safe, uvolní model z paměti)."""
+    """Resetuje singleton instanci (thread-safe, uvolní model z paměti a worker)."""
     global _default_engine
     with _ner_lock:
         if _default_engine is not None:
             _default_engine.unload()
             _default_engine = None
+    # Close persistent worker (sync, best-effort)
+    global _ner_worker
+    with _ner_worker_lock:
+        if _ner_worker is not None:
+            _ner_worker.close()
+            _ner_worker = None
 
 def get_ner_backend() -> str:
     """

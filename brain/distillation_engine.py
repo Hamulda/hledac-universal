@@ -14,7 +14,7 @@ Example:
     ...     score=0.95
     ... )
     >>> await engine.add_example(example)
-    >>> score = await engine.score_chain(query, chain)
+    >>> score = engine.score_chain(query, chain)
 """
 import asyncio
 import msgspec
@@ -87,19 +87,20 @@ class DistillationExample(msgspec.Struct):
 class _CriticMLPBase:
     """Base mixin for neural network backend — provides fallback scoring."""
 
-    def _heuristic_score(self, reasoning_chain: list[str]) -> float:
+    def _heuristic_score(self, reasoning_chain: list[str], _query: str = "") -> float:
         """Fallback scoring when MLX unavailable — simple chain length heuristic."""
+        del _query  # unused in heuristic fallback, kept for API compatibility
         if not reasoning_chain:
             return 0.3
         length_score = min(len(reasoning_chain) / 10.0, 0.7)
         avg_step_len = sum((len(s) for s in reasoning_chain)) / max(len(reasoning_chain), 1)
         detail_score = min(avg_step_len / 100.0, 0.3)
         return min(length_score + detail_score, 1.0)
+
 if _MLX_NN_AVAILABLE:
-    _nn_mod = _get_mlx_nn()
-    if _nn_mod is None:
+    nn = _get_mlx_nn()
+    if nn is None:
         raise ImportError('MLX nn unavailable')
-    nn = _nn_mod
 
     class CriticMLP(nn.Module):
         """MLX-based critic network for reasoning chain quality scoring."""
@@ -341,9 +342,8 @@ class DistillationEngine:
             del X, y
             if mx is not None:
                 mx.eval([])
-            gc.collect()
-            if mx is not None:
                 mx.clear_cache()
+            gc.collect()
             metrics = {'loss': losses[-1] if losses else 0.0, 'initial_loss': losses[0] if losses else 0.0, 'correlation': correlation, 'n_examples': len(examples), 'n_epochs': n_epochs}
             logger.info(f"✓ Training complete: loss={metrics['loss']:.4f}, corr={metrics['correlation']:.3f}")
             return metrics
@@ -351,7 +351,7 @@ class DistillationEngine:
             logger.error(f'Training failed: {e}')
             return {'loss': float('inf'), 'accuracy': 0.0, 'error': str(e)}
 
-    async def score_chain(self, query: str, chain: list[str]) -> float:
+    def score_chain(self, query: str, chain: list[str]) -> float:
         """
         Ohodnotit kvalitu reasoning chainu.
 
@@ -375,6 +375,49 @@ class DistillationEngine:
         except Exception as e:
             logger.error(f'Failed to score chain: {e}')
             return 0.5
+
+    def _heuristic_score(self, query: str, chain: list[str]) -> float:
+        """
+        Heuristické skóre když není dostupný critic.
+
+        Args:
+            query: Vstupní dotaz
+            chain: Seznam reasoning kroků
+
+        Returns:
+            Heuristické skóre 0-1
+        """
+        if not chain:
+            return 0.0
+        scores = []
+        chain_len = len(chain)
+        if 3 <= chain_len <= 10:
+            scores.append(1.0)
+        elif chain_len < 3:
+            scores.append(0.5)
+        else:
+            scores.append(0.7)
+        step_scores = []
+        for step in chain:
+            step_score = 0.5
+            reasoning_words = ['because', 'therefore', 'thus', 'hence', 'since', 'as', 'so']
+            if any((word in step.lower() for word in reasoning_words)):
+                step_score += 0.2
+            if len(step) > 20:
+                step_score += 0.1
+            query_words = set(query.lower().split())
+            step_words = set(step.lower().split())
+            if query_words & step_words:
+                step_score += 0.2
+            step_scores.append(min(step_score, 1.0))
+        avg_step_score = sum(step_scores) / len(step_scores) if step_scores else 0.5
+        scores.append(avg_step_score)
+        unique_steps = len(set(chain))
+        diversity_score = unique_steps / len(chain) if chain else 0.0
+        scores.append(diversity_score)
+        weights = [0.3, 0.5, 0.2]
+        final_score = sum((s * w for s, w in zip(scores, weights, strict=False)))
+        return min(max(final_score, 0.0), 1.0)
 
     def _get_chain_embedding(self, chain: list[str]) -> np.ndarray:
         """
@@ -607,3 +650,17 @@ async def create_distillation_engine(embedding_model: Any | None=None, db_path: 
     except Exception as e:
         logger.error(f'Failed to create DistillationEngine: {e}')
         return None
+
+
+if __name__ == '__main__':
+    # Smoke test — async factory, requires event loop
+    async def _smoke() -> None:
+        eng = await create_distillation_engine()
+        if eng is not None:
+            print(f'Status: {eng.get_status()}')
+            await eng.cleanup()
+            print('OK')
+        else:
+            print('FAILED: create_distillation_engine returned None')
+
+    asyncio.run(_smoke())

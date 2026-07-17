@@ -7,6 +7,9 @@ import socket
 from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import urlparse
+
+import aiofiles
+
 from .base import Transport, TransportConfig, TransportResult
 logger = logging.getLogger(__name__)
 MAX_CIRCUIT_REQUESTS: int = 3
@@ -123,9 +126,8 @@ class TorTransport(Transport):
             hostname_file = self.hidden_service_dir / 'hostname'
             for _ in range(15):
                 if await asyncio.to_thread(hostname_file.exists):
-                    f = await asyncio.to_thread(lambda: open(hostname_file))
-                    with f:
-                        self.onion_address = f.read().strip()
+                    async with aiofiles.open(hostname_file, 'r') as f:
+                        self.onion_address = (await f.read()).strip()
                     break
                 await asyncio.sleep(1)
             else:

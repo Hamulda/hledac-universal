@@ -162,7 +162,10 @@ class PromptBandit:
         untried = [i for i in range(self._n_variants) if self._counts.get(i, 0) == 0]
         if untried:
             return _RNG.choice(untried)
-        x = self._get_context_vector(context)
+        try:
+            x = await asyncio.to_thread(self._get_context_vector, context)
+        except Exception:
+            x = [0.0] * 9
         try:
             import numpy as np
             x_np = np.array(x, dtype=np.float64)
@@ -196,7 +199,10 @@ class PromptBandit:
         reward = max(0.0, min(1.0, reward))
         self._counts[idx] += 1
         self._rewards[idx] += reward
-        x = self._get_context_vector(context)
+        try:
+            x = await asyncio.to_thread(self._get_context_vector, context)
+        except Exception:
+            x = [0.0] * 9
         try:
             import numpy as np
             x_np = np.array(x, dtype=np.float64)

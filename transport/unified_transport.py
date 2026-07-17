@@ -5,9 +5,12 @@ Unified HTTP Transport Factory — Sprint Issue #7
 ================================================
 
 Single entry point for all HTTP fetching. Replaces 3-stack matrix:
-  - aiohttp.ClientSession (DEPRECATED, disabled)
+  - aiohttp.ClientSession — REMOVED (F350M-R: migrated to httpx/curl_cffi)
   - httpx.AsyncClient HTTP/2 (primary for clearnet)
-  - curl_cffi.AsyncSession JA3 (fingerprint spoofing only)
+  - curl_cffi.AsyncSession JA3 (fingerprint spoofing, Tor/I2P darknet)
+
+Note: aiohttp previously used in StealthSession has been migrated to curl_cffi
+  for JA3 fingerprint support (critical for OSINT stealth operations).
 
 Architecture:
   TransportRuntime.get_client(policy) → appropriate client

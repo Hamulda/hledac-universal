@@ -24,11 +24,12 @@ in knowledge graphs through quantum-inspired algorithms.
 import gc
 import logging
 import math
-from dataclasses import dataclass
+import os as _os
 import msgspec
 from typing import TYPE_CHECKING, Any
+
 logger = logging.getLogger(__name__)
-import os as _os
+
 MAX_QUANTUM_NODES: int = int(_os.environ.get('QUANTUM_MAX_NODES', '4096'))
 MAX_QUANTUM_EDGES: int = int(_os.environ.get('QUANTUM_MAX_EDGES', '50000'))
 _NP_CACHE: Any | None = None
@@ -1068,7 +1069,7 @@ class DuckPGQGraph:
                 rows = [(value, ioc_type, confidence, '') for ioc_type, value, confidence in ioc_copy]
                 ioc_flushed = self.upsert_ioc_batch(rows)
             if obs_copy:
-                for id_a, id_b, fid, ts_val, src in obs_copy:
+                for id_a, id_b, fid, _ts_val, _src in obs_copy:
                     try:
                         self.add_relation(id_a, id_b, 'observed', 1.0, fid)
                         obs_flushed += 1

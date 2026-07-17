@@ -113,6 +113,31 @@ class IsolatedInterpreter:
         """Check if concurrent.interpreters is available."""
         return _interpreters_available
 
+    def __enter__(self) -> "IsolatedInterpreter":
+        self.start()
+        return self
+
+    def __exit__(self, _exc_type: Any, _exc_val: Any, _exc_tb: Any) -> None:
+        self.close()
+
+    def eval(self, code: str) -> Any:
+        """
+        Evaluate code in the isolated interpreter.
+
+        Args:
+            code: Python code string to execute.
+
+        Returns:
+            Result of the last expression in code, or None on error.
+        """
+        if not self._interp:
+            return None
+        try:
+            return self._interp.call(eval, code)
+        except Exception as e:
+            logger.warning(f"eval failed: {e}")
+            return None
+
     def start(self) -> bool:
         """
         Start the isolated interpreter.
@@ -137,7 +162,7 @@ class IsolatedInterpreter:
                     logger.debug('Channel creation failed, using default communication')
                     self._receive_channel = None
                     self._send_channel = None
-                self._interp.start()
+                self._interp.prepare_main({'__name__': '__main__'})
                 logger.debug('Isolated interpreter started successfully')
                 return True
             except Exception as e:

@@ -62,6 +62,7 @@ class PipelineOrchestrator:
         "_queues",
         "_tasks",
         "_running",
+        "_adapter_task",
     )
 
     def __init__(
@@ -75,15 +76,16 @@ class PipelineOrchestrator:
         self._queues: dict[str, BoundedStageQueue[Any]] = {}
         self._tasks: list[asyncio.Task[Any]] = []
         self._running = False
+        self._adapter_task: asyncio.Task[None] | None = None
 
         self._init_queues(max_results)
         self._init_stages(ctx)
 
     def _init_queues(self, max_results: int) -> None:
         """Inicializuje bounded queues podle max_results."""
-        # Dynamic sizing based on max_results
-        # For 1000 URLs: queues can hold up to ~30% of max_results per stage
-        queue_scale = max(1, min(max_results // 10, 64))
+        # Queue sizes use BASE constants directly — _base_maxsize stores the true base.
+        # UMA shrink/grow via set_uma_state() multiplies this base by _MAXSIZE_TABLE.
+        # queue_scale was applied incorrectly and is now removed.
 
         self._queues = {
             "discovery_out": BoundedStageQueue[str](
@@ -91,19 +93,19 @@ class PipelineOrchestrator:
                 stage_name="discovery_out",
             ),
             "dedup_out": BoundedStageQueue[str](
-                maxsize=QUEUE_DEDUP_OUT * queue_scale,
+                maxsize=QUEUE_DEDUP_OUT,
                 stage_name="dedup_out",
             ),
             "fetch_out": BoundedStageQueue[Any](
-                maxsize=QUEUE_FETCH_OUT * queue_scale,
+                maxsize=QUEUE_FETCH_OUT,
                 stage_name="fetch_out",
             ),
             "match_out": BoundedStageQueue[Any](
-                maxsize=QUEUE_MATCH_OUT * queue_scale,
+                maxsize=QUEUE_MATCH_OUT,
                 stage_name="match_out",
             ),
             "enrich_out": BoundedStageQueue[Any](
-                maxsize=QUEUE_ENRICH_OUT * queue_scale,
+                maxsize=QUEUE_ENRICH_OUT,
                 stage_name="enrich_out",
             ),
         }
@@ -178,6 +180,29 @@ class PipelineOrchestrator:
             async with asyncio.TaskGroup() as main_tg:
                 # Start all stages as tasks in the TaskGroup
                 # Each stage runs its run() method concurrently
+
+                # P1-8: Background adapter — propagate ctx.uma_state → all queues
+                # Runs every 5s while pipeline is active; TaskGroup handles cancellation
+                async def _adapt_queues_to_uma() -> None:
+                    """UMA-aware queue sizing adapter (P1-8)."""
+                    last_state: str | None = None
+                    while True:
+                        try:
+                            await asyncio.sleep(5.0)
+                        except asyncio.CancelledError:
+                            break
+                        if not self._running:
+                            break
+                        current = getattr(self._ctx, "uma_state", "ok")
+                        if current != last_state:
+                            last_state = current
+                            for q in self._queues.values():
+                                q.set_uma_state(current)
+
+                self._adapter_task = main_tg.create_task(
+                    _adapt_queues_to_uma(),
+                    name="adapter:uma_queue_sizing",
+                )
 
                 # Discovery → Dedup
                 disc_task = main_tg.create_task(
@@ -275,6 +300,15 @@ class PipelineOrchestrator:
                     pass
                 except Exception:
                     pass
+        # P1-8: cancel adapter task
+        if self._adapter_task is not None and not self._adapter_task.done():
+            self._adapter_task.cancel()
+            try:
+                await self._adapter_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
 
 
 # ----------------------------------------------------------------------

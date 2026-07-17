@@ -476,17 +476,30 @@ class AcquisitionOrchestrator:
         remaining_s = lifecycle.remaining_time() if lifecycle else 999.0
         _safety_floor = _config.effective_windup_lead_s
 
-        async def run_feed_branch() -> tuple[list, bool, int]:
-            """Run feed sources and return (results, ok, count)."""
-            _tasks = [fetch_one(w) for w in work_items]
-            _result = await parallel(_tasks, taskgroup=True, policy='collect', ctx='acquisition:feed_branch')
-            _feed_results = _result.ok
-            _ok = all(r[1].ok for r in _feed_results if not isinstance(r, Exception))
-            _count = sum(
-                r[1].accepted_findings if not isinstance(r, Exception) and hasattr(r[1], "accepted_findings") else 0
-                for r in _feed_results
-            )
-            return _feed_results, _ok, _count
+        async def run_feed_branch() -> dict[str, Any]:
+            """Run feed sources and return a dict with consistent shape.
+
+            P2-16 fix: return dict (not tuple) to avoid isinstance tuple anti-pattern.
+            parallel() with policy='collect' handles exceptions internally and returns
+            ParallelResult.ok. Any unexpected Exception propagates here and is caught
+            below, returning a fail-safe dict — no isinstance fallback needed downstream.
+            """
+            try:
+                _tasks = [fetch_one(w) for w in work_items]
+                _parallel_result = await parallel(_tasks, taskgroup=True, policy='collect', ctx='acquisition:feed_branch')
+                _feed_results = _parallel_result.ok
+                _ok_count = 0
+                _total_findings = 0
+                for entry in _feed_results:
+                    if not isinstance(entry, tuple) or len(entry) != 2:
+                        continue
+                    _run_result = entry[1]
+                    if _run_result.ok:
+                        _ok_count += 1
+                    _total_findings += _run_result.accepted_findings
+                return {"ok": True, "count": _total_findings, "ok_count": _ok_count}
+            except Exception:
+                return {"ok": False, "count": 0, "ok_count": 0}
 
         async def run_public_branch() -> dict[str, Any]:
             """Run public discovery with remaining-time timeout."""
@@ -510,7 +523,8 @@ class AcquisitionOrchestrator:
 
         # Unpack FEED results
         _feed_data = _all_results[0]
-        _feed_results, _feed_ok, _feed_count = _feed_data if isinstance(_feed_data, tuple) else (_feed_data, False, 0)
+        _feed_ok = _feed_data.get("ok", False) if isinstance(_feed_data, dict) else False
+        _feed_count = _feed_data.get("count", 0) if isinstance(_feed_data, dict) else 0
 
         # Unpack PUBLIC results
         _public_result = _all_results[1] if len(_all_results) > 1 else {}
@@ -567,6 +581,12 @@ class AcquisitionOrchestrator:
         # P1-06: asyncio.TaskGroup (PEP 654) replaces create_task + gather.
         # Structured concurrency: cancellation propagates automatically,
         # ExceptionGroup diagnostics on branch failure.
+        # P2-14: TaskGroup exception unwrapping — use try/except*/else pattern.
+        # Branch methods (_run_*_branch_aggressive) already catch internal exceptions
+        # and return fail-safe tuples (False, 0) or (False, 0, False), so in the
+        # normal path .result() always returns a tuple, never raises.
+        # If TaskGroup propagates ExceptionGroup (task raised uncaught exception),
+        # the except* block handles it and we use getattr fallback for .result().
         try:
             async with asyncio.TaskGroup() as _tg:
                 _feed_tg = _tg.create_task(
@@ -582,27 +602,32 @@ class AcquisitionOrchestrator:
                     name="cycle:ct",
                 )
         except* BaseException as _eg:
-            # TaskGroup catches child exceptions and re-raises as ExceptionGroup.
-            # At least one branch failed — count it as partial.
+            # TaskGroup caught uncaught exceptions from branch tasks.
+            # Count partial failure and extract what we can from each task.
             _result.branch_timeout_count += 1
             for _exc in _eg.exceptions:
                 _result.branch_errors = getattr(_result, "branch_errors", []) + [type(_exc).__name__]
+            # Fallback: cancelled tasks return the fail-safe default tuple.
+            # Branch methods catch internal exceptions and return (False, 0) or (False, 0, False).
+            _feed_data = (False, 0)
+            _public_data = (False, 0, False)
+            _ct_data = (False, 0)
+        else:
+            # All branches succeeded — .result() is safe (branch methods catch internally).
+            _feed_data = _feed_tg.result()
+            _public_data = _public_tg.result()
+            _ct_data = _ct_tg.result()
 
-        _feed_results = (
-            _feed_tg.result(),
-            _public_tg.result(),
-            _ct_tg.result(),
-        )
+        _feed_ok, _feed_count = _feed_data[:2]
+        _public_ok, _public_count, _public_timeout = _public_data[:3]
+        _ct_ok, _ct_count = _ct_data[:2]
 
-        _feed_ok = _feed_results[0][0] if not isinstance(_feed_results[0], Exception) else False
-        _feed_count = _feed_results[0][1] if not isinstance(_feed_results[0], Exception) else 0
-        _public_ok = _feed_results[1][0] if not isinstance(_feed_results[1], Exception) else False
-        _public_count = _feed_results[1][1] if not isinstance(_feed_results[1], Exception) else 0
-        _public_timeout = _feed_results[1][2] if not isinstance(_feed_results[1], Exception) else False
-        _ct_ok = _feed_results[2][0] if not isinstance(_feed_results[2], Exception) else False
-        _ct_count = _feed_results[2][1] if not isinstance(_feed_results[2], Exception) else 0
-
-        if _public_timeout or (_feed_results[1] and isinstance(_feed_results[1], Exception)):
+        # P2-14-FIX: only increment if except* did NOT fire (else branch).
+        # In the except* path, branch_timeout_count is already incremented above.
+        # _public_timeout is always False in the except* path (task was cancelled,
+        # no result returned), so this guard is safe to remove from except* path.
+        # Only the else branch needs this check.
+        if _public_timeout:
             _result.branch_timeout_count += 1
 
         # P2-1: AIMD telemetry — capture window + counters for benchmark
@@ -636,12 +661,16 @@ class AcquisitionOrchestrator:
         try:
             _result = await parallel([fetch_one(w) for w in work_items], taskgroup=True, policy='collect', ctx='acquisition:feed_branch_aggressive')
             feed_results = _result.ok
-            _ok = all(r[1].ok for r in feed_results if not isinstance(r, Exception))
-            _count = sum(
-                r[1].accepted_findings if not isinstance(r, Exception) and hasattr(r[1], "accepted_findings") else 0
-                for r in feed_results
-            )
-            return (_ok, _count)
+            _ok_count = 0
+            _total_findings = 0
+            for entry in feed_results:
+                if not isinstance(entry, tuple) or len(entry) != 2:
+                    continue
+                _run_result = entry[1]
+                if _run_result.ok:
+                    _ok_count += 1
+                _total_findings += _run_result.accepted_findings
+            return (_ok_count == len(feed_results), _total_findings)
         except Exception:
             return (False, 0)
 
@@ -760,7 +789,7 @@ class AcquisitionOrchestrator:
     async def _build_seed_context(self, ctx: Any, query: str) -> Any:
         """Build seed context from query and acquisition plan."""
 
-        class _SeedCtx(msgspec.Struct, frozen=True):
+        class _SeedCtx(msgspec.Struct):
             domains: tuple = ()
             ips: tuple = ()
             urls: tuple = ()
@@ -990,6 +1019,7 @@ class AcquisitionOrchestrator:
 
     def _prioritize_sources(self, ctx: Any, ordered_sources: list) -> list:
         """Re-prioritize sources using latest graph stats."""
+        # TODO: implement actual prioritization using ctx.graph_stats
         return ordered_sources
 
     def _build_work_items(self, ctx: Any, sources: Sequence[str]) -> list:

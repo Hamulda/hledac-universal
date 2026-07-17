@@ -1,7 +1,9 @@
 """
-core/env_config.py — Canonical env-var registry with lazy @lru_cache
+core/env_config.py — Canonical env-var registry with functools.cache
 
 Sprint F280: Centralizes ALL os.environ.get("HLEDAC_*") lookups.
+P4-11 fix: Replaced _LazyEnvConfig DCLP race → functools.cache (thread-safe,
+zero-overhead, eliminates 2× _EnvConfig init race entirely).
 
 Problem solved:
     - _env_flag existed only in sprint_scheduler.py (L176-187)
@@ -9,9 +11,9 @@ Problem solved:
     - No caching = ~3.5us overhead per call (measured M1 Air)
     - Mixing cached vs raw lookups = incoherent configuration state
 
-Design (matches core/constants.py singleton pattern):
-    - Lazy singleton via _LazyEnvConfig (avoids import-time side-effects)
-    - @lru_cache per name on _EnvConfig._get_cached — bounded, fail-safe
+Design (P4-11: matches core/constants.py singleton pattern):
+    - @functools.cache on module-level _get_cached — thread-safe, GIL-protected
+    - _CacheAccessor provides dot-access compat + typed getters
     - Typed getters: get_bool, get_int, get_float, get_str — single conversion point
     - env vars read ONCE per name, cached for process lifetime
     - Backward compat: ENV.get() preserves raw os.environ.get semantics
@@ -25,8 +27,8 @@ Usage:
     threshold: float = ENV.get_float("HLEDAC_ANE_DEDUP_THRESHOLD", default=0.92)
 
 Invariant tests (TestSprintF280):
-    INV: env_config_singleton — only one _LazyEnvConfig instance
-    INV: env_config_cached — same name returns same value (lru_cache hit)
+    INV: env_config_singleton — only one _CacheAccessor instance
+    INV: env_config_cached — same name returns same value (cache hit)
     INV: env_config_lazy — no env lookups at import time
     INV: env_config_fail_safe — Exception → default returned
     INV: env_config_bool_interprets_truthy — "1"/"true"/"yes" → True; "0"/""/miss → False
@@ -45,21 +47,34 @@ Anti-patterns prevented:
 
 __all__ = [
     "ENV",
-    "_LazyEnvConfig",
+    "_get_cached",
 ]
 
 import os
-from functools import lru_cache
+from functools import cache
 from typing import Any
 
-T = type(None)
+
+@cache  # thread-safe, bounded by Python's cache implementation
+def _get_cached(name: str) -> str:
+    """Cached raw env lookup — thread-safe via GIL, no DCLP race.
+
+    Rejects non-str names to prevent accidental cache poisoning
+    via loose type coercion (e.g. int keys from config files).
+
+    Note: os.environ.get() never raises in CPython — try/except removed
+    to satisfy type checkers (unreachable code warning).
+    """
+    if not isinstance(name, str):
+        return ""
+    return (os.environ.get(name) or "").strip()
 
 
-class _EnvConfig:
-    """Thread-safe, lazily-cached env-var registry.
+class _CacheAccessor:
+    """Dot-access + typed-getter wrapper around _get_cached.
 
-    All lookups are cached via lru_cache on _get_cached.
-    Bounded maxsize=512 — safe for M1 8GB (each entry ~few hundred bytes).
+    Replaces _LazyEnvConfig + _EnvConfig — stateless, no DCLP race,
+    no threading.Lock needed (functools.cache is GIL-protected).
     """
 
     __slots__ = ()
@@ -70,14 +85,14 @@ class _EnvConfig:
         Truthy: "1", "true", "yes" (case-insensitive)
         Falsy:  "0", "false", "no", "" (including missing key → default)
         """
-        val = self._get_raw(name)
+        val = _get_cached(name)
         if not val:
             return default
         return val.lower() in ("1", "true", "yes")
 
     def get_int(self, name: str, default: int = 0) -> int:
         """Return env var as int; invalid/missing → default."""
-        val = self._get_raw(name)
+        val = _get_cached(name)
         if not val:
             return default
         try:
@@ -87,7 +102,7 @@ class _EnvConfig:
 
     def get_float(self, name: str, default: float = 0.0) -> float:
         """Return env var as float; invalid/missing → default."""
-        val = self._get_raw(name)
+        val = _get_cached(name)
         if not val:
             return default
         try:
@@ -96,47 +111,18 @@ class _EnvConfig:
             return default
 
     def get_str(self, name: str, default: str = "") -> str:
-        """Return env var as str; missing → default."""
-        return self._get_raw(name) or default
+        """Return env var as str; missing/empty → default."""
+        val = _get_cached(name)
+        return val if val else default
 
     def get(self, name: str, default: str = "") -> str:
-        """Raw string lookup — preserves existing os.environ.get semantics."""
-        return self._get_raw(name) or default
+        """[DEPRECATED] Alias for get_str(). Use get_str() for new code."""
+        return self.get_str(name, default)
 
     def __getattr__(self, name: str) -> Any:
         """Route HLEDAC_* → _get_cached(name) for dot-access compatibility."""
-        return self._get_cached(name)
-
-    @staticmethod
-    @lru_cache(maxsize=512)
-    def _get_cached(name: str) -> str:
-        """Cached raw lookup — called via __getattr__."""
-        try:
-            return (os.environ.get(name) or "").strip()
-        except Exception:
-            return ""
-
-    def _get_raw(self, name: str) -> str:
-        """Uncached path — used by typed getters to avoid double-cache."""
-        try:
-            return (os.environ.get(name) or "").strip()
-        except Exception:
-            return ""
-
-
-class _LazyEnvConfig:
-    """Lazy singleton wrapper — defers _EnvConfig() until first access."""
-
-    __slots__ = ("_instance",)
-
-    def __init__(self) -> None:
-        self._instance: _EnvConfig | None = None
-
-    def __getattr__(self, name: str) -> Any:
-        if self._instance is None:
-            object.__setattr__(self, "_instance", _EnvConfig())
-        return getattr(self._instance, name)
+        return _get_cached(name)
 
 
 #: Process-wide singleton — imported eagerly, resolved lazily
-ENV: _LazyEnvConfig = _LazyEnvConfig()
+ENV: _CacheAccessor = _CacheAccessor()

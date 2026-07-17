@@ -40,6 +40,8 @@ import weakref
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any, Callable
 import msgspec
+
+from hledac.universal.runtime.protocols.cleanup_protocol import shutdown_aclose
 if TYPE_CHECKING:
     from brain.ane_embedder import ANE_MLX_Mutex
     from brain.deephermes3_engine import DeepHermes3Engine
@@ -359,14 +361,26 @@ class MLXUnifiedScheduler:
         """No-op — O(1) direct dispatch, žádné worker tasky."""
         logger.debug('[MLXScheduler] Started — O(1) direct dispatch')
 
-    async def shutdown(self, timeout: float=5.0) -> None:
+    # P1-9: Canonical timeout for this scheduler.
+    DEFAULT_TIMEOUT_S = 5.0
+
+    async def shutdown(self, timeout: float = 5.0) -> None:
         """
-        Bounded shutdown — max 5.0s, fail-soft.
+        P1-9: Bounded shutdown with force-shutdown fallback.
 
         No workers to cancel — just release ANE mutex if held.
+        Outer timeout enforced via asyncio.wait_for(); force path after 1.0s.
         """
         if self._shutdown:
             return
+        await shutdown_aclose(
+            name="MLXUnifiedScheduler",
+            coro=self._do_shutdown(),
+            timeout_s=timeout,
+        )
+
+    async def _do_shutdown(self) -> None:
+        """Inner cleanup — called by shutdown() via shutdown_aclose()."""
         self._shutdown = True
         if self._token_cache is not None and hasattr(self._token_cache, 'clear_cache'):
             try:

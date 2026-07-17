@@ -31,6 +31,8 @@ from hledac.universal.utils.async_helpers import parallel
 # Type-safe, Python 3.10+ feature, 2-3× faster than manual __slots__.
 @dataclass(slots=True)
 class SprintSchedulerV2:
+    # P1-9: Canonical aclose timeout — matches DEFAULT_ACLOSE_TIMEOUT_S.
+    DEFAULT_TIMEOUT_S = 10.0
     """SprintScheduler v2 — greenfield rewrite with Protocol-based phase composition.
 
     Replaces the 33 449 LOC `SprintScheduler` with a thin orchestrator that
@@ -1088,49 +1090,77 @@ class SprintSchedulerV2:
         return None
 
     async def aclose(self, timeout_s: float = 10.0) -> None:
-        """Graceful shutdown — F285 canonical async cleanup path.
+        """Graceful shutdown — F285 + P1-9 canonical async cleanup path.
+
+        P1-9: Enforces outer timeout via asyncio.wait_for(). After timeout,
+        falls back to force-shutdown (coro.close() + 1s wait) — no SIGKILL.
 
         Cancels the cancel event, cancels sidecar tasks, closes DuckDB store
         and evidence log. Idempotent — safe to call multiple times.
         """
         import logging as _log
         import sys as _sys
+        import time as _time
 
         # Emit to stdout for BC with structlog-based test capture
         sprint_id = getattr(self, '_sprint_id', 'unknown')
         _sys.stdout.write(f"[aclean] sprint_id={sprint_id}\n")
         _sys.stdout.flush()
 
-        # Cancel the cancel event if set (stops acquisition loops)
-        if self._cancel_event is not None and not self._cancel_event.is_set():
-            self._cancel_event.set()
+        async def _do_aclose() -> None:
+            # Cancel the cancel event if set (stops acquisition loops)
+            if self._cancel_event is not None and not self._cancel_event.is_set():
+                self._cancel_event.set()
 
-        # Cancel sidecar tasks
-        for task in list(getattr(self, '_sidecar_tasks', []) or []):
-            if not task.done():
-                task.cancel()
+            # Cancel sidecar tasks
+            for task in list(getattr(self, '_sidecar_tasks', []) or []):
+                if not task.done():
+                    task.cancel()
 
-        # Close DuckDB store if present
-        duckdb_store = getattr(self, '_duckdb_store', None)
-        if duckdb_store is not None:
-            try:
-                from runtime.duckdb_store import DuckDBShadowStore
-                if isinstance(duckdb_store, DuckDBShadowStore):
+            # Close DuckDB store if present — pass timeout so sub-components
+            # can enforce their own nested timeouts (P1-9).
+            duckdb_store = getattr(self, '_duckdb_store', None)
+            if duckdb_store is not None:
+                try:
+                    from runtime.duckdb_store import DuckDBShadowStore
+                    if isinstance(duckdb_store, DuckDBShadowStore):
+                        async with asyncio.timeout(timeout_s):
+                            await duckdb_store.aclose(timeout_s=timeout_s)
+                except Exception as e:
+                    _sys.stdout.write(f"[aclean] duckdb_store close error: {e}\n")
+                    _sys.stdout.flush()
+
+            # Close evidence log if present
+            evidence_log = getattr(self, '_evidence_log', None)
+            if evidence_log is not None:
+                try:
                     async with asyncio.timeout(timeout_s):
-                        await duckdb_store.aclose()
-            except Exception as e:
-                _sys.stdout.write(f"[aclean] duckdb_store close error: {e}\n")
-                _sys.stdout.flush()
+                        await evidence_log.aclose(timeout_s=timeout_s)
+                except Exception as e:
+                    _sys.stdout.write(f"[aclean] evidence_log close error: {e}\n")
+                    _sys.stdout.flush()
 
-        # Close evidence log if present
-        evidence_log = getattr(self, '_evidence_log', None)
-        if evidence_log is not None:
-            try:
-                async with asyncio.timeout(timeout_s):
-                    await evidence_log.aclose()
-            except Exception as e:
-                _sys.stdout.write(f"[aclean] evidence_log close error: {e}\n")
-                _sys.stdout.flush()
+            _sys.stdout.write(f"[aclean] done\n")
+            _sys.stdout.flush()
 
-        _sys.stdout.write(f"[aclean] done\n")
-        _sys.stdout.flush()
+        # P1-9: Outer timeout wrapper with force-shutdown fallback
+        start = _time.monotonic()
+        reason = "normal"
+        try:
+            await asyncio.wait_for(_do_aclose(), timeout=timeout_s)
+        except asyncio.TimeoutError:
+            reason = "timeout"
+            _sys.stdout.write(f"[aclean:{sprint_id}] force shutdown after {timeout_s}s\n")
+            _sys.stdout.flush()
+            # Force shutdown: wait 1.0s for cancelled tasks to clean up.
+            # asyncio.wait_for already cancelled the inner task on timeout,
+            # so no further action is needed beyond the grace period.
+            await asyncio.sleep(1.0)
+            reason = "force"
+        except asyncio.CancelledError:
+            reason = "force"
+            raise
+        finally:
+            elapsed_ms = (_time.monotonic() - start) * 1000
+            _sys.stdout.write(f"[aclean:{sprint_id}] reason={reason} duration_ms={elapsed_ms:.1f}\n")
+            _sys.stdout.flush()

@@ -25,7 +25,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 import msgspec
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from hledac.universal.core.system_metrics import get_system_snapshot
@@ -33,8 +33,50 @@ from hledac.universal.utils.async_helpers import safe_create_task
 from .base import DecisionResponse, MemoryPressureLevel, OperationResult, OperationType, UniversalCoordinator
 logger = logging.getLogger(__name__)
 
-class MetricType(Enum):
-    """Types of metrics collected."""
+
+# ---------------------------------------------------------------------------
+# Stub implementations for optional dependencies that are imported lazily
+# inside try/except ImportError blocks.  These exist solely to satisfy the
+# static type-checker; all actual usage is guarded by try/except at runtime.
+# ---------------------------------------------------------------------------
+
+class _SecurityAuditorStub:
+    """Minimal stub — prevents type-checker errors when SecurityAuditor is absent."""
+    project_root: str | None
+
+    def __init__(self, project_root: str | None = None, **_: Any) -> None:
+        self.project_root = project_root
+
+    async def audit_directory(self, path: str, **kwargs: Any) -> dict[str, Any]:
+        return {'findings': {}, 'total_issues': 0, 'critical_count': 0, 'high_risk_count': 0, 'security_score': 0, 'issues': [], 'recommendations': []}
+
+
+class _SyntaxVerifierStub:
+    """Minimal stub — prevents type-checker errors when SyntaxVerifier is absent."""
+    def __init__(self, config: Any | None = None, **_: Any) -> None:
+        self.config = config
+
+    def verify_directory(self, path: str, **_: Any) -> Any:
+        class _Result:
+            all_valid: bool = True
+            files_checked: list[str] = []
+            valid_count: int = 0
+            invalid_count: int = 0
+            fixed_count: int = 0
+            errors: list[Any] = []
+        return _Result()
+
+
+class _CodebaseIntegrityValidatorStub:
+    """Minimal stub — prevents type-checker errors when validator is absent."""
+    def __init__(self, config: Any | None = None, **_: Any) -> None:
+        self.config = config
+
+    def validate_directory(self, path: str, **_: Any) -> dict[str, Any]:
+        return {'files_analyzed': 0, 'issues': [], 'integrity_score': 100, 'quality_grade': 'A', 'dummy_functions_count': 0, 'stub_files_count': 0}
+
+class MetricType(StrEnum):
+    """Types of metrics collected (StrEnum for direct JSON serialization)."""
     CPU = 'cpu'
     MEMORY = 'memory'
     DISK = 'disk'
@@ -117,34 +159,42 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
 
     async def _do_initialize(self) -> bool:
         """Initialize monitoring subsystems with graceful degradation."""
-        initialized_any = False
+        # AdvancedMonitoring — loaded lazily; stub keeps type-checker happy
+        _AdvancedMonitoringImpl: type | None = None
         try:
-            from hledac.monitoring.advanced_monitoring import AdvancedMonitoring
-            self._advanced_monitoring = AdvancedMonitoring()
-            if hasattr(self._advanced_monitoring, 'initialize'):
-                await self._advanced_monitoring.initialize()
-            self._advanced_available = True
-            initialized_any = True
-            logger.info('MonitoringCoordinator: AdvancedMonitoring initialized')
+            from hledac.monitoring.advanced_monitoring import AdvancedMonitoring as _AM  # type: ignore[unresolved-import]
+            _AdvancedMonitoringImpl = _AM
         except ImportError:
             logger.warning('MonitoringCoordinator: AdvancedMonitoring not available')
         except Exception as e:
             logger.warning(f'MonitoringCoordinator: AdvancedMonitoring init failed: {e}')
+        if _AdvancedMonitoringImpl is not None:
+            impl: Any = _AdvancedMonitoringImpl()
+            if hasattr(impl, 'initialize'):
+                await impl.initialize()
+            self._advanced_monitoring = impl
+            self._advanced_available = True
+            logger.info('MonitoringCoordinator: AdvancedMonitoring initialized')
+
+        # Watchdog — loaded lazily via compat shim
+        _WatchdogImpl: type | None = None
         try:
-            from compat.core_watchdog import Watchdog
-            self._watchdog = Watchdog()
-            if hasattr(self._watchdog, 'start'):
-                await self._watchdog.start()
-            self._watchdog_available = True
-            initialized_any = True
-            logger.info('MonitoringCoordinator: Watchdog initialized')
+            from compat.core_watchdog import Watchdog as _WD  # type: ignore[attr-defined]
+            _WatchdogImpl = _WD
         except ImportError:
             logger.warning('MonitoringCoordinator: Watchdog not available')
         except Exception as e:
             logger.warning(f'MonitoringCoordinator: Watchdog init failed: {e}')
-        initialized_any = True
+        if _WatchdogImpl is not None:
+            impl: Any = _WatchdogImpl()
+            if hasattr(impl, 'start'):
+                await impl.start()
+            self._watchdog = impl
+            self._watchdog_available = True
+            logger.info('MonitoringCoordinator: Watchdog initialized')
+
         self._start_background_collection()
-        return initialized_any
+        return True
 
     async def _do_cleanup(self) -> None:
         """Cleanup monitoring subsystems."""
@@ -538,11 +588,6 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
         stats['min_duration'] = min(stats['min_duration'], duration)
         stats['max_duration'] = max(stats['max_duration'], duration)
         stats['last_executed'] = time.time()
-        try:
-            loop = asyncio.get_running_loop()
-            safe_create_task(self.collect_system_metrics())
-        except RuntimeError:
-            pass
 
     def get_operation_stats(self, operation_type: str | None=None) -> dict[str, Any]:
         """

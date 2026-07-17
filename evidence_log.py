@@ -65,6 +65,7 @@ import aiosqlite
 import msgspec
 import orjson
 from hledac.universal.core.env_config import ENV
+from hledac.universal.runtime.protocols.cleanup_protocol import shutdown_aclose
 from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
 
 # ISSUE-11: ThreadPoolExecutor for GIL-free SQLite writes
@@ -618,6 +619,10 @@ class EvidenceLog:
     _SQLITE_BATCH_SIZE = 500
     _SQLITE_FLUSH_INTERVAL = 1.5
     _ASYNC_WRITE_QUEUE_MAXSIZE = 500
+
+    # P1-9: Canonical aclose timeout — matches DEFAULT_ACLOSE_TIMEOUT_S.
+    # Outer bound for the entire aclose() operation.
+    DEFAULT_TIMEOUT_S = 10.0
 
     def __init__(self, run_id: str, persist_path: Path | None=None, enable_persist: bool=True, encrypt_at_rest: bool=False, silent_failure: bool=False, sample_rate: float=1.0, cancel_event: asyncio.Event | None=None):
         """
@@ -2170,17 +2175,26 @@ class EvidenceLog:
         except Exception as _watch_err:
             logger.debug('[E2] Failed to start cancel watcher: %s', _watch_err)
 
-    async def aclose(self) -> None:
+    async def aclose(self, timeout_s: float | None = None) -> None:
         """
         Async cleanup: shutdown flush worker, close SQLite, close persist file.
 
-        This is the canonical async cleanup path. All resources are closed
-        in order with proper shutdown signaling.
+        P1-9: Delegates to shutdown_aclose() for canonical timeout + force-shutdown
+        pattern. All internal timeouts (_flush_task, _async_write_task) are
+        preserved as nested timeouts; the outer bound is enforced by shutdown_aclose().
 
         Idempotent: safe to call multiple times.
         """
         if self._closed:
             return
+        await shutdown_aclose(
+            name="EvidenceLog",
+            coro=self._do_shutdown(),
+            timeout_s=timeout_s if timeout_s is not None else self.DEFAULT_TIMEOUT_S,
+        )
+
+    async def _do_shutdown(self) -> None:
+        """Inner cleanup — called by aclose() via shutdown_aclose()."""
         self._closing = True
         # E2: Cancel the lifecycle watcher — aclose() is now the owner of shutdown.
         if self._cancel_watcher_task is not None and not self._cancel_watcher_task.done():

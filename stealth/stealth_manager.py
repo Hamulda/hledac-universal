@@ -28,6 +28,8 @@ try:
 except ImportError:
     CURL_CFFI_AVAILABLE = False
     AsyncSession = None
+
+import aiohttp
 _IMPERSONATE_PROFILES = ['chrome136', 'safari17_0']
 from hledac.universal.transport.http3_lane import _cache_get as _h3_cache_get
 from hledac.universal.transport.http3_lane import fetch_http3_aioquic, is_dark_web_url, record_h3_support
@@ -365,6 +367,9 @@ class StealthSession:
     - Streaming read s hard limitem max_bytes (žádné velké stringy v RAM)
     - Timeouty pro connect/read/total
     - Automatic cookie handling
+
+    Note: For JA3 fingerprint spoofing, use StealthManagerExtensions which wraps
+    curl_cffi.AsyncSession with impersonation profiles.
     """
     __slots__ = tuple(('_closed', '_cookies', '_request_count', '_session', 'manager'))
 
@@ -383,20 +388,25 @@ class StealthSession:
         observed as h3-capable by the public lane is automatically eligible
         here, and vice versa. Fail-soft: any probe error returns False and
         records the negative result so we do not hammer the same host.
+
+        Note: Uses shared aiohttp.ClientSession from _get_session() for efficiency
+        (avoids creating a new session per call). HTTP/3 detection is a lightweight
+        probe that doesn't require JA3 fingerprint spoofing.
         """
         domain = urlparse(url).netloc
         cached = _h3_cache_get(domain)
         if cached is not None:
             return cached
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.head(url, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=2.0)) as resp:
-                    alt_svc = resp.headers.get('Alt-Svc', '')
-                    supports_http3 = 'h3' in alt_svc.lower()
-                    record_h3_support(url, supports_http3)
-                    if supports_http3:
-                        logger.debug(f'HTTP/3 supported for {domain}')
-                    return supports_http3
+            session = await self._get_session()
+            _timeout = aiohttp.ClientTimeout(total=2.0)
+            async with session.head(url, allow_redirects=True, timeout=_timeout) as resp:
+                alt_svc = resp.headers.get('Alt-Svc', '')
+                supports_http3 = 'h3' in alt_svc.lower()
+                record_h3_support(url, supports_http3)
+                if supports_http3:
+                    logger.debug(f'HTTP/3 supported for {domain}')
+                return supports_http3
         except Exception as e:
             logger.debug(f'HTTP/3 detection failed for {domain}: {e}')
             record_h3_support(url, False)
@@ -595,10 +605,8 @@ class StealthSession:
         logger.debug(f'Stealth HEAD request to {url}')
         try:
             session = await self._get_session()
-            req_kwargs = {}
-            if timeout is not None:
-                req_kwargs['timeout'] = aiohttp.ClientTimeout(total=timeout)
-            async with session.head(url=url, headers=stealth_headers, allow_redirects=True, **req_kwargs) as response:
+            _timeout = aiohttp.ClientTimeout(total=timeout) if timeout is not None else aiohttp.ClientTimeout(total=DEFAULT_TOTAL_TIMEOUT)
+            async with session.head(url=url, headers=stealth_headers, allow_redirects=True, timeout=_timeout) as response:
                 self.manager._request_count += 1
                 if 200 <= response.status < 300:
                     self.manager._success_count += 1

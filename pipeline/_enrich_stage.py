@@ -158,10 +158,11 @@ class EnrichStage:
                 fail_count += batch_fail
 
                 # AIMD feedback per batch (not per item — smoother)
+                # on_failure() takes no args; uma_state context comes from ctx
                 if batch_success > 0:
-                    new_window, _ = await self._aimd.on_success()
+                    new_window = await self._aimd.on_success()
                 else:
-                    new_window, _ = await self._aimd.on_failure(self._uma_state)
+                    new_window = await self._aimd.on_failure()
 
                 # Update semaphore if worker count changed
                 new_workers = max(1, min(int(new_window), 16))
@@ -223,7 +224,7 @@ class EnrichStage:
                 except asyncio.CancelledError:
                     raise
                 except Exception:
-                    logger.debug("EnrichStage._enrich_one hit error: %r", exc_info=True)
+                    logger.debug("EnrichStage._enrich_one hit error", exc_info=True)
                     ctx.get_metrics(self.name).record_error()
                     continue
 
@@ -232,7 +233,7 @@ class EnrichStage:
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.debug("EnrichStage._enrich_one error")
+            logger.debug("EnrichStage._enrich_one error", exc_info=True)
             return []
 
     async def aclose(self) -> None:

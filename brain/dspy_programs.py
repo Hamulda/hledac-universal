@@ -57,7 +57,7 @@ class HypothesisRankerSignature:
 
 class DarkQueryProgram:
     """Wraps DarkQuerySignature with ChainOfThought reasoning."""
-    __slots__ = tuple(('program',))
+    __slots__ = ('program',)
 
     def __init__(self):
         if not _DSPY_AVAILABLE or not HLEDAC_ENABLE_DSPY:
@@ -69,7 +69,7 @@ class DarkQueryProgram:
 
 class HypothesisGeneratorProgram:
     """Wraps HypothesisGeneratorSignature with ChainOfThought."""
-    __slots__ = tuple(('program',))
+    __slots__ = ('program',)
 
     def __init__(self):
         if not _DSPY_AVAILABLE or not HLEDAC_ENABLE_DSPY:
@@ -81,7 +81,7 @@ class HypothesisGeneratorProgram:
 
 class HypothesisRankProgram:
     """Wraps HypothesisRankerSignature with ChainOfThought."""
-    __slots__ = tuple(('program',))
+    __slots__ = ('program',)
 
     def __init__(self):
         if not _DSPY_AVAILABLE or not HLEDAC_ENABLE_DSPY:
@@ -166,7 +166,7 @@ class EpistemicGapProgram:
     Wire: Called after WINDUP synthesis in sprint_scheduler
     """
     MAX_FINDINGS = MAX_EPISTEMIC_FINDINGS
-    __slots__ = tuple(('program',))
+    __slots__ = ('program',)
 
     def __init__(self):
         if not _DSPY_AVAILABLE or not HLEDAC_ENABLE_DSPY:
@@ -209,7 +209,7 @@ class ContradictionResolverProgram:
     Wire: Called when DS conflict_mass > 0.3 in hypothesis_engine
     """
     MAX_CONTRADICTIONS = 5
-    __slots__ = tuple(('program',))
+    __slots__ = ('program',)
 
     def __init__(self):
         if not _DSPY_AVAILABLE or not HLEDAC_ENABLE_DSPY:
@@ -258,7 +258,7 @@ class MultiHopDeepResearchChain:
     MAX_NODES_PER_HOP = 30
     MAX_HOPS_PER_SEARCH = 2
     TIMEOUT_SECONDS = 120
-    __slots__ = tuple(('graph_rag', 'hop_reasoner', 'max_hops'))
+    __slots__ = ('graph_rag', 'hop_reasoner', 'max_hops')
 
     def __init__(self, max_hops: int | None=None, graph_rag: Any=None):
         """

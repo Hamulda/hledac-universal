@@ -31,7 +31,7 @@ import sys
 import time
 import warnings
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 import msgspec
@@ -609,7 +609,7 @@ class ParallelResult(msgspec.Struct, frozen=True):
 
 
 async def _parallel_taskgroup[T](
-    coros: list[Awaitable[T]],
+    coros: Sequence[Awaitable[T]],
     *,
     concurrency: int | None,
     policy: ExceptionPolicy,
@@ -711,7 +711,7 @@ ConcurrencyBudgetResolver = Callable[[], Awaitable[int]]
 
 
 async def parallel[T](
-    coros: list[Awaitable[T]],
+    coros: Sequence[Awaitable[T]],
     *,
     policy: ExceptionPolicy = "collect",
     concurrency: int | ConcurrencyBudgetResolver | None = None,

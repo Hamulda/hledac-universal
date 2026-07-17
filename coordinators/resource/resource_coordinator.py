@@ -302,6 +302,30 @@ class AIMDController(msgspec.Struct):
         }
 
 
+def make_fetch_aimd() -> AIMDController:
+    """Factory for FetchStage AIMD controller — ceiling=25, fast scaling."""
+    return AIMDController(
+        min_value=AIMD_FETCH_MIN,
+        max_value=AIMD_FETCH_MAX,
+        additive_increment=AIMD_FETCH_ADDITIVE_INCREMENT,
+        decrease_factor=AIMD_FETCH_DECREASE_FACTOR,
+        success_threshold=AIMD_FETCH_SUCCESS_THRESHOLD,
+        name="fetch",
+    )
+
+
+def make_extract_aimd() -> AIMDController:
+    """Factory for extraction AIMD controller — ceiling=8, conservative scaling."""
+    return AIMDController(
+        min_value=AIMD_EXTRACTION_MIN,
+        max_value=AIMD_EXTRACTION_MAX,
+        additive_increment=AIMD_EXTRACTION_ADDITIVE_INCREMENT,
+        decrease_factor=AIMD_EXTRACTION_DECREASE_FACTOR,
+        success_threshold=2,
+        name="extract",
+    )
+
+
 # =============================================================================
 # BACKPRESSURE MONITOR
 # =============================================================================
@@ -693,6 +717,8 @@ __all__ = [
     "BackpressureMonitor",
     # AIMD
     "AIMDController",
+    "make_fetch_aimd",
+    "make_extract_aimd",
     # M1 Resource
     "CapacitySnapshot",
     "M1ResourceCoordinator",

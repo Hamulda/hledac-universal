@@ -22,5 +22,8 @@ def __getattr__(name: str):
     if name == "FeedSignalTelemetry":
         from .live_feed_pipeline import FeedSignalTelemetry
         return FeedSignalTelemetry
+    if name == "live_public_pipeline":
+        import importlib
+        return importlib.import_module("hledac.universal.pipeline.live_public_pipeline")
     # fail-soft: undefined attributes return None (pipeline/ uses error swallowing)
     return None
