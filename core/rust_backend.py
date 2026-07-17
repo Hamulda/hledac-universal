@@ -18,8 +18,7 @@ Migration:
 
 The package core/rust_backend/__init__.py provides:
     RustBackend, rust, AccelBackend, AccelInfo,
-    get_accel(), reset_accel(), check_metal_availability(),
-    gpu_batch_keyword_scan()
+    get_accel(), reset_accel(), check_metal_availability()
 """
 from __future__ import annotations
 
@@ -34,7 +33,6 @@ __all__ = [
     "get_accel",
     "reset_accel",
     "check_metal_availability",
-    "gpu_batch_keyword_scan",
 ]
 
 # Detect if this file is shadowing the package
@@ -61,5 +59,4 @@ from core.rust_backend import (  # noqa: E402, F401
     get_accel,
     reset_accel,
     check_metal_availability,
-    gpu_batch_keyword_scan,
 )

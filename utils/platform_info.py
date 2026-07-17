@@ -275,3 +275,50 @@ def format_platform_summary() -> str:
     r = get_optional_acceleration_status()
     parts = [f"{k}:{v.available}" for k, v in r.statuses.items()]
     return f"[Platform] {' | '.join(parts)} | missing={r.missing_optional}"
+
+
+# E3: Apply QoS once per process lifetime (thread identity is immutable)
+_APPLIED_QOS_TO_MAIN_THREAD = False
+
+
+def apply_qos_to_main_thread() -> bool:
+    """
+    Apply USER_INITIATED QoS hint to the current (main) thread.
+
+    Called once at event-loop startup (sprint_entrypoint.py) so the asyncio
+    event loop thread benefits from P-core scheduling on Apple Silicon M1.
+
+    Rayon thread pools (cpu_pool, io_pool, mixed_pool) already call
+    pthread_set_qos_class_self_np(QOS_CLASS_USER_INITIATED) inside their
+    spawn_handler — this call covers the main asyncio thread which is not
+    part of any rayon pool.
+
+    Idempotent: only applies once per process lifetime (thread identity is
+    immutable — QoS persists for the thread's entire lifetime).
+
+    Returns True on success, False on any error (fail-safe — never raises).
+    """
+    global _APPLIED_QOS_TO_MAIN_THREAD
+    if _APPLIED_QOS_TO_MAIN_THREAD:
+        return True
+
+    import ctypes
+    import sys
+
+    if sys.platform != "darwin":
+        return False
+
+    try:
+        libc = ctypes.CDLL(None)
+        pthread_self = libc.pthread_self
+        pthread_self.restype = ctypes.c_void_p
+        pthread_self.argtypes = []
+        pthread_set_qos_class_self_np = libc.pthread_set_qos_class_self_np
+        pthread_set_qos_class_self_np.restype = ctypes.c_int
+        pthread_set_qos_class_self_np.argtypes = [ctypes.c_int, ctypes.c_ulonglong]
+        QOS_CLASS_USER_INITIATED = 0x21
+        result = pthread_set_qos_class_self_np(QOS_CLASS_USER_INITIATED, 0)
+        _APPLIED_QOS_TO_MAIN_THREAD = result == 0
+        return _APPLIED_QOS_TO_MAIN_THREAD
+    except Exception:
+        return False

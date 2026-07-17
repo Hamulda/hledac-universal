@@ -521,6 +521,72 @@ pub fn batch_tokenize_(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Memory probing (M1 8GB UMA safety)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Probe total physical memory via sysctl HW_MEMSIZE on Darwin.
+/// Returns 0 if unavailable (non-Darwin or sysctl failure).
+fn probe_total_memory() -> usize {
+    #[cfg(target_os = "darwin")]
+    {
+        use libc::c_int;
+        let mib: [c_int; 2] = [6, 25]; // {CTL_HW, HW_MEMSIZE}
+        let mut total: u64 = 0;
+        let mut len = std::mem::size_of::<u64>();
+        unsafe {
+            let ret = libc::sysctl(
+                mib.as_ptr(),
+                2,
+                &mut total as *mut _ as *mut libc::c_void,
+                &mut len,
+                std::ptr::null(),
+                0,
+            );
+            if ret == 0 {
+                return total as usize;
+            }
+        }
+    }
+    0
+}
+
+/// Check if sufficient memory is available for MLX model loading.
+///
+/// Returns (allowed, available_bytes, reason).
+/// reason is "ok" if allowed, otherwise a descriptive message.
+#[pyfunction]
+#[pyo3(name = "check_available_memory")]
+pub fn check_available_memory_py(
+    required_bytes: usize,
+    available_bytes: usize,
+) -> PyResult<(bool, usize, String)> {
+    // Hard floor: refuse to load on systems with < 2GB total
+    const MIN_TOTAL_MEMORY: usize = 2 * 1024 * 1024 * 1024;
+    let total = probe_total_memory();
+    if total > 0 && total < MIN_TOTAL_MEMORY {
+        return Ok((
+            false,
+            available_bytes,
+            format!(
+                "system_total={} < {} (2GiB minimum)",
+                total, MIN_TOTAL_MEMORY
+            ),
+        ));
+    }
+    if available_bytes < required_bytes {
+        return Ok((
+            false,
+            available_bytes,
+            format!(
+                "available={} < required={}",
+                available_bytes, required_bytes
+            ),
+        ));
+    }
+    Ok((true, available_bytes, "ok".to_string()))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Registration
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -531,5 +597,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<TokenChunk>()?;
     m.add_class::<AdaptiveChunkSizer>()?;
     m.add_function(wrap_pyfunction!(batch_tokenize_, m)?)?;
+    m.add_function(wrap_pyfunction!(check_available_memory_py, m)?)?;
     Ok(())
 }

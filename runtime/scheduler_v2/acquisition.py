@@ -909,8 +909,9 @@ class AcquisitionOrchestrator:
             from hledac.universal.utils.uma_budget import get_uma_snapshot
 
             uma = get_uma_snapshot()
-            if uma.rss_gib >= 5.5 or uma.is_critical or uma.is_emergency:
-                log.debug("[F259] Synthesis skipped -- UMA RSS=%.1fGB, state=%s", uma.rss_gib, uma.state)
+            uma_used_gib = uma['uma_used_mb'] / 1024
+            if uma_used_gib >= 5.5 or uma['is_critical'] or uma['is_emergency']:
+                log.debug("[F259] Synthesis skipped -- UMA used=%.1fGB, pressure=%s", uma_used_gib, uma['uma_pressure_level'])
                 ctx.result.synthesis_success = False
                 ctx.result.synthesis_engine = "uma_guard"
                 return
@@ -934,13 +935,6 @@ class AcquisitionOrchestrator:
         if not findings:
             log.debug("[F259] Synthesis skipped -- no findings")
             return
-        if ctx.result.hermes_load_reason == "deferred":
-            log.debug("[Phase4] Loading Hermes on-demand (findings=%d)", len(findings))
-            try:
-                await self._load_hermes_for_sprint()
-            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                log.warning("[Phase4] Hermes load failed, continuing without: %s", e)
-                ctx.result.hermes_model_loaded = False
         try:
             from hledac.universal.brain.model_lifecycle import ModelLifecycle
             from hledac.universal.brain.synthesis_runner import SynthesisRunner
@@ -1111,15 +1105,15 @@ class AcquisitionOrchestrator:
         duckdb_store: Any,
     ) -> Any:
         """Run one feed source through live_feed_pipeline."""
-        from hledac.universal.pipeline.live_feed_pipeline import async_run_live_feed
+        from hledac.universal.pipeline.live_feed_pipeline import async_run_live_feed_pipeline
 
         try:
-            return await async_run_live_feed(
+            return await async_run_live_feed_pipeline(
                 work.url,
-                query=ctx.query,
                 store=duckdb_store,
-                fetch_timeout_s=work.timeout_s or 30.0,
-                max_results=getattr(work, "max_results", 10),
+                query_context=ctx.query,
+                max_entries=getattr(work, "max_results", 10),
+                timeout_s=work.timeout_s or 30.0,
             )
         except Exception:
             from hledac.universal.pipeline.live_feed_pipeline import FeedPipelineRunResult
@@ -1253,7 +1247,7 @@ class AcquisitionOrchestrator:
     async def _check_zero_findings_alert(self, ctx: Any) -> None:
         """Check zero-findings alert after each cycle."""
         try:
-            from hledac.universal.utils.alerts import check_zero_findings_alert
+            from hledac.universal.monitoring.alert_manager import check_zero_findings_alert
 
             _elapsed = _time.monotonic() - getattr(ctx, "_wall_clock_start", 0.0)
             await check_zero_findings_alert(

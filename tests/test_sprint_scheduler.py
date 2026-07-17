@@ -705,12 +705,13 @@ async def test_synthesis_sidecar_skipped_when_uma_emergency(minimal_config):
     sched._duckdb_store = AsyncMock()
     sched._duckdb_store.get_top_findings = AsyncMock(return_value=[{"ioc": "1.2.3.4", "text": "malware test"}])
 
-    # Mock UMA emergency
-    mock_uma = MagicMock()
-    mock_uma.rss_gib = 6.5
-    mock_uma.is_emergency = True
-    mock_uma.is_critical = True
-    mock_uma.state = "emergency"
+    # Mock UMA emergency — dict matching actual get_uma_snapshot() return type
+    mock_uma = {
+        "uma_used_mb": 6.5 * 1024,  # 6.5 GiB
+        "is_emergency": True,
+        "is_critical": True,
+        "uma_pressure_level": "emergency",
+    }
 
     # F266: accepted_findings must be > 0 to reach the uma_guard check
     sched._result.accepted_findings = 5
@@ -743,9 +744,18 @@ async def test_synthesis_sidecar_graceful_on_error(minimal_config):
     # F266: accepted_findings must be > 0 to reach SynthesisRunner instantiation
     sched._result.accepted_findings = 5
 
+    # Mock UMA snapshot — non-emergency values so synthesis proceeds to error path
+    mock_uma_normal = {
+        "uma_used_mb": 2048,  # 2 GiB — well below 5.5 threshold
+        "is_emergency": False,
+        "is_critical": False,
+        "uma_pressure_level": "normal",
+    }
+
     with patch.dict(os.environ, {"HLEDAC_ENABLE_HERMES_SYNTHESIS": "1"}):
-        with patch("hledac.universal.brain.synthesis_runner.SynthesisRunner", return_value=mock_runner):
-            await sched._run_synthesis_sidecar("test query", sched._duckdb_store, None)
+        with patch("hledac.universal.utils.uma_budget.get_uma_snapshot", return_value=mock_uma_normal):
+            with patch("hledac.universal.brain.synthesis_runner.SynthesisRunner", return_value=mock_runner):
+                await sched._run_synthesis_sidecar("test query", sched._duckdb_store, None)
 
     assert sched._result.synthesis_success is False
     assert sched._result.synthesis_engine == "error"
@@ -850,9 +860,16 @@ async def test_synthesis_sidecar_runs_when_accepted_findings_present(minimal_con
     sched._duckdb_store.get_stix_graph = MagicMock(return_value=None)
 
     # F282: set env var directly to bypass env cache
+    mock_uma_normal = {
+        "uma_used_mb": 2048,  # 2 GiB — well below 5.5 threshold
+        "is_emergency": False,
+        "is_critical": False,
+        "uma_pressure_level": "normal",
+    }
     with patch.dict(os.environ, {"HLEDAC_ENABLE_HERMES_SYNTHESIS": "1"}):
-        with patch("hledac.universal.brain.synthesis_runner.SynthesisRunner", return_value=mock_runner):
-            await sched._run_synthesis_sidecar("test query", sched._duckdb_store, None)
+        with patch("hledac.universal.utils.uma_budget.get_uma_snapshot", return_value=mock_uma_normal):
+            with patch("hledac.universal.brain.synthesis_runner.SynthesisRunner", return_value=mock_runner):
+                await sched._run_synthesis_sidecar("test query", sched._duckdb_store, None)
 
     # Synthesis DID run (because accepted_findings > 0 and env flag enabled)
     assert mock_runner.synthesize_findings.call_count == 1

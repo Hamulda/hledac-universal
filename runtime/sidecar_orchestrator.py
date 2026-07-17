@@ -26,23 +26,24 @@ Deletion test: if this module is deleted, the 4 public call sites above
 must reappear in SprintScheduler. No accepted-finding sidecar call site
 lives here — they all live in sidecar_bus.py / sidecar_dispatcher.py.
 
-ADVISORY CALLBACK SEAM (bounded, F226)
-──────────────────────────────────────
+ADVISORY CALLBACK SEAM (bounded, F226 + F1 FIX)
+────────────────────────────────────────────────
 SidecarOrchestrator owns scheduling and dispatch. SprintScheduler still owns
-the inline advisory implementations. One advisory crosses the scheduler facade
-via getattr; two are self-contained adapters. This is an explicit bounded seam:
+the inline advisory implementations. Two advisories are self-contained adapters
+(no scheduler dependency). All scheduler-backed sidecars now call through
+the SchedulerAdvisory Protocol — no getattr() reflection:
 
-  1. _run_ct_to_passivedns_pivot_advisory  → getattr(scheduler, "_run_ct_to_passivedns_pivot_advisory")
-  2. _run_bgp_advisory_sidecar             → own BGPAdvisorAdapter (no getattr)
-  3. _run_wayback_cdx_deep_sidecar         → own WaybackCDXDeepAdapter (no getattr)
+  1. _run_ct_to_passivedns_pivot_advisory  → SchedulerAdvisory._run_ct_to_passivedns_pivot_advisory
+  2. _run_bgp_advisory_sidecar             → own BGPAdvisorAdapter (no scheduler)
+  3. _run_wayback_cdx_deep_sidecar         → own WaybackCDXDeepAdapter (no scheduler)
+  4–12. _run_ipfs/onion/i2p/bgp_enrichment/commoncrawl/banner/dht/
+        digital_ghost/steganography/ti_feed → SchedulerAdvisory Protocol
 
-These three callback names are the ONLY permitted scheduler advisory callbacks.
-No new `getattr(self._scheduler, "_run_*")` calls may be added without updating
-the seal test in tests/test_sidecar_orchestrator.py.
-
-Extraction trigger: if advisory logic exceeds ~50 lines OR gains external callers
-beyond these three methods, extract to a dedicated adapter class — do not grow
-the getattr seam.
+F1 FIX: SchedulerAdvisory(Protocol) nahradil getattr() antipattern.
+scheduler: Any → scheduler: SchedulerAdvisory | None.
+mypy --strict odhali přejmenování jakékoli _run_* metody.
+No new scheduler-backed sidecar method may be added without updating
+the SchedulerAdvisory Protocol in sidecar_protocol.py.
 """
 
 
@@ -60,6 +61,7 @@ from hledac.universal.runtime.sidecar_dispatcher import (
     DispatchOutcome,
     SidecarDispatcher,
 )
+from hledac.universal.runtime.sidecar_protocol import SchedulerAdvisory
 
 log = logging.getLogger(__name__)
 
@@ -266,7 +268,8 @@ class SidecarOrchestrator:
 
     result_sink:     SprintSchedulerResult — telemetry fields are updated here.
     governor:        M1 resource governor or None — RAM guard checks.
-    scheduler:       SprintScheduler reference for deferred advisory access.
+    scheduler:       SchedulerAdvisory — F1 FIX: typovy kontrakt nahradil Any;
+                     primo volani pres Protocol nahradilo getattr() antipattern.
     """
 
     __slots__ = (
@@ -283,7 +286,7 @@ class SidecarOrchestrator:
         self,
         result_sink: Any,
         governor: Any = None,
-        scheduler: Any = None,
+        scheduler: SchedulerAdvisory | None = None,
     ) -> None:
         self._prewarmed = False  # ISSUE #22: prewarm once
         self._result = result_sink
@@ -941,15 +944,14 @@ class SidecarOrchestrator:
     async def _run_ct_to_passivedns_pivot_advisory(self) -> None:
         """R5: CT -> PassiveDNS one-hop pivot advisory.
 
-        Delegates to SprintScheduler._run_ct_to_passivedns_pivot_advisory().
+        F1 FIX: primo volani pres SchedulerAdvisory Protocol —
+        žádné getattr() reflection antipattern.
         Fail-soft: errors never crash the sprint.
         """
         if self._scheduler is None:
             return
         try:
-            method = getattr(self._scheduler, "_run_ct_to_passivedns_pivot_advisory", None)
-            if method is not None:
-                await method()
+            await self._scheduler._run_ct_to_passivedns_pivot_advisory()
         except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Fail-soft
 

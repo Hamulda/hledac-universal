@@ -163,3 +163,23 @@ pyo3-build-config = "0.23"
 unused = "warn"
 dead_code = "warn"
 unused_imports = "warn"
+
+# ---------------------------------------------------------------------------
+# Target-specific flags
+# ---------------------------------------------------------------------------
+# ISSUE E6: SIMD NEON on Apple Silicon M1/M2/M3
+# All Apple Silicon chips (M1+) support NEON and crypto extensions.
+# These flags ensure the compiler emits NEON instructions rather than
+# falling back to scalar code even when #[cfg(target_arch = "aarch64")]
+# guards are present. Without these, core::arch::aarch64 intrinsics compile
+# but emit no actual SIMD ops — performance degrades to scalar.
+#
+# +neon  : ARM SIMD instruction set (4× f32 in parallel)
+# +crypto: ARMv8 crypto extensions (AES, SHA1, SHA2 — used by sha2 crate)
+[target.'cfg(target_arch = "aarch64")']
+rustflags = ["-C", "target-feature=+neon,+crypto"]
+
+# aarch64-apple-darwin already implies +neon, but explicit is safer:
+# 1. Overrides any RUSTFLAGS from the environment
+# 2. Documents the requirement clearly
+# 3. Works even if maturin/cargo is invoked with conflicting flags

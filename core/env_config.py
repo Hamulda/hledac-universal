@@ -115,6 +115,22 @@ class _CacheAccessor:
         val = _get_cached(name)
         return val if val else default
 
+    def get_str(self, name: str, default: str = "") -> str:
+        """Return env var as str; missing/empty → default."""
+        val = _get_cached(name)
+        return val if val else default
+
+    def get_memory_bytes(self, name: str, default: str = "3GB") -> int:
+        """Return env var as memory bytes (e.g. '3GB', '512MB', '1TB').
+
+        Falls back to default string if env var not set.
+        Returns 0 for invalid/unparseable strings.
+        """
+        val = _get_cached(name)
+        if not val:
+            val = default
+        return _parse_memory_string(val)
+
     def get(self, name: str, default: str = "") -> str:
         """[DEPRECATED] Alias for get_str(). Use get_str() for new code."""
         return self.get_str(name, default)
@@ -122,6 +138,39 @@ class _CacheAccessor:
     def __getattr__(self, name: str) -> Any:
         """Route HLEDAC_* → _get_cached(name) for dot-access compatibility."""
         return _get_cached(name)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Memory string parser (for HLEDAC_MLX_MAX_MEMORY etc.)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _parse_memory_string(s: str) -> int:
+    """Parse memory string like '3GB', '512MB', '1TB' to bytes.
+
+    IMPORTANT: Must check longest suffixes first (TB→GB→MB→KB→B) to avoid
+    'B' matching before 'GB' when parsing '3GB'.endswith('B') = True.
+    """
+    s = s.strip().upper()
+    if not s:
+        return 0
+    multipliers = [
+        ("TB", 1024**4),
+        ("GB", 1024**3),
+        ("MB", 1024**2),
+        ("KB", 1024),
+        ("B", 1),
+    ]
+    for suffix, mult in multipliers:
+        if s.endswith(suffix):
+            num_str = s[: -len(suffix)].strip()
+            try:
+                return int(float(num_str) * mult)
+            except (ValueError, TypeError):
+                return 0
+    try:
+        return int(s)
+    except (ValueError, TypeError):
+        return 0
 
 
 #: Process-wide singleton — imported eagerly, resolved lazily

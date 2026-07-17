@@ -169,8 +169,10 @@ def _get_embedder():
 def _is_swap_detected() -> bool:
     """Check if system is swapping (heuristic: psutil shows non-zero swap)."""
     try:
-        import psutil
-        swap = psutil.swap_memory()
+        _ps = psutil
+        if _ps is None:
+            return False
+        swap = _ps.swap_memory()
         return swap.used > 0
     except Exception:  # noqa: BLE001 — fail-soft: psutil probe failure should not prevent embedding
         return False
@@ -417,7 +419,7 @@ def generate_embeddings(texts: list[str], batch_size: int | None=None, keep_load
     try:
         embeddings = embedder.encode_adaptive(texts_to_embed, initial_batch_size=batch_size, min_batch_size=4, max_batch_size=128, normalize=True, truncate_dim=_EMBEDDING_DIM, memory_pressure_provider=_uma_pressure_provider)
         try:
-            import psutil as _psutil
+            _ps = psutil  # already imported at module level from core.psutil_shim
             backend_name = type(embedder).__name__.lower()
             if 'coreml' in backend_name:
                 backend_name = 'coreml_bge'
@@ -427,8 +429,9 @@ def generate_embeddings(texts: list[str], batch_size: int | None=None, keep_load
                 backend_name = 'mlx_modernbert'
             else:
                 backend_name = 'cpu'
-            _ram = _psutil.virtual_memory().percent
-            logger.debug('EMBED_BACKEND: %s | texts=%d | dim=%s | ram=%.1f%%', backend_name, len(texts_to_embed), embeddings.shape, _ram)
+            if _ps is not None:
+                _ram = _ps.virtual_memory().percent
+                logger.debug('EMBED_BACKEND: %s | texts=%d | dim=%s | ram=%.1f%%', backend_name, len(texts_to_embed), embeddings.shape, _ram)
         except Exception:
             pass
         if embeddings.dtype != np.float32:

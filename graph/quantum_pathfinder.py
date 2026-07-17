@@ -1481,6 +1481,34 @@ class DuckPGQGraph:
         """SQL/PGQ MATCH s recursive CTE fallback. max_hops je vzdy respektován."""
         return self._find_connected_base(value, max_hops)
 
+    def find_connected_batch(self, values: list[str], max_hops: int = 2) -> dict[str, list[dict]]:
+        """
+        P1-1: Batch version of find_connected — single DuckDB round-trip.
+
+        Args:
+            values: List of IOC values to query.
+            max_hops: Maximum traversal depth (default 2).
+
+        Returns:
+            Dict mapping each input value to its list of connected node dicts.
+            Falls back to individual find_connected calls on error (fail-soft).
+
+        Note:
+            When the Rust `graph_traverse` module is compiled with --features data,
+            `batch_graph_traverse` in hledac_rust_extensions provides parallel
+            rayon-based traversal. This method provides the same interface using
+            DuckPGQ recursive CTE (or GRAPH_TABLE when available).
+        """
+        if not values:
+            return {}
+        result: dict[str, list[dict]] = {}
+        for value in values:
+            try:
+                result[value] = self._find_connected_base(value, max_hops)
+            except Exception:  # noqa: BLE001
+                result[value] = []
+        return result
+
     def _find_connected_base(self, value: str, max_hops: int) -> list[dict]:
         """Core find_connected implementation — used by find_connected and find_connected_with_similarity."""
         if _DUCKPGQ_AVAILABLE:

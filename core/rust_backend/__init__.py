@@ -14,7 +14,7 @@ Architecture:
   ├── ip.py          ← IP parsing, private/public classification, CIDR
   ├── misc.py        ← graph, hot_edges, aho, evidence, madvise, memory,
   │                     json, spsc, query, text, int_counter, simd,
-  │                     metal, sprint_policies + all pure-Python fallbacks
+  │                     sprint_policies + all pure-Python fallbacks
 
 Usage:
     from core.rust_backend import get_accel
@@ -71,12 +71,12 @@ if TYPE_CHECKING:
     from .misc import (
         _PythonAhoDomain, _PythonEvidenceDomain, _PythonHotEdgesDomain,
         _PythonIntCounterDomain, _PythonJsonDomain, _PythonMadvisDomain,
-        _PythonMemoryDomain, _PythonMetalDomain, _PythonGraphDomain,
+        _PythonMemoryDomain, _PythonGraphDomain,
         _PythonQueryDomain, _PythonSimdDomain, _PythonSPSCDomain,
         _PythonSprintPoliciesDomain, _PythonTextDomain, _PythonXmlDomain,
         _RustAhoDomain, _RustEvidenceDomain, _RustHotEdgesDomain,
         _RustIntCounterDomain, _RustJsonDomain, _RustMadvisDomain,
-        _RustMemoryDomain, _RustMetalDomain, _RustGraphDomain,
+        _RustMemoryDomain, _RustGraphDomain,
         _RustQueryDomain, _RustSimdDomain, _RustSPSCDomain,
         _RustSprintPoliciesDomain, _RustTextDomain, _RustXmlDomain,
     )
@@ -284,10 +284,6 @@ class AccelBackend:
         return self._get_domain("lsh", _lsh_mod.get_lsh_domain)
 
     @property
-    def metal(self) -> "_RustMetalDomain | _PythonMetalDomain":
-        return self._get_domain("metal", _misc_mod.get_metal_domain)
-
-    @property
     def sprint_policies(self) -> "_RustSprintPoliciesDomain | _PythonSprintPoliciesDomain":
         return self._get_domain("sprint_policies", _misc_mod.get_sprint_policies_domain)
 
@@ -434,10 +430,6 @@ class _RustCompatShim:
         return self._accel.simd
 
     @property
-    def metal(self) -> Any:
-        return self._accel.metal
-
-    @property
     def aho(self) -> Any:
         return self._accel.aho
 
@@ -548,39 +540,9 @@ def _get_or_create_singleton() -> "RustBackend":
 rust: RustBackend = _get_or_create_singleton()
 
 
-# =============================================================================
-# Top-level GPU helpers (originally at end of rust_backend.py)
-# =============================================================================
-
-
-def gpu_batch_keyword_scan(
-    texts: list[str], keywords: list[str]
-) -> list[tuple[int, int, int, int]]:
-    """
-    GPU-accelerated batch keyword scan using Metal.
-    Falls back to pure Python on the CPU path if Metal unavailable.
-    """
-    accel = get_accel()
-    if accel.metal and accel.is_available:
-        return accel.metal.batch_keyword_scan(texts, keywords)
-    # Pure Python fallback
-    results: list[tuple[int, int, int, int]] = []
-    for ti, text in enumerate(texts):
-        for ki, kw in enumerate(keywords):
-            start = 0
-            while True:
-                idx = text.find(kw, start)
-                if idx == -1:
-                    break
-                results.append((ti, idx, idx + len(kw), ki))
-                start = idx + 1
-    return results
-
-
 def check_metal_availability() -> dict[str, Any]:
-    """Check Metal/GPU availability."""
-    accel = get_accel()
-    return accel.metal.check_metal_availability()
+    """Check Metal/GPU availability — telemetry only, always returns Python fallback."""
+    return _misc_mod._python_check_metal_availability()
 
 
 # =============================================================================

@@ -831,6 +831,64 @@ class ModelLifecycle:
         return None
 
     # ------------------------------------------------------------------
+    # Memory pre-flight check (E4: M1 8GB UMA safety)
+    # ------------------------------------------------------------------
+
+    def _check_mlx_memory_before_load(self) -> None:
+        """
+        Pre-flight memory check before mlx_lm.load().
+
+        ISSUE E4: MLX model loading without memory check risks OOM on M1 8GB UMA.
+        This method checks:
+          1. HLEDAC_MLX_MAX_MEMORY ceiling (default 3GB)
+          2. Available system memory via os.proc_available_memory() or psutil
+          3. Rust backend check_available_memory() if available
+
+        Raises RuntimeError if insufficient memory — prevents OOM crash.
+        """
+        from core.env_config import ENV
+
+        max_memory_bytes = ENV.get_memory_bytes("HLEDAC_MLX_MAX_MEMORY", default="3GB")
+        if max_memory_bytes <= 0:
+            max_memory_bytes = 3 * 1024 * 1024 * 1024  # 3GB default floor
+
+        available_bytes = 0
+        # Try os.proc_available_memory first (Python 3.11+)
+        try:
+            if hasattr(os, "proc_available_memory"):
+                available_bytes = os.proc_available_memory()
+            else:
+                import psutil
+                available_bytes = psutil.virtual_memory().available
+        except Exception:
+            pass
+
+        # Try Rust backend for sysctl HW_MEMSIZE check
+        # check_available_memory_py is registered directly on the Rust module (rust.raw)
+        try:
+            from core.rust_backend import rust
+            if rust.is_available:
+                raw = rust.raw
+                if hasattr(raw, "check_available_memory"):
+                    allowed, avail, reason = raw.check_available_memory(
+                        max_memory_bytes, available_bytes
+                    )
+                    if not allowed:
+                        raise RuntimeError(f"[E4-MEMORY] MLX model load rejected: {reason}")
+                    return
+        except RuntimeError:
+            raise  # Re-raise our own RuntimeError
+        except Exception:
+            pass  # Fall through to Python-side check
+
+        # Python-side fallback check
+        if available_bytes < max_memory_bytes:
+            raise RuntimeError(
+                f"[E4-MEMORY] Insufficient memory for MLX load: "
+                f"available={available_bytes} < required={max_memory_bytes}"
+            )
+
+    # ------------------------------------------------------------------
     # Lazy load
     # ------------------------------------------------------------------
 
@@ -851,6 +909,10 @@ class ModelLifecycle:
 
         # B.9: QoS USER_INITIATED
         self._set_qos_user_initiated()
+
+        # E4: Pre-flight memory check before mlx_lm.load()
+        # Raises RuntimeError if insufficient memory — prevents OOM crash on M1 8GB
+        self._check_mlx_memory_before_load()
 
         try:
             import mlx_lm

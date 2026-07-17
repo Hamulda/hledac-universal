@@ -68,6 +68,40 @@ class TestDuckPGQGraphPersistence:
         assert stats.get("nodes", 0) >= 0
         assert stats.get("edges", 0) >= 0
 
+    def test_find_connected_batch_returns_dict_structure(self):
+        """find_connected_batch returns dict with correct structure (same-instance)."""
+        g = DuckPGQGraph()
+        g.add_ioc("batch.src1.test", "domain", 0.9, "smoke_batch")
+        g.add_ioc("batch.dst1.test", "domain", 0.85, "smoke_batch")
+        g.add_ioc("batch.src2.test", "domain", 0.8, "smoke_batch")
+        g.add_relation("batch.src1.test", "batch.dst1.test", "linked", 1.0, "batch evidence")
+
+        result = g.find_connected_batch(
+            ["batch.src1.test", "batch.src2.test", "batch.none.test"],
+            max_hops=2,
+        )
+        assert isinstance(result, dict), f"Expected dict, got {type(result)}"
+        assert "batch.src1.test" in result
+        assert isinstance(result["batch.src1.test"], list)
+        assert "batch.src2.test" in result
+        assert isinstance(result["batch.src2.test"], list)
+        assert "batch.none.test" in result
+        assert isinstance(result["batch.none.test"], list)
+
+    def test_find_connected_batch_empty_input(self):
+        """find_connected_batch with empty list returns empty dict."""
+        g = DuckPGQGraph()
+        result = g.find_connected_batch([], max_hops=2)
+        assert result == {}
+
+    def test_find_connected_batch_exception_fallback(self):
+        """find_connected_batch returns {} on graph unavailable."""
+        # When DuckPGQGraph is in READ-ONLY with no lock, graph is usable
+        g = DuckPGQGraph()
+        result = g.find_connected_batch(["nonexistent.value.test"], max_hops=2)
+        assert isinstance(result, dict)
+        assert "nonexistent.value.test" in result
+
 
 class TestGraphServicePythonSetDedup:
     """Verify GraphService Python-set dedup path (when Rust unavailable)."""

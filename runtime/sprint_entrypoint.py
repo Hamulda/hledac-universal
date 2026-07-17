@@ -95,6 +95,11 @@ from hledac.universal.runtime.sprint_lifecycle import _PHASE_ORDER, SprintLifecy
 from hledac.universal.utils.async_helpers import safe_gather, safe_wait_for
 from hledac.universal.utils.config_introspection import safe_attr_get
 
+# E3: macOS P-core QoS — apply USER_INITIATED to main asyncio event loop thread.
+# Rust rayon pools get this automatically (lib.rs:185-196 apply_qos_hint inside pool threads).
+# Python asyncio runs on the main thread which needs the same hint.
+from hledac.universal.utils.platform_info import apply_qos_to_main_thread
+
 logger = logging.getLogger(__name__)
 
 # Issue 10.2 / F320: Unified tracing + structured logging configuration.
@@ -1924,25 +1929,27 @@ async def run_sprint(
         # Remove any lock whose owning PID is dead (crash, SIGKILL, orphaned).
         # Uses psutil.pid_exists() for cross-platform liveness check.
         try:
-            import psutil
+            from core.psutil_shim import psutil_module
 
-            lock_dir = _sprint_lock_path.parent
-            if lock_dir.exists():
-                for lock_file in lock_dir.iterdir():
-                    if not lock_file.name.endswith(".lock"):
-                        continue
-                    try:
-                        # Read PID from lock file (first 4 bytes little-endian)
-                        pid_bytes = lock_file.read_bytes()
-                        if len(pid_bytes) >= 4:
-                            lock_pid = int.from_bytes(pid_bytes[:4], byteorder="little")
-                            if not psutil.pid_exists(lock_pid):
-                                lock_file.unlink()
-                                logger.info(
-                                    f"[F320-JANITOR] Removed stale lock: {lock_file.name} (PID={lock_pid} dead)"
-                                )
-                    except Exception:  # noqa: BLE001
-                        pass  # best-effort
+            _ps = psutil_module()
+            if _ps is not None:
+                lock_dir = _sprint_lock_path.parent
+                if lock_dir.exists():
+                    for lock_file in lock_dir.iterdir():
+                        if not lock_file.name.endswith(".lock"):
+                            continue
+                        try:
+                            # Read PID from lock file (first 4 bytes little-endian)
+                            pid_bytes = lock_file.read_bytes()
+                            if len(pid_bytes) >= 4:
+                                lock_pid = int.from_bytes(pid_bytes[:4], byteorder="little")
+                                if not _ps.pid_exists(lock_pid):
+                                    lock_file.unlink()
+                                    logger.info(
+                                        f"[F320-JANITOR] Removed stale lock: {lock_file.name} (PID={lock_pid} dead)"
+                                    )
+                        except Exception:  # noqa: BLE001
+                            pass  # best-effort
         except Exception:  # noqa: BLE001
             pass  # janitor failure is non-fatal
 
@@ -3492,6 +3499,9 @@ def _run_sprint_loop(args: argparse.Namespace) -> None:
     )
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    # E3: Apply USER_INITIATED QoS to the main thread so asyncio event loop
+    # gets P-core scheduling on Apple Silicon M1. Rayon pools already have this.
+    apply_qos_to_main_thread()
     shutdown_event = asyncio.Event()
     restore_signals = _install_signal_handler_for_loop(loop, shutdown_event)
     pending: set = set()

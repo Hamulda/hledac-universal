@@ -893,60 +893,6 @@ class _PythonSimdDomain:
 
 
 # =============================================================================
-# Metal / GPU
-# =============================================================================
-
-
-class _RustMetalDomain:
-    __slots__ = ("_ext",)
-
-    def __init__(self, ext: hledac_rust_extensions) -> None:
-        self._ext = ext
-
-    def batch_keyword_scan(self, texts: list[str], keywords: list[str]) -> list[tuple[int, int, int, int]]:
-        return self._ext.batch_keyword_scan(texts, keywords)
-
-    def batch_ioc_scan(self, texts: list[str]) -> list[tuple[int, int, int, int, str]]:
-        return self._ext.batch_ioc_scan(texts)
-
-    def check_metal_availability(self) -> dict[str, Any]:
-        return self._ext.check_metal_availability()
-
-    def get_pattern_stats(
-        self,
-        results: list[tuple[int, int, int, int]],
-        num_texts: int,
-        bytes_scanned: int,
-    ) -> dict[str, Any]:
-        return self._ext.get_pattern_stats(results, num_texts, bytes_scanned)
-
-
-class _PythonMetalDomain:
-    __slots__ = ("_domain",)
-
-    def __init__(self) -> None:
-        self._domain = _PythonMetalDomainInner()
-
-    def batch_keyword_scan(self, texts: list[str], keywords: list[str]) -> list[tuple[int, int, int, int]]:
-        return self._domain.batch_keyword_scan(texts, keywords)
-
-    def batch_ioc_scan(self, texts: list[str]) -> list[tuple[int, int, int, int, str]]:
-        return self._domain.batch_ioc_scan(texts)
-
-    @staticmethod
-    def check_metal_availability() -> dict[str, Any]:
-        return _python_check_metal_availability()
-
-    @staticmethod
-    def get_pattern_stats(
-        results: list[tuple[int, int, int, int]],
-        num_texts: int,
-        bytes_scanned: int,
-    ) -> dict[str, Any]:
-        return _python_get_pattern_stats(results, num_texts, bytes_scanned)
-
-
-# =============================================================================
 # Sprint Policies (FeedDominanceGuard, LaneBudgetPool)
 # =============================================================================
 
@@ -1812,12 +1758,6 @@ def get_simd_domain(ext: object | None) -> _RustSimdDomain | _PythonSimdDomain:
     if ext is not None:
         return _RustSimdDomain(ext)
     return _PythonSimdDomain()
-
-
-def get_metal_domain(ext: object | None) -> _RustMetalDomain | _PythonMetalDomain:
-    if ext is not None:
-        return _RustMetalDomain(ext)
-    return _PythonMetalDomain()
 
 
 def get_sprint_policies_domain(ext: object | None) -> _RustSprintPoliciesDomain | _PythonSprintPoliciesDomain:

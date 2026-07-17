@@ -19,7 +19,6 @@ GHOST_INVARIANTS:
 from __future__ import annotations
 
 
-
 import logging
 import os
 from typing import Any, Protocol, runtime_checkable
@@ -27,6 +26,55 @@ from typing import Any, Protocol, runtime_checkable
 import msgspec
 
 logger = logging.getLogger(__name__)
+
+
+# ── SchedulerAdvisory Protocol ─────────────────────────────────────────────────
+
+@runtime_checkable
+class SchedulerAdvisory(Protocol):
+    """
+    F1 FIX: Typovy kontrakt pro scheduler-sidecar komunikaci.
+
+    SidecarOrchestrator vola metody scheduleru pres tento Protocol —
+    nahrada za getattr() antipattern. Pri prejmenovani metody v
+    SprintScheduler mypy --strict okamzite zachyti chybu.
+
+    Method names match SprintScheduler private method names (with _ prefix).
+    """
+
+    # ── R5: CT → PassiveDNS pivot advisory ──────────────────────────────────
+    async def _run_ct_to_passivedns_pivot_advisory(self) -> None: ...
+
+    # ── IPFS enrichment ─────────────────────────────────────────────────────
+    async def _run_ipfs_enrichment_sidecar(self) -> None: ...
+
+    # ── F251: Onion discovery ───────────────────────────────────────────────
+    async def _run_onion_discovery_sidecar(self) -> None: ...
+
+    # ── F2P: I2P discovery ─────────────────────────────────────────────────
+    async def _run_i2p_discovery_sidecar(self) -> None: ...
+
+    # ── BGP advisory ────────────────────────────────────────────────────────
+    async def _run_bgp_advisory_sidecar(self) -> None: ...
+
+    # ── F250F: CommonCrawl CDX ─────────────────────────────────────────────
+    async def _run_commoncrawl_sidecar(self) -> None: ...
+
+    # ── F229: Banner grab ──────────────────────────────────────────────────
+    async def _run_banner_grab_sidecar(self) -> None: ...
+
+    # ── F214Q: DHT discovery ────────────────────────────────────────────────
+    async def _run_dht_sidecar(self) -> None: ...
+
+    # ── F3FORENSICS: Digital ghost ─────────────────────────────────────────
+    async def _run_digital_ghost_sidecar(self, findings: list[Any]) -> None: ...
+
+    # ── F3FORENSICS: Steganography ─────────────────────────────────────────
+    async def _run_steganography_sidecar(self, findings: list[Any]) -> None: ...
+
+    # ── F252: TI feed ─────────────────────────────────────────────────────
+    async def _run_ti_feed_sidecar(self) -> None: ...
+
 
 
 # ── SidecarContext ──────────────────────────────────────────────────────────────
