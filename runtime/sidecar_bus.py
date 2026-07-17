@@ -507,12 +507,12 @@ async def _gopher_crawl_runner(findings: list, store: DuckDBShadowStore, query: 
         return 0
 from hledac.universal.runtime.sidecar_runner_decorator import sidecar_runner, sidecar_runner_await
 from hledac.universal.utils.async_helpers import bounded_parallel_map
-_ExposureCorrelatorRunner = sidecar_runner(name='exposure_correlator', module_path='hledac.universal.intelligence.exposure_correlator', factory_name='create_exposure_correlator_adapter', correlate_method='correlate')
-_LeakSentinelRunner = sidecar_runner(name='leak_sentinel', module_path='hledac.universal.intelligence.leak_sentinel', factory_name='create_leak_sentinel_adapter', correlate_method='scan')
-_TemporalArchaeologyRunner = sidecar_runner(name='temporal_archaeology', module_path='hledac.universal.intelligence.temporal_archaeologist_adapter', factory_name='create_temporal_archaeologist_adapter', correlate_method='synthesize_timeline')
-_PassiveFingerprintRunner = sidecar_runner(name='passive_fingerprint', module_path='hledac.universal.intelligence.passive_fingerprint', factory_name='create_passive_fingerprint_adapter', correlate_method='correlate')
-_RirCorrelatorRunner = sidecar_runner_await(name='rir_correlator', module_path='hledac.universal.intelligence.rir_correlator', factory_name='create_rir_correlator_adapter', correlate_method='async_correlate')
-_PassiveTechStackRunner = sidecar_runner(name='passive_tech_stack', module_path='hledac.universal.intelligence.passive_fingerprint', factory_name='create_passive_tech_stack_adapter', correlate_method='correlate')
+_ExposureCorrelatorRunner = sidecar_runner(name='exposure_correlator', module_path='hledac.universal.intel.exposure_correlator', factory_name='create_exposure_correlator_adapter', correlate_method='correlate')
+_LeakSentinelRunner = sidecar_runner(name='leak_sentinel', module_path='hledac.universal.intel.leak_sentinel', factory_name='create_leak_sentinel_adapter', correlate_method='scan')
+_TemporalArchaeologyRunner = sidecar_runner(name='temporal_archaeology', module_path='hledac.universal.intel.temporal_archaeologist_adapter', factory_name='create_temporal_archaeologist_adapter', correlate_method='synthesize_timeline')
+_PassiveFingerprintRunner = sidecar_runner(name='passive_fingerprint', module_path='hledac.universal.intel.passive_fingerprint', factory_name='create_passive_fingerprint_adapter', correlate_method='correlate')
+_RirCorrelatorRunner = sidecar_runner_await(name='rir_correlator', module_path='hledac.universal.intel.rir_correlator', factory_name='create_rir_correlator_adapter', correlate_method='async_correlate')
+_PassiveTechStackRunner = sidecar_runner(name='passive_tech_stack', module_path='hledac.universal.intel.passive_fingerprint', factory_name='create_passive_tech_stack_adapter', correlate_method='correlate')
 DEFAULT_SIDECAR_RUNNERS: list[tuple[str, SidecarRunner]] = [('exposure_correlator', _ExposureCorrelatorRunner()), ('evidence_triage', _evidence_triage_runner), ('pattern_mining', _pattern_mining_runner), ('sprint_diff', _sprint_diff_runner), ('kill_chain_tagging', _kill_chain_tagging_runner), ('wayback_diff', _wayback_diff_runner), ('rir_correlator', _RirCorrelatorRunner()), ('social_identity_surface', _social_identity_surface_runner), ('embedding', _embedding_runner), ('network_intel', _network_intel_runner), ('banner_grab', _banner_grab_runner), ('ipv6_recon', _ipv6_recon_runner), ('gopher_crawl', _gopher_crawl_runner)]
 
 class FindingSidecarBus:

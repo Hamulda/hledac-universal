@@ -25,7 +25,7 @@ Pattern (before → after):
   AFTER (8-12 LOC per runner):
     _XxxRunner = sidecar_runner(
         name="xxx",
-        module_path="hledac.universal.intelligence.xxx",
+        module_path="hledac.universal.intel.xxx",
         factory_name="create_xxx_adapter",
         correlate_method="do_something",
     )
@@ -84,7 +84,7 @@ def sidecar_runner(
     Usage:
         _ExposureCorrelatorRunner = sidecar_runner(
             name="exposure_correlator",
-            module_path="hledac.universal.intelligence.exposure_correlator",
+            module_path="hledac.universal.intel.exposure_correlator",
             factory_name="create_exposure_correlator_adapter",
             correlate_method="correlate",
         )
@@ -239,7 +239,7 @@ class BaseSidecarRunner:
     @property
     @abstractmethod
     def _module_path(self) -> str | None:
-        """Dotted module path for the adapter (e.g. 'hledac.universal.intelligence.xxx')."""
+        """Dotted module path for the adapter (e.g. 'hledac.universal.intel.xxx')."""
         raise NotImplementedError
 
     @property

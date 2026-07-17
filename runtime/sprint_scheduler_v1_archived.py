@@ -2965,7 +2965,7 @@ def _import_exporters():
 
 
 def _import_correlate_findings():
-    from hledac.universal.intelligence.workflow_orchestrator import correlate_findings
+    from hledac.universal.intel.workflow_orchestrator import correlate_findings
 
     return correlate_findings
 
@@ -4071,7 +4071,7 @@ class SprintScheduler:
 
         async def _init_rel_discovery() -> None:
             try:
-                from hledac.universal.intelligence.relationship_discovery import RelationshipDiscoveryEngine
+                from hledac.universal.intel.relationship_discovery import RelationshipDiscoveryEngine
                 from hledac.universal.paths import LMDB_ROOT
 
                 self._rel_discovery_engine = RelationshipDiscoveryEngine(use_sparse=True, max_memory_mb=512)
@@ -5070,7 +5070,7 @@ class SprintScheduler:
             self._maybe_call_pressure_relief()
             self._runner.teardown()
             try:
-                from hledac.universal.intelligence.entity_signal_extractor import (
+                from hledac.universal.intel.entity_signal_extractor import (
                     reset_extractor_stats,
                     shutdown_executor,
                 )
@@ -5223,7 +5223,7 @@ class SprintScheduler:
             except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 pass
             try:
-                from hledac.universal.intelligence import get_open_source_collectors
+                from hledac.universal.intel import get_open_source_collectors
 
                 await get_open_source_collectors().close()
             except Exception:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
@@ -6433,7 +6433,7 @@ class SprintScheduler:
             _wayback_shaped = build_lane_query(query, AcquisitionLane.WAYBACK)
             if _wayback_shaped and (not isinstance(_wayback_shaped, dict)):
                 try:
-                    from hledac.universal.intelligence.wayback_diff_miner import WaybackDiffMiner
+                    from hledac.universal.intel.wayback_diff_miner import WaybackDiffMiner
 
                     miner = WaybackDiffMiner()
                     try:
@@ -8008,7 +8008,7 @@ class SprintScheduler:
         F228A: seed_context enables domain/IP shaping for text queries.
 
         """
-        from hledac.universal.intelligence.wayback_diff_miner import WaybackDiffMiner
+        from hledac.universal.intel.wayback_diff_miner import WaybackDiffMiner
         from hledac.universal.runtime.acquisition_strategy import AcquisitionLane
         from hledac.universal.runtime.source_finding_bridge import wayback_results_to_findings
 
@@ -8168,7 +8168,7 @@ class SprintScheduler:
                 return ("DOH", 0)
         if self._doh_adapter is None:
             try:
-                from hledac.universal.intelligence.doh_lane import DOHAdapter
+                from hledac.universal.intel.doh_lane import DOHAdapter
 
                 self._doh_adapter = DOHAdapter()
             except Exception as _init_exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
@@ -10376,7 +10376,7 @@ class SprintScheduler:
             log.debug("[F251] Tor availability check failed: %s", e)
             return
         try:
-            from hledac.universal.intelligence.onion_seed_manager import OnionSeedManager
+            from hledac.universal.intel.onion_seed_manager import OnionSeedManager
 
             seed_mgr = OnionSeedManager()
         except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
@@ -10402,7 +10402,7 @@ class SprintScheduler:
             """Crawl single .onion seed, convert to CanonicalFinding list."""
             inner_findings: list = []
             try:
-                from hledac.universal.intelligence.dark_web_intelligence import (
+                from hledac.universal.intel.dark_web_intelligence import (
                     DarkWebCrawler,
                     darkweb_content_to_canonical,
                 )
@@ -10625,7 +10625,7 @@ class SprintScheduler:
         log.debug("[F214Q] Starting DHT discovery sidecar")
         try:
             from hledac.universal.dht.kademlia_node import DHT_REAL_UDP
-            from hledac.universal.intelligence.dark_web_intelligence import DHTFinding, dht_content_to_canonical
+            from hledac.universal.intel.dark_web_intelligence import DHTFinding, dht_content_to_canonical
 
             if not DHT_REAL_UDP:
                 log.debug("[F214Q] DHT simulated mode -- skipping sidecar")
@@ -12731,7 +12731,7 @@ class SprintScheduler:
 
         """
         try:
-            from hledac.universal.intelligence.bgp_lane import BGPAdapter
+            from hledac.universal.intel.bgp_lane import BGPAdapter
         except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return
         try:
@@ -12747,7 +12747,7 @@ class SprintScheduler:
             pdns_adapter = None
             if ENV.get_bool("HLEDAC_ENABLE_BGP_PDNS"):
                 try:
-                    from hledac.universal.intelligence.bgp_passive_dns_adapter import PassiveDNSAdapter
+                    from hledac.universal.intel.bgp_passive_dns_adapter import PassiveDNSAdapter
 
                     pdns_adapter = PassiveDNSAdapter()
                     pdns_adapter.set_session(await session_provider())
@@ -12908,7 +12908,7 @@ class SprintScheduler:
 
         """
         try:
-            from hledac.universal.intelligence.wayback_cdx import WaybackCDXDeepSearch
+            from hledac.universal.intel.wayback_cdx import WaybackCDXDeepSearch
         except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return
         try:
@@ -13962,7 +13962,7 @@ class SprintScheduler:
         except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             pass
         try:
-            from hledac.universal.intelligence.social_identity_miner import create_social_identity_miner_adapter
+            from hledac.universal.intel.social_identity_miner import create_social_identity_miner_adapter
         except Exception as e:  # noqa: BLE001 — best-effort; graph operation failure; non-critical
             log.debug("[F204I] Import failed: %s", e)
             return

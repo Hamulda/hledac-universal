@@ -99,7 +99,7 @@ def run_budget_benchmark() -> BudgetBenchmarkResult:
     - Sidecar admission check behavior
     - Embedding fallback chunking
     """
-    from hledac.universal.intelligence.streaming_embedder import StreamingEmbedder
+    from hledac.universal.intel.streaming_embedder import StreamingEmbedder
     from hledac.universal.core.protocols import get_governor
     from hledac.universal.runtime.resource_governor import HEAVY_SIDECARS, MISSION_PEAK_RSS_GIB
     governor = get_governor()
