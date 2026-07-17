@@ -1,32 +1,168 @@
 """
 hledac_rust_extensions — Rust extensions for Hledac OSINT platform.
 
-Native Rust code loaded from cdylib at parent directory level.
+Runtime-loaded PyO3 cdylib. Supports three loading strategies in order of preference:
+
+1. Installed wheel  (standard, no path manipulation)
+   → __file__ points into site-packages, .so loaded by Python's import machinery.
+2. Editable develop  (uv run maturin develop — in-place .so in rust_extensions/)
+   → detected by checking if __file__ is inside the workspace rust_extensions/ dir.
+3. Workspace .so    (cargo build --release manually, maturin build + uv pip install)
+   → fallback when neither wheel nor editable install is available.
+
+The module is registered in sys.modules before exec_module to avoid a race:
+two concurrent "import hledac_rust_extensions" calls must not try to exec the
+same _spec twice.  We use an import lock (threading.local) so that only the
+first caller performs the load; later callers block on that lock and receive
+the already-initialised module from sys.modules.
+
+Acceptance: python -c "import hledac_rust_extensions; print(hledac_rust_extensions.__file__)"
+shows a path INSIDE site-packages when installed as a wheel.
 """
+from __future__ import annotations
+
+import importlib.util
 import os
 import sys
+import threading
+from typing import ClassVar
 
-# Find cdylib at parent level
-_package_dir = os.path.dirname(__file__)
-_parent_dir = os.path.dirname(_package_dir)
-_cdylib_path = os.path.join(_parent_dir, "hledac_rust_extensions.abi3.so")
+__version__ = "0.1.0"
 
-if not os.path.exists(_cdylib_path):
-    raise ImportError(
-        f"Native extension not found at {_cdylib_path}. "
-        "Please build with 'cd rust_extensions && maturin develop'."
-    )
+# ----------------------------------------------------------------------
+# Loading strategy detection
+# ----------------------------------------------------------------------
 
-# Load cdylib as an extension module
-import importlib.util
-_spec = importlib.util.spec_from_file_location("hledac_rust_extensions", _cdylib_path)
-assert _spec is not None, f"Failed to load spec from {_cdylib_path}"
-_mod = importlib.util.module_from_spec(_spec)
-assert _spec.loader is not None, f"No loader for {_cdylib_path}"
-sys.modules["hledac_rust_extensions"] = _mod
-_spec.loader.exec_module(_mod)
 
-# Re-export symbols
-__version__ = getattr(_mod, "__version__", "0.1.0")
-__all__ = [n for n in dir(_mod) if not n.startswith("_")]
-globals().update((n, getattr(_mod, n)) for n in __all__)
+def _is_editable_install() -> bool:
+    """
+    True when running from 'uv run maturin develop' (in-place .so).
+
+    maturin develop creates a .pth file or symlink inside site-packages
+    that points back to the workspace rust_extensions/ directory.
+    We detect this by checking whether our own __file__ lives inside
+    a rust_extensions/ workspace dir (as opposed to site-packages).
+    """
+    own_file: str = __file__
+    # Normalise: follow symlinks so we get the real path
+    own_file = os.path.realpath(own_file)
+    # __file__ is rust_extensions/hledac_rust_extensions/__init__.py
+    # The parent of the package dir is the rust_extensions workspace root
+    parent_dir = os.path.dirname(os.path.dirname(own_file))  # → rust_extensions/
+    marker = os.path.join(parent_dir, "hledac_rust_extensions.abi3.so")
+    return os.path.isfile(marker)
+
+
+def _find_workspace_so() -> str | None:
+    """
+    Return the .so path for the editable / workspace fallback.
+
+    Called only when NOT installed as a wheel.
+    """
+    # __file__ = rust_extensions/hledac_rust_extensions/__init__.py
+    pkg_dir = os.path.dirname(os.path.abspath(__file__))
+    # one level up = rust_extensions/
+    parent_dir = os.path.dirname(pkg_dir)
+    so_path = os.path.join(parent_dir, "hledac_rust_extensions.abi3.so")
+    return so_path if os.path.isfile(so_path) else None
+
+
+# ----------------------------------------------------------------------
+# Module-level import lock — prevents concurrent exec_module race
+# ----------------------------------------------------------------------
+
+
+class _ImportLock:
+    """
+    Per-module threading lock.  Only the first thread to acquire it performs
+    the actual import; all others wait and then receive the pre-registered
+    module from sys.modules.
+
+    Using a class-level dict keyed by full module name means every
+    concurrent import of hledac_rust_extensions in the same process shares
+    the same lock — no matter which code path triggered the import.
+    """
+
+    _locks: ClassVar[dict[str, threading.Lock]] = {}
+
+    __slots__ = ("_key",)
+
+    def __init__(self, key: str) -> None:
+        self._key = key
+        if key not in _ImportLock._locks:
+            _ImportLock._locks[key] = threading.Lock()
+
+    def __enter__(self) -> None:
+        _ImportLock._locks[self._key].acquire()
+
+    def __exit__(self, _exc_type: object, _exc_val: object, _exc_tb: object) -> None:
+        _ImportLock._locks[self._key].release()
+
+
+# ----------------------------------------------------------------------
+# Core loading logic — runs exactly once, thread-safe
+# ----------------------------------------------------------------------
+
+
+def _load() -> None:
+    """
+    Thread-safe, idempotent module initialiser.
+
+    Handles all three installation scenarios:
+      1. Wheel-installed (standard)    → Python import machinery already loaded us
+      2. Editable develop             → load workspace .so in-place
+      3. Workspace .so fallback        → load manually from parent dir
+    """
+    # Case 1: wheel-installed — Python already executed this file as part of
+    #         importlib.invalidate_caches() + import machinery.
+    #         The symbols are already in sys.modules.  Nothing to do.
+    if not _is_editable_install() and _find_workspace_so() is None:
+        # Registered by the Python import machinery; just pull symbols.
+        _mod = sys.modules.get("hledac_rust_extensions")
+        if _mod is not None:
+            _reexport(_mod)
+        return
+
+    # Cases 2 & 3: we need to load the .so ourselves.
+    so_path = _find_workspace_so()
+    if so_path is None:
+        raise ImportError(
+            "Native extension not found. "
+            "Run: cd rust_extensions && maturin develop  (dev)  or  "
+            "cd rust_extensions && maturin build --release && uv pip install dist/*.whl  (prod)"
+        )
+
+    _spec = importlib.util.spec_from_file_location("hledac_rust_extensions", so_path)
+    if _spec is None:
+        raise ImportError(f"importlib.util.spec_from_file_location returned None for {so_path}")
+    if _spec.loader is None:
+        raise ImportError(f"No loader available for {so_path}")
+
+    # Register BEFORE exec_module so concurrent callers get the in-progress
+    # module object, not a second attempt to exec the same .so.
+    sys.modules["hledac_rust_extensions"] = importlib.util.module_from_spec(_spec)
+
+    # exec_module raises on error; we let it propagate.
+    _spec.loader.exec_module(sys.modules["hledac_rust_extensions"])  # type: ignore[arg-type]
+
+    _reexport(sys.modules["hledac_rust_extensions"])
+
+
+def _reexport(mod: object) -> None:
+    """Re-export all public symbols from the loaded Rust module."""
+    global __version__
+    __version__ = getattr(mod, "__version__", __version__)
+    _all = [n for n in dir(mod) if not n.startswith("_")]
+    globals()["__all__"] = _all
+    globals().update((n, getattr(mod, n)) for n in _all)
+
+
+# ----------------------------------------------------------------------
+# Execute loading under lock
+# ----------------------------------------------------------------------
+
+
+_LOCK = _ImportLock("hledac_rust_extensions")
+
+with _LOCK:
+    _load()

@@ -108,6 +108,8 @@ class TestSprint8AXFlagOn:
             'assert _is_shadow_enabled() == True, "Flag should be True"\n'
             'shadow_reset_failures()\n'
             'store = DuckDBShadowStore()\n'
+            'store._db_path = None\n'
+            'store._lazy = False\n'
             "import duckdb\n"
             'conn = duckdb.connect(":memory:")\n'
             "conn.execute('''\n"
@@ -131,7 +133,9 @@ class TestSprint8AXFlagOn:
             '    except Exception:\n'
             '        break\n'
             'if batch:\n'
-            '    session_event_loop.run_until_complete(rec._flush_batch(batch))\n'
+            '    _loop = asyncio.new_event_loop()\n'
+            '    _loop.run_until_complete(rec._flush_batch(batch))\n'
+            '    _loop.close()\n'
             'failures = shadow_ingest_failures()\n'
             'print(f"failures={failures}")\n'
             'rows = conn.execute("SELECT id, query, source_type FROM canonical_findings ORDER BY ts").fetchall()\n'
@@ -140,7 +144,7 @@ class TestSprint8AXFlagOn:
             '    print(f"  row={row}")\n'
             'conn.close()\n'
         )
-        stdout, stderr, rc = _run_in_subprocess(code, env={"GHOST_DUCKDB_SHADOW": "1"})
+        stdout, stderr, _rc = _run_in_subprocess(code, env={"GHOST_DUCKDB_SHADOW": "1"})
         lines = [l for l in stdout.strip().splitlines() if l and not l.startswith("Warning")]  # noqa: E741
         failures_lines = [l for l in lines if "failures=" in l]  # noqa: E741
         rows_lines = [l for l in lines if "rows_in_db=" in l]  # noqa: E741
@@ -228,6 +232,7 @@ class TestSprint8AXMemoryMode:
             'from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore\n'
             'store = DuckDBShadowStore()\n'
             'store._db_path = None\n'
+            'store._lazy = False\n'
             "import duckdb, time\n"
             'conn = duckdb.connect(":memory:")\n'
             "conn.execute('''\n"
@@ -250,7 +255,9 @@ class TestSprint8AXMemoryMode:
             '    inserted2 = await store.async_record_shadow_findings_batch(batch2)\n'
             '    rows = await store.async_query_recent_findings(limit=25)\n'
             '    return inserted1, inserted2, len(rows)\n'
-            'inserted1, inserted2, total = session_event_loop.run_until_complete(run_test())\n'
+            '_loop = asyncio.new_event_loop()\n'
+            'inserted1, inserted2, total = _loop.run_until_complete(run_test())\n'
+            '_loop.close()\n'
             'print(f"inserted1={inserted1}")\n'
             'print(f"inserted2={inserted2}")\n'
             'print(f"total={total}")\n'
@@ -276,6 +283,7 @@ class TestSprint8AXMemoryMode:
             'from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore\n'
             'store = DuckDBShadowStore()\n'
             'store._db_path = None\n'
+            'store._lazy = False\n'
             "import duckdb\n"
             'conn = duckdb.connect(":memory:")\n'
             "conn.execute('''\n"
@@ -297,7 +305,9 @@ class TestSprint8AXMemoryMode:
             '    return len(batch)\n'
             'async def run_test():\n'
             '    await asyncio.gather(write_and_capture(1), write_and_capture(2), write_and_capture(3))\n'
-            'session_event_loop.run_until_complete(run_test())\n'
+            '_loop = asyncio.new_event_loop()\n'
+            '_loop.run_until_complete(run_test())\n'
+            '_loop.close()\n'
             'print(f"thread_names={thread_names}")\n'
             'assert len(set(thread_names)) == 1, f"Expected 1 unique thread, got: {set(thread_names)}"\n'
             'assert "duckdb_worker" in thread_names[0], f"Expected duckdb_worker, got: {thread_names[0]}"\n'
@@ -324,6 +334,7 @@ class TestSprint8AXBatchChunking:
             'from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore\n'
             'store = DuckDBShadowStore()\n'
             'store._db_path = None\n'
+            'store._lazy = False\n'
             "import duckdb, time\n"
             'conn = duckdb.connect(":memory:")\n'
             "conn.execute('''\n"
@@ -341,7 +352,9 @@ class TestSprint8AXBatchChunking:
             '             for i in range(1001)]\n'
             '    inserted = await store.async_record_shadow_findings_batch(batch, max_batch_size=500)\n'
             '    return inserted\n'
-            'inserted = session_event_loop.run_until_complete(run_test())\n'
+            '_loop = asyncio.new_event_loop()\n'
+            'inserted = _loop.run_until_complete(run_test())\n'
+            '_loop.close()\n'
             'print(f"inserted={inserted}")\n'
             'conn.close()\n'
         )
@@ -446,11 +459,13 @@ class TestSprint8AXAclclose:
             '    elapsed = time.monotonic() - start\n'
             '    print(f"elapsed={elapsed:.2f}")\n'
             '    assert elapsed < 5.0, f"aclose should not block: {elapsed:.2f}s"\n'
-            'session_event_loop.run_until_complete(run_test())\n'
+            '_loop = asyncio.new_event_loop()\n'
+            '_loop.run_until_complete(run_test())\n'
+            '_loop.close()\n'
         )
         stdout, _, _ = _run_in_subprocess(code, env={"GHOST_DUCKDB_SHADOW": "1"})
-        lines = [l for l in stdout.strip().splitlines() if l]  # noqa: E741
-        elapsed_lines = [l for l in lines if "elapsed=" in l]  # noqa: E741
+        lines = stdout.strip().splitlines()
+        elapsed_lines = [l for l in lines if "elapsed=" in l]
         assert elapsed_lines, f"Elapsed time missing: {lines}"
         elapsed_val = float(elapsed_lines[0].split("=")[1])
         assert elapsed_val < 5.0, f"aclose should complete quickly: {elapsed_val:.2f}s"

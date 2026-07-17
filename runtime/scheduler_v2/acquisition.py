@@ -133,13 +133,13 @@ class AcquisitionOrchestrator:
                     # completes faster so its result can gate _finalize_result_truth output
                     try:
                         async with asyncio.TaskGroup() as _tg:
-                            _predispatch_tg = _tg.create_task(
+                            _tg.create_task(
                                 self._ensure_nonfeed_predispatch_before_finalization(
                                     ctx, ordered_sources, duckdb_store, "hard_deadline_exceeded"
                                 ),
                                 name="finalize:predispatch",
                             )
-                            _finalize_tg = _tg.create_task(
+                            _tg.create_task(
                                 self._finalize_result_truth(
                                     ctx,
                                     "hard_deadline_exceeded",
@@ -162,13 +162,13 @@ class AcquisitionOrchestrator:
                         # Sprint F350M-R Issue #P2: parallelize finalization pipeline
                         try:
                             async with asyncio.TaskGroup() as _tg:
-                                _predispatch_tg = _tg.create_task(
+                                _tg.create_task(
                                     self._ensure_nonfeed_predispatch_before_finalization(
                                         ctx, ordered_sources, duckdb_store, "stop_requested_break"
                                     ),
                                     name="finalize:predispatch",
                                 )
-                                _finalize_tg = _tg.create_task(
+                                _tg.create_task(
                                     self._finalize_result_truth(
                                         ctx, "stop_requested_break", "stop_requested guard passed", "GATHER"
                                     ),
@@ -192,13 +192,13 @@ class AcquisitionOrchestrator:
                     # Sprint F350M-R Issue #P2: parallelize finalization pipeline
                     try:
                         async with asyncio.TaskGroup() as _tg:
-                            _predispatch_tg = _tg.create_task(
+                            _tg.create_task(
                                 self._ensure_nonfeed_predispatch_before_finalization(
                                     ctx, ordered_sources, duckdb_store, "lifecycle_abort_break"
                                 ),
                                 name="finalize:predispatch",
                             )
-                            _finalize_tg = _tg.create_task(
+                            _tg.create_task(
                                 self._finalize_result_truth(
                                     ctx, "lifecycle_abort_break", "abort_requested from lifecycle", "GATHER"
                                 ),

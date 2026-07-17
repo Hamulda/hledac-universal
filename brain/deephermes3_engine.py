@@ -27,7 +27,6 @@ from dataclasses import dataclass
 import msgspec
 from pathlib import Path
 from typing import Any, TypeVar
-from pydantic import BaseModel, Field
 from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok, safe_wait_for
 from hledac.universal.utils.cache import PyCacheDict
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode, encode_fast as _msgspec_encode_fast
@@ -43,7 +42,7 @@ def _otel_resolver() -> Any:
         return result
     return _otel_fallback()
 _otel_instrumented = _otel_resolver()
-T = TypeVar('T', bound=BaseModel, default=BaseModel)
+T = TypeVar('T')
 _xxh3_func: Callable[[str], str] | None = None
 _xxh3_func_batch: Callable[..., list[str]] | None = None
 
@@ -2898,33 +2897,33 @@ class DeepHermes3Engine:
         from hledac.universal.planning.htn_planner import PlannerRuntimeResult
         if self._model is None:
             return [PlannerRuntimeResult(task_id=r.task_id, executed=False, skipped_panic=False, hermes_output=None, error='model_not_loaded') for r in requests]
-        from pydantic import BaseModel, Field
+        import msgspec
 
-        class GenericResult(BaseModel):
-            result: str = Field(description='Result text')
-            confidence: float = Field(ge=0.0, le=1.0, default=0.5)
+        class GenericResult(msgspec.Struct, kw_only=True):
+            result: str = ''
+            confidence: float = 0.5
 
         class FetchResult(GenericResult):
-            url: str = Field(description='Fetched URL')
+            url: str = ''
 
         class DeepReadResult(GenericResult):
-            url: str = Field(description='Source URL')
-            depth: int = Field(default=1)
+            url: str = ''
+            depth: int = 1
 
         class AnalyseResult(GenericResult):
-            source: str = Field(description='Analysis source')
+            source: str = ''
 
         class SynthesizeResult(GenericResult):
-            sources: list[str] = Field(default_factory=list)
+            sources: list[str] = msgspec.field(default_factory=list)
 
         class BranchResult(GenericResult):
-            branches: int = Field(default=1)
+            branches: int = 1
 
         class ExplainResult(GenericResult):
-            topic: str = Field(description='Explained topic')
+            topic: str = ''
 
         class HypothesisResult(GenericResult):
-            hypothesis: str = Field(description='Hypothesis text')
+            hypothesis: str = ''
         _MODEL_REGISTRY = {'FetchResult': FetchResult, 'DeepReadResult': DeepReadResult, 'AnalyseResult': AnalyseResult, 'SynthesizeResult': SynthesizeResult, 'BranchResult': BranchResult, 'ExplainResult': ExplainResult, 'HypothesisResult': HypothesisResult, 'GenericResult': GenericResult}
         if response_models is None:
             response_models = _MODEL_REGISTRY
@@ -3469,9 +3468,9 @@ class DeepHermes3Engine:
             return False
         try:
             import outlines.generate as og
-            from pydantic import BaseModel
+            import msgspec
 
-            class _ProbeSchema(BaseModel):
+            class _ProbeSchema(msgspec.Struct):
                 ok: bool
             gen = og.json(self._outlines_model, _ProbeSchema)
             return callable(gen)

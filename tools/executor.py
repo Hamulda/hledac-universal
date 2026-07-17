@@ -14,7 +14,7 @@ import inspect
 import threading
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, Field
+import msgspec
 
 if TYPE_CHECKING:
     from .registry import Tool, ToolRegistry
@@ -148,11 +148,16 @@ class ToolExecutor:
     async def _execute_handler(self, tool: Tool, validated_args: Any) -> Any:
         """Execute tool handler with validated arguments."""
         handler = tool.handler
+        # Convert msgspec.Struct to dict for handler - use msgspec.json.encode/decode
+        if hasattr(validated_args, '__dict__'):
+            kwargs = msgspec.json.decode(msgspec.json.encode(validated_args))
+        else:
+            kwargs = validated_args
         if inspect.iscoroutinefunction(handler):
-            return await handler(**validated_args.model_dump())
+            return await handler(**kwargs)
         else:
             loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, lambda: handler(**validated_args.model_dump()))
+            return await loop.run_in_executor(None, lambda: handler(**kwargs))
 
 
 _DNS_TUNNEL_EXECUTOR: asyncio.AbstractEventLoop | None = None
@@ -544,81 +549,81 @@ async def _python_execute_handler(
     }
 
 
-class WebSearchArgs(BaseModel):
+class WebSearchArgs(msgspec.Struct, kw_only=True):
     query: str
-    max_results: int = Field(default=10, ge=1, le=50)
-    recency_days: int | None = Field(default=None, ge=1)
+    max_results: int = 10
+    recency_days: int | None = None
 
 
-class WebSearchResult(BaseModel):
+class WebSearchResult(msgspec.Struct, kw_only=True):
     staged: bool = False
     backend_ready: bool = False
     query_ready: bool = True
     contract_ready: bool = False
-    capability_blockers: list[str] = Field(default_factory=list)
+    capability_blockers: list[str] = msgspec.field(default_factory=list)
     staged_reason: str = ""
-    results: list[dict[str, Any]] = Field(default_factory=list)
+    results: list[dict[str, Any]] = msgspec.field(default_factory=list)
     total_found: int = 0
     query: str = ""
 
 
-class EntityExtractionArgs(BaseModel):
+class EntityExtractionArgs(msgspec.Struct, kw_only=True):
     text: str
-    entity_types: list[str] = Field(default=["person", "organization", "location"])
+    entity_types: list[str] = msgspec.field(default_factory=lambda: ["person", "organization", "location"])
 
 
-class EntityExtractionResult(BaseModel):
+class EntityExtractionResult(msgspec.Struct, kw_only=True):
     entities: list[dict[str, Any]]
     entity_count: int
 
 
-class AcademicSearchArgs(BaseModel):
+class AcademicSearchArgs(msgspec.Struct, kw_only=True):
     query: str
-    sources: list[str] = Field(default=["arxiv", "semantic_scholar"])
+    sources: list[str] = msgspec.field(default_factory=lambda: ["arxiv", "semantic_scholar"])
     year_from: int | None = None
     year_to: int | None = None
-    max_results: int = Field(default=10, ge=1, le=100)
+    max_results: int = 10
 
 
-class AcademicSearchResult(BaseModel):
+class AcademicSearchResult(msgspec.Struct, kw_only=True):
     papers: list[dict[str, Any]]
     total_found: int
     sources_searched: list[str]
 
 
-class FileReadArgs(BaseModel):
+class FileReadArgs(msgspec.Struct, kw_only=True):
     path: str
     encoding: str = "utf-8"
-    max_bytes: int | None = Field(default=None, ge=1)
+    max_bytes: int | None = None
 
 
-class FileReadResult(BaseModel):
+class FileReadResult(msgspec.Struct, kw_only=True):
     content: str
     path: str
     size_bytes: int
     encoding: str
 
 
-class FileWriteArgs(BaseModel):
+class FileWriteArgs(msgspec.Struct, kw_only=True):
     path: str
     content: str
     encoding: str = "utf-8"
     append: bool = False
 
 
-class FileWriteResult(BaseModel):
+class FileWriteResult(msgspec.Struct, kw_only=True):
     path: str
     bytes_written: int
     success: bool
 
 
-class PythonExecuteArgs(BaseModel):
+class PythonExecuteArgs(msgspec.Struct, kw_only=True):
     code: str
-    timeout_seconds: int = Field(default=30, ge=1, le=300)
-    allowed_modules: list[str] = Field(default_factory=list)
+    timeout_seconds: int = 30
+    allowed_modules: list[str] = msgspec.field(default_factory=list)
 
 
-class PythonExecuteResult(BaseModel):
+class PythonExecuteResult(msgspec.Struct, kw_only=True):
     stdout: str
     stderr: str
     result: Any
@@ -626,14 +631,14 @@ class PythonExecuteResult(BaseModel):
     success: bool
 
 
-class DNSTunnelCheckArgs(BaseModel):
+class DNSTunnelCheckArgs(msgspec.Struct, kw_only=True):
     mode: str = "analyze_queries"
-    queries: list[str] = Field(default_factory=list)
+    queries: list[str] = msgspec.field(default_factory=list)
 
 
-class DNSTunnelCheckResult(BaseModel):
-    findings: list[dict[str, Any]] = Field(default_factory=list)
-    stats: dict[str, Any] = Field(default_factory=dict)
+class DNSTunnelCheckResult(msgspec.Struct, kw_only=True):
+    findings: list[dict[str, Any]] = msgspec.field(default_factory=list)
+    stats: dict[str, Any] = msgspec.field(default_factory=dict)
     error: str | None = None
 
 

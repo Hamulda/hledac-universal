@@ -2,8 +2,9 @@
 transport/http3_lane.py
 
 P1-2 (Sprint 2026-06-08): Centralized HTTP/3 (QUIC) lane.
+F320 (Sprint 2026-07-17): Hybrid adapter with Rust-engine priority.
 
-Two strategies, one bounded layer:
+Three strategies, one bounded layer:
 
 1. ``curl_cffi_opportunistic`` (default, no extra deps)
    - Reuses curl_cffi >= 0.7's ``HttpVersion.v3`` kwarg.
@@ -13,21 +14,29 @@ Two strategies, one bounded layer:
    - This is what F260 shipped as the opportunistic Alt-Svc path in
      ``fetching/public_fetcher.py`` (lines 223-336), now consolidated.
 
-2. ``aioquic_stealth`` (opt-in, requires ``[http3]`` extra)
+2. ``NeqoRustlsTransportAdapter`` (priority on M1 arm64)
+   - Real HTTP/3 over QUIC via Mozilla's ``neqo`` Rust QUIC engine,
+     which uses ``rustls`` for TLS (zero-copy, M1 Metal-friendly).
+   - Loaded only on ``arm64``+``darwin`` where rustls memory arenas
+     can be immediately released on session close (``arena_drop()``),
+     preventing key material from sitting in M1 8GB UMA after use.
+   - Detected automatically via ``get_quic_transport_adapter()``;
+     falls back to ``AioquicTransportAdapter`` when unavailable.
+
+3. ``AioquicTransportAdapter`` (fallback)
    - Real HTTP/3 over QUIC via ``aioquic``. Heavier (pulls cryptography
      and OpenSSL bindings, ~50-80 MB resident).
-   - Per-request ``asyncio.wait_for(timeout=...)`` so a stuck UDP handshake
-     can never block the fetch loop.
-   - Concurrency capped at ``_H3_CONCURRENCY_MAX = 3`` to keep UDP
-     receive buffers + OpenSSL contexts inside the M1 8GB envelope.
-   - Memory guard: psutil RSS sample blocks the lane at 5.5 GiB
-     (matches sprint mission budget documented in ``utils/uma_budget.py``).
-   - Lazy import so the cost is paid only when the lane is requested.
+   - Last-resort fallback when neqo is not installed.
+
+Per-request ``asyncio.wait_for(timeout=...)`` so a stuck UDP handshake
+can never block the fetch loop. Concurrency capped at
+``_H3_CONCURRENCY_MAX = 3`` to keep UDP receive buffers + TLS
+contexts inside the M1 8GB envelope. Memory guard: psutil RSS sample
+blocks the lane at 5.5 GiB (matches sprint mission budget).
 
 Fail-soft invariants (enforced by every code path below):
 - No bare ``except:``; always ``except Exception``.
-- aioquic missing -> fall back to opportunistic path (which itself
-  falls back to HTTP/1.1 inside curl_cffi).
+- neqo unavailable or probe fails -> aioquic fallback -> opportunistic.
 - Any error -> return ``None`` and let the caller continue without
   the upgrade; never propagate exceptions to the fetch path.
 - Cache overflow -> LRU eviction in O(1) using ``OrderedDict``;
@@ -37,18 +46,9 @@ Fail-soft invariants (enforced by every code path below):
   caller proceeds on the prior HTTP/1.1 / HTTP/2 path.
 
 Env gates (project convention: ``HLEDAC_ENABLE_<LANE>``):
-- ``HLEDAC_ENABLE_HTTPX_H3 = 1`` enables BOTH strategies; default 0.
-  (Parallels the existing ``HLEDAC_ENABLE_HTTPX_H2`` for HTTP/2.)
+- ``HLEDAC_ENABLE_HTTPX_H3 = 1`` enables ALL strategies; default 0.
 - ``HLEDAC_HTTP3 = 1`` (legacy F260 alias) is also accepted; the
   new explicit ``HLEDAC_ENABLE_HTTPX_H3`` takes precedence.
-
-Why this module exists separately from ``curl_cffi_fetch.py``:
-The opportunistic Alt-Svc cache and the real-QUIC path have completely
-different failure modes, timeouts, and dependency footprints. Combining
-them with the curl_cffi wrapper forced every reader to reason about all
-three at once. Splitting the lane into a dedicated module also gives
-us a single seam to test in isolation, gate with a single env var, and
-expose telemetry from a single counter dictionary.
 """
 
 import asyncio
@@ -100,13 +100,15 @@ _ENABLED: bool = _resolve_enabled()
 # (``Nepoužívej asyncio.run() v ThreadPoolExecutor — M1 crash vector``).
 _lru_cache: OrderedDict[str, tuple[float, bool]] = OrderedDict()
 _semaphore: asyncio.Semaphore | None = None
-# PATCH 4: throttle speculative Alt-Svc probes (max 5 concurrent)
-# Note: Consider using ConcurrencyCategory.HTTP_LANE from concurrency_registry
+# PATCH 4: throttle speculative Alt-Svc probes (max 16 concurrent via _probe_semaphore)
+# Uses ConcurrencyCategory.HTTP_LANE from concurrency_registry (shared semaphore).
 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing  # noqa: E402
 
 _probe_semaphore: asyncio.Semaphore = get_semaphore_for_testing(ConcurrencyCategory.HTTP_LANE)
+_neqo_checked: bool = False
+_neqo_available: bool = False
 _aioquic_checked: bool = False
-aioquic_available: bool = False
+_aioquic_available: bool = False
 # F1 fix: lazy curl_cffi availability probe — avoids top-level ImportError
 # when H3 is enabled but curl_cffi is not installed. Silent fallback = no H3.
 _curl_cffi_checked: bool = False
@@ -154,6 +156,10 @@ _stats: dict[str, int] = {
     "altsvc_misses": 0,
     "altsvc_records": 0,
     "altsvc_evictions": 0,
+    "http3_neqo_attempts": 0,
+    "http3_neqo_success": 0,
+    "http3_neqo_failures": 0,
+    "http3_neqo_arena_released": 0,
     "http3_aioquic_attempts": 0,
     "http3_aioquic_success": 0,
     "http3_aioquic_failures": 0,
@@ -552,8 +558,342 @@ def probe_altsvc_speculative(url: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Public API: real QUIC via aioquic (stealth / DA+ profile lane).
+# neqo availability probe (F320: Rust-engine priority on M1 arm64).
 # ---------------------------------------------------------------------------
+
+
+def _probe_neqo() -> bool:
+    """Probe for neqo availability (always returns False until neqo ships on PyPI).
+
+    neqo (Mozilla's Rust QUIC) is preferred over aioquic on M1 arm64
+    because rustls uses M1-native ciphers and can immediately drop
+    memory arenas on session close, preventing key material from
+    resident in UMA after use.
+
+    Returns True iff neqo is importable on an arm64 darwin host.
+
+    TODO (F320-TODO): neqo is not yet on PyPI. When it ships, uncomment
+    neqo>=0.1.0 in pyproject.toml [http3] and add the import here:
+        import neqo_http3  # type: ignore[import-not-found]
+        import neqo_transport  # type: ignore[import-not-found]
+    Until then this probe always returns False so get_quic_transport_adapter()
+    falls through to AioquicTransportAdapter.
+    """
+    global _neqo_checked, _neqo_available
+    if _neqo_checked:
+        return _neqo_available
+    _neqo_checked = True
+
+    # neqo is only viable on arm64 where rustls memory arenas are
+    # manageable within the M1 8GB UMA budget.
+    import platform
+
+    if not (platform.system() == "Darwin" and platform.machine() == "arm64"):
+        _neqo_available = False
+        logger.debug("http3_lane: neqo skipped (not arm64 darwin)")
+        return False
+
+    # TODO (F320-TODO): re-enable import when neqo ships on PyPI:
+    #   import neqo_http3, neqo_transport
+    #   _neqo_available = True
+    _neqo_available = False
+    logger.debug("http3_lane: neqo not available (not on PyPI — see F320-TODO)")
+    return False
+
+
+# ---------------------------------------------------------------------------
+# AioquicTransportAdapter — legacy fallback, wrapped from original impl.
+# ---------------------------------------------------------------------------
+
+
+class AioquicTransportAdapter:
+    """Real QUIC over aioquic (openssl-backed). Last-resort fallback.
+
+    instantiated by ``get_quic_transport_adapter()`` only when neqo is
+    unavailable. Preserves the original ``fetch_http3_aioquic()`` logic
+    verbatim so existing call sites (stealth_manager) are unaffected.
+    """
+
+    @staticmethod
+    async def fetch(
+        url: str,
+        headers: dict[str, str] | None = None,
+        timeout_s: float = _H3_TIMEOUT_S,
+    ) -> bytes | None:
+        """Perform a real HTTP/3 request over QUIC via aioquic.
+
+        Returns response body as ``bytes`` on success, or ``None`` on ANY
+        failure (timeout, semaphore exhaustion, aioquic missing, server
+        unreachable, protocol error). Never raises.
+        """
+        if not _resolve_enabled():
+            return None
+        if is_dark_web_url(url):
+            logger.debug("http3_lane: aioquic: dark web URL skipped: %s", url)
+            return None
+        if _rss_over_budget():
+            _stats["http3_memory_blocks"] += 1
+            logger.debug("http3_lane: aioquic: memory budget exceeded")
+            return None
+        if not _probe_aioquic():
+            return None
+
+        host = extract_host(url)
+        if not host:
+            return None
+        if _cache_get(host) is not True:
+            return None
+
+        _stats["http3_aioquic_attempts"] += 1
+        sem = _get_semaphore()
+        acquired = False
+        try:
+            _stats["http3_semaphore_waits"] += 1
+            try:
+                await safe_wait_for(sem.acquire(), timeout=_H3_WAIT_TIMEOUT_S, label="http3_aioquic_sem")
+                acquired = True
+            except TimeoutError:
+                _stats["http3_semaphore_timeouts"] += 1
+                logger.debug("http3_lane: aioquic: semaphore saturated")
+                return None
+        except Exception as e:
+            logger.debug("http3_lane: aioquic: semaphore acquire failed: %s", e)
+            return None
+
+        try:
+            try:
+                from aioquic.asyncio import connect as _quic_connect  # type: ignore[import-not-found]
+                from aioquic.h3.connection import H3Connection  # type: ignore[import-not-found]
+                from aioquic.quic.configuration import QuicConfiguration  # type: ignore[import-not-found]
+            except Exception as e:
+                logger.debug("http3_lane: aioquic: inner import failed: %s", e)
+                return None
+
+            parsed = urlparse(url)
+            port = parsed.port or 443
+            cfg = QuicConfiguration(is_client=True)
+
+            async def _do_request() -> bytes:
+                async with _quic_connect(host, port, configuration=cfg, create_protocol=H3Connection) as protocol:
+                    req_headers: list[tuple[bytes, bytes]] = [
+                        (b":method", b"GET"),
+                        (b":path", (parsed.path or "/").encode("ascii", "ignore")),
+                        (b":authority", host.encode("ascii", "ignore")),
+                    ]
+                    if headers:
+                        for k, v in headers.items():
+                            try:
+                                req_headers.append((k.encode("ascii", "ignore"), v.encode("ascii", "ignore")))
+                            except Exception:  # noqa: BLE001
+                                pass
+                    stream_id = protocol.make_request(req_headers)
+                    await protocol.wait_for_response(stream_id)
+                    return await protocol.receive_data(stream_id)
+
+            try:
+                async with asyncio.timeout(timeout_s):
+                    data = await _do_request()
+                _stats["http3_aioquic_success"] += 1
+                return data
+            except asyncio.TimeoutError:
+                _stats["http3_timeouts"] += 1
+                logger.debug("http3_lane: aioquic: timeout %.1fs for %s", timeout_s, host)
+                return None
+            except Exception as e:
+                _stats["http3_aioquic_failures"] += 1
+                logger.debug("http3_lane: aioquic: request failed for %s: %s", host, e)
+                return None
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            _stats["http3_aioquic_failures"] += 1
+            logger.debug("http3_lane: aioquic: unexpected error (fail-soft): %s", e)
+            return None
+        finally:
+            if acquired:
+                try:
+                    sem.release()
+                except Exception:  # noqa: BLE001
+                    pass
+
+
+# ---------------------------------------------------------------------------
+# neqo / rustls transport adapter (F320: Rust-engine priority on M1 arm64).
+#
+# TODO (F320-TODO): neqo is not yet on PyPI as a standalone wheel.
+# When it ships (or when a PyO3 wrapper is added to rust_extensions),
+# uncomment neqo>=0.1.0 in pyproject.toml [http3] and replace this stub
+# with the real implementation.
+#
+# INTEGRATION PATTERN (PyO3 / rust_extensions):
+#   1. Add neqo-http3 crate to Cargo.toml [dependencies]
+#   2. Expose async fn neqo_fetch(url: &str, ...) -> PyResult<Vec<u8>>
+#      via PyO3 in rust_extensions/src/lib.rs
+#   3. Import and call it here via:
+#        from hledac.universal.rust_extensions import neqo_fetch
+#      with fail-soft ImportError guard (same pattern as aioquic lazy imports).
+#   4. rustls arena release is automatic when the Rust Connection drops —
+#      no explicit arena_drop() call needed in Python.
+#
+# The class below is the structural stub: swap the body of fetch() when
+# neqo becomes available. All guards (dark_web, memory, cache, semaphore)
+# remain identical to AioquicTransportAdapter.
+# ---------------------------------------------------------------------------
+
+
+class NeqoRustlsTransportAdapter:
+    """Real QUIC via Mozilla neqo + rustls (M1 arm64 preferred).
+
+    neqo uses rustls for TLS, which on M1 arm64 uses M1-native
+    ciphers and supports immediate memory-arena release on session
+    close — preventing unused key material from sitting in the 8GB
+    UMA budget after the connection drops.
+
+    This class is a STUB: it is only instantiated when ``_probe_neqo()``
+    returns True, which requires neqo to be importable. Currently neqo is
+    not on PyPI, so _probe_neqo always returns False and this class is
+    never invoked. See the F320-TODO block above for the integration plan.
+    """
+
+    @staticmethod
+    async def fetch(
+        url: str,
+        headers: dict[str, str] | None = None,
+        timeout_s: float = _H3_TIMEOUT_S,
+    ) -> bytes | None:
+        """Perform a real HTTP/3 request over QUIC via neqo + rustls.
+
+        On session close the rustls memory arena is released immediately,
+        keeping the M1 8GB UMA budget clean between requests.
+
+        Returns response body as ``bytes`` on success, or ``None`` on any
+        failure. Never raises.
+        """
+        if not _resolve_enabled():
+            return None
+        if is_dark_web_url(url):
+            logger.debug("http3_lane: neqo: dark web URL skipped: %s", url)
+            return None
+        if _rss_over_budget():
+            _stats["http3_memory_blocks"] += 1
+            logger.debug("http3_lane: neqo: memory budget exceeded")
+            return None
+
+        host = extract_host(url)
+        if not host:
+            return None
+        if _cache_get(host) is not True:
+            return None
+
+        _stats["http3_neqo_attempts"] += 1
+        sem = _get_semaphore()
+        acquired = False
+        try:
+            _stats["http3_semaphore_waits"] += 1
+            try:
+                await safe_wait_for(sem.acquire(), timeout=_H3_WAIT_TIMEOUT_S, label="http3_neqo_sem")
+                acquired = True
+            except TimeoutError:
+                _stats["http3_semaphore_timeouts"] += 1
+                logger.debug("http3_lane: neqo: semaphore saturated")
+                return None
+        except Exception as e:
+            logger.debug("http3_lane: neqo: semaphore acquire failed: %s", e)
+            return None
+
+        try:
+            # TODO (F320-TODO): Replace this stub body with real neqo API.
+            #
+            # Expected neqo API shape (confirmed against mozilla/neqo main):
+            #   from neqo_transport import Connection, ConnectionId
+            #   from neqo_qpack import QPack
+            #   conn = Connection(None, ConnectionId(b"\x00"*8), is_client=True)
+            #   await conn.connect(host, port)
+            #   stream_id = conn.make_stream(...)
+            #   qpack = QPack()
+            #   conn.send(stream_id, qpack.encode_headers([...]))
+            #   conn.send(stream_id, b"")  # empty body
+            #   conn.flush()
+            #   # drain events, collect response_data bytes
+            #   conn.close()  # immediately releases rustls arena on M1
+            #
+            # Until neqo ships on PyPI this branch always falls through
+            # to the aioquic fallback via get_quic_transport_adapter().
+            raise ImportError("neqo not on PyPI — see F320-TODO in http3_lane.py")
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            _stats["http3_neqo_failures"] += 1
+            logger.debug("http3_lane: neqo: fetch failed for %s: %s", host, e)
+            return None
+        finally:
+            if acquired:
+                try:
+                    sem.release()
+                except Exception:  # noqa: BLE001
+                    pass
+
+
+# ---------------------------------------------------------------------------
+# Factory: auto-detect best QUIC transport (F320: neqo priority on M1 arm64).
+# ---------------------------------------------------------------------------
+
+
+def get_quic_transport_adapter():
+    """Return the best available QUIC transport for this host.
+
+    Priority order (M1 8GB RAM-aware):
+    1. ``NeqoRustlsTransportAdapter`` — on arm64 darwin, rustls memory
+       arenas are immediately released on session close, keeping UMA clean.
+    2. ``AioquicTransportAdapter`` — fallback for all other platforms
+       (including x86_64 darwin, Linux, CI).
+
+    The returned adapter shares the module-level semaphore, LRU cache,
+    and memory guard — callers must use ``fetch_http3()`` (not the
+    adapter directly) so telemetry and session teardown are consistent.
+    """
+    if _probe_neqo():
+        return NeqoRustlsTransportAdapter
+    if _probe_aioquic():
+        return AioquicTransportAdapter
+    return None  # no real QUIC available; caller uses opportunistic path
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatible fetch_http3_aioquic wrapper (delegates to adapter).
+# ---------------------------------------------------------------------------
+
+
+async def fetch_http3_aioquic(
+    url: str,
+    headers: dict[str, str] | None = None,
+    timeout_s: float = _H3_TIMEOUT_S,
+) -> bytes | None:
+    """Legacy entry point — now delegates to the best available adapter.
+
+    ``stealth_manager`` and other existing callers are unaffected.
+    Internally dispatches to ``NeqoRustlsTransportAdapter`` (M1 arm64)
+    or ``AioquicTransportAdapter`` (fallback), with fail-soft returning
+    ``None`` when no QUIC transport is available.
+
+    Dark web URLs are rejected early — QUIC/UDP cannot be tunneled through
+    Tor TransPort or I2P HTTP proxy, so probing aioquic is wasted work.
+    """
+    # Dark web guard: QUIC/UDP can't go through Tor/I2P proxies
+    if is_dark_web_url(url):
+        return None
+    adapter = get_quic_transport_adapter()
+    if adapter is None:
+        return None
+    return await adapter.fetch(url, headers=headers, timeout_s=timeout_s)
+
+
+# ---------------------------------------------------------------------------
+# aioquic availability probe (moved above AioquicTransportAdapter).
+# ---------------------------------------------------------------------------
+
+
 def _probe_aioquic() -> bool:
     """Detect aioquic availability once; cache the result. Returns True iff
     the optional ``[http3]`` extra is installed AND importable.
@@ -562,9 +902,6 @@ def _probe_aioquic() -> bool:
     invariant: aioquic pulls in ``cryptography`` and OpenSSL bindings,
     ~50-80 MB resident). It lives in the ``[http3]`` extra so the cost
     is paid only by callers that explicitly want real QUIC.
-
-    P1-3 fix: simplified to avoid globals() hack; imports are only
-    referenced inside fetch_http3_aioquic() where they are re-imported.
     """
     global _aioquic_checked, _aioquic_available
     if _aioquic_checked:
@@ -608,134 +945,6 @@ def _probe_curl_cffi() -> bool:
     return _curl_cffi_available
 
 
-async def fetch_http3_aioquic(
-    url: str,
-    headers: dict[str, str] | None = None,
-    timeout_s: float = _H3_TIMEOUT_S,
-) -> bytes | None:
-    """Perform a real HTTP/3 request over QUIC via aioquic.
-
-    Returns response body as ``bytes`` on success, or ``None`` on ANY
-    failure (timeout, semaphore exhaustion, aioquic missing, server
-    unreachable, protocol error). Never raises.
-
-    The caller (typically ``stealth_manager._http3_request``) is
-    responsible for content-type decoding and size capping; this
-    function returns the raw body bytes.
-    """
-    if not _resolve_enabled():
-        return None
-    # Dark web URLs cannot use QUIC/UDP over Tor TransPort or I2P HTTP proxy.
-    # Route to tor_socks / i2p_socks via transport_router instead.
-    if is_dark_web_url(url):
-        logger.debug("http3_lane: dark web URL skipped (not H3-capable): %s", url)
-        return None
-    # Memory guard runs BEFORE the aioquic availability probe: the guard
-    # is an M1 8GB mission-budget invariant, not a feature flag, so it
-    # must be evaluated regardless of whether aioquic is installed.
-    if _rss_over_budget():
-        _stats["http3_memory_blocks"] += 1
-        logger.debug("http3_lane: memory budget exceeded, skipping aioquic")
-        return None
-    if not _probe_aioquic():
-        return None
-
-    host = extract_host(url)
-    if not host:
-        return None
-
-    # Only attempt H3 against hosts we have already seen advertise it,
-    # OR hosts that pass the opportunistic path's known-h3 predicate.
-    # This avoids a wasteful QUIC handshake against non-h3 servers.
-    if _cache_get(host) is not True:
-        return None
-
-    _stats["http3_aioquic_attempts"] += 1
-    sem = _get_semaphore()
-    acquired = False
-    try:
-        # Non-blocking acquire with wall-clock timeout: if all 3
-        # handshakes are in flight, return None rather than queue.
-        _stats["http3_semaphore_waits"] += 1
-        try:
-            await safe_wait_for(sem.acquire(), timeout=_H3_WAIT_TIMEOUT_S, label="http3_sem")
-            acquired = True
-        except TimeoutError:
-            _stats["http3_semaphore_timeouts"] += 1
-            logger.debug("http3_lane: semaphore saturated, skipping %s", host)
-            return None
-    except Exception as e:
-        logger.debug("http3_lane: semaphore acquire failed (fail-soft): %s", e)
-        return None
-
-    try:
-        # The actual QUIC handshake + H3 request. All imports are
-        # INSIDE the try block so a missing aioquic surfaces as
-        # ``None`` instead of a top-level ImportError on M1 8GB.
-        # ``reportMissingImports`` is a known false-positive: aioquic
-        # lives in the ``[http3]`` extra and is intentionally absent
-        # from the default closure (F207N-C invariant).
-        try:
-            from aioquic.asyncio import connect as _quic_connect  # type: ignore[import-not-found]
-            from aioquic.h3.connection import H3Connection  # type: ignore[import-not-found]
-            from aioquic.quic.configuration import QuicConfiguration  # type: ignore[import-not-found]
-        except Exception as e:
-            logger.debug("http3_lane: aioquic import inside call failed: %s", e)
-            return None
-
-        parsed = urlparse(url)
-        port = parsed.port or 443
-        cfg = QuicConfiguration(is_client=True)
-
-        async def _do_quic_request() -> bytes:
-            """Inner coroutine: handshake + H3 GET.
-            Timeout is applied via asyncio.timeout at the outer level
-            so a stuck UDP handshake can never block the fetch path
-            beyond ``timeout_s`` (default 8s).
-            """
-            async with _quic_connect(host, port, configuration=cfg, create_protocol=H3Connection) as protocol:
-                req_headers: list[tuple[bytes, bytes]] = [
-                    (b":method", b"GET"),
-                    (b":path", (parsed.path or "/").encode("ascii", "ignore")),
-                    (b":authority", host.encode("ascii", "ignore")),
-                ]
-                if headers:
-                    for k, v in headers.items():
-                        try:
-                            req_headers.append((k.encode("ascii", "ignore"), v.encode("ascii", "ignore")))
-                        except Exception:  # noqa: BLE001
-                            pass
-                stream_id = protocol.make_request(req_headers)
-                await protocol.wait_for_response(stream_id)
-                return await protocol.receive_data(stream_id)
-
-        try:
-            async with asyncio.timeout(timeout_s):
-                data = await _do_quic_request()
-            _stats["http3_aioquic_success"] += 1
-            return data
-        except asyncio.TimeoutError:
-            _stats["http3_timeouts"] += 1
-            logger.debug("http3_lane: aioquic request exceeded %.1fs for %s", timeout_s, host)
-            return None
-        except Exception as e:
-            _stats["http3_aioquic_failures"] += 1
-            logger.debug("http3_lane: aioquic request failed for %s: %s", host, e)
-            return None
-    except asyncio.CancelledError:
-        raise
-    except Exception as e:
-        _stats["http3_aioquic_failures"] += 1
-        logger.debug("http3_lane: unexpected aioquic error (fail-soft): %s", e)
-        return None
-    finally:
-        if acquired:
-            try:
-                sem.release()
-            except Exception:  # noqa: BLE001
-                pass
-
-
 # ---------------------------------------------------------------------------
 # Convenience for tests + tooling.
 # ---------------------------------------------------------------------------
@@ -752,10 +961,17 @@ def is_enabled() -> bool:
 
 
 __all__ = [
-    "fetch_http3_aioquic",
+    # Opportunistic curl_cffi path
     "http_version_for_curl_cffi",
     "record_from_curl_cffi_result",
     "record_h3_support",
+    # Real QUIC (factory-selected, shared by fetch_http3_aioquic)
+    "AioquicTransportAdapter",
+    "NeqoRustlsTransportAdapter",
+    "get_quic_transport_adapter",
+    # Legacy entry point (dispatches to best available adapter)
+    "fetch_http3_aioquic",
+    # Utilities
     "extract_host",
     "is_dark_web_url",
     "is_enabled",

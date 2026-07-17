@@ -100,8 +100,8 @@ def _sidecar_profile_allows(sidecar_name: str, profile: str | None) -> tuple[boo
         return (True, '')
     return (False, f"profile '{profile}' disallows active-network sidecar '{sidecar_name}'")
 
-class SidecarBatch(msgspec.Struct):
-    """Batch of accepted findings submitted to the sidecar bus."""
+class SidecarBatch(msgspec.Struct, gc=False):
+    """Batch of accepted findings submitted to the sidecar bus. F350M-R: gc=False for M1 8GB."""
     findings: list
     query: str
     results: list | None = None
@@ -120,7 +120,8 @@ class SidecarBatch(msgspec.Struct):
                 outcomes[f'sidecar_{r.sidecar_name}'] = {'attempted': False, 'skipped_reason': r.skipped_reason or 'unknown', 'elapsed_ms': round(r.elapsed_ms, 1)}
         return outcomes
 
-class SidecarRunResult(msgspec.Struct):
+class SidecarRunResult(msgspec.Struct, gc=False):
+    """Sidecar run result record. F350M-R: gc=False for M1 8GB."""
     sidecar_name: str
     attempted: bool
     produced_count: int

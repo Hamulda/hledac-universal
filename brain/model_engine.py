@@ -19,9 +19,7 @@ Callers use the protocol, not concrete classes.
 
 from typing import Any, TypeVar
 
-from pydantic import BaseModel
-
-T = TypeVar('T', bound=BaseModel, default=BaseModel)  # PEP 696: TypeVar with default
+T = TypeVar('T')  # PEP 696: TypeVar with default
 
 
 class ModelEngine:

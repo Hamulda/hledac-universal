@@ -479,6 +479,207 @@ pub fn lmdb_dht_close_env(path: String) -> PyResult<()> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Generic async LMDB operations — P4-3: async LMDB via py.allow_threads()
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Async single-key put with GIL release via py.allow_threads().
+///
+/// path_or_env: Either a path string (new env opened) or an lmdb.Environment.
+/// key: Raw key bytes.
+/// value: Raw value bytes.
+///
+/// Returns True on success.
+#[pyfunction]
+#[pyo3(name = "lmdb_async_put")]
+pub fn lmdb_async_put<'py>(
+    py: Python<'py>,
+    path_or_env: &Bound<'py, PyAny>,
+    key: Vec<u8>,
+    value: Vec<u8>,
+) -> PyResult<bool> {
+    let env = _resolve_env(py, path_or_env)?;
+    py.allow_threads(|| {
+        let txn = env.getattr("begin")?.call1((true,))?;
+        let result = txn.call_method1("put", (key.as_slice(), value.as_slice()));
+        match result {
+            Ok(_) => {
+                let _ = txn.call_method0("commit");
+                true
+            }
+            Err(_) => false,
+        }
+    })
+}
+
+/// Async single-key get with GIL release via py.allow_threads().
+#[pyfunction]
+#[pyo3(name = "lmdb_async_get")]
+pub fn lmdb_async_get<'py>(
+    py: Python<'py>,
+    path_or_env: &Bound<'py, PyAny>,
+    key: Vec<u8>,
+) -> PyResult<Option<Vec<u8>>> {
+    let env = _resolve_env(py, path_or_env)?;
+    py.allow_threads(|| {
+        let txn = env.getattr("begin")?.call1((false,))?;
+        let result: Option<Vec<u8>> = txn
+            .call_method1("get", (key.as_slice(),))?
+            .extract()
+            .ok()
+            .unwrap_or(None);
+        drop(txn);
+        Ok(result)
+    })
+}
+
+/// Async batch put — single write transaction for N items.
+/// GIL release via py.allow_threads() for the entire batch.
+#[pyfunction]
+#[pyo3(name = "lmdb_async_put_batch")]
+pub fn lmdb_async_put_batch<'py>(
+    py: Python<'py>,
+    path_or_env: &Bound<'py, PyAny>,
+    items: Vec<(Vec<u8>, Vec<u8>)>,
+    max_batch: usize,
+) -> PyResult<usize> {
+    let env = _resolve_env(py, path_or_env)?;
+    let max_batch = max_batch.min(10_000);
+    py.allow_threads(|| {
+        let mut total_written = 0;
+        for chunk in items.chunks(max_batch.max(1)) {
+            let result: Result<(), _> = (|| {
+                let txn = env.getattr("begin")?.call1((true,))?;
+                for (k, v) in chunk {
+                    txn.call_method1("put", (k.as_slice(), v.as_slice()))?;
+                }
+                txn.call_method0("commit")?;
+                Ok(())
+            })();
+            if result.is_ok() {
+                total_written += chunk.len();
+            } else {
+                break;
+            }
+        }
+        Ok(total_written)
+    })
+}
+
+/// Async batch get — parallel reads via multiple read transactions.
+/// GIL release via py.allow_threads().
+#[pyfunction]
+#[pyo3(name = "lmdb_async_get_many")]
+pub fn lmdb_async_get_many<'py>(
+    py: Python<'py>,
+    path_or_env: &Bound<'py, PyAny>,
+    keys: Vec<Vec<u8>>,
+) -> PyResult<Vec<Option<Vec<u8>>>> {
+    let env = _resolve_env(py, path_or_env)?;
+    py.allow_threads(|| {
+        let mut results: Vec<Option<Vec<u8>>> = Vec::with_capacity(keys.len());
+        for key in keys {
+            let txn = env.getattr("begin")?.call1((false,))?;
+            let val: Option<Vec<u8>> = txn
+                .call_method1("get", (key.as_slice(),))?
+                .extract()
+                .ok()
+                .unwrap_or(None);
+            drop(txn);
+            results.push(val);
+        }
+        Ok(results)
+    })
+}
+
+/// Async prefix scan — returns all (key, value) pairs matching prefix.
+/// GIL release via py.allow_threads().
+#[pyfunction]
+#[pyo3(name = "lmdb_async_scan_prefix")]
+pub fn lmdb_async_scan_prefix<'py>(
+    py: Python<'py>,
+    path_or_env: &Bound<'py, PyAny>,
+    prefix: Vec<u8>,
+    limit: usize,
+) -> PyResult<Vec<(Vec<u8>, Vec<u8>)>> {
+    let env = _resolve_env(py, path_or_env)?;
+    let limit = limit.min(100_000);
+    py.allow_threads(|| {
+        let mut results: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+        let txn = env.getattr("begin")?.call1((false,))?;
+        let mut cursor: Bound<'_, PyAny> = txn.call_method0("cursor")?;
+
+        let py_iter: Bound<'_, PyAny> = cursor.call_method0("iter")?;
+        let mut rust_iter = match py_iter.try_iter() {
+            Ok(iter) => iter,
+            Err(_) => return Ok(results),
+        };
+
+        for item in rust_iter {
+            let item = match item {
+                Ok(i) => i,
+                Err(_) => continue,
+            };
+            let pair: Vec<Vec<u8>> = match item.extract() {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            if pair.len() != 2 {
+                continue;
+            }
+            if pair[0].starts_with(&prefix) {
+                results.push((pair[0].clone(), pair[1].clone()));
+                if results.len() >= limit {
+                    break;
+                }
+            }
+        }
+        drop(cursor);
+        drop(txn);
+        Ok(results)
+    })
+}
+
+/// Async single-key delete with GIL release.
+#[pyfunction]
+#[pyo3(name = "lmdb_async_delete")]
+pub fn lmdb_async_delete<'py>(
+    py: Python<'py>,
+    path_or_env: &Bound<'py, PyAny>,
+    key: Vec<u8>,
+) -> PyResult<bool> {
+    let env = _resolve_env(py, path_or_env)?;
+    py.allow_threads(|| {
+        let txn = env.getattr("begin")?.call1((true,))?;
+        let result = txn.call_method1("delete", (key.as_slice(),));
+        match result {
+            Ok(_) => {
+                let _ = txn.call_method0("commit");
+                true
+            }
+            Err(_) => false,
+        }
+    })
+}
+
+/// Resolve path string or env object to lmdb.Environment.
+/// If path_or_env is a string, opens a new env. Otherwise returns the env as-is.
+fn _resolve_env<'py>(
+    py: Python<'py>,
+    path_or_env: &Bound<'py, PyAny>,
+) -> PyResult<Bound<'py, PyAny>> {
+    if let Ok(path_str) = path_or_env.extract::<String>() {
+        // It's a path string — open new env
+        let lmdb = PyModule::import(py, "lmdb")?;
+        let open_fn: Bound<'py, PyAny> = lmdb.getattr("open")?;
+        let env: Bound<'py, PyAny> = open_fn.call1((path_str,))?.into();
+        Ok(env)
+    } else {
+        // It's already an env
+        Ok(path_or_env.clone())
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Module registration
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -501,6 +702,13 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(lmdb_dht_scan_all_nodes, m)?)?;
     m.add_function(wrap_pyfunction!(lmdb_dht_bfs_traverse, m)?)?;
     m.add_function(wrap_pyfunction!(lmdb_dht_close_env, m)?)?;
+    // P4-3: Generic async LMDB operations
+    m.add_function(wrap_pyfunction!(lmdb_async_put, m)?)?;
+    m.add_function(wrap_pyfunction!(lmdb_async_get, m)?)?;
+    m.add_function(wrap_pyfunction!(lmdb_async_put_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(lmdb_async_get_many, m)?)?;
+    m.add_function(wrap_pyfunction!(lmdb_async_scan_prefix, m)?)?;
+    m.add_function(wrap_pyfunction!(lmdb_async_delete, m)?)?;
     Ok(())
 }
 
@@ -524,6 +732,13 @@ mod tests {
             "lmdb_dht_scan_all_nodes",
             "lmdb_dht_bfs_traverse",
             "lmdb_dht_close_env",
+            // P4-3: Generic async LMDB
+            "lmdb_async_put",
+            "lmdb_async_get",
+            "lmdb_async_put_batch",
+            "lmdb_async_get_many",
+            "lmdb_async_scan_prefix",
+            "lmdb_async_delete",
         ];
         for name in names {
             assert!(name.len() > 0);

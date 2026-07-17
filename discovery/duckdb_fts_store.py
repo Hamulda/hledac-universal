@@ -113,6 +113,13 @@ class DuckDBFTSStore:
                 return
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
             self._conn = duckdb.connect(str(self._db_path), read_only=self._readonly)
+            # M1 8GB: memory_limit + threads + preserve_insertion_order
+            try:
+                self._conn.execute("SET memory_limit = '512MB'")
+                self._conn.execute("PRAGMA threads = 2")
+                self._conn.execute("SET preserve_insertion_order = false")
+            except Exception:
+                pass  # fail-soft
             self._ensure_schema()
             self._init_wal()
             if self._wal_path and self._wal_path.exists():

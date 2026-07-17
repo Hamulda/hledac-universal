@@ -45,14 +45,22 @@ INVARIANTS
   so we never thrash the index.
 """
 import asyncio
-import json
 import logging
 import os
 import time
-from dataclasses import asdict, dataclass
 import msgspec
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
+
+try:
+    import orjson
+
+    _ORJSON_AVAILABLE = True
+except ImportError:
+    _ORJSON_AVAILABLE = False
+    import orjson as _orjson_stub  # type: ignore[attr-defined, assignment]
+
+    orjson = _orjson_stub
 if TYPE_CHECKING:
     import numpy as np
 logger = logging.getLogger(__name__)
@@ -205,8 +213,14 @@ class IVFPQAutoTuner:
         try:
             if not self._state_path.exists():
                 return TuneState()
-            with self._state_path.open('r', encoding='utf-8') as f:
-                data = json.load(f)
+            with self._state_path.open('rb') as f:
+                raw = f.read()
+            if _ORJSON_AVAILABLE:
+                data = orjson.loads(raw)
+            else:
+                import json as _stdlib_json
+
+                data = _stdlib_json.loads(raw.decode('utf-8'))
             return TuneState(last_tune_at=float(data.get('last_tune_at', 0.0)), last_num_partitions=int(data.get('last_num_partitions', DEFAULT_NUM_PARTITIONS)), last_recall=float(data.get('last_recall', 0.0)), inserts_since_tune=int(data.get('inserts_since_tune', 0)), tune_count=int(data.get('tune_count', 0)), last_num_sub_vectors=int(data.get('last_num_sub_vectors', DEFAULT_NUM_SUB_VECTORS)), recall_ema=float(data.get('recall_ema', 0.0)), recall_ema_alpha=float(data.get('recall_ema_alpha', 0.3)))
         except Exception as e:
             logger.debug(f'[LANCEDB-AUTOTUNE] state load failed (defaults): {e}')
@@ -219,8 +233,16 @@ class IVFPQAutoTuner:
         try:
             self._state_path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self._state_path.with_suffix(self._state_path.suffix + '.tmp')
-            with tmp.open('w', encoding='utf-8') as f:
-                json.dump(asdict(state), f, indent=2, sort_keys=True)
+            # NOTE: state is msgspec.Struct — use msgspec.to_builtins() (convert to JSON-compatible dict)
+            _state_dict = msgspec.to_builtins(state)
+            if _ORJSON_AVAILABLE:
+                raw = orjson.dumps(_state_dict, option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS)
+                tmp.write_bytes(raw)
+            else:
+                import json as _stdlib_json
+
+                with tmp.open('w', encoding='utf-8') as f:
+                    _stdlib_json.dump(_state_dict, f, indent=2, sort_keys=True)
             os.replace(tmp, self._state_path)
         except Exception as e:
             logger.debug(f'[LANCEDB-AUTOTUNE] state save failed: {e}')
@@ -466,7 +488,7 @@ class IVFPQAutoTuner:
             logger.info(f'[LANCEDB-AUTOTUNE] retrained table={self._table_name} num_partitions={n_part} num_sub_vectors={n_sub} max_iterations={M1_MAX_ITERATIONS}')
             try:
                 if hasattr(table, 'optimize'):
-                    table.optimize()
+                    cast(Any, table).optimize()
             except Exception as e_opt:
                 logger.debug(f'[LANCEDB-AUTOTUNE] post-retrain compact skipped: {e_opt}')
             return True

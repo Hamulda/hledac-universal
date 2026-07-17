@@ -100,10 +100,11 @@ _FORCE_RUST: bool = os.environ.get("HLEDAC_FORCE_RUST", "0") == "1"
 # =============================================================================
 
 
-class AccelInfo(msgspec.Struct, frozen=True):
+class AccelInfo(msgspec.Struct, frozen=True, gc=False):
     """
     Frozen accelerator backend info.
     Describes which backend is active and its capabilities.
+    F350M-R: gc=False for M1 8GB — hot-path IPC between Python and Rust.
     """
 
     available: bool
@@ -494,6 +495,16 @@ class _RustCompatShim:
 
     def __repr__(self) -> str:
         return repr(self._accel)
+
+    @property
+    def tls(self) -> Any:
+        """Issue B5: TLS cert metadata — wraps extract_tls_metadata as rust.tls.extract_tls_metadata(...)."""
+        from . import misc as _misc_mod
+        probe = self._accel._ensure_probe()
+        raw_fn = getattr(probe.ext, "extract_tls_metadata", None)
+        if raw_fn is not None:
+            return _misc_mod._TlsDomain(raw_fn)
+        return None
 
 
 _rust_compat_instance: "RustBackend | None" = None

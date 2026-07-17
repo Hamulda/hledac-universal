@@ -126,6 +126,7 @@ rl/.qmix_weights.npz
 archive/runs/*.json
 archive/runs/*.log
 archive/exports/*.json
+archive/scheduler_archives/
 **/target/**
 **/.venv/**
 **/__pycache__/**

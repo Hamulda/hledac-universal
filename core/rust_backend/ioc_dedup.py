@@ -79,6 +79,10 @@ class _PythonIocDedupStore:
     def get_by_type(self, ioc_type: str) -> list[str]:
         return [v for (v, t) in self._entries if t == ioc_type]
 
+    def len(self) -> int:
+        """Return the number of entries in the store."""
+        return len(self._entries)
+
     def __len__(self) -> int:
         return len(self._entries)
 

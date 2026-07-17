@@ -163,6 +163,13 @@ class ParquetExporter:
             try:
                 import duckdb
                 self._duckdb_conn = duckdb.connect(str(duckdb_path), read_only=True)
+                # M1 8GB: memory_limit + threads + preserve_insertion_order (read-only, conservative)
+                try:
+                    self._duckdb_conn.execute("SET memory_limit = '1GB'")
+                    self._duckdb_conn.execute("PRAGMA threads = 2")
+                    self._duckdb_conn.execute("SET preserve_insertion_order = false")
+                except Exception:  # noqa: BLE001 — fail-soft
+                    pass
             except Exception:
                 self._duckdb_conn = None
 
@@ -227,6 +234,13 @@ class ParquetExporter:
 
             # Vytvoř dočasnou tabulku
             conn = duckdb.connect(":memory:")
+            # M1 8GB: memory_limit + threads + preserve_insertion_order
+            try:
+                conn.execute("SET memory_limit = '512MB'")
+                conn.execute("PRAGMA threads = 2")
+                conn.execute("SET preserve_insertion_order = false")
+            except Exception:  # noqa: BLE001 — fail-soft
+                pass
             conn.execute("""
                 CREATE TABLE tmp_findings (
                     id VARCHAR,
@@ -564,7 +578,13 @@ class ParquetExporter:
             import duckdb
 
             conn = duckdb.connect(str(duckdb_path) if duckdb_path else ":memory:")
-
+            # M1 8GB: memory_limit + threads + preserve_insertion_order
+            try:
+                conn.execute("SET memory_limit = '1GB'")
+                conn.execute("PRAGMA threads = 2")
+                conn.execute("SET preserve_insertion_order = false")
+            except Exception:
+                pass  # fail-soft
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
             compression_clause = f"COMPRESSION {compression.upper()}" if compression != "zstd" else "COMPRESSION ZSTD"

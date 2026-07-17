@@ -109,8 +109,8 @@ class LayerContext:
         """Cancellation event for this sprint."""
         return self._meta.get('cancel_event', asyncio.Event())
 
-class LayerEvent(msgspec.Struct):
-    """Event that propagates through the LayerStack."""
+class LayerEvent(msgspec.Struct, gc=False):
+    """Event that propagates through the LayerStack. F350M-R: gc=False for M1 8GB."""
     type: str
     data: dict[str, Any] = field(default_factory=dict)
     halted: bool = False
@@ -293,7 +293,7 @@ class _UDSProtocol(asyncio.Protocol):
         self._buffer.extend(data)
         try:
             import msgspec
-            msg = msgspec.msgpack.decode(self._buffer)
+            msg = msgspec.msgpack.decode(self._buffer, type=LayerEvent)
             safe_create_task(self._handler(msg), name='layer_protocol:msg_handler')
         except Exception:
             return
@@ -305,7 +305,7 @@ class _UDSProtocol(asyncio.Protocol):
         if self._transport:
             self._transport.close()
 
-async def uds_fetch(path: str, message: dict[str, Any], timeout: float=5.0) -> dict[str, Any] | None:
+async def uds_fetch(path: str, message: LayerEvent, timeout: float=5.0) -> LayerEvent | None:
     """
     Send a msgpack message over UNIX domain socket and get reply.
 
@@ -313,11 +313,11 @@ async def uds_fetch(path: str, message: dict[str, Any], timeout: float=5.0) -> d
 
     Args:
         path: Socket path
-        message: Message to send (msgpack-encoded)
+        message: LayerEvent to send (msgpack-encoded)
         timeout: Request timeout
 
     Returns:
-        Response dict or None on error
+        LayerEvent response or None on error
     """
     try:
         import msgspec
@@ -327,7 +327,7 @@ async def uds_fetch(path: str, message: dict[str, Any], timeout: float=5.0) -> d
             await writer.drain()
             response_bytes = await safe_wait_for(reader.read(65536), timeout=timeout, label='uds_read')
             if response_bytes:
-                return msgspec.msgpack.decode(response_bytes)
+                return msgspec.msgpack.decode(response_bytes, type=LayerEvent)
         finally:
             writer.close()
             await writer.wait_closed()

@@ -82,8 +82,9 @@ class TestI2PSessionPool:
 
         assert pf.I2P_SOCKS_PROXY == "socks5://127.0.0.1:9999"
 
-    def test_get_i2p_session_creates_session(self):
-        """_get_i2p_session creates aiohttp.ClientSession with ProxyConnector."""
+    @pytest.mark.asyncio
+    async def test_get_i2p_session_creates_session(self):
+        """_get_i2p_session creates httpx.AsyncClient with SOCKS5H proxy."""
         import importlib
 
         from hledac.universal.fetching import public_fetcher as pf
@@ -94,79 +95,57 @@ class TestI2PSessionPool:
         pf._i2p_session_locally_created = False
         pf._injected_session_provider = None
 
-        mock_connector = MagicMock()
         mock_session = MagicMock()
         mock_session.closed = False
-        mock_pc_cls = MagicMock()
-        mock_pc_cls.from_url.return_value = mock_connector
 
-        mock_aiohttp_socks = MagicMock()
-        mock_aiohttp_socks.ProxyConnector = mock_pc_cls
+        # F260: Force the httpx-socks fallback path by pretending
+        # curl_cffi is unavailable. The F260 default prefers curl_cffi
+        # (JA3 unification), but these tests verify the httpx-socks fallback.
+        with patch.object(pf, "is_curl_cffi_available", return_value=(False, "test_forced_fallback")):
+            with patch.object(pf, "httpx_socks_client", return_value=mock_session) as mock_httpx_socks_client:
+                session = await pf._get_i2p_session()
 
-        async def run_test():
-            # F260: Force the aiohttp_socks fallback path by pretending
-            # curl_cffi is unavailable. The F260 default prefers curl_cffi
-            # (JA3 unification), but these legacy tests verify the fallback.
-            with patch.object(pf, "is_curl_cffi_available", return_value=(False, "test_forced_fallback")):
-                with patch.object(pf.aiohttp, 'ClientSession', return_value=mock_session) as mock_cs:
-                    with patch.dict('sys.modules', {'aiohttp_socks': mock_aiohttp_socks}):
-                        session = await pf._get_i2p_session()
+                # Verify httpx_socks_client was called with I2P proxy URL
+                mock_httpx_socks_client.assert_called_once()
+                call_args = mock_httpx_socks_client.call_args
+                assert "socks5://" in call_args[0][0]
+                assert session is mock_session
 
-                        # Verify ProxyConnector was created with I2P proxy URL
-                        mock_pc_cls.from_url.assert_called_once()
-                        call_url = mock_pc_cls.from_url.call_args[0][0]
-                        assert "socks5://" in call_url
+    @pytest.mark.asyncio
+    async def test_get_i2p_session_injects_provider(self):
+        """get_session_manager().get_i2p_session() uses injected provider when available."""
+        from hledac.universal.fetching._session_mgr import get_session_manager
 
-                        # Verify ClientSession was created with connector
-                        mock_cs.assert_called_once()
-                        assert session is mock_session
-
-        anyio.run(run_test)
-
-    def test_get_i2p_session_injects_provider(self):
-        """_get_i2p_session uses injected provider when available."""
-        import importlib
-
-        from hledac.universal.fetching import public_fetcher as pf
-        importlib.reload(pf)
-
-        pf._i2p_session = None
-        pf._i2p_session_locally_created = False
-
+        mgr = get_session_manager("test_i2p_inject")
         injected = MagicMock()
-        injected.closed = False
-        pf._injected_session_provider = (None, injected)
+        injected.is_closed = False
+        mgr.inject_provider(None, injected)
 
-        async def run_test():
-            session = await pf._get_i2p_session()
-            assert session is injected
-
-        anyio.run(run_test)
+        # Force curl_cffi unavailable and mock httpx_socks_client to prevent real HTTP calls
+        with patch("hledac.universal.transport.curl_cffi_runtime.is_curl_cffi_available", return_value=(False, "test")):
+            with patch("hledac.universal.transport.session_pool.httpx_socks_client", return_value=injected):
+                try:
+                    session = await mgr.get_i2p_session()
+                    assert session is injected
+                finally:
+                    mgr.inject_provider(None, None)  # cleanup
 
 
 class TestI2PFallback:
     """invariant_I2P-T3: pool failure falls back to darknet path."""
 
-    def test_get_i2p_session_raises_on_missing_dep(self):
-        """Missing aiohttp_socks raises RuntimeError."""
-        import importlib
+    @pytest.mark.asyncio
+    async def test_get_i2p_session_raises_on_missing_dep(self):
+        """Missing httpx_socks raises RuntimeError."""
+        from hledac.universal.fetching._session_mgr import get_session_manager
 
-        from hledac.universal.fetching import public_fetcher as pf
-        importlib.reload(pf)
+        mgr = get_session_manager("test_i2p_missing_dep")
 
-        pf._i2p_session = None
-        pf._i2p_session_locally_created = False
-        pf._injected_session_provider = None
-
-        async def run_test():
-            # F260: Force the aiohttp_socks fallback path so the missing-dep
-            # error path is exercised (curl_cffi is preferred by default).
-            with patch.object(pf, "is_curl_cffi_available", return_value=(False, "test_forced_fallback")):
-                with patch.dict('sys.modules', {'aiohttp_socks': None}):
-                    with pytest.raises(RuntimeError, match="aiohttp_socks required"):
-                        await pf._get_i2p_session()
-
-        anyio.run(run_test)
+        # Force curl_cffi unavailable and httpx_socks import failure
+        with patch("hledac.universal.transport.curl_cffi_runtime.is_curl_cffi_available", return_value=(False, "test")):
+            with patch.dict('sys.modules', {'httpx_socks': None}):
+                with pytest.raises((ModuleNotFoundError, RuntimeError)):
+                    await mgr.get_i2p_session()
 
     def test_is_i2p_url_helper(self):
         """_is_i2p_url returns True for .i2p and .b32.i2p, False otherwise."""

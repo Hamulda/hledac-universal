@@ -1113,6 +1113,19 @@ class _PythonSprintPoliciesDomain:
     def LaneBudgetPool(self) -> PythonLaneBudgetPool:
         return PythonLaneBudgetPool()
 
+    @staticmethod
+    def compute_dominance(
+        total_accepted: int,
+        feed_accepted: int,
+        nonfeed_accepted: int,
+    ) -> dict[str, Any]:
+        """Convenience method — pure-Python fallback for compute_feed_dominance."""
+        if total_accepted == 0:
+            return {"feed_dominance_ratio": 0.0, "guard_triggered": False}
+        ratio = feed_accepted / total_accepted
+        guard_triggered = ratio >= 0.95 and nonfeed_accepted < 5
+        return {"feed_dominance_ratio": ratio, "guard_triggered": guard_triggered}
+
 
 # =============================================================================
 # Pure-Python helper classes / functions
@@ -1120,30 +1133,34 @@ class _PythonSprintPoliciesDomain:
 
 
 class _PythonHotEdgeCounter:
-    __slots__ = ("_max_edges", "_edges", "_dirty")
+    __slots__ = ("_max_edges", "_edges", "_dirty", "_dirty_keys")
 
     def __init__(self, max_edges: int = 10_000) -> None:
         self._max_edges = max_edges
         self._edges: dict[tuple[int, int], int] = {}
         self._dirty: list[tuple[int, int, int]] = []
+        self._dirty_keys: set[tuple[int, int]] = set()
 
     def bump_edge(self, src: int, dst: int, count: int = 1) -> int:
         key = (src, dst)
         new_val = self._edges.get(key, 0) + count
         self._edges[key] = new_val
-        self._dirty.append((src, dst, count))
+        if key not in self._dirty_keys:
+            self._dirty_keys.add(key)
+            self._dirty.append((src, dst, count))
         return new_val
 
     def pending_count(self) -> int:
-        """Number of dirty entries to be flushed."""
-        return len(self._dirty)
+        """Number of unique dirty edges to be flushed."""
+        return len(self._dirty_keys)
 
     def should_flush(self) -> bool:
-        return len(self._dirty) >= self._max_edges
+        return len(self._dirty_keys) >= self._max_edges
 
     def drain_dirty(self) -> list[tuple[int, int, int]]:
         dirty = self._dirty
         self._dirty = []
+        self._dirty_keys.clear()
         return dirty
 
     def snapshot(self) -> dict[tuple[int, int], int]:
@@ -1151,7 +1168,7 @@ class _PythonHotEdgeCounter:
 
 
 class _PythonIntCounterLayout:
-    __slots__ = ("_field_names", "_data")
+    __slots__ = ("_field_names", "_data", "_index")
 
     def __init__(self, field_names: list[str]) -> None:
         self._field_names = field_names
@@ -1435,11 +1452,11 @@ def _acquire_ro_conn(db_path: str) -> Any:
     # Open fresh connection (outside lock to minimize lock hold time)
     try:
         new_conn = _duckdb.connect(db_path, read_only=True)
+        new_conn.execute("PRAGMA busy_timeout=5000")
+        # M1 8GB: memory_limit + threads + preserve_insertion_order
         try:
-            new_conn.execute("PRAGMA busy_timeout=5000")
-        except Exception:
-            pass  # DuckDB <1.4 doesn't support busy_timeout
-        try:
+            new_conn.execute("SET memory_limit = '1GB'")
+            new_conn.execute("PRAGMA threads = 2")
             new_conn.execute("SET preserve_insertion_order = false")
         except Exception:
             pass
@@ -1814,3 +1831,36 @@ def get_html_domain(ext: object | None) -> _RustHtmlDomain | _PythonHtmlDomain:
     if ext is not None and _HTML_PARSE_RUST_AVAILABLE:
         return _RustHtmlDomain(ext)
     return _PythonHtmlDomain()
+
+
+# =============================================================================
+# Issue B5: TLS cert metadata domain
+# =============================================================================
+
+
+class _TlsDomain:
+    """Wraps extract_tls_metadata so it is accessible as rust.tls.extract_tls_metadata(...).
+
+    The raw function is a top-level function in hledac_rust_extensions (probe.ext).
+    This wrapper exposes it as a method on a domain object, matching the pattern of
+    other domains (bloom, url, ioc, etc.).
+    """
+
+    __slots__ = ("_fn",)
+
+    def __init__(self, raw_fn: object) -> None:
+        self._fn = raw_fn
+
+    def extract_tls_metadata(
+        self,
+        san_entries: list[tuple[int, str]],
+        issuer_org: str | None,
+        der_bytes: bytes | None,
+    ) -> tuple[list[str], str | None, str | None]:
+        fn = self._fn
+        if fn is None:
+            return ([], None, None)
+        try:
+            return fn(san_entries, issuer_org, der_bytes)  # type: ignore[operator]
+        except Exception:  # noqa: BLE001 — best-effort; Rust TLS metadata failure is non-fatal
+            return ([], None, None)

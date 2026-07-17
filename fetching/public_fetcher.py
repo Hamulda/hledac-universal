@@ -22,6 +22,7 @@ F-GLOBAL: Global state refactoring (2026-06-30):
 from __future__ import annotations
 import asyncio
 import concurrent.futures
+import functools
 import importlib.util
 import os
 import re
@@ -36,7 +37,7 @@ import msgspec
 from core.env_config import ENV
 from hledac.universal.utils.cache import PyCacheDict
 from runtime.logging_setup import get_logger
-from tools.regex_cache import collapse_whitespace, strip_html_tags
+from hledac.universal.tools.regex_cache import collapse_whitespace, strip_html_tags
 if TYPE_CHECKING:
     import httpx
 from core.psutil_shim import process as _psutil_process
@@ -62,23 +63,13 @@ def __getattr__(name: str) -> Any:
         return _rust_backend.raw
     raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
 _classify_url_cache: PyCacheDict[str, tuple[str, str]] = PyCacheDict(512, 300.0)
-_url_classify_cache_rust: 'Any' = None
-_url_classify_cache_lock = threading.Lock()
-
+@functools.lru_cache(maxsize=1)
 def _get_rust_url_cache() -> 'Any':
     """Lazy singleton for UrlClassifyCachePy — created on first call.
 
-    Thread-safe via double-checked locking pattern:
-    - Fast path: outer check without lock (no contention after init)
-    - Slow path: inner check with lock (only first caller blocks)
+    Thread-safe via functools.lru_cache internals (one lock, acquired once).
     """
-    global _url_classify_cache_rust
-    if _url_classify_cache_rust is not None:
-        return _url_classify_cache_rust
-    with _url_classify_cache_lock:
-        if _url_classify_cache_rust is None:
-            _url_classify_cache_rust = _rust_backend.url.UrlClassifyCachePy(capacity=50000, ttl_s=300.0)
-    return _url_classify_cache_rust
+    return _rust_backend.url.UrlClassifyCachePy(capacity=50000, ttl_s=300.0)
 
 def _classify_url_cached(url: str) -> tuple[str, str]:
     """Returns (kind_str, lowercase_host) using Rust when available.
@@ -124,12 +115,13 @@ def _python_classify_url(url: str) -> tuple[str, str]:
         # Cloud storage
         if any(k in netloc for k in ("drive.google.com", "dropbox.com", "onedrive.live.com")):
             return ("storage", "cloud")
-        # Darknet before clearnet
-        if netloc.endswith(".onion"):
+        # Darknet before clearnet — use hostname (port-stripped) so :8080 doesn't break .i2p/.onion detection
+        hostname = parsed.hostname or ''
+        if hostname.endswith(".onion"):
             return ("onion", netloc)
-        if netloc.endswith(".i2p"):
-            return ("i2p", netloc)
-        if 'freenet' in netloc or 'hyphanet' in netloc:
+        if hostname.endswith(".i2p") or hostname.endswith(".b32.i2p"):
+            return ("i2p", hostname)
+        if hostname.endswith(".freenet") or 'freenet' in netloc or 'hyphanet' in netloc:
             return ("freenet", netloc)
         # Clearnet: http/https URLs that aren't special categories
         if parsed.scheme in ("http", "https"):
@@ -200,7 +192,6 @@ from hledac.universal.utils.uma_budget import M1_FETCH_SOFT_CEILING_GB
 logger = get_logger(__name__)
 _ContentHasher: object | None = None
 _RUST_CONTENT_HASHER: bool = False
-_CONTENTHASHER_LOCK = threading.Lock()
 MAX_BODY_HASHES: Final[int] = 10000
 
 # ISSUE-018: Deduplicated — canonical BodyHashStore lives in fetching/_body_hash.py
@@ -218,23 +209,18 @@ def _get_content_hasher() -> object | None:
     Canonical RustBackend entry point — single lazy-load for all content hashing
     needs. Returns rust.hash on success, None on failure. Cached after first call.
 
-    Thread-safe via double-checked locking:
-    - Fast path: outer check without lock
-    - Slow path: inner check with lock (only first caller blocks)
+    Thread-safe via functools.lru_cache internals (one lock, acquired once).
     """
     global _ContentHasher, _RUST_CONTENT_HASHER
     if _RUST_CONTENT_HASHER:
         return _ContentHasher
-    with _CONTENTHASHER_LOCK:
-        if _RUST_CONTENT_HASHER:
-            return _ContentHasher
-        try:
-            from core.rust_backend import rust
-            _ContentHasher = rust.hash
-            _RUST_CONTENT_HASHER = True
-        except Exception:  # noqa: BLE001 — best-effort; Rust backend unavailable, fallback to Python
-            _RUST_CONTENT_HASHER = False
-            _ContentHasher = None
+    try:
+        from core.rust_backend import rust
+        _ContentHasher = rust.hash
+        _RUST_CONTENT_HASHER = True
+    except Exception:  # noqa: BLE001 — best-effort; Rust backend unavailable, fallback to Python
+        _RUST_CONTENT_HASHER = False
+        _ContentHasher = None
     return _ContentHasher
 
 def _compute_body_hash(body: bytes) -> str:
@@ -594,8 +580,8 @@ class TransportCounters:
         self.static_hydration_insufficient = min(static_hydration_insufficient, _MAX_COUNT)
         self.macos_webkit_count = min(macos_webkit_count, _MAX_COUNT)
 
-class FetchResult(msgspec.Struct, frozen=True):
-    """Frozen msgspec result — no mutations after construction.
+class FetchResult(msgspec.Struct, frozen=True, gc=False):
+    """Frozen msgspec result — no mutations after construction. F350M-R: gc=False for M1 8GB.
 
     Backward-compatible: added fields have defaults so existing callers are unaffected.
 
@@ -1317,7 +1303,7 @@ def _close_tor_session_sync() -> None:
         # This is safe from a daemon thread (no M1 crash vector).
         try:
             with asyncio.Runner() as runner:
-                runner.run(session.close())
+                runner.run(session.aclose())
         except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             logger.warning('Error closing Tor session in thread: %s', e)
         finally:
@@ -1367,7 +1353,7 @@ def _close_i2p_session_sync() -> None:
         # This is safe from a daemon thread (not the M1 crash path).
         try:
             with asyncio.Runner() as runner:
-                runner.run(session.close())
+                runner.run(session.aclose())
         except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             logger.warning('Error closing I2P session in thread: %s', e)
         finally:
@@ -1693,23 +1679,19 @@ def _compute_effective_max_bytes(requested: int) -> int:
         return hard
     return min(max(requested, 1), hard)
 _JS_RENDERER_SEMAPHORE: asyncio.Semaphore | None = None
-_JSRENDERER_SEMAPHORE_LOCK = threading.Lock()
 _JSC_RENDERER_COOLDOWN_S = 0.5
 
 def _get_js_renderer_semaphore() -> asyncio.Semaphore:
     """F226A: Lazily-initialized, per-event-loop JS renderer Semaphore(1).
 
-    Thread-safe via double-checked locking:
-    - Fast path: outer check without lock
-    - Slow path: inner check with lock (only first caller blocks)
+    Thread-safe via functools.lru_cache internals (one lock, acquired once).
+    Note: asyncio.Semaphore is created in the calling event loop context.
     """
     global _JS_RENDERER_SEMAPHORE
     if _JS_RENDERER_SEMAPHORE is not None:
         return _JS_RENDERER_SEMAPHORE
-    with _JSRENDERER_SEMAPHORE_LOCK:
-        if _JS_RENDERER_SEMAPHORE is None:
-            from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-            _JS_RENDERER_SEMAPHORE = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
+    from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+    _JS_RENDERER_SEMAPHORE = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
     return _JS_RENDERER_SEMAPHORE
 
 async def _cooldown_after_browser_stop() -> None:
@@ -1757,8 +1739,8 @@ async def _teardown_browser_pool() -> None:
         pass
     logger.debug('[winddown] browser pool torn down')
 
-class AiohttpBodyOutcome(msgspec.Struct, frozen=True):
-    """F226B: aiohttp body read outcome with peek + size cap."""
+class AiohttpBodyOutcome(msgspec.Struct, frozen=True, gc=False):
+    """F226B: aiohttp body read outcome with peek + size cap. F350M-R: gc=False for M1 8GB."""
     body: bytes
     total_read: int
     truncated: bool
@@ -2396,7 +2378,7 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
                 if _curl_h3_text:
                     _store_body_hash(url, _compute_body_hash(_curl_h3_text.encode('utf-8', errors='replace')))
                 return FetchResult(url=url, final_url=_curl_h3_final_url, status_code=_curl_h3_result.get('status_code', 0), content_type=_curl_h3_result.get('content_type', ''), text=_curl_h3_text, fetched_bytes=len(_curl_h3_bytes), declared_length=-1, elapsed_ms=_curl_h3_elapsed_ms, error=_curl_h3_result.get('error', None), decode_replaced=_curl_h3_decode_replaced, decode_replacement_count=_curl_h3_decode_replacement_count, redirected=_curl_h3_redirected, redirect_target=_curl_h3_redirect_target, failure_stage=_curl_h3_result.get('failure_stage', None), network_error_kind=_curl_h3_result.get('network_error_kind', None), selected_transport='curl_cffi', http_version='h3', transport_policy_reason='h3_clearnet', transport_counters=_tc)
-        session = tor_session if use_tor else i2p_session if use_i2p else await async_get_httpx_session()
+        session = tor_session if use_tor else i2p_session if use_i2p else await httpx_client()
         _semaphore = get_tor_semaphore() if use_tor or use_i2p else get_clearnet_semaphore()
         if stealth_session is not None:
             headers = {'User-Agent': stealth_session.rotate_ua()}
@@ -2722,12 +2704,12 @@ async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: in
         _tc.i2p_httpx_socks_count += 1
     else:
         _tc.aiohttp_count += 1
-    return FetchResult(url=url, final_url=url, status_code=last_status_code, content_type='', text=None, fetched_bytes=0, declared_length=-1, elapsed_ms=elapsed_ms, error=err_str, body_read_error=body_read_error, failure_stage=failure_stage, network_error_kind=network_error_kind, selected_transport='httpx_h2' if _use_httpx_h2 else 'httpx_socks' if use_tor or use_i2p else 'httpx_h2', transport_policy_reason=_router_reason if _use_httpx_h2 else 'darknet_url' if use_tor or use_i2p else 'clearnet_default', transport_fallback_reason='httpx_h2_fallback' if _httpx_fallback_reason == 'httpx_h2_fallback' else None, transport_counters=_tc)
     try:
         from core.telemetry.context_state import reset_request_id
         reset_request_id()
     except Exception:  # noqa: BLE001 — best-effort; telemetry teardown failure is non-fatal
         pass
+    return FetchResult(url=url, final_url=url, status_code=last_status_code, content_type='', text=None, fetched_bytes=0, declared_length=-1, elapsed_ms=elapsed_ms, error=err_str, body_read_error=body_read_error, failure_stage=failure_stage, network_error_kind=network_error_kind, selected_transport='httpx_h2' if _use_httpx_h2 else 'httpx_socks' if use_tor or use_i2p else 'httpx_h2', transport_policy_reason=_router_reason if _use_httpx_h2 else 'darknet_url' if use_tor or use_i2p else 'clearnet_default', transport_fallback_reason='httpx_h2_fallback' if _httpx_fallback_reason == 'httpx_h2_fallback' else None, transport_counters=_tc)
 
 
 async def async_fetch_public_text_batch(
@@ -2925,7 +2907,7 @@ async def process_html_payload(html: str, url: str) -> tuple[str, list, dict]:
 
     Args:
         html: Raw HTML content.
-        url: Source URL (for context in errors; not used for fetching).
+        url: Source URL (for context in errors; kept for API compatibility, unused).
 
     Returns:
         Tuple of (markdown-stripped text, pattern match list, metadata dict).

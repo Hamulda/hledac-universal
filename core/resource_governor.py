@@ -61,19 +61,54 @@ class UMAState(StrEnum):
     EMERGENCY = "emergency"
 
 
-class LockOrder(IntEnum):
+# ==============================================================================
+# LOCK ORDERING — migrated to core/locks.py for centralization
+# ==============================================================================
+
+from hledac.universal.core.locks import LockCategory
+
+# Mapping from old LockOrder to new LockCategory
+_LOCK_ORDER_TO_CATEGORY: dict[int, LockCategory] = {
+    1: LockCategory.MPC,  # MPC = 1
+    2: LockCategory.WAL,  # IO_LATCH → WAL (closest semantic match)
+    3: LockCategory.METRICS,  # TELEMETRY → METRICS
+    4: LockCategory.GRAPH,  # DECISION → GRAPH (closest semantic match)
+}
+
+
+class _LockOrderShim(IntEnum):
+    """
+    Backward-compatible LockOrder enum.
+
+    Deprecated: Use LockCategory from core.locks directly for new code.
+    This shim maps old LockOrder values to new LockCategory values.
+    """
+
     MPC = 1
     IO_LATCH = 2
     TELEMETRY = 3
     DECISION = 4
 
+    def to_category(self) -> LockCategory:
+        """Map to LockCategory for registry operations."""
+        return _LOCK_ORDER_TO_CATEGORY[self.value]
 
-_LOCK_REGISTRY: dict[LockOrder, threading.Lock | _threading.RLock] = {}
+
+# Re-export as LockOrder for backward compatibility
+LockOrder = _LockOrderShim
+
+# Import registry helpers from core.locks
+from hledac.universal.core.locks import (
+    _LockRegistry as _LOCK_REGISTRY_CORE,
+    register_lock as _core_register_lock,
+    acquire_in_order as _core_acquire_in_order,
+)
 
 
 def _register_lock(order: LockOrder, lock: threading.Lock | _threading.RLock) -> None:
-    """Register a lock in the ordering registry."""
-    _LOCK_REGISTRY[order] = lock
+    """Register a lock in the ordering registry (legacy wrapper)."""
+    category = order.to_category()
+    _core_register_lock(category, lock, f"resource_governor._lock_{order.name.lower()}")
 
 
 def acquire_in_order(*orders: LockOrder) -> list[contextlib.AbstractContextManager]:
@@ -89,8 +124,37 @@ def acquire_in_order(*orders: LockOrder) -> list[contextlib.AbstractContextManag
 
     NOTE: For same-order locks (shouldn't happen), acquisition order is undefined.
     """
-    sorted_orders = sorted(set(orders), key=lambda x: x.value)
-    return [contextlib.nullcontext(_LOCK_REGISTRY[o]) for o in sorted_orders]
+    from hledac.universal.core.locks import acquire_in_order as core_acquire
+
+    categories = [o.to_category() for o in orders]
+    return core_acquire(*categories)
+
+
+# For external compatibility, expose _LOCK_REGISTRY that maps LockOrder → threading.Lock
+class _LegacyLockRegistry(dict):
+    """Backward-compatible lock registry that maps LockOrder → threading.Lock."""
+
+    def __getitem__(self, key: object) -> threading.Lock | threading.RLock:
+        from hledac.universal.core.locks import _LOCKS_BY_CATEGORY
+
+        if isinstance(key, _LockOrderShim):
+            cat = key.to_category()
+            locks = _LOCKS_BY_CATEGORY.get(cat, [])
+            if locks:
+                return locks[0]
+            raise KeyError(f"No lock registered for category {cat.name}")
+        raise KeyError(f"Invalid key type: {type(key)}")
+
+    def __contains__(self, key: object) -> bool:
+        from hledac.universal.core.locks import _LOCKS_BY_CATEGORY
+
+        if isinstance(key, _LockOrderShim):
+            cat = key.to_category()
+            return bool(_LOCKS_BY_CATEGORY.get(cat, []))
+        return False
+
+
+_LOCK_REGISTRY: dict[LockOrder, threading.Lock | threading.RLock] = _LegacyLockRegistry()
 
 
 class ConcurrencyPreset(msgspec.Struct, frozen=True):

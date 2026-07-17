@@ -134,9 +134,14 @@ def _python_xxhash64_hex(data: bytes) -> str:
     return f"{_python_xxhash64(data):016x}"
 
 
-def _python_xxhash64(data: bytes) -> int:
-    """Pure-Python xxHash64 approximation (for compatibility, not speed)."""
+def _python_xxhash64(data: bytes | str) -> int:
+    """Pure-Python xxHash64 approximation (for compatibility, not speed).
+
+    Accepts both bytes and str for Rust API compatibility.
+    """
     import hashlib
+    if isinstance(data, str):
+        data = data.encode("utf-8")
     h = hashlib.sha256(data).digest()
     return int.from_bytes(h[:8], byteorder="little")
 

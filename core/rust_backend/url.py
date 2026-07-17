@@ -247,11 +247,12 @@ def _python_classify_url(url: str) -> tuple[str, str]:
             return ("document", "file")
         if any(k in netloc for k in ("drive.google.com", "dropbox.com", "onedrive.live.com")):
             return ("storage", "cloud")
-        # Onion / I2P before clearnet
-        if netloc.endswith(".onion"):
+        # Onion / I2P before clearnet — use hostname (port-stripped) so :8080 doesn't break .i2p detection
+        hostname = parsed.hostname or ''
+        if hostname.endswith(".onion"):
             return ("onion", parsed.netloc)
-        if netloc.endswith(".i2p"):
-            return ("i2p", parsed.netloc)
+        if hostname.endswith(".i2p") or hostname.endswith(".b32.i2p"):
+            return ("i2p", hostname)
         # clearnet detection: http/https URLs that aren't special categories
         if parsed.scheme in ("http", "https"):
             return ("clearnet", parsed.netloc.removeprefix("www."))

@@ -8,7 +8,7 @@ one flush to complete before starting the next. With 2 workers and chunk_size=10
 a large batch stalls the pipeline: 2048 findings → 2 sequential flushes of 1024.
 
 Solution: Drain queue into N chunks concurrently, flush all chunks in parallel
-via asyncio.gather — all DuckDB + graph I/O runs simultaneously instead of
+via parallel() — all DuckDB + graph I/O runs simultaneously instead of
 back-to-back. M1 8GB: concurrency=4 (max ~4 × 1-2MB Arrow IPC payloads = 4-8MB
 concurrent, well within wired limit + RAM budget).
 
@@ -16,7 +16,7 @@ Architecture:
     Queue drain → N=_STORE_FLUSH_CONCURRENCY chunks × _STORE_FLUSH_CHUNK_SIZE=256
             │
             ▼
-    asyncio.gather(*[_flush_store_batch(chunk) for chunk in chunks])
+    parallel([_flush_chunk(chunk) for chunk in chunks], taskgroup=True, policy="collect")
             │
     ┌───────┴───────────────────────────────────────┐
     ▼                                                       ▼
@@ -30,13 +30,13 @@ M1 8GB constraints:
 - Queue maxsize=500 (backpressure prevents OOM)
 - 2 enrich workers (CPU-bound, ThreadPoolExecutor)
 - 2 store workers (I/O-bound, drain queue faster)
-- DuckDB write + graph upsert run in asyncio.gather (intra-batch parallelism)
+- DuckDB write + graph upsert run in parallel() (intra-batch parallelism)
 - Chunk size 1024 for DuckDB ingest (already bounded)
 - _STORE_FLUSH_CONCURRENCY=4: max 4 concurrent flush operations
 - _STORE_FLUSH_CHUNK_SIZE=256: per-chunk size for parallel flush
 
 P4-2 changes vs P4-1:
-- _store_worker_main: sequential flush → parallel chunk flush via asyncio.gather
+- _store_worker_main: sequential flush → parallel chunk flush via parallel()
 - Added _flush_store_batch_concurrent helper for parallel chunk dispatch
 - Added _STORE_FLUSH_CONCURRENCY=4 and _STORE_FLUSH_CHUNK_SIZE=256 constants
 """
@@ -282,7 +282,7 @@ class FindingPipeline:
         Store worker that batches findings and writes to DuckDB + LMDB.
 
         P4-2: Parallel chunk flush — drain queue into N chunks, flush all chunks
-        concurrently via asyncio.gather. Each chunk runs DuckDB + graph in parallel;
+        concurrently via parallel(). Each chunk runs DuckDB + graph in parallel;
         chunks themselves run concurrently. 4-6× I/O throughput vs sequential flush.
 
         ISSUE-005 fix: queue.get() WITHOUT timeout blocks efficiently via
@@ -325,7 +325,7 @@ class FindingPipeline:
 
     async def _flush_store_batch_concurrent(self, batch: list[Any]) -> None:
         """
-        P4-2: Flush multiple chunks in parallel via asyncio.gather.
+        P4-2: Flush multiple chunks in parallel via parallel().
 
         Chunks batch into _STORE_FLUSH_CHUNK_SIZE pieces, each piece runs
         _flush_store_batch (DuckDB ‖ graph) concurrently. Max
@@ -379,7 +379,7 @@ class FindingPipeline:
     async def _flush_store_batch(self, batch: list[Any]) -> None:
         """Flush a batch to DuckDB + LMDB.
 
-        P4-1: DuckDB write + graph upsert run in asyncio.gather — intra-batch
+        P4-1: DuckDB write + graph upsert run in parallel() — intra-batch
         parallelism.
 
         async_ingest_findings_batch is an async def that internally schedules
@@ -405,10 +405,13 @@ class FindingPipeline:
             ctx='finding_pipeline:store',
             logger_instance=logger,
         )
-        duckdb_ok, graph_ok = _result.ok[0], _result.ok[1]
-        if isinstance(duckdb_ok, BaseException):
+        # Guard: ok[] access only when items present (policy='collect' returns all results,
+        # but guard is defensive — protects against future policy changes or empty results)
+        duckdb_ok = _result.ok[0] if len(_result.ok) > 0 else None
+        graph_ok = _result.ok[1] if len(_result.ok) > 1 else None
+        if duckdb_ok is None or isinstance(duckdb_ok, BaseException):
             logger.warning(f'FindingPipeline: store flush DuckDB error: {duckdb_ok}')
-        if isinstance(graph_ok, BaseException):
+        if graph_ok is None or isinstance(graph_ok, BaseException):
             logger.warning(f'FindingPipeline: store flush graph error: {graph_ok}')
 
     def _graph_upsert_batch(self, batch: list[Any]) -> None:

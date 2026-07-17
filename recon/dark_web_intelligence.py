@@ -89,18 +89,19 @@ class OnionType(Enum):
     UNKNOWN = 'unknown'
 
 
-class CrawlTask(msgspec.Struct, frozen=True):
+class CrawlTask(msgspec.Struct, frozen=True, gc=False):
     """
     ISSUE-017: BFS crawl task — single URL with depth for parallel processing.
     Thread-safe: immutable (frozen=True), no internal mutable state.
+    F350M-R: gc=False for M1 8GB.
     """
     url: str
     depth: int
     parent_url: str | None = None
 
 
-class HiddenService(msgspec.Struct):
-    """Represents a discovered hidden service."""
+class HiddenService(msgspec.Struct, gc=False):
+    """Represents a discovered hidden service. F350M-R: gc=False for M1 8GB."""
     address: str
     onion_type: OnionType
     source: DarkWebSource
@@ -118,8 +119,8 @@ class HiddenService(msgspec.Struct):
     keywords: list[str] = field(default_factory=list)
     risk_level: RiskLevel = RiskLevel.MEDIUM
 
-class DarkWebContent(msgspec.Struct, frozen=True):
-    """Content extracted from dark web."""
+class DarkWebContent(msgspec.Struct, frozen=True, gc=False):
+    """Content extracted from dark web. F350M-R: gc=False for M1 8GB."""
     url: str
     content_hash: str
     content_type: str
@@ -173,7 +174,7 @@ class TorProxyManager:
             transport = httpx_socks.AsyncProxyTransport.from_url(f'socks5://{self.proxy_host}:{self.proxy_port}', rdns=True)
             limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
             timeout = httpx.Timeout(connect=60.0, read=120.0, write=20.0, pool=30.0)
-            self._session = httpx.AsyncClient(limits=limits, http2=True, timeout=timeout, transport=transport, trust_env=False, headers={'User-Agent': self._get_tor_browser_ua()})
+            self._session = httpx.AsyncClient(limits=limits, http2=False, timeout=timeout, transport=transport, trust_env=False, headers={'User-Agent': self._get_tor_browser_ua()})  # SOCKS5 tunnel doesn't support HTTP/2 ALPN
             logger.info(f'Tor proxy initialized: {self.proxy_host}:{self.proxy_port}')
             return True
         except asyncio.TimeoutError:

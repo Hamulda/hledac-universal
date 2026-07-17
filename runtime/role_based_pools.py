@@ -100,6 +100,8 @@ _DB_WORKERS: int = 2  # DuckDB concurrent writer limit
 _HASH_WORKERS: int = 4  # P-core count for CPU-bound hash
 _REGEX_WORKERS: int = 4  # P-core count for regex matching
 _ASYNC_IO_WORKERS: int = 4  # asyncio.to_thread workers
+_LMDB_WORKERS: int = 2  # LMDB writer limit (1 writer + 1 reader)
+_DUCKDB_FALLBACK_WORKERS: int = 4  # DuckDB fallback pool (when PEP 734 unavailable)
 
 
 class RAMBudgetExceeded(Exception):
@@ -164,14 +166,17 @@ class RoleBasedPools:
     __slots__ = (
         "_embed_executor",
         "_duckdb_executor",
+        "_duckdb_fallback_executor",
         "_hash_executor",
         "_regex_executor",
         "_async_io_executor",
+        "_lmdb_executor",
         "_embed_semaphore",
         "_db_semaphore",
         "_hash_semaphore",
         "_regex_semaphore",
         "_async_io_semaphore",
+        "_lmdb_semaphore",
         "_async_locks",
         "_init_lock",
         "_initialized",
@@ -187,6 +192,7 @@ class RoleBasedPools:
         self._hash_semaphore: asyncio.Semaphore | None = None
         self._regex_semaphore: asyncio.Semaphore | None = None
         self._async_io_semaphore: asyncio.Semaphore | None = None
+        self._lmdb_semaphore: asyncio.Semaphore | None = None
 
         # Per-role async locks for submit serialization
         self._async_locks: dict[str, asyncio.Lock] = {}
@@ -194,9 +200,11 @@ class RoleBasedPools:
         # Lazy executors
         self._embed_executor: IsolatedMLXExecutor | None = None
         self._duckdb_executor: IsolatedDuckDBExecutor | None = None
+        self._duckdb_fallback_executor: ThreadPoolExecutor | None = None
         self._hash_executor: ThreadPoolExecutor | None = None
         self._regex_executor: ThreadPoolExecutor | None = None
         self._async_io_executor: ThreadPoolExecutor | None = None
+        self._lmdb_executor: ThreadPoolExecutor | None = None
 
     def _ensure_initialized(self) -> None:
         """Lazy initialization of all executors (double-checked locking)."""
@@ -213,6 +221,7 @@ class RoleBasedPools:
             self._hash_semaphore = asyncio.Semaphore(_HASH_WORKERS)
             self._regex_semaphore = asyncio.Semaphore(_REGEX_WORKERS)
             self._async_io_semaphore = asyncio.Semaphore(_ASYNC_IO_WORKERS)
+            self._lmdb_semaphore = asyncio.Semaphore(_LMDB_WORKERS)
 
             # Initialize async locks
             self._async_locks = {
@@ -221,6 +230,7 @@ class RoleBasedPools:
                 "db": asyncio.Lock(),
                 "regex": asyncio.Lock(),
                 "async_io": asyncio.Lock(),
+                "lmdb": asyncio.Lock(),
             }
 
             # ThreadPoolExecutors for GIL-releasing work
@@ -235,6 +245,15 @@ class RoleBasedPools:
             self._async_io_executor = ThreadPoolExecutor(
                 max_workers=_ASYNC_IO_WORKERS,
                 thread_name_prefix="hledac-async-io",
+            )
+            # P2-1: Dedicated pools replacing unbounded asyncio.to_thread defaults
+            self._duckdb_fallback_executor = ThreadPoolExecutor(
+                max_workers=_DUCKDB_FALLBACK_WORKERS,
+                thread_name_prefix="hledac-duckdb-fb",
+            )
+            self._lmdb_executor = ThreadPoolExecutor(
+                max_workers=_LMDB_WORKERS,
+                thread_name_prefix="hledac-lmdb",
             )
 
             # PEP 734 executors (Python 3.14+, memory-isolated)
@@ -266,6 +285,11 @@ class RoleBasedPools:
         self._ensure_initialized()
         assert self._async_locks is not None
         return self._async_locks["async_io"]
+
+    async def _get_lmdb_lock(self) -> asyncio.Lock:
+        self._ensure_initialized()
+        assert self._async_locks is not None
+        return self._async_locks["lmdb"]
 
     # ------------------------------------------------------------------|
     # RAM budget checks (M1 8GB)                                       |
@@ -478,12 +502,18 @@ class RoleBasedPools:
                     except Exception:
                         return None
                 else:
-                    # Fallback: use asyncio.to_thread
+                    # P2-1 Fallback: use dedicated DuckDB pool (not default asyncio executor)
+                    assert self._duckdb_fallback_executor is not None
+                    loop = asyncio.get_running_loop()
                     try:
                         if timeout is not None:
-                            coro = asyncio.to_thread(fn, *args, **kwargs)
+                            coro = loop.run_in_executor(
+                                self._duckdb_fallback_executor, lambda: fn(*args, **kwargs)
+                            )
                             return await safe_wait_for(coro, timeout=timeout, label="role_pool:db")
-                        return await asyncio.to_thread(fn, *args, **kwargs)
+                        return await loop.run_in_executor(
+                            self._duckdb_fallback_executor, lambda: fn(*args, **kwargs)
+                        )
                     except Exception:
                         return None
 
@@ -584,6 +614,78 @@ class RoleBasedPools:
                     return await loop.run_in_executor(self._async_io_executor, lambda: fn(*args, **kwargs))
                 except Exception:
                     return None
+
+    # ------------------------------------------------------------------|
+    # Role: LMDB — Key-value store I/O (I/O-bound, 1 writer)          |
+    # ------------------------------------------------------------------|
+
+    async def run_lmdb[T](
+        self,
+        fn: "Callable[..., T]",
+        /,
+        *args: Any,
+        timeout: float | None = None,
+        **kwargs: Any,
+    ) -> T | None:
+        """
+        Run LMDB operations on dedicated 2-worker pool.
+
+        LMDB is single-writer but supports concurrent readers.
+        Pool has 2 workers: 1 writer + 1 reader (sufficient for LMDB's
+        mdb_reader_list API and write transactions).
+
+        P2-1: Replaces unbounded asyncio.to_thread() default executor
+        for LMDB operations in local_graph.py, persistent_kv_cache.py, etc.
+
+        Args:
+            fn: Synchronous callable that performs LMDB operation.
+                Must NOT hold the write lock across await points.
+            timeout: Optional timeout in seconds.
+
+        Returns:
+            Result of fn(*args, **kwargs), or None on error/timeout.
+
+        Pool: ThreadPoolExecutor with 2 workers (LMDB write lock serializes anyway)
+        """
+        self._ensure_initialized()
+        assert self._lmdb_semaphore is not None
+        assert self._lmdb_executor is not None
+
+        async with self._lmdb_semaphore:
+            async with await self._get_lmdb_lock():
+                loop = asyncio.get_running_loop()
+                try:
+                    if timeout is not None:
+                        coro = loop.run_in_executor(
+                            self._lmdb_executor, lambda: fn(*args, **kwargs)
+                        )
+                        return await safe_wait_for(coro, timeout=timeout, label="role_pool:lmdb")
+                    return await loop.run_in_executor(
+                        self._lmdb_executor, lambda: fn(*args, **kwargs)
+                    )
+                except Exception:
+                    return None
+
+    def run_lmdb_sync[T](
+        self,
+        fn: "Callable[..., T]",
+        /,
+        *args: Any,
+        **kwargs: Any,
+    ) -> T | None:
+        """
+        Synchronous version of run_lmdb for non-async contexts.
+
+        Note: Unlike run_lmdb, this does NOT use the thread pool because
+        it is called from synchronous code paths (e.g., shutdown hooks)
+        where the caller already owns the thread. The function is executed
+        directly with full exception shielding.
+        """
+        self._ensure_initialized()
+        try:
+            return fn(*args, **kwargs)
+        except Exception:
+            return None
 
     # ------------------------------------------------------------------|
     # Utility: batch processing                                        |

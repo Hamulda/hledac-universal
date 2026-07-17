@@ -705,9 +705,11 @@ async def parse_feeds_async(
             for sanitized, task in zip(sanitized_texts, tasks)
         ]
 
-    results = await asyncio.gather(
-        *[_parse_with_semaphore(task) for task in tasks],
-        return_exceptions=True,
+    from utils.async_helpers import parallel
+    result = await parallel(
+        [_parse_with_semaphore(task) for task in tasks],
+        policy="log",
+        ctx="feed_parse",
     )
 
     # Shutdown thread pool — prevents thread leak on repeated calls
@@ -715,12 +717,9 @@ async def parse_feeds_async(
 
     # Filter exceptions, return valid results
     filtered: list[list[FeedEntry]] = []
-    for result in results:
-        if isinstance(result, Exception):
-            # Swallow parse errors silently — fail-soft invariant (empty result = no entries)
-            filtered.append([])
-        elif isinstance(result, list):
-            filtered.append(result)
+    for item in result.ok:
+        if isinstance(item, list):
+            filtered.append(item)
         else:
             filtered.append([])
     return filtered

@@ -30,8 +30,8 @@ _SCHEDULE_DELAY_MS: int = 2000
 _MAX_ATTRS_PER_SPAN: int = 32
 _RING_BUFFER_CAPACITY: int = 4096
 
-class TelemetryConfig(msgspec.Struct, frozen=True):
-    """Immutable telemetry configuration."""
+class TelemetryConfig(msgspec.Struct, frozen=True, gc=False):
+    """Immutable telemetry configuration. F350M-R: gc=False for M1 8GB."""
     exporter_kind: str = 'stdout'
     service_name: str = 'hledac-universal'
     service_version: str = '18.0.0'
@@ -126,6 +126,10 @@ def _build_duckdb_exporter(cfg: TelemetryConfig) -> Any:
             conn = duckdb.connect(db_path, read_only=False)
         else:
             conn = duckdb.connect(database=':memory:', read_only=False)
+        # M1 8GB: memory_limit + threads + preserve_insertion_order
+        conn.execute("SET memory_limit = '256MB'")
+        conn.execute("PRAGMA threads = 2")
+        conn.execute("SET preserve_insertion_order = false")
         from hledac.universal.otel._duckdb_exporter import create_otel_spans_table
         create_otel_spans_table(conn)
         exporter = DuckDBSpanExporter(conn=conn, max_batch_size=500)

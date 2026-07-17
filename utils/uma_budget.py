@@ -49,7 +49,7 @@ def _detect_total_memory_mb() -> int:
     except (ImportError, AttributeError):
         return 8192
 _UMA_TOTAL_MB: int = _detect_total_memory_mb()
-from core.resource_governor import _THRESHOLD_CRITICAL_GIB, _THRESHOLD_EMERGENCY_GIB, _THRESHOLD_WARN_GIB, RATIOS_USED as _RATIOS_USED, DETECTED_TOTAL_GIB as _DETECTED_TOTAL_GIB
+from hledac.universal.core.resource_governor import _THRESHOLD_CRITICAL_GIB, _THRESHOLD_EMERGENCY_GIB, _THRESHOLD_WARN_GIB, RATIOS_USED as _RATIOS_USED, DETECTED_TOTAL_GIB as _DETECTED_TOTAL_GIB
 _WARN_THRESHOLD_MB: int = int(_THRESHOLD_WARN_GIB * 1024)
 _CRITICAL_THRESHOLD_MB: int = int(_THRESHOLD_CRITICAL_GIB * 1024)
 _EMERGENCY_THRESHOLD_MB: int = int(_THRESHOLD_EMERGENCY_GIB * 1024)
@@ -92,7 +92,7 @@ def get_system_memory_mb() -> tuple[int, int, int]:
         return (total_mb, used_mb, available_mb)
     except Exception:
         pass
-    from core.resource_governor import _get_cached_psutil, _read_virtual_memory_sync
+    from hledac.universal.core.resource_governor import _get_cached_psutil, _read_virtual_memory_sync
     try:
         vm = _get_cached_psutil('virtual_memory', _read_virtual_memory_sync)
         if vm is None:

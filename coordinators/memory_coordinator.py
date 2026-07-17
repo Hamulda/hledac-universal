@@ -199,7 +199,7 @@ class UniversalMemoryCoordinator:
     - Callback system for pressure events
     - Neuromorphic memory zones and pattern storage
     """
-    __slots__ = tuple(('_alloc_lock', '_alloc_lock_once', '_cached_cpu_percent', '_cached_on_battery', '_last_battery_check', '_last_cpu_sample_time', '_neuro_enabled', '_neuro_memory', '_pressure_lock', '_pressure_lock_once', '_running', '_stats_lock', '_stats_lock_once', '_thermal_history', '_thermal_state', 'allocations', 'callbacks', 'lock', 'memory_limit_bytes', 'memory_limit_mb', 'statistics', 'zone_allocations'))
+    __slots__ = tuple(('_alloc_lock', '_alloc_lock_once', '_cached_cpu_percent', '_cached_on_battery', '_last_battery_check', '_last_cpu_sample_time', '_last_memory_stats', '_neuro_enabled', '_neuro_memory', '_pressure_lock', '_pressure_lock_once', '_running', '_stats_lock', '_stats_lock_once', '_thermal_history', '_thermal_state', 'allocations', 'callbacks', 'lock', 'memory_limit_bytes', 'memory_limit_mb', 'statistics', 'zone_allocations'))
 
     def __init__(self, memory_limit_mb: float=5500, enable_neuromorphic: bool=False):
         """
@@ -240,6 +240,8 @@ class UniversalMemoryCoordinator:
         # ISSUE-16: CPU sampling cache (non-blocking psutil.cpu_percent interval=None)
         self._last_cpu_sample_time: float | None = None
         self._cached_cpu_percent: float | None = None
+        # ISSUE-P2-7b: Cache last MemoryStatistics to avoid stale reads in get_pressure()
+        self._last_memory_stats: MemoryStatistics | None = None
         # Backward compatibility — route old self.lock users to _get_alloc_lock()
         self.lock = self._alloc_lock  # type: ignore[assignment]
 
@@ -380,9 +382,15 @@ class UniversalMemoryCoordinator:
             return 'falling'
         return 'stable'
 
-    def get_pressure_level(self) -> str:
-        """Returns memory pressure level."""
-        current = self._calculate_pressure_level()
+    def get_pressure_level(self, used_memory_mb: float | None = None) -> str:
+        """Returns memory pressure level.
+
+        Args:
+            used_memory_mb: Optional pre-fetched value to avoid stale reads.
+                If None, reads self.statistics.used_memory_mb (may be stale
+                if called concurrently with get_memory_usage).
+        """
+        current = self._calculate_pressure_level(used_memory_mb)
         if current == MemoryPressureLevel.CRITICAL:
             return 'critical'
         elif current == MemoryPressureLevel.HIGH:
@@ -393,7 +401,11 @@ class UniversalMemoryCoordinator:
 
     async def get_pressure(self) -> PressureState:
         """Get canonical pressure state (UMAGovernor protocol)."""
-        current = self._calculate_pressure_level()
+        # Re-use latest value from get_memory_usage if available, avoids stale read
+        if hasattr(self, '_last_memory_stats') and self._last_memory_stats is not None:
+            current = self._calculate_pressure_level(self._last_memory_stats.used_memory_mb)
+        else:
+            current = self._calculate_pressure_level()
         return current
 
     def get_power_state(self) -> dict:
@@ -415,9 +427,13 @@ class UniversalMemoryCoordinator:
         return state
 
     def _on_battery_power(self) -> bool:
-        """Detekuje běh na baterii – cache s TTL."""
+        """Detekuje běh na baterii – cache s TTL 30s (sync path).
+
+        Fallback pro macOS bez psutil.sensors_battery().
+        Async varianta je _on_battery_power_async() pro event-loop context.
+        """
         now = time.time()
-        if now - self._last_battery_check > 60:
+        if now - self._last_battery_check > 30:
             try:
                 battery = psutil.sensors_battery()
                 if battery is not None:
@@ -425,7 +441,46 @@ class UniversalMemoryCoordinator:
                 else:
                     import subprocess
                     result = subprocess.run(['pmset', '-g', 'batt'], capture_output=True, text=True, timeout=2)
-                    self._cached_on_battery = b'discharging' in result.stdout.lower().encode()
+                    self._cached_on_battery = 'discharging' in result.stdout.lower()
+            except Exception:
+                self._cached_on_battery = True
+            self._last_battery_check = now
+        return self._cached_on_battery
+
+    async def _on_battery_power_async(self) -> bool:
+        """Async varianta – běží v thread poolu, neblokuje event loop.
+
+        Poznámky:
+        - psutil.sensors_battery() je sync I/O (~µs), běží v asyncio.to_thread()
+          aby neblokoval event loop v async kontextu
+        - pmset subprocess běží čistě async přes create_subprocess_exec
+        - returncode check zajišťuje že cache se neaktualizuje při selhání pmset
+        - asyncio.CancelledError je re-raised (nedědí z Exception v Python 3.8+,
+          ale pro kompatibilitu s older Python verze je explicitně ošetřena)
+        """
+        now = time.time()
+        if now - self._last_battery_check > 30:
+            try:
+                # psutil.sensors_battery() — sync I/O, thread pool aby neblokoval
+                battery = await asyncio.to_thread(psutil.sensors_battery)
+                if battery is not None:
+                    self._cached_on_battery = not battery.power_plugged
+                else:
+                    proc = await asyncio.create_subprocess_exec(
+                        'pmset', '-g', 'batt',
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    # ISSUE-3 fix: check returncode — nepoužívat stdout když pmset selhal
+                    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=1.0)
+                    if proc.returncode == 0:
+                        self._cached_on_battery = b'discharging' in stdout.lower()
+                    # else: cache se neaktualizuje, ponechá předchozí hodnotu
+            except asyncio.CancelledError:
+                raise  # Re-raise — CancelledError nesmí být polykána
+            except asyncio.TimeoutError:
+                # Timeout — ponechat starou cached hodnotu
+                pass
             except Exception:
                 self._cached_on_battery = True
             self._last_battery_check = now
@@ -765,18 +820,28 @@ class UniversalMemoryCoordinator:
 
         Returns:
             MemoryStatistics object
+
+        Note:
+            psutil calls (virtual_memory, memory_info) are blocking I/O (~5-50ms).
+            They run outside _stats_lock via asyncio.to_thread to avoid blocking
+            the event loop and to minimize lock contention with concurrent callers
+            of get_zone_usage().
         """
-        vm = psutil.virtual_memory()
+        # Blocking I/O outside lock — eliminates event-loop blocking
+        vm = await asyncio.to_thread(psutil.virtual_memory)
         process = psutil.Process()
+        used_mb = await asyncio.to_thread(lambda: process.memory_info().rss / (1024 * 1024))
+
         async with self._get_stats_lock():
-            used_mb = process.memory_info().rss / (1024 * 1024)
             self.statistics.used_memory_mb = used_mb
             self.statistics.available_memory_mb = vm.available / (1024 * 1024)
             if used_mb > self.statistics.peak_usage_mb:
                 self.statistics.peak_usage_mb = used_mb
             self.statistics.current_level = self._calculate_pressure_level()
             self.statistics.allocation_count = len(self.allocations)
-            return MemoryStatistics(total_memory_mb=vm.total / (1024 * 1024), used_memory_mb=used_mb, available_memory_mb=vm.available / (1024 * 1024), peak_usage_mb=self.statistics.peak_usage_mb, current_level=self.statistics.current_level, cleanup_count=self.statistics.cleanup_count, last_cleanup_time=self.statistics.last_cleanup_time, allocation_count=len(self.allocations))
+            result = MemoryStatistics(total_memory_mb=vm.total / (1024 * 1024), used_memory_mb=used_mb, available_memory_mb=vm.available / (1024 * 1024), peak_usage_mb=self.statistics.peak_usage_mb, current_level=self.statistics.current_level, cleanup_count=self.statistics.cleanup_count, last_cleanup_time=self.statistics.last_cleanup_time, allocation_count=len(self.allocations))
+            self._last_memory_stats = result
+            return result
 
     async def get_zone_usage(self, zone: MemoryZone) -> ZoneStatistics:
         """
@@ -795,13 +860,38 @@ class UniversalMemoryCoordinator:
             return ZoneStatistics(zone=zone.value, allocation_count=len(allocations), total_bytes=total_bytes, total_mb=total_bytes / (1024 * 1024), evictable_count=evictable, non_evictable_count=len(allocations) - evictable)
 
     async def get_all_zone_usage(self) -> dict[str, ZoneStatistics]:
-        """Get usage for all zones."""
-        return {zone.value: await self.get_zone_usage(zone) for zone in MemoryZone}
+        """Get usage for all zones (parallel fetch, fail-safe)."""
+        from utils.async_helpers import parallel
+        result = await parallel(
+            [self.get_zone_usage(z) for z in MemoryZone],
+            policy="collect",
+            ctx="zone_usage",
+        )
+        return {
+            z.value: data if not isinstance(data, Exception) else ZoneStatistics(
+                zone=z.value, allocation_count=0, total_bytes=0, total_mb=0.0,
+                evictable_count=0, non_evictable_count=0,
+            )
+            for z, data in zip(MemoryZone, result.ok)
+        }
 
     async def get_stats(self) -> dict[str, Any]:
-        """Get comprehensive memory statistics."""
+        """Get comprehensive memory statistics (parallel zone fetch, fail-safe)."""
+        from utils.async_helpers import parallel
         stats = await self.get_memory_usage()
-        result = {'total_mb': stats.total_memory_mb, 'used_mb': stats.used_memory_mb, 'available_mb': stats.available_memory_mb, 'peak_mb': stats.peak_usage_mb, 'percent': stats.used_memory_mb / stats.total_memory_mb * 100, 'limit_mb': self.memory_limit_mb, 'pressure': stats.current_level.value, 'allocations': stats.allocation_count, 'cleanups': stats.cleanup_count, 'zones': {zone.value: (await self.get_zone_usage(zone)).__dict__ for zone in MemoryZone}}
+        zone_result = await parallel(
+            [self.get_zone_usage(z) for z in MemoryZone],
+            policy="collect",
+            ctx="zone_stats",
+        )
+        zones = {
+            z.value: msgspec.to_builtins(data) if not isinstance(data, Exception) else {
+                'zone': z.value, 'allocation_count': 0, 'total_bytes': 0,
+                'total_mb': 0.0, 'evictable_count': 0, 'non_evictable_count': 0,
+            }
+            for z, data in zip(MemoryZone, zone_result.ok)
+        }
+        result = {'total_mb': stats.total_memory_mb, 'used_mb': stats.used_memory_mb, 'available_mb': stats.available_memory_mb, 'peak_mb': stats.peak_usage_mb, 'percent': stats.used_memory_mb / stats.total_memory_mb * 100, 'limit_mb': self.memory_limit_mb, 'pressure': stats.current_level.value, 'allocations': stats.allocation_count, 'cleanups': stats.cleanup_count, 'zones': zones}
         if self._neuro_memory:
             result['neuromorphic'] = self.get_neuromorphic_stats()
         return result
@@ -872,9 +962,16 @@ class UniversalMemoryCoordinator:
             logger.info(f'Freed {freed_bytes} bytes via eviction')
             return freed_bytes >= required_bytes
 
-    def _calculate_pressure_level(self) -> MemoryPressureLevel:
-        """Calculate current memory pressure level."""
-        usage_ratio = self.statistics.used_memory_mb / self.memory_limit_mb
+    def _calculate_pressure_level(self, used_memory_mb: float | None = None) -> MemoryPressureLevel:
+        """Calculate current memory pressure level.
+
+        Args:
+            used_memory_mb: Optional pre-fetched value. If None, reads from
+                self.statistics (caller must hold _stats_lock in that case).
+        """
+        if used_memory_mb is None:
+            used_memory_mb = self.statistics.used_memory_mb
+        usage_ratio = used_memory_mb / self.memory_limit_mb
         if usage_ratio < 0.6:
             return MemoryPressureLevel.NORMAL
         elif usage_ratio < 0.8:

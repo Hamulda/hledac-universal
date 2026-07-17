@@ -60,8 +60,8 @@ class Ok(Generic[T]):
         return self.value
 
 
-class Err(msgspec.Struct, frozen=True):
-    """Err result — carries error message and optional exception."""
+class Err(msgspec.Struct, frozen=True, gc=False):
+    """Err result — carries error message and optional exception. F350M-R: gc=False for M1 8GB."""
     error: str
     exception: BaseException | None = None
 

@@ -236,6 +236,14 @@ logger = get_logger(__name__)
 _BOOT_TELEMETRY_MAX: int = 200
 _boot_telemetry: deque[dict[str, Any]] = deque(maxlen=_BOOT_TELEMETRY_MAX)
 
+# Cached boot log path — initialized once
+_BOOT_LOG_PATH: pathlib.Path = pathlib.Path.home() / ".hledac" / "logs" / "boot.jsonl"
+
+try:
+    import orjson as _orjson
+except ImportError:
+    import json as _orjson  # fallback — orjson is always available in this project
+
 
 # ---- BootTelemetryDrainer singleton ----
 
@@ -252,14 +260,15 @@ class _BootTelemetryDrainer:
     - Fail-soft: any error drops to pass, never raises
     """
 
-    __slots__ = ("_queue", "_task", "_log_path", "_compact", "_started")
+    __slots__ = ("_queue", "_task", "_log_path", "_compact", "_started", "_stopped")
 
     def __init__(self) -> None:
-        self._queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=512)
+        self._queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue(maxsize=512)
         self._task: asyncio.Task[None] | None = None
         self._log_path: pathlib.Path = pathlib.Path.home() / ".hledac" / "logs" / "boot.jsonl"
         self._compact: Callable[[dict[str, Any]], str] | None = None
         self._started: bool = False
+        self._stopped: bool = False
 
     def _get_compact(self) -> Callable[[dict[str, Any]], str]:
         """Lazy-load orjson or rust json.compact (called from worker thread)."""
@@ -285,14 +294,16 @@ class _BootTelemetryDrainer:
         )
 
     async def stop(self) -> None:
-        """Graceful stop: flush all pending, then cancel worker."""
+        """
+        Graceful stop: enqueue sentinel, wait for drainer to process it.
+
+        ISSUE #2 fix: replaces the broken queue.join() which required task_done()
+        callbacks that were never called — stop() would hang forever.
+        """
         if not self._started or self._task is None:
             return
-        try:
-            await self._queue.join()  # drain all pending
-        except Exception:
-            pass
-        self._task.cancel()
+        self._stopped = True
+        self._enqueue_stop_sentinel()
         with contextlib.suppress(asyncio.CancelledError):
             await self._task
 
@@ -304,8 +315,14 @@ class _BootTelemetryDrainer:
         telemetry is best-effort and must never block the caller.
         """
         record = {"step": step, "status": status, "ms": time.time(), **kw}
+        _boot_telemetry.append(record)  # ISSUE #1 fix: was dead code, now live
         with contextlib.suppress(asyncio.QueueFull):
             self._queue.put_nowait(record)
+
+    def _enqueue_stop_sentinel(self) -> None:
+        """Non-blocking enqueue of shutdown sentinel (called from stop())."""
+        with contextlib.suppress(asyncio.QueueFull):
+            self._queue.put_nowait(None)
 
     async def _drain_loop(self) -> None:
         """Background worker: batch-flush queue to disk every 2s or 100 records."""
@@ -317,7 +334,12 @@ class _BootTelemetryDrainer:
             try:
                 async with asyncio.timeout(2.0):
                     item = await self._queue.get()
+                # Sentinel None = stop signal from stop()
+                if item is None or self._stopped:
+                    self._queue.task_done()
+                    break
                 batch.append(item)
+                self._queue.task_done()  # ISSUE #2 fix: was missing — join() would hang forever
             except asyncio.CancelledError:
                 # Graceful shutdown: flush remaining and exit
                 if batch:
@@ -345,7 +367,8 @@ class _BootTelemetryDrainer:
             # Build payload in memory — encode lines individually then join
             lines_out: list[bytes] = []
             for rec in batch:
-                line_bytes = compact(rec).encode() if isinstance(compact(rec), str) else compact(rec)
+                encoded = compact(rec)
+                line_bytes = encoded.encode() if isinstance(encoded, str) else encoded
                 lines_out.append(line_bytes + b"\n")
             payload = b"".join(lines_out)
             # Atomic write: tempfile + rename
@@ -355,10 +378,9 @@ class _BootTelemetryDrainer:
             try:
                 tmp.write(payload)
                 tmp.close()
-                with contextlib.suppress(FileNotFoundError):
+                with contextlib.suppress(FileNotFoundError, OSError):
                     os.replace(tmp.name, self._log_path)
             except Exception:
-                contextlib.suppress(FileNotFoundError, OSError)
                 raise
             finally:
                 try:
@@ -398,50 +420,27 @@ def _boot_record_sync(step: str, status: str, **kw: Any) -> None:
     """
     Sync wrapper for _boot_record_async — used ONLY from non-async context (main()).
 
-    F350M-R ISSUE #5 fix: wraps the async version in asyncio.to_thread to avoid
-    blocking the event loop on sync call sites.
+    P0-4 FIX: Writes directly to boot.jsonl WITHOUT creating any event loop.
+    This replaces the old asyncio.run() approach which:
+      (a) created a new loop on every call — 2-5 MB RSS × N calls on M1 8GB
+      (b) cannot run inside an existing event loop (RuntimeError from async ctx)
+
+    Design:
+      - Append-only line write to boot.jsonl — atomic, O(1) syscalls
+      - orjson serialization (sync path, no thread needed)
+      - orjson dumps to bytes + os.write for maximum simplicity
+      - Fail-soft: any error is silently dropped
     """
-    d = _get_boot_drainer()
-    # Ensure drainer is started (queue worker)
     try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        # No running loop — create a new one (sync context, e.g. main())
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    try:
-        loop.run_until_complete(d.start())
+        record = {"step": step, "status": status, "ms": time.time(), **kw}
+        # orjson returns bytes; json returns str — normalize to bytes
+        raw = _orjson.dumps(record)
+        line = raw + b"\n" if isinstance(raw, bytes) else (raw + "\n").encode()
+        with _BOOT_LOG_PATH.open("ab") as f:
+            f.write(line)
     except Exception:
+        # fail-safe: telemetry is best-effort, never propagates
         pass
-    # Run the record — loop is guaranteed available from above
-    try:
-        loop.run_until_complete(_boot_record_async(step, status, **kw))
-    except Exception:
-        pass
-
-
-def _boot_record(step: str, status: str, **kw: Any) -> None:
-    """
-    Public entry point — dispatches to async or sync based on context.
-
-    DEPRECATED: async callers should use _boot_record_async() directly.
-    """
-    try:
-        loop = asyncio.get_running_loop()
-        import warnings
-
-        warnings.warn(
-            "_boot_record called from async context — use await _boot_record_async instead",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        # Create task and store reference to prevent garbage collection
-        # F350M-R ISSUE #31: use safe_create_task with eager_start=True (CPU-bound on hot path)
-        task = safe_create_task(_boot_record_async(step, status, **kw), eager_start=True)
-        # Fire-and-forget but track at least in task list
-        task.add_done_callback(lambda _: None)  # silence unhandled exception warnings
-    except RuntimeError:
-        _boot_record_sync(step, status, **kw)
 
 
 def get_boot_telemetry() -> list[dict[str, Any]]:
@@ -1608,20 +1607,21 @@ async def _print_scorecard_report(
                 pass
         return entities
 
-    # Issue #36: asyncio.gather with return_exceptions=True for parallel I/O collection.
+    # Issue #36: P4-1: asyncio.gather → parallel() with TaskGroup.
     # Each _sync_* wrapped in asyncio.to_thread() (thread pool, not blocking event loop).
-    gather_results = await asyncio.gather(
+    from utils.async_helpers import parallel
+    phase1_coros = [
         asyncio.to_thread(lambda: _sync_get_dedup(sprint_report)),
         asyncio.to_thread(_sync_get_arrow_metrics),
         asyncio.to_thread(_sync_get_cb_states),
         asyncio.to_thread(_sync_get_peak_rss),
         asyncio.to_thread(_sync_get_ghost_entities),
-        return_exceptions=True,
-    )
-    _check_gathered(list(gather_results), None, "scorecard_phase1")
+    ]
+    phase1_result = await parallel(phase1_coros, policy="log", ctx="scorecard_phase1")
+    _check_gathered(list(phase1_result.ok), None, "scorecard_phase1")
 
     # Unpack results with fallback defaults
-    dedup_result, arrow_metrics_result, cb_open_domains, peak_rss_mb, ghost_entities = gather_results
+    dedup_result, arrow_metrics_result, cb_open_domains, peak_rss_mb, ghost_entities = phase1_result.ok
 
     if isinstance(dedup_result, Exception):
         accepted, ioc_nodes, source_yield = 0, 0, {}

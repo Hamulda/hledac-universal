@@ -79,12 +79,14 @@ def _posix_ipc_available() -> bool:
     return _POSIX_IPC_SPEC is not None and __import__("sys").platform == "darwin"
 
 
-class RingMMapChannel(msgspec.Struct, frozen=True):
+class RingMMapChannel(msgspec.Struct, frozen=True, gc=False):
     """
     IPC channel descriptor — passed to subprocess at spawn time.
 
     frozen=True: immutable after creation (safe to share across async tasks)
-    :    prevents cyclic GC overhead
+    gc=False: F350M-R — prevents cyclic GC overhead, critical for M1 8GB
+               millisecond OSINT streams. Zero-copy POSIX shm mmap means no
+               Python object cycles are created through the buffer.
     """
 
     shm_name: str

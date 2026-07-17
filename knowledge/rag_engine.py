@@ -25,7 +25,7 @@ import os
 import msgspec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str
+from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str, loads as _msgspec_loads
 from hledac.universal.utils.async_helpers import parallel
 if TYPE_CHECKING:
     pass
@@ -134,7 +134,7 @@ class BM25Index:
             self._term_doc_pair_count += 1
         self.doc_count = len(self.documents)
         self.avg_doc_length = sum(self.doc_lengths) / self.doc_count if self.doc_count > 0 else 0
-        if RANK_BM25_AVAILABLE:
+        if RANK_BM25_AVAILABLE and _RankBM25 is not None:
             tokenized_corpus = [self._tokenize(doc.content) for doc in self.documents]
             self._rank_bm25 = _RankBM25(tokenized_corpus)
 
@@ -378,7 +378,7 @@ class HNSWVectorIndex:
                 self._index.save(index_file)
                 import orjson
                 meta = {'id_to_label': self._id_to_label, 'label_to_id': self._label_to_id, 'current_label': self._current_label, 'dim': self.dim, 'max_elements': self.max_elements, 'M': self.M, 'ef_construction': self.ef_construction, 'ef_search': self.ef_search, 'space': self.space}
-                (save_path / 'usearch_metadata.orjson').write_bytes(or_msgspec_dumps_str(meta))
+                (save_path / 'usearch_metadata.orjson').write_text(_msgspec_dumps_str(meta))
                 logger.info(f'USearch index saved to {save_path}')
             except Exception as e:
                 logger.error(f'Failed to save USearch index: {e}')
@@ -404,7 +404,7 @@ class HNSWVectorIndex:
         if self._available and index_file.exists() and orjson_meta.exists():
             try:
                 import orjson
-                meta = or_msgspec_loads(orjson_meta.read_bytes())
+                meta = _msgspec_loads(orjson_meta.read_bytes())
                 self._id_to_label = meta['id_to_label']
                 self._label_to_id = {int(k): v for k, v in meta['label_to_id'].items()}
                 self._current_label = int(meta['current_label'])
@@ -1028,10 +1028,9 @@ class RAGEngine:
             raise ValueError('No path provided for saving index')
         self._hnsw_index.save_index(save_path)
         try:
-            import orjson
             doc_map_path = Path(save_path) / 'document_map.json'
-            with open(doc_map_path, 'wb') as f:
-                f.write(or_msgspec_dumps_str(self._document_map))
+            with open(doc_map_path, 'w') as f:
+                f.write(_msgspec_dumps_str(self._document_map))
         except ImportError:
             import json
             doc_map_path = Path(save_path) / 'document_map.json'
@@ -1057,11 +1056,11 @@ class RAGEngine:
             try:
                 import orjson
                 with open(doc_map_path, 'rb') as f:
-                    self._document_map = or_msgspec_loads(f.read())
+                    self._document_map = _msgspec_loads(f.read())
             except ImportError:
                 import json
                 with open(doc_map_path) as f:
-                    self._document_map = _msgspec_loads(f)
+                    self._document_map = _msgspec_loads(f.read())
         logger.info(f'HNSW index loaded from {load_path}')
 
     def get_hnsw_stats(self) -> dict[str, Any] | None:
@@ -1135,7 +1134,7 @@ class RAGEngine:
                 else:
                     output = result
                 if hasattr(output, 'tolist'):
-                    output = output.tolist()
+                    output = output.tolist()  # type: ignore[union-size]
                 embedding = []
                 while isinstance(output, list) and output:
                     if isinstance(output[0], list):

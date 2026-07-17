@@ -30,13 +30,11 @@ Design:
 import logging
 from typing import Any, TypeVar
 
-from pydantic import BaseModel
-
 from .modernbert_engine import ModernBertEngine
 
 logger = logging.getLogger(__name__)
 
-T = TypeVar('T', bound=BaseModel, default=BaseModel)  # PEP 696: TypeVar with default
+T = TypeVar('T')  # PEP 696: TypeVar with default
 
 
 class ModernBertModelAdapter:

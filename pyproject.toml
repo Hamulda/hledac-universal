@@ -47,16 +47,19 @@ dependencies = [
     # If explicitly needed: HLEDAC_ENABLE_CAMOUFOX=1 + install manually.
     # h2 REMOVED F3XX: httpx bundles h2 internally — no need for explicit dep.
     # HTTP/2 is enabled by default in httpx >= 0.28.0.
-    # httpx-socks<0.12.0: API stable in 0.11.x; AsyncProxyTransport used by Tor/I2P
-    "httpx-socks>=0.10.0,<0.12.0",
+    # httpx-socks>=0.11.0: persistent SOCKS5 connections — one handshake, reuse across
+    #   Tor circuits. httpx-socks 0.10 creates a new SOCKS5 handshake per request
+    #   (50–150 ms × N requests = 5–15 s overhead at 100+ requests).
+    #   API is identical — AsyncProxyTransport.from_url(rdns=) is drop-in across 0.10–0.11.x.
+    "httpx-socks>=0.11.0,<0.12.0",
     # hishel<2.0.0: API stable in 1.x; upper bound prevents 2.x breaking changes
     "hishel>=0.0.31,<2.0.0",
     "aiosqlite>=0.20.0",  # hishel dependency for AsyncSqliteStorage
     # ── Serialization ─────────────────────────────────────────────────────────
     "orjson>=3.10.0",
-    # UPGRADE 2026-07-05: msgspec 0.22.x is backward-compatible, adds fixes.
-    # NOTE: 0.22.0 not yet available for Python 3.14 — requires 0.21.x
-    "msgspec>=0.21.1,<0.23.0",
+    # STABLE 2026-07: msgspec 0.21.1 je nejnovější funkční release pro Py 3.14 cp314t (nogil).
+    # Všechna IPC schémata používají Struct(gc=False) pro minimální RAM footprint.
+    "msgspec>=0.21.1,<0.22.0",
     "msgpack>=1.1.2",
     # F3XX: Retry modernization — replaces manual exponential-backoff retry loops
     "tenacity>=9.0.0",
@@ -65,12 +68,13 @@ dependencies = [
     # Python duckdb 1.5.x is backward-compatible with DuckDB 1.10.x files.
     # rust_extensions bundles DuckDB 1.10.5 C++ source; no ABI conflict exists.
     # UPGRADE 2026-07-05: Extended upper bound to <2.0.0 for DuckDB 1.10+ support.
-    "duckdb>=1.5.0,<2.0.0",
-    "lancedb>=0.33.0,<0.35.0",
-    # Issue 4.3: sqlite-vec fallback for semantic_store — zero-process ANN on M1 8GB
+    "duckdb>=1.5.4,<2.0.0",
+    # Issue 4.3: sqlite-vec primary ANN store — zero-process, M1-native, ~5MB vs ~200MB LanceDB subprocess.
+    # LanceDB moved to [ml] extra (opt-in, >1M vectors where Rust-side ANN gives real benefit).
     "sqlite-vec>=0.1.0",
     "pyarrow>=24.0.0,<25.0.0",
-    "polars>=1.0.0,<2.0.0",
+    # Polars 1.42+ has improved streaming engine for M1 8GB — streaming collect by default.
+    "polars>=1.42.0,<2.0.0",
     "lmdb>=2.2.0",
     "diskcache>=5.6.0",
     # ── MLX / Apple Silicon ───────────────────────────────────────────────────
@@ -88,7 +92,7 @@ dependencies = [
     "mlx-gliner2>=0.1.1; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "fast-langdetect>=1.0.1",
     # ── Numerika / ML ─────────────────────────────────────────────────────────
-    "numpy>=2.4.6",
+    "numpy>=2.5.0",
     "scipy>=1.17.1",
     "scikit-learn>=1.9.0",
     "xgboost>=3.2.0",
@@ -105,7 +109,8 @@ dependencies = [
     "rank-bm25>=0.2.2",
     # UPGRADE 2026-07-05: Extended upper bound to <0.20.0 for rustworkx 0.18+ support.
     "rustworkx>=0.17.1,<0.20.0",
-    "python-igraph>=1.0.0",
+    # python-igraph REMOVED P2-5d: rustworkx is primary graph library (2026-07-17)
+    # rustworkx PyGraph replaced igraph.Graph for M1-optimized in-memory graphs
     "rapidfuzz>=3.0.0",
     # ── Parsing / web scraping ────────────────────────────────────────────────
     # selectolax PRIMARY: fast, pure Python, CSS selectors (M1 8GB friendly).
@@ -217,6 +222,10 @@ aiohttp-fallback = [
 # ── Optional ML extras ───────────────────────────────────────────────────────
 # Install with: uv sync --extra ml
 ml = [
+    # LanceDB ANN — opt-in for >1M vectors where Rust-side HNSW gives real benefit.
+    # Default: sqlite-vec primary (zero-process, M1-native, ~5MB resident).
+    # Install with: uv sync --extra ml  (also installs DSPy, transformers, flashrank).
+    "lancedb>=0.34.0,<0.36.0",
     # DSPy compiled programs (HLEDAC_ENABLE_DSPY=1)
     "dspy>=3.2.1",
     # Structured generation + grammar-constrained decoding
@@ -226,6 +235,45 @@ ml = [
     # Re-ranker for semantic search
     "flashrank>=0.2.10",
 ]
+# ── mlx-lm Architecture Note (F4XX) ─────────────────────────────────────────
+# WARNING: mlx-lm Python package (installed via [ml] extra above) is intended
+# ONLY for development and as a FALLBACK when the external Rust mlxcel binary
+# is not available.
+#
+# PRODUCTION INFERENCE ARCHITECTURE (M1 8GB / 16+ threads):
+#   The canonical inference path uses `mlxcel` — a standalone Rust binary that
+#   runs OUTSIDE the Python process via UNIX domain socket
+#   (/tmp/hledac_mlxcel.sock) or subprocess pipes.
+#
+#   Benefits of mlxcel over in-process mlx-lm:
+#     - RSS savings: ~300MB (Python mlx-lm bindings + MLX Metal runtime NOT
+#       loaded in Python process — mlxcel runs as separate Rust process)
+#     - M1 8GB ceiling: Python orchestrator (~1GB) + mlxcel (~2GB subprocess)
+#       leaves ~5GB for OS + KV cache vs ~6.25GB all-in-process
+#     - Failure isolation: mlxcel crash ≠ Python crash
+#     - Metal context: Rust has direct GPU queue access without Python GIL
+#
+#   Installation of mlxcel (outside pip/uv):
+#     # Build from source or download release from GitHub releases
+#     cargo install mlxcel  # or download prebuilt binary
+#     # mlxcel is auto-detected at runtime via:
+#     #   ~/.local/bin/mlxcel, ~/bin/mlxcel, /usr/local/bin/mlxcel,
+#     #   /opt/homebrew/bin/mlxcel, $PATH/mlxcel
+#
+#   When mlxcel IS available: Brain/model_manager.py routes ALL Hermes inference
+#   through MlxcelIpcClient → mlxcel (DeepHermes3Engine stays unloaded).
+#
+#   When mlxcel is NOT available: Falls back to DeepHermes3Engine (in-process
+#   mlx-lm Python bindings) — development / CI / no-Rust environments only.
+#
+# VERSION COLLISION CHECK (transformers vs dspy):
+#   dspy>=3.2.1 typically requires transformers>=4.30.0
+#   This [ml] extra pins transformers>=5.10.2 (compatible with both dspy and
+#   flashrank). No known collision at these version ranges.
+#   If you encounter ImportError: cannot import name 'Signal' from 'transformers':
+#     - Downgrade dspy to ~2.5.x which is compatible with transformers 4.x
+#     - Or upgrade transformers to >=4.30.0
+
 mlx-embed = [
     # MLX-native embedding (M1 unified memory, no subprocess, no conversion)
     # NOTE: exact mlx pin matches [project] main mlx pin — no version conflict.
@@ -235,11 +283,23 @@ mlx-embed = [
 http3 = [
     # Real QUIC lane for stealth/DA+ profiles (M1 8GB: ~50-80 MB resident).
     # INSTALL WITH: uv sync --extra http3  (NOT automatic — opt-in only)
-    # CUTTING-EDGE ALTERNATIVE: neqo (Mozilla Rust QUIC) — when available, replace
-    # aioquic with neqo for better M1 performance via rustls + zero-copy.
-    # Currently: aioquic is the only mature Python QUIC option.
+    # F320 hybrid strategy — auto-detection via get_quic_transport_adapter():
+    #   arm64 darwin + neqo available  → NeqoRustlsTransportAdapter (rustls,
+    #     immediate arena release, keeps M1 8GB UMA clean between requests)
+    #   otherwise                     → AioquicTransportAdapter (fallback)
+    # ARCHITECTURAL NOTE (M1 8GB): neqo + rustls has lower RAM footprint
+    # than aioquic + cryptography/BoringSSL because rustls uses M1-native
+    # ciphers and immediately releases memory arenas on session close.
+    # neqo is detected at RUNTIME via _probe_neqo() (arm64 darwin only),
+    # so the package is listed here for future expansion but is NOT
+    # currently on PyPI (TODO: add PyO3/ne-qp-rs wrapper when neqo ships
+    # a Python wheel; currently aioquic is the only available QUIC engine).
+    # "neqo>=0.1.0",  # ← UNCOMMENT WHEN neqo ships a PyPI wheel
+    # aioquic is the fallback when neqo is unavailable (x86_64, Linux, CI).
+    # M1 8GB RAM: aioquic is ~50-80 MB resident due to OpenSSL/BoringSSL
+    # and is therefore deprecated on M1 arm64 in favour of neqo.
     "aioquic>=1.3.0",
-    "cryptography>=48.0.0",  # BoringSSL-backed (Rust) — optimal on M1
+    "cryptography>=48.0.0",  # BoringSSL-backed (Rust) — used by aioquic fallback
 ]
 m1-local = [
     # M1-specific fallbacks (no aioquic — it lives in [http3] extra for M1 8GB).
@@ -285,7 +345,7 @@ dev = [
     "pygments>=2.15.0",
     "ruff>=0.1.0",
     "maturin>=1.0.0",
-    "numpy>=1.24.0",
+    "numpy>=2.5.0",
     "pyright>=1.1.410",
     "ty>=0.0.49",
     # ── Test-only extras (used in tests / probes only) ──────────────────────
@@ -334,6 +394,9 @@ ignore = ["E501", "F821", "B027"]  # BLE001: P1-01 audit in progress — see Iss
 # EXCEPTION: asyncio.wait_for(asyncio.shield(...)) patterns MUST keep asyncio.wait_for
 # (shield requires wait_for's timeout-interrupt behavior; safe_wait_for uses asyncio.timeout
 # which doesn't guarantee shield protection). Each shield site has inline noqa: F911.
+# TPL001: threading.Lock() must be registered in core/locks.py LockCategory registry.
+# CI: grep -rn 'threading\.Lock()' --include='*.py' . | grep -v 'test' | grep -v 'probe' | grep -v '_LOCK_REGISTRY\|register_lock\|core/locks' | grep -v '# noqa' — expect 0 matches for unregistered locks.
+# All threading.Lock / threading.RLock instances must call register_lock(LockCategory.XXX, lock, "module._name"). See core/locks.py.
 
 [tool.ruff.lint.per-file-ignores]
 # stubs/ – Apple/CoreML framework .pyi binding files; preserve original names
@@ -728,7 +791,7 @@ allowed-unresolved-imports = [
     "coremltools",
     "pytesseract",
     "stem",
-    "duckduckgo_search", "ddgs",
+    "ddgs",  # was: duckduckgo_search (renamed 2025)
     # camoufox REMOVED F330: nodriver covers browser fingerprinting needs
     "nodriver<0.50",  # F265C: >=0.50 has UTF-8 bug in cdp/network.py on Py 3.14
     "stix2",

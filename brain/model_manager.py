@@ -6,6 +6,8 @@ Zajišťuje:
 - Automatické uvolňování paměti (gc + MLX cache clear)
 - Jednotné rozhraní pro Hermes3, ModernBERT a GLiNER
 - Strict 1-model-at-a-time policy pro M1 8GB stabilitu
+- F4XX: Out-of-Process inference přes mlxcel UNIX socket / subprocess
+  (mlxcel = externí Rust binárka, šetří ~300MB Python RSS)
 """
 import asyncio
 import gc
@@ -14,16 +16,67 @@ import logging
 import os
 import time
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, AsyncIterator
 from contextlib import asynccontextmanager
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 from hledac.universal.brain.model_inference_guard import check_model_allowed, record_model_failure, record_model_success
 from hledac.universal.brain.quantization_selector import QuantizationSelector
 from hledac.universal.utils.concurrency import adjust_fetch_workers
 from hledac.universal.utils.exceptions import MemoryPressureError
+
+T = TypeVar("T")
 MLX_AVAILABLE = False
+
+# ── mlxcel detection ─────────────────────────────────────────────────────────
+
+_MLXCEL_DETECTED: bool = False
+
+
+def _detect_mlxcel() -> bool:
+    """
+    F4XX: Detect mlxcel binary presence.
+
+    Checks standard locations + PATH for the mlxcel Rust binary.
+    Does NOT attempt connection — only checks if binary exists.
+
+    mlxcel is the out-of-process inference server (Rust, separate process).
+    When available, all Hermes inference routes through MlxcelIpcClient
+    instead of in-process mlx-lm Python bindings (~300MB RSS savings).
+    """
+    global _MLXCEL_DETECTED
+    if _MLXCEL_DETECTED:
+        return True
+
+    # Paths checked by MlxcelIpcClient._find_binary()
+    _SEARCH_PATHS = [
+        Path.home() / ".local" / "bin" / "mlxcel",
+        Path.home() / "bin" / "mlxcel",
+        Path("/usr/local/bin/mlxcel"),
+        Path("/opt/homebrew/bin/mlxcel"),
+        Path("/opt/bin/mlxcel"),
+    ]
+    for path in _SEARCH_PATHS:
+        if path.exists():
+            _MLXCEL_DETECTED = True
+            logger.info("[MLXCEL] Detected mlxcel binary at %s", path)
+            return True
+
+    # Also check PATH
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        candidate = Path(directory) / "mlxcel"
+        if candidate.exists():
+            _MLXCEL_DETECTED = True
+            logger.info("[MLXCEL] Detected mlxcel binary at %s", candidate)
+            return True
+
+    return False
+
+
+def _mlxcel_is_available() -> bool:
+    """Runtime check: mlxcel binary detected on system."""
+    return _detect_mlxcel()
 _model_max_rss_gb: float = 6.0
 _MODEL_SIZES_GB = {'hermes': 1.75, 'modernbert': 0.5, 'gliner': 0.3}
 _UNLOAD_TIMEOUT_S: float = 5.0
@@ -114,6 +167,141 @@ class ModelType(Enum):
     MODERNBERT = auto()
     GLINER = auto()
 
+
+# ── MlxcelHermesAdapter ──────────────────────────────────────────────────────
+
+class MlxcelHermesAdapter:
+    """
+    F4XX: Out-of-Process Hermes adapter — routes ALL inference through mlxcel.
+
+    This adapter wraps MlxcelIpcClient and exposes the same `generate()` interface
+    as DeepHermes3Engine. It is returned by ModelManager._create_hermes_engine()
+    when mlxcel binary is detected on the system.
+
+    Benefits vs DeepHermes3Engine (in-process mlx-lm):
+      - RSS savings: ~300MB (Python mlx-lm bindings + MLX Metal runtime not loaded)
+      - Failure isolation: mlxcel crash ≠ Python crash
+      - M1 8GB: Python orchestrator stays under the 6.25GB ceiling
+
+    Fallback: If mlxcel becomes unavailable at runtime, generate() raises
+    MlxcelUnavailable and callers should fall back to DeepHermes3Engine.
+    """
+
+    __slots__ = ("_client", "_config", "_initialized")
+
+    def __init__(self) -> None:
+        self._client = None
+        self._config = self._default_config()
+        self._initialized = False
+
+    @staticmethod
+    def _default_config() -> Any:
+        """Return a minimal config object matching DeepHermes3Engine expectations."""
+        from dataclasses import dataclass
+        @dataclass
+        class _Cfg:
+            model_path: str = "mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit"
+            max_tokens: int = 1024
+            temperature: float = 0.7
+            context_window: int = 8192
+        return _Cfg()
+
+    async def initialize(self) -> None:
+        """Lazy-init mlxcel client on first use."""
+        if self._initialized:
+            return
+        try:
+            from hledac.universal.brain.mlxcel_ipc_client import get_mlxcel_client
+            self._client = await get_mlxcel_client()
+            self._initialized = True
+            logger.info("[MLXCEL ADAPTER] Client initialized")
+        except Exception as e:
+            logger.warning("[MLXCEL ADAPTER] Failed to init mlxcel client: %s", e)
+            self._initialized = False
+
+    async def generate(
+        self,
+        prompt: str,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        system_msg: str | None = None,
+        *,
+        thinking: bool = True,
+        adapter_path: str | None = None,
+    ) -> str:
+        """
+        Generate text via mlxcel subprocess (same signature as DeepHermes3Engine.generate).
+
+        Raises:
+            MlxcelUnavailable: If mlxcel is not connected / not available.
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        if self._client is None:
+            from hledac.universal.brain.mlxcel_ipc_client import MlxcelUnavailable
+            raise MlxcelUnavailable("mlxcel client not available")
+
+        try:
+            result = await self._client.generate(
+                prompt=prompt,
+                temperature=temperature or self._config.temperature,
+                max_tokens=max_tokens or self._config.max_tokens,
+                system_msg=system_msg,
+                thinking=thinking,
+                adapter_path=adapter_path,
+            )
+            return result.text
+        except Exception as e:
+            from hledac.universal.brain.mlxcel_ipc_client import MlxcelUnavailable
+            raise MlxcelUnavailable(f"mlxcel generate failed: {e}") from e
+
+    async def generate_stream(
+        self,
+        prompt: str,
+        max_tokens: int = 512,
+        system_msg: str | None = None,
+        temperature: float | None = None,
+        *,
+        thinking: bool = True,
+    ) -> AsyncIterator[str]:
+        """
+        Stream generated tokens via mlxcel subprocess.
+
+        Yields:
+            Token chunks as they are generated.
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        if self._client is None:
+            from hledac.universal.brain.mlxcel_ipc_client import MlxcelUnavailable
+            raise MlxcelUnavailable("mlxcel client not available")
+
+        try:
+            async for chunk in self._client.generate_stream(
+                prompt=prompt,
+                temperature=temperature or self._config.temperature,
+                max_tokens=max_tokens,
+                system_msg=system_msg,
+                thinking=thinking,
+            ):
+                yield chunk
+        except Exception as e:
+            logger.warning("[MLXCEL ADAPTER] Stream error: %s", e)
+
+    def apply_lora_adapter(self, adapter_path: str | None) -> None:
+        """LoRA adapter not yet supported via mlxcel IPC (stub for API compatibility)."""
+        if adapter_path is not None:
+            logger.debug("[MLXCEL ADAPTER] LoRA adapter not yet supported via IPC")
+
+    @property
+    def stats(self) -> Any:
+        """Return IPC telemetry from mlxcel client."""
+        if self._client is not None:
+            return self._client.stats
+        return None
+
 @asynccontextmanager
 async def model_lifecycle(model_name: ModelName):
     """
@@ -181,7 +369,20 @@ class ModelManager:
         self._psutil_available = PSUTIL_AVAILABLE
 
     def _create_hermes_engine(self) -> Any:
-        """Factory pro Hermes3Engine."""
+        """
+        Factory pro Hermes3Engine / MlxcelHermesAdapter.
+
+        F4XX: Pokud je dostupný mlxcel (Rust out-of-process inference server),
+        vrací MlxcelHermesAdapter — všechna generování jdou přes UNIX socket do
+        externího Rust procesu (~300MB RSS úspora oproti in-process mlx-lm).
+
+        Pokud mlxcel není k dispozici, vrací DeepHermes3Engine (původní
+        in-process mlx-lm Python bindings) — nouzový fallback.
+        """
+        if _mlxcel_is_available():
+            logger.info("[MODEL MANAGER] mlxcel detected — routing Hermes via MlxcelHermesAdapter")
+            return MlxcelHermesAdapter()
+        logger.info("[MODEL MANAGER] mlxcel not available — using DeepHermes3Engine (in-process mlx-lm)")
         from .deephermes3_engine import DeepHermes3Engine
         return DeepHermes3Engine()
 

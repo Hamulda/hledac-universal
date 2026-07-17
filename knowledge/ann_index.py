@@ -58,11 +58,19 @@ _USEARCH_CONNECTIVITY = 16  # M1 NEON-friendly connectivity
 _USEARCH_EXPANSION_ADD = 128  # Index build expansion
 _USEARCH_EXPANSION_SEARCH = 64  # Search expansion
 
-# IVF-PQ configuration (optimized for 256d vectors)
-# Old: num_partitions=64, num_sub_vectors=12 (suboptimal ratio)
-# New: num_partitions=128, num_sub_vectors=8 (256/8=32d per sub-vector, better)
-_IVF_PQ_PARTITIONS = 128
+# IVF-PQ configuration (M1 8GB optimized for 256d vectors)
+# num_partitions: 256 = 1 partition per ~195 rows at MAX_ENTRIES=50k
+#                 keeps PQ centroids well-trained without excessive memory
+# num_sub_vectors: 8  = 256/8=32d per sub-vector (good compression/accuracy)
+# max_iterations: 20  = M1 8GB friendly (vs default 50)
+_IVF_PQ_PARTITIONS = 256
 _IVF_PQ_SUB_VECTORS = 8
+_M1_MAX_ITERATIONS = 20
+
+# IVF-PQ nprobes search optimization (M1 latency guard)
+# Probes only 8 of 256 partitions per query — avoids full table scan
+# Reduces RAM bandwidth on M1 UMA by ~97% vs nprobes=256
+_IVF_PQ_NPROBES_DEFAULT = 8
 
 
 # -----------------------------------------------------------------------
@@ -335,6 +343,7 @@ class _ANNIndex:
                     num_partitions=getattr(self, "_ivfpq_num_partitions", _IVF_PQ_PARTITIONS),
                     num_sub_vectors=getattr(self, "_ivfpq_num_sub_vectors", _IVF_PQ_SUB_VECTORS),
                     vector_column_name="vector",
+                    max_iterations=_M1_MAX_ITERATIONS,
                 )
                 self._ivfpq_trained = True
                 logger.info(
@@ -450,26 +459,34 @@ class _ANNIndex:
                         idx = int(match.key)
                         if idx < len(self._usearch_labels):
                             fk = self._usearch_labels[idx]
-                            # Get vector from LanceDB
-                            try:
-                                doc = self._table.search(emb_norm.tolist(), vector_column_name="vector").limit(1).to_list()
-                                # Use USEARCH distance directly
-                                score = float(1.0 - match.distance)
-                                candidates[fk] = ([], "", score)
-                            except Exception:  # noqa: BLE001
-                                pass
+                            # Use USEARCH distance directly — LanceDB lookup not needed here
+                            # (LanceDB is only used in the fallback path below)
+                            score = float(1.0 - match.distance)
+                            candidates[fk] = ([], "", score)
                 except Exception as e:
                     logger.debug(f"[ANN] USEARCH search failed: {e}")
 
             # Fall back to LanceDB if USEARCH unavailable or failed
+            # M1 8GB optimization: nprobes=8 probes only 8/256 partitions (~3% of index)
+            # instead of scanning the full table — ~97% RAM bandwidth reduction
             if not candidates:
                 with self._lock:
-                    results = (
-                        self._table.search(emb_norm.tolist(), vector_column_name="vector")
-                        .metric("cosine")
-                        .limit(fetch_limit)
-                        .to_list()
-                    )
+                    try:
+                        results = (
+                            self._table.search(emb_norm.tolist(), vector_column_name="vector")
+                            .metric("cosine")
+                            .nprobes(_IVF_PQ_NPROBES_DEFAULT)
+                            .limit(fetch_limit)
+                            .to_list()
+                        )
+                    except TypeError:
+                        # Fallback for LanceDB versions without nprobes on builder
+                        results = (
+                            self._table.search(emb_norm.tolist(), vector_column_name="vector")
+                            .metric("cosine")
+                            .limit(fetch_limit)
+                            .to_list()
+                        )
 
                 for r in results:
                     fk = r.get("finding_key", "") or r.get("id", "")
@@ -506,7 +523,7 @@ class _ANNIndex:
 
             output = []
             for idx, score in reranked[:top_k]:
-                fk, (vec, th, _dist) = candidate_items[idx]
+                fk, (_, th, _dist) = candidate_items[idx]
                 score = max(0.0, min(1.0, score))
                 if score >= _MIN_SCORE:
                     output.append({"finding_key": fk, "text_hash": th or "", "score": score})
@@ -691,7 +708,7 @@ _ann_index: _ANNIndex | None = None
 _ann_index_lock = threading.Lock()
 
 
-def get_ann_index(lmdb_path: str | None = None) -> _ANNIndex:
+def get_ann_index() -> _ANNIndex:
     """
     Get the singleton ANN index instance (sync, thread-safe).
 
@@ -712,7 +729,7 @@ def get_ann_index(lmdb_path: str | None = None) -> _ANNIndex:
 _ann_index_async_lock = LazyAsyncioLock()
 
 
-async def get_ann_index_async(lmdb_path: str | None = None) -> _ANNIndex:
+async def get_ann_index_async() -> _ANNIndex:
     """
     Get the singleton ANN index instance (async-safe).
 

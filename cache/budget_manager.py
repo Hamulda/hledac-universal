@@ -17,8 +17,8 @@ import logging
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
+import msgspec
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field
 from ..tools.url_dedup import create_rotating_bloom_filter
 from ..utils.deduplication import SimHash
 logger = logging.getLogger(__name__)
@@ -67,39 +67,36 @@ class FrequencyTracker:
     def size_mb(self):
         return self.counters.nbytes / (1024 * 1024)
 
-class BudgetConfig(BaseModel):
+class BudgetConfig(msgspec.Struct, kw_only=True):
     """Configuration for resource budgets"""
-    model_config = ConfigDict(validate_assignment=True)
-    max_iterations: int = Field(default=6, ge=1, description='Maximum number of iterations')
-    max_docs: int = Field(default=30, ge=1, description='Maximum documents to collect')
-    max_time_sec: int = Field(default=180, ge=10, description='Maximum time in seconds')
-    max_tool_calls: int = Field(default=60, ge=1, description='Maximum tool calls')
-    min_confidence: float = Field(default=0.7, ge=0.0, le=1.0, description='Minimum confidence to stop early')
-    stagnation_threshold: int = Field(default=2, ge=1, description='Iterations without new entities to trigger stagnation')
+    max_iterations: int = 6
+    max_docs: int = 30
+    max_time_sec: int = 180
+    max_tool_calls: int = 60
+    min_confidence: float = 0.7
+    stagnation_threshold: int = 2
 
-class BudgetState(BaseModel):
+class BudgetState(msgspec.Struct, kw_only=True):
     """Current state of resource consumption"""
-    model_config = ConfigDict(validate_assignment=True)
-    iteration: int = Field(default=0, ge=0, description='Current iteration count')
-    docs_collected: int = Field(default=0, ge=0, description='Documents collected so far')
-    tool_calls: int = Field(default=0, ge=0, description='Tool calls made so far')
-    start_time: datetime = Field(default_factory=datetime.now, description='Workflow start time')
-    last_entities_count: int = Field(default=0, ge=0, description='Entity count in previous iteration')
-    stagnation_counter: int = Field(default=0, ge=0, description='Consecutive iterations without new entities')
-    current_confidence: float = Field(default=0.0, ge=0.0, le=1.0, description='Current confidence score')
+    iteration: int = 0
+    docs_collected: int = 0
+    tool_calls: int = 0
+    start_time: datetime = msgspec.field(default_factory=lambda: datetime.now(UTC))
+    last_entities_count: int = 0
+    stagnation_counter: int = 0
+    current_confidence: float = 0.0
 
-class IterationSnapshot(BaseModel):
+class IterationSnapshot(msgspec.Struct, kw_only=True):
     """Log of evidence collected in an iteration"""
-    model_config = ConfigDict(validate_assignment=True)
-    iteration: int = Field(ge=0, description='Iteration number')
-    entities: list[str] = Field(default_factory=list, description='Discovered entities')
-    sources: list[str] = Field(default_factory=list, description='Discovered sources')
-    claims: list[str] = Field(default_factory=list, description='Extracted claims')
-    findings: list[Any] = Field(default_factory=list, description='Research findings (Sprint 26)')
-    confidence: float = Field(default=0.0, ge=0.0, le=1.0, description='Confidence score')
-    timestamp: datetime = Field(default_factory=datetime.now, description='When evidence was logged')
+    iteration: int = 0
+    entities: list[str] = msgspec.field(default_factory=list)
+    sources: list[str] = msgspec.field(default_factory=list)
+    claims: list[str] = msgspec.field(default_factory=list)
+    findings: list[Any] = msgspec.field(default_factory=list)
+    confidence: float = 0.0
+    timestamp: datetime = msgspec.field(default_factory=lambda: datetime.now(UTC))
 
-class BudgetStatus(BaseModel):
+class BudgetStatus(msgspec.Struct, kw_only=True):
     """Status report for logging and debugging"""
     should_stop: bool = False
     stop_reason: StopReason = StopReason.NONE
@@ -110,8 +107,8 @@ class BudgetStatus(BaseModel):
     elapsed_time_sec: float = 0.0
     stagnation_counter: int = 0
     current_confidence: float = 0.0
-    budgets: dict[str, Any] = Field(default_factory=dict)
-    utilization: dict[str, float] = Field(default_factory=dict)
+    budgets: dict[str, Any] = msgspec.field(default_factory=dict)
+    utilization: dict[str, float] = msgspec.field(default_factory=dict)
 
 class BudgetManager:
     """

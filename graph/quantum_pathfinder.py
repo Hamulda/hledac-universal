@@ -1004,6 +1004,10 @@ class DuckPGQGraph:
             self.con.execute('PRAGMA busy_timeout=5000')
             self.con.execute('PRAGMA synchronous=NORMAL')
             self.con.execute('PRAGMA wal_autocheckpoint=262144')
+            # M1 8GB: memory_limit + threads + preserve_insertion_order
+            self.con.execute("SET memory_limit = '1GB'")
+            self.con.execute('PRAGMA threads = 2')
+            self.con.execute('SET preserve_insertion_order = false')
         except Exception as e:
             logger.debug(f'[GRAPH] WAL pragma init failed: {e}')
         self._init_schema()

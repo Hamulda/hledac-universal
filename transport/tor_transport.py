@@ -140,7 +140,7 @@ class TorTransport(Transport):
         self._session_direct = self._httpx.AsyncClient(limits=limits, http2=True, timeout=timeout, follow_redirects=True, trust_env=False)
         if self.security_level == 'tor':
             transport = self._httpx_socks.AsyncProxyTransport.from_url(f'socks5://127.0.0.1:{self.socks_port}', rdns=True)
-            self._session_tor = self._httpx.AsyncClient(limits=limits, http2=True, timeout=timeout, follow_redirects=True, transport=transport, trust_env=False)
+            self._session_tor = self._httpx.AsyncClient(limits=limits, http2=False, timeout=timeout, follow_redirects=True, transport=transport, trust_env=False)  # SOCKS5 tunnel doesn't support HTTP/2 ALPN
         else:
             self._session_tor = self._session_direct
         self._ready.set()

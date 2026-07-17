@@ -10,6 +10,7 @@ Python fallback: original asyncio.to_thread() path (always-on, fail-safe).
 from __future__ import annotations
 
 import asyncio
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -26,6 +27,8 @@ if TYPE_CHECKING:
 # Lazy import — Rust module loaded on first use, not at module load time.
 # This keeps the M1 RAM budget intact during startup.
 _lmdb_dht: Any | None = None
+# P2-1: lazy role_pools import to avoid circular dependency at module load.
+_role_pools: Any | None = None
 
 
 def _get_lmdb_dht() -> Any:
@@ -39,6 +42,15 @@ def _get_lmdb_dht() -> Any:
         except ImportError:
             _lmdb_dht = None
     return _lmdb_dht
+
+
+def _get_role_pools() -> Any:
+    """Lazy-load RoleBasedPools to avoid circular import at module load."""
+    global _role_pools
+    if _role_pools is None:
+        from hledac.universal.runtime.role_based_pools import get_role_pools
+        _role_pools = get_role_pools()
+    return _role_pools
 
 
 MAX_NODES_FOR_SCAN = 10000
@@ -130,7 +142,7 @@ class LocalGraphStore:
                 neighbors_json,
             )
         else:
-            # Fallback: Python asyncio.to_thread (always-on)
+            # P2-1 Fallback: dedicated LMDB pool (not default asyncio executor)
             def _put():
                 putmulti_bounded(
                     self.env,
@@ -144,7 +156,7 @@ class LocalGraphStore:
                     overwrite=True,
                 )
 
-            await asyncio.to_thread(_put)
+            await _get_role_pools().run_lmdb(_put)
 
         if self.graph is not None:
             import mlx.core as mx
@@ -200,7 +212,7 @@ class LocalGraphStore:
                             data = txn.get(f"neighbors:{node_id}".encode())
                             return decode(data) if data else []
 
-                    neighbors = await asyncio.to_thread(_get_neighbors)
+                    neighbors = await _get_role_pools().run_lmdb(_get_neighbors)
                     return {
                         "node_id": node_id,
                         "features": feat,
@@ -219,7 +231,7 @@ class LocalGraphStore:
                 neighbors = decode(neigh) if neigh else []
                 return (blob, neighbors)
 
-        result = await asyncio.to_thread(_get)
+        result = await _get_role_pools().run_lmdb(_get)
         if result is None:
             return None
         blob, neighbors = result
@@ -264,7 +276,7 @@ class LocalGraphStore:
                     if len(out) >= limit:
                         break
 
-        await asyncio.to_thread(_scan)
+        await _get_role_pools().run_lmdb(_scan)
         return out
 
     async def put_dht_node(
@@ -297,7 +309,7 @@ class LocalGraphStore:
                     with self.env.begin(write=True) as txn:
                         txn.put(f"dht_node:{node_id}".encode(), encrypted)
 
-                await asyncio.to_thread(_put)
+                await _get_role_pools().run_lmdb(_put)
         except Exception:
             pass
 
@@ -328,7 +340,7 @@ class LocalGraphStore:
                     )
                     return decode(plaintext)
 
-            return await asyncio.to_thread(_get)
+            return await _get_role_pools().run_lmdb(_get)
         except Exception:
             return None
 
@@ -356,7 +368,7 @@ class LocalGraphStore:
                     if len(out) >= limit:
                         break
 
-        await asyncio.to_thread(_scan)
+        await _get_role_pools().run_lmdb(_scan)
         return out
 
     async def count_dht_nodes(self) -> int:
@@ -379,7 +391,7 @@ class LocalGraphStore:
                         count += 1
             return count
 
-        return await asyncio.to_thread(_count)
+        return await _get_role_pools().run_lmdb(_count)
 
     async def clear_dht_nodes(self) -> None:
         """Clear all persisted DHT nodes (e.g., on startup)."""
@@ -395,7 +407,7 @@ class LocalGraphStore:
                     if k.startswith(b"dht_node:"):
                         txn.delete(k)
 
-        await asyncio.to_thread(_clear)
+        await _get_role_pools().run_lmdb(_clear)
 
     async def save_routing_snapshot(self, nodes: list[dict]) -> None:
         """
@@ -422,7 +434,7 @@ class LocalGraphStore:
                     with self.env.begin(write=True) as txn:
                         txn.put(b"routing_table_v1", encrypted)
 
-                await asyncio.to_thread(_put)
+                await _get_role_pools().run_lmdb(_put)
         except Exception:
             pass
 
@@ -457,7 +469,7 @@ class LocalGraphStore:
                             bucket_key, blob, associated_data=b"routing_table_v1"
                         )
 
-                plaintext = await asyncio.to_thread(_get)
+                plaintext = await _get_role_pools().run_lmdb(_get)
                 if not plaintext:
                     return []
                 data = decode(plaintext)

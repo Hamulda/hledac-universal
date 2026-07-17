@@ -88,7 +88,7 @@ def _get_rrf_reranker() -> Any | None:
     if 'rrf' in _RRF_RERANKER_CACHE:
         return _RRF_RERANKER_CACHE['rrf']
     try:
-        from lancedb.rerankers import RRFReranker
+        from lancedb.rerankers import RRFReranker  # lazy: lancedb in [ml] extra
         _RRF_RERANKER_CACHE['rrf'] = RRFReranker(K=60, return_score='all')
         return _RRF_RERANKER_CACHE['rrf']
     except ImportError:
@@ -190,6 +190,10 @@ class LanceDBIdentityStore:
     - Embedding policy: MLXEmbeddingManager singleton přes _mlx_embed_manager
     - Thermal awareness coupling: volá self._orch._memory_mgr (optional, debt)
 
+    LanceDB is OPT-IN via ``uv sync --extra ml`` (lancedb in [ml] extra).
+    Primary store is SqliteVecIdentityStore (zero-process, M1-native, ~5MB).
+    LanceDB kept as fallback for >1M vectors where Rust-side HNSW benefits.
+
     Features:
     - Hybrid search (vector + FTS)
     - Bounded storage
@@ -285,8 +289,11 @@ class LanceDBIdentityStore:
         self._metrics = {'cache_hits': 0, 'cache_misses': 0, 'quantization_errors': deque(maxlen=100), 'search_latencies': deque(maxlen=1000), 'cache_evictions': 0}
         self._large_override_enabled = _resolve_lancedb_cache_size() > _HLEDAC_HARD_MAX_CACHE_MB * 1024 * 1024
         self._ivfpq_enabled: bool = os.environ.get('HLEDAC_LANCEDB_QUANTIZE', '1') != '0'
-        self._ivfpq_num_partitions: int = max(8, min(256, int(os.environ.get('HLEDAC_LANCEDB_IVFPQ_NUM_PARTITIONS', '64'))))
-        self._ivfpq_num_sub_vectors: int = max(4, min(64, int(os.environ.get('HLEDAC_LANCEDB_IVFPQ_NUM_SUB_VECTORS', '12'))))
+        self._ivfpq_num_partitions: int = max(8, min(256, int(os.environ.get('HLEDAC_LANCEDB_IVFPQ_NUM_PARTITIONS', '256'))))
+        self._ivfpq_num_sub_vectors: int = max(4, min(64, int(os.environ.get('HLEDAC_LANCEDB_IVFPQ_NUM_SUB_VECTORS', '8'))))
+        # M1 8GB IVF-PQ nprobes search optimization (probes only ~3% of 256 partitions)
+        # Avoids full table scan — ~97% RAM bandwidth reduction on M1 UMA
+        self._ivfpq_nprobes: int = max(1, min(64, int(os.environ.get('HLEDAC_LANCEDB_IVFPQ_NPROBES', '8'))))
         self._ivfpq_trained: bool = False
         self._ivfpq_lock: asyncio.Lock = asyncio.Lock()
         try:
@@ -300,7 +307,7 @@ class LanceDBIdentityStore:
         """Synchronous LMDB put operation - zero-copy via orjson."""
         try:
             with self._cache_env.begin(write=True) as txn:
-                txn.put(key.encode(), or_msgspec_dumps_str(data))
+                txn.put(key.encode(), _msgspec_dumps_str(data))
         except Exception as e:
             logger.debug(f'LMDB put failed: {e}')
 
@@ -314,7 +321,7 @@ class LanceDBIdentityStore:
         try:
             with self._cache_env.begin(write=True) as txn:
                 for key, data in items:
-                    txn.put(key.encode(), or_msgspec_dumps_str(data))
+                    txn.put(key.encode(), _msgspec_dumps_str(data))
         except Exception as e:
             logger.debug(f'LMDB batch put failed ({len(items)} items): {e}')
 
@@ -338,7 +345,7 @@ class LanceDBIdentityStore:
             try:
                 with self._cache_env.begin(write=True) as txn:
                     for key, val in items:
-                        txn.put(key.encode(), or_msgspec_dumps_str(val))
+                        txn.put(key.encode(), _msgspec_dumps_str(val))
                 return None
             except Exception as e:
                 logger.warning(f'LMDB batch put failed ({len(items)} items): {e}')
@@ -641,7 +648,7 @@ class LanceDBIdentityStore:
                 with self._cache_env.begin() as txn:
                     cached = txn.get(text_hash.encode())
                     if cached:
-                        data = or_msgspec_loads(cached)
+                        data = _msgspec_loads(cached)
                         if 'ttl' in data and 'stored_at' in data:
                             if time.time() - data['stored_at'] > data['ttl']:
                                 return (None, True)
@@ -1022,7 +1029,7 @@ class LanceDBIdentityStore:
                         entries = []
                         for key, value in cursor:
                             try:
-                                data = or_msgspec_loads(value)
+                                data = _msgspec_loads(value)
                                 entries.append((key, data))
                             except Exception:
                                 pass
@@ -1078,7 +1085,7 @@ class LanceDBIdentityStore:
             return None
 
     def _initialize(self) -> None:
-        """Initialize database and table."""
+        """Initialize database and table (lazy — lancedb is opt-in via [ml] extra)."""
         try:
             from knowledge.lancedb_pool import get_connection
             import pyarrow as pa
@@ -1152,7 +1159,7 @@ class LanceDBIdentityStore:
                 num_sub_vectors = getattr(self, '_ivfpq_num_sub_vectors', 12)
 
                 def _train() -> None:
-                    self._table.create_index(metric='cosine', index_type='IVF_PQ', num_partitions=num_partitions, num_sub_vectors=num_sub_vectors)
+                    self._table.create_index(metric='cosine', index_type='IVF_PQ', num_partitions=num_partitions, num_sub_vectors=num_sub_vectors, max_iterations=20)
                 await asyncio.to_thread(_train)
                 self._ivfpq_trained = True
                 logger.info(f'[LANCEDB] IVF-PQ trained: table=entities rows={row_count} num_partitions={num_partitions} num_sub_vectors={num_sub_vectors}')
@@ -1297,14 +1304,30 @@ class LanceDBIdentityStore:
                     builder = self._table.search(query_type='hybrid', vector_column_name='embedding').vector(_emb).text(_txt).limit(_lim)
                     if reranker is not None:
                         builder = builder.rerank(reranker=reranker)
+                    # M1 8GB optimization: probe only ~3% of IVF_PQ partitions
+                    _nprobes = self._ivfpq_nprobes
+                    try:
+                        builder = builder.nprobes(_nprobes)
+                    except TypeError:
+                        pass  # Fallback for LanceDB versions without nprobes
                     return builder.to_polars()
                 elif _qt == 'fts' and _txt and self._lancedb_has_fts:
                     return self._table.search(_txt, query_type='fts').limit(_lim).to_polars()
                 elif _txt and (not self._lancedb_has_fts):
                     logger.debug('[LANCEDB:H] text_hint=%r ignored — FTS not supported in local LanceDB', str(_txt)[:50])
-                    return self._table.search(_emb, vector_column_name='embedding').limit(_lim).to_polars()
+                    # M1 8GB optimization: probe only ~3% of IVF_PQ partitions
+                    _nprobes = self._ivfpq_nprobes
+                    try:
+                        return self._table.search(_emb, vector_column_name='embedding').nprobes(_nprobes).limit(_lim).to_polars()
+                    except TypeError:
+                        return self._table.search(_emb, vector_column_name='embedding').limit(_lim).to_polars()
                 else:
-                    return self._table.search(_emb, vector_column_name='embedding').limit(_lim).to_polars()
+                    # M1 8GB optimization: probe only ~3% of IVF_PQ partitions
+                    _nprobes = self._ivfpq_nprobes
+                    try:
+                        return self._table.search(_emb, vector_column_name='embedding').nprobes(_nprobes).limit(_lim).to_polars()
+                    except TypeError:
+                        return self._table.search(_emb, vector_column_name='embedding').limit(_lim).to_polars()
             df = await asyncio.to_thread(_search)
             if '_relevance_score' in df.columns:
                 df = df.with_columns(pl.col('_relevance_score').alias('similarity'))
@@ -1887,14 +1910,30 @@ class LanceDBAcademicStore:
                     builder = self._table.search(query_type='hybrid', vector_column_name='embedding', fts_columns=['title', 'abstract']).vector(_emb).text(_q).limit(_k)
                     if reranker is not None:
                         builder = builder.rerank(reranker=reranker)
+                    # M1 8GB optimization: probe only ~3% of IVF_PQ partitions
+                    _nprobes = self._ivfpq_nprobes
+                    try:
+                        builder = builder.nprobes(_nprobes)
+                    except TypeError:
+                        pass
                     results = builder
                 elif _qt == 'fts' and _q and self._lancedb_has_fts:
                     results = self._table.search(_q, query_type='fts', fts_columns=['title', 'abstract']).limit(_k)
                 elif _q and (not self._lancedb_has_fts):
                     logger.debug('[LANCEDB:H] academic query=%r — FTS not available, vector only', str(_q)[:50])
-                    results = self._table.search(_emb, vector_column_name='embedding')
+                    # M1 8GB optimization: probe only ~3% of IVF_PQ partitions
+                    _nprobes = self._ivfpq_nprobes
+                    try:
+                        results = self._table.search(_emb, vector_column_name='embedding').nprobes(_nprobes)
+                    except TypeError:
+                        results = self._table.search(_emb, vector_column_name='embedding')
                 else:
-                    results = self._table.search(_emb, vector_column_name='embedding')
+                    # M1 8GB optimization: probe only ~3% of IVF_PQ partitions
+                    _nprobes = self._ivfpq_nprobes
+                    try:
+                        results = self._table.search(_emb, vector_column_name='embedding').nprobes(_nprobes)
+                    except TypeError:
+                        results = self._table.search(_emb, vector_column_name='embedding')
                 if _filters:
                     for key, value in _filters.items():
                         results = results.where(f"{key} = '{value}'")
@@ -1921,10 +1960,17 @@ class LanceDBAcademicStore:
         if not self._initialized:
             await self.initialize()
         try:
-            results = self._table.search([0.0] * self._dim, vector_column_name='embedding').where(f"paper_id = '{paper_id}'").limit(1).to_list()
-            if not results:
+            _nprobes = self._ivfpq_nprobes
+            try:
+                _base = self._table.search([0.0] * self._dim, vector_column_name='embedding').nprobes(_nprobes).where(f"paper_id = '{paper_id}'").limit(1).to_list()
+            except TypeError:
+                _base = self._table.search([0.0] * self._dim, vector_column_name='embedding').where(f"paper_id = '{paper_id}'").limit(1).to_list()
+            if not _base:
                 return []
-            similar = self._table.search(results[0].get('embedding', [0.0] * self._dim), vector_column_name='embedding').where(f"citation_count > {results[0].get('citation_count', 0) * 0.5}").limit(max_papers).to_list()
+            try:
+                similar = self._table.search(_base[0].get('embedding', [0.0] * self._dim), vector_column_name='embedding').nprobes(_nprobes).where(f"citation_count > {_base[0].get('citation_count', 0) * 0.5}").limit(max_papers).to_list()
+            except TypeError:
+                similar = self._table.search(_base[0].get('embedding', [0.0] * self._dim), vector_column_name='embedding').where(f"citation_count > {_base[0].get('citation_count', 0) * 0.5}").limit(max_papers).to_list()
             papers = []
             for row in similar:
                 if row.get('paper_id') != paper_id:

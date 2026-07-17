@@ -41,6 +41,15 @@ _LAZY_ATTRS: dict[str, str] = {
     # ISSUE-001: rust_backend always resolves to the package (core/rust_backend/)
     # even when imported as `from core.rust_backend import rust`.
     "rust_backend": "hledac.universal.core.rust_backend",
+    # Lock registry for deadlock prevention
+    "LockCategory": "hledac.universal.core.locks",
+    "LockInfo": "hledac.universal.core.locks",
+    "register_lock": "hledac.universal.core.locks",
+    "acquire_in_order": "hledac.universal.core.locks",
+    "get_registered_locks": "hledac.universal.core.locks",
+    "get_locks_by_category": "hledac.universal.core.locks",
+    "AsyncLockDCLP": "hledac.universal.core.locks",
+    "make_counter": "hledac.universal.core.locks",
 }
 
 # Thread-safe lazy loading lock — guards __getattr__ against concurrent import
@@ -101,4 +110,13 @@ __all__ = [
     'get_system_detector',
     'get_hardware_capabilities',
     'HardwareCapabilities',
+    # Lock registry for deadlock prevention
+    'LockCategory',
+    'LockInfo',
+    'register_lock',
+    'acquire_in_order',
+    'get_registered_locks',
+    'get_locks_by_category',
+    'AsyncLockDCLP',
+    'make_counter',
 ]

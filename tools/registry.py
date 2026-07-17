@@ -21,7 +21,6 @@ from collections.abc import Callable
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 import msgspec
-from pydantic import BaseModel, Field
 if TYPE_CHECKING:
     pass
 
@@ -38,13 +37,13 @@ class RiskLevel(StrEnum):
     HIGH = 'high'
     CRITICAL = 'critical'
 
-class CostModel(BaseModel):
+class CostModel(msgspec.Struct, kw_only=True):
     """Cost model for tool execution planning and resource management."""
-    ram_mb_est: int = Field(default=100, description='Estimated RAM usage in MB')
-    time_ms_est: int = Field(default=1000, description='Estimated execution time in milliseconds')
-    network: bool = Field(default=False, description='Whether tool requires network access')
-    network_cost: int = Field(default=0, description='Network cost tier: 0=none, 1=light, 2=heavy')
-    risk_level: RiskLevel = Field(default=RiskLevel.LOW, description='Risk level for sandboxing decisions')
+    ram_mb_est: int = 100
+    time_ms_est: int = 1000
+    network: bool = False
+    network_cost: int = 0
+    risk_level: RiskLevel = RiskLevel.LOW
 
     def to_hermes_hint(self) -> dict[str, Any]:
         """Convert to compact hint for Hermes LLM."""
@@ -115,16 +114,16 @@ class SourceReputation(msgspec.Struct):
         """Return dict for serialization."""
         return {'domain': self.domain, 'path_prefix': self.path_prefix, 'corroboration_rate': round(self.corroboration_rate, 3), 'contested_rate': round(self.contested_rate, 3), 'drift_rate': round(self.drift_rate, 3), 'blocked_rate': round(self.blocked_rate, 3), 'overall_score': round(self.overall_score, 3), 'total_claims': self.total_claims, 'last_updated': self.last_updated}
 
-class RateLimits(BaseModel):
+class RateLimits(msgspec.Struct, kw_only=True):
     """Rate limiting configuration for tools."""
-    max_calls_per_run: int = Field(default=100, description='Maximum calls per agent run')
-    max_parallel: int = Field(default=1, description='Maximum parallel executions')
+    max_calls_per_run: int = 100
+    max_parallel: int = 1
 
     def to_hermes_hint(self) -> dict[str, Any]:
         """Convert to compact hint for Hermes LLM."""
         return {'max_calls': self.max_calls_per_run, 'parallel': self.max_parallel}
 
-class Tool(BaseModel):
+class Tool(msgspec.Struct, kw_only=True):
     """
     Tool definition with schemas, cost model, and handler.
 
@@ -133,23 +132,31 @@ class Tool(BaseModel):
     execute_with_limits() gates on required_capabilities when
     available_capabilities is explicitly provided.
     """
-    model_config = {'arbitrary_types_allowed': True}
-    name: str = Field(description='Unique tool identifier')
-    description: str = Field(description='Description for Hermes LLM')
-    args_schema: type[BaseModel] = Field(description='Pydantic model for arguments')
-    returns_schema: type[BaseModel] = Field(description='Pydantic model for return value')
-    cost_model: CostModel = Field(default_factory=CostModel)
-    rate_limits: RateLimits = Field(default_factory=RateLimits)
-    handler: Callable[..., Any] = Field(description='Tool implementation')
-    required_capabilities: set[str] = Field(default_factory=set, description='Capabilities required for this tool')
+    name: str
+    description: str
+    args_schema: type
+    returns_schema: type
+    cost_model: CostModel = msgspec.field(default_factory=CostModel)
+    rate_limits: RateLimits = msgspec.field(default_factory=RateLimits)
+    handler: Callable[..., Any]
+    required_capabilities: set[str] = msgspec.field(default_factory=set)
 
     def to_tool_card(self) -> dict[str, Any]:
         """Generate tool card for Hermes LLM consumption."""
-        return {'name': self.name, 'description': self.description, 'args_schema': self.args_schema.model_json_schema(), 'returns_schema': self.returns_schema.model_json_schema(), 'cost_hints': self.cost_model.to_hermes_hint(), 'rate_limits': self.rate_limits.to_hermes_hint()}
+        args_schema_info = getattr(self.args_schema, '__name__', str(self.args_schema))
+        returns_schema_info = getattr(self.returns_schema, '__name__', str(self.returns_schema))
+        return {
+            'name': self.name,
+            'description': self.description,
+            'args_schema': args_schema_info,
+            'returns_schema': returns_schema_info,
+            'cost_hints': self.cost_model.to_hermes_hint(),
+            'rate_limits': self.rate_limits.to_hermes_hint()
+        }
 
-    def validate_args(self, args: dict[str, Any]) -> BaseModel:
+    def validate_args(self, args: dict[str, Any]) -> Any:
         """Validate arguments against schema."""
-        return self.args_schema(**args)
+        return msgspec.convert(args, self.args_schema)
 
 class ToolRegistry:
     """

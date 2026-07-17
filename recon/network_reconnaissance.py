@@ -37,9 +37,6 @@ from hledac.universal.utils.msgspec_json import loads as _msgspec_loads
 import httpx
 import dns.asyncresolver
 from hledac.universal.transport.session_pool import session_pool
-import dns.name
-import dns.rdatatype
-import dns.resolver
 from hledac.universal.utils.async_helpers import safe_gather_ok
 from hledac.universal.utils.async_helpers import safe_gather
 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, ConcurrencyBudgetRegistry
@@ -416,7 +413,7 @@ class SSLAnalyzer:
                         if 'DNS:' in item:
                             san_domains.append(item.replace('DNS:', ''))
             sha256_fp = hashlib.sha256(cert_der).hexdigest()
-            sha1_fp = hashlib.sha256(cert_der).hexdigest()
+            sha1_fp = hashlib.sha1(cert_der).hexdigest()
             not_before = datetime.strptime(x509.get_notBefore().decode(), '%Y%m%d%H%M%SZ').replace(tzinfo=UTC)
             not_after = datetime.strptime(x509.get_notAfter().decode(), '%Y%m%d%H%M%SZ').replace(tzinfo=UTC)
             days_until_expiry = (not_after - datetime.now(UTC)).days
@@ -846,7 +843,7 @@ async def resolve_cname_chain(domain: str, max_depth: int=10) -> list[CNAMERecor
                 cname_value = str(answers[0]).rstrip('.')
                 chain.append(CNAMERecord(source=current, target=cname_value, ttl=answers.ttl))
                 current = cname_value
-            except (TimeoutError, dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
+            except (TimeoutError, dns.asyncresolver.NoAnswer, dns.asyncresolver.NXDOMAIN):
                 break
     except Exception as e:
         logger.debug(f'resolve_cname_chain({domain}): {e}')

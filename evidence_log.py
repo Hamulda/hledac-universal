@@ -860,7 +860,13 @@ class EvidenceLog:
             try:
                 import duckdb
                 self._duckdb_conn = duckdb.connect(str(self._db_path).replace('.db', '.duckdb'), read_only=False)
-                self._duckdb_conn.execute("PRAGMA threads=2")  # M1 8GB: 2 threads max
+                # M1 8GB: memory_limit + threads + preserve_insertion_order
+                try:
+                    self._duckdb_conn.execute("SET memory_limit = '256MB'")
+                    self._duckdb_conn.execute("PRAGMA threads=2")
+                    self._duckdb_conn.execute("SET preserve_insertion_order = false")
+                except Exception:  # noqa: BLE001 — fail-soft
+                    pass
                 self._duckdb_conn.execute('''
                     CREATE TABLE IF NOT EXISTS events (
                         id INTEGER PRIMARY KEY,

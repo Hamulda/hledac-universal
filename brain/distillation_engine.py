@@ -32,7 +32,23 @@ import numpy as np
 from hledac.universal.utils.async_helpers import safe_gather_ok
 from hledac.universal.utils.mlx_cache import MLX_AVAILABLE, get_mx
 logger = logging.getLogger(__name__)
-_MLX_NN_AVAILABLE: bool = MLX_AVAILABLE
+
+# Lazy-loaded mlx.nn module (avoids importing MLX at module load time)
+_mlx_nn_mod: Any = None
+
+
+def _get_mlx_nn() -> Any:
+    """Lazily import mlx.nn, returning None if unavailable."""
+    global _mlx_nn_mod
+    if _mlx_nn_mod is None:
+        try:
+            import mlx.nn as _mlx_nn_mod  # type: ignore[assignment]
+        except ImportError:
+            _mlx_nn_mod = None
+    return _mlx_nn_mod
+
+
+_MLX_NN_AVAILABLE: bool = _get_mlx_nn() is not None
 
 class DistillationExample(msgspec.Struct):
     """
@@ -80,8 +96,7 @@ class _CriticMLPBase:
         detail_score = min(avg_step_len / 100.0, 0.3)
         return min(length_score + detail_score, 1.0)
 if _MLX_NN_AVAILABLE:
-    from hledac.universal.utils.mlx_lazy import nn as _get_nn
-    _nn_mod = _get_nn()
+    _nn_mod = _get_mlx_nn()
     if _nn_mod is None:
         raise ImportError('MLX nn unavailable')
     nn = _nn_mod
@@ -137,10 +152,10 @@ else:
             self.hidden_dims = hidden_dims or [128, 64]
             logger.debug('CriticMLP running in heuristic mode (MLX unavailable)')
 
-        def __call__(self, x) -> np.ndarray:
+        def __call__(self, _x) -> np.ndarray:
             return np.array([0.5])
 
-        def predict(self, embedding: np.ndarray) -> float:
+        def predict(self, _embedding: np.ndarray) -> float:
             return 0.5
 
 class DistillationEngine:
@@ -201,7 +216,6 @@ class DistillationEngine:
 
     async def _init_database(self) -> None:
         """Inicializovat SQLite databázi."""
-        from contextlib import closing
         try:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -231,10 +245,17 @@ class DistillationEngine:
             logger.error('Engine not initialized')
             return False
         try:
-            with await asyncio.to_thread(closing, sqlite3.connect(str(self._db_path))) as conn:
-                cursor = await asyncio.to_thread(conn.cursor)
-                await asyncio.to_thread(lambda: cursor.execute('\n                    INSERT INTO examples (query, chain, score, metadata, timestamp)\n                    VALUES (?, ?, ?, ?, ?)\n                    ', (example.query, _json.encode(example.chain).decode('utf-8'), example.score, _json.encode(example.metadata).decode('utf-8'), example.timestamp)))
-                await asyncio.to_thread(lambda: conn.commit())
+
+            def _do_insert():
+                with closing(sqlite3.connect(str(self._db_path))) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        '\n                        INSERT INTO examples (query, chain, score, metadata, timestamp)\n                        VALUES (?, ?, ?, ?, ?)\n                        ',
+                        (example.query, _json.encode(example.chain).decode('utf-8'), example.score, _json.encode(example.metadata).decode('utf-8'), example.timestamp),
+                    )
+                    conn.commit()
+
+            await asyncio.to_thread(_do_insert)
             logger.debug(f'Added example with score {example.score:.3f}')
             return True
         except Exception as e:
@@ -251,11 +272,15 @@ class DistillationEngine:
         if not self._initialized:
             logger.error('Engine not initialized')
             return []
+
+        def _do_select() -> list[tuple]:
+            with closing(sqlite3.connect(str(self._db_path))) as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT query, chain, score, metadata, timestamp FROM examples ORDER BY timestamp DESC LIMIT 10000')
+                return cursor.fetchall()
+
         try:
-            with await asyncio.to_thread(closing, sqlite3.connect(str(self._db_path))) as conn:
-                cursor = await asyncio.to_thread(conn.cursor)
-                await asyncio.to_thread(lambda: cursor.execute('SELECT query, chain, score, metadata, timestamp FROM examples ORDER BY timestamp DESC LIMIT 10000'))
-                rows = await asyncio.to_thread(lambda: cursor.fetchall())
+            rows = await asyncio.to_thread(_do_select)
             examples = []
             for row in rows:
                 examples.append(DistillationExample(query=row[0], chain=_json.decode(row[1]), score=row[2], metadata=_json.decode(row[3]) if row[3] else {}, timestamp=row[4]))
@@ -478,7 +503,8 @@ class DistillationEngine:
         """
         if not self._initialized:
             return {'error': 'Engine not initialized'}
-        try:
+
+        def _do_stats() -> dict[str, Any]:
             with closing(sqlite3.connect(str(self._db_path))) as conn:
                 cursor = conn.cursor()
                 cursor.execute('SELECT COUNT(*) FROM examples')
@@ -486,6 +512,9 @@ class DistillationEngine:
                 cursor.execute('SELECT AVG(score), MIN(score), MAX(score) FROM examples')
                 stats = cursor.fetchone()
             return {'n_examples': count, 'avg_score': stats[0] if stats[0] else 0.0, 'min_score': stats[1] if stats[1] else 0.0, 'max_score': stats[2] if stats[2] else 0.0}
+
+        try:
+            return await asyncio.to_thread(_do_stats)
         except Exception as e:
             logger.error(f'Failed to get stats: {e}')
             return {'error': str(e)}
@@ -507,7 +536,7 @@ def _load_distillation():
         logger.warning(f'Failed to load distillation module: {e}')
         DISTILLATION_AVAILABLE = False
 
-async def distil(findings: list[dict], max_tokens: int=2000) -> str:
+async def distil(findings: list[dict], _max_tokens: int = 2000) -> str:
     """
     Předprocesuje findings přes DistillationEngine před synthesis.
 
@@ -516,7 +545,7 @@ async def distil(findings: list[dict], max_tokens: int=2000) -> str:
 
     Args:
         findings: List of finding dicts s poli text/snippet/title/source
-        max_tokens: Cílový počet tokenů (přibližně)
+        _max_tokens: Cílový počet tokenů (přibližně) — rezervováno pro budoucí use
 
     Returns:
         Komprimovaný text
@@ -578,27 +607,3 @@ async def create_distillation_engine(embedding_model: Any | None=None, db_path: 
     except Exception as e:
         logger.error(f'Failed to create DistillationEngine: {e}')
         return None
-if __name__ == '__main__':
-    import asyncio
-    logging.basicConfig(level=logging.INFO)
-
-    async def test():
-        print('Testing DistillationEngine...')
-        engine = await create_distillation_engine()
-        if engine is None:
-            print('Failed to create engine')
-            return
-        print(f'Engine status: {engine.get_status()}')
-        example = DistillationExample(query='What is the capital of France?', chain=['Step 1: Identify the country as France', 'Step 2: Recall that Paris is the capital of France', 'Step 3: Verify this information is correct'], score=0.95, metadata={'source': 'test'})
-        await engine.add_example(example)
-        print('Added example')
-        stats = await engine.get_stats()
-        print(f'Stats: {stats}')
-        chain = ['Step 1: Identify the country', 'Step 2: Recall the capital']
-        score = await engine.score_chain('What is the capital of France?', chain)
-        print(f'Score: {score:.3f}')
-        metrics = await engine.train(n_epochs=5)
-        print(f'Training metrics: {metrics}')
-        await engine.cleanup()
-        print('Cleanup complete')
-    asyncio.run(test())

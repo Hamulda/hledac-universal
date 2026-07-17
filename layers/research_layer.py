@@ -86,37 +86,28 @@ class ResearchLayer:
             return
         if self._ghost_director is None:
             try:
+                # GhostDirector adapter exists in hledac.cortex.director
                 from hledac.cortex.director import GhostDirector
                 self._ghost_director = GhostDirector(max_steps=20)
                 await self._ghost_director.initialize_drivers()
                 logger.info('✅ GhostDirector initialized (local)')
-            except ImportError as e:
+            except Exception as e:  # noqa: BLEAVE
                 logger.warning(f'⚠️ GhostDirector not available: {e}')
                 self._ghost_director = None
 
     async def _init_depth_maximizer(self) -> None:
-        """Lazy initialization of ResearchDepthMaximizer"""
-        if self._depth_maximizer is None:
-            try:
-                from hledac.research.depth_maximizer import ResearchDepthMaximizer
-                self._depth_maximizer = ResearchDepthMaximizer(max_depth=self.config.max_depth, strategy=self.config.strategy)
-                await self._depth_maximizer.start()
-                logger.info('✅ ResearchDepthMaximizer initialized')
-            except ImportError as e:
-                logger.warning(f'⚠️ ResearchDepthMaximizer not available: {e}')
-                self._depth_maximizer = None
+        """Lazy initialization of ResearchDepthMaximizer."""
+        # hledac.research.depth_maximizer doesn't exist (F330 cleanup)
+        # Research depth is handled by the universal brain/hypothesis_engine
+        logger.debug('ResearchDepthMaximizer not available — depth research via brain layer')
+        self._depth_maximizer = None
 
     async def _init_hunter(self) -> None:
-        """Lazy initialization of Hunter"""
-        if self._hunter is None:
-            try:
-                from hledac.cortex.hunter import Hunter
-                self._hunter = Hunter()
-                await self._hunter.initialize()
-                logger.info('✅ Hunter initialized')
-            except ImportError as e:
-                logger.warning(f'⚠️ Hunter not available: {e}')
-                self._hunter = None
+        """Lazy initialization of Hunter."""
+        # hledac.cortex.hunter doesn't exist (F330 cleanup)
+        # URL harvesting is handled by FetchCoordinator in universal
+        logger.debug('Hunter not available — URL harvesting via FetchCoordinator')
+        self._hunter = None
 
     def create_mission(self, goal: str) -> GhostMission:
         """
@@ -177,7 +168,7 @@ class ResearchLayer:
         """
         if self._depth_maximizer is None:
             await self._init_depth_maximizer()
-        if self._depth_maximizer is None:
+        if self._depth_maximizer is None or not hasattr(self._depth_maximizer, 'start_deep_research'):
             logger.warning('⚠️ ResearchDepthMaximizer not available, using fallback')
             return await self._fallback_exploration(start_url, max_depth)
         strategy = strategy or ExplorationStrategy(self.config.strategy)

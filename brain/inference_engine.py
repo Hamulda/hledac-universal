@@ -33,6 +33,8 @@ from collections.abc import Callable, Iterator
 from enum import Enum
 from typing import Any
 import msgspec
+
+from brain.deephermes3_engine import _get_xxh3_hex
 import numpy as np
 try:
     from utils.eig import EIGCalculator
@@ -62,7 +64,7 @@ class InferenceEvidence(msgspec.Struct, frozen=False):
     def __post_init__(self) -> None:
         if not self.evidence_id:
             content = ''.join([self.fact, ':', self.source, ':', str(self.timestamp)])
-            self.evidence_id = hashlib.md5(content.encode()).hexdigest()[:12]
+            self.evidence_id = _get_xxh3_hex(content)[:12]
         self.confidence = max(0.0, min(1.0, self.confidence))
 
     def to_dict(self) -> dict[str, Any]:
@@ -96,7 +98,7 @@ class Hypothesis(msgspec.Struct, frozen=False):
     def __post_init__(self) -> None:
         if not self.hypothesis_id:
             content = ''.join([self.statement, ':', str(self.created_at)])
-            self.hypothesis_id = hashlib.md5(content.encode()).hexdigest()[:12]
+            self.hypothesis_id = _get_xxh3_hex(content)[:12]
         if self.posterior_probability == 0.0:
             self.posterior_probability = self.prior_probability
         self.prior_probability = max(0.0, min(1.0, self.prior_probability))
@@ -769,7 +771,7 @@ class InferenceEngine:
             merged_attributes = {k: list(v) if len(v) > 1 else list(v)[0] for k, v in merged_attributes.items()}
             avg_similarity = np.mean([similarity_matrix[i, j] for i in cluster for j in cluster if i < j]) if len(cluster) > 1 else 1.0
             evidence_ids = [f.get('evidence_id', '') for f in cluster_fragments if f.get('evidence_id')]
-            entity = ResolvedEntity(entity_id=''.join(['entity_', str(cluster_idx), '_', hashlib.md5(canonical_name.encode()).hexdigest()[:8]]), canonical_name=canonical_name, aliases=list(all_names), fragments=cluster_fragments, confidence=avg_similarity, resolution_method='probabilistic_clustering', attributes=merged_attributes, source_evidence=evidence_ids)
+            entity = ResolvedEntity(entity_id=''.join(['entity_', str(cluster_idx), '_', _get_xxh3_hex(canonical_name)[:8]]), canonical_name=canonical_name, aliases=list(all_names), fragments=cluster_fragments, confidence=avg_similarity, resolution_method='probabilistic_clustering', attributes=merged_attributes, source_evidence=evidence_ids)
             resolved_entities.append(entity)
         logger.info(f'Entity resolution: {len(fragments)} fragments → {len(resolved_entities)} entities')
         return resolved_entities
@@ -1592,17 +1594,20 @@ class MultiHopReasoner:
 
 def create_inference_tool(engine: InferenceEngine, execute_fn=None):
     """Create a ToolRegistry-compatible Tool from InferenceEngine."""
-    from pydantic import BaseModel, Field
+    import msgspec
     from ..tool_registry import Tool
 
-    class InferenceArgs(BaseModel):
-        mode: str = Field(description='Inference mode: abductive, chain, resolve, indirect')
-        query: str | None = Field(default='', description='Query string')
-        entities: list[str] | None = Field(default_factory=list, description='List of entities')
-        observations: list[str] | None = Field(default_factory=list, description='List of observations')
-        hypothesis: str | None = Field(default='', description='Hypothesis for abductive reasoning')
-        max_hops: int = Field(default=3, description='Maximum hops for multi-hop inference')
+    class InferenceArgs(msgspec.Struct, kw_only=True):
+        """Inference arguments for the tool."""
+        mode: str = ''
+        query: str = ''
+        entities: list[str] = msgspec.field(default_factory=list)
+        observations: list[str] = msgspec.field(default_factory=list)
+        hypothesis: str = ''
+        max_hops: int = 3
 
-    class InferenceResult(BaseModel):
-        result: dict[str, Any] = Field(default_factory=dict, description='Inference result')
+    class InferenceResult(msgspec.Struct, kw_only=True):
+        """Inference result."""
+        result: dict[str, Any] = msgspec.field(default_factory=dict)
+
     return Tool(name='infer', description='Logical inference: abduction, evidence chaining, multi-hop reasoning, entity resolution', args_schema=InferenceArgs, returns_schema=InferenceResult, memory_mb=50, is_network=False, handler=execute_fn)

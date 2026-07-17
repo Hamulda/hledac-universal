@@ -248,7 +248,7 @@ class SessionManager:
             if self._tor_session is None or self._tor_session.is_closed:
                 from httpx_socks import AsyncProxyTransport
 
-                transport = AsyncProxyTransport.from_url("socks5h://127.0.0.1:9050", rdns=True)
+                transport = AsyncProxyTransport.from_url("socks5://127.0.0.1:9050", rdns=True)  # socks5:// + rdns=True = remote DNS (SOCKS5H behavior)
                 limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
                 timeout = httpx.Timeout(connect=60.0, read=120.0, write=20.0, pool=30.0)
                 self._tor_session = httpx.AsyncClient(transport=transport, limits=limits, timeout=timeout, trust_env=False)
@@ -291,7 +291,7 @@ class SessionManager:
             if self._i2p_session is None or self._i2p_session.is_closed:
                 from httpx_socks import AsyncProxyTransport
 
-                transport = AsyncProxyTransport.from_url("socks5://127.0.0.1:7654", rdns=True)
+                transport = AsyncProxyTransport.from_url("socks5://127.0.0.1:7654", rdns=True)  # socks5:// + rdns=True = remote DNS (SOCKS5H behavior)
                 limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
                 timeout = httpx.Timeout(connect=60.0, read=120.0, write=20.0, pool=30.0)
                 self._i2p_session = httpx.AsyncClient(transport=transport, limits=limits, timeout=timeout, trust_env=False)

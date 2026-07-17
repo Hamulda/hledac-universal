@@ -861,6 +861,13 @@ def _get_duckdb_ro() -> duckdb.DuckDBPyConnection | None:
 
             from hledac.universal.paths import get_ioc_db_path
             _DUCKDB_RO_CON = duckdb.connect(str(get_ioc_db_path()), read_only=True)
+            # M1 8GB: memory_limit + threads + preserve_insertion_order (read-only, conservative)
+            try:
+                _DUCKDB_RO_CON.execute("SET memory_limit = '1GB'")
+                _DUCKDB_RO_CON.execute("PRAGMA threads = 2")
+                _DUCKDB_RO_CON.execute("SET preserve_insertion_order = false")
+            except Exception:
+                pass  # fail-soft for read-only connection
         except Exception as e:
             logger.debug(f"[HOT-EDGES] DuckDB read-only connect failed: {e}")
             return None

@@ -29,7 +29,7 @@ class MARLReplayBuffer:
         self.actions = np.zeros((capacity, n_agents), dtype=np.int32)
         self.rewards = np.zeros(capacity, dtype=np.float32)
         self.next_states = np.zeros((capacity, state_dim), dtype=np.float32)
-        self.dones = np.zeros(capacity, dtype=np.bool_)
+        self.dones = np.zeros(capacity, dtype=np.bool)
         self.pos = 0
         self.size = 0
 

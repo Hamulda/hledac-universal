@@ -203,6 +203,7 @@ class UnifiedEmbeddingManager:
                     logger.warning(f'[UnifiedEmbedder] encode shape mismatch: {arr.shape}')
                     return [[0.0] * self._dim for _ in chunk_texts]
                 return [arr[i].tolist() for i in range(arr.shape[0])]
+            from utils.async_helpers import parallel
             if n <= 4:
                 embeddings = await asyncio.to_thread(encode_chunk, texts)
                 return [list(e) for e in embeddings]
@@ -210,42 +211,25 @@ class UnifiedEmbeddingManager:
                 mid = (n + 1) // 2
                 chunk_a = texts[:mid]
                 chunk_b = texts[mid:]
-                gathered = await asyncio.gather(
-                    asyncio.to_thread(encode_chunk, chunk_a),
-                    asyncio.to_thread(encode_chunk, chunk_b),
-                    return_exceptions=True,
+                p_result = await parallel(
+                    [
+                        asyncio.to_thread(encode_chunk, chunk_a),
+                        asyncio.to_thread(encode_chunk, chunk_b),
+                    ],
+                    policy="raise",
+                    ctx="embed_two_chunk",
                 )
-                # I6/I7: CancelledError / BaseException re-raised, regular exceptions
-                # fall through to the outer except Exception handler (fail-fast semantics)
-                errors: list[BaseException] = []
-                ok_results: list[Any] = []
-                for item in gathered:
-                    if isinstance(item, BaseException):
-                        errors.append(item)
-                    else:
-                        ok_results.append(item)
-                if errors:
-                    # Re-raise first BaseException (fail-fast)
-                    raise errors[0]
-                return list(ok_results[0]) + list(ok_results[1])
+                return list(p_result.ok[0]) + list(p_result.ok[1])
             else:
                 chunk_size = (n + 3) // 4
                 chunks = [texts[i:i + chunk_size] for i in range(0, n, chunk_size)]
-                gathered = await asyncio.gather(
-                    *[asyncio.to_thread(encode_chunk, chunk) for chunk in chunks],
-                    return_exceptions=True,
+                p_result = await parallel(
+                    [asyncio.to_thread(encode_chunk, chunk) for chunk in chunks],
+                    policy="raise",
+                    ctx="embed_multi_chunk",
                 )
-                errors: list[BaseException] = []
-                ok_results: list[Any] = []
-                for item in gathered:
-                    if isinstance(item, BaseException):
-                        errors.append(item)
-                    else:
-                        ok_results.append(item)
-                if errors:
-                    raise errors[0]
                 embeddings: list[list[float]] = []
-                for result in ok_results:
+                for result in p_result.ok:
                     embeddings.extend(result)
                 return embeddings
         except Exception as e:

@@ -46,6 +46,16 @@ from collections import deque
 from dataclasses import dataclass, field
 import msgspec
 from typing import Any, Final
+
+try:
+    import orjson
+
+    _ORJSON_AVAILABLE = True
+except ImportError:
+    _ORJSON_AVAILABLE = False
+    import orjson as _orjson_stub  # type: ignore[attr-defined]
+
+    orjson = _orjson_stub
 __all__ = ['NonfeedCandidateLedger', 'LedgerRecord', 'LEDGER_FAMILY', 'LEDGER_STAGE', 'DomainCandidate', 'extract_domain_candidates_from_text', 'extract_domain_candidates_from_finding', 'generate_conceptual_domain_candidates', 'compute_lane_eligibility', 'rank_candidates', 'filter_source_host_only', 'FAMILY_FEED', 'MAX_DOMAIN_CANDIDATES_FOR_LANES', 'MAX_FEED_CANDIDATES', 'MAX_DOH_DOMAINS', 'MAX_CT_DOMAINS', 'MAX_WAYBACK_CANDIDATES', 'MAX_PASSIVE_DNS_CANDIDATES', 'MAX_CONCEPTUAL_DOMAINS']
 LEDGER_FAMILY: Final[type] = str
 LEDGER_STAGE: Final[type] = str
@@ -630,9 +640,8 @@ async def _generate_conceptual_domains_mlx(query: str) -> list[DomainCandidate]:
         system_prompt = 'You are an OSINT infrastructure researcher. Given an OSINT query topic, generate up to 5 plausible domain names that might be relevant for investigating that topic. Focus on common infrastructure patterns: threat actor leak sites, ransomware negotiation portals, breach forums, dark web marketplaces, or public reconnaissance platforms. Return ONLY a JSON list of domain strings, nothing else. Example: ["ransomware-leak.site", "breach-forum.onion", "osint-scanner.io"]'
         user_prompt = f'Query: {query.strip()}\nDomains (JSON list only):'
         response = await safe_wait_for(engine.generate(user_prompt, system_msg=system_prompt, thinking=False), timeout=30.0, label='conceptual_domains')
-        import json as _json
         try:
-            candidates = _json.loads(response)
+            candidates = orjson.loads(response) if _ORJSON_AVAILABLE else response
             if not isinstance(candidates, list):
                 raise ValueError('not a list')
         except Exception:
@@ -641,7 +650,11 @@ async def _generate_conceptual_domains_mlx(query: str) -> list[DomainCandidate]:
             if not array_match:
                 return []
             try:
-                candidates = _json.loads(array_match.group(0))
+                if _ORJSON_AVAILABLE:
+                    candidates = orjson.loads(array_match.group(0))
+                else:
+                    import json as _stdlib_json
+                    candidates = _stdlib_json.loads(array_match.group(0))
             except Exception:
                 return []
         if not isinstance(candidates, list):

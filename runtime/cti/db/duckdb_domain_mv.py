@@ -207,6 +207,10 @@ class DuckDBDomainMv:
             fresh = not DB_PATH.exists()
 
             self._conn = duckdb.connect(str(DB_PATH), read_only=False)
+            # M1 8GB: memory_limit + threads + preserve_insertion_order
+            self._conn.execute("SET memory_limit = '1GB'")
+            self._conn.execute("PRAGMA threads = 2")
+            self._conn.execute("SET preserve_insertion_order = false")
 
             if fresh:
                 with self._conn.cursor() as cur:

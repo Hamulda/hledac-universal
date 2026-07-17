@@ -54,6 +54,31 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# P4-3: async LMDB via Rust backend with py.allow_threads() GIL release
+# Falls back to asyncio.to_thread() when Rust backend unavailable
+_lmdb_async: Any | None = None
+
+
+def _get_lmdb_async() -> Any:
+    """Lazy-load async LMDB module."""
+    global _lmdb_async
+    if _lmdb_async is None:
+        try:
+            from hledac.universal.core.lmdb_async import (
+                lmdb_async_delete,
+                lmdb_async_put,
+                lmdb_async_scan_prefix,
+            )
+
+            _lmdb_async = {
+                "put": lmdb_async_put,
+                "delete": lmdb_async_delete,
+                "scan_prefix": lmdb_async_scan_prefix,
+            }
+        except ImportError:
+            _lmdb_async = {}
+    return _lmdb_async
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Constants
 # ─────────────────────────────────────────────────────────────────────────────
@@ -71,8 +96,8 @@ _ENTRY_TTL_S = 7 * 24 * 3600  # 7 days TTL
 # CacheEntry dataclass
 # ─────────────────────────────────────────────────────────────────────────────
 
-class CacheEntry(msgspec.Struct):
-    """Metadata entry for one cached KV cache."""
+class CacheEntry(msgspec.Struct, gc=False):
+    """Metadata entry for one cached KV cache. F350M-R: gc=False for M1 8GB."""
 
     prompt_hash: str
     safetensors_path: str
@@ -276,31 +301,49 @@ class PersistentKVCache:
             self._lru_order.move_to_end(key)
         self._lru_order[key] = time.time()
 
-    def _evict_lru(self) -> int:
+    async def _evict_lru(self) -> int:
         """Evict oldest LRU entries until within bounds. Returns count evicted."""
         evicted = 0
         while self._total_bytes > self._max_size_bytes or len(self._lru_order) > self._max_entries:
             if not self._lru_order:
                 break
             oldest_key, _ = self._lru_order.popitem(last=False)
-            evicted += self._evict_entry(oldest_key)
+            evicted += await self._evict_entry(oldest_key)
         return evicted
 
-    def _evict_entry(self, key: str) -> int:
+    async def _evict_entry(self, key: str) -> int:
         """Evict a single entry by key. Returns bytes freed."""
         if not self._initialized or self._lmdb_env is None:
             return 0
         freed = 0
+        key_bytes = key.encode()
         try:
-            with self._lmdb_env.begin(write=True) as txn:
-                value = txn.get(key.encode(), db=self._lmdb_db)
-                if value:
-                    entry = CacheEntry.decode(value)
-                    freed = entry.size_bytes
-                    st_path = Path(entry.safetensors_path)
-                    if st_path.exists():
-                        st_path.unlink(missing_ok=True)
-                    txn.delete(key.encode(), db=self._lmdb_db)
+            # P4-3: Read entry to get size_bytes (needed for _total_bytes accounting)
+            def _read_for_size() -> tuple[int, Path | None]:
+                with self._lmdb_env.begin() as txn:
+                    value = txn.get(key_bytes, db=self._lmdb_db)
+                    if value:
+                        entry = CacheEntry.decode(value)
+                        return entry.size_bytes, Path(entry.safetensors_path)
+                return 0, None
+
+            freed, st_path = await asyncio.to_thread(_read_for_size)
+
+            # Delete safetensors file (sync, fast)
+            if st_path and st_path.exists():
+                st_path.unlink(missing_ok=True)
+
+            # P4-3: Delete from LMDB using Rust backend with py.allow_threads() GIL release
+            async_lmdb = _get_lmdb_async()
+            if async_lmdb:
+                await async_lmdb["delete"](self._lmdb_env, key_bytes)
+            else:
+                def _delete_lmdb() -> None:
+                    with self._lmdb_env.begin(write=True) as txn:
+                        txn.delete(key_bytes, db=self._lmdb_db)
+
+                await asyncio.to_thread(_delete_lmdb)
+
             if key in self._lru_order:
                 del self._lru_order[key]
             self._total_bytes = max(0, self._total_bytes - freed)
@@ -356,7 +399,7 @@ class PersistentKVCache:
             size_bytes = safetensors_path.stat().st_size
 
             # Evict if needed BEFORE adding new entry
-            await asyncio.to_thread(self._evict_lru)
+            await self._evict_lru()
 
             entry = CacheEntry(
                 prompt_hash=key,
@@ -368,11 +411,19 @@ class PersistentKVCache:
             )
 
             if self._lmdb_env is not None:
-                def _write_lmdb() -> None:
-                    with self._lmdb_env.begin(write=True) as txn:
-                        txn.put(key.encode(), entry.encode(), db=self._lmdb_db)
+                # P4-3: Rust backend with py.allow_threads() GIL release
+                # Falls back to asyncio.to_thread() when Rust unavailable
+                async_lmdb = _get_lmdb_async()
+                key_bytes = key.encode()
+                value_bytes = entry.encode()
+                if async_lmdb:
+                    await async_lmdb["put"](self._lmdb_env, key_bytes, value_bytes)
+                else:
+                    def _write_lmdb() -> None:
+                        with self._lmdb_env.begin(write=True) as txn:
+                            txn.put(key_bytes, value_bytes, db=self._lmdb_db)
 
-                await asyncio.to_thread(_write_lmdb)
+                    await asyncio.to_thread(_write_lmdb)
 
             self._lru_order[key] = entry.last_accessed
             self._total_bytes += size_bytes
@@ -424,12 +475,12 @@ class PersistentKVCache:
             return None, None
 
         if time.time() - entry.created_at > _ENTRY_TTL_S:
-            await asyncio.to_thread(self._evict_entry, key)
+            await self._evict_entry(key)
             return None, None
 
         st_path = Path(entry.safetensors_path)
         if not st_path.exists():
-            await asyncio.to_thread(self._evict_entry, key)
+            await self._evict_entry(key)
             return None, None
 
         try:
@@ -451,10 +502,18 @@ class PersistentKVCache:
 
             if self._lmdb_env is not None:
                 entry.last_accessed = time.time()
-                def _update_lmdb() -> None:
-                    with self._lmdb_env.begin(write=True) as txn:
-                        txn.put(key.encode(), entry.encode(), db=self._lmdb_db)
-                await asyncio.to_thread(_update_lmdb)
+                # P4-3: Rust backend with py.allow_threads() GIL release
+                async_lmdb = _get_lmdb_async()
+                key_bytes = key.encode()
+                value_bytes = entry.encode()
+                if async_lmdb:
+                    await async_lmdb["put"](self._lmdb_env, key_bytes, value_bytes)
+                else:
+                    def _update_lmdb() -> None:
+                        with self._lmdb_env.begin(write=True) as txn:
+                            txn.put(key_bytes, value_bytes, db=self._lmdb_db)
+
+                    await asyncio.to_thread(_update_lmdb)
 
             logger.debug("[PKV] Loaded cache %s (%.1fKB)", key, entry.size_bytes / 1024)
             return kv_cache, token_count
@@ -489,7 +548,7 @@ class PersistentKVCache:
         try:
             keys = list(self._lru_order.keys())
             for key in keys:
-                await asyncio.to_thread(self._evict_entry, key)
+                await self._evict_entry(key)
             self._lru_order.clear()
             self._total_bytes = 0
             logger.info("[PKV] Cache cleared")

@@ -20,6 +20,16 @@ import msgspec
 from typing import Any
 from hledac.universal.utils.async_helpers import safe_create_task
 
+try:
+    import orjson
+
+    _ORJSON_AVAILABLE = True
+except ImportError:
+    _ORJSON_AVAILABLE = False
+    import orjson as _orjson_stub  # type: ignore[attr-defined]
+
+    orjson = _orjson_stub
+
 
 def _maybe_call_pressure_relief(ctx: Any) -> None:
     """F273G: Call malloc_zone_pressure_relief if governor recommends.
@@ -205,12 +215,17 @@ class WinddownOrchestrator:
             from hledac.universal.brain.hypothesis_engine import HypothesisEngine
             engine = HypothesisEngine()
             hypotheses = await engine.generate_hypotheses(report, ctx.query)
-            import json
             import os
             if export_dir:
                 path = os.path.join(export_dir, 'hypotheses.json')
-                with open(path, 'w') as f:
-                    json.dump([h.as_dict() if hasattr(h, 'as_dict') else str(h) for h in hypotheses], f)
+                data = [h.as_dict() if hasattr(h, 'as_dict') else str(h) for h in hypotheses]
+                if _ORJSON_AVAILABLE:
+                    with open(path, 'wb') as f:
+                        f.write(orjson.dumps(data))
+                else:
+                    import json as _stdlib_json
+                    with open(path, 'w') as f:
+                        _stdlib_json.dump(data, f)
                 return path
         except Exception:
             pass
@@ -347,7 +362,7 @@ class WinddownOrchestrator:
         except Exception:
             pass
 
-    def _unload_lazy_models(self, ctx: Any) -> None:
+    def _unload_lazy_models(self, _ctx: Any) -> None:
         """Release all lazy models (NER, GNN, ANE, MoE) via brain._lazy."""
         try:
             from hledac.universal.brain import _lazy as lazy_module

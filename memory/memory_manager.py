@@ -59,7 +59,7 @@ SESSION_TTL_DAYS = 30
 def _json_dumps(obj: Any) -> bytes:
     """Serialize object to JSON bytes."""
     if ORJSON_AVAILABLE:
-        return or_msgspec_dumps_str(obj)
+        return orjson.dumps(obj)
     return _msgspec_dumps_str(obj).encode('utf-8')
 
 def _json_loads(data) -> Any:
@@ -68,7 +68,7 @@ def _json_loads(data) -> Any:
         return None
     if ORJSON_AVAILABLE:
         try:
-            return or_msgspec_loads(data)
+            return orjson.loads(data)
         except Exception:
             pass
     try:

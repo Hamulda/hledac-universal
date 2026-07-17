@@ -31,12 +31,13 @@ logger = logging.getLogger(__name__)
 
 # ── SidecarContext ──────────────────────────────────────────────────────────────
 
-class SidecarContext(msgspec.Struct):
+class SidecarContext(msgspec.Struct, gc=False):
     """
     Context passed to every sidecar adapter.
 
     F314-3: Migrated from @dataclass to msgspec.Struct for M1 8GB RAM optimization.
-    msgspec.Struct is ~3x faster to instantiate and uses ~40% less memory than dataclass.
+    F350M-R: gc=False vyjímá objekt ze sledování cyklického GC — kritické pro
+    milisekundové OSINT streamy na 8GB M1.
 
     Fields:
         query: Original sprint query string

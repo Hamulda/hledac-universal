@@ -337,7 +337,7 @@ class EmbeddingCache:
                     "format": "int8_scale",  # ISSUE #022: explicit format marker
                 }
                 # ISSUE #022 fix: always produce bytes, handle str from msgspec
-                if orjson:
+                if ORJSON_AVAILABLE:
                     _header_str = _msgspec_dumps_str(header)
                     header_bytes: bytes = _header_str.encode()
                 else:
@@ -411,12 +411,14 @@ class EmbeddingCache:
                 "format": "int8_scale" if self._version >= _VERSION_INT8 else "float16",
             }
             def _write_sync():
-                with open(self._meta_path, "w") as f:
-                    if _msgspec_encode:
-                        f.write(_msgspec_encode(meta).decode())
-                    else:
-                        import json
-                        json.dump(meta, f)
+                if _msgspec_encode:
+                    data: str | bytes = _msgspec_encode(meta).decode()
+                    mode = "w"
+                else:
+                    data = orjson.dumps(meta)
+                    mode = "wb"
+                with open(self._meta_path, mode) as f:
+                    f.write(data)
             await asyncio.to_thread(_write_sync)
         except Exception as e:
             logger.debug(f"[EmbedCache] meta save failed (non-fatal): {e}")
@@ -571,13 +573,14 @@ class EmbeddingCache:
                 free_list = meta.get("free_list", [])
                 if free_list:
                     slot = free_list.pop()
-                    with open(self._meta_path, "w") as f:
-                        if _msgspec_encode:
-                            f.write(_msgspec_encode(meta).decode())
-                        else:
-                            import json
-
-                            json.dump(meta, f)
+                    if _msgspec_encode:
+                        data: str | bytes = _msgspec_encode(meta).decode()
+                        mode = "w"
+                    else:
+                        data = orjson.dumps(meta)
+                        mode = "wb"
+                    with open(self._meta_path, mode) as f:
+                        f.write(data)
                     return slot
         except Exception:
             pass

@@ -180,13 +180,61 @@ _GHOST_ENTRIES: dict[str, str] = {
 }
 
 # -----------------------------------------------------------------------------
-# Runtime __getattr__ with auto-discovery cache
+# Lazy attribute index — built once on first __getattr__ access
+# Maps: attribute name → module path  (e.g. "DuckDBShadowStore" → "hledac.universal.knowledge.duckdb_store")
+# Pre-populated from _EXPLICIT_ATTRS_BY_MODULE (authoritative whitelist).
+# Modules without explicit entries contribute via __all__ scan at index build time.
+# -----------------------------------------------------------------------------
+_ATTRIBUTE_INDEX: dict[str, str] | None = None
+
+
+def _build_index() -> dict[str, str]:
+    """Build the attribute→module index once (paid once, amortised across all imports)."""
+    idx: dict[str, str] = {}
+
+    # 1. Populate from explicit whitelists — authoritative, zero extra imports
+    for mod_path, explicit in _EXPLICIT_ATTRS_BY_MODULE.items():
+        for name in explicit:
+            idx.setdefault(name, mod_path)  # first wins (preserves _AUTO_MODULE_PATHS priority)
+
+    # 2. Scan modules without explicit entries: contribute their __all__ (or public module attrs)
+    # These are the few modules in _AUTO_MODULE_PATHS not covered by _EXPLICIT_ATTRS_BY_MODULE.
+    # We import them lazily here — one-time cost, paid once at first __getattr__.
+    for mod_path in _AUTO_MODULE_PATHS:
+        if mod_path in _EXPLICIT_ATTRS_BY_MODULE:
+            continue  # already covered by step 1
+        try:
+            mod = import_module(mod_path)
+        except (ImportError, ModuleNotFoundError):
+            continue
+        explicit = _EXPLICIT_ATTRS_BY_MODULE.get(mod_path)
+        if explicit is not None:
+            for name in explicit:
+                idx.setdefault(name, mod_path)
+        else:
+            # __all__-based module
+            all_list: list[str] | None = getattr(mod, "__all__", None)
+            if all_list is not None:
+                for name in all_list:
+                    if not name.startswith("_"):
+                        idx.setdefault(name, mod_path)
+            else:
+                # Last resort: public attrs of the module itself (non-dunder, non-underscore)
+                for name in dir(mod):
+                    if not name.startswith("_"):
+                        idx.setdefault(name, mod_path)
+
+    return idx
+
+
+# -----------------------------------------------------------------------------
+# Runtime __getattr__ with index-accelerated lookup
 # -----------------------------------------------------------------------------
 _cache: dict[str, Any] = {}
 
 
 def __getattr__(name: str) -> Any:
-    """Lazy-load symbols on first access via auto-discovery from __all__."""
+    """Lazy-load symbols on first access via pre-built attribute index."""
     # Bootstrap namespace lazily on first attribute access
     _ensure_bootstrap()
 
@@ -194,42 +242,33 @@ def __getattr__(name: str) -> Any:
     if name in _cache:
         return _cache[name]
 
-    # Ghost entries
-    if name in _GHOST_ENTRIES:
-        raise ImportError(_GHOST_ENTRIES[name])
+    # Build index once on first miss
+    global _ATTRIBUTE_INDEX
+    if _ATTRIBUTE_INDEX is None:
+        _ATTRIBUTE_INDEX = _build_index()
 
-    # Search through auto-module paths
-    for mod_path in _AUTO_MODULE_PATHS:
+    # Resolve via index
+    mod_path = _ATTRIBUTE_INDEX.get(name)
+    if mod_path is not None:
         try:
             mod = import_module(mod_path)
-        except ModuleNotFoundError as exc:
-            # Fallback: when a transitive dep (e.g. msgspec) is unavailable in
-            # the env, the full path fails. Try the local module path without the
-            # hledac. prefix — mirrors the original _LAZY_EXPORTS fallback logic.
-            if exc.name and exc.name.startswith("hledac.") and mod_path.startswith("hledac.universal."):
-                local_path = mod_path[len("hledac.universal."):]
-                try:
-                    mod = import_module(local_path)
-                except (ImportError, ModuleNotFoundError):
-                    continue
-            else:
-                continue
+        except (ImportError, ModuleNotFoundError):
+            # Index was built from stale data — rebuild and retry once
+            _ATTRIBUTE_INDEX = _build_index()
+            mod_path = _ATTRIBUTE_INDEX.get(name)
+            if mod_path is None:
+                if name in _GHOST_ENTRIES:
+                    raise ImportError(_GHOST_ENTRIES[name])
+                raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+            mod = import_module(mod_path)
 
-        explicit = _EXPLICIT_ATTRS_BY_MODULE.get(mod_path)
-        if explicit is not None:
-            # No __all__ module — use explicit whitelist
-            if name in explicit and hasattr(mod, name):
-                val = getattr(mod, name)
-                _cache[name] = val
-                return val
-        else:
-            # __all__-based module
-            all_list: list[str] | None = getattr(mod, "__all__", None)
-            if all_list is not None and name in all_list and not name.startswith("_"):
-                val = getattr(mod, name)
-                _cache[name] = val
-                return val
+        val = getattr(mod, name)
+        _cache[name] = val
+        return val
 
+    # Not in index — ghost or truly absent
+    if name in _GHOST_ENTRIES:
+        raise ImportError(_GHOST_ENTRIES[name])
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

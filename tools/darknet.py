@@ -3,10 +3,16 @@ Darknet přístup – Tor, I2P, experimentální post‑quantum crypto.
 Sprint 46: Access to Unreachable Data (Sessions + Paywall + OSINT + Darknet)
 Socks5 proxy support via httpx-socks.
 """
+from __future__ import annotations
+
 import asyncio
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
+
+if TYPE_CHECKING:
+    import httpx
+    import httpx_socks
 logger = logging.getLogger(__name__)
 try:
     from httpx_socks import AsyncProxyTransport
@@ -31,13 +37,15 @@ except ImportError:
 
 class DarknetConnector:
     """Connector pro darknet (Tor, I2P) a post-quantum crypto."""
-    __slots__ = tuple(('_i2p_port', '_tor_control_port', '_tor_port', 'tor_controller'))
+    __slots__ = tuple(('_i2p_port', '_i2p_client', '_tor_client', '_tor_control_port', '_tor_port', 'tor_controller'))
 
     def __init__(self) -> None:
         self.tor_controller = None
         self._tor_port = 9050
         self._tor_control_port = 9051
         self._i2p_port = 4444
+        self._tor_client: httpx.AsyncClient | None = None
+        self._i2p_client: httpx.AsyncClient | None = None
 
     async def ensure_tor(self) -> bool:
         """Zajistí, že Tor controller je připojen."""
@@ -53,35 +61,79 @@ class DarknetConnector:
             logger.warning(f'[TOR] Controller failed: {e}')
             return False
 
+    async def _get_tor_client(self) -> httpx.AsyncClient | None:
+        """Get or create persistent Tor httpx client (connection reuse — httpx-socks 0.11+)."""
+        if not HTTPX_SOCKS_AVAILABLE:
+            return None
+        if self._tor_client is None or self._tor_client.is_closed:
+            import httpx
+            transport = AsyncProxyTransport.from_url('socks5://127.0.0.1:9050', rdns=True)
+            limits = httpx.Limits(max_connections=10, max_keepalive_connections=5)
+            self._tor_client = httpx.AsyncClient(
+                transport=transport,
+                timeout=httpx.Timeout(30.0),
+                limits=limits,
+                trust_env=False,
+            )
+        return self._tor_client
+
     async def fetch_via_tor(self, url: str) -> bytes | None:
-        """Fetch URL přes Tor SOCKS proxy."""
+        """Fetch URL přes Tor SOCKS proxy (persistent connection — httpx-socks 0.11+)."""
         if not HTTPX_SOCKS_AVAILABLE:
             logger.warning('[TOR] httpx-socks not available')
             return None
+        client = await self._get_tor_client()
+        if client is None:
+            return None
         try:
-            import httpx
-            transport = AsyncProxyTransport.from_url('socks5://127.0.0.1:9050')
-            async with httpx.AsyncClient(transport=transport, timeout=httpx.Timeout(30.0)) as session:
-                resp = await session.get(url)
-                return resp.read()
+            resp = await client.get(url)
+            return resp.read()
         except Exception as e:
             logger.warning(f'[TOR] Fetch failed {url}: {e}')
             return None
 
+    async def _get_i2p_client(self) -> httpx.AsyncClient | None:
+        """Get or create persistent I2P httpx client (connection reuse — httpx-socks 0.11+)."""
+        if not HTTPX_SOCKS_AVAILABLE:
+            return None
+        if self._i2p_client is None or self._i2p_client.is_closed:
+            import httpx
+            transport = AsyncProxyTransport.from_url(f'socks5://127.0.0.1:{self._i2p_port}', rdns=True)
+            limits = httpx.Limits(max_connections=10, max_keepalive_connections=5)
+            self._i2p_client = httpx.AsyncClient(
+                transport=transport,
+                timeout=httpx.Timeout(30.0),
+                limits=limits,
+                trust_env=False,
+            )
+        return self._i2p_client
+
     async def fetch_via_i2p(self, url: str) -> bytes | None:
-        """Fetch URL přes I2P SOCKS proxy."""
+        """Fetch URL přes I2P SOCKS proxy (persistent connection — httpx-socks 0.11+)."""
         if not HTTPX_SOCKS_AVAILABLE:
             logger.warning('[I2P] httpx-socks not available')
             return None
+        client = await self._get_i2p_client()
+        if client is None:
+            return None
         try:
-            import httpx
-            transport = AsyncProxyTransport.from_url(f'socks5://127.0.0.1:{self._i2p_port}')
-            async with httpx.AsyncClient(transport=transport, timeout=httpx.Timeout(30.0)) as session:
-                resp = await session.get(url)
-                return resp.read()
+            resp = await client.get(url)
+            return resp.read()
         except Exception as e:
             logger.warning(f'[I2P] Fetch failed {url}: {e}')
             return None
+
+    async def close(self) -> None:
+        """Close persistent httpx clients."""
+        for client_attr in ('_tor_client', '_i2p_client'):
+            client: httpx.AsyncClient | None = getattr(self, client_attr, None)
+            if client is not None and not client.is_closed:
+                try:
+                    await client.aclose()
+                except Exception:
+                    pass
+        setattr(self, '_tor_client', None)
+        setattr(self, '_i2p_client', None)
 
     async def new_tor_circuit(self) -> bool:
         """Požádá Tor o nový okruh (nová IP)."""

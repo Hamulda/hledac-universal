@@ -451,7 +451,6 @@ def osint_metric(example, pred, trace=None) -> float:
         Score0.0-1.0
     """
     try:
-        import json
         answer = str(pred.answer)
         if len(answer) < 50:
             return 0.0

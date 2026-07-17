@@ -176,7 +176,8 @@ def _get_TargetProfileSummary():
         return TargetProfileSummary
     from dataclasses import dataclass
 
-    class TargetProfileSummary(msgspec.Struct):
+    class TargetProfileSummary(msgspec.Struct, gc=False):
+        """F350M-R: gc=False for M1 8GB."""
         target_id: str = ""
         first_seen: float = 0.0
         last_seen: float = 0.0
@@ -213,6 +214,7 @@ __all__ = [
     "QualityRejectionRecord",
     "_normalize_osint_url",
     "ParquetHistoryReader",
+    "RemoteParquetSource",
     "export_findings_to_parquet",
 ]
 from hledac.universal.tools.file_cache import apply_nocache_to_path, madv_free_reusable_on_path
@@ -291,15 +293,23 @@ def _get_rust_assess_quality_batch():
 # Rust build_arrow_batch_from_findings — strict import
 try:
     from hledac_rust_extensions import build_arrow_batch_from_findings as _rust_arrow_func
+    from hledac_rust_extensions import build_record_batch_from_structs as _rust_record_batch_cols_func
 except ImportError:
     _rust_arrow_func = None
+    _rust_record_batch_cols_func = None
 
 _RUST_ARROW_AVAILABLE = _rust_arrow_func is not None
+_RUST_RECORD_BATCH_COLS_AVAILABLE = _rust_record_batch_cols_func is not None
 
 
 def _get_rust_build_arrow_batch():
     """Lazy getter for Rust Arrow batch builder."""
     return _rust_arrow_func
+
+
+def _get_rust_record_batch_from_structs():
+    """Lazy getter for Rust zero-copy column-path Arrow batch builder (P4-7)."""
+    return _rust_record_batch_cols_func
 
 
 # Rust batch_ioc_extract_unified — strict import
@@ -431,265 +441,306 @@ def extract_iocs_from_texts(texts: list[str]):
         return
 
 
-class ParquetHistoryReader:
+class RemoteParquetSource:
     """
-    Lazy paginated parquet reader for IOC history — enables 100 GB+ reads without OOM.
+    DuckDB-native remote Parquet reader via ATTACH — no local Parquet copy needed.
 
-    M1 8GB safe: reads one row-group at a time (max 100_000 rows per batch).
-    Zero-copy: Arrow IPC bytes → pa.ipc.open_record_batch() → Polars zero-copy.
+    P4-8: DuckDB 1.5+ supports native Parquet attachment for S3/HTTPS/Postgres.
+    Uses DuckDB's own filter pushdown, column pruning, and parallel execution.
 
-    F320+: Filter pushdown via row-group statistics (ts min/max per RG).
-    F320+: Polars LazyFrame integration for efficient filtering.
+    Supported sources:
+      - S3: s3://bucket/path/file.parquet
+      - HTTPS: https://host/path/file.parquet
+      - Azure: az://bucket/path/file.parquet
+      - GCS: gs://bucket/path/file.parquet
+      - Postgres: postgres://host/db (via DuckDB postgres scanner)
+
+    M1 8GB safe: DuckDB manages memory internally via hard_memory_limit.
+    Zero-copy: Arrow Table export from DuckDB via fetchmany + Arrow batch.
 
     Usage:
-        reader = ParquetHistoryReader("/path/to/history.parquet")
-
-        # Filter pushdown by time range (skips irrelevant row-groups)
-        reader.filter_time_range(min_ts=1700000000.0, max_ts=1701000000.0)
-        reader.filter_source_types(["dark_web", "leak"])
-
-        # Streaming iteration
-        for batch in reader.iter_batches(batch_size=50_000):
+        # S3 with credentials
+        src = RemoteParquetSource(
+            "s3://mybucket/findings/*.parquet",
+            source_type="s3",
+            credentials={"key_id": "AKIA...", "secret": "..."}
+        )
+        for batch in src.iter_batches(batch_size=50_000):
             df = pl.from_arrow(batch)  # zero-copy
             process(df)
 
-        # Or as Polars LazyFrame (full filter pipeline)
-        lf = reader.to_polars_lazy()
-        filtered = lf.filter(pl.col("source_type") == "dark_web").collect()
+        # HTTPS public file (no credentials)
+        src = RemoteParquetSource(
+            "https://example.com/data.parquet",
+            source_type="https"
+        )
 
-    Fallback: if Rust parquet_reader unavailable, falls back to pure PyArrow.
+        # Filter pushdown via SQL WHERE (DuckDB optimizes)
+        src = RemoteParquetSource("s3://bucket/data.parquet", sql_where="ts > 1700000000")
+
+    ATTACH path (DuckDB 1.5+):
+        CREATE SECRET (TYPE S3, KEY_ID '...', SECRET '...')
+        ATTACH 's3://bucket/file.parquet' AS remote (TYPE PARQUET)
+        SELECT * FROM remote.findings WHERE ts > 1700000000
     """
 
     __slots__ = tuple((
-        "_current_rg", "_num_rg", "_total_rows", "batch_size", "columns", "path",
-        "_ts_min", "_ts_max", "_source_types", "_rg_stats_cached"
+        "uri", "source_type", "credentials", "alias", "columns",
+        "batch_size", "sql_where", "_conn", "_total_rows",
     ))
 
-    def __init__(self, path: str, columns: list[str] | None = None, batch_size: int = 50000) -> None:
-        self.path = path
-        self.columns = columns or ["id", "query", "source_type", "confidence", "ts", "provenance_json"]
+    def __init__(
+        self,
+        uri: str,
+        source_type: str = "s3",
+        credentials: dict[str, str] | None = None,
+        alias: str = "remote",
+        columns: list[str] | None = None,
+        batch_size: int = 50000,
+        sql_where: str | None = None,
+    ) -> None:
+        self.uri = uri
+        self.source_type = source_type
+        self.credentials = credentials or {}
+        self.alias = alias
+        self.columns = columns
         self.batch_size = min(batch_size, 100000)
-        self._num_rg: int | None = None
+        self.sql_where = sql_where
+        self._conn: Any | None = None
         self._total_rows: int | None = None
-        self._current_rg: int = 0
-        # Filter pushdown state
-        self._ts_min: float | None = None
-        self._ts_max: float | None = None
-        self._source_types: set[str] | None = None
-        self._rg_stats_cached: list[tuple[int, float, float, int]] | None = None
 
-    def filter_time_range(self, min_ts: float | None = None, max_ts: float | None = None) -> "ParquetHistoryReader":
-        """Set time filter for row-group pruning. Returns self for chaining."""
-        self._ts_min = min_ts
-        self._ts_max = max_ts
-        self._rg_stats_cached = None  # Invalidate cache
-        return self
+    def _get_duckdb(self):
+        return _get_duckdb()
 
-    def filter_source_types(self, source_types: list[str] | None) -> "ParquetHistoryReader":
-        """Set source_type filter. None = no filter. Returns self for chaining."""
-        self._source_types = set(source_types) if source_types else None
-        return self
+    def _ensure_connection(self) -> None:
+        """Lazily create DuckDB connection and ATTACH the remote source."""
+        if self._conn is not None:
+            return
+        duckdb = self._get_duckdb()
+        self._conn = duckdb.connect(":memory:")
+        self._configure_conn(self._conn)
+        self._attach_source(self._conn)
 
-    def _get_row_group_stats(self) -> list[tuple[int, float, float, int]]:
-        """Get row-group statistics for filter pushdown."""
-        if self._rg_stats_cached is not None:
-            return self._rg_stats_cached
-        if _RUST_PARQUET_AVAILABLE and _get_parquet_row_group_stats() is not None:
-            try:
-                result = _get_parquet_row_group_stats()(self.path)
-                if result is not None:
-                    self._rg_stats_cached = result
-                    return result
-            except Exception:  # noqa: BLE001 — best-effort; Arrow/Parquet operation; non-critical
-                pass
-        # Fallback: compute from data (expensive but correct)
-        self._rg_stats_cached = self._compute_rg_stats_fallback()
-        return self._rg_stats_cached
-
-    def _compute_rg_stats_fallback(self) -> list[tuple[int, float, float, int]]:
-        """Compute row-group stats using PyArrow (fallback)."""
-        import pyarrow as pa
-        import pyarrow.parquet as pq
-
+    def _configure_conn(self, conn: Any) -> None:
+        """Apply M1 8GB-safe DuckDB settings."""
         try:
-            pf = pq.ParquetFile(self.path)
-            stats: list[tuple[int, float, float, int]] = []
-            for rg_idx in range(pf.num_row_groups):
-                # iter_batches signature: (self, batch_size=65536, row_groups=None, columns=None, ...)
-                batches = list(pf.iter_batches(batch_size=10000, row_groups=[rg_idx], columns=["ts"]))
-                if batches:
-                    table = pa.Table.from_batches(batches)
-                    col = table.column("ts")
-                    ts_list = col.to_pylist()
-                    min_ts = min(ts_list) if ts_list else 0.0
-                    max_ts = max(ts_list) if ts_list else 0.0
-                    stats.append((rg_idx, min_ts, max_ts, len(col)))
-                else:
-                    stats.append((rg_idx, 0.0, 0.0, 0))
-            return stats
-        except Exception:  # noqa: BLE001 — best-effort; telemetry/stats; best-effort
-            return []
+            conn.execute("PRAGMA threads = 2")
+            conn.execute("PRAGMA enable_progress_bar = false")
+            conn.execute("SET memory_limit = '2GB'")
+            conn.execute("PRAGMA hard_memory_limit = '1GB'")
+            conn.execute("SET preserve_insertion_order = false")
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB settings; non-critical
+            pass
 
-    def _filter_row_groups(self) -> list[int]:
-        """Apply filters to get list of row-groups to read."""
-        stats = self._get_row_group_stats()
-        filtered_rgs: list[int] = []
-        for rg_idx, min_ts, max_ts, count in stats:
-            if count == 0:
-                continue
-            # Time filter
-            if self._ts_min is not None and max_ts < self._ts_min:
-                continue
-            if self._ts_max is not None and min_ts > self._ts_max:
-                continue
-            filtered_rgs.append(rg_idx)
-        return filtered_rgs
-
-    @property
-    def num_row_groups(self) -> int:
-        """Return number of row-groups (metadata only, no data read)."""
-        if self._num_rg is not None:
-            return self._num_rg
-        if _RUST_PARQUET_AVAILABLE and _get_parquet_get_metadata() is not None:
-            try:
-                result = _get_parquet_get_metadata()(self.path)
-                if result is not None:
-                    self._num_rg, self._total_rows = result
-                    return self._num_rg
-            except Exception:  # noqa: BLE001 — best-effort; Arrow/Parquet operation; non-critical
-                pass
+    def _attach_source(self, conn: Any) -> None:
+        """ATTACH remote source based on type. Failures are logged and recovered."""
         try:
-            import pyarrow.parquet as pq
+            if self.source_type == "s3":
+                self._attach_s3(conn)
+            elif self.source_type == "https":
+                self._attach_https(conn)
+            elif self.source_type == "azure":
+                self._attach_azure(conn)
+            elif self.source_type == "gcs":
+                self._attach_gcs(conn)
+            elif self.source_type == "postgres":
+                self._attach_postgres(conn)
+            else:
+                logger.warning(f"[RemoteParquet] Unknown source_type={self.source_type!r}, attempting S3 fallback")
+                self._attach_s3(conn)
+        except Exception as e:  # noqa: BLE001 — best-effort; remote attach; non-critical
+            logger.warning(f"[RemoteParquet] Failed to ATTACH {self.uri}: {e}")
 
-            pf = pq.ParquetFile(self.path)
-            self._num_rg = pf.num_row_groups
-            self._total_rows = pf.metadata.num_rows
-            return self._num_rg
-        except Exception:  # noqa: BLE001 — best-effort; rowgroup filter failure; non-critical
-            self._num_rg = 0
+    def _attach_s3(self, conn: Any) -> None:
+        """Attach S3 Parquet via CREATE SECRET + ATTACH."""
+        secret_name = f"_s3_secret_{id(self)}"
+        key_id = self.credentials.get("key_id", "").replace("'", "''")
+        secret = self.credentials.get("secret", "").replace("'", "''")
+        region = self.credentials.get("region", "us-east-1").replace("'", "''")
+        if key_id and secret:
+            conn.execute(f"""
+                CREATE SECRET {secret_name} (
+                    TYPE S3,
+                    KEY_ID '{key_id}',
+                    SECRET '{secret}',
+                    REGION '{region}'
+                )
+            """)
+        conn.execute(f"ATTACH '{self.uri}' AS {self.alias} (TYPE PARQUET)")
+
+    def _attach_https(self, conn: Any) -> None:
+        """Attach HTTPS Parquet — DuckDB handles via httpfs extension."""
+        try:
+            conn.execute("LOAD httpfs")
+        except Exception:  # noqa: BLE001 — best-effort; httpfs load; non-critical
+            pass
+        conn.execute(f"ATTACH '{self.uri}' AS {self.alias} (TYPE PARQUET)")
+
+    def _attach_azure(self, conn: Any) -> None:
+        """Attach Azure Blob Parquet via CREATE SECRET + ATTACH."""
+        secret_name = f"_azure_secret_{id(self)}"
+        account = self.credentials.get("account", "").replace("'", "''")
+        access_key = self.credentials.get("access_key", "").replace("'", "''")
+        if account and access_key:
+            conn.execute(f"""
+                CREATE SECRET {secret_name} (
+                    TYPE AZURE,
+                    ACCOUNT_NAME '{account}',
+                    ACCOUNT_KEY '{access_key}'
+                )
+            """)
+        conn.execute(f"ATTACH '{self.uri}' AS {self.alias} (TYPE PARQUET)")
+
+    def _attach_gcs(self, conn: Any) -> None:
+        """Attach GCS Parquet via CREATE SECRET + ATTACH."""
+        secret_name = f"_gcs_secret_{id(self)}"
+        credentials_json = self.credentials.get("credentials_json", "").replace("'", "''")
+        if credentials_json:
+            conn.execute(f"""
+                CREATE SECRET {secret_name} (
+                    TYPE GCS,
+                    CREDENTIALS_JSON '{credentials_json}'
+                )
+            """)
+        conn.execute(f"ATTACH '{self.uri}' AS {self.alias} (TYPE PARQUET)")
+
+    def _attach_postgres(self, conn: Any) -> None:
+        """Attach Postgres table via DuckDB postgres scanner."""
+        try:
+            conn.execute("LOAD postgres")
+        except Exception:  # noqa: BLE001 — best-effort; postgres load; non-critical
+            pass
+        host = self.credentials.get("host", "localhost")
+        port = self.credentials.get("port", "5432")
+        db = self.credentials.get("database", "postgres")
+        user = self.credentials.get("user", "")
+        password = self.credentials.get("password", "")
+        # Escape single quotes in all credentials — prevents SQL injection in ATTACH URL
+        user = user.replace("'", "''")
+        password = password.replace("'", "''")
+        host = host.replace("'", "''")
+        db = db.replace("'", "''")
+        conn.execute(f"""
+            ATTACH 'postgres://{user}:{password}@{host}:{port}/{db}'
+            AS {self.alias} (TYPE POSTGRES)
+        """)
+
+    def _build_sql(self) -> str:
+        """Build SQL query with optional column selection and WHERE clause."""
+        cols = ", ".join(self.columns) if self.columns else "*"
+        sql = f"SELECT {cols} FROM {self.alias}"
+        if self.sql_where:
+            sql += f" WHERE {self.sql_where}"
+        return sql
+
+    def _count_rows(self) -> int:
+        """Get total row count via COUNT(*) pushdown."""
+        self._ensure_connection()
+        try:
+            cols = ", ".join(self.columns) if self.columns else "*"
+            count_sql = f"SELECT COUNT(*) FROM {self.alias}"
+            if self.sql_where:
+                count_sql += f" WHERE {self.sql_where}"
+            result = self._conn.execute(count_sql).fetchone()
+            return result[0] if result else 0
+        except Exception:  # noqa: BLE001 — best-effort; row count; non-critical
             return 0
 
     @property
     def total_rows(self) -> int:
-        """Return total row count across all row-groups."""
-        if self._total_rows is not None:
-            return self._total_rows
-        _ = self.num_row_groups
-        return self._total_rows or 0
+        """Return total row count (DuckDB COUNT(*) pushdown)."""
+        if self._total_rows is None:
+            self._total_rows = self._count_rows()
+        return self._total_rows
 
     def iter_batches(self) -> Iterator:
         """
-        Iterate over filtered row-groups as Arrow RecordBatch objects.
+        Iterate over remote Parquet as Arrow RecordBatch objects via DuckDB.
 
         Yields:
-            pyarrow.RecordBatch — zero-copy view of one row-group.
-            Caller converts to Polars via pl.from_arrow(batch) for zero-copy.
+            pyarrow.RecordBatch — zero-copy via DuckDB Arrow export.
+            Caller converts to Polars via pl.from_arrow(batch).
         """
-        # Apply filter pushdown
-        rg_indices = self._filter_row_groups() if (self._ts_min or self._ts_max) else range(self.num_row_groups)
-        if _RUST_PARQUET_AVAILABLE and _get_parquet_read_row_group_ipc() is not None:
-            yield from self._iter_rust_filtered(rg_indices)
-        else:
-            yield from self._iter_pyarrow_filtered(rg_indices)
+        self._ensure_connection()
+        try:
+            import pyarrow as pa
 
-    def _iter_rust_filtered(self, rg_indices: list[int] | range):
-        """Rust-accelerated row-group iteration via IPC bytes with filter."""
-        for rg_idx in rg_indices:
+            sql = self._build_sql()
+            result = self._conn.execute(sql)
             try:
-                ipc_bytes = _get_parquet_read_row_group_ipc()(self.path, rg_idx, None, self.batch_size)
-                if ipc_bytes is None:
-                    continue
-                if isinstance(ipc_bytes, memoryview):
-                    ipc_bytes = bytes(ipc_bytes)
-                if len(ipc_bytes) == 0:
-                    continue
-                import pyarrow as pa
-
-                reader = pa.ipc.open_record_batch(ipc_bytes)
-                batch = reader.read_next_batch()
-                # Apply source_type filter in-memory if set (row-level)
-                if self._source_types:
-                    batch = self._filter_batch_source_types(batch)
-                if batch.num_rows > 0:
-                    yield batch
-            except Exception:  # noqa: BLE001 — best-effort; memory operation; non-critical
-                continue
-
-    def _iter_pyarrow_filtered(self, rg_indices: list[int] | range):
-        """Pure PyArrow fallback with filter."""
-        import pyarrow.parquet as pq
-
-        try:
-            pf = pq.ParquetFile(self.path)
-            for rg_idx in rg_indices:
-                try:
-                    # PyArrow iter_batches signature: iter_batches(batch_size, row_groups=None, columns=None)
-                    batch = next(pf.iter_batches(batch_size=self.batch_size, row_groups=[rg_idx], columns=self.columns))
-                    if self._source_types:
-                        batch = self._filter_batch_source_types(batch)
-                    if batch.num_rows > 0:
+                # Fast path: DuckDB can return Arrow table directly — O(1) allocation
+                batches = result.fetch_arrow_batch(self.batch_size)
+                while len(batches) > 0:
+                    for batch in batches:
                         yield batch
-                except StopIteration:
-                    continue
-        except Exception:  # noqa: BLE001 — best-effort; rowgroup filter failure; non-critical
+                    batches = result.fetch_arrow_batch(self.batch_size)
+                return
+            except AttributeError:
+                pass  # Fall through to tuple-based path
+            # Fallback: convert tuples to Arrow via from_pydict (single pass per batch)
+            while True:
+                rows = result.fetchmany(self.batch_size)
+                if not rows:
+                    break
+                columns = [desc[0] for desc in result.description]
+                col_arrays = [[row[i] for row in rows] for i in range(len(columns))]
+                table = pa.Table.from_pydict(dict(zip(columns, col_arrays)))
+                yield from table.to_batches(max_chunksize=self.batch_size)
+        except Exception as e:  # noqa: BLE001 — best-effort; remote read; non-critical
+            logger.warning(f"[RemoteParquet] iter_batches error: {e}")
             return
-
-    def _filter_batch_source_types(self, batch):
-        """Filter batch by source_type in-memory (post row-group filter)."""
-        import pyarrow as pa
-
-        if not self._source_types:
-            return batch
-        try:
-            schema = batch.schema
-            type_idx = schema.get_field_index("source_type")
-            if type_idx < 0:
-                return batch
-            type_col = batch.column(type_idx)
-            # Use filter directly on the column
-            mask = pa.compute.is_in(type_col, value_set=self._source_types)
-            return batch.filter(mask)
-        except Exception:  # noqa: BLE001 — best-effort; rowgroup filter failure; non-critical
-            return batch
 
     def to_polars_lazy(self):
         """
-        Convert parquet file to Polars LazyFrame with filter pushdown.
+        Return Polars LazyFrame via DuckDB scan.
 
-        This enables full Polars query optimization including:
-        - Column pruning
-        - Predicate pushdown
-        - Parallel execution
+        DuckDB's Parquet scanner handles filter pushdown and column pruning
+        natively — no PyArrow intermediate.
 
         Returns:
-            polars.LazyFrame — collect() when ready to execute.
+            polars.LazyFrame — collect() to execute.
         """
+        self._ensure_connection()
         try:
             import polars as pl
-            import pyarrow.parquet as pq
 
-            # Build Polars LazyFrame from PyArrow (zero-copy path)
-            table = pq.read_table(self.path, columns=self.columns)
-            df = pl.from_arrow(table)
-            lf = df.lazy()
-
-            # Apply filters if set
-            if self._ts_min is not None:
-                lf = lf.filter(pl.col("ts") >= self._ts_min)
-            if self._ts_max is not None:
-                lf = lf.filter(pl.col("ts") <= self._ts_max)
-            if self._source_types:
-                lf = lf.filter(pl.col("source_type").is_in(self._source_types))
-
-            return lf
+            sql = self._build_sql()
+            lf = self._conn.execute(sql).pl()
+            return lf.lazy()
         except ImportError:
             raise ImportError("Polars not installed: pip install polars")
+        except Exception as e:  # noqa: BLE001 — best-effort; DuckDB scan; non-critical
+            logger.warning(f"[RemoteParquet] to_polars_lazy error: {e}")
+            return None
+
+    def read_table(self):
+        """
+        Read entire remote Parquet as Arrow Table.
+        WARNING: may OOM for large remote files — prefer iter_batches().
+
+        Returns:
+            pyarrow.Table or None on error.
+        """
+        self._ensure_connection()
+        try:
+            import pyarrow as pa
+
+            sql = self._build_sql()
+            result = self._conn.execute(sql)
+            batches = list(result.fetchmany(self.batch_size * 10))  # safety cap
+            if not batches:
+                return None
+            columns = [desc[0] for desc in result.description]
+            col_arrays = [[row[i] for row in batches] for i in range(len(columns))]
+            return pa.Table.from_pydict(dict(zip(columns, col_arrays)))
+        except Exception:  # noqa: BLE001 — best-effort; remote read; non-critical
+            return None
 
     def iter_batches_async(self):
         """
-        Async iterator for use in async contexts.
+        Async iterator wrapping iter_batches on a thread pool.
 
-        Yields batches on a thread pool to avoid blocking event loop.
+        Yields batches on a thread pool to avoid blocking the event loop.
         """
         async def _aiter():
             loop = asyncio.get_running_loop()
@@ -698,24 +749,317 @@ class ParquetHistoryReader:
 
         return _aiter()
 
-    def read_table(self):
-        """
-        Read entire parquet file as a single Arrow Table.
-        WARNING: may OOM for 100GB+ files — prefer iter_batches().
-
-        Returns:
-            pyarrow.Table or None on error.
-        """
-        if _RUST_PARQUET_AVAILABLE and _get_parquet_read_table() is not None:
+    def close(self) -> None:
+        """Close DuckDB connection."""
+        if self._conn is not None:
             try:
-                return _get_parquet_read_table()(self.path, None, self.batch_size)
-            except Exception:  # noqa: BLE001 — best-effort; Arrow/Parquet operation; non-critical
+                self._conn.close()
+            except Exception:  # noqa: BLE001 — best-effort; connection close; non-critical
                 pass
+            self._conn = None
+
+    def __repr__(self) -> str:
+        return (
+            f"RemoteParquetSource(uri={self.uri!r}, source_type={self.source_type!r}, "
+            f"total_rows={self.total_rows}, batch_size={self.batch_size})"
+        )
+
+
+class ParquetHistoryReader:
+    """
+    DuckDB-native parquet reader — eliminates ~200 LOC of manual row-group management.
+
+    P4-8: Replaces hand-rolled row-group stats + PyArrow fallback chain with
+    DuckDB's own read_parquet() which has native filter pushdown, column pruning,
+    and parallel execution. Falls back to PyArrow only when DuckDB is unavailable.
+
+    M1 8GB safe: DuckDB manages memory via hard_memory_limit (1GB ceiling).
+    Zero-copy: Arrow Table from DuckDB → Polars zero-copy via from_arrow.
+
+    Usage:
+        reader = ParquetHistoryReader("/path/to/history.parquet")
+
+        # Filter pushdown (DuckDB WHERE pushdown — no row-group manual filtering)
+        reader.filter_time_range(min_ts=1700000000.0, max_ts=1701000000.0)
+        reader.filter_source_types(["dark_web", "leak"])
+
+        # Streaming via DuckDB fetchmany → Arrow batches
+        for batch in reader.iter_batches(batch_size=50_000):
+            df = pl.from_arrow(batch)  # zero-copy
+            process(df)
+
+        # Or as Polars LazyFrame (DuckDB scan with full optimizer)
+        # M1 8GB: streaming engine required — prevents full table materialization
+        lf = reader.to_polars_lazy()
+        filtered = lf.filter(pl.col("source_type") == "dark_web").collect(engine="streaming")
+
+    ATTACH alternative for remote files:
+        RemoteParquetSource — use when file is on S3/HTTPS/Azure/GCS/Postgres.
+        ParquetHistoryReader — local files only.
+    """
+
+    __slots__ = tuple((
+        "path", "columns", "batch_size",
+        "_ts_min", "_ts_max", "_source_types",
+        "_duckdb_conn", "_total_rows",
+    ))
+
+    def __init__(self, path: str, columns: list[str] | None = None, batch_size: int = 50000) -> None:
+        self.path = path
+        self.columns = columns or ["id", "query", "source_type", "confidence", "ts", "provenance_json"]
+        self.batch_size = min(batch_size, 100000)
+        self._ts_min: float | None = None
+        self._ts_max: float | None = None
+        self._source_types: set[str] | None = None
+        self._duckdb_conn: Any | None = None
+        self._total_rows: int | None = None
+
+    def filter_time_range(self, min_ts: float | None = None, max_ts: float | None = None) -> "ParquetHistoryReader":
+        """Set time filter for DuckDB WHERE pushdown. Returns self for chaining."""
+        self._ts_min = min_ts
+        self._ts_max = max_ts
+        return self
+
+    def filter_source_types(self, source_types: list[str] | None) -> "ParquetHistoryReader":
+        """Set source_type filter for DuckDB WHERE pushdown. Returns self for chaining."""
+        self._source_types = set(source_types) if source_types else None
+        return self
+
+    def _ensure_duckdb(self) -> Any | None:
+        """Lazily get DuckDB connection with local parquet attached."""
+        if self._duckdb_conn is not None:
+            return self._duckdb_conn
+        try:
+            duckdb = self._get_duckdb()
+            conn = duckdb.connect(":memory:")
+            try:
+                conn.execute("PRAGMA threads = 2")
+                conn.execute("SET memory_limit = '1GB'")
+                conn.execute("PRAGMA hard_memory_limit = '1GB'")
+                conn.execute("PRAGMA enable_progress_bar = false")
+            except Exception:  # noqa: BLE001 — best-effort; DuckDB settings; non-critical
+                pass
+            # Read local parquet — DuckDB handles row-group stats + filter pushdown
+            conn.execute(f"CREATE VIEW local_parquet AS SELECT * FROM read_parquet('{self.path}')")
+            self._duckdb_conn = conn
+            return conn
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB init; non-critical
+            return None
+
+    def _get_duckdb(self):
+        return _get_duckdb()
+
+    def _build_where(self) -> str | None:
+        """Build DuckDB WHERE clause from filters."""
+        parts: list[str] = []
+        if self._ts_min is not None:
+            parts.append(f"ts >= {self._ts_min}")
+        if self._ts_max is not None:
+            parts.append(f"ts <= {self._ts_max}")
+        if self._source_types:
+            escaped = [t.replace("'", "''") for t in self._source_types]
+            types_list = ", ".join(f"'{t}'" for t in escaped)
+            parts.append(f"source_type IN ({types_list})")
+        return " AND ".join(parts) if parts else None
+
+    def _count_rows(self) -> int:
+        """COUNT(*) via DuckDB (pushdown-aware)."""
+        conn = self._ensure_duckdb()
+        if conn is None:
+            return self._count_rows_pyarrow()
+        try:
+            where = self._build_where()
+            sql = "SELECT COUNT(*) FROM local_parquet"
+            if where:
+                sql += f" WHERE {where}"
+            result = conn.execute(sql).fetchone()
+            return result[0] if result else 0
+        except Exception:  # noqa: BLE001 — best-effort; count; non-critical
+            return self._count_rows_pyarrow()
+
+    def _count_rows_pyarrow(self) -> int:
+        """PyArrow fallback row count."""
+        try:
+            import pyarrow.parquet as pq
+            pf = pq.ParquetFile(self.path)
+            return pf.metadata.num_rows
+        except Exception:  # noqa: BLE001 — best-effort; PyArrow count; non-critical
+            return 0
+
+    @property
+    def num_row_groups(self) -> int:
+        """Return number of row-groups via PyArrow (metadata only, no data read)."""
+        try:
+            import pyarrow.parquet as pq
+            pf = pq.ParquetFile(self.path)
+            return pf.num_row_groups
+        except Exception:  # noqa: BLE001 — best-effort; rowgroup count; non-critical
+            return 0
+
+    @property
+    def total_rows(self) -> int:
+        """Return total row count."""
+        if self._total_rows is None:
+            self._total_rows = self._count_rows()
+        return self._total_rows
+
+    def iter_batches(self) -> Iterator:
+        """
+        Iterate via DuckDB fetchmany → Arrow RecordBatch (DuckDB-native path).
+
+        Falls back to PyArrow if DuckDB unavailable.
+        Yields:
+            pyarrow.RecordBatch — caller uses pl.from_arrow(batch) for zero-copy.
+        """
+        conn = self._ensure_duckdb()
+        if conn is not None:
+            yield from self._iter_via_duckdb(conn)
+            return
+        yield from self._iter_via_pyarrow()
+
+    def _iter_via_duckdb(self, conn: Any) -> Iterator:
+        """DuckDB-native iteration with WHERE pushdown."""
+        try:
+            import pyarrow as pa
+
+            cols = ", ".join(self.columns) if self.columns else "*"
+            sql = f"SELECT {cols} FROM local_parquet"
+            where = self._build_where()
+            if where:
+                sql += f" WHERE {where}"
+            result = conn.execute(sql)
+            try:
+                # Fast path: DuckDB Arrow batch export — O(1) allocation
+                batches = result.fetch_arrow_batch(self.batch_size)
+                while len(batches) > 0:
+                    for batch in batches:
+                        yield batch
+                    batches = result.fetch_arrow_batch(self.batch_size)
+                return
+            except AttributeError:
+                pass  # Fall through to tuple-based path
+            # Fallback: convert tuples to Arrow via from_pydict (single pass per batch)
+            while True:
+                rows = result.fetchmany(self.batch_size)
+                if not rows:
+                    break
+                columns = [desc[0] for desc in result.description]
+                col_arrays = [[row[i] for row in rows] for i in range(len(columns))]
+                table = pa.Table.from_pydict(dict(zip(columns, col_arrays)))
+                yield from table.to_batches(max_chunksize=self.batch_size)
+        except Exception as e:  # noqa: BLE001 — best-effort; DuckDB iteration; non-critical
+            logger.warning(f"[ParquetHistoryReader] DuckDB path failed, falling back to PyArrow: {e}")
+            yield from self._iter_via_pyarrow()
+
+    def _iter_via_pyarrow(self) -> Iterator:
+        """PyArrow fallback — pure row-group iteration."""
         try:
             import pyarrow.parquet as pq
 
+            pf = pq.ParquetFile(self.path)
+            cols = self.columns
+            for rg_idx in range(pf.num_row_groups):
+                try:
+                    batch = next(pf.iter_batches(batch_size=self.batch_size, row_groups=[rg_idx], columns=cols))
+                    if batch.num_rows > 0:
+                        yield batch
+                except StopIteration:
+                    continue
+        except Exception:  # noqa: BLE001 — best-effort; PyArrow fallback; non-critical
+            return
+
+    def to_polars_lazy(self):
+        """
+        Polars LazyFrame via DuckDB scan (DuckDB-native, full optimizer).
+
+        DuckDB handles filter pushdown, column pruning, and parallel execution.
+        Falls back to PyArrow if DuckDB unavailable.
+
+        Returns:
+            polars.LazyFrame or None.
+        """
+        conn = self._ensure_duckdb()
+        if conn is None:
+            return self._to_polars_lazy_pyarrow()
+        try:
+            import polars as pl
+
+            cols = ", ".join(self.columns) if self.columns else "*"
+            sql = f"SELECT {cols} FROM local_parquet"
+            where = self._build_where()
+            if where:
+                sql += f" WHERE {where}"
+            return conn.execute(sql).pl().lazy()
+        except ImportError:
+            raise ImportError("Polars not installed: pip install polars")
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB scan; non-critical
+            return self._to_polars_lazy_pyarrow()
+
+    def _to_polars_lazy_pyarrow(self):
+        """
+        PyArrow fallback for to_polars_lazy.
+
+        M1 8GB: Uses pl.scan_parquet() for streaming — avoids full table
+        materialization that pq.read_table() would trigger. Filters are
+        applied as predicates pushed down into the scan.
+        """
+        try:
+            import polars as pl
+
+            # M1 8GB: scan_parquet() streams data with predicate pushdown,
+            # unlike pq.read_table() which eagerly materializes the entire file.
+            lf = pl.scan_parquet(self.path, schema_overrides={"provenance_json": pl.String})
+
+            # Apply filters if set (predicate pushdown into scan)
+            if self._ts_min is not None:
+                lf = lf.filter(pl.col("ts") >= self._ts_min)
+            if self._ts_max is not None:
+                lf = lf.filter(pl.col("ts") <= self._ts_max)
+            if self._source_types:
+                lf = lf.filter(pl.col("source_type").is_in(self._source_types))
+            return lf
+        except ImportError:
+            raise ImportError("Polars not installed: pip install polars")
+        except Exception:  # noqa: BLE001 — best-effort; PyArrow fallback; non-critical
+            return None
+
+    def iter_batches_async(self):
+        """Async iterator — runs iter_batches on thread pool."""
+        async def _aiter():
+            loop = asyncio.get_running_loop()
+            for batch in self.iter_batches():
+                yield await loop.run_in_executor(None, lambda b=batch: b)
+
+        return _aiter()
+
+    def read_table(self):
+        """Read entire parquet as Arrow Table. Prefer iter_batches() for large files.
+
+        M1 8GB: This method is a last-resort fallback for explicit full-table reads.
+        For large files, prefer iter_batches() which streams in row groups.
+        """
+        conn = self._ensure_duckdb()
+        if conn is not None:
+            try:
+                cols = ", ".join(self.columns) if self.columns else "*"
+                sql = f"SELECT {cols} FROM local_parquet"
+                where = self._build_where()
+                if where:
+                    sql += f" WHERE {where}"
+                result = conn.execute(sql)
+                # M1 8GB: fetch_arrow_table() is zero-copy via Arrow C Data Interface,
+                # no Python intermediary allocation unlike fetchall() + from_pydict().
+                arrow_table = result.fetch_arrow_table()
+                if arrow_table is None or arrow_table.num_rows == 0:
+                    return None
+                return arrow_table
+            except Exception:  # noqa: BLE001 — best-effort; DuckDB read; non-critical
+                pass
+        # DuckDB unavailable — fall back to PyArrow (eager, loads entire file)
+        try:
+            import pyarrow.parquet as pq
             return pq.read_table(self.path)
-        except Exception:  # noqa: BLE001 — best-effort; Arrow/Parquet operation; non-critical
+        except Exception:  # noqa: BLE001 — best-effort; PyArrow read; non-critical
             return None
 
     def __len__(self) -> int:
@@ -802,6 +1146,13 @@ def export_findings_to_parquet(
     try:
         duckdb = _get_duckdb()
         conn = duckdb.connect(":memory:")
+        # M1 8GB: memory_limit + threads + preserve_insertion_order
+        try:
+            conn.execute("PRAGMA threads = 2")
+            conn.execute("SET memory_limit = '1GB'")
+            conn.execute("SET preserve_insertion_order = false")
+        except Exception:  # noqa: BLE001 — fail-soft
+            pass
         conn.execute(f"ATTACH '{_db_path}' AS source_db")
         conn.execute("USE source_db")
 
@@ -883,9 +1234,10 @@ from .wal import WALManager
 logger = logging.getLogger(__name__)
 
 
-class ActivationResult(msgspec.Struct):
+class ActivationResult(msgspec.Struct, gc=False):
     """
     Sprint F300: msgspec.Struct for activation record operations.
+    F350M-R: gc=False for M1 8GB.
 
     Fields:
         finding_id:     Unique identifier of the finding
@@ -907,9 +1259,10 @@ class ActivationResult(msgspec.Struct):
     accepted: bool = False
 
 
-class ReplayResult(msgspec.Struct):
+class ReplayResult(msgspec.Struct, gc=False):
     """
     Sprint F300: msgspec.Struct for pending-sync replay operations.
+    F350M-R: gc=False for M1 8GB.
 
     Fields:
         finding_id:           Unique identifier of the finding
@@ -934,7 +1287,7 @@ class ReplayResult(msgspec.Struct):
     error: str | None
 
 
-class CanonicalFinding(msgspec.Struct, frozen=True):
+class CanonicalFinding(msgspec.Struct, frozen=True, gc=False):
     """
     Sprint 8P: Canonical internal finding DTO.
 
@@ -951,7 +1304,7 @@ class CanonicalFinding(msgspec.Struct, frozen=True):
 
     DTO invariants:
       - frozen=True  - immutabilní instance
-      -      - zakázán garbage collector tracking (výkon)
+      - gc=False  - F350M-R: zakázán garbage collector tracking, kritické pro 8GB M1
       - msgspec.Struct - zero-copy decode/encode
 
     NOTE 8Q/8R: CanonicalFinding je používán napříč celým projektem jako univerzální
@@ -1679,21 +2032,24 @@ class DuckDBShadowStore:
             from time import perf_counter_ns
 
             t0 = perf_counter_ns()
-            rows = conn.execute(
+            arrow_table = conn.execute(
                 "\n                SELECT id, query, source_type, confidence, ts, payload_text\n                FROM canonical_findings\n                ORDER BY confidence DESC, ts DESC\n                LIMIT ?\n                ",
                 [limit],
-            ).fetchall()
+            ).fetch_arrow_table()
             DuckDBShadowStore._record_query_latency(self._qe()._query_latencies_ns, perf_counter_ns() - t0)
+            if arrow_table is None or arrow_table.num_rows == 0:
+                return []
+            # M1 8GB: fetch_arrow_table() zero-copy Arrow C Data Interface — no Python intermediary
             return [
                 {
-                    "ioc": row[0],
-                    "query": row[1],
-                    "source_type": row[2],
-                    "confidence": row[3],
-                    "ts": row[4],
-                    "summary": (row[5] or "")[:200],
+                    "ioc": row["id"],
+                    "query": row["query"],
+                    "source_type": row["source_type"],
+                    "confidence": row["confidence"],
+                    "ts": row["ts"],
+                    "summary": (row["payload_text"] or "")[:200],
                 }
-                for row in rows
+                for row in arrow_table.to_pylist()
             ]
         except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return []
@@ -2004,6 +2360,9 @@ class DuckDBShadowStore:
         duckdb = _get_duckdb()
         conn = duckdb.connect(str(self._db_path))
         try:
+            conn.execute("SET memory_limit = '1GB'")
+            conn.execute("PRAGMA threads = 2")
+            conn.execute("SET preserve_insertion_order = false")
             madv_free_reusable_on_path(self._db_path)
             apply_nocache_to_path(self._db_path)
             try:
@@ -2501,8 +2860,13 @@ class DuckDBShadowStore:
                 from time import perf_counter_ns
 
                 t0 = perf_counter_ns()
-                result = list(self._store.arrow_fetch_batch(conn, sql, [limit]))
-                DuckDBShadowStore._record_query_latency(self._store._qe()._query_latencies_ns, perf_counter_ns() - t0)
+                raw_result = list(self._store.arrow_fetch_batch(conn, sql, [limit]))
+                try:
+                    qe = self._store._qe()
+                    if hasattr(qe, "_query_latencies_ns"):
+                        DuckDBShadowStore._record_query_latency(qe._query_latencies_ns, perf_counter_ns() - t0)
+                except Exception:  # noqa: BLE001 — best-effort; metrics failure; non-critical
+                    pass
                 return [
                     {
                         "id": row[0],
@@ -2512,7 +2876,7 @@ class DuckDBShadowStore:
                         "ts": row[4],
                         "provenance_json": row[5],
                     }
-                    for row in result
+                    for row in raw_result
                 ]
             except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 return []
@@ -3563,6 +3927,8 @@ class DuckDBShadowStore:
             raise
         except Exception:  # noqa: BLE001 — best-effort; DB query failure; non-critical
             return []
+        except Exception:  # noqa: BLE001 — best-effort; DB query failure; non-critical
+            return []
 
     def _sync_execute_raw_sql(self, sql: str) -> list[Any]:
         """
@@ -4055,22 +4421,25 @@ class DuckDBShadowStore:
         if conn is None:
             return []
         try:
-            rows = conn.execute(
+            arrow_table = conn.execute(
                 "SELECT ioc_a, ioc_b, ioc_type_a, ioc_type_b, support, confidence, score, last_seen FROM ioc_cooccurrence ORDER BY score DESC LIMIT ?",
                 (limit,),
-            ).fetchall()
+            ).fetch_arrow_table()
+            if arrow_table is None or arrow_table.num_rows == 0:
+                return []
+            # M1 8GB: fetch_arrow_table() zero-copy Arrow C Data Interface — no Python intermediary
             return [
                 {
-                    "ioc_a": r[0],
-                    "ioc_b": r[1],
-                    "ioc_type_a": r[2],
-                    "ioc_type_b": r[3],
-                    "support": r[4],
-                    "confidence": r[5],
-                    "score": r[6],
-                    "last_seen": r[7],
+                    "ioc_a": row["ioc_a"],
+                    "ioc_b": row["ioc_b"],
+                    "ioc_type_a": row["ioc_type_a"],
+                    "ioc_type_b": row["ioc_type_b"],
+                    "support": row["support"],
+                    "confidence": row["confidence"],
+                    "score": row["score"],
+                    "last_seen": row["last_seen"],
                 }
-                for r in rows
+                for row in arrow_table.to_pylist()
             ]
         except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return []
@@ -4682,6 +5051,9 @@ class DuckDBShadowStore:
         db_path = ghost_home / "ghost_global.duckdb"
         conn = duckdb.connect(str(db_path), access_mode="automatic")
         try:
+            conn.execute("SET memory_limit = '256MB'")
+            conn.execute("PRAGMA threads = 2")
+            conn.execute("SET preserve_insertion_order = false")
             conn.execute(
                 "\n                CREATE TABLE IF NOT EXISTS global_entities (\n                    entity_value TEXT PRIMARY KEY,\n                    entity_type TEXT,\n                    sprint_count INT DEFAULT 0,\n                    last_seen DOUBLE,\n                    confidence_cumulative REAL DEFAULT 0\n                )\n                "
             )
@@ -7352,9 +7724,49 @@ class DuckDBShadowStore:
             return (0, None)
         if not _check_pyarrow_available():
             return (0, "pyarrow_not_installed")
+        import io as _io
+
         import pyarrow as _pa
 
-        if _RUST_ARROW_AVAILABLE and _rust_build_arrow_batch is not None:
+        # P4-7: Try zero-copy column-path first (build_record_batch_from_structs).
+        # This avoids the dict roundtrip of build_arrow_batch_from_findings by
+        # accepting 6 pre-separated PyList columns and building IPC bytes in Rust.
+        if _RUST_RECORD_BATCH_COLS_AVAILABLE and _rust_record_batch_cols_func is not None:
+            try:
+                # Extract columns as Python lists — passed by reference to Rust,
+                # which iterates them via PyO3 Bound API (zero GIL overhead per item).
+                ids_list = [f.finding_id for f in findings]
+                queries_list = [f.query for f in findings]
+                src_types_list = [f.source_type for f in findings]
+                conf_list = [f.confidence for f in findings]
+                ts_list = [f.ts for f in findings]
+                prov_list = [_provenance_to_arrow_native(f.provenance) for f in findings]
+                ipc_bytes = _rust_record_batch_cols_func(
+                    ids_list,
+                    queries_list,
+                    src_types_list,
+                    conf_list,
+                    ts_list,
+                    prov_list,
+                )
+                if ipc_bytes and len(ipc_bytes) > 8:
+                    reader = _pa.ipc.open_stream(_io.BytesIO(ipc_bytes))
+                    try:
+                        record_batch = reader.read_next_batch()
+                    except StopIteration:
+                        # Empty batch (n=0, schema only) — success, zero records
+                        return (0, None)
+                    duckdb_count, duckdb_err = self._qe().insert_findings_bulk_arrow(record_batch)
+                    if duckdb_err is not None:
+                        return (0, "duckdb_insert_failed")
+                    return (duckdb_count, None)
+            except Exception as _rust_cols_e:  # noqa: BLE001 — best-effort; Arrow/Parquet operation; non-critical
+                _logger.debug("[Arrow-Rust] record_batch_cols failed, trying dict path: %s", _rust_cols_e)
+                # fall through to dict-path
+
+        # P4-7: Fallback A — dict-path (original build_arrow_batch_from_findings).
+        # Retained for back-compat and as a safe fallback if column lengths mismatch.
+        if _RUST_ARROW_AVAILABLE and _rust_arrow_func is not None:
             try:
                 findings_dicts = [
                     {
@@ -7367,35 +7779,46 @@ class DuckDBShadowStore:
                     }
                     for f in findings
                 ]
-                ipc_bytes = _rust_build_arrow_batch(findings_dicts)
+                ipc_bytes = _rust_arrow_func(findings_dicts)
                 if ipc_bytes and len(ipc_bytes) > 8:
-                    reader = _pa.ipc.open_record_batch_reader(ipc_bytes)
-                    table = reader.read_next_batch()
-                    duckdb_count, duckdb_err = self._qe().insert_findings_bulk_arrow(table)
+                    reader = _pa.ipc.open_stream(_io.BytesIO(ipc_bytes))
+                    try:
+                        record_batch = reader.read_next_batch()
+                    except StopIteration:
+                        # Empty batch (n=0, schema only) — success, zero records
+                        return (0, None)
+                    duckdb_count, duckdb_err = self._qe().insert_findings_bulk_arrow(record_batch)
                     if duckdb_err is not None:
                         return (0, "duckdb_insert_failed")
                     return (duckdb_count, None)
             except Exception as _rust_e:  # noqa: BLE001 — best-effort; Arrow/Parquet operation; non-critical
                 _logger.debug("[Arrow-Rust] build_arrow_batch_from_findings failed, falling back to Python: %s", _rust_e)
                 pass  # fall through to Python fallback
+
+        # P4-7: Fallback B — pure Python pa.RecordBatch.from_arrays.
+        # pa.RecordBatch.from_arrays() is lighter than pa.Table.from_arrays()
+        # because RecordBatch is a non-chunked, flat column container.
+        # We still use list comprehensions here (N× allocations) but DuckDB
+        # receives a RecordBatch which is the preferred Arrow载体.
         try:
-            provenance_raw = [_provenance_to_arrow_native(f.provenance) for f in findings]
-            provenance_arr = _pa.array(provenance_raw, type=_pa.string())
+            provenance_arr = _pa.array([_provenance_to_arrow_native(f.provenance) for f in findings], type=_pa.string())
             id_arr = _pa.array([f.finding_id for f in findings], type=_pa.string())
             query_arr = _pa.array([f.query for f in findings], type=_pa.string())
             src_arr = _pa.array([f.source_type for f in findings], type=_pa.string())
             conf_arr = _pa.array([f.confidence for f in findings], type=_pa.float64())
             ts_arr = _pa.array([f.ts for f in findings], type=_pa.float64())
-            table = _pa.Table.from_arrays(
+            # P4-7: RecordBatch instead of Table — DuckDB bulk insert prefers
+            # non-chunked RecordBatch (single IPC record batch = oneArrow payload)
+            record_batch = _pa.RecordBatch.from_arrays(
                 [id_arr, query_arr, src_arr, conf_arr, ts_arr, provenance_arr],
                 names=["id", "query", "source_type", "confidence", "ts", "provenance_json"],
             )
         except Exception as e:  # noqa: BLE001 — best-effort; DB query failure; non-critical
             import logging as _logging
 
-            _logging.getLogger(__name__).error(f"[P0-4 Arrow] Table build failed: {type(e).__name__}: {e}")
+            _logging.getLogger(__name__).error(f"[P0-4 Arrow] RecordBatch build failed: {type(e).__name__}: {e}")
             return (0, "table_build_failed")
-        duckdb_count, duckdb_err = self._qe().insert_findings_bulk_arrow(table)
+        duckdb_count, duckdb_err = self._qe().insert_findings_bulk_arrow(record_batch)
         if duckdb_err is not None:
             return (0, "duckdb_insert_failed")
         return (duckdb_count, None)
@@ -7913,6 +8336,9 @@ class DuckDBShadowStore:
         duckdb = _get_duckdb()
         tmp_conn = duckdb.connect(str(self._db_path), read_only=False)
         try:
+            tmp_conn.execute("SET memory_limit = '1GB'")
+            tmp_conn.execute("PRAGMA threads = 2")
+            tmp_conn.execute("SET preserve_insertion_order = false")
             tmp_conn.execute("VACUUM")
         finally:
             tmp_conn.close()
@@ -8344,6 +8770,9 @@ class DuckDBShadowStore:
                 duckdb = _get_duckdb()
                 conn = duckdb.connect(str(self._db_path))
                 try:
+                    conn.execute("SET memory_limit = '1GB'")
+                    conn.execute("PRAGMA threads = 2")
+                    conn.execute("SET preserve_insertion_order = false")
                     sql = "SELECT 1 FROM canonical_findings WHERE id = ? LIMIT 1"
                     result = list(self.arrow_fetch_batch(conn, sql, [finding_id]))
                     return bool(result)

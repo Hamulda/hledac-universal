@@ -846,16 +846,16 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             delay = max(min_delay, min(delay, max_delay))
             await asyncio.sleep(delay)
             try:
-                from curl_cffi import requests
-                session = requests.Session(impersonate=impersonate)
-                if method.upper() == 'GET':
-                    resp = session.get(url, headers=headers, **kwargs)
-                elif method.upper() == 'POST':
-                    resp = session.post(url, headers=headers, **kwargs)
-                else:
-                    resp = session.request(method, url, headers=headers, **kwargs)
-                elapsed = time.time() - start_time
-                return {'success': True, 'url': url, 'status_code': resp.status_code, 'content': resp.text[:5000] if hasattr(resp, 'text') else '', 'headers': dict(resp.headers) if hasattr(resp, 'headers') else {}, 'elapsed_seconds': elapsed, 'jitter_delay': delay, 'impersonate': impersonate, 'method': 'curl_cffi'}
+                from curl_cffi.requests import AsyncSession
+                async with AsyncSession(impersonate=impersonate) as session:
+                    if method.upper() == 'GET':
+                        resp = await session.get(url, headers=headers, **kwargs)
+                    elif method.upper() == 'POST':
+                        resp = await session.post(url, headers=headers, **kwargs)
+                    else:
+                        resp = await session.request(method, url, headers=headers, **kwargs)
+                    elapsed = time.time() - start_time
+                    return {'success': True, 'url': url, 'status_code': resp.status_code, 'content': resp.text[:5000] if hasattr(resp, 'text') else '', 'headers': dict(resp.headers) if hasattr(resp, 'headers') else {}, 'elapsed_seconds': elapsed, 'jitter_delay': delay, 'impersonate': impersonate, 'method': 'curl_cffi'}
             except ImportError:
                 from network.session_runtime import async_get_httpx_session
                 import httpx

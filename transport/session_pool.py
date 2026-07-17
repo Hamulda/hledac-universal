@@ -238,7 +238,7 @@ async def httpx_socks_client(
             )
             _httpx_socks_clients[cache_key] = httpx.AsyncClient(
                 limits=limits,
-                http2=True,
+                http2=False,  # SOCKS5 tunnel doesn't support HTTP/2 ALPN negotiation
                 timeout=timeout,
                 follow_redirects=True,
                 transport=transport,
