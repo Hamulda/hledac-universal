@@ -1,0 +1,6 @@
+- PEP 734 isolation infrastructure added for DuckDB write operations with DUCKDB_WRITE role constant
+- run_db_write() function implemented in role_based_pools.py for DuckDB write execution
+- ThreadPoolExecutor used as workaround due to stateful self closure pickle serialization problem
+- Full PEP 734 isolation requires standalone functions rather than closures for complete process isolation
+- All 38 tests passed after ISSUE G2 completion
+- Three roles now exist: DUCKDB_READ, DUCKDB_WRITE, and CPU_WORK

@@ -794,7 +794,6 @@ class SprintSchedulerV2:
         object.__setattr__(self, '_ctx', self._ctx.with_cycle(
             duckdb_store=_duckdb_raw,
             sidecar_orchestrator=self._sidecar_orchestrator,
-            sidecar_tasks=self._sidecar_tasks,
             synth_windup_task=getattr(self, '_synth_windup_task', None),
             hermes_engine=_hermes_raw,
             privacy_layer=getattr(self, '_privacy_layer', None),
@@ -806,7 +805,7 @@ class SprintSchedulerV2:
             rel_discovery_engine=getattr(self, '_rel_discovery_engine', None),
         ))
 
-        _orch = WinddownOrchestrator()
+        _orch = WinddownOrchestrator(scheduler=self)
         await _orch.run(
             ctx=self._ctx,
             lifecycle=self._lifecycle,

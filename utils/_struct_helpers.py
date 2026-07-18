@@ -78,4 +78,40 @@ F350M-R / Issue #D1 — 2026-07-18.
 
 from __future__ import annotations
 
-__all__: list[str] = []
+from typing import Any
+
+__all__: list[str] = ["struct_replace"]
+
+
+def struct_replace(obj: Any, /, **changes: Any) -> Any:
+    """Type-safe replacement for frozen msgspec.Struct.
+
+    C-optimized via msgspec.structs.replace() — partial updates via keyword args.
+    Raises TypeError if a field in `changes` doesn't exist on `obj`.
+
+    Works with msgspec.Struct (frozen=True, gc=False, mutable containers).
+    This is the msgspec equivalent of dataclasses.replace().
+
+    Usage::
+
+        ctx = struct_replace(ctx, duckdb_store=store, governor=gov)
+        cycle = struct_replace(ctx._cycle, barrier_retry_count=2)
+
+    Args:
+        obj: A msgspec.Struct instance.
+        **changes: Field name -> new value mappings.
+
+    Returns:
+        A new instance of the same type with the specified fields replaced.
+
+    Raises:
+        TypeError: If `obj` is not a msgspec.Struct, or if `changes`
+            contains a field name that doesn't exist on the struct.
+    """
+    import msgspec as _msgspec
+
+    if not isinstance(obj, _msgspec.Struct):
+        raise TypeError(f"{obj!r} is not a msgspec.Struct")
+
+    # msgspec.structs.replace validates fields, raises on unknown keys
+    return _msgspec.structs.replace(obj, **changes)

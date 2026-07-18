@@ -1,87 +1,105 @@
 ---
-children_hash: 0cc1d782e5fdd64666cc9a573dadc89ce85c1cd52cc1bdc0507b8085cfa26142
-compression_ratio: 0.847536231884058
+children_hash: 975666575c685a5800cb705bbb4183ab0e2399dba0ec15c4607ac63a8623dae3
+compression_ratio: 0.7711187214611872
 condensation_order: 2
 covers: [context.md, hledac_universal/_index.md]
-covers_token_total: 1725
+covers_token_total: 1752
 summary_level: d2
-token_count: 1462
+token_count: 1351
 type: summary
 ---
 <think>
-The user wants me to create a structural summary at level d1 (domain level) from the provided knowledge entries. I need to consolidate these 10 entries about hledac_universal architecture into a coherent overview that:
-- Preserves key facts, architectural decisions, and relationships
-- References entry names for drill-down
-- Targets ~20-30% compression
-- Outputs clean markdown without code blocks or XML tags
+The user wants me to create a structural summary at level d1 from the provided knowledge entries about hledac_universal architecture. This is the final iteration, so I need to provide my best synthesized summary based on the extensive information provided.
 
-Let me analyze the entries:
+Let me analyze the key themes and synthesize a concise but comprehensive summary:
 
-1. **brain_module_organization.md** - PEP 562 facade, 12 lazy-loaded engines, MLX/Apple Silicon support, cold import reduced from 9.7s to 150ms
+1. **System Overview**: M1 8GB-optimized OSINT orchestrator with sprint-based query processing
+2. **Core Architecture**: Entry point, 12-stage sprint lifecycle, 8 acquisition lanes
+3. **10 Critical Invariants**: Table of key stability rules
+4. **Brain Module**: PEP 562 lazy loading, 12 engines
+5. **Transport Layer**: HTTP/3 dual strategy (curl_cffi + aioquic), Tor/I2P
+6. **Storage Trinity**: DuckDB, LMDB, LanceDB
+7. **Sidecar Protocol Registry**: 17 adapters with priority system
+8. **Memory Governance**: M1 8GB budget allocation
+9. **Layer Protocol**: LayerStack with UDS IPC
+10. **Performance Patterns**: msgspec, orjson, LRU
+11. **Related Knowledge**: Cross-references
 
-2. **context.md** - Overview of HTTP/3 lane transport, opportunistic/stealth modes, public fetcher, M1 8GB memory
-
-3. **critical_invariants.md** - 10 critical invariants for M1 8GB stability (async patterns, MLX cache, DuckDB/LMDB, bloom filters, fail-safe)
-
-4. **hledac_universal_architecture.md** - Sprint-based async orchestrator, DuckDB shadow store, tiered sources, M1 8GB optimizations
-
-5. **http_3_lane_and_public_fetcher.md** - HTTP/3 dual strategy (curl_cffi + aioquic), Tor/I2P, URL classification, body hashing
-
-6. **layer_protocol_and_layerstack.md** - Layer Protocol with LayerStack for event propagation, mount/unmount lifecycle, UDS IPC
-
-7. **project_documentation.md** - Comprehensive project docs: OSINT orchestrator on M1 8GB, MLX/Hermes3, sprint cycles, storage trinity
-
-8. **rust_extensions_code_review.md** - Rust extensions review: OnceLock fix, SQL injection patch, GIL false positive, 87 pre-existing errors
-
-9. **sidecar_protocol_registry.md** - 17 sidecar adapters, lazy imports, memory admission, finding output format
-
-
-10. **sprint_lifecycle_pipeline.md** - Sprint pipeline from CLI through 8 lanes to DuckDB, 12 lifecycle stages
-
-These form a cohesive architecture spanning MLX inference, dual HTTP/3 transport with privacy networks, DuckDB-backed storage, and a sidecar extension system. The sprint pipeline orchestrates everything while maintaining strict M1 memory constraints through 10 critical invariants.
+I need to synthesize this into a cohesive architectural narrative that captures the essence of the system without overwhelming detail.
 </think>
 
 # Hledac Universal Architecture
 
-## Overview
+## System Overview
 
-Hledac Universal is an OSINT orchestrator running on MacBook Air M1 with 8GB unified memory, using MLX/Hermes3 for inference and sprint cycles to process search queries returning structured IoC data. Storage trinity: DuckDB (SQL/canonical facts), LMDB (key-value/entity), LanceDB (ANN/RAG).
+Hledac Universal is an M1 8GB-optimized OSINT orchestrator that processes queries through sprint cycles, using MLX/Hermes3 for inference and a storage trinity (DuckDB/LMDB/LanceDB) for structured data. It balances memory constraints with high-throughput acquisition through strict invariant enforcement and tiered lane prioritization.
 
-## Core Modules
+## Core Architecture
 
-### Runtime
-- **sprint_lifecycle_pipeline**: CLI → 8 acquisition lanes → advisory runners → graph accumulation → DuckDB write. 12 lifecycle stages from NOT_SCHEDULED through ACCEPTED. Advisory Log LRU(16) with FIFO eviction, no promotion on hit.
-- **layer_protocol_and_layerstack**: Layer Protocol (runtime_checkable) defines mount/unmount/on_event interface. LayerStack manages lifecycle with timeouts (30s/10s/30s). UDS Protocol uses msgspec.msgpack for zero-copy IPC. Event propagation stops if layer returns None or sets halted=True.
+**Entry Point**: `python -m hledac.universal --sprint "QUERY"` via `runtime/sprint_entrypoint.py`
 
-### Brain Layer
-- **brain_module_organization**: PEP 562 facade reduces cold import from ~9.7s to ~150ms. 12 lazy-loaded engines via `__getattr__`. Hermes3Engine is L1 canonical. ModelManager handles M1 lifecycle. Promotes FACADE export-only pattern. NEREngine requires large RAM. MoE and Distillation are DORMANT.
+**Sprint Lifecycle Pipeline** (12 stages, NOT_SCHEDULED → ACCEPTED): CLI → run_sprint → SprintScheduler.run() → run_prelude → run_acquisition_lanes → advisory runners → graph accumulation → DuckDB async_ingest_findings_batch
 
-### Transport
-- **http_3_lane_and_public_fetcher**: Dual HTTP/3 strategy: curl_cffi opportunistic + aioquic stealth (~50-80MB resident). LRU cache bounded at 512 entries. Rust URL classification with xxh3_64 cache key. BLAKE3-64 with NEON acceleration for body hashing. Tor/I2P via SOCKS proxies with circuit renewal every 10 requests. QUIC/UDP incompatible with Tor/I2P — H3 auto-skipped for dark web.
+**8 Acquisition Lanes** with tier priority (High→Low): surface → structured_ti → deep → archive → other, with nonfeed fallback: CT, WAYBACK, PASSIVE_DNS, PIVOT_EXECUTOR, DOH
 
-### Storage
-- **hledac_universal_architecture**: DuckDB shadow store is canonical facts authority. M1 8GB optimizations: 600MB DuckDB limit, 4 threads, Arrow zero-copy, LRU(16) dedup, msgspec.Struct hot-path DTOs. Chunk size: 500, concurrency: 2 for DuckDB inserts.
-- **critical_invariants**: 10 invariants for M1 stability. Key: asyncio.gather always with return_exceptions=True, mx.eval([]) before clear_cache(), DuckDB only via async_ingest_findings_batch(), LMDB bulk only via cursor.putmulti(), M1 Metal cache dynamic formula with 1GiB ceiling.
+**Advisory Log**: LRU(16) with FIFO eviction, no promotion on hit
 
-### Extensions
-- **rust_extensions_code_review**: OnceLock stores module name string (re-imported per call), SQL injection patched via DuckDB parameterized queries, GIL safety confirmed (held by pyfunction macro), 87 pre-existing errors are PyClass Frozen=False mismatches.
+## 10 Critical Invariants (M1 8GB Stability)
 
-### Sidecars
-- **sidecar_protocol_registry**: 17 adapters with registry mechanics, lazy imports, memory admission via GovernorDecision. Priority 7 adapters (lancedb_rag, threat_intel) run early. ram_budget_mb checked before every run. 17 adapters: fediverse(50MB/6), dht(100MB/4), academic(80MB/5), lancedb_rag(60MB/7), threat_intel(40MB/7), and 12 others.
+| ID | Invariant | Enforcement |
+|----|-----------|-------------|
+| I1 | asyncio.gather ALWAYS with return_exceptions=True | CI |
+| I2 | mx.eval([]) before mx.metal.clear_cache() | CI |
+| I3 | No time.sleep() in async — use asyncio.sleep() | CI |
+| I4 | No asyncio.run() in ThreadPoolExecutor — use loop.run_until_complete() | CI |
+| I5 | DuckDB ONLY via async_ingest_findings_batch() | CI |
+| I6 | LMDB bulk ONLY via cursor.putmulti() | CI |
+| I7 | URL dedup ONLY via RotatingBloomFilter | CI |
+| I8 | M1 Metal cache: dynamic formula (min(max(available*0.2, 512MiB), 1GiB)) | CI |
+| I9 | Sidecars return [] on errors, never throw | CI |
+| I10 | No bare except — always except Exception: | CI |
+
+## Brain Module
+
+**PEP 562 Facade** (`brain/__init__.py`): 12 lazy-loaded engines reduce cold import from ~9.7s to ~150ms (98% reduction). Hermes3Engine is L1 canonical. ModelManager handles M1 lifecycle.
+
+**Engines**: deephermes3, MLX dispatcher, batch scheduler, causal, distillation, DSPy, CoreML, ANE, MLX embeddings, NER, MoE, Distillation (DORMANT)
+
+## Transport Layer
+
+**HTTP/3 Dual Strategy** (`transport/http3_lane.py`): curl_cffi for opportunistic JA3 fingerprinting (Chrome 124, Firefox 133, Safari 17) and aioquic QUIC for stealth (~50-80 MB resident, concurrency capped at 3). Dark web (.onion/.i2p/.b32.i2p) detected but QUIC/UDP incompatible with Tor/I2P.
+
+**Public Fetcher**: Tor/I2P session management, Rust URL classification with xxh3_64 cache key, BLAKE3-64 body hashing with NEON acceleration, HTTP/2 with 200 max connections and 100 keepalive.
+
+## Storage Trinity
+
+| Store | Purpose | Config |
+|-------|---------|--------|
+| DuckDB | SQL/canonical facts | 600MB limit, 4 threads, chunk=500 |
+| LMDB | Key-value/entity WAL | cursor.putmulti() for bulk |
+| LanceDB | ANN/RAG embeddings | 60MB sidecar budget |
+
+## Sidecar Protocol Registry
+
+17 adapters with priority-based execution and memory admission (Priority 7: lancedb_rag, threat_intel → Priority 3: leak_sentinel). Academic adapter skips in aggressive mode (~50s savings).
+
+## Memory & Resource Governance
+
+**M1 8GB Budget**: DuckDB 600MB, Metal cache dynamic (512MiB–1GiB, wired hard limit 1.5 GiB), aioquic blocked at 5.5 GiB RSS, KV cache 4-bit quantization max 8192 tokens.
+
+**Pre-flight Guards**: Abort if active-window budget < 30s; minimum sprint = windup_lead + 30s
+
+## Layer Protocol & Performance
+
+**LayerStack** (`layers/layer_protocol.py`): Mount/unmount lifecycle with UDS IPC via msgspec.msgpack. Mount 30s timeout (rollback on error), unmount 10s (best-effort).
+
+**Hot-path Patterns**: msgspec.Struct with frozen=True/gc=False, orjson fallback, LRU(512) O(1) OrderedDict eviction, pytest-timeout 30s default, asyncio_mode=auto. Rust extensions use OnceLock<&str> pattern with parameterized SQL queries.
 
 ## Key Architectural Decisions
 
-- **Sprint pipeline**: Owner dispatches cycles via SprintScheduler. Tier priority High→Low: surface → structured_ti → deep → archive → other. Nonfeed fallback lanes: CT, WAYBACK, PASSIVE_DNS, PIVOT_EXECUTOR, DOH.
-- **Storage trinity**: DuckDB for sprint facts and analytics, DuckPGQGraph for IOC storage, LMDB for payload WAL.
-- **MLX patterns**: kv_bits=4, max_kv_size=8192 in mlx_lm.generate(). Metal cache hard limit 1.5 GiB.
-
-## Entry Reference
-
-- `brain_module_organization.md` — Lazy engine loading, Hermes3 canonical
-- `critical_invariants.md` — 10 M1 stability rules
-- `http_3_lane_and_public_fetcher.md` — HTTP/3 dual strategy, Tor/I2P, hashing
-- `layer_protocol_and_layerstack.md` — Event propagation, UDS IPC
-- `project_documentation.md` — Comprehensive architecture reference
-- `rust_extensions_code_review.md` — Rust extension fixes
-- `sidecar_protocol_registry.md` — 17 sidecar adapters
-- `sprint_lifecycle_pipeline.md` — Pipeline flow, 12 lifecycle stages
+- Sprint-based async orchestration enables adaptive query processing
+- Lazy loading via PEP 562 achieves 98% cold import reduction
+- 10 critical invariants enforced via CI for M1 stability
+- Dual HTTP/3 strategy balances stealth and fingerprinting evasion
+- Priority-based sidecar registry with memory admission gates
+- Tiered storage trinity optimizes for different access patterns

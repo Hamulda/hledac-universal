@@ -1,105 +1,94 @@
 ---
-children_hash: 9016201fc7e9260db3a1a0d8cb8f90b11c02cefe34e798b2d6f42207ad60582f
-compression_ratio: 0.316875
+children_hash: 37cd53981a95966bc501f567fd983ef25c187cdc9fc1d5f007fbc71a30952d5a
+compression_ratio: 0.23828125
 condensation_order: 1
-covers: [context.md, duckdb_shadow_store.md, duckdb_shadow_store_extended.md, duckdb_thread_count_and_settings.md, duckpgqgraph_api.md, query_cache_ioc_extraction.md, walmanager.md]
-covers_token_total: 3200
+covers: [context.md, duckdb-as-canonical-storage-with-tiered-memory-budget.md, duckdb_shadow_store.md, duckdb_shadow_store_extended.md, duckdb_thread_count_and_settings.md, duckpgqgraph_api.md, issue_032_write_serialization_fix.md, query_cache_ioc_extraction.md, walmanager.md]
+covers_token_total: 4096
 summary_level: d1
-token_count: 1014
+token_count: 976
 type: summary
 ---
 <think>
-The user wants me to create a structural summary of the DuckDB store knowledge entries. I need to consolidate the key facts, architectural decisions, and relationships while referencing entry names for drill-down.
+The user wants me to create a structural summary at level d1 from the provided knowledge entries about the duckdb_store topic. I need to distill the key facts, architectural decisions, and relationships while referencing entry names for drill-down.
 
-Let me identify the key components:
+Let me analyze the key points:
 
-1. **3-tier facts hierarchy**: Sprint Facts, Shadow Findings, Cross-Sprint
-2. **IOC extraction**: 3-tier fallback chain with zero-copy Python path
-3. **Query cache**: L1/L2 two-tier system (500/5000 entries, 300s TTL)
-4. **DuckPGQGraph**: Graph analytics layer for IOC storage
-5. **WALManager**: LMDB-based write-ahead logging
-6. **DuckDB settings**: Thread count (2 optimal), memory (600MB-2GB), Arrow ingest
-7. **ParquetHistoryReader**: For 100GB+ lazy reads
-8. **DuckDB memory config for M1 8GB**: 600MB limit, 4 threads, 1GB temp
+1. **Architecture Overview**: DuckDB shadow analytics store with tiered facts hierarchy and IOC extraction pipeline
 
-Key relationships:
-- duckdb_shadow_store -> ioc_extract -> query_cache
-- DuckPGQGraph uses DuckDB for storage, LanceDB for reranking
-- WALManager for crash recovery
+2. **3-Tier Facts Hierarchy**:
+   - TIER1: Sprint Facts (sprint_delta, sprint_scorecard, source_hit_log)
+   - TIER2: Shadow Findings (canonical_findings, shadow_runs)
+   - TIER3: Cross-Sprint (temporal_events)
 
-Let me create a concise structural summary.
+3. **IOC Extraction**: 3-tier fallback chain (Python zero-copy → Rayon/PyO3 → Pure Python), DuckPGQGraph for IOC storage (F272 replaced ioc_graph table)
+
+4. **Query Cache**: L1 in-memory LRU (500 entries, 300s TTL) + L2 LMDB (5000 entries, 300s TTL, 16MB)
+
+5. **Memory/Performance Settings**: M1 8GB optimized (600MB limit, 4 threads, Arrow ingest 1.5-2x faster)
+
+6. **Write Serialization**: ISSUE-032 fix via shared executor pool (max_workers=4)
+
+7. **WALManager**: LMDB-based WAL with 3 namespaces, compaction triggers
+
+8. **Key Files**: duckdb_store.py, wal.py, graph_service.py, config/settings.py
+
+Let me structure this into a clean summary.
 </think>
 
 # duckdb_store
 
-DuckDB shadow analytics store with tiered facts hierarchy, IOC extraction pipeline, and query caching.
+## Overview
+DuckDB shadow analytics store with tiered facts hierarchy and IOC extraction pipeline. Serves as the canonical facts authority in the storage trinity (DuckDB → LMDB → LanceDB).
 
 ## Architecture
 
-**3-Tier Facts Hierarchy** (see `duckdb_shadow_store_extended.md`):
-- **TIER1**: Sprint Facts — `sprint_delta`, `sprint_scorecard`, `source_hit_log`
-- **TIER2**: Shadow Findings — `canonical_findings`, `shadow_runs`
-- **TIER3**: Cross-Sprint — `temporal_events` (append-only)
+### 3-Tier Facts Hierarchy
+- **TIER1 - Sprint Facts**: sprint_delta, sprint_scorecard, source_hit_log
+- **TIER2 - Shadow Findings**: canonical_findings, shadow_runs
+- **TIER3 - Cross-Sprint**: temporal_events
 
-**Ingest Flow**: `EvidenceLog.append()` → `canonical_findings` → `shadow_runs` → `temporal_events`
+### Write Pipeline
+EvidenceLog.append() → canonical_findings → shadow_runs → temporal_events
+All write paths funnel through async_ingest_findings_batch(). Write serialization via shared executor pool (max_workers=4) from ISSUE-032.
 
-## IOC Extraction
+### IOC Extraction
+3-tier fallback chain (duckdb_shadow_store_extended.md, query_cache_ioc_extraction.md):
+1. Zero-copy Python via PyList::append
+2. Rayon Vec return with PyO3 auto-convert
+3. Pure Python fallback
 
-3-tier fallback chain (see `duckdb_shadow_store_extended.md`, `query_cache_ioc_extraction.md`):
-1. **Tier 1**: `batch_ioc_extract_unified_python` — zero-copy via `PyList::append` (fastest)
-2. **Tier 2**: `batch_ioc_extract_unified` — Rayon Vec return with PyO3 auto-convert
-3. **Tier 3**: `ioc_qs.extract_iocs_from_text` — pure Python fallback
+IOC storage via DuckPGQGraph (F272 replaced DuckDB ioc_graph table). Valid IOC types: ipv4|ipv6|domain|md5|sha1|sha256|email|cve|url|filename|registry_key|pending.
 
-Valid IOC types: `ipv4|ipv6|domain|md5|sha1|sha256|email|cve|url|filename|registry_key|pending` (F320 unknown→pending)
-
-## Query Cache
-
-Two-tier L1/L2 system (see `duckdb_thread_count_and_settings.md`, `query_cache_ioc_extraction.md`):
-- **L1**: In-memory LRU, 500 entries, 300s TTL (sub-millisecond hits)
+### Query Cache (F320-2)
+Two-tier L1/L2 cache (duckdb_thread_count_and_settings.md, query_cache_ioc_extraction.md):
+- **L1**: In-memory LRU, 500 entries, 300s TTL
 - **L2**: LMDB persistent, 5000 entries, 300s TTL, 16MB map
-- Opt-in via `HLEDAC_DUCKDB_QUERY_CACHE=1` (default OFF)
 
-## DuckPGQGraph API
+Default OFF (opt-in via HLEDAC_DUCKDB_QUERY_CACHE=1).
 
-Graph analytics donor layer (F226) wrapping DuckDB (see `duckpgqgraph_api.md`):
-- **upsert_ioc/upsert_relation**: Idempotent inserts with optional LanceDB embedding
-- **find_connected_batch**: DuckPGQ recursive CTE + LanceDB reranking
-- **Limits**: MAX_GRAPH_ANALYTICS_NODES=500, MAX_GRAPH_ANALYTICS_TOP_K=10
-- **Hot edges cache**: LMDB O(1) read path (F265-U6)
+### WALManager (walmanager.md)
+LMDB-based write-ahead logging with 3 namespaces: finding (truth records), pending_duckdb_sync (recovery markers), deadletter_ingest (failed writes). Compaction triggers: 1-hour interval OR 5000 writes.
 
-## WALManager
+### DuckPGQGraph API (duckpgqgraph_api.md)
+Graph analytics layer for IOC storage. Owns path queries, graph analytics, and LanceDB reranking. MAX_GRAPH_ANALYTICS_NODES=500, MAX_GRAPH_ANALYTICS_TOP_K=10. Hot-edges LMDB cache for O(1) read path.
 
-LMDB-based write-ahead logging (see `walmanager.md`):
-- **Namespaces**: `finding` (truth), `pending_duckdb_sync` (recovery), `deadletter_ingest` (failed writes)
-- **Bounds**: MAX_PENDING_SYNC_MARKERS=10000 (auto-eviction)
-- **Compaction**: 1-hour interval OR 5000 writes
-- Env: `HLEDAC_WAL_UNIFIED=1` enables `wal:finding:` prefix (F272)
+## Performance & Configuration
 
-## DuckDB Configuration (M1 8GB)
+### M1 8GB Optimized Settings
+- Memory limit: 600MB (down from 2GB)
+- Threads: 4 (duckdb_store.py default), overridden to 2 by settings.py
+- Arrow ingest: ON by default, 1.5-2× faster than executemany
+- Chunk tuning: MAX_CHUNK_SIZE=500, MAX_CHUNK_CONCURRENCY=2
 
-| Setting | Value | Env Var |
-|---------|-------|---------|
-| Threads | 2 (optimal) | `HLEDAC_DUCKDB_THREADS` |
-| Memory | 600MB limit, 2GB default | `HLEDAC_DUCKDB_MEMORY` |
-| Temp | 1GB | — |
-| In-process | True (saves ~200MB) | `HLEDAC_DUCKDB_INPROCESS` |
-| Arrow ingest | True (1.5-2× faster) | `HLEDAC_ARROW_INGEST` |
-| Chunk size | 500 | — |
-| Chunk concurrency | 2 | — |
+### DuckDBSettings
+Threads capped at 4, memory_limit_gib capped at 4.0 for M1. Arrow ingest break-even at N=5-10 rows.
 
-**Note**: Thread count conflict resolved — `settings.py` (2) overrides `duckdb_store.py` (4). Arrow ingest break-even at N=5-10 rows.
+### ParquetHistoryReader
+100GB+ IOC history reads without OOM, 100k rows per batch, zero-copy Arrow IPC→PyArrow→Polars.
 
-## Large History Reads
-
-`ParquetHistoryReader` (see `duckdb_shadow_store_extended.md`):
-- 100GB+ IOC history without OOM
-- Zero-copy Arrow IPC → PyArrow → Polars
-- 100k rows/batch max
-- Columns: `id, query, source_type, confidence, ts, provenance_json`
-
-## Key Files
-
-- `knowledge/duckdb_store.py` — DuckDBShadowStore
-- `knowledge/graph_service.py` — GraphService + DuckPGQGraph
-- `knowledge/wal.py` — WALManager
-- `config/settings.py` — DuckDBSettings
+## Related Entries
+- duckpgqgraph_api.md - Graph analytics layer
+- walmanager.md - WAL lifecycle management
+- issue_032_write_serialization_fix.md - Write serialization fix
+- query_cache_ioc_extraction.md - Cache and IOC tiers
+- duckdb_thread_count_and_settings.md - Thread count and settings

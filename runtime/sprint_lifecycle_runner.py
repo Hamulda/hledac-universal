@@ -277,6 +277,13 @@ class SprintLifecycleRunner:
         """True when the lifecycle has reached a terminal phase."""
         return self._adapter.is_terminal()
 
+    def should_enter_windup(self, now_monotonic: float | None = None) -> bool:
+        """True if windup should begin (time-based heuristic).
+
+        Delegates to the underlying lifecycle adapter.
+        """
+        return self._adapter.should_enter_windup(now_monotonic)
+
     # ── Sleep with lifecycle tick ──────────────────────────────────────────
 
     async def sleep_or_abort(

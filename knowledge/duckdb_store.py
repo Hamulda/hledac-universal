@@ -1338,22 +1338,25 @@ class CanonicalFinding(msgspec.Struct, frozen=True, gc=False):
 
 from ._quality_types import FindingQualityDecision
 
-_DuckDBModule: Any | None = None
-
 
 from ._query_cache import _DuckDBQueryCache
 
 _query_cache: _DuckDBQueryCache | None = None
 
 
-def _get_duckdb() -> Any:
-    """Lazy import of duckdb - only loaded when sidecar is actually used."""
-    global _DuckDBModule
-    if _DuckDBModule is None:
-        import duckdb
+import functools
 
-        _DuckDBModule = duckdb
-    return _DuckDBModule
+
+@functools.cache
+def _get_duckdb() -> Any:
+    """Lazy import of duckdb - only loaded when sidecar is actually used.
+
+    Thread-safe via functools.cache internal lock (PEP 603 memoization).
+    No global variable needed; cache handles idempotent initialization.
+    """
+    import duckdb
+
+    return duckdb
 
 
 from core.env_config import ENV

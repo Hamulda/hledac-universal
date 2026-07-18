@@ -1,0 +1,1 @@
+PEP 734 isolation infrastructure prepared for DuckDB writes using ThreadPoolExecutor and run_db_write(), but full isolation requires standalone functions rather than closures due to pickle limitations; all 38 tests passed.

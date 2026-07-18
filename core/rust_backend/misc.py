@@ -1356,17 +1356,19 @@ _POOL_MAX_SIZE: int = 4  # MVCC allows multiple readers; 4 covers burst parallel
 _POOL: deque[tuple[str, Any]] = deque()  # DuckDBPyConnection at runtime
 _POOL_PATHS: set[str] = set()  # track which db_paths are in pool
 _POOL_LOCK = Lock()
-_DUCKDB_MODULE: Any | None = None
+import functools
 
 
+@functools.cache
 def _get_duckdb_module() -> Any:
-    """Lazy import of duckdb module — called once at first pool acquisition."""
-    global _DUCKDB_MODULE
-    if _DUCKDB_MODULE is None:
-        import duckdb
+    """Lazy import of duckdb module — called once at first pool acquisition.
 
-        _DUCKDB_MODULE = duckdb
-    return _DUCKDB_MODULE
+    Thread-safe via functools.cache internal lock (PEP 603 memoization).
+    No global variable needed; cache handles idempotent initialization.
+    """
+    import duckdb
+
+    return duckdb
 
 
 def _acquire_ro_conn(db_path: str) -> Any:

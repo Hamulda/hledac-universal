@@ -517,6 +517,71 @@ class RoleBasedPools:
                     except Exception:
                         return None
 
+    async def run_db_write(
+        self,
+        fn: "Callable[..., Any]",
+        /,
+        *args: Any,
+        timeout: float | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """
+        Run DuckDB write function with isolation support.
+
+        Use for: WAL writes, Arrow batch inserts, bulk upserts.
+
+        Returns:
+            Write result (count, error, or bool), or None on error/timeout/RAM budget.
+
+        Pool: PEP 734 IsolatedInterpreter (DuckDB) when available, otherwise
+        asyncio.to_thread fallback with dedicated DuckDB pool.
+        RAM budget: max 2 concurrent (DuckDB connection limit)
+
+        M1 8GB note: DuckDB writes are I/O-bound (Arrow batch + LMDB WAL).
+        True memory isolation via PEP 734 prevents DuckDB memory pressure
+        from affecting MLX Metal arena.
+        """
+        self._ensure_initialized()
+
+        # RAM budget check
+        if not self._check_db_ram_budget():
+            warnings.warn(
+                "DuckDB write RAM budget exceeded (system RAM < 500 MB), "
+                "deferring DB write work",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return None
+
+        assert self._db_semaphore is not None
+
+        async with self._db_semaphore:
+            async with await self._get_db_lock():
+                if self._duckdb_executor is not None and self._duckdb_executor.is_available:
+                    # PEP 734 available — use isolated interpreter for memory isolation
+                    try:
+                        if timeout is not None:
+                            coro = self._duckdb_executor.execute_query_async(fn, *args, **kwargs)
+                            return await safe_wait_for(coro, timeout=timeout, label="role_pool:db_write")
+                        return await self._duckdb_executor.execute_query_async(fn, *args, **kwargs)
+                    except Exception:
+                        return None
+                else:
+                    # Fallback: use dedicated DuckDB pool
+                    assert self._duckdb_fallback_executor is not None
+                    loop = asyncio.get_running_loop()
+                    try:
+                        if timeout is not None:
+                            coro = loop.run_in_executor(
+                                self._duckdb_fallback_executor, lambda: fn(*args, **kwargs)
+                            )
+                            return await safe_wait_for(coro, timeout=timeout, label="role_pool:db_write")
+                        return await loop.run_in_executor(
+                            self._duckdb_fallback_executor, lambda: fn(*args, **kwargs)
+                        )
+                    except Exception:
+                        return None
+
     # ------------------------------------------------------------------|
     # Role: REGEX — Pattern matching (CPU-bound)                       |
     # ------------------------------------------------------------------|

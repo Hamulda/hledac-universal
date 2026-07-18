@@ -1,0 +1,122 @@
+{
+  "completedAt": 1784334045320,
+  "id": "drm-1784333771434",
+  "operations": [
+    {
+      "action": "CROSS_REFERENCE",
+      "inputFiles": [
+        "facts/project/issue_g2_pep_734_isolation_infrastructure.md",
+        "facts/project/hledac_universal_claude_md.md"
+      ],
+      "needsReview": false,
+      "previousTexts": {
+        "facts/project/issue_g2_pep_734_isolation_infrastructure.md": "---\ntitle: Issue G2 PEP 734 Isolation Infrastructure\nsummary: PEP 734 isolation infrastructure prepared with DUCKDB_WRITE + run_db_write() in role_based_pools.py. DuckDB writes use ThreadPoolExecutor (stateful self closure = pickle problem). Full isolation needs standalone functions.\ntags: []\nrelated: []\nkeywords: []\ncreatedAt: '2026-07-18T00:00:59.213Z'\nupdatedAt: '2026-07-18T00:00:59.213Z'\n---\n## Reason\nDocument ISSUE G2 completion: PEP 734 isolation infrastructure for DuckDB writes\n\n## Raw Concept\n**Task:**\nISSUE G2: PEP 734 isolation infrastructure for DuckDB write operations\n\n**Changes:**\n- Added DUCKDB_WRITE role constant to role_based_pools.py\n- Implemented run_db_write() function for DuckDB write operations\n- DuckDB writes use ThreadPoolExecutor with stateful self closure pattern\n\n**Flow:**\nDuckDB write request -> ThreadPoolExecutor -> run_db_write() -> DuckDB write\n\n**Timestamp:** 2026-07-18\n\n**Author:** system\n\n## Narrative\n### Structure\nPEP 734 isolation infrastructure provides isolated execution environments for DuckDB write operations. DUCKDB_WRITE role added alongside existing DUCKDB_READ and CPU_WORK roles.\n\n### Dependencies\nRequires PEP 734 multiprocessing.isolation if using full isolation. Current implementation uses ThreadPoolExecutor as workaround for stateful self closure pickle problem.\n\n### Highlights\n38 tests passed after implementation. For full PEP 734 isolation, DuckDB writes need standalone functions rather than closures.\n\n## Facts\n- **pep734_isolation**: PEP 734 isolation infrastructure is prepared for DuckDB writes [project]\n- **duckdb_write_interface**: DUCKDB_WRITE + run_db_write() added to role_based_pools.py [project]\n- **duckdb_write_implementation**: DuckDB writes currently use ThreadPoolExecutor due to stateful self closure pickle problem [project]\n- **pep734_full_isolation_requirement**: Full PEP 734 isolation requires standalone functions (not closures) [project]\n- **test_results**: All 38 tests passed after ISSUE G2 completion [project]\n",
+        "facts/project/hledac_universal_claude_md.md": "---\ntitle: Hledac Universal CLAUDE.md\nsummary: 'Hledac Universal project docs: conventions, invariants, architecture, feature flags, wired components, pre-flight guards, exit codes, anti-patterns, hardware constraints'\ntags: []\nrelated: [facts/project/parallel_async_helper.md]\nkeywords: []\ncreatedAt: '2026-07-11T15:07:16.916Z'\nupdatedAt: '2026-07-11T15:07:16.916Z'\n---\n## Reason\nCurating comprehensive project documentation from CLAUDE.md\n\n## Raw Concept\n**Task:**\nDocument Hledac Universal project from CLAUDE.md\n\n**Files:**\n- .claude/CLAUDE.md\n\n**Flow:**\nSprintScheduler.run() -> run_prelude -> run_acquisition_lanes -> run_advisory_runner -> _accumulate_findings_to_graph -> run_winddown -> DuckDB async_ingest_findings_batch\n\n**Timestamp:** 2026-07-11\n\n## Narrative\n### Structure\nStorage Trinity: DuckDB (SQL), LMDB (key-value), LanceDB (ANN embeddings). Brain Layer: MLX inference, DSPy optimizer, hypothesis engine.\n\n### Dependencies\nRequires uv sync --extra mlx-embed for MLX embeddings, --extra http3 for aioquic QUIC support\n\n### Highlights\n10 Critical invariants for M1 stability. 50+ feature flags. Pre-flight guard F221-ABORT with --force override. HTTP/3 dual strategy: curl_cffi_opportunistic (default) + aioquic real-QUIC lane.\n\n### Rules\nRule 1: No bare except - always except Exception:\nRule 2: asyncio.gather always with return_exceptions=True\nRule 3: mx.eval([]) before mx.metal.clear_cache()\nRule 4: DuckDB writes ONLY through async_ingest_findings_batch()\nRule 5: LMDB bulk via cursor.putmulti() - never per-item\nRule 6: Fail-safe everywhere - sidecary return [] on errors\nRule 7: No time.sleep() in async - use asyncio.sleep()\nRule 8: No asyncio.run() in ThreadPoolExecutor - use loop.run_until_complete()\nRule 9: Use RotatingBloomFilter not ScalableBloomFilter\nRule 10: sys.exit() propagates verbatim - envelope has except SystemExit: raise\n\n### Examples\nEntry: python -m hledac.universal --sprint \"QUERY\" [--duration SECS] [--aggressive]\nPre-flight: --duration 60 passes MIN_ACTIVE_WINDOW_S=30s guard\nTests: pytest tests/ -x --timeout=30 -q && smoke_runner.py --smoke\n\n## Facts\n- **project_name**: Project is Hledac Universal OSINT orchestrator [project]\n- **hardware**: Runs on MacBook Air M1 8GB UMA [project]\n- **llm_model**: Uses MLX framework with Hermes-3-Llama-3.2-3B-4bit model [project]\n- **sprint_model**: Sprint cycles: each sprint processes a search query and returns IoC data [convention]\n- **async_pattern**: Uses asyncio.gather with return_exceptions=True [convention]\n- **duckdb_write**: DuckDB via async_ingest_findings_batch() - only canonical write path [convention]\n- **lmdb_write**: LMDB bulk via cursor.putmulti() [convention]\n- **bloom_filter**: Uses RotatingBloomFilter for URL dedup [convention]\n- **mlx_cache**: mx.eval([]) before mx.metal.clear_cache() [convention]\n- **no_sleep**: No time.sleep() in async code - use asyncio.sleep() [convention]\n- **no_asyncio_run**: No asyncio.run() in ThreadPoolExecutor - use loop.run_until_complete() [convention]\n- **exception_handling**: No bare except: - always except Exception: [convention]\n- **exit_codes**: Exit codes: 0=success, 1=runtime, 2=config, 3=programmer, 130=SIGINT [convention]\n- **test_suite**: Test baseline: test_sprint_scheduler.py ~89, test_hledac_rust_extensions.py ~64, F206 probe 200+ [project]\n"
+      },
+      "reason": "Both files document DuckDB write operations. The claude_md establishes the canonical write path (async_ingest_findings_batch(), Rule 4: DuckDB writes ONLY through this path), while issue_g2 documents a new PEP 734 isolation infrastructure providing an alternative write mechanism via run_db_write(). They complement each other: the claude_md documents the standard async path, issue_g2 documents the new ThreadPoolExecutor-based isolation path for scenarios requiring process isolation.",
+      "type": "CONSOLIDATE"
+    },
+    {
+      "action": "CREATE",
+      "confidence": 0.95,
+      "needsReview": false,
+      "outputFile": "memory/resource_governor/m1-8gb-unified-memory-as-system-wide-constraint.md",
+      "sources": [
+        "facts/project/_index.md",
+        "duckdb_store/_index.md",
+        "memory/resource_governor/_index.md",
+        "testing/conftest/_index.md",
+        "hledac_universal/_index.md"
+      ],
+      "type": "SYNTHESIZE"
+    },
+    {
+      "action": "CREATE",
+      "confidence": 0.9,
+      "needsReview": false,
+      "outputFile": "data/duckdb_store/duckdb-as-canonical-storage-with-tiered-memory-budget.md",
+      "sources": [
+        "duckdb_store/_index.md",
+        "facts/project/_index.md",
+        "hledac_universal/_index.md",
+        "memory/resource_governor/_index.md"
+      ],
+      "type": "SYNTHESIZE"
+    },
+    {
+      "action": "CREATE",
+      "confidence": 0.92,
+      "needsReview": false,
+      "outputFile": "facts/project/rust-pyo3-unifies-all-hot-paths.md",
+      "sources": [
+        "facts/project/_index.md",
+        "duckdb_store/_index.md",
+        "hledac_universal/_index.md",
+        "memory/resource_governor/_index.md"
+      ],
+      "type": "SYNTHESIZE"
+    },
+    {
+      "action": "CREATE",
+      "confidence": 0.85,
+      "needsReview": false,
+      "outputFile": "facts/project/environment-gates-control-feature-activation.md",
+      "sources": [
+        "facts/project/_index.md",
+        "duckdb_store/_index.md",
+        "hledac_universal/_index.md",
+        "memory/resource_governor/_index.md"
+      ],
+      "type": "SYNTHESIZE"
+    },
+    {
+      "action": "CREATE",
+      "confidence": 0.88,
+      "needsReview": false,
+      "outputFile": "architecture/hledac_universal/10-critical-invariants-govern-system-stability.md",
+      "sources": [
+        "facts/project/_index.md",
+        "hledac_universal/_index.md",
+        "memory/resource_governor/_index.md",
+        "testing/conftest/_index.md"
+      ],
+      "type": "SYNTHESIZE"
+    },
+    {
+      "action": "CREATE",
+      "confidence": 0.9,
+      "needsReview": false,
+      "outputFile": "architecture/hledac_universal/sprint-pipeline-orchestrates-8-acquisition-lanes.md",
+      "sources": [
+        "facts/project/_index.md",
+        "hledac_universal/_index.md",
+        "duckdb_store/_index.md",
+        "testing/conftest/_index.md"
+      ],
+      "type": "SYNTHESIZE"
+    },
+    {
+      "action": "CREATE",
+      "confidence": 0.87,
+      "needsReview": false,
+      "outputFile": "architecture/hledac_universal/lazy-loading-reduces-cold-import-by-98.md",
+      "sources": [
+        "hledac_universal/_index.md",
+        "facts/project/_index.md",
+        "memory/resource_governor/_index.md"
+      ],
+      "type": "SYNTHESIZE"
+    }
+  ],
+  "startedAt": 1784333771434,
+  "status": "completed",
+  "summary": {
+    "consolidated": 1,
+    "errors": 0,
+    "flaggedForReview": 0,
+    "pruned": 0,
+    "synthesized": 7
+  },
+  "taskId": "2bef564f-b245-4664-8f2f-ee38a68bce7a",
+  "trigger": "agent-idle"
+}

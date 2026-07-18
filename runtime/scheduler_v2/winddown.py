@@ -79,10 +79,10 @@ class WinddownOrchestrator:
             → _graceful_sidecar_shutdown()
             → _close_duckdb()
     """
-    __slots__ = ()
+    __slots__ = ('_scheduler',)
 
-    def __init__(self) -> None:
-        pass
+    def __init__(self, scheduler: Any = None) -> None:
+        object.__setattr__(self, '_scheduler', scheduler)
 
     async def run(self, ctx: Any, lifecycle: Any, query: str) -> WinddownPhaseResult:
         _t_winddown_start = _time.monotonic()
@@ -140,7 +140,7 @@ class WinddownOrchestrator:
 
         # Final cleanup
         self._maybe_launch_enhanced_research(ctx)
-        ctx._sidecar_tasks = None
+        # Note: sidecar_tasks removed from _CycleState — lives on SprintSchedulerV2 only
         ctx._acquisition_plan = None
         ctx._lifecycle = None
         _result.final_phase = ctx.runner.current_phase if ctx.runner else 'WINDDOWN'
@@ -387,7 +387,9 @@ class WinddownOrchestrator:
 
     async def _graceful_sidecar_shutdown(self, ctx: Any) -> None:
         """Graceful sidecar task shutdown with 15s bounded timeout."""
-        _sidecar_tasks = getattr(ctx, '_sidecar_tasks', None)
+        # sidecar_tasks lives on SprintSchedulerV2, not on SprintContext._cycle
+        _scheduler = object.__getattribute__(self, '_scheduler')
+        _sidecar_tasks: set | None = getattr(_scheduler, '_sidecar_tasks', None) if _scheduler else None
         if not _sidecar_tasks:
             return
         _pending = list(_sidecar_tasks)

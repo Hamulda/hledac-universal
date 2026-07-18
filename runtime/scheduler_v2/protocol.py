@@ -8,26 +8,68 @@ and the shared SprintContext passed to all phases.
 from __future__ import annotations
 import asyncio
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import msgspec
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
+from utils._struct_helpers import struct_replace
 if TYPE_CHECKING:
     from runtime.scheduler_config import SprintSchedulerConfig
     from runtime.scheduler_result import SprintSchedulerResult
 
 class PhaseRunner(Protocol):
-    """Protocol for the lifecycle runner (SprintLifecycleManager)."""
+    """Protocol for the lifecycle runner (SprintLifecycleRunner).
+
+    Defines the contract between SprintContext and the mechanical lifecycle boundary.
+    Implemented by SprintLifecycleRunner — a pure mechanical seam that translates
+    lifecycle state into phase transitions without owning policy.
+
+    GHOST_INVARIANTS:
+    - is_terminal() returns True when runner has reached a terminal phase
+    - should_enter_windup() returns True when windup should begin (time-based)
+    - windup_guard() evaluates pre_windup_barrier callback before allowing continuation
+    - current_phase() returns current phase as string
+    - teardown() triggers final phase transitions for windup/export/teardown
+    - abort() requests immediate abort with reason
+    - abort_requested / abort_reason provide abort state read access
+    """
 
     def is_terminal(self) -> bool:
         """True if runner has reached a terminal phase."""
         ...
 
     def should_enter_windup(self, now_monotonic: float | None=None) -> bool:
-        """True if windup should begin."""
+        """True if windup should begin (time-based heuristic)."""
         ...
 
     def windup_guard(self, now_monotonic: float) -> bool:
-        """True if windup guard allows continuation."""
+        """True if windup guard allows continuation (evaluates pre_windup_barrier)."""
+        ...
+
+    @property
+    def current_phase(self) -> str:
+        """Current phase as string for scheduler callbacks."""
+        ...
+
+    def teardown(self) -> None:
+        """Handle final phase transitions for teardown.
+
+        If in WINDUP → EXPORT → TEARDOWN.
+        If in ACTIVE/WARMUP → TEARDOWN (abort).
+        """
+        ...
+
+    def abort(self, reason: str) -> None:
+        """Request immediate abort with reason."""
+        ...
+
+    @property
+    def abort_requested(self) -> bool:
+        """True if the lifecycle has been asked to abort."""
+        ...
+
+    @property
+    def abort_reason(self) -> str:
+        """Reason for abort, if any."""
         ...
 
 class Phase(Protocol):
@@ -118,7 +160,7 @@ class AcquisitionPhaseResult(msgspec.Struct):
 
 class WinddownPhaseResult(msgspec.Struct):
     """Result from the winddown phase."""
-    export_paths: list[str] = field(default_factory=list)
+    export_paths: list[str] = msgspec.field(default_factory=list)
     synthesis_success: bool = False
     teardown_duration_s: float | None = None
     error: str | None = None
@@ -161,8 +203,6 @@ class _CycleState(msgspec.Struct):
     'EnrichmentServices instance. May be None.'
     sidecar_orchestrator: Any = None
     'SidecarOrchestrator instance. May be None.'
-    sidecar_tasks: set[Any] = field(default_factory=set)
-    'Set of active sidecar tasks.'
     acquisition_plan: Any = None
     'AcquisitionPlan instance. May be None.'
     synth_windup_task: Any = None
@@ -224,15 +264,15 @@ class SprintContext(msgspec.Struct, frozen=True):
     'EvidenceLog init result. Access .value if .ok, else handle .error.'
     ct_log_client: Any = None
     'CT log client. May be None.'
-    runner: Any = None
-    'SprintLifecycleManager — phase transitions, windup guard.'
+    runner: PhaseRunner | None = None
+    'SprintLifecycleRunner — phase transitions, windup guard.'
     lifecycle: Any = None
     'SprintLifecycle — lifecycle events (start, cycle, windup, teardown).'
-    cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
+    cancel_event: asyncio.Event = msgspec.field(default_factory=asyncio.Event)
     'Cancellation event — set to cancel the sprint.'
-    bg_tasks: set[asyncio.Task[Any]] = field(default_factory=set)
+    bg_tasks: set[asyncio.Task[Any]] = msgspec.field(default_factory=set)
     'Set of background asyncio.Task objects tracked by the scheduler.'
-    _cycle: _CycleState = field(default_factory=_CycleState)
+    _cycle: _CycleState = msgspec.field(default_factory=_CycleState)
     'Per-cycle state — see _CycleState docstring.'
 
     @property
@@ -262,7 +302,7 @@ class SprintContext(msgspec.Struct, frozen=True):
         Each service field accepts an InitResult[T] (from fail-soft init) or None.
         Access the live object via result.value when result.ok is True.
         """
-        return dataclass_replace(self, duckdb_store=duckdb_store, graph_service=graph_service, hermes_engine=hermes_engine, governor=governor, evidence_log=evidence_log, runner=runner, lifecycle=lifecycle)
+        return struct_replace(self, duckdb_store=duckdb_store, graph_service=graph_service, hermes_engine=hermes_engine, governor=governor, evidence_log=evidence_log, runner=runner, lifecycle=lifecycle)
 
     def with_cycle(self, **kwargs: Any) -> 'SprintContext':
         """Return a new SprintContext with updated per-cycle state.
@@ -272,25 +312,25 @@ class SprintContext(msgspec.Struct, frozen=True):
             ctx = ctx.with_cycle(wall_clock_start=ts, lifecycle=lifecycle_mgr)
             ctx = ctx.with_cycle(stop_requested=True, barrier_retry_count=2)
         """
-        _new_cycle = dataclass_replace(self._cycle, **kwargs)
-        return dataclass_replace(self, _cycle=_new_cycle)
+        _new_cycle = struct_replace(self._cycle, **kwargs)
+        return struct_replace(self, _cycle=_new_cycle)
+
 
 def dataclass_replace(obj: Any, **changes: Any) -> Any:
-    """Type-safe replacement for frozen dataclass replace().
+    """Polyglot replace: delegates to msgspec.structs.replace for msgspec.Struct,
+    otherwise falls back to the dataclass logic for real @dataclass types.
 
-    Uses object's __dataclass_fields__ to validate at runtime.
-    Works with frozen=True, slots=True dataclasses.
+    This is the bridge for code that may work with both dataclasses and msgspec
+    Structs. For new code targeting only msgspec.Struct, prefer ``struct_replace``
+    directly.
     """
-    import typing
-    if not hasattr(obj, '__dataclass_fields__'):
-        raise TypeError(f'{obj!r} is not a dataclass')
-    _fields = obj.__dataclass_fields__
-    _cls = type(obj)
-    _kwargs: dict[str, Any] = {}
-    for _name, _field in _fields.items():
-        if _field.init:
-            _current = getattr(obj, _name, _field.default)
-            _kwargs[_name] = changes.pop(_name, _current)
-    if changes:
-        raise TypeError(f'{_cls.__name__} has no field(s): {list(changes.keys())}')
-    return _cls(**_kwargs)
+    import dataclasses as _dataclasses
+    import msgspec as _msgspec
+
+    if isinstance(obj, _msgspec.Struct):
+        return _msgspec.structs.replace(obj, **changes)
+
+    # Real dataclass — use standard library
+    if not isinstance(obj, type) and hasattr(obj, '__dataclass_fields__'):
+        return _dataclasses.replace(obj, **changes)
+    raise TypeError(f"{obj!r} is neither a msgspec.Struct nor a dataclass")

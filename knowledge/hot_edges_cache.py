@@ -53,6 +53,7 @@ HLEDAC_HOT_EDGES_MAP_SIZE_MB   override 32 MB default
 """
 
 
+import functools
 import logging
 import os
 from pathlib import Path
@@ -844,6 +845,7 @@ def get_node_id_by_value(value: str) -> int | None:
 _DUCKDB_RO_CON: duckdb.DuckDBPyConnection | None = None
 
 
+@functools.cache
 def _get_duckdb_ro() -> duckdb.DuckDBPyConnection | None:
     """Return a reusable read-only DuckDB connection.
 
@@ -853,25 +855,24 @@ def _get_duckdb_ro() -> duckdb.DuckDBPyConnection | None:
 
     Thread-safety: DuckDB read-only connections are safe for concurrent reads
     from multiple threads (MVCC). The connection is opened lazily on first use.
+    functools.cache ensures thread-safe lazy init — no global needed.
     """
-    global _DUCKDB_RO_CON
-    if _DUCKDB_RO_CON is None:
-        try:
-            import duckdb
+    try:
+        import duckdb
 
-            from hledac.universal.paths import get_ioc_db_path
-            _DUCKDB_RO_CON = duckdb.connect(str(get_ioc_db_path()), read_only=True)
-            # M1 8GB: memory_limit + threads + preserve_insertion_order (read-only, conservative)
-            try:
-                _DUCKDB_RO_CON.execute("SET memory_limit = '1GB'")
-                _DUCKDB_RO_CON.execute("PRAGMA threads = 2")
-                _DUCKDB_RO_CON.execute("SET preserve_insertion_order = false")
-            except Exception:
-                pass  # fail-soft for read-only connection
-        except Exception as e:
-            logger.debug(f"[HOT-EDGES] DuckDB read-only connect failed: {e}")
-            return None
-    return _DUCKDB_RO_CON
+        from hledac.universal.paths import get_ioc_db_path
+        conn = duckdb.connect(str(get_ioc_db_path()), read_only=True)
+        # M1 8GB: memory_limit + threads + preserve_insertion_order (read-only, conservative)
+        try:
+            conn.execute("SET memory_limit = '1GB'")
+            conn.execute("PRAGMA threads = 2")
+            conn.execute("SET preserve_insertion_order = false")
+        except Exception:
+            pass  # fail-soft for read-only connection
+        return conn
+    except Exception as e:
+        logger.debug(f"[HOT-EDGES] DuckDB read-only connect failed: {e}")
+        return None
 
 
 def lookup_ioc_values_by_ids(

@@ -69,23 +69,29 @@ if TYPE_CHECKING:
 
 # ISSUE-001 Phase 2: SQLite3 → DuckDB Migration
 # ForensicsMetadataStore replaces local SQLite cache with DuckDB for better M1 performance.
-_DUCKDB_STORE: "ForensicsMetadataStore | None" = None
+import functools
+
+
+@functools.cache
+def _get_duckdb_store_sync() -> "ForensicsMetadataStore | None":
+    """Get or create singleton DuckDB forensics metadata store (sync cache for async context).
+
+    Thread-safe via functools.cache internal lock (PEP 603 memoization).
+    """
+    try:
+        from knowledge.duckdb_forensics_store import ForensicsMetadataStore
+
+        return ForensicsMetadataStore()
+    except ImportError:
+        return None
 
 
 async def _get_duckdb_store() -> "ForensicsMetadataStore | None":
     """Get or create singleton DuckDB forensics metadata store."""
-    global _DUCKDB_STORE
-    if _DUCKDB_STORE is None:
-        try:
-            from knowledge.duckdb_forensics_store import ForensicsMetadataStore
-
-            store = ForensicsMetadataStore()
-            await store.initialize()
-            _DUCKDB_STORE = store
-        except ImportError:
-            logger.warning("[FORENSICS] ForensicsMetadataStore unavailable, using SQLite fallback")
-            return None
-    return _DUCKDB_STORE
+    store = _get_duckdb_store_sync()
+    if store is not None:
+        await store.initialize()
+    return store
 
 def _exif_to_float(val):
     """Handle EXIF rational (num, denom) tuples and plain numeric values."""

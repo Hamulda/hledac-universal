@@ -3,19 +3,25 @@
     {
       "order": 3,
       "path": "_index.md",
-      "tokens": 801,
+      "tokens": 574,
       "type": "summary"
     },
     {
       "order": 2,
-      "path": "data/_index.md",
-      "tokens": 1030,
+      "path": "architecture/_index.md",
+      "tokens": 1351,
       "type": "summary"
     },
     {
       "importance": 50,
       "path": "architecture/context.md",
       "tokens": 86,
+      "type": "context"
+    },
+    {
+      "importance": 50,
+      "path": "architecture/hledac_universal/10-critical-invariants-govern-system-stability.md",
+      "tokens": 364,
       "type": "context"
     },
     {
@@ -65,6 +71,12 @@
       "type": "context"
     },
     {
+      "importance": 50,
+      "path": "architecture/hledac_universal/lazy-loading-reduces-cold-import-by-98.md",
+      "tokens": 302,
+      "type": "context"
+    },
+    {
       "abstractPath": "architecture/hledac_universal/project_documentation.abstract.md",
       "abstractTokens": 53,
       "importance": 50,
@@ -86,6 +98,12 @@
       "importance": 50,
       "path": "architecture/hledac_universal/sidecar_protocol_registry.md",
       "tokens": 59,
+      "type": "context"
+    },
+    {
+      "importance": 50,
+      "path": "architecture/hledac_universal/sprint-pipeline-orchestrates-8-acquisition-lanes.md",
+      "tokens": 332,
       "type": "context"
     },
     {
@@ -114,6 +132,12 @@
       "importance": 50,
       "path": "data/duckdb_store/context.md",
       "tokens": 59,
+      "type": "context"
+    },
+    {
+      "importance": 50,
+      "path": "data/duckdb_store/duckdb-as-canonical-storage-with-tiered-memory-budget.md",
+      "tokens": 342,
       "type": "context"
     },
     {
@@ -149,9 +173,11 @@
       "type": "context"
     },
     {
+      "abstractPath": "data/duckdb_store/issue_032_write_serialization_fix.abstract.md",
+      "abstractTokens": 75,
       "importance": 50,
       "path": "data/duckdb_store/issue_032_write_serialization_fix.md",
-      "tokens": 554,
+      "tokens": 75,
       "type": "context"
     },
     {
@@ -179,6 +205,12 @@
       "type": "context"
     },
     {
+      "importance": 50,
+      "path": "facts/project/environment-gates-control-feature-activation.md",
+      "tokens": 327,
+      "type": "context"
+    },
+    {
       "abstractPath": "facts/project/hashing_facade_issue_2.abstract.md",
       "abstractTokens": 57,
       "importance": 50,
@@ -195,6 +227,14 @@
       "type": "context"
     },
     {
+      "abstractPath": "facts/project/issue_g2_pep_734_isolation_infrastructure.abstract.md",
+      "abstractTokens": 56,
+      "importance": 50,
+      "path": "facts/project/issue_g2_pep_734_isolation_infrastructure.md",
+      "tokens": 56,
+      "type": "context"
+    },
+    {
       "abstractPath": "facts/project/parallel_async_helper.abstract.md",
       "abstractTokens": 71,
       "importance": 50,
@@ -206,6 +246,12 @@
       "importance": 50,
       "path": "facts/project/pyo3-bridges-python-and-rust-across-all-performance-paths.md",
       "tokens": 301,
+      "type": "context"
+    },
+    {
+      "importance": 50,
+      "path": "facts/project/rust-pyo3-unifies-all-hot-paths.md",
+      "tokens": 335,
       "type": "context"
     },
     {
@@ -233,95 +279,11 @@
       "type": "context"
     },
     {
-      "abstractPath": "infrastructure/external_services/external_service_integrations.abstract.md",
-      "abstractTokens": 72,
-      "importance": 50,
-      "path": "infrastructure/external_services/external_service_integrations.md",
-      "tokens": 72,
-      "type": "context"
-    },
-    {
-      "importance": 50,
-      "path": "knowledge_base/audit/context.md",
-      "tokens": 115,
-      "type": "context"
-    },
-    {
-      "abstractPath": "knowledge_base/audit/documentation_coverage_assessment_2026_07_16.abstract.md",
-      "abstractTokens": 75,
-      "importance": 50,
-      "path": "knowledge_base/audit/documentation_coverage_assessment_2026_07_16.md",
-      "tokens": 75,
-      "type": "context"
-    },
-    {
       "abstractPath": "knowledge_base/audit/kb_audit_2026_07_11.abstract.md",
       "abstractTokens": 48,
       "importance": 50,
       "path": "knowledge_base/audit/kb_audit_2026_07_11.md",
       "tokens": 48,
-      "type": "context"
-    },
-    {
-      "importance": 50,
-      "path": "knowledge_base/context.md",
-      "tokens": 117,
-      "type": "context"
-    },
-    {
-      "abstractPath": "knowledge_base/feature_flags/feature_flags_reference.abstract.md",
-      "abstractTokens": 53,
-      "importance": 50,
-      "path": "knowledge_base/feature_flags/feature_flags_reference.md",
-      "tokens": 53,
-      "type": "context"
-    },
-    {
-      "importance": 50,
-      "path": "memory/feature-flags-gate-memory-management-across-stack.md",
-      "tokens": 318,
-      "type": "context"
-    },
-    {
-      "importance": 50,
-      "path": "memory/gil-reduction-pattern-batch-operations-over-single-calls.md",
-      "tokens": 291,
-      "type": "context"
-    },
-    {
-      "importance": 50,
-      "path": "memory/m1-8gb-resource-optimization-spans-storage-hashing-and-ml.md",
-      "tokens": 296,
-      "type": "context"
-    },
-    {
-      "importance": 50,
-      "path": "memory/resource_governor/context.md",
-      "tokens": 72,
-      "type": "context"
-    },
-    {
-      "abstractPath": "memory/resource_governor/issue_007_mpsc_batch_send_optimization.abstract.md",
-      "abstractTokens": 43,
-      "importance": 50,
-      "path": "memory/resource_governor/issue_007_mpsc_batch_send_optimization.md",
-      "tokens": 43,
-      "type": "context"
-    },
-    {
-      "abstractPath": "memory/resource_governor/m1_8gb_ram_priority_optimizations.abstract.md",
-      "abstractTokens": 58,
-      "importance": 50,
-      "path": "memory/resource_governor/m1_8gb_ram_priority_optimizations.md",
-      "tokens": 58,
-      "type": "context"
-    },
-    {
-      "abstractPath": "memory/resource_governor/m1resourcegovernor_implementation.abstract.md",
-      "abstractTokens": 66,
-      "importance": 50,
-      "path": "memory/resource_governor/m1resourcegovernor_implementation.md",
-      "tokens": 66,
       "type": "context"
     },
     {
@@ -333,13 +295,13 @@
       "type": "context"
     }
   ],
-  "generated_at": "2026-07-16T16:41:49.419Z",
+  "generated_at": "2026-07-18T00:20:45.319Z",
   "lane_tokens": {
-    "contexts": 3989,
+    "contexts": 3992,
     "stubs": 0,
-    "summaries": 1831
+    "summaries": 1925
   },
-  "source_fingerprint": "e97428a3f0f65a2fb0d975d334290434291271522854750ac096f7460871f370",
-  "total_tokens": 5820,
+  "source_fingerprint": "bc69423d53e6b8148ec09c601446e5a31c4c063482991d58beb69ac5a41b5519",
+  "total_tokens": 5917,
   "version": 1
 }
