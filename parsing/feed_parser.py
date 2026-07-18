@@ -699,7 +699,8 @@ async def parse_feeds_async(
     # Threshold 32: below this, serial sanitization in Rust is faster than rayon overhead
     texts = [t.text for t in tasks]
     if _RUST_SANITIZE_AVAILABLE and len(texts) >= 32 and _batch_sanitize_xml is not None:
-        sanitized_texts = await loop.run_in_executor(None, _batch_sanitize_xml, texts)
+        from hledac.universal.utils.executor_decorator import offload_to
+        sanitized_texts = await offload_to("duckdb_pool", _batch_sanitize_xml, texts)
         tasks = [
             _FeedParseTask(sanitized, task.feed_url)
             for sanitized, task in zip(sanitized_texts, tasks)

@@ -25,6 +25,7 @@ from hledac.universal.brain.model_inference_guard import check_model_allowed, re
 from hledac.universal.brain.quantization_selector import QuantizationSelector
 from hledac.universal.utils.concurrency import adjust_fetch_workers
 from hledac.universal.utils.exceptions import MemoryPressureError
+from hledac.universal.utils.executor_decorator import offload_to
 
 T = TypeVar("T")
 MLX_AVAILABLE = False
@@ -610,8 +611,7 @@ class ModelManager:
         logger.info('[MODEL DOWNLOAD] Reducing HTTP worker pool to 3 during download')
         await adjust_fetch_workers(3)
         try:
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, lambda: mlx_lm.download(model_id))
+            await offload_to("cpu_io_pool", mlx_lm.download, model_id)
             logger.info('[MODEL DOWNLOAD] Hermes-3 downloaded successfully')
         finally:
             logger.info('[MODEL DOWNLOAD] Restoring HTTP worker pool to 25')

@@ -145,6 +145,29 @@ class M1AirConfig(msgspec.Struct, frozen=True):
 
     # ── Prewarm / conditional cache ─────────────────────────────────────────
 
+    # ── Executor pool sizing (threads) ────────────────────────────────────────
+    # R-2: Named pools for @offload_to() decorator.
+    # Total threads bounded by M1 8GB: 4P + 4E cores = 8 threads max.
+    # Thread-stack RAM: ~1 MB/thread × N — all pools share the budget.
+    # Rayon pools (cpu/io/mixed) are preferred; Python ThreadPool used as fallback.
+
+    cpu_io_pool: ClassVar[int] = 4
+    """Python SharedWorkerPool: I/O-bound blocking calls (WHOIS, SSL, SQLite, file)."""
+
+    cpu_blocking_pool: ClassVar[int] = 2
+    """Python ThreadPool for CPU-bound Python work (regex, parsing). Use asyncio.to_thread()."""
+
+    mlx_pool: ClassVar[int] = 1
+    """Rayon MLX pool: LLM inference, MLX Metal operations."""
+
+    ane_pool: ClassVar[int] = 1
+    """Rayon ANE pool: Apple Neural Engine for CoreML inference."""
+
+    duckdb_pool: ClassVar[int] = 2
+    """Rayon io pool: DuckDB queries, graph_traverse, compression."""
+
+    # ── Prewarm / conditional cache ─────────────────────────────────────────
+
     prewarm_pool_size: ClassVar[int] = 4
     conditional_cache_ttl_s: ClassVar[int] = 3600
     conditional_cache_max_entries: ClassVar[int] = 5000

@@ -48,6 +48,8 @@ Sprint F150P: Finish-layer truth fields — canonical surfaces from scheduler/co
 
 import asyncio
 import logging
+
+from hledac.universal.utils.executor_decorator import offload_to
 import os
 import pathlib
 from typing import TYPE_CHECKING, Any
@@ -3140,8 +3142,8 @@ async def _get_sprint_trend(store: Any, last_n: int = 5) -> list[dict]:
     try:
         if hasattr(store, "get_sprint_trend"):
             # Run sync wrapper in executor to avoid blocking event loop
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, lambda: store.get_sprint_trend(last_n=last_n) or [])
+            result = await offload_to("duckdb_pool", store.get_sprint_trend, last_n)
+            return result or []
     except Exception:  # noqa: BLE001
         pass
     return []
@@ -3177,8 +3179,8 @@ async def _get_source_leaderboard(store: Any, days: int = 7) -> list[dict]:
     try:
         if hasattr(store, "get_source_leaderboard"):
             # Run sync wrapper in executor to avoid blocking event loop
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, lambda: store.get_source_leaderboard(days=days) or [])
+            result = await offload_to("duckdb_pool", store.get_source_leaderboard, days)
+            return result or []
     except Exception:  # noqa: BLE001
         pass
     return []

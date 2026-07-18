@@ -1407,16 +1407,13 @@ class DuckPGQGraph:
         shm_path = self.db_path + '.shm'
         lock_path = self.db_path + '.lock'
         if os.path.exists(wal_path):
-            db_alive = False
-            for _attempt in range(3):
-                try:
-                    test_conn = self._duckdb.connect(self.db_path, read_only=False)
-                    test_conn.close()
-                    db_alive = True
-                    break
-                except Exception:
-                    pass
-            if db_alive:
+            # R-1 FIX: Check DB aliveness via .lock file presence instead of
+            # creating a new DuckDB connection on every startup (30-50ms overhead).
+            # If .lock exists, another process has the DB open → WAL is live.
+            # Only truncate if no lock file (orphan WAL from crashed process).
+            lock_file = self.db_path + '.lock'
+            if os.path.exists(lock_file):
+                logger.debug('[GRAPH] WAL cleanup skipped: DB locked by another process')
                 return
             try:
                 if os.path.exists(wal_path):

@@ -121,7 +121,7 @@ if dspy is not None:
             try:
                 from hledac.universal.brain.ane_embedder import get_ane_mlx_mutex
                 mutex = get_ane_mlx_mutex()
-                mutex.acquire_mlx(model_size_mb=2000.0)
+                mutex.acquire_llm(model_size_mb=2000.0)
 
                 # F4XX: Check for mlxcel first — prefer out-of-process inference
                 from hledac.universal.brain.model_manager import _mlxcel_is_available
@@ -240,7 +240,7 @@ if dspy is not None:
                     pass
                 try:
                     from hledac.universal.brain.ane_embedder import get_ane_mlx_mutex
-                    get_ane_mlx_mutex().release('mlx')
+                    get_ane_mlx_mutex().release('llm')
                 except Exception:
                     pass
                 self._loaded = False

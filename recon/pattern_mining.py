@@ -89,8 +89,10 @@ async def forecast_mamba2(series: list[float], horizon: int=5) -> list[float] | 
         List of forecasted values or None on failure
     """
     import asyncio
+    import functools
     import re
     import time
+    from hledac.universal.utils.executor_decorator import offload_to
     global _MAMBA_FAILURES, _MAMBA_DISABLED_UNTIL
     if time.time() < _MAMBA_DISABLED_UNTIL:
         return None
@@ -105,15 +107,12 @@ async def forecast_mamba2(series: list[float], horizon: int=5) -> list[float] | 
     prompt = f'You are a time series forecaster. Given past values, predict the next {horizon} values as numbers only, separated by spaces.  # noqa: E501\n\nExample:\nPast: 1.0 2.0 3.0 4.0\nNext: 5.0 6.0 7.0\n\nNow:\nPast: {series_str}\nNext:'
     try:
         from mlx_lm import generate
-        loop = asyncio.get_running_loop()
         from hledac.universal.utils.mlx_cache import get_mlx_semaphore
         async with get_mlx_semaphore():
             try:
-                async with asyncio.timeout(0.5):
-                    output = await loop.run_in_executor(None, lambda: generate(model, tokenizer, prompt, max_tokens=horizon * 5, temp=0.0))
+                output = await offload_to("cpu_blocking_pool", generate, model, tokenizer, prompt, max_tokens=horizon * 5, temp=0.0, timeout=0.5)
             except TypeError:
-                async with asyncio.timeout(0.5):
-                    output = await loop.run_in_executor(None, lambda: generate(model, tokenizer, prompt, max_tokens=horizon * 5))
+                output = await offload_to("cpu_blocking_pool", generate, model, tokenizer, prompt, max_tokens=horizon * 5, timeout=0.5)
         numbers = re.findall('[-+]?\\d*\\.?\\d+', output)
         if len(numbers) >= horizon:
             _MAMBA_FAILURES = 0

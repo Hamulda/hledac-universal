@@ -760,9 +760,8 @@ class RemoteParquetSource:
         Yields batches on a thread pool to avoid blocking the event loop.
         """
         async def _aiter():
-            loop = asyncio.get_running_loop()
             for batch in self.iter_batches():
-                yield await loop.run_in_executor(None, lambda b=batch: b)
+                yield await asyncio.to_thread(lambda b=batch: b, batch)
 
         return _aiter()
 
@@ -1043,9 +1042,8 @@ class ParquetHistoryReader:
     def iter_batches_async(self):
         """Async iterator — runs iter_batches on thread pool."""
         async def _aiter():
-            loop = asyncio.get_running_loop()
             for batch in self.iter_batches():
-                yield await loop.run_in_executor(None, lambda b=batch: b)
+                yield await asyncio.to_thread(lambda b=batch: b, batch)
 
         return _aiter()
 

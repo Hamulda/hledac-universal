@@ -17,72 +17,241 @@ from dataclasses import dataclass
 from enum import Enum
 import msgspec
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Any, Literal
 import numpy as np
 logger = logging.getLogger(__name__)
 
-class ANE_MLX_Mutex:
+class _MLXFamilyMutex:
     """
-    Prevents simultaneous ANE + MLX model loading on M1 8GB.
+    R-4: Koordinace ANE/MLX/CoreML na M1 8GB.
 
-    Only ONE runtime can hold the lock at a time:
-    - ANE path: reranker + embedder models
-    - MLX path: Hermes 3B LLM + KV cache
+    Tři sloty pro vzájemné vyloučení:
+      - LLM:      Hermes 3B LLM + KV cache (MLX)
+      - EMBED_ANE: ANE embedder (CoreML/neural engine)
+      - EMBED_COREML: CoreML embedder (mlx-embeddings)
+
+    Cross-process file lock /tmp/hledac_mlx_family.lock zabraňuje kolizi
+    s externím mlxcel subprocess.
 
     Max combined memory: 2.5GB (hard guard).
     """
-    _instance: ANE_MLX_Mutex | None = None
+    _instance: _MLXFamilyMutex | None = None
     _lock: threading.Lock = threading.Lock()
-    _active_runtime: Literal['ane', 'mlx', None] = None
+    _active_runtime: Literal['llm', 'embed_ane', 'embed_coreml', None] = None
     _max_combined_mb: float = 2560.0
+    _cross_lock_path: str = '/tmp/hledac_mlx_family.lock'
+    _cross_lock_fd: Any = None  # file object for cross-process lock (open file handle)
 
-    def __new__(cls) -> ANE_MLX_Mutex:
+    # Per-slot model sizes (MB)
+    _SLOT_SIZES: dict[Literal['llm', 'embed_ane', 'embed_coreml'], float] = {
+        'llm': 2048.0,       # Hermes 3B
+        'embed_ane': 90.0,   # ANE CoreML embedder
+        'embed_coreml': 50.0, # MLX embedder
+    }
+
+    def __new__(cls) -> _MLXFamilyMutex:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
 
-    def acquire_ane(self, model_size_mb: float=0.0) -> None:
-        """Acquire ANE lock. Raises MemoryError if MLX is active."""
-        with self._lock:
-            if self._active_runtime == 'mlx':
-                raise MemoryError('[ANE_MLX_Mutex] MLX model active — cannot acquire ANE. Release MLX first via release().')
-            if self._active_runtime == 'ane':
-                return
-            self._active_runtime = 'ane'
-            logger.debug(f'[ANE_MLX_Mutex] Acquired ANE (model={model_size_mb:.0f}MB)')
+    # ── Cross-process file lock ──────────────────────────────────────────────
 
-    def acquire_mlx(self, model_size_mb: float=0.0) -> None:
-        """Acquire MLX lock. Raises MemoryError if ANE is active."""
+    def _acquire_cross_lock(self, slot: Literal['llm', 'embed_ane', 'embed_coreml']) -> None:
+        """Acquire cross-process file lock (non-blocking). Fails silently — telemetry only."""
+        try:
+            import fcntl
+            fd = open(self._cross_lock_path, 'a')
+            # LOCK_NB | LOCK_EX = non-blocking exclusive
+            fcntl.flock(fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # Store fd in instance — released on unlock
+            _MLXFamilyMutex._cross_lock_fd = fd
+        except (FileNotFoundError, PermissionError, OSError) as exc:
+            # Cross-lock unavailable — log but don't fail (intra-process guard still active)
+            logger.debug(f'[_MLXFamilyMutex] Cross-lock unavailable: {exc}')
+
+    def _release_cross_lock(self) -> None:
+        """Release cross-process file lock."""
+        import fcntl
+        fd = getattr(_MLXFamilyMutex, '_cross_lock_fd', None)
+        if fd is not None:
+            try:
+                fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
+                fd.close()
+            except (OSError, AttributeError):
+                pass
+            _MLXFamilyMutex._cross_lock_fd = None
+
+    # ── Intra-process guard ─────────────────────────────────────────────────
+
+    def _check_slot_conflict(self, slot: Literal['llm', 'embed_ane', 'embed_coreml']) -> MemoryError | None:
+        """Return MemoryError if slot conflicts with active runtime."""
+        conflict_map: dict[Literal['llm', 'embed_ane', 'embed_coreml'], str | None] = {
+            'llm': 'embed_ane',           # LLM blocks ANE embedder (GPU bandwidth)
+            'embed_ane': 'llm',           # ANE blocks LLM
+            'embed_coreml': 'llm',         # CoreML embed blocks LLM
+        }
+        blocker = conflict_map.get(slot)
+        if blocker is not None and self._active_runtime == blocker:
+            return MemoryError(f'[_MLXFamilyMutex] {self._active_runtime} is active — cannot acquire {slot}. Release {self._active_runtime} first.')
+        if self._active_runtime == slot:
+            return None  # Already this slot — re-entrant OK
+        return None
+
+    def acquire_llm(self, model_size_mb: float = 0.0) -> None:
+        """Acquire LLM slot. Raises MemoryError if ANE/CoreML embedder is active."""
         with self._lock:
-            if self._active_runtime == 'ane':
-                raise MemoryError('[ANE_MLX_Mutex] ANE model active — cannot acquire MLX. Release ANE first via release().')
-            if self._active_runtime == 'mlx':
-                return
+            err = self._check_slot_conflict('llm')
+            if err:
+                raise err
             if model_size_mb > self._max_combined_mb:
-                raise MemoryError(f'[ANE_MLX_Mutex] MLX model {model_size_mb:.0f}MB exceeds {self._max_combined_mb:.0f}MB limit.')
-            self._active_runtime = 'mlx'
-            logger.debug(f'[ANE_MLX_Mutex] Acquired MLX (model={model_size_mb:.0f}MB)')
+                raise MemoryError(f'[_MLXFamilyMutex] LLM model {model_size_mb:.0f}MB exceeds {self._max_combined_mb:.0f}MB limit.')
+            self._active_runtime = 'llm'
+            logger.debug(f'[_MLXFamilyMutex] Acquired LLM (model={model_size_mb:.0f}MB)')
+        self._acquire_cross_lock('llm')
 
-    def release(self, runtime: Literal['ane', 'mlx']) -> None:
+    def acquire_embed_ane(self, model_size_mb: float = 0.0) -> None:
+        """Acquire ANE embedder slot. Raises MemoryError if LLM is active."""
+        with self._lock:
+            err = self._check_slot_conflict('embed_ane')
+            if err:
+                raise err
+            self._active_runtime = 'embed_ane'
+            logger.debug(f'[_MLXFamilyMutex] Acquired EMBED_ANE (model={model_size_mb:.0f}MB)')
+        self._acquire_cross_lock('embed_ane')
+
+    def acquire_embed_coreml(self, model_size_mb: float = 0.0) -> None:
+        """Acquire CoreML/MLX embedder slot. Raises MemoryError if LLM is active."""
+        with self._lock:
+            err = self._check_slot_conflict('embed_coreml')
+            if err:
+                raise err
+            self._active_runtime = 'embed_coreml'
+            logger.debug(f'[_MLXFamilyMutex] Acquired EMBED_COREML (model={model_size_mb:.0f}MB)')
+        self._acquire_cross_lock('embed_coreml')
+
+    # ── Non-blocking try-acquire (for embedder fallback) ───────────────────────
+
+    def try_acquire_llm(self, model_size_mb: float = 0.0) -> bool:
+        """Try to acquire LLM slot — returns True if acquired, False if busy."""
+        with self._lock:
+            err = self._check_slot_conflict('llm')
+            if err:
+                return False
+            if model_size_mb > self._max_combined_mb:
+                return False
+            self._active_runtime = 'llm'
+            logger.debug(f'[_MLXFamilyMutex] Acquired LLM (model={model_size_mb:.0f}MB)')
+        self._acquire_cross_lock('llm')
+        return True
+
+    def try_acquire_embed_ane(self, model_size_mb: float = 0.0) -> bool:
+        """Try to acquire ANE embedder slot — returns True if acquired, False if busy."""
+        with self._lock:
+            err = self._check_slot_conflict('embed_ane')
+            if err:
+                return False
+            self._active_runtime = 'embed_ane'
+            logger.debug(f'[_MLXFamilyMutex] Acquired EMBED_ANE (model={model_size_mb:.0f}MB)')
+        self._acquire_cross_lock('embed_ane')
+        return True
+
+    def try_acquire_embed_coreml(self, model_size_mb: float = 0.0) -> bool:
+        """Try to acquire CoreML/MLX embedder slot — returns True if acquired, False if busy."""
+        with self._lock:
+            err = self._check_slot_conflict('embed_coreml')
+            if err:
+                return False
+            self._active_runtime = 'embed_coreml'
+            logger.debug(f'[_MLXFamilyMutex] Acquired EMBED_COREML (model={model_size_mb:.0f}MB)')
+        self._acquire_cross_lock('embed_coreml')
+        return True
+
+    def release(self, runtime: Literal['llm', 'embed_ane', 'embed_coreml']) -> None:
         """Release lock for specified runtime."""
+        self._release_cross_lock()
         with self._lock:
             if self._active_runtime == runtime:
                 self._active_runtime = None
-                logger.debug(f'[ANE_MLX_Mutex] Released {runtime}')
+                logger.debug(f'[_MLXFamilyMutex] Released {runtime}')
 
-    def is_active(self) -> Literal['ane', 'mlx', None]:
+    def is_active(self) -> Literal['llm', 'embed_ane', 'embed_coreml', None]:
         """Return currently active runtime."""
         return self._active_runtime
 
+    def is_llm_active(self) -> bool:
+        return self._active_runtime == 'llm'
+
+    def is_embed_ane_active(self) -> bool:
+        return self._active_runtime == 'embed_ane'
+
+    def is_embed_coreml_active(self) -> bool:
+        return self._active_runtime == 'embed_coreml'
+
+    @property
+    def is_metal_busy_with_other_process(self) -> bool:
+        """R-4: Cross-process check — True if external mlxcel is holding the Metal lock."""
+        try:
+            import fcntl
+            fd = open(self._cross_lock_path, 'r')
+            try:
+                # LOCK_EX | LOCK_NB = non-blocking exclusive — fails if locked by another
+                fcntl.flock(fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
+                return False  # Lock acquired = no other process holds it
+            except OSError:
+                return True  # EWOULDBLOCK = another process holds the lock
+            finally:
+                fd.close()
+        except (FileNotFoundError, PermissionError, OSError):
+            return False  # Lock file missing/unavailable = no external process
+
+
+# ── Backward-compat alias ────────────────────────────────────────────────────
+class ANE_MLX_Mutex(_MLXFamilyMutex):
+    """R-4: DEPRECATED — use _MLXFamilyMutex directly. ANE_MLX_Mutex preserved for compat."""
+
+    def acquire_ane(self, model_size_mb: float = 0.0) -> None:
+        """Deprecated alias for acquire_embed_ane."""
+        warnings.warn(
+            'ANE_MLX_Mutex.acquire_ane() is deprecated. Use acquire_embed_ane() instead.',
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.acquire_embed_ane(model_size_mb)
+
+    def acquire_mlx(self, model_size_mb: float = 0.0) -> None:
+        """Deprecated alias for acquire_llm."""
+        warnings.warn(
+            'ANE_MLX_Mutex.acquire_mlx() is deprecated. Use acquire_llm() instead.',
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.acquire_llm(model_size_mb)
+
+    def release(self, runtime: Literal['ane', 'mlx'] | Literal['llm', 'embed_ane', 'embed_coreml']) -> None:  # type: ignore[override]
+        """Deprecated — maps old 'ane'/'mlx' to new slot names."""
+        import sys
+        warnings.warn(
+            'ANE_MLX_Mutex.release() is deprecated. Use release() with llm/embed_ane/embed_coreml instead.',
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        if runtime == 'ane':
+            return super().release('embed_ane')
+        if runtime == 'mlx':
+            return super().release('llm')
+        return super().release(runtime)  # type: ignore[arg-type]
+
     def is_ane_active(self) -> bool:
-        return self._active_runtime == 'ane'
+        return self.is_embed_ane_active()
 
     def is_mlx_active(self) -> bool:
-        return self._active_runtime == 'mlx'
+        return self.is_llm_active()
 
-def get_ane_mlx_mutex() -> ANE_MLX_Mutex:
-    """Thread-safe singleton accessor."""
-    return ANE_MLX_Mutex()
+
+def get_ane_mlx_mutex() -> _MLXFamilyMutex:  # type: ignore[return-value]
+    """Thread-safe singleton accessor — returns _MLXFamilyMutex (formerly ANE_MLX_Mutex)."""
+    return _MLXFamilyMutex()
 try:
     import CoreML as _CoreML
     import Foundation as _Foundation
@@ -240,7 +409,7 @@ class ANEEmbedder:
                 self.model = model
                 self._loaded = True
                 self._last_load_error = None
-                get_ane_mlx_mutex().acquire_ane(model_size_mb=90.0)
+                get_ane_mlx_mutex().acquire_embed_ane(model_size_mb=90.0)
                 logger.info(f'ANEEmbedder loaded CoreML: {self.model_name}')
                 return
             except Exception as e:
@@ -302,9 +471,25 @@ class ANEEmbedder:
         """
         Sprint F228B: Truthful embed — no NotImplementedError in production.
         Falls back gracefully: CoreML → fallback embedder → hash fallback.
+
+        R-4: If LLM is active on Metal GPU, skip Metal-backed embedding
+        and use hash fallback to avoid GPU bandwidth contention.
         """
         global _ANE_TELEMETRY
         _ANE_TELEMETRY['ane_embed_attempted'] += 1
+
+        # R-4: Avoid Metal GPU contention with active LLM inference.
+        # If Hermes LLM is running (holds 'llm' slot), use hash fallback.
+        # This check is safe even when called from mlx_unified_scheduler
+        # (scheduler already holds embed_ane slot, so embed_ane slot check
+        # would be re-entrant — we just check LLM state instead).
+        try:
+            if _MLXFamilyMutex().is_llm_active():
+                _ANE_TELEMETRY['ane_embed_fallback_used'] += 1
+                return self._hash_embed(texts if isinstance(texts, list) else [texts])
+        except Exception:
+            pass  # Mutex unavailable — proceed with normal path
+
         if isinstance(texts, str):
             texts = [texts]
         if self._loaded and self.model is not None:
@@ -394,7 +579,7 @@ def get_ane_embedder() -> ANEEmbedder | None:
 def unload_ane_embedder() -> None:
     """Release ANE mutex (no-op since ANE path is disabled)."""
     try:
-        get_ane_mlx_mutex().release('ane')
+        get_ane_mlx_mutex().release('embed_ane')
     except Exception:
         pass
 

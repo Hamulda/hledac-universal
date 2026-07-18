@@ -1,0 +1,39 @@
+{
+  "session_id": "session-universal-20260718T132929Z_567264-97336",
+  "schema_version": 2,
+  "summary": "Latest assistant action: # Hledac/universal — Komplexní inženýrská roadmap ## Ptačí perspektiva Projekt je OSINT/fetch/scheduling stack na Pythonu 3.14 s rozsáhlý....",
+  "objective": null,
+  "task_summary": null,
+  "spec_summary": null,
+  "evaluation_summary": null,
+  "verification_summary": null,
+  "constraints": [],
+  "grounded_facts": [
+    {
+      "fact": "{\"query\":\"from hledac_rust_extensions|import hledac_rust_extensions\",\"filters\":{\"path\":\".\",\"file_types\":[],\"result_types\":[\"text\"],\"max_results\":10},\"results\":[],\"returned\":0,\"h...",
+      "source": "tool:code_search"
+    },
+    {
+      "fact": "{\"query\":\"maturin\",\"filters\":{\"path\":\"rust_extensions\",\"file_types\":[],\"result_types\":[\"text\"],\"max_results\":10},\"results\":[{\"result_type\":\"text\",\"path\":\"rust_extensions/.cargo/...",
+      "source": "tool:code_search"
+    },
+    {
+      "fact": "{\"query\":\"from .ioc_processor import\",\"filters\":{\"path\":\".\",\"file_types\":[],\"result_types\":[\"text\"],\"max_results\":10},\"results\":[],\"returned\":0,\"hints\":[]}",
+      "source": "tool:code_search"
+    },
+    {
+      "fact": "{\"query\":\"hledac_rust_extensions\",\"filters\":{\"path\":\"knowledge\",\"file_types\":[],\"result_types\":[\"text\"],\"max_results\":10},\"results\":[{\"result_type\":\"text\",\"path\":\"knowledge/db.p...",
+      "source": "tool:code_search"
+    },
+    {
+      "fact": "{\"query\":\"_rust_ext\",\"filters\":{\"path\":\"core\",\"file_types\":[],\"result_types\":[\"text\"],\"max_results\":10},\"results\":[{\"result_type\":\"text\",\"path\":\"core/_domain_protocol.py\",\"line\"...",
+      "source": "tool:code_search"
+    }
+  ],
+  "touched_files": [],
+  "open_questions": [],
+  "verification_todo": [],
+  "delegation_notes": [],
+  "history_artifact_path": null,
+  "generated_at": "2026-07-18T14:20:58.607479+00:00"
+}

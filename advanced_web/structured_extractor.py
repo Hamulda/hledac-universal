@@ -125,15 +125,13 @@ class StructuredExtractor:
         self._max_recursion_depth = max_recursion_depth
 
     async def extract_async(self, html: str, source_url: str='') -> StructuredExtraction:
-        """Async entrypoint. Sync parsing runs in default thread pool
-        (per project invariant: never use asyncio.to_thread for I/O).
+        """Async entrypoint. Sync parsing runs in cpu_blocking_pool.
 
         Note: the parsing itself is CPU-bound; we still go through
         run_in_executor to keep the event loop free.
         """
-        import asyncio
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self.extract, html, source_url)
+        from hledac.universal.utils.executor_decorator import offload_to
+        return await offload_to("cpu_blocking_pool", self.extract, html, source_url)
 
     def extract(self, html: str, source_url: str='') -> StructuredExtraction:
         """Synchronous extraction entrypoint. Always returns a value.

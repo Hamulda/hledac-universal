@@ -14,6 +14,8 @@ import inspect
 import threading
 from typing import TYPE_CHECKING, Any
 
+from hledac.universal.utils.executor_decorator import offload_to
+
 import msgspec
 
 if TYPE_CHECKING:
@@ -156,8 +158,7 @@ class ToolExecutor:
         if inspect.iscoroutinefunction(handler):
             return await handler(**kwargs)
         else:
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, lambda: handler(**kwargs))
+            return await offload_to("cpu_blocking_pool", handler, **kwargs)
 
 
 _DNS_TUNNEL_EXECUTOR: asyncio.AbstractEventLoop | None = None

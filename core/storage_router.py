@@ -60,6 +60,7 @@ import fnmatch
 import logging
 
 from hledac.universal.utils.locks import LazyAsyncioLock
+from hledac.universal.utils.executor_decorator import offload_to
 from dataclasses import dataclass
 import msgspec
 from enum import Enum
@@ -397,8 +398,7 @@ class StorageRouter:
                     self._notify_invalidation(policy.kind, key)
                     return False
                 # Run backend I/O in thread pool — backends are not fully async
-                loop = asyncio.get_running_loop()
-                stored = await loop.run_in_executor(None, lambda: self._backend_put(backend, key, value))
+                stored = await offload_to("cpu_io_pool", self._backend_put, backend, key, value)
                 self._notify_invalidation(policy.kind, key)
                 return stored
             except Exception as e:
@@ -429,8 +429,7 @@ class StorageRouter:
             if backend is None:
                 continue
             try:
-                loop = asyncio.get_running_loop()
-                value = await loop.run_in_executor(None, lambda: self._backend_get(backend, key))
+                value = await offload_to("cpu_io_pool", self._backend_get, backend, key)
             except Exception as e:
                 logger.debug('[StorageRouter] aget miss kind=%s key=%s: %s', kind.value, key, e)
                 continue
@@ -458,8 +457,7 @@ class StorageRouter:
             deleted = False
             if backend is not None:
                 try:
-                    loop = asyncio.get_running_loop()
-                    deleted = await loop.run_in_executor(None, lambda: self._backend_delete(backend, key))
+                    deleted = await offload_to("cpu_io_pool", self._backend_delete, backend, key)
                 except Exception as e:
                     logger.debug('[StorageRouter] adelete failed %s: %s', key, e)
             if deleted:

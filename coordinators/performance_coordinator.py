@@ -12,6 +12,8 @@ Key Features:
 - Async-first architecture optimization
 """
 import asyncio
+
+from hledac.universal.utils.executor_decorator import offload_to
 import gc
 from hledac.universal.utils.async_helpers import safe_create_task
 import logging
@@ -166,7 +168,7 @@ class AgentPool:
         if memory_mb > self.config.memory_threshold_mb:
             logger.warning(f'High memory usage ({memory_mb:.1f}MB), triggering cleanup')
             await self._emergency_cleanup()
-        return await asyncio.get_running_loop().run_in_executor(None, agent_factory)
+        return await offload_to("cpu_blocking_pool", agent_factory)
 
     def _is_agent_expired(self, agent: Any) -> bool:
         """Check if agent instance has expired."""

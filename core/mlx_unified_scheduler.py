@@ -299,7 +299,7 @@ class MLXUnifiedScheduler:
             # concurrent ANE access from other paths (reranker, etc.).
             if self._ane_mutex is not None:
                 try:
-                    self._ane_mutex.acquire_ane(model_size_mb=50)
+                    self._ane_mutex.acquire_embed_ane(model_size_mb=50)
                     ane_routed = True
                     self._update_stats(ane_offload_count=1)
                 except MemoryError:
@@ -315,7 +315,7 @@ class MLXUnifiedScheduler:
                 result = await batcher.process(texts, embedder, memory_provider=self._sample_memory_pressure)
         finally:
             if ane_routed and self._ane_mutex is not None:
-                self._ane_mutex.release(runtime='ane')
+                self._ane_mutex.release(runtime='embed_ane')
             if _inference_sem is not None:
                 _inference_sem.release()
         latency_ms = (time_module.monotonic() - start_ts) * 1000
@@ -415,7 +415,7 @@ class MLXUnifiedScheduler:
             except Exception:
                 pass
             try:
-                self._ane_mutex.release(runtime='mlx')
+                self._ane_mutex.release(runtime='llm')
             except Exception:
                 pass
         logger.info('[MLXScheduler] Shutdown complete')
@@ -556,7 +556,7 @@ def _scheduler_at_exit(instance: MLXUnifiedScheduler) -> None:
             except Exception:
                 pass
             try:
-                instance._ane_mutex.release(runtime='mlx')
+                instance._ane_mutex.release(runtime='llm')
             except Exception:
                 pass
     except Exception:

@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any
 import numpy as np
 from context_optimization.mmr import maximal_marginal_relevance
+from hledac.universal.utils.executor_decorator import offload_to
 logger = logging.getLogger(__name__)
 _DEFAULT_URI = Path(__file__).parent.parent.parent / 'data' / 'rag.lance'
 _MAX_BATCH_SIZE = 32
@@ -162,8 +163,7 @@ class LanceDBRAGEngine:
         import orjson
         metadata_json = orjson.dumps(doc.metadata).decode()
         try:
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, lambda: self._table.add([{'id': doc.id, 'content': doc.content, 'metadata': metadata_json, 'embedding': emb_norm}]))
+            await offload_to("cpu_blocking_pool", self._table.add, [{'id': doc.id, 'content': doc.content, 'metadata': metadata_json, 'embedding': emb_norm}])
             return True
         except Exception as e:
             logger.warning(f'[LANCEDB:RAG] add_document failed: {e}')
@@ -239,8 +239,7 @@ class LanceDBRAGEngine:
         norm = np.linalg.norm(q_emb) + 1e-08
         q_emb_norm = (np.array(q_emb) / norm).tolist()
         try:
-            loop = asyncio.get_running_loop()
-            results = await loop.run_in_executor(None, lambda: self._table.search(q_emb_norm, vector_column_name='embedding').metric('cosine').limit(top_k * 2 if use_mmr else top_k).to_list())
+            results = await offload_to("cpu_blocking_pool", lambda: self._table.search(q_emb_norm, vector_column_name='embedding').metric('cosine').limit(top_k * 2 if use_mmr else top_k).to_list())
         except Exception as e:
             logger.debug(f'[LANCEDB:RAG] search failed: {e}')
             return []

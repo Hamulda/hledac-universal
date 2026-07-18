@@ -18,6 +18,7 @@ import asyncio
 import time
 
 from hledac.universal.discovery.base import DiscoveryBatchResult, DiscoveryHit
+from hledac.universal.core.resource_pool import PoolKind, with_resource
 
 # DuckDB store interface for historical query
 _HISTORICAL_STORE_PATH = "~/.hledac/hledac.duckdb"
@@ -71,51 +72,46 @@ async def async_search_historical_frontier(
         return DiscoveryBatchResult(hits=(), error="empty_query")
 
     start = time.monotonic()
+    db_path = _HISTORICAL_STORE_PATH.replace("~", str(__import__("pathlib").Path.home()))
 
     try:
-        import duckdb
+        with with_resource(PoolKind.DUCKDB_RO, db_path) as conn:  # noqa: F841 — conn used in _query closure
+            try:
+                # Tokenize query — match tokens against stored query + title + url
+                tokens = {t.lower().strip(".,;:!?()[]{}-_") for t in query.split() if len(t) > 1}
+                if not tokens:
+                    return DiscoveryBatchResult(hits=(), error="empty_query")
 
-        db_path = _HISTORICAL_STORE_PATH.replace("~", str(__import__("pathlib").Path.home()))
-        conn = duckdb.connect(db_path, read_only=True)
+                # Build LIKE pattern from most significant token (first substantial word)
+                primary = next((t for t in query.split() if len(t) > 2), query.split()[0] if query.split() else "")
+                pattern = f"%{primary}%"
 
-        try:
-            # Tokenize query — match tokens against stored query + title + url
-            tokens = {t.lower().strip(".,;:!?()[]{}-_") for t in query.split() if len(t) > 1}
-            if not tokens:
-                return DiscoveryBatchResult(hits=(), error="empty_query")
+                async def _query() -> list:
+                    return conn.execute(
+                        """
+                        SELECT query, title, url, snippet, provenance_json
+                        FROM shadow_findings
+                        WHERE (
+                            query ILIKE ? OR
+                            title ILIKE ? OR
+                            url ILIKE ?
+                        )
+                        ORDER BY ts DESC
+                        LIMIT ?
+                        """,
+                        [pattern, pattern, pattern, max_results * 3],
+                    ).fetchall()
 
-            # Build LIKE pattern from most significant token (first substantial word)
-            primary = next((t for t in query.split() if len(t) > 2), query.split()[0] if query.split() else "")
-            pattern = f"%{primary}%"
-
-            async def _query() -> list:
-                return conn.execute(
-                    """
-                    SELECT query, title, url, snippet, provenance_json
-                    FROM shadow_findings
-                    WHERE (
-                        query ILIKE ? OR
-                        title ILIKE ? OR
-                        url ILIKE ?
-                    )
-                    ORDER BY ts DESC
-                    LIMIT ?
-                    """,
-                    [pattern, pattern, pattern, max_results * 3],
-                ).fetchall()
-
-            async with asyncio.timeout(timeout_s):
-                rows = await _query()
-        finally:
-            conn.close()
-    except TimeoutError:
-        elapsed = time.monotonic() - start
-        return DiscoveryBatchResult(
-            hits=(),
-            error_type="timeout",
-            elapsed_s=elapsed,
-            error="historical_frontier_timeout",
-        )
+                async with asyncio.timeout(timeout_s):
+                    rows = await _query()
+            except TimeoutError:
+                elapsed = time.monotonic() - start
+                return DiscoveryBatchResult(
+                    hits=(),
+                    error_type="timeout",
+                    elapsed_s=elapsed,
+                    error="historical_frontier_timeout",
+                )
     except Exception:
         elapsed = time.monotonic() - start
         return DiscoveryBatchResult(

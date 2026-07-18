@@ -52,6 +52,8 @@ import msgspec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
+from hledac.universal.utils.executor_decorator import offload_to
+
 try:
     import orjson
 
@@ -580,8 +582,7 @@ class IVFPQAutoTuner:
             cur_sub = int(current_num_sub_vectors) if current_num_sub_vectors is not None else self._state.last_num_sub_vectors
             return TuneResult(success=False, triggered=False, old_partitions=current_num_partitions, new_partitions=current_num_partitions, recall=0.0, avg_search_ms=0.0, rows=0, old_num_sub_vectors=cur_sub, new_num_sub_vectors=cur_sub)
         try:
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(None, lambda: self.tune_if_due(table, current_num_partitions=current_num_partitions, current_num_sub_vectors=current_num_sub_vectors, inserts_delta=inserts_delta))
+            result = await offload_to("cpu_blocking_pool", self.tune_if_due, table, current_num_partitions, current_num_sub_vectors, inserts_delta)
             return result
         except RuntimeError:
             return self.tune_if_due(table, current_num_partitions=current_num_partitions, current_num_sub_vectors=current_num_sub_vectors, inserts_delta=inserts_delta)

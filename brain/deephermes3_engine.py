@@ -3034,7 +3034,7 @@ class DeepHermes3Engine:
         _mlx_prewarm_active = False
         try:
             from brain.ane_embedder import get_ane_mlx_mutex
-            get_ane_mlx_mutex().release('mlx')
+            get_ane_mlx_mutex().release('llm')
         except Exception:
             pass
         logger.info('✓ Hermes-3 unloaded (Sprint 7K lifecycle closed)')
@@ -3157,7 +3157,7 @@ class DeepHermes3Engine:
             raise
         finally:
             try:
-                mutex.release('mlx')
+                mutex.release('llm')
             except Exception:
                 pass
 

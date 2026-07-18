@@ -53,6 +53,7 @@ from typing import TYPE_CHECKING, Any
 from hledac.universal.core.protocols import safe_get_finding_field, safe_get_payload_text
 from hledac.universal.pipeline.ioc_cooccurrence_miner import IOCooccurrenceMiner
 from hledac.universal.utils.graph_utils import lazy_ig as _lazy_ig
+from hledac.universal.utils.executor_decorator import offload_to
 logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     pass
@@ -645,11 +646,10 @@ class EvidenceNetworkAnalyzer:
         we return [] — the local edge set is still useful.
         """
         try:
-            loop = asyncio.get_running_loop()
             values = [n.value for n in nodes][:MAX_GRAPH_BATCH_VALUES]
             if not values:
                 return []
-            connected_map = await loop.run_in_executor(None, lambda: self._graph.find_connected_batch(values, max_hops))
+            connected_map = await offload_to("duckdb_pool", self._graph.find_connected_batch, values, max_hops)
         except Exception as e:
             logger.debug(f'EvidenceNetworkAnalyzer: graph lookup failed: {e}')
             return []

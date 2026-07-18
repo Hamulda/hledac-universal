@@ -38,6 +38,8 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
+from hledac.universal.utils.executor_decorator import offload_to
+
 if TYPE_CHECKING:
     from brain.deephermes3_engine import DeepHermes3Engine
 
@@ -240,9 +242,8 @@ class ContinuousBatchEngine:
             return self._engine._format_chatml(system_msg=system, user_msg=prompt)
 
         # Parallel ChatML formatting in thread pool (CPU-bound, ~0.01ms/prompt)
-        loop = asyncio.get_running_loop()
         formatted_prompts = await asyncio.gather(
-            *[loop.run_in_executor(None, prep_one, p) for p in prompts],
+            *[offload_to("cpu_blocking_pool", prep_one, p) for p in prompts],
             return_exceptions=True,
         )
 
