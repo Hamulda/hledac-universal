@@ -184,30 +184,40 @@ def _is_numeric_hostname(url: str) -> bool:
         return True  # any parsing error -> skip
 
 
+# _Python*Domain classes live in submodules, not in the package __init__
+from core.rust_backend.bloom import _PythonBloomDomain
+from core.rust_backend.url import _PythonUrlDomain
+from core.rust_backend.hash import _PythonHashDomain
+from core.rust_backend.rolling_hash import _PythonRollingHashDomain
+from core.rust_backend.simhash import _PythonSimhashDomain
+from core.rust_backend.quality import _PythonQualityDomain
+from core.rust_backend.ioc import _PythonIocDomain
+from core.rust_backend.misc import _PythonTextDomain, _PythonHtmlDomain
+from core.rust_backend.ip import _PythonIpDomain
+from core.rust_backend.misc import _PythonSimdDomain
+
+_PYTHON_DOMAINS = {
+    "bloom": _PythonBloomDomain,
+    "url": _PythonUrlDomain,
+    "hash": _PythonHashDomain,
+    "rolling_hash": _PythonRollingHashDomain,
+    "simhash": _PythonSimhashDomain,
+    "quality": _PythonQualityDomain,
+    "ioc": _PythonIocDomain,
+    "text": _PythonTextDomain,
+    "ip": _PythonIpDomain,
+    "simd": _PythonSimdDomain,
+    "html": _PythonHtmlDomain,
+}
+
+
 def _get_python_domain(domain_name: str):
     """Get pure Python domain instance for differential testing.
 
     Creates Python domain directly without triggering RustBackend initialization.
     This avoids importing the module-level `rust = RustBackend()` singleton.
     """
-    # Import only the Python domain classes - these are defined at module level
-    # before the RustBackend singleton is created
-    import core.rust_backend as rb
-
-    domain_map = {
-        "bloom": rb._PythonBloomDomain,
-        "url": rb._PythonUrlDomain,
-        "hash": rb._PythonHashDomain,
-        "rolling_hash": rb._PythonRollingHashDomain,
-        "simhash": rb._PythonSimhashDomain,
-        "quality": rb._PythonQualityDomain,
-        "ioc": rb._PythonIocDomain,
-        "text": rb._PythonTextDomain,
-        "ip": rb._PythonIpDomain,
-        "simd": rb._PythonSimdDomain,
-        "html": rb._PythonHtmlDomain,
-    }
-    domain_cls = domain_map.get(domain_name)
+    domain_cls = _PYTHON_DOMAINS.get(domain_name)
     if domain_cls is None:
         pytest.skip(f"Domain {domain_name} not available for pure Python testing")
     return domain_cls()

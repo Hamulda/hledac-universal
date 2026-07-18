@@ -67,7 +67,7 @@ back to DeepHermes3Engine (in-process mlx-lm Python bindings fallback).
 from __future__ import annotations
 
 import asyncio
-import json
+import orjson as json
 import logging
 import os
 import socket
@@ -297,7 +297,7 @@ class MlxcelIpcClient:
             "params": params,
             "id": id(params) & 0xFFFF,
         }
-        request_bytes = (json.dumps(request) + "\n").encode("utf-8")
+        request_bytes = json.dumps(request) + b"\n"
 
         start = time.monotonic()
         try:
@@ -319,7 +319,7 @@ class MlxcelIpcClient:
             if not response_line:
                 raise MlxcelUnavailable("mlxcel closed connection")
 
-            response = json.loads(response_line.decode("utf-8"))
+            response = json.loads(response_line)
 
             if "error" in response:
                 err = response["error"]
@@ -335,7 +335,7 @@ class MlxcelIpcClient:
             # Mark disconnected so next call reconnects fresh
             self._connected = False
             raise MlxcelUnavailable(f"RPC timeout after {self._RPC_TIMEOUT_S}s for {method}")
-        except (OSError, json.JSONDecodeError, asyncio.CancelledError) as e:
+        except (OSError, ValueError, asyncio.CancelledError) as e:
             self._stats.record_failure(str(e))
             self._connected = False
             raise MlxcelUnavailable(f"RPC failed: {e}") from e
@@ -463,7 +463,7 @@ class MlxcelIpcClient:
             },
             "id": id(prompt) & 0xFFFF,
         }
-        request_bytes = (json.dumps(request) + "\n").encode("utf-8")
+        request_bytes = json.dumps(request) + b"\n"
 
         if self._writer is None:
             raise MlxcelUnavailable("Not connected to mlxcel")
@@ -480,7 +480,7 @@ class MlxcelIpcClient:
             if not line:
                 break
             try:
-                resp = json.loads(line.decode("utf-8"))
+                resp = json.loads(line)
                 if "error" in resp:
                     err = resp["error"]
                     logger.warning("[MLXCEL] stream error: %s", err.get("message"))
@@ -492,7 +492,7 @@ class MlxcelIpcClient:
                     yield chunk
                 if done:
                     break
-            except json.JSONDecodeError:
+            except ValueError:
                 continue
             except asyncio.TimeoutError:
                 raise MlxcelUnavailable(f"Stream chunk timeout after {self._RPC_TIMEOUT_S}s")

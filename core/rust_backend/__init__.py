@@ -50,12 +50,30 @@ from . import hash as _hash_mod
 from . import ip as _ip_mod
 from . import ioc as _ioc_mod
 from . import ioc_dedup as _ioc_dedup_mod
-from . import misc as _misc_mod
 from . import quality as _quality_mod
 from . import rolling_hash as _rolling_hash_mod
 from . import simhash as _simhash_mod
 from . import url as _url_mod
 from . import lsh as _lsh_mod
+# Modular misc domains (split from misc.py)
+from . import graph as _graph_mod
+from . import hot_edges as _hot_edges_mod
+from . import aho as _aho_mod
+from . import evidence as _evidence_mod
+from . import madvise as _madvise_mod
+from . import memory as _memory_mod
+from . import json as _json_mod
+from . import spsc as _spsc_mod
+from . import query as _query_mod
+from . import text as _text_mod
+from . import xml as _xml_mod
+from . import int_counter as _int_counter_mod
+from . import simd as _simd_mod
+from . import sprint_policies as _sprint_policies_mod
+from . import html as _html_mod
+from . import metal as _metal_mod
+# Legacy misc module (only for _TlsDomain and backward compat)
+from . import misc as _misc_mod
 from ._prober import force_python as _force_python
 from ._prober import force_rust as _force_rust
 from ._prober import probe as _probe
@@ -68,23 +86,29 @@ if TYPE_CHECKING:
     from .ip import _PythonIpDomain, _RustIpDomain
     from .ioc import _PythonIocDomain, _RustIocDomain
     from .ioc_dedup import _PythonIocDedupDomain, _RustIocDedupDomain
-    from .misc import (
-        _PythonAhoDomain, _PythonEvidenceDomain, _PythonHotEdgesDomain,
-        _PythonIntCounterDomain, _PythonJsonDomain, _PythonMadvisDomain,
-        _PythonMemoryDomain, _PythonGraphDomain,
-        _PythonQueryDomain, _PythonSimdDomain, _PythonSPSCDomain,
-        _PythonSprintPoliciesDomain, _PythonTextDomain, _PythonXmlDomain,
-        _RustAhoDomain, _RustEvidenceDomain, _RustHotEdgesDomain,
-        _RustIntCounterDomain, _RustJsonDomain, _RustMadvisDomain,
-        _RustMemoryDomain, _RustGraphDomain,
-        _RustQueryDomain, _RustSimdDomain, _RustSPSCDomain,
-        _RustSprintPoliciesDomain, _RustTextDomain, _RustXmlDomain,
-    )
     from .quality import _PythonQualityDomain, _RustQualityDomain
     from .rolling_hash import _PythonRollingHashDomain, _RustRollingHashDomain
     from .simhash import _PythonSimhashDomain, _RustSimhashDomain
     from .url import _PythonUrlDomain, _RustUrlDomain
     from .lsh import _PythonLshDomain, _RustLshDomain
+    # Modular misc domains
+    from .graph import _PythonGraphDomain, _RustGraphDomain
+    from .hot_edges import _PythonHotEdgesDomain, _RustHotEdgesDomain
+    from .aho import _PythonAhoDomain, _RustAhoDomain
+    from .evidence import _PythonEvidenceDomain, _RustEvidenceDomain
+    from .madvise import _PythonMadvisDomain, _RustMadvisDomain
+    from .memory import _PythonMemoryDomain, _RustMemoryDomain
+    from .json import _PythonJsonDomain, _RustJsonDomain
+    from .spsc import _PythonSPSCDomain, _RustSPSCDomain
+    from .query import _PythonQueryDomain, _RustQueryDomain
+    from .text import _PythonTextDomain, _RustTextDomain
+    from .xml import _PythonXmlDomain, _RustXmlDomain
+    from .int_counter import _PythonIntCounterDomain, _RustIntCounterDomain
+    from .simd import _PythonSimdDomain, _RustSimdDomain
+    from .sprint_policies import _PythonSprintPoliciesDomain, _RustSprintPoliciesDomain
+    from .misc import (
+        _PythonHtmlDomain, _RustHtmlDomain,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -217,59 +241,59 @@ class AccelBackend:
     def ip(self) -> "_RustIpDomain | _PythonIpDomain":
         return self._get_domain("ip", _ip_mod.get_domain)
 
-    # --- misc domains (all from misc.py) ---
+    # --- misc domains (now split into modular files) ---
 
     @property
     def graph(self) -> "_RustGraphDomain | _PythonGraphDomain":
-        return self._get_domain("graph", _misc_mod.get_graph_domain)
+        return self._get_domain("graph", _graph_mod.get_graph_domain)
 
     @property
     def hot_edges(self) -> "_RustHotEdgesDomain | _PythonHotEdgesDomain":
-        return self._get_domain("hot_edges", _misc_mod.get_hot_edges_domain)
+        return self._get_domain("hot_edges", _hot_edges_mod.get_hot_edges_domain)
 
     @property
     def aho(self) -> "_RustAhoDomain | _PythonAhoDomain":
-        return self._get_domain("aho", _misc_mod.get_aho_domain)
+        return self._get_domain("aho", _aho_mod.get_aho_domain)
 
     @property
     def evidence(self) -> "_RustEvidenceDomain | _PythonEvidenceDomain":
-        return self._get_domain("evidence", _misc_mod.get_evidence_domain)
+        return self._get_domain("evidence", _evidence_mod.get_evidence_domain)
 
     @property
     def madvise(self) -> "_RustMadvisDomain | _PythonMadvisDomain":
-        return self._get_domain("madvise", _misc_mod.get_madvise_domain)
+        return self._get_domain("madvise", _madvise_mod.get_madvise_domain)
 
     @property
     def memory(self) -> "_RustMemoryDomain | _PythonMemoryDomain":
-        return self._get_domain("memory", _misc_mod.get_memory_domain)
+        return self._get_domain("memory", _memory_mod.get_memory_domain)
 
     @property
     def json(self) -> "_RustJsonDomain | _PythonJsonDomain":
-        return self._get_domain("json", _misc_mod.get_json_domain)
+        return self._get_domain("json", _json_mod.get_json_domain)
 
     @property
     def spsc(self) -> "_RustSPSCDomain | _PythonSPSCDomain":
-        return self._get_domain("spsc", _misc_mod.get_spsc_domain)
+        return self._get_domain("spsc", _spsc_mod.get_spsc_domain)
 
     @property
     def query(self) -> "_RustQueryDomain | _PythonQueryDomain":
-        return self._get_domain("query", _misc_mod.get_query_domain)
+        return self._get_domain("query", _query_mod.get_query_domain)
 
     @property
     def text(self) -> "_RustTextDomain | _PythonTextDomain":
-        return self._get_domain("text", _misc_mod.get_text_domain)
+        return self._get_domain("text", _text_mod.get_text_domain)
 
     @property
     def xml(self) -> "_RustXmlDomain | _PythonXmlDomain":
-        return self._get_domain("xml", _misc_mod.get_xml_domain)
+        return self._get_domain("xml", _xml_mod.get_xml_domain)
 
     @property
     def int_counter(self) -> "_RustIntCounterDomain | _PythonIntCounterDomain":
-        return self._get_domain("int_counter", _misc_mod.get_int_counter_domain)
+        return self._get_domain("int_counter", _int_counter_mod.get_int_counter_domain)
 
     @property
     def simd(self) -> "_RustSimdDomain | _PythonSimdDomain":
-        return self._get_domain("simd", _misc_mod.get_simd_domain)
+        return self._get_domain("simd", _simd_mod.get_simd_domain)
 
     @property
     def rolling_hash(self) -> "_RustRollingHashDomain | _PythonRollingHashDomain":
@@ -285,7 +309,11 @@ class AccelBackend:
 
     @property
     def sprint_policies(self) -> "_RustSprintPoliciesDomain | _PythonSprintPoliciesDomain":
-        return self._get_domain("sprint_policies", _misc_mod.get_sprint_policies_domain)
+        return self._get_domain("sprint_policies", _sprint_policies_mod.get_sprint_policies_domain)
+
+    @property
+    def html(self) -> "_RustHtmlDomain | _PythonHtmlDomain":
+        return self._get_domain("html", _html_mod.get_html_domain)
 
     # -------------------------------------------------------------------------
     # Internal
@@ -406,7 +434,7 @@ class _RustCompatShim:
     @property
     def html(self) -> Any:
         # Route to the actual HTML domain from misc.py
-        from . import misc as _misc_mod
+        # _misc_mod already imported at module level — reuse, don't re-import
         probe = self._accel._ensure_probe()
         return _misc_mod.get_html_domain(probe.ext)
 
@@ -491,7 +519,7 @@ class _RustCompatShim:
     @property
     def tls(self) -> Any:
         """Issue B5: TLS cert metadata — wraps extract_tls_metadata as rust.tls.extract_tls_metadata(...)."""
-        from . import misc as _misc_mod
+        # _misc_mod already imported at module level — reuse, don't re-import
         probe = self._accel._ensure_probe()
         raw_fn = getattr(probe.ext, "extract_tls_metadata", None)
         if raw_fn is not None:
@@ -542,7 +570,7 @@ rust: RustBackend = _get_or_create_singleton()
 
 def check_metal_availability() -> dict[str, Any]:
     """Check Metal/GPU availability — telemetry only, always returns Python fallback."""
-    return _misc_mod._python_check_metal_availability()
+    return _metal_mod.check_metal_availability()
 
 
 # =============================================================================

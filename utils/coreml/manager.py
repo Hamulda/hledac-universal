@@ -54,7 +54,22 @@ class CoreMLServiceManager:
             return False
 
     def start(self) -> None:
-        """Start the CoreML service subprocess (sync wrapper — use start_async in async ctx)."""
+        """
+        Start the CoreML service subprocess synchronously.
+
+        DEPRECATED: In async contexts, use start_async() instead.
+        This sync variant blocks the event loop during the 0.5s polling intervals.
+
+        B2-FIX: The 500ms polling sleep is a one-time startup cost (~10s max timeout).
+        For async callers, wrap with asyncio.to_thread() or use start_async().
+        """
+        import warnings as _w
+        _w.warn(
+            "CoreMLServiceManager.start() is deprecated in async contexts. "
+            "Use start_async() or asyncio.to_thread(start).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if self.is_running():
             logger.info('CoreML service already running')
             return

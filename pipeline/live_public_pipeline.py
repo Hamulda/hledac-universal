@@ -2490,7 +2490,7 @@ async def _inject_onion_hits(
     """
     from hledac.universal.fetching.public_fetcher import async_fetch_public_text
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-    from hledac.universal.utils.async_helpers import safe_gather, safe_wait_for
+    from hledac.universal.utils.async_helpers import parallel, safe_wait_for
 
     # Quick check: skip if circuit is open
     if _onion_circuit_is_open():
@@ -2544,11 +2544,12 @@ async def _inject_onion_hits(
             logger.debug(f"[F193A] Onion fetch {onion_url}: {e}")
             return None
 
-    result_obj = await safe_gather(
-        *[_fetch_one_onion(url) for url in onion_urls],
-        label="onion_hits",
+    _result = await parallel(
+        [_fetch_one_onion(url) for url in onion_urls],
+        policy="collect",
+        ctx="onion_hits",
     )
-    for finding in result_obj.ok:
+    for finding in _result.ok:
         if finding is not None:
             findings.append(finding)
 
@@ -3559,11 +3560,11 @@ async def async_run_live_public_pipeline(
         )
         tasks.append(task)
 
-    # F261: safe_gather centralizes [I6][I7][I8] invariants at the gather boundary.
+    # ISSUE-D2: parallel() centralizes [I6][I7][I8] invariants at the gather boundary.
     # Same return shape as before (ok_results + error_results) so downstream
     # code at 3911/4225/4227 keeps working unchanged.
-    from hledac.universal.utils.async_helpers import safe_gather, safe_wait_for
-    _result = await safe_gather(*tasks, label="live_public_page_fetch")
+    from hledac.universal.utils.async_helpers import parallel, safe_wait_for
+    _result = await parallel(tasks, policy="collect", ctx="live_public_page_fetch")
     ok_results, error_results = _result.ok, _result.errors
 
     # Assemble page results in discovery order (skipping exceptions)

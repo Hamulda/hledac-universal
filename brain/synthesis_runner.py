@@ -33,7 +33,7 @@ import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_fire_and_forget, safe_gather_ok
+from hledac.universal.utils.async_helpers import safe_create_task, parallel
 from hledac.universal.utils.cache import PyCacheDict
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
@@ -1779,10 +1779,12 @@ class SynthesisRunner:
 
         # Phase 1: Check all model sizes in parallel
         # F314-4: migrated asyncio.gather -> safe_gather_ok (fail-soft, preserves order)
-        size_results = await safe_gather_ok(
-            *[_check_model_size(mid, mgb) for mid, mgb in model_candidates],
-            label="synthesis:check_model_sizes",
+        _size_result = await parallel(
+            [_check_model_size(mid, mgb) for mid, mgb in model_candidates],
+            policy="log",
+            ctx="synthesis:check_model_sizes",
         )
+        size_results = _size_result.ok
 
         # Filter eligible models (fit within budget)
         eligible: list[str] = []
@@ -1798,9 +1800,10 @@ class SynthesisRunner:
             # F314-4: migrated asyncio.gather -> safe_gather_fire_and_forget
             # Download in parallel - best effort, don't fail all if one fails.
             # Result is unused (disk rescan below finds downloads).
-            await safe_gather_fire_and_forget(
-                *[_download_model(mid) for mid in eligible],
-                label="synthesis:download_models",
+            await parallel(
+                [_download_model(mid) for mid in eligible],
+                policy="log",
+                ctx="synthesis:download_models",
             )
             # Re-scan disk for any successfully downloaded model
             for d in search:

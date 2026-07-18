@@ -92,7 +92,7 @@ from hledac.universal.runtime.acquisition_telemetry_reconcile import (
     complete_source_family_outcomes_from_prelude,
 )
 from hledac.universal.runtime.sprint_lifecycle import _PHASE_ORDER, SprintLifecycleManager
-from hledac.universal.utils.async_helpers import safe_gather, safe_wait_for
+from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for, parallel
 from hledac.universal.utils.config_introspection import safe_attr_get
 
 # E3: macOS P-core QoS — apply USER_INITIATED to main asyncio event loop thread.
@@ -1629,9 +1629,10 @@ async def dry_run_sprint(query: str, duration_s: float = 300.0) -> None:
                 resp = await session.head(url)
                 return (name, resp.status_code < 500)
 
-            result = await safe_gather(
-                *(check_source(name, url) for name, url in src_checks),
-                label="source_availability",
+            result = await parallel(
+                [check_source(name, url) for name, url in src_checks],
+                policy="collect",
+                ctx="source_availability",
             )
             for name, ok in result.ok:
                 online_sources[name] = ok

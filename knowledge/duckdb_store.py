@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import functools
 import sys
 import weakref
 
@@ -34,20 +35,34 @@ from hledac.universal.runtime.protocols.cleanup_protocol import shutdown_aclose
 from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
 from hledac.universal.knowledge.duckdb_migrator import SchemaMigrator
 
-# OTEL instrumentation — strict import with fallback chain
-try:
-    from otel._instrumentation import instrumented as _otel_instrumented
-except ImportError:
-    from hledac.universal.otel._instrumentation import instrumented as _otel_instrumented
+# OTEL instrumentation — importlib chain, lookup cached once
+@functools.lru_cache(maxsize=1)
+def _otel_instrumented_factory() -> Any:
+    from importlib import import_module
 
-# instrument_duckdb_connection — strict import
-try:
-    from runtime._telemetry_setup import instrument_duckdb_connection
-except ImportError:
     try:
-        from hledac.universal.runtime._telemetry_setup import instrument_duckdb_connection
+        return import_module("otel._instrumentation").instrumented
     except ImportError:
-        instrument_duckdb_connection = None
+        return import_module("hledac.universal.otel._instrumentation").instrumented
+
+
+_otel_instrumented = _otel_instrumented_factory()
+
+# instrument_duckdb_connection — importlib chain, lookup cached once
+@functools.lru_cache(maxsize=1)
+def _instrument_duckdb_connection_factory() -> Any:
+    from importlib import import_module
+
+    try:
+        return import_module("runtime._telemetry_setup").instrument_duckdb_connection
+    except ImportError:
+        try:
+            return import_module("hledac.universal.runtime._telemetry_setup").instrument_duckdb_connection
+        except ImportError:
+            return None
+
+
+instrument_duckdb_connection = _instrument_duckdb_connection_factory()
 import datetime as _dt
 import logging
 import os

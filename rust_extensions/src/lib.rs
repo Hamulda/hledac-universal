@@ -22,11 +22,16 @@ use std::sync::LazyLock;
 
 pub mod aho_corasick;
 pub mod query_terms; // B4: Aho-Corasick query-context scan + whitespace trim
+#[cfg(feature = "bloom")]
 pub mod bloom;
 pub mod compress;
+#[cfg(feature = "advanced")]
 pub mod regex_lz4; // LZ4-compressed pattern store for 10k+ patterns
+#[cfg(feature = "advanced")]
 pub mod content_hasher;
+#[cfg(feature = "core")]
 pub mod crypto_accelerate;
+#[cfg(feature = "advanced")]
 pub mod adaptive_scheduler;
 #[cfg(feature = "data")]
 pub mod async_query; // ISSUE-013: std::thread + rayon pool pro async Rust DuckDB queries
@@ -56,14 +61,17 @@ pub mod _entropy; // Shared entropy helpers — broken out to avoid circular qua
 pub mod rolling_hash;
 #[cfg(feature = "advanced")]
 pub mod signal_batch;
+#[cfg(feature = "advanced")]
 pub mod simd_similarity;
 pub mod simhash_ext;
 #[cfg(feature = "graph")]
 pub mod lsh_index; // F320+: LSH index for O(1) near-duplicate detection at scale
 pub mod text_norm;
+#[cfg(feature = "advanced")]
 pub mod feed_decision;
 #[cfg(feature = "advanced")]
 pub mod feed_pipeline;
+#[cfg(feature = "advanced")]
 pub mod pipeline_compose; // Multi-stage pipeline operators via rayon
 pub mod xml_sanitize;
 pub mod url_engine;
@@ -568,10 +576,14 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     m.add_class::<aho_corasick::AhoCorasickMatcher>()?;
     m.add_class::<aho_corasick::PatternHit>()?;  // Issue #37: zero-copy hit struct
-    m.add_class::<bloom::BloomFilter>()?;
-    // F266-U1: file-backed mmap Bloom filter (persists across restart).
-    bloom::register(m)?;
+    #[cfg(feature = "bloom")]
+    {
+        m.add_class::<bloom::BloomFilter>()?;
+        // F266-U1: file-backed mmap Bloom filter (persists across restart).
+        bloom::register(m)?;
+    }
     // P3-3: ephemeral batch Bloom filter check.
+    #[cfg(feature = "bloom")]
     m.add_function(wrap_pyfunction!(bloom::bloom_check_batch, m)?)?;
     m.add_class::<rolling_hash::RollingHashEngine>()?;
 
@@ -625,10 +637,12 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<xxhash_ext::StreamHasher64>()?;
 
     // F320: batch xxh3-64 via rayon — parallel prompt cache fingerprinting (Apple Silicon NEON)
+    #[cfg(feature = "advanced")]
     m.add_function(wrap_pyfunction!(content_hasher::batch_xxh3_64_hex, m)?)?;
 
     // SHA-256 + BLAKE3 content hashing (TLS cert fingerprint, body dedup).
     // NEON-enabled on aarch64 (Apple Silicon), scalar fallback elsewhere.
+    #[cfg(feature = "advanced")]
     m.add_class::<content_hasher::ContentHasher>()?;
 
     // Issue B5: TLS cert metadata — single Rust call replacing 5-level Python fallback.
@@ -636,6 +650,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // F275: CommonCrypto SHA-256 hardware acceleration on Apple Silicon (~3× vs sha2 crate).
     crypto_accelerate::register_functions(m)?;
+    #[cfg(feature = "advanced")]
     adaptive_scheduler::register_functions(m)?;
     rate_limit::register_module(m)?;  // ISSUE #016: NVD token bucket rate limiter
     // F5.2: FeedDominanceGuard + LaneBudgetPool in Rust (zero-copy, no GIL)
@@ -648,7 +663,9 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // HotEdgeCounterRust — in-memory L1 write buffer for hot edge counts.
     #[cfg(feature = "graph")]
-    hot_edges_rs::register_functions(m)?;
+    {
+        hot_edges_rs::register_functions(m)?;
+    }
 
     // F265B-IV: Telemetry aggregator — counters, histograms, gauges for sprint reporting
     telemetry_agg::register_functions(m)?;
@@ -710,6 +727,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // PAR-1 P1: SIMD-accelerated batch cosine similarity for embedding re-ranking.
     // Fallback for environments without MLX (CI, testing). NEON on AArch64.
+    #[cfg(feature = "advanced")]
     simd_similarity::register_functions(m)?;
 
     // Zero-copy PyO3 batch utilities — Py<PyList> iteration without Vec<String> allocation.
@@ -736,6 +754,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     arrow_batch_builder::register(m)?;
 
     // F350+: LZ4-compressed pattern store for 10k+ patterns (M1 8GB RAM optimization).
+    #[cfg(feature = "advanced")]
     regex_lz4::register(m)?;
 
     // F320+: Lazy parquet reader — paginated Arrow Row-Group iterator.
@@ -789,6 +808,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // ISSUE #014: Multi-stage pipeline operators via rayon — zero-copy Arc<T> between stages.
     // Replaces Python async Queue + dict overhead in sidecar_bus.py for 100+ events/sec.
     // Pipeline primitives: MAP, FILTER-MAP, FOLD, COUNT — all parallel via mixed_pool.
+    #[cfg(feature = "advanced")]
     pipeline_compose::register(m)?;
 
     // F5.2: GIL management — Python::with_gil() + rayon pools (ne pyo3-async)
@@ -805,6 +825,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     collections::register_functions(m)?;
 
     // C3: Feed decision classifiers — pure functions for feed signal classification.
+    #[cfg(feature = "advanced")]
     feed_decision::register_functions(m)?;
     #[cfg(feature = "advanced")]
     feed_pipeline::register(m)?;

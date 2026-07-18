@@ -914,13 +914,41 @@ struct Commands {
 
     /// Encrypt data with CryptoKit AES-GCM
     /// Uses PBKDF2-HMAC-SHA256 for key derivation + AES-256-GCM for encryption
-    static func cryptokitEncrypt(password: String, outputPath: String) -> CommandResult {
-        // Read plaintext from stdin
+    ///
+    /// stdin format: line 1 = password, line 2+ = plaintext data
+    /// This avoids password appearing in ps aux (CRITICAL fix)
+    static func cryptokitEncrypt(outputPath: String) -> CommandResult {
+        // Read all of stdin
         let stdinData = FileHandle.standardInput.readDataToEndOfFile()
         guard !stdinData.isEmpty else {
             return CommandResult.failure(
                 errorCode: "NO_INPUT",
                 message: "No data provided on stdin"
+            )
+        }
+
+        // Split: first line = password, rest = plaintext
+        guard let stdinString = String(data: stdinData, encoding: .utf8) else {
+            return CommandResult.failure(
+                errorCode: "INVALID_ENCODING",
+                message: "stdin must be UTF-8 encoded"
+            )
+        }
+
+        let lines = stdinString.components(separatedBy: "\n")
+        guard lines.count >= 2, !lines[0].isEmpty else {
+            return CommandResult.failure(
+                errorCode: "INVALID_STDIN_FORMAT",
+                message: "stdin must be: password\\n<plaintext-data>"
+            )
+        }
+
+        let password = lines[0]
+        let plaintextData = lines[1...].joined(separator: "\n").data(using: .utf8) ?? Data()
+        guard !plaintextData.isEmpty else {
+            return CommandResult.failure(
+                errorCode: "NO_PLAINTEXT",
+                message: "No plaintext data provided"
             )
         }
 
@@ -931,7 +959,7 @@ struct Commands {
 
             // Encrypt with AES-GCM
             let nonce = try AES.GCM.Nonce(data: _generateRandomBytes(count: 12))
-            let sealedBox = try AES.GCM.seal(stdinData, using: key, nonce: nonce)
+            let sealedBox = try AES.GCM.seal(plaintextData, using: key, nonce: nonce)
 
             // Format: salt (16) + nonce (12) + ciphertext + tag (16)
             var encryptedData = Data()
@@ -948,7 +976,7 @@ struct Commands {
                 "kdf": "PBKDF2-HMAC-SHA256",
                 "iterations": "310000",
                 "output_path": outputPath,
-                "bytes_encrypted": "\(stdinData.count)"
+                "bytes_encrypted": "\(plaintextData.count)"
             ])
         } catch {
             return CommandResult.failure(
@@ -992,7 +1020,27 @@ struct Commands {
 
     /// Decrypt data with CryptoKit AES-GCM
     /// Reads encrypted file: salt (16) + combined (nonce+ciphertext+tag)
-    static func cryptokitDecrypt(password: String, inputPath: String, outputPath: String) -> CommandResult {
+    ///
+    /// stdin format: line 1 = password
+    /// This avoids password appearing in ps aux (CRITICAL fix)
+    static func cryptokitDecrypt(inputPath: String, outputPath: String) -> CommandResult {
+        // Read password from stdin
+        let stdinData = FileHandle.standardInput.readDataToEndOfFile()
+        guard let stdinString = String(data: stdinData, encoding: .utf8) else {
+            return CommandResult.failure(
+                errorCode: "INVALID_ENCODING",
+                message: "stdin must be UTF-8 encoded"
+            )
+        }
+
+        let lines = stdinString.components(separatedBy: "\n")
+        guard let password = lines.first, !password.isEmpty else {
+            return CommandResult.failure(
+                errorCode: "NO_PASSWORD",
+                message: "No password provided on stdin"
+            )
+        }
+
         let inputURL = URL(fileURLWithPath: inputPath)
         let outputURL = URL(fileURLWithPath: outputPath)
 

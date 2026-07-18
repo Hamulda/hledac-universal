@@ -1250,3 +1250,294 @@ def test_sprint_scheduler_config_with_keyword_query(minimal_config):
     # accepted_findings should be 0 for fresh scheduler
     assert result.accepted_findings == 0
     assert result.final_phase == "BOOT"
+
+
+# ── Issue B3: ObservedRunReport duplicate field detection ──────────────────────
+import ast
+
+
+import os
+from pathlib import Path
+
+
+def _find_msgspec_struct_duplicates(root: Path, exclude_dirs=None):
+    """Scan all .py files under root for msgspec.Struct classes with duplicate fields.
+
+    Returns list of (file_rel, class_name, field_name, first_line, second_line).
+    """
+    if exclude_dirs is None:
+        exclude_dirs = {'__pycache__', '.pytest_cache', '.venv', '.git',
+                       'build', 'dist', '.mypy_cache', 'tests', 'tests/.archive'}
+
+    issues = []
+    for py_file in root.rglob('*.py'):
+        if any(ex in py_file.parts for ex in exclude_dirs):
+            continue
+        try:
+            source = py_file.read_text(encoding='utf-8')
+        except (OSError, UnicodeDecodeError):
+            continue
+        try:
+            tree = ast.parse(source, filename=str(py_file))
+        except BaseException:
+            # Catch ALL exceptions — ast.parse can fail for many reasons beyond SyntaxError:
+            # - RecursionError: deeply nested source (generated code, templates)
+            # - MemoryError: OOM during complex AST construction
+            # - ValueError: invalid source encoding edges
+            # - any other stdlib exception raised by ast module on pathological input
+            continue
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            is_struct = any(
+                (isinstance(b, ast.Name) and b.id == 'Struct') or
+                (isinstance(b, ast.Attribute) and b.attr == 'Struct')
+                for b in node.bases
+            )
+            if not is_struct:
+                continue
+
+            seen = {}
+            for item in node.body:
+                if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+                    name, kind, line = item.target.id, 'AnnAssign', item.lineno
+                elif isinstance(item, ast.Assign):
+                    name = None
+                    for t in item.targets:
+                        if isinstance(t, ast.Name):
+                            name = t.id
+                            break
+                    if name is None:
+                        continue
+                    kind, line = 'Assign', item.lineno
+                else:
+                    continue
+
+                if name in seen:
+                    issues.append((str(py_file.relative_to(root)), node.name,
+                                   name, seen[name][1], line))
+                else:
+                    seen[name] = (kind, line)
+
+    return issues
+
+
+class TestObservedRunReportSchema:
+    """AST-based schema validation for ObservedRunReport msgspec.Struct.
+
+    ISSUE-B3: Duplicate field names cause silent last-value-wins semantics in
+    msgspec.Struct class bodies. Field declarations with Annotated[Type, Meta(...)]
+    validators get silently overwritten by plain Type declarations, breaking
+    validate_observed_run_report() strict validation via msgspec.convert(..., strict=True).
+
+    This test ensures NO field name appears twice in the ObservedRunReport class.
+    """
+
+    def test_observed_run_report_no_duplicate_fields(self):
+        """Verify ObservedRunReport has no duplicate field names via AST analysis."""
+        import hledac.universal.__main__ as main_module
+
+        source_file = main_module.__file__
+        assert source_file and source_file.endswith(".py"), f"Not a source file: {source_file}"
+
+        with open(source_file, "r", encoding="utf-8") as f:
+            tree = ast.parse(f.read(), filename=source_file)
+
+        # Find ObservedRunReport class
+        observed_run_class = None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and node.name == "ObservedRunReport":
+                observed_run_class = node
+                break
+
+        assert observed_run_class is not None, "ObservedRunReport class not found in __main__.py"
+
+        # Collect all field names (left of ':' in AnnAssign or Assign nodes)
+        field_names = []
+        for item in observed_run_class.body:
+            if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+                field_names.append(item.target.id)
+            elif isinstance(item, ast.Assign):
+                for target in item.targets:
+                    if isinstance(target, ast.Name):
+                        field_names.append(target.id)
+
+        # Check for duplicates
+        seen: set[str] = set()
+        duplicates: list[str] = []
+        for name in field_names:
+            if name in seen:
+                duplicates.append(name)
+            seen.add(name)
+
+        assert not duplicates, (
+            f"Duplicate field names found in ObservedRunReport: {duplicates}. "
+            f"msgspec.Struct uses last-value-wins semantics — Annotated validators "
+            f"are silently overwritten by plain declarations, breaking strict validation."
+        )
+
+    def test_validate_observed_run_report_accepts_valid_data(self):
+        """Verify validate_observed_run_report accepts properly structured data."""
+        from hledac.universal.__main__ import (
+            FeedHealthBreakdown,
+            ObservedRunReport,
+            UmaSnapshot,
+            validate_observed_run_report,
+        )
+        import msgspec
+
+        uma = msgspec.convert(
+            {"rss_mb": 0, "metal_cache_mb": 0, "gc_pressure": 0.0}, UmaSnapshot
+        )
+        fb = msgspec.convert({"healthy": 0, "degraded": 0, "unhealthy": 0}, FeedHealthBreakdown)
+
+        valid_data = {
+            "started_ts": 1000.0,
+            "finished_ts": 2000.0,
+            "elapsed_ms": 1000.0,
+            "total_sources": 5,
+            "completed_sources": 3,
+            "fetched_entries": 100,
+            "accepted_findings": 10,
+            "stored_findings": 8,
+            "batch_error": None,
+            "per_source": (),
+            "patterns_configured": 50,
+            "bootstrap_applied": True,
+            "content_quality_validated": True,
+            "dedup_before": {},
+            "dedup_after": {},
+            "dedup_delta": {},
+            "dedup_surface_available": True,
+            "uma_snapshot": uma,
+            "slow_sources": (),
+            "error_summary": {},
+            "success_rate": 0.8,
+            "failed_source_count": 0,
+            "baseline_delta": {},
+            "health_breakdown": fb,
+            "entries_seen": 100,
+            "entries_with_empty_assembled_text": 10,
+            "entries_with_text": 90,
+            "entries_scanned": 100,
+            "entries_with_hits": 5,
+            "total_pattern_hits": 20,
+            "findings_built_pre_store": 15,
+            "avg_assembled_text_len": 250.5,
+            "signal_stage": "live",
+            "active_pipeline_iterations": 3,
+            "live_run_attempt_count": 2,
+            "recommended_next_sprint": "8BK",
+        }
+
+        report = validate_observed_run_report(valid_data)
+        assert isinstance(report, ObservedRunReport)
+        assert report.entries_with_text == 90
+        assert report.active_pipeline_iterations == 3
+        assert report.signal_stage == "live"
+
+    def test_validate_observed_run_report_meta_validators_rejected(self):
+        """Verify that Annotated Meta validators reject invalid data via strict conversion."""
+        from hledac.universal.__main__ import (
+            FeedHealthBreakdown,
+            ObservedRunReport,
+            UmaSnapshot,
+            validate_observed_run_report,
+        )
+        import msgspec
+
+        uma = msgspec.convert(
+            {"rss_mb": 0, "metal_cache_mb": 0, "gc_pressure": 0.0}, UmaSnapshot
+        )
+        fb = msgspec.convert({"healthy": 0, "degraded": 0, "unhealthy": 0}, FeedHealthBreakdown)
+
+        base = {
+            "started_ts": 1000.0,
+            "finished_ts": 2000.0,
+            "elapsed_ms": 1000.0,
+            "total_sources": 5,
+            "completed_sources": 3,
+            "fetched_entries": 100,
+            "accepted_findings": 10,
+            "stored_findings": 8,
+            "batch_error": None,
+            "per_source": (),
+            "patterns_configured": 50,
+            "bootstrap_applied": True,
+            "content_quality_validated": True,
+            "dedup_before": {},
+            "dedup_after": {},
+            "dedup_delta": {},
+            "dedup_surface_available": True,
+            "uma_snapshot": uma,
+            "slow_sources": (),
+            "error_summary": {},
+            "success_rate": 0.8,
+            "failed_source_count": 0,
+            "baseline_delta": {},
+            "health_breakdown": fb,
+            "signal_stage": "unknown",
+            "accepted_count_delta": 0,
+            "low_information_rejected_count_delta": 0,
+            "in_memory_duplicate_rejected_count_delta": 0,
+            "persistent_duplicate_rejected_count_delta": 0,
+            "other_rejected_count_delta": 0,
+            "live_run_attempt_count": 1,
+            "recommended_next_sprint": "8BK",
+        }
+
+        # Helper to build a full record with ge=0 fields set to 0
+        def make_record(**overrides):
+            record = {}
+            ge0_fields = {
+                "entries_seen": 0,
+                "entries_with_empty_assembled_text": 0,
+                "entries_with_text": 0,
+                "entries_scanned": 0,
+                "entries_with_hits": 0,
+                "total_pattern_hits": 0,
+                "findings_built_pre_store": 0,
+                "avg_assembled_text_len": 0.0,
+                "active_pipeline_iterations": 1,
+            }
+            record.update(base)
+            record.update(ge0_fields)
+            record.update(overrides)
+            return record
+
+        # Valid: ge=0 fields at 0
+        r = validate_observed_run_report(make_record())
+        assert r.entries_seen == 0
+        assert r.entries_with_text == 0
+        assert r.total_pattern_hits == 0
+
+        # Invalid: ge=0 fields set to -1 (must be rejected by Meta(ge=0))
+        invalid_data = make_record(entries_with_text=-1, total_pattern_hits=-1)
+        try:
+            validate_observed_run_report(invalid_data)
+            raise AssertionError("Expected ValidationError for negative ge=0 fields")
+        except msgspec.ValidationError:
+            pass  # expected
+
+    def test_project_wide_msgspec_struct_no_duplicate_fields(self):
+        """Scan the entire hledac/ source tree for any msgspec.Struct with duplicate fields.
+
+        ISSUE-B3: Duplicate field names cause silent last-value-wins semantics in
+        msgspec.Struct class bodies across the whole project. This is a project-wide
+        regression guard, not limited to ObservedRunReport.
+        """
+        import hledac.universal.__main__ as main_module
+
+        # Derive the package root from the main module's file
+        main_file = main_module.__file__
+        assert main_file and main_file.endswith(".py")
+        root = Path(main_file).parent.parent  # hledac/universal/ -> hledac/
+
+        issues = _find_msgspec_struct_duplicates(root)
+
+        assert not issues, (
+            f"Duplicate field names found in msgspec.Struct classes across the project:\n" +
+            "\n".join(f"  {f}::{c}.{name} (lines {fl}, {sl})"
+                      for f, c, name, fl, sl in issues)
+        )

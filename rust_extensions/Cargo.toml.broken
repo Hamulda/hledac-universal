@@ -1,0 +1,142 @@
+[package]
+name = "hledac-rust-extensions"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "hledac_rust_extensions"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+aho-corasick = "1.1"
+pyo3 = { version = "0.23", features = ["extension-module"] }
+rayon = "1.12"
+regex = "1.11"
+regex-automata = { version = "=0.4.15", default-features = false, features = ["meta"] }
+url = "2"
+lol_html = "2.9"
+xml = "1.3"
+xxhash-rust = { version = "0.8", features = ["xxh3", "const_xxh3", "xxh64"] }
+sha2 = "0.10"
+aes-gcm = "0.10"
+pbkdf2 = { version = "0.12", features = ["simple"] }
+rand = "0.8"
+ahash = "0.8"
+parking_lot = "0.12"
+memchr = "2.7"
+memmap2 = "0.9"
+blake2 = "0.10"
+blake3 = "0.1"
+unicode-normalization = "0.1"
+lz4_flex = "0.10"
+libc = "0.2"
+serde_json = "1"
+crossbeam-channel = "0.5"
+dashmap = "6"
+duckdb = { version = "1", optional = true }
+ipnetwork = "0.20"
+bincode = { version = "2.0", features = ["derive", "serde"] }
+zstd = "0.13"
+dirs = "5"
+
+
+# ---------------------------------------------------------------------------
+# Feature flags — TRUE conditional compilation
+# ---------------------------------------------------------------------------
+# Dev shortcut: --no-default-features --features ""  (core only, ~5× faster)
+# Default = core + data (DuckDB wired) — standard Hledac build
+# Full build:  --features "full"  (everything, ~3× compile time)
+
+[features]
+default = ["core", "data"]
+
+# core: IOC extraction, URL ops, hashing, compression, HTML parsing
+# Always compiled. No heavy deps. Available even with --no-default-features.
+core = [
+    "bloom",
+    "hash",
+    "regex",
+    "url",
+    "html_parse",
+    "compression",
+    "crypto",
+    "text_processing",
+    "ioc_processing",
+    "validation",
+    "pools",
+]
+
+# data: DuckDB integration — Arrow batch, async queries, graph traversal
+data = [
+    "duckdb",
+    "arrow_batch_builder",
+    "async_query",
+    "graph_traverse",
+]
+
+# graph: Graph analytics (LSH index, hot edges)
+graph = [
+    "lsh_index",
+    "hot_edges",
+]
+
+# advanced: Feed pipeline, federated learning, pattern matching
+advanced = [
+    "feed_pipeline",
+    "federated_qtable",
+    "signal_batch",
+    "dedup_bloom",
+    "graph_lru",
+]
+
+# full: All features (development/CI only)
+full = ["core", "data", "graph", "advanced"]
+
+# Individual module features — satisfy Cargo feature resolution
+feed_pipeline = []
+federated_qtable = []
+signal_batch = []
+dedup_bloom = []
+graph_lru = []
+bloom = []
+hash = []
+regex = []
+url = []
+html_parse = []
+compression = []
+crypto = []
+text_processing = []
+ioc_processing = []
+validation = []
+pools = []
+embedding_index = []
+mlx_bridge = []
+graph_traverse = []
+lsh_index = []
+hot_edges = []
+duckdb = []
+arrow_batch_builder = []
+async_query = []
+
+# ---------------------------------------------------------------------------
+# Build profiles
+# ---------------------------------------------------------------------------
+[profile.dev]
+opt-level = 1
+debug = false
+lto = false
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+
+[build-dependencies]
+pyo3-build-config = "0.23"
+
+[lints.rust]
+unused = "warn"
+dead_code = "warn"
+unused_imports = "warn"

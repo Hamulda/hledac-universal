@@ -68,7 +68,7 @@ import msgspec
 from datetime import UTC, datetime
 from enum import Enum, auto
 from typing import Any
-from hledac.universal.utils.async_helpers import chunked_taskgroup, safe_gather_ok
+from hledac.universal.utils.async_helpers import chunked_taskgroup, parallel
 from .knowledge.rag_engine import Document
 from .layers.stealth_layer import BehaviorPattern, BehaviorSimulator, SimulationConfig
 from .project_types import CanonicalGroundingHints, ResearchConfig, ResearchMode, ResearchResult, RunCorrelation, UniversalResearchOrchestrator
@@ -583,8 +583,8 @@ class UnifiedResearchEngine:
             if 'stealth_crawler' in tools_to_use:
                 search_tasks.append(self._task_search(query, 'web'))
             async with self._semaphore:
-                search_results = await safe_gather_ok(*search_tasks, label='enhanced_research:857')
-            for findings in search_results:
+                search_results = await parallel(search_tasks, policy="log", ctx="enhanced_research:857")
+            for findings in search_results.ok:
                 if isinstance(findings, list):
                     all_findings.extend(findings)
             self._context_swap()
@@ -601,8 +601,8 @@ class UnifiedResearchEngine:
                     cross_ref_tasks.append(self._task_data_leak_check(query))
                 if cross_ref_tasks:
                     async with self._semaphore:
-                        cross_results = await safe_gather_ok(*cross_ref_tasks, label='enhanced_research:888')
-                    for findings in cross_results:
+                        cross_results = await parallel(cross_ref_tasks, policy="log", ctx="enhanced_research:888")
+                    for findings in cross_results.ok:
                         if isinstance(findings, list):
                             all_findings.extend(findings)
                 self._context_swap()

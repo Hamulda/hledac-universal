@@ -4,10 +4,17 @@ import logging
 import os
 import re
 import subprocess
+import threading
 import weakref
 logger = logging.getLogger(__name__)
 _vault_registry: dict[str, RamDiskVault] = {}
 _atexit_registered: bool = False
+
+# Global RAM disk size tracker — prevents M1 8GB oversubscription
+# Lock ensures thread-safe updates across RamDiskVault instances
+_total_ramdisk_mb: int = 0
+_total_ramdisk_lock: threading.Lock = threading.Lock()
+MAX_TOTAL_RAMDISK_MB: int = 512  # Conservative: 512MB on 8GB machine
 
 def _vault_atexit_cleanup() -> None:
     """
@@ -96,6 +103,15 @@ class RamDiskVault:
         self._mounted: bool = False
 
     def mount(self) -> str | None:
+        # Check global RAM budget before allocating
+        global _total_ramdisk_mb, _total_ramdisk_lock
+        with _total_ramdisk_lock:
+            if _total_ramdisk_mb + self.size_mb > MAX_TOTAL_RAMDISK_MB:
+                logger.error(
+                    f'RAM disk size limit exceeded: {self.size_mb}MB requested, '
+                    f'currently allocated: {_total_ramdisk_mb}MB, max: {MAX_TOTAL_RAMDISK_MB}MB'
+                )
+                return None
         try:
             block_count = self.size_mb * 1024 * 1024 // self._block_size
             logger.info(f'Creating RAM disk: {self.size_mb}MB ({block_count} blocks)')
@@ -120,6 +136,10 @@ class RamDiskVault:
             logger.info(f'RAM disk mounted at: {self.mount_point}')
             self._mounted = True
             _register_vault(self)
+            # Update global RAM budget tracker
+            with _total_ramdisk_lock:
+                _total_ramdisk_mb += self.size_mb
+                logger.debug(f'Global RAM disk budget: {_total_ramdisk_mb}/{MAX_TOTAL_RAMDISK_MB}MB')
             return self.mount_point
         except subprocess.TimeoutExpired:
             logger.error('Timeout while mounting RAM disk')
@@ -149,6 +169,10 @@ class RamDiskVault:
                 logger.error(f'Failed to unmount RAM disk: {result.stderr}')
                 return False
             logger.info('RAM disk unmounted successfully')
+            # Decrement global RAM budget tracker
+            global _total_ramdisk_mb
+            with _total_ramdisk_lock:
+                _total_ramdisk_mb -= self.size_mb
             self.device_path = None
             self.mount_point = None
             self._mounted = False
@@ -170,6 +194,11 @@ class RamDiskVault:
             return False
 
     def _cleanup_device(self):
+        # Decrement global RAM budget tracker before cleanup
+        if self._mounted or self.device_path:
+            global _total_ramdisk_mb
+            with _total_ramdisk_lock:
+                _total_ramdisk_mb -= self.size_mb
         if self.device_path:
             try:
                 subprocess.run(['hdiutil', 'detach', self.device_path, '-force'], capture_output=True, timeout=10)
@@ -177,6 +206,7 @@ class RamDiskVault:
                 pass
             self.device_path = None
             self.mount_point = None
+            self._mounted = False
 
     def __enter__(self):
         self.mount()

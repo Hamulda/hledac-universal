@@ -37,8 +37,7 @@ from hledac.universal.utils.msgspec_json import loads as _msgspec_loads
 import httpx
 import dns.asyncresolver
 from hledac.universal.transport.session_pool import session_pool
-from hledac.universal.utils.async_helpers import safe_gather_ok
-from hledac.universal.utils.async_helpers import safe_gather
+from hledac.universal.utils.async_helpers import safe_gather_ok, parallel
 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, ConcurrencyBudgetRegistry
 logger = logging.getLogger(__name__)
 
@@ -207,7 +206,7 @@ class DNSEnumerator:
                         found.append((full_domain, str(rdata), 'CNAME'))
                 except Exception as e:
                     logger.debug(f'[DNS] CNAME lookup failed for {full_domain}: {e}')
-        await safe_gather(*[check_subdomain(s) for s in wordlist], label='brute_force_subdomains', logger_instance=logger)
+        await parallel([check_subdomain(s) for s in wordlist], policy="log", ctx='brute_force_subdomains')
         return found
 
     async def permutation_scan(self, domain: str, words: list[str] | None=None) -> list[tuple[str, str]]:
@@ -235,7 +234,7 @@ class DNSEnumerator:
                         found.append((full_domain, str(rdata)))
                 except Exception:
                     pass
-        await safe_gather(*[check_perm(p) for p in list(permutations)[:100]], label='permutation_scan', logger_instance=logger)
+        await parallel([check_perm(p) for p in list(permutations)[:100]], policy="log", ctx='permutation_scan')
         return found
 
     async def attempt_zone_transfer(self, domain: str) -> list[str] | None:
@@ -545,7 +544,8 @@ class NetworkReconnaissance:
                 return None
         try:
             async with asyncio.timeout(self._WILDCARD_PROBE_TOTAL_S):
-                results = await safe_gather_ok(*[probe_hostname(p) for p in probes], label='network_reconnaissance:745')
+                _probe_result = await parallel([probe_hostname(p) for p in probes], policy="log", ctx='network_reconnaissance:745')
+                results = _probe_result.ok
         except TimeoutError:
             self._confirmed_non_wildcard.add(domain)
             return {'wildcard_suspected': False, 'probe_count': self._WILDCARD_PROBE_COUNT, 'responses': [], 'probe_method': 'timeout_conservative'}
@@ -588,7 +588,9 @@ class NetworkReconnaissance:
         dns_task = self.dns.enumerate_all(domain, include_subdomains=include_subdomains)
         whois_task = self.whois.lookup(domain)
         ssl_task = self.ssl.analyze_certificate(domain)
-        dns_results, whois_data, ssl_cert = await safe_gather_ok(dns_task, whois_task, ssl_task, label='network_reconnaissance:825')
+        _dns_result = await parallel([dns_task, whois_task, ssl_task], policy="log", ctx='network_reconnaissance:825')
+        _dr = _dns_result.ok
+        dns_results, whois_data, ssl_cert = (_dr[0], _dr[1], _dr[2]) if len(_dr) >= 3 else (None, None, None)
         ip_addresses: list[str] = []
         dns_records: list[DNSRecord] = []
         if isinstance(dns_results, dict) and 'records' in dns_results:

@@ -599,23 +599,12 @@ func parseHPKEDecrypt() throws -> CommandResult {
 // MARK: - CryptoKit AES-GCM Command Parsing
 
 func parseCryptoKitEncrypt() throws -> CommandResult {
-    var password: String?
     var outputPath: String?
 
     let args = Array(CommandLine.arguments[2...])
     var i = 0
     while i < args.count {
         switch args[i] {
-        case "--password":
-            guard i + 1 < args.count else {
-                return CommandResult.failure(
-                    errorCode: "MISSING_PASSWORD",
-                    message: "--password requires a value"
-                )
-            }
-            password = args[i + 1]
-            i += 2
-
         case "--output":
             guard i + 1 < args.count else {
                 return CommandResult.failure(
@@ -627,15 +616,8 @@ func parseCryptoKitEncrypt() throws -> CommandResult {
             i += 2
 
         default:
-            i += 1  // Skip unknown args, stdin provides data
+            i += 1  // Skip unknown args, stdin provides password + data
         }
-    }
-
-    guard let pwd = password else {
-        return CommandResult.failure(
-            errorCode: "MISSING_PASSWORD",
-            message: "--password is required"
-        )
     }
 
     guard let outPath = outputPath else {
@@ -645,11 +627,11 @@ func parseCryptoKitEncrypt() throws -> CommandResult {
         )
     }
 
-    return Commands.cryptokitEncrypt(password: pwd, outputPath: outPath)
+    // Password and plaintext are read from stdin by Commands.cryptokitEncrypt
+    return Commands.cryptokitEncrypt(outputPath: outPath)
 }
 
 func parseCryptoKitDecrypt() throws -> CommandResult {
-    var password: String?
     var inputPath: String?
     var outputPath: String?
 
@@ -657,16 +639,6 @@ func parseCryptoKitDecrypt() throws -> CommandResult {
     var i = 0
     while i < args.count {
         switch args[i] {
-        case "--password":
-            guard i + 1 < args.count else {
-                return CommandResult.failure(
-                    errorCode: "MISSING_PASSWORD",
-                    message: "--password requires a value"
-                )
-            }
-            password = args[i + 1]
-            i += 2
-
         case "--input":
             guard i + 1 < args.count else {
                 return CommandResult.failure(
@@ -688,15 +660,8 @@ func parseCryptoKitDecrypt() throws -> CommandResult {
             i += 2
 
         default:
-            i += 1  // Skip unknown args
+            i += 1  // Skip unknown args, password read from stdin
         }
-    }
-
-    guard let pwd = password else {
-        return CommandResult.failure(
-            errorCode: "MISSING_PASSWORD",
-            message: "--password is required"
-        )
     }
 
     guard let inPath = inputPath else {
@@ -713,7 +678,8 @@ func parseCryptoKitDecrypt() throws -> CommandResult {
         )
     }
 
-    return Commands.cryptokitDecrypt(password: pwd, inputPath: inPath, outputPath: outPath)
+    // Password is read from stdin by Commands.cryptokitDecrypt
+    return Commands.cryptokitDecrypt(inputPath: inPath, outputPath: outPath)
 }
 
 func parseKeyId(_ args: [String]) throws -> String {

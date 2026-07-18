@@ -28,7 +28,7 @@ from enum import Enum
 from typing import Any
 import msgspec
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
-from hledac.universal.utils.async_helpers import safe_gather_ok, safe_wait_for
+from hledac.universal.utils.async_helpers import safe_wait_for, parallel
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
 _level_stats_factory: defaultdict[str, dict[str, int]] = defaultdict(lambda: {'explored': 0, 'relevant': 0})
 logger = logging.getLogger(__name__)
@@ -379,7 +379,8 @@ class UniversalResearchCoordinator(UniversalCoordinator):
             tasks.append(self._safe_execute(self._execute_evidence_analysis, DecisionResponse(decision_id='multi_evidence', chosen_option='evidence', confidence=confidence_threshold, reasoning=query), query))
         if self._rag_available:
             tasks.append(self._safe_execute(self._execute_rag_research, DecisionResponse(decision_id='multi_rag', chosen_option='rag', confidence=confidence_threshold, reasoning=query), query))
-        raw_results = await safe_gather_ok(*tasks, label='research_coordinator:609')
+        _res_result = await parallel(tasks, policy="log", ctx='research_coordinator:609')
+        raw_results = _res_result.ok
         for result in raw_results:
             if isinstance(result, ResearchResult):
                 results.append(result)

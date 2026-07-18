@@ -216,10 +216,12 @@ class LootManager:
                 zip_data = f.read()
             repo_root = Path(__file__).parent.parent
             helper_path = repo_root / 'tools' / 'secure_enclave_helper' / '.build' / 'release' / 'secure-enclave-helper'
-            cmd = [str(helper_path), 'cryptokit-encrypt', '--password', password, '--output', str(output_path)]
+            cmd = [str(helper_path), 'cryptokit-encrypt', '--output', str(output_path)]
 
             async def _run_encrypt() -> subprocess.CompletedProcess:
-                return await asyncio.to_thread(subprocess.run, cmd, input=zip_data, capture_output=True, timeout=30)
+                # Pass password + newline + zip_data via stdin to avoid ps exposure
+                stdin_payload = password.encode() + b'\n' + zip_data
+                return await asyncio.to_thread(subprocess.run, cmd, input=stdin_payload, capture_output=True, timeout=30)
 
             # C7-FIX: Use asyncio.Runner() instead of new_event_loop/run_until_complete.
             # Avoids M1 Metal crash vector when called from async context.
@@ -432,10 +434,12 @@ class LootManager:
             repo_root = Path(__file__).parent.parent
             helper_path = repo_root / 'tools' / 'secure_enclave_helper' / '.build' / 'release' / 'secure-enclave-helper'
             decrypt_output = output_path / 'decrypted.zip'
-            cmd = [str(helper_path), 'cryptokit-decrypt', '--password', password, '--input', str(temp_path), '--output', str(decrypt_output)]
+            cmd = [str(helper_path), 'cryptokit-decrypt', '--input', str(temp_path), '--output', str(decrypt_output)]
 
             async def _run_decrypt() -> subprocess.CompletedProcess:
-                return await asyncio.to_thread(subprocess.run, cmd, capture_output=True, timeout=30)
+                # Pass password + newline via stdin to avoid ps exposure
+                stdin_payload = password.encode() + b'\n'
+                return await asyncio.to_thread(subprocess.run, cmd, input=stdin_payload, capture_output=True, timeout=30)
 
             # C7-FIX: Use asyncio.Runner() instead of new_event_loop/run_until_complete.
             # Avoids M1 Metal crash vector when called from async context.

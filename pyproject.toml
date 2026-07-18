@@ -450,6 +450,8 @@ ignore = ["E501", "F821", "B027"]  # BLE001: P1-01 audit in progress — see Iss
 "knowledge/duckdb_store.py" = ["BLE001"]
 # brain/deephermes3_engine.py — cold-path MLX init/load
 "brain/deephermes3_engine.py" = ["BLE001"]
+# core/rust_backend/misc.py — cold-path pretty-print fallback (msgspec.json has no indent)
+"core/rust_backend/misc.py" = ["BLE001"]
 # pipeline/live_public_pipeline.py — cold-path pipeline orchestration
 "pipeline/live_public_pipeline.py" = ["BLE001"]
 # knowledge/lancedb_store.py — cold-path LanceDB init

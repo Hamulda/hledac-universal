@@ -67,16 +67,6 @@ default = ["core", "data"]
 # Always compiled. No heavy deps. Available even with --no-default-features.
 core = [
     "bloom",
-    "hash",
-    "regex",
-    "url",
-    "html_parse",
-    "compression",
-    "crypto",
-    "text_processing",
-    "ioc_processing",
-    "validation",
-    "pools",
 ]
 
 # data: DuckDB integration — Arrow batch, async queries, graph traversal
@@ -99,7 +89,16 @@ graph = [
 
 # advanced: Feed pipeline, federated learning, pattern matching
 # Pure Rust, no heavy deps — always compiled in full builds
+# Includes: regex_lz4, content_hasher, adaptive_scheduler, simd_similarity,
+# feed_decision, pipeline_compose, feed_pipeline, federated_qtable,
+# signal_batch, dedup_bloom, graph_cache
 advanced = [
+    "regex_lz4",
+    "content_hasher",
+    "adaptive_scheduler",
+    "simd_similarity",
+    "feed_decision",
+    "pipeline_compose",
     "feed_pipeline",
     "federated_qtable",
     "signal_batch",
@@ -110,32 +109,29 @@ advanced = [
 # full: All features (development/CI only, ~3× compile time vs core-only)
 full = ["core", "data", "graph", "advanced"]
 
-# Individual module features — satisfy Cargo feature resolution (empty stubs)
-# The actual gating is done via #[cfg(feature)] in lib.rs, not these stubs.
-feed_pipeline = []
-federated_qtable = []
-signal_batch = []
-dedup_bloom = []
-graph_cache = []
-bloom = []
-hash = []
-regex = []
-url = []
-html_parse = []
-compression = []
-crypto = []
-text_processing = []
-ioc_processing = []
-validation = []
-pools = []
-embedding_index = []
-mlx_bridge = []
-graph_traverse = []
-lsh_index = []
-hot_edges = []
-duckdb = []
-arrow_batch_builder = []
-async_query = []
+# Individual module features — the actual gating is via #[cfg(feature)] in lib.rs.
+# Only stubs that are referenced by a composite feature need to stay here.
+# Empty stubs (X = []) have NO effect on compilation.
+bloom = []           # Referenced by core; #[cfg(feature = "bloom")] in lib.rs
+regex_lz4 = []        # Referenced by advanced; #[cfg(feature = "advanced")] in lib.rs
+content_hasher = []   # Referenced by advanced; #[cfg(feature = "advanced")] in lib.rs
+adaptive_scheduler = []  # Referenced by advanced; #[cfg(feature = "advanced")] in lib.rs
+simd_similarity = []  # Referenced by advanced; #[cfg(feature = "advanced")] in lib.rs
+feed_decision = []    # Referenced by advanced; #[cfg(feature = "advanced")] in lib.rs
+pipeline_compose = [] # Referenced by advanced; #[cfg(feature = "advanced")] in lib.rs
+graph_traverse = []   # Referenced by data
+arrow_batch_builder = []  # Referenced by data
+async_query = []      # Referenced by data
+lsh_index = []        # Referenced by graph
+hot_edges = []         # Deprecated: module is hot_edges_rs, guarded by graph feature
+# NOTE: hot_edges_rs is the actual module name, hot_edges feature is legacy alias
+duckdb = []           # Referenced by data
+data = []             # Referenced by data; #[cfg(feature = "data")] in lib.rs
+feed_pipeline = []    # Referenced by advanced
+federated_qtable = [] # Referenced by advanced
+signal_batch = []     # Referenced by advanced
+dedup_bloom = []      # Referenced by advanced
+graph_cache = []      # Referenced by advanced
 
 # ---------------------------------------------------------------------------
 # Build profiles

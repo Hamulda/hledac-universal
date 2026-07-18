@@ -15,7 +15,7 @@ Communication protocol:
 from __future__ import annotations
 
 import asyncio
-import json
+import orjson as json
 import os
 import sys
 
@@ -61,7 +61,7 @@ async def main() -> None:
 
         try:
             request = json.loads(line)
-        except json.JSONDecodeError as e:
+        except ValueError as e:
             print(json.dumps({"success": False, "error": f"Invalid JSON: {e}"}), flush=True)
             continue
 

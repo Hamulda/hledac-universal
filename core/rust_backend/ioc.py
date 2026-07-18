@@ -89,6 +89,10 @@ class _RustIocDomain:
         ex = _get_executor()
         return [row for rows in ex.map(_python_extract_iocs_flat_indexed, indexed) for row in rows]
 
+    def batch_dedup_urls(self, urls: list[str]) -> list[str]:
+        """Deduplicate URLs — delegates to Rust standalone function in ioc_extract module."""
+        return self._ext.batch_dedup_urls(urls)
+
 
 class _PythonIocDomain:
     __slots__ = ()
@@ -139,6 +143,11 @@ class _PythonIocDomain:
         indexed: list[tuple[int, str]] = list(enumerate(texts))
         ex = _get_executor()
         return [row for rows in ex.map(_python_extract_iocs_flat_indexed, indexed) for row in rows]
+
+    @staticmethod
+    def batch_dedup_urls(urls: list[str]) -> list[str]:
+        """Deduplicate URLs — pure Python fallback."""
+        return _python_batch_dedup_urls(urls)
 
 
 _PY_IPV6_RE: re.Pattern | None = None
@@ -307,6 +316,44 @@ def _python_nfc_normalize(text: str) -> str:
         return unicodedata.normalize("NFC", text)
     except Exception:
         return text
+
+
+def _python_batch_dedup_urls(urls: list[str]) -> list[str]:
+    """Pure-Python URL dedup with normalization — mirrors Rust batch_dedup_urls."""
+    from urllib.parse import parse_qsl, urlencode, urlparse
+    seen: set[str] = set()
+    result: list[str] = []
+    for url in urls:
+        try:
+            trimmed = url.strip()
+            if not trimmed:
+                continue
+            synthetic = trimmed if "://" in trimmed else f"http://{trimmed.lstrip('/')}"
+            parsed = urlparse(synthetic)
+            scheme = parsed.scheme.lower()
+            host = parsed.hostname or ""
+            port = parsed.port
+            path = parsed.path or "/"
+            if port == 80 and scheme == "http":
+                port = None
+            elif port == 443 and scheme == "https":
+                port = None
+            norm = f"{scheme}://{host}"
+            if port:
+                norm += f":{port}"
+            norm += path
+            params = [(k, v) for k, v in parse_qsl(parsed.query) if k not in {"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "fbclid", "gclid", "ref", "source"}]
+            params.sort()
+            if params:
+                norm += "?" + urlencode(params)
+            if norm not in seen:
+                seen.add(norm)
+                result.append(norm)
+        except Exception:
+            if url not in seen:
+                seen.add(url)
+                result.append(url)
+    return result
 
 
 def _python_strip_diacritics(text: str) -> str:

@@ -12,7 +12,7 @@ import logging
 import os
 import secrets
 from typing import Any
-from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
+from hledac.universal.utils.async_helpers import parallel
 from transport.circuit_breaker import domain_breaker_check, domain_breaker_record_failure, domain_breaker_record_success
 from transport.session_pool import session_pool
 
@@ -276,7 +276,7 @@ class StealthBrowser:
                         if link not in visited:
                             tasks.append(crawl_page(link, current_depth + 1))
                     if tasks:
-                        await safe_gather_fire_and_forget(*tasks, label='stealth_browser:373')
+                        await parallel(tasks, policy="log", ctx="stealth_browser:373")
         try:
             await crawl_page(url, 1)
         except Exception as e:

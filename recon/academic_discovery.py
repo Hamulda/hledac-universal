@@ -579,17 +579,21 @@ async def search_academic_all(
             return await search_func(query, max_results)
 
     # F262D: migrated asyncio.gather → safe_gather_ok (fail-soft invariant preserved)
-    results_raw: list[Any] = await safe_gather_ok(
-        limited_search("arxiv", search_arxiv),
-        limited_search("crossref", search_crossref),
-        limited_search("semantic_scholar", search_semantic_scholar),
-        limited_search("openalex", search_openalex),
-        limited_search("ia_scholar", search_ia_scholar),
-        limited_search("core", search_core),
-        limited_search("biorxiv", search_biorxiv),
-        limited_search("medrxiv", search_medrxiv),
-        label="academic_discovery:571",
+    _acad_result = await parallel(
+        [
+            limited_search("arxiv", search_arxiv),
+            limited_search("crossref", search_crossref),
+            limited_search("semantic_scholar", search_semantic_scholar),
+            limited_search("openalex", search_openalex),
+            limited_search("ia_scholar", search_ia_scholar),
+            limited_search("core", search_core),
+            limited_search("biorxiv", search_biorxiv),
+            limited_search("medrxiv", search_medrxiv),
+        ],
+        policy="log",
+        ctx="academic_discovery:571",
     )
+    results_raw: list[Any] = _acad_result.ok
 
     arxiv_result: list[dict[str, Any]] = results_raw[0] if not isinstance(results_raw[0], Exception) else []
     crossref_result: list[dict[str, Any]] = results_raw[1] if not isinstance(results_raw[1], Exception) else []

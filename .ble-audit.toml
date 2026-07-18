@@ -1,0 +1,40 @@
+# BLE Audit Configuration — Issue D5
+# Replaces static pyproject.toml per-file-ignores with smart AST-based audit
+
+[ble-audit]
+# Directories to exclude from auditing
+exclude_dirs = [
+    "__pycache__",
+    ".venv",
+    ".venv-test",
+    "probe_",
+    ".claude",
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".hypothesis",
+    "archive",
+    "stubs",
+    "tests/.archive",
+    "tests/probe_f",
+    "tests/probe_p",
+]
+
+# Files to exclude (full path or substring match)
+exclude_files = [
+    "test_simple.py",
+]
+
+# Allow exception tuples: except (ValueError, TypeError):
+allow_exception_tuples = true
+
+# Allow except Exception as e: with logger.* within N lines
+allow_logged_exceptions = true
+logger_lookahead_lines = 5
+
+# Allow explicit # noqa: BLE001 suppression comments
+allow_noqa_comments = true
+
+# CI will FAIL if violations exceed this threshold
+# Set to 0 for strict mode (any violation fails CI)
+ci_threshold = 0

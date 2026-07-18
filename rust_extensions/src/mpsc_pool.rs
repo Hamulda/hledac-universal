@@ -76,21 +76,30 @@ struct WakeFd {
 }
 
 impl WakeFd {
-    fn new() -> Self {
+    fn new() -> std::io::Result<Self> {
         use libc::{pipe, F_GETFL, F_SETFL, O_NONBLOCK};
 
         let mut fds = [0i32; 2];
-        // SAFETY: pipe(2) creates two valid file descriptors.
-        unsafe {
-            pipe(fds.as_mut_ptr());
-            // Set write end to non-blocking so wake() never blocks
-            let flags = libc::fcntl(fds[1], F_GETFL, 0);
-            libc::fcntl(fds[1], F_SETFL, flags | O_NONBLOCK);
+        // SAFETY: pipe(2) creates two valid file descriptors; returns -1 on error.
+        let ret = unsafe { pipe(fds.as_mut_ptr()) };
+        if ret == -1 {
+            return Err(std::io::Error::last_os_error());
         }
-        Self {
+        // Set write end to non-blocking so wake() never blocks
+        // SAFETY: fds[1] is a valid fd after successful pipe(2).
+        unsafe {
+            let flags = libc::fcntl(fds[1], F_GETFL, 0);
+            if flags == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if libc::fcntl(fds[1], F_SETFL, flags | O_NONBLOCK) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+        }
+        Ok(Self {
             read_fd: fds[0],
             write_fd: fds[1],
-        }
+        })
     }
 
     /// Write a byte to wake up the Python async waiter (non-blocking).
@@ -181,15 +190,15 @@ pub struct MPSCPool {
 }
 
 impl MPSCPool {
-    fn with_capacity(capacity: usize) -> Self {
+    fn with_capacity(capacity: usize) -> std::io::Result<Self> {
         let (sender, receiver) = bounded::<QueueItem>(capacity);
-        Self {
+        Ok(Self {
             senders: vec![sender],
             receiver: Some(receiver),
-            wake: WakeFd::new(),
+            wake: WakeFd::new()?,
             closed: AtomicBool::new(false),
             capacity,
-        }
+        })
     }
 }
 
@@ -200,8 +209,9 @@ impl MPSCPool {
     /// Args:
     ///     capacity: max queue depth (default 2048, 2× asyncio.Queue maxsize=500)
     #[new]
-    fn new(capacity: Option<usize>) -> Self {
+    fn new(capacity: Option<usize>) -> PyResult<Self> {
         Self::with_capacity(capacity.unwrap_or(MPSC_DEFAULT_CAPACITY))
+            .map_err(|e| pyo3::exceptions::PyOSError::new_err(e.to_string()))
     }
 
     /// Add a producer sender — call from each producer thread.
@@ -374,16 +384,21 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
 mod tests {
     use super::*;
 
+    // Helper: create a pool, unwrapping the Result.
+    fn make_pool(capacity: Option<usize>) -> MPSCPool {
+        MPSCPool::with_capacity(capacity.unwrap_or(MPSC_DEFAULT_CAPACITY)).unwrap()
+    }
+
     #[test]
     fn test_pool_create() {
-        let pool = MPSCPool::new(None);
+        let pool = make_pool(None);
         assert!(!pool.is_empty());
         assert_eq!(pool.len(), 0);
     }
 
     #[test]
     fn test_add_sender() {
-        let mut pool = MPSCPool::new(None);
+        let mut pool = make_pool(None);
         let ptr1 = pool.add_sender();
         let ptr2 = pool.add_sender();
         assert!(ptr1 != 0);
@@ -392,7 +407,7 @@ mod tests {
 
     #[test]
     fn test_send_and_recv() {
-        let mut pool = MPSCPool::new(None);
+        let mut pool = make_pool(None);
         let sender_ptr = pool.add_sender();
 
         assert!(pool.send(sender_ptr, b"hello"));
@@ -408,7 +423,7 @@ mod tests {
 
     #[test]
     fn test_full_backpressure() {
-        let mut pool = MPSCPool::new(Some(2));
+        let mut pool = make_pool(Some(2));
         let sender_ptr = pool.add_sender();
 
         assert!(pool.send(sender_ptr, b"a"));
@@ -419,7 +434,7 @@ mod tests {
 
     #[test]
     fn test_multi_sender() {
-        let mut pool = MPSCPool::new(None);
+        let mut pool = make_pool(None);
         let s1 = pool.add_sender();
         let s2 = pool.add_sender();
 
@@ -433,7 +448,7 @@ mod tests {
 
     #[test]
     fn test_recv_batch_limits() {
-        let mut pool = MPSCPool::new(None);
+        let mut pool = make_pool(None);
         let sender_ptr = pool.add_sender();
 
         for i in 0..10 {

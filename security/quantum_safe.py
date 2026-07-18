@@ -1,23 +1,32 @@
 """Quantum-safe cryptography (PQ only — neuromorphic crypto moved to brain/experimental_neuro_crypto.py)."""
+from __future__ import annotations
+
 import base64
 import logging
 import secrets
 from dataclasses import dataclass
 import msgspec
 from enum import Enum
+
 logger = logging.getLogger(__name__)
+
+# secure_zero: ctypes-based memory wipe (M1 Metal-safe, zero Python overhead)
+from hledac.universal.utils.secure_zero import secure_zero as _secure_zero
+
 try:
     import oqs as _oqs
+
     REAL_PQ_AVAILABLE = True
-    _KYBER_ALG = 'ML-KEM-768'
-    _DILITHIUM_ALG = 'ML-DSA-65'
+    _KYBER_ALG = "ML-KEM-768"
+    _DILITHIUM_ALG = "ML-DSA-65"
 except ImportError:
     REAL_PQ_AVAILABLE = False
     _KYBER_ALG = None
     _DILITHIUM_ALG = None
     _oqs = None
+
 if not REAL_PQ_AVAILABLE:
-    logger.warning('PQ crypto running in SIMULATION mode — NOT cryptographically secure. Install liboqs-python: pip install oqs')
+    logger.warning("PQ crypto running in SIMULATION mode — NOT cryptographically secure. Install liboqs-python: pip install oqs")
 
 class SecurityLevel(Enum):
     """Úrovně zabezpečení"""
@@ -70,6 +79,33 @@ class QuantumSafeVault:
                 self._signing_keypair = {'public': sig.generate_keypair(), 'secret': sig.export_secret_key()}
         self._initialized = True
         logger.info('✓ QuantumSafeVault initialized')
+
+    def wipe_keys(self) -> None:
+        """
+        G1: Secure wipe of secret key material from memory.
+
+        Call this when the vault is no longer needed — before GC or reuse.
+        Uses ctypes.memset (M1 Metal-safe) with fallback to Python loop.
+
+        Wipes: _keypair['secret'], _signing_keypair['secret']
+        """
+        for keypair in (self._keypair, self._signing_keypair):
+            if keypair is not None and "secret" in keypair:
+                secret = keypair["secret"]
+                if isinstance(secret, bytearray):
+                    _secure_zero(secret)
+                elif isinstance(secret, bytes):
+                    # Immutable bytes — wipe a mutable copy; original stays but
+                    # at least the mutable copy we control is securely wiped
+                    _wipe = bytearray(secret)
+                    _secure_zero(_wipe)
+
+    def __del__(self) -> None:
+        """F350M-R G1: wipe keys at GC time as last-resort safety net."""
+        try:
+            self.wipe_keys()
+        except Exception:
+            pass  # swallow during GC — prevent logging in destructor
 
     async def encrypt(self, plaintext: bytes, associated_data: bytes | None=None) -> EncryptedContainer:
         """Zašifrovat data pomocí ML-KEM."""

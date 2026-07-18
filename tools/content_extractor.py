@@ -98,7 +98,7 @@ def extract_structured_snippet(data: str, max_chars: int=20000) -> str:
         return ''
     data = data[:50000]
     try:
-        import json
+        import orjson as json
         parsed = json.loads(data)
 
         def extract_values(obj, depth=0):
@@ -126,7 +126,7 @@ def extract_structured_snippet(data: str, max_chars: int=20000) -> str:
         if values:
             snippet = ' | '.join(values[:5])
             return snippet[:max_chars]
-    except (json.JSONDecodeError, ValueError):
+    except (ValueError, TypeError):
         pass
     return data[:max_chars]
 

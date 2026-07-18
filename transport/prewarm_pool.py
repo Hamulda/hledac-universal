@@ -41,7 +41,7 @@ import os
 import time
 
 from core.env_config import ENV  # noqa: E402
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok
+from hledac.universal.utils.async_helpers import safe_create_task, parallel
 from typing import Any
 
 logger = logging.getLogger("hledac.universal.transport.prewarm_pool")
@@ -563,9 +563,10 @@ async def fill_all_slots() -> None:
                 return  # already filled
             await _fill_slot(slot_idx, "chrome110")
 
-        await safe_gather_ok(
-            *[_ensure_slot(i) for i in range(_POOL_SIZE)],
-            label="prewarm_pool:fill_all_slots",
+        await parallel(
+            [_ensure_slot(i) for i in range(_POOL_SIZE)],
+            policy="log",
+            ctx="prewarm_pool:fill_all_slots",
         )
 
 

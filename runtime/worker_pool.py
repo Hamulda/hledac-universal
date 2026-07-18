@@ -389,6 +389,15 @@ class RustWorkerPool:
             return await _await_result()
 
         finally:
+            # Abort the rayon task on any exit path (timeout, cancellation, error).
+            # rayon_abort is safe to call even if the task already completed
+            # (JoinHandle already taken, no-op on already-joined thread).
+            # This prevents background thread leaks on asyncio.timeout fires.
+            try:
+                from hledac_rust_extensions import rayon_abort
+                rayon_abort(handle)
+            except Exception:
+                pass  # Best-effort — don't mask original errors
             async with async_lock:
                 self._active_count -= 1
 
@@ -403,7 +412,7 @@ class RustWorkerPool:
             except Exception:
                 return None
 
-        from hledac_rust_extensions import rayon_submit, rayon_join
+        from hledac_rust_extensions import rayon_submit, rayon_join, rayon_abort
 
         handle = rayon_submit(self._pool_type, n_items, fn, args)
         try:
@@ -413,6 +422,15 @@ class RustWorkerPool:
                 raise RuntimeError(
                     f"Rayon {self._pool_type} task was aborted: {e}"
                 ) from None
+            raise
+        except Exception:
+            # Best-effort abort on unexpected errors (e.g. timeout, Rust panic).
+            # rayon_join has already waited for the thread via helper thread,
+            # so this is truly best-effort — the thread is already done.
+            try:
+                rayon_abort(handle)
+            except Exception:
+                pass
             raise
 
     @property

@@ -47,9 +47,9 @@
 //! retains its own deduplication scope. Use `batch_extract_iocs_simd` (which drops
 //! text_idx) for flat per-IOC results across the batch.
 //!
-//! Pattern order (matches `pattern_id` indices):
-//!   0=IPv4, 1=Domain, 2=MD5, 3=SHA1, 4=SHA256, 5=Email, 6=CVE, 7=MAC, 8=BTC, 9=ETH
-//! Issue #4: Added MAC (7), BTC (8), ETH (9) IOC types.
+//! Pattern order (G1: IPv4/Domain/MD5/SHA1/SHA256, G2: Email/CVE/MAC/BTC/ETH):
+//! IPv6 handled separately via IPV6_REGEX (post-match validation).
+//! F1.2 fix: 10-pattern single build_many exceeded NFA 50 MB limit — split into G1 + G2.
 
 use pyo3::prelude::*;
 use pyo3::types::PyList;
@@ -75,32 +75,44 @@ use crate::ioc_patterns_generated::{
 ///
 /// IPv6 is handled separately via `IPV6_REGEX` (post-match validation) because
 /// the full RFC 4291 pattern exceeds regex-automata's NFA size limit even at 50 MB.
-static IOC_META_REGEX: std::sync::LazyLock<Result<Regex, regex_automata::meta::BuildError>> =
+/// F1.2 fix: Split into two 5-pattern groups to stay under NFA size limit.
+/// Group 1: IPv4, Domain, MD5, SHA1, SHA256
+/// Group 2: Email, CVE, MAC, BTC, ETH
+/// Scanning both groups covers all 10 IOC types with no loss of coverage.
+static IOC_META_REGEX_G1: std::sync::LazyLock<Result<Regex, regex_automata::meta::BuildError>> =
     std::sync::LazyLock::new(|| {
         let result = Regex::builder()
             .configure(
                 regex_automata::meta::Config::new()
-                    .nfa_size_limit(Some(50 * 1024 * 1024)) // 50 MB NFA cache
-                    .dfa_size_limit(Some(50 * 1024 * 1024)), // 50 MB DFA cache
+                    .nfa_size_limit(Some(50 * 1024 * 1024))
+                    .dfa_size_limit(Some(50 * 1024 * 1024)),
             )
-            .build_many(&[
-                // Issue #031: Use constants from ioc_patterns_generated (single source of truth).
-                IPV4_PAT,
-                DOMAIN_PAT,
-                MD5_PAT,
-                SHA1_PAT,
-                SHA256_PAT,
-                EMAIL_PAT,
-                CVE_PAT,
-                MAC_PAT,
-                BTC_PAT,
-                ETH_PAT,
-            ]);
+            .build_many(&[IPV4_PAT, DOMAIN_PAT, MD5_PAT, SHA1_PAT, SHA256_PAT]);
 
         if let Err(ref e) = result {
-            // IOS.T1: Surface initialization errors in telemetry (fail-soft, never panics)
             eprintln!(
-                "[ioc_extract_simd] IOC_META_REGEX initialization failed: {} — returning empty results at runtime",
+                "[ioc_extract_simd] IOC_META_REGEX_G1 (IPv4/Domain/MD5/SHA1/SHA256) initialization failed: {}",
+                e
+            );
+        }
+        result
+    });
+
+/// F1.2 fix: Group 2 — Email, CVE, MAC, BTC, ETH.
+/// Pattern IDs 0-4 in this group map to the second half of IOC types.
+static IOC_META_REGEX_G2: std::sync::LazyLock<Result<Regex, regex_automata::meta::BuildError>> =
+    std::sync::LazyLock::new(|| {
+        let result = Regex::builder()
+            .configure(
+                regex_automata::meta::Config::new()
+                    .nfa_size_limit(Some(50 * 1024 * 1024))
+                    .dfa_size_limit(Some(50 * 1024 * 1024)),
+            )
+            .build_many(&[EMAIL_PAT, CVE_PAT, MAC_PAT, BTC_PAT, ETH_PAT]);
+
+        if let Err(ref e) = result {
+            eprintln!(
+                "[ioc_extract_simd] IOC_META_REGEX_G2 (Email/CVE/MAC/BTC/ETH) initialization failed: {}",
                 e
             );
         }
@@ -130,26 +142,26 @@ static IPV6_REGEX: std::sync::LazyLock<RegexSimple> =
         .expect("IPV6_REGEX should always compile — pattern is hardcoded")
     });
 
-/// IOC type mapping from `build_many` pattern index → string label.
-/// IPv6 was removed from build_many due to regex-automata NFA size limits;
-/// it is handled separately via `IPV6_REGEX` in `extract_one_simd`.
-/// Issue #4: Extended with MAC (7), BTC (8), ETH (9).
-fn pattern_to_ioc_type(pattern_id: usize) -> &'static str {
+/// IOC type mapping for Group 1 (IPv4, Domain, MD5, SHA1, SHA256).
+fn g1_pattern_to_ioc_type(pattern_id: usize) -> &'static str {
     match pattern_id {
         0 => "ipv4",
         1 => "domain",
         2 => "md5",
         3 => "sha1",
         4 => "sha256",
-        5 => "email",
-        6 => "cve",
-        7 => "mac",
-        8 => "btc",
-        9 => "eth",
-        // DEFENSIVE: _ => "unknown" instead of unreachable!().
-        // If a new IOC_META_REGEX variant is added without updating this match,
-        // we return "unknown" rather than panicking. A new variant without a
-        // pattern should not crash the process — the extraction still works.
+        _ => "unknown",
+    }
+}
+
+/// IOC type mapping for Group 2 (Email, CVE, MAC, BTC, ETH).
+fn g2_pattern_to_ioc_type(pattern_id: usize) -> &'static str {
+    match pattern_id {
+        0 => "email",
+        1 => "cve",
+        2 => "mac",
+        3 => "btc",
+        4 => "eth",
         _ => "unknown",
     }
 }
@@ -160,32 +172,53 @@ fn is_hex_hash(value: &str, expected_len: usize) -> bool {
     value.len() == expected_len && value.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-/// Extract IOCs from a single text using single-pass meta-regex.
-/// IPv6 is handled via `IPV6_REGEX` post-match (not in build_many due to NFA size limits).
+/// Extract IOCs from a single text using two-phase SIMD scanning.
+/// F1.2 fix: Split into G1 (IPv4/Domain/MD5/SHA1/SHA256) and G2 (Email/CVE/MAC/BTC/ETH)
+/// to stay under the NFA size limit of 50 MB per regex-automata build_many call.
+/// IPv6 is handled separately via `IPV6_REGEX` (post-match validation).
 /// Returns Vec of (ioc_value, ioc_type).
 fn extract_one_simd(text: &str) -> Vec<(String, String)> {
     if text.is_empty() {
         return Vec::new();
     }
-    let regex = match IOC_META_REGEX.as_ref() {
+
+    let regex_g1 = match IOC_META_REGEX_G1.as_ref() {
         Ok(r) => r,
-        Err(_) => return Vec::new(), // IOS.T1: fail-soft on init error
+        Err(_) => return Vec::new(),
+    };
+    let regex_g2 = match IOC_META_REGEX_G2.as_ref() {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
     };
 
     let mut iocs: Vec<(String, String)> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
 
-    for m in regex.find_iter(text) {
+    // Group 1: IPv4, Domain, MD5, SHA1, SHA256
+    for m in regex_g1.find_iter(text) {
         let pattern_id = m.pattern().as_usize();
-        let ioc_type = pattern_to_ioc_type(pattern_id);
+        let ioc_type = g1_pattern_to_ioc_type(pattern_id);
         let raw_value = &text[m.start()..m.end()];
 
-        // Validate hex hashes to prevent false positives (SHA1/SHA256/MD5 without true \b)
-        // Issue #4: ETH also requires 0x prefix validation
         let value = match ioc_type {
             "md5" if !is_hex_hash(raw_value, 32) => continue,
             "sha1" if !is_hex_hash(raw_value, 40) => continue,
             "sha256" if !is_hex_hash(raw_value, 64) => continue,
+            _ => raw_value.to_lowercase(),
+        };
+
+        if seen.insert(value.clone()) {
+            iocs.push((value, ioc_type.to_string()));
+        }
+    }
+
+    // Group 2: Email, CVE, MAC, BTC, ETH
+    for m in regex_g2.find_iter(text) {
+        let pattern_id = m.pattern().as_usize();
+        let ioc_type = g2_pattern_to_ioc_type(pattern_id);
+        let raw_value = &text[m.start()..m.end()];
+
+        let value = match ioc_type {
             "eth" if !raw_value.starts_with("0x") || !is_hex_hash(&raw_value[2..], 40) => continue,
             _ => raw_value.to_lowercase(),
         };
@@ -441,9 +474,11 @@ mod tests {
 
     #[test]
     fn test_meta_regex_builds_successfully() {
-        // Verify the LazyLock initializes without panic
-        let regex = IOC_META_REGEX.as_ref();
-        assert!(regex.is_ok(), "IOC_META_REGEX should build successfully");
+        // F1.2 fix: Verify both G1 and G2 initialize without panic
+        let regex_g1 = IOC_META_REGEX_G1.as_ref();
+        let regex_g2 = IOC_META_REGEX_G2.as_ref();
+        assert!(regex_g1.is_ok(), "IOC_META_REGEX_G1 should build successfully");
+        assert!(regex_g2.is_ok(), "IOC_META_REGEX_G2 should build successfully");
     }
 
     // ─── IPv6 Boundary Tests (P1 fix) ───────────────────────────────────────

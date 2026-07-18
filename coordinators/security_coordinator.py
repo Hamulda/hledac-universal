@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 import msgspec
 from enum import Enum
 from typing import Any
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
 logger = logging.getLogger(__name__)
 from hledac.universal.security.pq_crypto import PQAvailability
@@ -888,7 +888,8 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             async with semaphore:
                 return await self.stealth_request_with_jitter(url, min_delay=jitter_range[0], max_delay=jitter_range[1])
         tasks = [fetch_with_limit(url) for url in urls]
-        results = await safe_gather_ok(*tasks, label='security_coordinator:1699')
+        _sec_result = await parallel(tasks, policy="log", ctx='security_coordinator:1699')
+        results = _sec_result.ok
         processed_results = []
         for i, result in enumerate(results):
             if isinstance(result, Exception):

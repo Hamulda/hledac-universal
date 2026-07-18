@@ -49,6 +49,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import contextlib
+import contextvars
 import hashlib
 import logging
 import os
@@ -68,31 +69,51 @@ from hledac.universal.core.env_config import ENV
 from hledac.universal.runtime.protocols.cleanup_protocol import shutdown_aclose
 from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
 
-# ISSUE-11: ThreadPoolExecutor for GIL-free SQLite writes
+# ISSUE-11 / C2: ThreadPoolExecutor for GIL-free SQLite writes
 # Lazily initialized — only created if SQLite path is used
+# C2: Added threading.RLock for thread-safe singleton creation
 _evidence_sqlite_executor: concurrent.futures.ThreadPoolExecutor | None = None
 _duckdb_executor: concurrent.futures.ThreadPoolExecutor | None = None
+_duckdb_executor_lock = threading.RLock()
+_evidence_sqlite_executor_lock = threading.RLock()
 _arrow = None
+
+# C5 FIX: Cache env read at module load — avoids per-call os.environ.get()
+#         in hot-path _get_arrow() (called 3x per flush cycle in sprint).
+#         _ARROW_ENABLED is evaluated once at import; subsequent _get_arrow()
+#         calls skip the env lookup entirely (fast-path: _arrow cached).
+_ARROW_ENABLED: bool = os.environ.get('HLEDAC_ARROW_EVIDENCE', '0') == '1'
 
 
 def _ensure_duckdb_executor() -> concurrent.futures.ThreadPoolExecutor:
-    """Lazily create and return the DuckDB write executor (singleton)."""
+    """Lazily create and return the DuckDB write executor (singleton).
+
+    C2 FIX: DuckDB is thread-safe (internal locking) — 2 workers better
+    utilize M1 8GB's 4P+4E cores. WAL contention is DuckDB-internal, not
+    a cross-process bottleneck. Threading lock prevents race in singleton init.
+    """
     global _duckdb_executor
-    if _duckdb_executor is None:
-        _duckdb_executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix='evidence_duckdb',
-        )
-    return _duckdb_executor
+    with _duckdb_executor_lock:
+        if _duckdb_executor is None:
+            _duckdb_executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=2, thread_name_prefix='evidence_duckdb',
+            )
+        return _duckdb_executor
 
 
 def _ensure_evidence_sqlite_executor() -> concurrent.futures.ThreadPoolExecutor:
-    """Lazily create and return the SQLite write executor (singleton)."""
+    """Lazily create and return the SQLite write executor (singleton).
+
+    C2: SQLite WAL has genuine write serialization — max_workers=1 is correct.
+    Threading lock prevents race in singleton init.
+    """
     global _evidence_sqlite_executor
-    if _evidence_sqlite_executor is None:
-        _evidence_sqlite_executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix='evidence_sqlite',
-        )
-    return _evidence_sqlite_executor
+    with _evidence_sqlite_executor_lock:
+        if _evidence_sqlite_executor is None:
+            _evidence_sqlite_executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix='evidence_sqlite',
+            )
+        return _evidence_sqlite_executor
 
 
 def _shutdown_executor_guarded(
@@ -139,11 +160,14 @@ def _shutdown_executors() -> None:
 atexit.register(_shutdown_executors)
 
 def _get_arrow():
-    """Lazy Arrow IPC loader — only loads pyarrow if HLEDAC_ARROW_EVIDENCE=1."""
+    """Lazy Arrow IPC loader — only loads pyarrow if HLEDAC_ARROW_EVIDENCE=1.
+
+    C5 FIX: _ARROW_ENABLED is cached at module load (line ~81).
+    After first call, _arrow is cached so this function is O(1) — no env read.
+    """
     global _arrow
     if _arrow is None:
-        import os as _os
-        if _os.environ.get('HLEDAC_ARROW_EVIDENCE', '0') == '1':
+        if _ARROW_ENABLED:
             try:
                 import pyarrow as _pa
                 import pyarrow.ipc as _ipc
@@ -851,8 +875,6 @@ class EvidenceLog:
           - Zero-copy via run_in_executor (ThreadPoolExecutor)
           - Eliminates GIL contention on SQLite write path
         """
-        global _evidence_sqlite_executor, _duckdb_executor
-
         if self._db_path is None:
             from hledac.universal.paths import EVIDENCE_ROOT
             evidence_dir = EVIDENCE_ROOT
@@ -1174,11 +1196,10 @@ class EvidenceLog:
         file I/O + IPC serialization overhead dominates. Direct executemany is
         3-5× faster for small batches and avoids temp file lifecycle issues.
 
-        DuckDB table-level locking means max_workers=1 is sufficient and
-        correct — concurrent threads would serialize at the lock anyway.
+        C2 FIX: DuckDB is thread-safe (internal locking) — max_workers=2
+        in the module-level executor. PRAGMA threads=2 is set once at
+        connect() time (line ~886) and persists for the session.
         """
-        global _duckdb_executor
-
         if self._duckdb_conn is None:
             await self._flush_sqlite_batch(batch)
             return
@@ -1205,9 +1226,12 @@ class EvidenceLog:
         loop = asyncio.get_running_loop()
 
         def _duckdb_insert_records() -> None:
-            """Direct executemany insert — runs on ThreadPoolExecutor, no GIL."""
+            """Direct executemany insert — runs on ThreadPoolExecutor, no GIL.
+
+            PRAGMA threads=2 is set once at connect() time (line ~886) and
+            persists for the DuckDB session — no need to re-apply per batch.
+            """
             try:
-                self._duckdb_conn.execute('PRAGMA threads=2')
                 self._duckdb_conn.executemany(
                     'INSERT INTO events (timestamp, event_type, data, hash) VALUES (?, ?, ?, ?)',
                     records,
@@ -1217,7 +1241,9 @@ class EvidenceLog:
                 logger.warning(f'[_flush_duckdb_batch] DuckDB executemany failed: {e}')
 
         try:
-            await loop.run_in_executor(_ensure_duckdb_executor(), _duckdb_insert_records)
+            # C2: copy_context() propagates ContextVar (sprint_id, lane, mode) across thread boundary
+            ctx = contextvars.copy_context()
+            await loop.run_in_executor(ctx, _ensure_duckdb_executor(), _duckdb_insert_records)
         except Exception as e:
             logger.warning(f'[_flush_duckdb_batch] executor failed: {e}')
             # Fallback: direct SQLite
@@ -1229,8 +1255,6 @@ class EvidenceLog:
         ISSUE-11: SQLite writes run on ThreadPoolExecutor — event loop
         is never blocked by GIL-held database operations.
         """
-        global _evidence_sqlite_executor
-
         if not batch:
             return
 
@@ -1271,7 +1295,9 @@ class EvidenceLog:
                 logger.warning(f'[_flush_sqlite_batch] SQLite insert failed: {e}')
 
         try:
-            await loop.run_in_executor(_ensure_evidence_sqlite_executor(), _sqlite_insert)
+            # C2: copy_context() propagates ContextVar (sprint_id, lane, mode) across thread boundary
+            ctx = contextvars.copy_context()
+            await loop.run_in_executor(ctx, _ensure_evidence_sqlite_executor(), _sqlite_insert)
         except Exception as e:
             logger.warning(f'[_flush_sqlite_batch] executor failed: {e}')
 

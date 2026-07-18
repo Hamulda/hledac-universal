@@ -24,7 +24,7 @@ Canonical write path: LMDB put() via SecretVault.put()
 from __future__ import annotations
 
 import asyncio
-import json
+import json as _stdjson
 import logging
 import os
 from dataclasses import dataclass
@@ -33,6 +33,38 @@ from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     import lmdb
+
+# orjson — strict import with fallback (consistent with project hot-path pattern)
+_orjson_mod: Any = None
+_orjson_dumps: Any = None
+
+
+def _get_orjson() -> Any:
+    """Lazy-load orjson; returns orjson.dumps or False if unavailable."""
+    global _orjson_mod, _orjson_dumps
+    if _orjson_mod is None:
+        try:
+            import orjson
+
+            _orjson_mod = orjson
+            _orjson_dumps = orjson.dumps
+        except ImportError:
+            _orjson_mod = False
+            _orjson_dumps = False
+    return _orjson_dumps
+
+
+def _orjson_default_serializer(obj: Any) -> Any:
+    """Default serializer for orjson — handles Path, datetime, etc."""
+    import datetime
+
+    if isinstance(obj, Path):
+        return str(obj)
+    if isinstance(obj, datetime.datetime):
+        return obj.isoformat()
+    if isinstance(obj, datetime.date):
+        return obj.isoformat()
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON-serializable")
 
 logger = logging.getLogger(__name__)
 
@@ -178,12 +210,14 @@ class SecretVault:
         self._lock: asyncio.Lock = asyncio.Lock()
 
     def _open_lmdb(self) -> lmdb.Environment:
-        """Open LMDB environment."""
+        """Open LMDB environment with security-hardened settings."""
         import lmdb
 
         self._path.mkdir(parents=True, exist_ok=True)
         map_size = 10 * 1024 * 1024  # 10 MB initial
-        env = lmdb.open(str(self._path), map_size=map_size, writemap=True)
+        # readahead=False: reduces page fault exposure for sensitive data
+        # writemap=True: required for zero-copy writes (map_size is bounded at 10MB)
+        env = lmdb.open(str(self._path), map_size=map_size, writemap=True, readahead=False)
         return env
 
     # ---- LMDB helpers ----
@@ -222,12 +256,21 @@ class SecretVault:
         return _fernet_decrypt(encrypted, self._password)
 
     def _serialize(self, data: dict[str, Any]) -> bytes:
-        """Serialize secret data to JSON bytes."""
-        return json.dumps(data, default=str).encode()
+        """Serialize secret data to JSON bytes using orjson (hot-path optimization)."""
+        orjson_dumps = _get_orjson()
+        if orjson_dumps:
+            return orjson_dumps(data, default=_orjson_default_serializer)
+        # Fallback to stdlib json
+        return _stdjson.dumps(data, default=str).encode()
 
     def _deserialize(self, raw: bytes) -> dict[str, Any]:
         """Deserialize JSON bytes to dict."""
-        return json.loads(raw.decode())
+        try:
+            import orjson
+
+            return orjson.loads(raw)
+        except Exception:
+            return _stdjson.loads(raw.decode())
 
     # ---- Public API ----
 

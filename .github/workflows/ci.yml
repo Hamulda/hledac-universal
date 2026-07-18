@@ -81,6 +81,30 @@ jobs:
         run: |
           uv run --no-sync pre-commit run --all-files --show-diff-on-failure
 
+  ble-audit:
+    name: ble-audit · BLE001 dynamic audit
+    runs-on: macos-latest
+    timeout-minutes: 3
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+
+      - name: BLE001 audit (CI mode — fail on NEW violations)
+        run: |
+          uv run --no-sync python tools/ble_audit.py --ci
+
   build-rust:
     name: maturin build · wheel
     runs-on: macos-latest
@@ -96,6 +120,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Guard — core/rust_backend.py must not exist
+        # Issue #3: this file shadows core/rust_backend/ package on Python 3.12+
+        run: test ! -f core/rust_backend.py
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

@@ -535,7 +535,7 @@ def get_swap_policy_tier(swap_gib: float) -> tuple[str, str]:
 
 import threading as _threading
 
-from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
+from hledac.universal.utils.async_helpers import parallel
 
 _io_only_latch: bool = False
 _io_only_latch_lock: _threading.Lock = _threading.Lock()
@@ -1526,8 +1526,10 @@ class UMAAlarmDispatcher:
             if not callbacks:
                 return
             self._last_dispatch_time[current_state] = now
-        await safe_gather_fire_and_forget(
-            *[_dispatch_one(cb, logger) for cb in callbacks], label="resource_governor:648"
+        await parallel(
+            [_dispatch_one(cb, logger) for cb in callbacks],
+            policy="log",
+            ctx="resource_governor:648",
         )
 
 

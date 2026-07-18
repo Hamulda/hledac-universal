@@ -898,7 +898,8 @@ async def async_search_public_web(
             return (hits_v, None)
 
         # Run all variants concurrently
-        results = await safe_gather_ok(*[search_variant(v) for v in variants], label="duckduckgo_adapter:946")
+        _ddg_result = await parallel([search_variant(v) for v in variants], policy="log", ctx="duckduckgo_adapter:946")
+        results = _ddg_result.ok
         seen_urls: dict[str, int] = {}
         for res in results:
             if isinstance(res, BaseException):
@@ -1425,10 +1426,12 @@ async def search_multi_engine(
 
     all_results: list[dict] = []
     # F262D: migrated asyncio.gather → safe_gather_ok (fail-soft invariant preserved)
-    for batch in await safe_gather_ok(
-        ddg_task, mojeek_task, cc_task,
-        label="duckduckgo_adapter:1474",
-    ):
+    _ddg2_result = await parallel(
+        [ddg_task, mojeek_task, cc_task],
+        policy="log",
+        ctx="duckduckgo_adapter:1474",
+    )
+    for batch in _ddg2_result.ok:
         if isinstance(batch, DiscoveryBatchResult) and batch.hits:
             all_results.extend([
                 {"title": h.title, "url": h.url, "snippet": h.snippet, "source": h.source}

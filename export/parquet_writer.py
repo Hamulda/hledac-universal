@@ -542,8 +542,9 @@ class ParquetExporter:
             tasks.append(task)
 
         # Bounded gather (M1 safe)
-        from utils.async_helpers import safe_gather_ok
-        results = await safe_gather_ok(*tasks)
+        from hledac.universal.utils.async_helpers import parallel
+        _write_result = await parallel(tasks, policy="log", ctx='parquet_writer:export')
+        results = _write_result.ok
         written = [r for r in results if isinstance(r, Path)]
 
         return written

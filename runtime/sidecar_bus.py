@@ -43,7 +43,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from hledac.universal.core.protocols import safe_get_finding_field, safe_get_payload_text
 from hledac.universal.runtime.sidecar_runner_decorator import _store_ingest_and_count
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_fire_and_forget, safe_gather_ok
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_fire_and_forget, parallel
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
@@ -647,9 +647,9 @@ class FindingSidecarBus:
             if not stage_tasks:
                 continue
             try:
-                gathered = await safe_gather_ok(*stage_tasks, label='sidecar_bus:stage')
-                self._check_gathered(gathered)
-                for item in gathered:
+                gathered = await parallel(stage_tasks, policy="log", ctx='sidecar_bus:stage')
+                self._check_gathered(list(gathered.ok))
+                for item in gathered.ok:
                     if isinstance(item, SidecarRunResult):
                         all_results.append(item)
                     elif isinstance(item, BaseException):
@@ -666,7 +666,7 @@ class FindingSidecarBus:
                 for t in stage_tasks:
                     if not t.done():
                         t.cancel()
-                await safe_gather_fire_and_forget(*stage_tasks, label='sidecar_bus:cancelled')
+                await parallel(list(stage_tasks), policy="log", ctx='sidecar_bus:cancelled')
                 raise
         remaining_tasks: list[asyncio.Task[SidecarRunResult]] = []
         for name, runner in self._runners.items():
@@ -675,9 +675,9 @@ class FindingSidecarBus:
                 runners_executed.add(name)
         if remaining_tasks:
             try:
-                gathered = await safe_gather_ok(*remaining_tasks, label='sidecar_bus:remaining')
-                self._check_gathered(gathered)
-                for item in gathered:
+                gathered = await parallel(list(remaining_tasks), policy="log", ctx='sidecar_bus:remaining')
+                self._check_gathered(list(gathered.ok))
+                for item in gathered.ok:
                     if isinstance(item, SidecarRunResult):
                         all_results.append(item)
             except asyncio.CancelledError:

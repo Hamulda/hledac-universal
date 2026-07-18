@@ -234,7 +234,7 @@ class SprintSchedulerV2:
         import time as _time
 
         from runtime.sprint_lifecycle import SprintLifecycleManager
-        from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok
+        from hledac.universal.utils.async_helpers import safe_create_task, parallel
 
         _lifecycle_mgr = SprintLifecycleManager(
             config=self._config,
@@ -254,18 +254,18 @@ class SprintSchedulerV2:
         # Sequential was: duckdb → governor → hermes → evidence_log → sidecar (~3-5s sum).
         # Now: max(all) — DuckDB (~1-2s), Governor (~50ms), Hermes (~100ms), EvidenceLog (~20ms)
         # run concurrently. SidecarOrchestrator still sequential (needs duckdb reference).
-        (
-            _duckdb_store,
-            _governor,
-            _hermes_engine,
-            _evidence_log,
-        ) = await safe_gather_ok(
-            self._init_duckdb_store(query),
-            self._init_governor(),
-            self._init_hermes_engine(query),
-            self._init_evidence_log(),
-            label="scheduler_v2:_init_services",
+        # ISSUE-D2: parallel() replaces safe_gather_ok
+        _init_result = await parallel(
+            [
+                self._init_duckdb_store(query),
+                self._init_governor(),
+                self._init_hermes_engine(query),
+                self._init_evidence_log(),
+            ],
+            policy="log",
+            ctx="scheduler_v2:_init_services",
         )
+        (_duckdb_store, _governor, _hermes_engine, _evidence_log) = _init_result.ok
         object.__setattr__(self, '_duckdb_store', _duckdb_store)
         object.__setattr__(self, '_governor', _governor)
         object.__setattr__(self, '_hermes_engine', _hermes_engine)

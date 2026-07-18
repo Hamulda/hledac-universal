@@ -44,7 +44,7 @@ from typing import TYPE_CHECKING, Any
 
 import msgspec.json as _json
 
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel
 from core.capabilities import CAPS, OLEVBA
 
 logger = logging.getLogger(__name__)
@@ -810,8 +810,8 @@ class UniversalMetadataExtractor:
         for i in range(0, len(file_paths), self.batch_size):
             batch = file_paths[i:i + self.batch_size]
             tasks = [self.extract(path) for path in batch]
-            batch_results = await safe_gather_ok(*tasks, label='metadata_extractor:1131')
-            for path, result in zip(batch, batch_results, strict=False):
+            batch_results = await parallel(tasks, policy="log", ctx='metadata_extractor:1131')
+            for path, result in zip(batch, batch_results.ok, strict=False):
                 if isinstance(result, Exception):
                     results.append(MetadataResult(file_path=path, success=False, error=str(result)))
                 else:

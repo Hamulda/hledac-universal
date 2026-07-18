@@ -189,6 +189,11 @@ class I2PTransport(Transport):
 
     async def stop(self) -> None:
         """Graceful I2P transport shutdown."""
+        from hledac.universal.utils.secure_zero import wipe_i2p_identity
+
+        # G1: Secure wipe of I2P identity material before shutdown
+        wipe_i2p_identity(self.i2p_address)
+
         if self._session_socks:
             await self._session_socks.aclose()
             self._session_socks = None

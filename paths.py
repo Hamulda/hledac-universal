@@ -1,10 +1,11 @@
+import asyncio
 import pathlib as _pl
 import atexit
 import contextvars
 from dataclasses import dataclass
 import msgspec
 from typing import cast
-__all__ = ['RAMDISK_ROOT', 'FALLBACK_ROOT', 'RAMDISK_ACTIVE', 'CACHE_ROOT', 'LIGHTRAG_ROOT', 'DB_ROOT', 'LMDB_ROOT', 'SPRINT_LMDB_ROOT', 'EVIDENCE_ROOT', 'KEYS_ROOT', 'TOR_ROOT', 'NYM_ROOT', 'I2P_ROOT', 'RUNS_ROOT', 'SOCKETS_ROOT', 'SPRINT_STORE_ROOT', 'IOC_DB_PATH', 'PATHS', 'get_current_paths', 'set_current_paths', 'reset_current_paths', 'get_sprint_parquet_dir', 'get_dedup_paths', 'get_ioc_db_path', 'get_sprint_report_path', 'get_sprint_json_report_path', 'get_sprint_next_seeds_path', 'assert_ramdisk_alive', 'cleanup_fallback_artifacts', 'is_auto_ramdisk', 'lmdb_map_size', 'get_lmdb_max_size_mb', 'open_lmdb', 'cleanup_stale_lmdb_locks', 'cleanup_stale_sockets', 'CTI_EXPORT_DIR', 'RUNTIME_STATE', 'EMBEDDING_CACHE', 'BENCHMARK_CACHE']
+__all__ = ['RAMDISK_ROOT', 'FALLBACK_ROOT', 'RAMDISK_ACTIVE', 'CACHE_ROOT', 'LIGHTRAG_ROOT', 'DB_ROOT', 'LMDB_ROOT', 'SPRINT_LMDB_ROOT', 'EVIDENCE_ROOT', 'KEYS_ROOT', 'TOR_ROOT', 'NYM_ROOT', 'I2P_ROOT', 'RUNS_ROOT', 'SOCKETS_ROOT', 'SPRINT_STORE_ROOT', 'IOC_DB_PATH', 'PATHS', 'get_current_paths', 'set_current_paths', 'reset_current_paths', 'get_sprint_parquet_dir', 'get_dedup_paths', 'get_ioc_db_path', 'get_sprint_report_path', 'get_sprint_json_report_path', 'get_sprint_next_seeds_path', 'assert_ramdisk_alive', 'cleanup_fallback_artifacts', 'is_auto_ramdisk', 'lmdb_map_size', 'get_lmdb_max_size_mb', 'open_lmdb', 'cleanup_stale_lmdb_locks', 'cleanup_stale_sockets', 'CTI_EXPORT_DIR', 'RUNTIME_STATE', 'EMBEDDING_CACHE', 'BENCHMARK_CACHE', '_ensure_ramdisk_active_async']
 _paths_context_var: contextvars.ContextVar[_Paths | None] = contextvars.ContextVar('_paths_context', default=None)
 
 def get_current_paths() -> _Paths:
@@ -143,6 +144,10 @@ def _try_create_ramdisk() -> tuple[Path | None, bool]:
             _subprocess.run(['diskutil', 'erasevolume', 'HFS+', 'RAMDisk', device], capture_output=True, timeout=10)
         except Exception:
             pass
+        # B2-FIX: This 500ms sleep waits for HFS+ volume to settle — macOS requires
+        # this before the mount becomes visible. _try_create_ramdisk is ALWAYS called
+        # via asyncio.to_thread() from async paths, so this never blocks the event loop.
+        # For truly sync callers (none currently exist), wrap with asyncio.to_thread().
         try:
             _time.sleep(0.5)
         except Exception:
@@ -183,6 +188,9 @@ def _ensure_ramdisk_active() -> None:
     Called lazily before LMDB/open or when RAMDISK_ROOT is first accessed.
     Attempts RAM disk creation if not already active.
     Thread-safe: idempotent (only runs once).
+
+    B2-FIX: This sync variant is for thread-pool callers (duckdb_store).
+    For async callers, use _ensure_ramdisk_active_async().
     """
     global _SELECTED_ROOT, _RAMDISK_ACTIVE, _FALLBACK_ROOT
     if _RAMDISK_ACTIVE:
@@ -199,6 +207,33 @@ def _ensure_ramdisk_active() -> None:
         if auto_active and os.environ.get('HLEDAC_RAMDISK_AUTO_CREATED') == '1':
             duckdb_temp_path = str(_SELECTED_ROOT / 'duckdb_tmp')
             os.environ.setdefault('HLEDAC_DUCKDB_RAMDISK_TEMP', duckdb_temp_path)
+
+
+async def _ensure_ramdisk_active_async() -> None:
+    """
+    B2-FIX: Async variant of _ensure_ramdisk_active().
+
+    Non-blocking for async callers. Uses asyncio.to_thread() to run
+    the blocking _try_create_ramdisk() in a thread pool, then yields
+    to the event loop.
+    """
+    global _SELECTED_ROOT, _RAMDISK_ACTIVE, _FALLBACK_ROOT
+    if _RAMDISK_ACTIVE:
+        return
+    if _SELECTED_ROOT is not None and _SELECTED_ROOT != _FALLBACK_ROOT:
+        return  # Already have a working non-fallback root
+    # Run blocking RAM disk creation in thread pool (avoids event loop blocking)
+    auto_path, auto_active = await asyncio.to_thread(_try_create_ramdisk)
+    if auto_path is not None:
+        _SELECTED_ROOT = auto_path
+        _RAMDISK_ACTIVE = auto_active
+        import warnings as _w
+        _w.warn(f'[GHOST OPSEC] RAM disk activated at runtime: {_SELECTED_ROOT}', stacklevel=2)
+        if auto_active and os.environ.get('HLEDAC_RAMDISK_AUTO_CREATED') == '1':
+            duckdb_temp_path = str(_SELECTED_ROOT / 'duckdb_tmp')
+            os.environ.setdefault('HLEDAC_DUCKDB_RAMDISK_TEMP', duckdb_temp_path)
+
+
 RAMDISK_ROOT: Path = _SELECTED_ROOT
 FALLBACK_ROOT: Path = _FALLBACK_ROOT if not _RAMDISK_ACTIVE else RAMDISK_ROOT
 RAMDISK_ACTIVE: bool = _RAMDISK_ACTIVE

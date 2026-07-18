@@ -379,8 +379,8 @@ class WinddownOrchestrator:
             t.cancel()
         if _bg_tasks:
             try:
-                from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
-                await safe_gather_fire_and_forget(*_bg_tasks, label='sprint_scheduler:winddown_bg')
+                from hledac.universal.utils.async_helpers import parallel
+                await parallel(list(_bg_tasks), policy="log", ctx='sprint_scheduler:winddown_bg')
             except Exception:
                 pass
             _bg_tasks.clear()
@@ -395,8 +395,8 @@ class WinddownOrchestrator:
         _pending = list(_sidecar_tasks)
         try:
             async with asyncio.timeout(15.0):
-                from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
-                await safe_gather_fire_and_forget(*_pending, label='sprint_scheduler:sidecar_tasks')
+                from hledac.universal.utils.async_helpers import parallel
+                await parallel(list(_pending), policy="log", ctx='sprint_scheduler:sidecar_tasks')
         except TimeoutError:
             for t in _pending:
                 if not t.done():

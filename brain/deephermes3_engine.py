@@ -789,7 +789,8 @@ class DeepHermes3Engine:
         I/O wait (async dispatch) with GPU computation.
         """
         tasks = [self._run_structured_single(payload) for payload, _ in items]
-        results = await safe_gather_ok(*tasks, label='deephermes3:structured_batch', logger_instance=logger)
+        _batch_result = await parallel(tasks, policy="log", ctx='deephermes3:structured_batch')
+        results = _batch_result.ok
         has_exception = any((isinstance(r, Exception) for r in results))
         if has_exception:
             self._telemetry_counters['batch_shattered'] += 1
@@ -2945,7 +2946,8 @@ class DeepHermes3Engine:
         for i in range(0, len(requests), self._BRIDGE_CHUNK_SIZE):
             chunk = requests[i:i + self._BRIDGE_CHUNK_SIZE]
             chunk_tasks = [execute_single(req) for req in chunk]
-            chunk_results = await safe_gather_ok(*chunk_tasks, label='deephermes3_engine:2147')
+            _chunk_result = await parallel(chunk_tasks, policy="log", ctx='deephermes3_engine:2147')
+            chunk_results = _chunk_result.ok
             for req, result in zip(chunk, chunk_results, strict=False):
                 if isinstance(result, Exception):
                     results.append(PlannerRuntimeResult(task_id=req.task_id, executed=False, skipped_panic=False, hermes_output=None, error=f'bridge_exception:{result}'))

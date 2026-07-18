@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 import numpy as np
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel
 from hledac.universal.utils.mlx_cache import MLX_AVAILABLE, get_mx
 logger = logging.getLogger(__name__)
 
@@ -315,7 +315,8 @@ class DistillationEngine:
             loop = asyncio.get_running_loop()
             with ThreadPoolExecutor(max_workers=2) as executor:
                 embedding_tasks = [loop.run_in_executor(executor, self._get_chain_embedding, example.chain) for example in examples]
-                embeddings = await safe_gather_ok(*embedding_tasks, label='distillation_engine:391')
+                _emb_result = await parallel(embedding_tasks, policy="log", ctx='distillation_engine:391')
+                embeddings = _emb_result.ok
             X_list = embeddings
             y_list = [example.score for example in examples]
             mx = get_mx()

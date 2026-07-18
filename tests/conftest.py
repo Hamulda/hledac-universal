@@ -536,6 +536,30 @@ def _gc_and_close_loops(request: pytest.FixtureRequest) -> None:
         pass
 
 
+@pytest.fixture(autouse=True)
+def _env_config_cache_clear() -> None:
+    """
+    Clear env_config._get_cached functools.cache before each test.
+
+    Root cause: ENV.get_bool() uses @functools.cache on _get_cached, which
+    persists across tests in the same session. patch.dict(os.environ, ...) in
+    individual tests CANNOT invalidate the cache once it is populated.
+
+    Fix: clear the cache function's underlying cache dict before every test
+    so each test starts with a clean slate and patch.dict works correctly.
+
+    Order: runs BEFORE _gc_and_close_loops (alphabetical: _e < _g).
+    """
+    try:
+        from core.env_config import _get_cached
+        # @functools.cache stores in func.__wrapped__.__dict__ or func.__dict__
+        _get_cached.cache_clear()
+    except Exception:
+        pass
+
+    yield
+
+
 @pytest.fixture
 def memory_snapshot() -> Generator[Snapshot | None]:
     """

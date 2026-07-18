@@ -170,13 +170,10 @@ _EXPLICIT_ATTRS_BY_MODULE: dict[str, frozenset[str]] = {
 
 # Ghost entries: deleted symbols that must raise ImportError with a helpful msg
 _GHOST_ENTRIES: dict[str, str] = {
-    "FullyAutonomousOrchestrator": "FullyAutonomousOrchestrator was removed. Use UniversalConfig + SprintScheduler.",
-    "MARLCoordinator": "MARLCoordinator was deleted in a prior sprint. Search the git history.",
-    "PressureLevel": "PressureLevel was deleted in a prior sprint. Search the git history.",
-    "ParallelExecutionOptimizer": "ParallelExecutionOptimizer was deleted in a prior sprint. Search the git history.",
-    "RayClusterManager": "RayClusterManager was deleted in a prior sprint. Search the git history.",
-    "LanguageDetector": "LanguageDetector was deleted in a prior sprint. Search the git history.",
-    "SemanticFilter": "SemanticFilter was deleted in a prior sprint. Search the git history.",
+    # FullyAutonomousOrchestrator, MARLCoordinator, PressureLevel,
+    # ParallelExecutionOptimizer, RayClusterManager, LanguageDetector,
+    # SemanticFilter — deleted in prior sprints; removed from __all__ and
+    # _ghosts_and_special to eliminate dead-weight entries.
 }
 
 # -----------------------------------------------------------------------------
@@ -242,6 +239,10 @@ def __getattr__(name: str) -> Any:
     if name in _cache:
         return _cache[name]
 
+    # __all__ is defined at module level — serve it directly
+    if name == "__all__":
+        return _cache.setdefault(name, __all__)
+
     # Build index once on first miss
     global _ATTRIBUTE_INDEX
     if _ATTRIBUTE_INDEX is None:
@@ -301,21 +302,9 @@ def load_optional(name: str) -> ModuleType:
 # Built dynamically so the list NEVER goes stale relative to module __all__.
 # -----------------------------------------------------------------------------
 
-# FullyAutonomousOrchestrator was removed from code but kept in __all__
-# for back-compat warning if anyone tries to import it
-_ghosts_and_special: frozenset[str] = frozenset({
-    "FullyAutonomousOrchestrator",  # removed; kept for back-compat
-    "MARLCoordinator",
-    "PressureLevel",
-    "ParallelExecutionOptimizer",
-    "RayClusterManager",
-    "LanguageDetector",
-    "SemanticFilter",
-})
-
-# __all__ = union of all explicit attrs + ghosts + load_optional
+# __all__ = union of all explicit attrs + load_optional
 _all_names: set[str] = set()
 for explicit in _EXPLICIT_ATTRS_BY_MODULE.values():
     _all_names.update(explicit)
 
-__all__ = sorted(_all_names | _ghosts_and_special | {"load_optional"})
+__all__ = sorted(_all_names | {"load_optional"})

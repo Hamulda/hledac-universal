@@ -152,6 +152,11 @@ class TorTransport(Transport):
     async def stop(self) -> None:
         """Graceful Tor shutdown."""
         from hledac.universal.paths import TOR_ROOT
+        from hledac.universal.utils.secure_zero import wipe_tor_identity
+
+        # G1: Secure wipe of Tor identity material before shutdown
+        wipe_tor_identity(self.onion_address)
+
         pid_path = TOR_ROOT / 'tor.pid'
         if pid_path.exists():
             try:
@@ -198,8 +203,18 @@ class TorTransport(Transport):
         Sprint F214Q B.3: Fallback cleanup guard — logs warning if stop() was not called.
         Does NOT call stop() here (can raise in destructor).
         Cleanup must be done via stop() explicitly.
+        G1: Safety-net wipe of onion address even if stop() was never called.
         """
-        if getattr(self, 'tor_process', None) is not None or getattr(self, 'http_server', None) is not None:
+        # G1: wipe identity in destructor as last-resort safety net
+        try:
+            onion_addr = getattr(self, "onion_address", None)
+            if onion_addr:
+                from hledac.universal.utils.secure_zero import wipe_tor_identity
+
+                wipe_tor_identity(onion_addr)
+        except Exception:
+            pass  # swallow all errors in destructor
+        if getattr(self, "tor_process", None) is not None or getattr(self, "http_server", None) is not None:
             logger.warning(f"TorTransport.__del__: stop() not called — Tor process or HTTP server may leak. circuits_created={getattr(self, '_circuits_created', 0)}, circuit_failures={getattr(self, '_circuit_failures', 0)}")
 
     async def wait_ready(self):

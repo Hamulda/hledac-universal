@@ -22,7 +22,7 @@ Features:
 """
 from __future__ import annotations
 import asyncio
-import json
+import orjson as json
 import logging
 import os
 import subprocess
@@ -186,8 +186,8 @@ class _NERPersistentWorker:
                                     ready_event.set()
                                 continue
                             try:
-                                response = json.loads(line.decode())
-                            except json.JSONDecodeError:
+                                response = json.loads(line)
+                            except ValueError:
                                 logger.warning(f"NER worker invalid JSON: {line[:100]}")
                                 continue
                             rid = response.pop("_request_id", None)
@@ -280,7 +280,7 @@ class _NERPersistentWorker:
                 if self._proc is None or self._proc.stdin is None:
                     return None
                 try:
-                    self._proc.stdin.write((json.dumps(request) + "\n").encode("utf-8"))
+                    self._proc.stdin.write(json.dumps(request) + b"\n")
                     await asyncio.wait_for(self._proc.stdin.drain(), timeout=5.0)
                 except BrokenPipeError:
                     logger.warning("NER worker stdin BrokenPipe — restarting")
