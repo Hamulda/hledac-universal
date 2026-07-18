@@ -136,6 +136,8 @@ class AccelInfo(msgspec.Struct, frozen=True, gc=False):
     version_tuple: tuple[int, int, int]
     abi_version: int  # ISSUE-040: ABI version from Rust extension (0 = unknown/unavailable)
     backend: str  # "rust" | "python"
+    capability_score: float = 0.0  # ISSUE-2: fraction of reference symbols present
+    so_mtime: float | None = None  # ISSUE-2: mtime of loaded .so at probe time
 
     @property
     def is_compatible(self) -> bool:
@@ -198,6 +200,16 @@ class AccelBackend:
         return self._ensure_probe().available
 
     @property
+    def capability_score(self) -> float:
+        """ISSUE-2: Fraction of reference symbols present in the Rust binary (0.0-1.0)."""
+        return self._ensure_probe().capability_score
+
+    @property
+    def so_mtime(self) -> float | None:
+        """ISSUE-2: mtime of the loaded .so at probe time."""
+        return self._ensure_probe().so_mtime
+
+    @property
     def info(self) -> AccelInfo:
         """Frozen accelerator info snapshot."""
         p = self._ensure_probe()
@@ -207,6 +219,8 @@ class AccelBackend:
             version_tuple=p.version_tuple,
             abi_version=p.abi_version,
             backend="rust" if p.available else "python",
+            capability_score=p.capability_score,
+            so_mtime=p.so_mtime,
         )
 
     # -------------------------------------------------------------------------

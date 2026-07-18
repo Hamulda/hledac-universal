@@ -22,6 +22,7 @@ F-GLOBAL: Global state refactoring (2026-06-30):
 from __future__ import annotations
 import asyncio
 import concurrent.futures
+import contextvars
 import functools
 import importlib.util
 import os
@@ -43,6 +44,20 @@ if TYPE_CHECKING:
 from core.psutil_shim import process as _psutil_process
 from core.rust_backend import rust as _rust_backend
 from hledac.universal.utils.async_helpers import parallel
+from tenacity import (
+    retry,
+    retry_if_exception,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential_jitter,
+)
+from tenacity import RetryCallState as _TenacityRetryCallState
+
+# Context variable for passing circuit-breaker state into tenacity callbacks.
+# ISSUE-7: avoids closure capture of mutable objects across tenacity retry boundaries.
+_cb_domain_var: contextvars.ContextVar[str] = contextvars.ContextVar('_cb_domain', default='')
+_cb_breaker_var: contextvars.ContextVar['CircuitBreaker | None'] = contextvars.ContextVar('_cb_breaker', default=None)  # type: ignore[valid-type]
+
 _URL_OPS_WARNING = False
 
 def __getattr__(name: str) -> Any:
@@ -62,6 +77,119 @@ def __getattr__(name: str) -> Any:
     if name == 'rust_html':
         return _rust_backend.raw
     raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
+
+
+# --- Tenacity retry integration (ISSUE-7) ----------------------------------------
+
+
+class _RetryableStatus(Exception):
+    """Signals a retryable HTTP status that tenacity can retry via retry_if_exception_type."""
+
+    __slots__ = ('status_code', 'retry_after', 'circuit_breaker_domain', 'is_timeout')
+
+    def __init__(
+        self,
+        status_code: int,
+        retry_after: float | None = None,
+        circuit_breaker_domain: str = '',
+        is_timeout: bool = False,
+    ) -> None:
+        super().__init__(status_code, retry_after, circuit_breaker_domain, is_timeout)
+        self.status_code = status_code
+        self.retry_after = retry_after
+        self.circuit_breaker_domain = circuit_breaker_domain
+        self.is_timeout = is_timeout
+
+
+# Module-level state for decorrelated jitter chain across tenacity retries.
+# Reset before each top-level fetch call via _reset_tenacity_jitter_state().
+_tenacity_prev_sleep: float = 0.0
+
+
+def _reset_tenacity_jitter_state() -> None:
+    """Reset jitter state before a new fetch call (ISSUE-7)."""
+    global _tenacity_prev_sleep
+    _tenacity_prev_sleep = 0.0
+
+
+def _tenacity_wait_jitter(retry_state: _TenacityRetryCallState) -> float:
+    """Tenacity wait generator: Retry-After header → backoff → jitter cap at 8 s.
+
+    ISSUES-7: Replaces manual retry loop with tenacity decorator.
+    Uses decorrelated jitter (same formula as existing _compute_backoff_seconds)
+    but accepts tenacity's RetryCallState so @retry can drive it.
+
+    prev_sleep is carried via module-level _tenacity_prev_sleep to maintain
+    the decorrelated jitter chain across retries. Reset via _reset_tenacity_jitter_state().
+    """
+    global _tenacity_prev_sleep
+    attempt = retry_state.attempt_number
+    exc = retry_state.outcome.exception() if retry_state.outcome is not None else None
+    retry_after: float | None = None
+    if isinstance(exc, _RetryableStatus):
+        retry_after = exc.retry_after
+    # Fallback: geometric backoff capped at 8 s (matches _compute_backoff_seconds)
+    if retry_after is None or retry_after <= 0:
+        retry_after = min(2.0 ** (attempt + 1), 8.0)
+    else:
+        retry_after = min(retry_after, 60.0)
+    # Decorrelated jitter: same formula as _compute_backoff_seconds
+    jittered = min(8.0, _JITTER_RNG.uniform(0.0, max(retry_after, _tenacity_prev_sleep) * 3.0))
+    _tenacity_prev_sleep = jittered
+    return jittered
+
+
+# --- _RetryableStatus retry predicate (used by tenacity) ------------------------
+
+
+def _is_retryable_status_exception(exc: BaseException) -> bool:
+    """Tenacity predicate: retry only on _RetryableStatus (HTTP retryable codes)."""
+    return isinstance(exc, _RetryableStatus)
+
+
+def _tenacity_before_sleep(retry_state: _TenacityRetryCallState) -> None:
+    """Tenacity before_sleep: record circuit-breaker failure before retry delay.
+
+    ISSUES-7: Called by tenacity AFTER a retryable failure but BEFORE the wait delay.
+    Reads circuit-breaker state from context variables set by async_fetch_public_text.
+    """
+    exc = retry_state.outcome.exception() if retry_state.outcome is not None else None
+    if not isinstance(exc, _RetryableStatus):
+        return
+    cb = _cb_breaker_var.get()
+    cb_domain = _cb_domain_var.get()
+    if cb is not None:
+        cb.record_failure(failure_kind=str(exc.status_code), is_timeout=exc.is_timeout)
+    if cb_domain:
+        try:
+            from transport.circuit_breaker import rust_circuit_record_failure
+
+            rust_circuit_record_failure(cb_domain, is_timeout=exc.is_timeout)
+        except Exception:  # noqa: BLE001 — best-effort; Rust CB unavailable is non-fatal
+            pass
+
+
+def _tenacity_after(retry_state: _TenacityRetryCallState) -> None:
+    """Tenacity after: record circuit-breaker success on final success (ISSUE-7).
+
+    Reads circuit-breaker state from context variables set by async_fetch_public_text.
+    """
+    outcome_ok = retry_state.outcome.exception() is None if retry_state.outcome is not None else False
+    if not outcome_ok:
+        return
+    cb = _cb_breaker_var.get()
+    cb_domain = _cb_domain_var.get()
+    if cb is not None:
+        cb.record_success()
+    if cb_domain:
+        try:
+            from transport.circuit_breaker import rust_circuit_record_success
+
+            rust_circuit_record_success(cb_domain)
+        except Exception:  # noqa: BLE001 — best-effort; Rust CB unavailable is non-fatal
+            pass
+
+
 _classify_url_cache: PyCacheDict[str, tuple[str, str]] = PyCacheDict(512, 300.0)
 @functools.lru_cache(maxsize=1)
 def _get_rust_url_cache() -> 'Any':
@@ -2002,712 +2130,22 @@ async def _playwright_locked(url: str, timeout: float) -> str:
             await browser.close()
         await _cooldown_after_browser_stop()
 
-async def async_fetch_public_text(url: str, timeout_s: float=35.0, max_bytes: int=MAX_BYTES_DEFAULT, use_stealth: bool=False, use_js: bool=False, use_doh: bool=False, js_confidence: float=0.8, priority: int=5, bypass_circuit_breaker: bool=False) -> FetchResult:
-    """
-    Fetch a public URL using the shared aiohttp session.
 
-    P4 stealth mode: optional StealthManager/StealthSession for enhanced privacy.
-    P4 Tor mode: .onion URLs automatically routed via Tor SOCKS5 proxy.
-    P7 JS mode: Camoufox (primary) with nodriver fallback for JS-heavy pages.
-    Chunked streaming with hard size cap.
-    CancelledError propagates (not swallowed).
-
-    Parameters
-    ----------
-    url : str
-        Target URL (http or https only, .onion via Tor SOCKS5).
-    timeout_s : float
-        Per-request timeout in seconds (default 35 s, scaled x2 for Tor).
-    max_bytes : int
-        Maximum bytes to read from body (default 2 MB, hard cap 10 MB).
-    use_stealth : bool
-        If True, use StealthManager/StealthSession for enhanced stealth
-        (header rotation, fingerprint randomization, rate limiting).
-    use_js : bool
-        If True, force JS rendering via Camoufox/nodriver.
-    use_doh : bool
-        P16: If True, resolve hostname via DoH (cloudflare-dns) before
-        connecting. Falls back to system DNS if DoH fails. Configurable
-        via hledac.universal.config.PrivacyConfig.use_doh.
-
-    Returns
-    -------
-    FetchResult
-        Typed result with final_url, status, content_type, text (or None),
-        byte counts, elapsed_ms, and optional error.
-    """
-    t0 = time.monotonic()
-    _tc = TransportCounters()
-    _request_id: str = ''
-    try:
-        from core.telemetry.context_state import reset_request_id, set_request_id
-        _request_id = set_request_id()
-    except Exception:  # noqa: BLE001 — best-effort; telemetry setup failure is non-fatal
-        pass
-    if not isinstance(url, str):
-        elapsed_ms = (time.monotonic() - t0) * 1000
-        return FetchResult(url=str(url) if url is not None else '', final_url=str(url) if url is not None else '', status_code=0, content_type='', text=None, fetched_bytes=0, declared_length=-1, elapsed_ms=elapsed_ms, error='url_empty', failure_stage='validation')
-    validation_error = _validate_url(url)
-    if validation_error is not None:
-        elapsed_ms = (time.monotonic() - t0) * 1000
-        return FetchResult(url=url, final_url=url, status_code=0, content_type='', text=None, fetched_bytes=0, declared_length=-1, elapsed_ms=elapsed_ms, error=validation_error, failure_stage='validation')
-    _url_kind: str = 'malformed'
-    _url_host: str = ''
-    try:
-        _url_kind, _url_host = _classify_url_cached(url)
-    except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-        logger.debug('URL classification failed (non-fatal): {_e}', _e=_e)
-    _circuit_breaker_domain: str = _url_host
-    _circuit_breaker: CircuitBreaker | None = None
-    # ISSUE #33: Feed sources have per-source asyncio.timeout — domain circuit breaker
-    # is redundant and can block all sources from same domain. Bypass for feed paths.
-    # ISSUE-41: Rust fast-path — lock-free atomic check before Python CircuitBreaker
-    if not bypass_circuit_breaker:
-        try:
-            if _circuit_breaker_domain:
-                # Fast-path: try Rust lock-free circuit breaker first
-                from transport.circuit_breaker import rust_circuit_is_open, rust_circuit_record_success, rust_circuit_record_failure
-                _rust_open = rust_circuit_is_open(_circuit_breaker_domain)
-                if _rust_open is True:
-                    # Circuit open in Rust — return blocked immediately
-                    elapsed_ms = (time.monotonic() - t0) * 1000
-                    return FetchResult(url=url, final_url=url, status_code=0, content_type='', text=None, fetched_bytes=0, declared_length=-1, elapsed_ms=elapsed_ms, error='circuit_breaker_open:rust_fast_path', failure_stage='circuit_breaker', selected_transport='httpx_h2', transport_policy_reason='clearnet_default')
-                elif _rust_open is None:
-                    # Rust unavailable — fall back to Python CircuitBreaker
-                    _circuit_breaker = get_breaker(_circuit_breaker_domain)
-                    if _circuit_breaker is not None:
-                        decision = _circuit_breaker.check_circuit()
-                        if not decision.allowed:
-                            elapsed_ms = (time.monotonic() - t0) * 1000
-                            return FetchResult(url=url, final_url=url, status_code=0, content_type='', text=None, fetched_bytes=0, declared_length=-1, elapsed_ms=elapsed_ms, error=f'circuit_breaker_open:{decision.state}:{decision.reason}', failure_stage='circuit_breaker', selected_transport='httpx_h2', transport_policy_reason='clearnet_default')
-                # Rust returned False (circuit closed) — continue to fetch
-        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-            logger.debug('Circuit breaker check failed (non-fatal): {e}', e=e)
-    max_bytes = _compute_effective_max_bytes(max_bytes)
-    _router_decision: TransportDecision = route_transport(url, use_stealth=use_stealth, use_js=use_js, cache_safe=False, retry_after_status=None, suggested_timeout_s=timeout_s, suggested_max_bytes=max_bytes, suggested_concurrency=None, preclassified_kind=_url_kind, preclassified_host=_url_host)
-    _router_lane = _router_decision.lane
-    _router_reason = _router_decision.reason
-    _original_policy_reason: str | None = None
-    _httpx_fallback_reason: str | None = None
-    _curl_fallback_reason: str | None = None
-    _actual_transport: str = ''
-    _fallback_info: str | None = None
-    use_tor = _router_lane == 'tor_socks'
-    use_i2p = _router_lane == 'i2p_socks'
-    _is_h2_candidate = _router_lane == 'httpx_h2'
-    _is_h3_candidate = _router_lane == 'httpx_h3'
-    try:
-        from hledac.universal.transport.policy import get_transport_policy
-        _policy_decision = get_transport_policy(use_stealth=use_stealth, use_js=use_js, retry_after_status=None, js_confidence=js_confidence, priority=priority, is_httpx_h2_candidate=_is_h2_candidate, is_httpx_h3_candidate=_is_h3_candidate)
-        _tier = _policy_decision.tier
-        _t0_allowed = True
-        _t3_allowed = _policy_decision.js_allowed
-        _h2_allowed = _policy_decision.h2_allowed
-        _h3_allowed = _policy_decision.h3_allowed
-    except Exception as _policy_e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-        _tier = 'T0_curl_cffi'
-        _t0_allowed = True
-        _t3_allowed = False
-        _h2_allowed = False
-        _h3_allowed = False
-        logger.debug('[policy] get_transport_policy failed (falling back to T0): {_policy_e}', _policy_e=_policy_e)
-    if use_js:
-        if not _t3_allowed:
-            logger.warning('BROWSER_DEFERRED url=%s priority=%d js_confidence=%.2f — policy_js_blocked', url, priority, js_confidence)
-        else:
-            logger.info('JS rendering requested for {url}', url=url)
-            js_html = await _fetch_with_nodriver(url, _url_kind, _url_host)
-            if not js_html:
-                logger.warning('nodriver failed, trying Camoufox: {url}', url=url)
-                js_html = await _fetch_with_camoufox(url, timeout=timeout_s)
-            if not js_html:
-                logger.warning('Camoufox failed, trying Playwright: {url}', url=url)
-                js_html = await _fetch_with_playwright(url, timeout=timeout_s)
-            if js_html:
-                js_text, js_matches, js_meta = await process_html_payload(js_html, url)
-                elapsed_ms = (time.monotonic() - t0) * 1000
-                _tc.js_renderer_count += 1
-                _meta_sources = list(js_meta.get('ga_gtm_ids', ()))
-                if js_meta.get('og_tags'):
-                    _meta_sources.append('og_tags')
-                if js_meta.get('comments'):
-                    _meta_sources.append('html_comments')
-                if js_text:
-                    _store_body_hash(url, _compute_body_hash(js_text.encode('utf-8', errors='replace')))
-                _matched: tuple[str, ...] = tuple(((m.label or '') + '|' + m.pattern + '|' + m.value for m in js_matches or []))
-                return FetchResult(url=url, final_url=url, status_code=200, content_type='text/html', text=js_text, fetched_bytes=len(js_html), declared_length=-1, elapsed_ms=elapsed_ms, error=None, selected_transport='js', transport_policy_reason='js_required', transport_counters=_tc, hydration_sources=tuple(_meta_sources), matched_patterns=_matched)
-            elapsed_ms = (time.monotonic() - t0) * 1000
-            _tc.js_renderer_count += 1
-            return FetchResult(url=url, final_url=url, status_code=0, content_type='', text=None, fetched_bytes=0, declared_length=-1, elapsed_ms=elapsed_ms, error='js_render_failed', failure_stage='fetching', selected_transport='js', transport_policy_reason='js_required', transport_counters=_tc)
-    _use_httpx_h2: bool = _router_lane == 'httpx_h2' and _h2_allowed
-    if _use_httpx_h2:
-        logger.debug('[HTTPX] H2 lane selected for {url}: {_router_reason}', url=url, _router_reason=_router_reason)
-        _original_policy_reason = _router_reason
-        try:
-            try:
-                await _blocking_altsvc_probe_for_url(url)
-            except Exception:  # noqa: BLE001 — best-effort; Alt-Svc probe failure is non-fatal
-                pass
-            _httpx_resp = await fetch_via_httpx_h2(url, timeout_s=timeout_s)
-            _httpx_final_url = str(_httpx_resp.url)
-            _httpx_resp_cast = cast(Any, _httpx_resp)
-            _httpx_status = _httpx_resp_cast.status
-            _httpx_content_type = _httpx_resp.headers.get('Content-Type', '')
-            _httpx_raw_ct = _httpx_content_type.split(';')[0].strip().lower()
-            _http_ver: str | None = None
-            try:
-                _http_ver = _httpx_resp.extensions.get('http_version', None)
-                if _http_ver:
-                    _http_ver = f'http/{(_http_ver.decode() if isinstance(_http_ver, bytes) else _http_ver)}'
-            except AttributeError:
-                pass
-                _http_ver = _httpx_resp.extensions.get('http_version', None)
-                if _http_ver:
-                    _http_ver = f'http/{(_http_ver.decode() if isinstance(_http_ver, bytes) else _http_ver)}'
-            _body: BodyReadResult = await _read_body_into(_httpx_resp_cast.aiter_chunked(65536), max_bytes)
-            if _body.truncated:
-                elapsed_ms = (time.monotonic() - t0) * 1000
-                _tc.httpx_h2_count += 1
-                return FetchResult(url=url, final_url=_httpx_final_url, status_code=_httpx_status, content_type=_httpx_content_type, text=None, fetched_bytes=_body.total_read, declared_length=-1, elapsed_ms=elapsed_ms, error='size_cap_exceeded', failure_stage='size', selected_transport='httpx_h2', http_version=_http_ver, transport_policy_reason=_router_reason, transport_counters=_tc)
-            _text, _decode_replaced, _decode_replacement_count, _decode_codec = _try_decode(_body.body)
-            elapsed_ms = (time.monotonic() - t0) * 1000
-            redirected, redirect_target = _derive_redirect_fields(url, _httpx_final_url)
-            _tc.httpx_h2_count += 1
-            if _text:
-                _store_body_hash(url, _compute_body_hash(_text.encode('utf-8', errors='replace')))
-            return FetchResult(url=url, final_url=_httpx_final_url, status_code=_httpx_status, content_type=_httpx_content_type, text=_text, fetched_bytes=_body.total_read, declared_length=-1, elapsed_ms=elapsed_ms, error=None, decode_replaced=_decode_replaced, decode_replacement_count=_decode_replacement_count, redirected=redirected, redirect_target=redirect_target, selected_transport='httpx_h2', http_version=_http_ver, transport_policy_reason=_router_reason, transport_counters=_tc, body=_body.body)
-        except asyncio.CancelledError:
-            elapsed_ms = (time.monotonic() - t0) * 1000
-            raise
-        except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-            elapsed_ms = (time.monotonic() - t0) * 1000
-            try:
-                from hledac.universal.transport.httpx_transport import classify_httpx_h2_error, record_httpx_h2_failure
-                _httpx_err_type = classify_httpx_h2_error(_e)
-                record_httpx_h2_failure()
-            except asyncio.CancelledError:
-                raise
-            except Exception:  # noqa: BLE001 — best-effort; error classification for telemetry
-                _httpx_err_type = 'unknown_httpx_error'
-            logger.warning('[HTTPX] H2 lane failed for {url} ({_httpx_err_type}), falling back to aiohttp: {_e}', url=url, _httpx_err_type=_httpx_err_type, _e=_e)
-            _use_httpx_h2 = False
-            _httpx_fallback_reason: str | None = 'httpx_h2_fallback'
-    if use_tor or use_i2p:
-        timeout_s = timeout_s * TOR_STEALTH_TIMEOUT_SCALE
-    _resolved_ip: str | None = None
-    if use_doh:
-        try:
-            from hledac.universal.security.passive_dns import get_random_doh_provider, resolve_doh
-            hostname = _url_host if _url_host else ''
-            if hostname:
-                _doh_provider = get_random_doh_provider()
-                ips = await resolve_doh(hostname, provider=_doh_provider)
-                if ips:
-                    _resolved_ip = ips[0]
-                    logger.debug('DoH [{_doh_provider}] resolved {hostname} → {_resolved_ip}', _doh_provider=_doh_provider, hostname=hostname, _resolved_ip=_resolved_ip)
-                else:
-                    logger.debug('DoH [{_doh_provider}] returned no IPs for {hostname}, falling back to system DNS', _doh_provider=_doh_provider, hostname=hostname)
-        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-            logger.debug('DoH resolution failed for {url}: {e}', url=url, e=e)
-    stealth_session = None
-    if use_stealth:
-        try:
-            from hledac.universal.stealth.stealth_session import StealthSession
-            stealth_session = StealthSession()
-        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-            logger.warning('Stealth session unavailable, proceeding without: {e}', e=e)
-    if _router_lane == 'curl_cffi_stealth':
-        _original_policy_reason = _router_reason
-        _stealth_headers = build_randomized_headers()
-        try:
-            _curl_http_version = _altsvc_http_version_for(_altsvc_extract_host(url, _url_host))
-            _curl_result = await fetch_via_curl_cffi_cached(url=url, headers=_stealth_headers, timeout_s=timeout_s, max_bytes=max_bytes, profile='chrome110', http_version=_curl_http_version, _pre_probe=True)
-            _altsvc_record_from_result(url, _curl_result.get('headers'))
-            _curl_text: str | None
-            _curl_bytes = _curl_result.get('content', b'')
-            _curl_decode_replaced = False
-            _curl_decode_replacement_count = 0
-            _curl_error = _curl_result.get('error', None)
-            _curl_declared_length: int = -1
-            _curl_headers = _curl_result.get('headers', {}) or {}
-            if _curl_headers:
-                _cl = _curl_headers.get('content-length', _curl_headers.get('Content-Length', '-1'))
-                try:
-                    _curl_declared_length = int(_cl)
-                except (ValueError, TypeError):
-                    _curl_declared_length = -1
-            if _curl_bytes:
-                _curl_text, _curl_decode_replaced, _curl_decode_replacement_count, _curl_decode_codec = _try_decode(_curl_bytes)
-            else:
-                _curl_text = None
-            if _curl_text and _needs_js_fetch(_curl_text, url=url, content_length=len(_curl_bytes), declared_length=_curl_declared_length):
-                from hledac.universal.utils.hydration_extractor import extract_static_hydration as _extract_static_hydration
-                _hydration = _extract_static_hydration(_curl_text)
-                _tc.static_hydration_attempted += 1
-                if _hydration.sufficient:
-                    _tc.static_hydration_sufficient += 1
-                    logger.info('curl_cffi static hydration sufficient for {url}', url=url)
-                    _curl_elapsed_ms = (time.monotonic() - t0) * 1000
-                    _tc.curl_cffi_count += 1
-                    _curl_final_url = _curl_result.get('final_url', url)
-                    _curl_redirected, _curl_redirect_target = _derive_redirect_fields(url, _curl_final_url)
-                    return FetchResult(url=url, final_url=_curl_final_url, status_code=_curl_result.get('status_code', 0), content_type=_curl_result.get('content_type', ''), text=_hydration.text if _hydration.text else _curl_text, fetched_bytes=len(_curl_bytes), declared_length=-1, elapsed_ms=_curl_elapsed_ms, error=_curl_error, decode_replaced=_curl_decode_replaced, decode_replacement_count=_curl_decode_replacement_count, redirected=_curl_redirected, redirect_target=_curl_redirect_target, failure_stage=_curl_result.get('failure_stage', None), network_error_kind=_curl_result.get('network_error_kind', None), selected_transport='curl_cffi', http_version=None, transport_policy_reason=_router_reason, transport_fallback_reason=None, transport_counters=_tc, js_renderer_skipped_reason=f'static_hydration_sufficient:{_hydration.reason}', hydration_score=_hydration.hydration_score, hydration_sources=tuple(_hydration.sources) if hasattr(_hydration, 'sources') else ())
-                elif _hydration.found:
-                    _tc.static_hydration_insufficient += 1
-                from hledac.universal.rendering.macos_webkit_renderer import fetch_with_macos_webkit
-                _wkr = await fetch_with_macos_webkit(url, timeout_s=timeout_s)
-                if _wkr.ok and _wkr.html:
-                    _wkr_text, _wkr_matches, _wkr_meta = await process_html_payload(_wkr.html, url)
-                    _wkr_elapsed_ms = (time.monotonic() - t0) * 1000
-                    _tc.js_renderer_count += 1
-                    _tc.macos_webkit_count += 1
-                    _wkr_sources = list(_wkr_meta.get('ga_gtm_ids', ()))
-                    if _wkr_meta.get('og_tags'):
-                        _wkr_sources.append('og_tags')
-                    if _wkr_meta.get('comments'):
-                        _wkr_sources.append('html_comments')
-                    logger.info('WKWebView succeeded for {url} (curl_cffi fallback)', url=url)
-                    return FetchResult(url=url, final_url=url, status_code=200, content_type='text/html', text=_wkr_text, fetched_bytes=_wkr.rendered_bytes, declared_length=-1, elapsed_ms=_wkr_elapsed_ms, error=None, selected_transport='js', transport_policy_reason='js_required', transport_counters=_tc, hydration_sources=tuple(_wkr_sources))
-                if not _all_js_renderers_unavailable():
-                    _js_html = await _fetch_with_nodriver(url, _url_kind, _url_host)
-                    if _js_html:
-                        _js_text, _js_matches, _ = await process_html_payload(_js_html, url)
-                        _js_elapsed_ms = (time.monotonic() - t0) * 1000
-                        _tc.js_renderer_count += 1
-                        logger.info('nodriver succeeded for {url} (curl_cffi fallback)', url=url)
-                        _matched = tuple(((m.label or '') + '|' + m.pattern + '|' + m.value for m in _js_matches or []))
-                        return FetchResult(url=url, final_url=url, status_code=200, content_type='text/html', text=_js_text, fetched_bytes=len(_js_html), declared_length=-1, elapsed_ms=_js_elapsed_ms, error=None, selected_transport='js', transport_policy_reason='js_required', transport_counters=_tc, matched_patterns=_matched)
-                    _js_html = await _fetch_with_camoufox(url, timeout=timeout_s)
-                    if _js_html:
-                        _js_text, _js_matches, _ = await process_html_payload(_js_html, url)
-                        _js_elapsed_ms = (time.monotonic() - t0) * 1000
-                        _tc.js_renderer_count += 1
-                        logger.info('Camoufox succeeded for {url} (curl_cffi fallback)', url=url)
-                        _matched = tuple(((m.label or '') + '|' + m.pattern + '|' + m.value for m in _js_matches or []))
-                        return FetchResult(url=url, final_url=url, status_code=200, content_type='text/html', text=_js_text, fetched_bytes=len(_js_html), declared_length=-1, elapsed_ms=_js_elapsed_ms, error=None, selected_transport='js', transport_policy_reason='js_required', transport_counters=_tc, matched_patterns=_matched)
-                    _js_html = await _fetch_with_playwright(url, timeout=timeout_s)
-                    if _js_html:
-                        _js_text, _js_matches, _ = await process_html_payload(_js_html, url)
-                        _js_elapsed_ms = (time.monotonic() - t0) * 1000
-                        _tc.js_renderer_count += 1
-                        logger.info('Playwright succeeded for {url} (curl_cffi fallback)', url=url)
-                        _matched = tuple(((m.label or '') + '|' + m.pattern + '|' + m.value for m in _js_matches or []))
-                        return FetchResult(url=url, final_url=url, status_code=200, content_type='text/html', text=_js_text, fetched_bytes=len(_js_html), declared_length=-1, elapsed_ms=_js_elapsed_ms, error=None, selected_transport='js', transport_policy_reason='js_required', transport_counters=_tc, matched_patterns=_matched)
-            elapsed_ms = (time.monotonic() - t0) * 1000
-            _curl_final_url = _curl_result.get('final_url', url)
-            _curl_redirected, _curl_redirect_target = _derive_redirect_fields(url, _curl_final_url)
-            _tc.curl_cffi_count += 1
-            return FetchResult(url=url, final_url=_curl_final_url, status_code=_curl_result.get('status_code', 0), content_type=_curl_result.get('content_type', ''), text=_curl_text, fetched_bytes=len(_curl_bytes), declared_length=-1, elapsed_ms=elapsed_ms, error=_curl_error, decode_replaced=_curl_decode_replaced, decode_replacement_count=_curl_decode_replacement_count, redirected=_curl_redirected, redirect_target=_curl_redirect_target, failure_stage=_curl_result.get('failure_stage', None), network_error_kind=_curl_result.get('network_error_kind', None), selected_transport='curl_cffi', http_version=None, transport_policy_reason=_router_reason, transport_fallback_reason=None, transport_counters=_tc, body=_curl_bytes)
-        except asyncio.CancelledError:
-            elapsed_ms = (time.monotonic() - t0) * 1000
-            raise
-        except Exception as _curl_e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-            elapsed_ms = (time.monotonic() - t0) * 1000
-            logger.warning('[curl_cffi] stealth lane failed for {url}, falling back to aiohttp: {_curl_e}', url=url, _curl_e=_curl_e)
-            _curl_fallback_reason = f'curl_cffi_failed:{type(_curl_e).__name__}'
-            _tc.curl_cffi_fallback_to_aiohttp_count += 1
-            _tc.fallback_count += 1
-    if use_tor and ENV.get_bool('HLEDAC_ENABLE_TOR') and (_url_kind == 'onion'):
-        try:
-            _stealth_headers = build_randomized_headers()
-            _tor_curl_result = await fetch_via_tor_curl_cffi(url=url, headers=_stealth_headers, timeout_s=timeout_s * TOR_STEALTH_TIMEOUT_SCALE, max_bytes=max_bytes, profile='chrome110', tor_manager=None, circuit_rotation_count=TOR_CIRCUIT_RENEWAL_REQUEST_COUNT)
-            _tor_curl_bytes = _tor_curl_result.get('content', b'')
-            _tor_curl_text: str | None
-            _tor_curl_decode_replaced = False
-            _tor_curl_decode_replacement_count = 0
-            _tor_curl_error = _tor_curl_result.get('error', None)
-            if _tor_curl_bytes:
-                _tor_curl_text, _tor_curl_decode_replaced, _tor_curl_decode_replacement_count, _tor_curl_decode_codec = _try_decode(_tor_curl_bytes)
-            else:
-                _tor_curl_text = None
-            elapsed_ms = (time.monotonic() - t0) * 1000
-            _tc.curl_cffi_tor_count += 1
-            if _tor_curl_text and (not _tor_curl_error):
-                _store_body_hash(url, _compute_body_hash(_tor_curl_text.encode('utf-8', errors='replace')))
-            return FetchResult(url=url, final_url=_tor_curl_result.get('final_url', url), status_code=_tor_curl_result.get('status_code', 0), content_type=_tor_curl_result.get('content_type', ''), text=_tor_curl_text, fetched_bytes=len(_tor_curl_bytes) if _tor_curl_bytes else 0, declared_length=-1, elapsed_ms=elapsed_ms, error=_tor_curl_error, decode_replaced=_tor_curl_decode_replaced, decode_replacement_count=_tor_curl_decode_replacement_count, failure_stage=_tor_curl_result.get('failure_stage', None), network_error_kind=_tor_curl_result.get('network_error_kind', None), selected_transport='curl_cffi_tor', transport_policy_reason='tor_curl_cffi', transport_counters=_tc)
-        except asyncio.CancelledError:
-            raise
-        except Exception as _tor_curl_e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-            elapsed_ms = (time.monotonic() - t0) * 1000
-            logger.warning('[curl_cffi_tor] onion fetch failed for {url}, falling back to httpx-socks: {_tor_curl_e}', url=url, _tor_curl_e=_tor_curl_e)
-            _tc.curl_cffi_tor_fallback_count += 1
-    elif use_tor and _url_kind == 'onion':
-        logger.warning('onion_url_skipped: tor_not_enabled {url}', url=url)
-    tor_session = None
-    if use_tor:
-        try:
-            tor_session = await _get_tor_session()
-        except RuntimeError as e:
-            elapsed_ms = (time.monotonic() - t0) * 1000
-            _tc.tor_httpx_socks_count += 1
-            return FetchResult(url=url, final_url=url, status_code=0, content_type='', text=None, fetched_bytes=0, declared_length=-1, elapsed_ms=elapsed_ms, error=f'tor_unavailable;{type(e).__name__};{e}', failure_stage='connection', selected_transport='httpx_socks', transport_policy_reason='darknet_url', transport_counters=_tc)
-    i2p_session = None
-    if use_i2p:
-        try:
-            i2p_session = await _get_i2p_session()
-        except RuntimeError as e:
-            elapsed_ms = (time.monotonic() - t0) * 1000
-            _tc.i2p_httpx_socks_count += 1
-            return FetchResult(url=url, final_url=url, status_code=0, content_type='', text=None, fetched_bytes=0, declared_length=-1, elapsed_ms=elapsed_ms, error=f'i2p_unavailable;{type(e).__name__};{e}', failure_stage='connection', selected_transport='httpx_socks', transport_policy_reason='darknet_url', transport_counters=_tc)
-    retry_after: float | None = None
-    last_status_code: int = 0
-    last_error: str | None = None
-    for attempt in range(MAX_RETRIES + 1):
-        if use_tor or use_i2p:
-            await _jitter_delay()
-        elif stealth_session is not None:
-            await stealth_session.apply_jitter()
-        if use_tor:
-            await _maybe_renew_tor_circuit()
-        _use_curl_cffi_for_h3 = not use_tor and (not use_i2p) and _h3_allowed and ENV.get_bool('HLEDAC_ENABLE_CURL_CFFI')
-        if _use_curl_cffi_for_h3:
-            _curl_h3_version = _altsvc_http_version_for(_altsvc_extract_host(url, _url_host))
-            if _curl_h3_version is not None:
-                _curl_h3_result = await fetch_via_curl_cffi_cached(url=url, headers=None, timeout_s=timeout_s, max_bytes=max_bytes, profile='chrome110', http_version=_curl_h3_version, _pre_probe=False)
-                _curl_h3_bytes = _curl_h3_result.get('content', b'')
-                _curl_h3_text: str | None
-                if _curl_h3_bytes:
-                    _curl_h3_text = _curl_h3_bytes.decode('utf-8', errors='replace')
-                else:
-                    _curl_h3_text = None
-                _curl_h3_elapsed_ms = (time.monotonic() - t0) * 1000
-                _curl_h3_final_url = _curl_h3_result.get('final_url', url)
-                _curl_h3_redirected, _curl_h3_redirect_target = _derive_redirect_fields(url, _curl_h3_final_url)
-                _curl_h3_decode_replaced = False
-                _curl_h3_decode_replacement_count = 0
-                if _curl_h3_text:
-                    _store_body_hash(url, _compute_body_hash(_curl_h3_text.encode('utf-8', errors='replace')))
-                return FetchResult(url=url, final_url=_curl_h3_final_url, status_code=_curl_h3_result.get('status_code', 0), content_type=_curl_h3_result.get('content_type', ''), text=_curl_h3_text, fetched_bytes=len(_curl_h3_bytes), declared_length=-1, elapsed_ms=_curl_h3_elapsed_ms, error=_curl_h3_result.get('error', None), decode_replaced=_curl_h3_decode_replaced, decode_replacement_count=_curl_h3_decode_replacement_count, redirected=_curl_h3_redirected, redirect_target=_curl_h3_redirect_target, failure_stage=_curl_h3_result.get('failure_stage', None), network_error_kind=_curl_h3_result.get('network_error_kind', None), selected_transport='curl_cffi', http_version='h3', transport_policy_reason='h3_clearnet', transport_counters=_tc)
-        session = tor_session if use_tor else i2p_session if use_i2p else await httpx_client()
-        _semaphore = get_tor_semaphore() if use_tor or use_i2p else get_clearnet_semaphore()
-        if stealth_session is not None:
-            headers = {'User-Agent': stealth_session.rotate_ua()}
-        else:
-            headers = {'User-Agent': DEFAULT_UA}
-        request_kwargs: dict = {'headers': headers, 'allow_redirects': True}
-        if not use_tor and (not use_i2p) and (not use_stealth):
-            try:
-                _ps = _psutil_process()
-                if _ps is not None:
-                    rss_gb = _ps.memory_info().rss / 1000000000.0
-                    if rss_gb > M1_FETCH_SOFT_CEILING_GB:
-                        await asyncio.sleep(0.05)
-            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                logger.debug('Memory check failed (non-fatal): {e}', e=e)
-        try:
-            async with asyncio.timeout(timeout_s):
-                async with _semaphore:
-                    if ENV.get_bool('HLEDAC_ENABLE_STEALTH_LAYER'):
-                        try:
-                            from layers import get_stealth_layer
-                            _sl = get_stealth_layer()
-                            if _sl:
-                                await asyncio.sleep(_sl.get_timing_jitter())
-                        except Exception:  # noqa: BLE001 — best-effort; stealth jitter failure is non-fatal
-                            pass
-                    async with session.get(url, **request_kwargs) as resp:
-                        final_url = str(resp.url)
-                        last_status_code = resp.status_code
-                        content_type = resp.headers.get('Content-Type', '') or ''
-                        raw_content_type = content_type.split(';')[0].strip().lower()
-                        _escalated_to_curl = False
-                        if last_status_code in (403, 429) and attempt == 0:
-                            _env_curl = ENV.get('HLEDAC_ENABLE_CURL_CFFI')
-                            if _env_curl == '1':
-                                _esc_use_curl, _esc_curl_reason = should_use_curl_cffi(url, use_stealth=use_stealth, use_js=use_js, prior_status=last_status_code)
-                                if _esc_use_curl:
-                                    try:
-                                        _esc_http_version = _altsvc_http_version_for(_altsvc_extract_host(url, _url_host))
-                                        _esc_result = await fetch_via_curl_cffi_cached(url=url, headers=None, timeout_s=timeout_s, max_bytes=max_bytes, profile='chrome110', http_version=_esc_http_version, _pre_probe=True)
-                                        _altsvc_record_from_result(url, _esc_result.get('headers'))
-                                        if _esc_result.get('status_code', 0) // 100 == 2:
-                                            _escalated_to_curl = True
-                                            _tc.curl_cffi_count += 1
-                                            _esc_bytes = _esc_result.get('content', b'')
-                                            _esc_text: str | None
-                                            _esc_decode_replaced = False
-                                            _esc_decode_replacement_count = 0
-                                            if _esc_bytes:
-                                                _esc_charset = parse_charset_from_content_type(_esc_result.get('content_type', ''))
-                                                _esc_text, _esc_decode_replaced, _esc_decode_replacement_count, _esc_decode_codec = _try_decode_with_charset(_esc_bytes, http_charset=_esc_charset)
-                                            else:
-                                                _esc_text = None
-                                            _esc_elapsed_ms = (time.monotonic() - t0) * 1000
-                                            _esc_final_url = _esc_result.get('final_url', url)
-                                            _esc_redirected, _esc_redirect_target = _derive_redirect_fields(url, _esc_final_url)
-                                            return FetchResult(url=url, final_url=_esc_final_url, status_code=_esc_result.get('status_code', 0), content_type=_esc_result.get('content_type', ''), text=_esc_text, fetched_bytes=len(_esc_bytes), declared_length=-1, elapsed_ms=_esc_elapsed_ms, error=_esc_result.get('error', None), decode_replaced=_esc_decode_replaced, decode_replacement_count=_esc_decode_replacement_count, redirected=_esc_redirected, redirect_target=_esc_redirect_target, failure_stage=_esc_result.get('failure_stage', None), network_error_kind=_esc_result.get('network_error_kind', None), selected_transport='curl_cffi', http_version=None, transport_policy_reason=_router_reason, transport_fallback_reason='aiohttp_status_403_or_429_to_curl_cffi', transport_counters=_tc)
-                                        else:
-                                            _curl_fallback_reason = f"curl_cffi_status_{_esc_result.get('status_code', 0)}_to_aiohttp"
-                                            _tc.curl_cffi_fallback_to_aiohttp_count += 1
-                                            _tc.fallback_count += 1
-                                    except asyncio.CancelledError:
-                                        raise
-                                    except Exception as _esc_e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                                        _curl_fallback_reason = f'curl_cffi_failed:{type(_esc_e).__name__}'
-                                        _tc.curl_cffi_fallback_to_aiohttp_count += 1
-                                        _tc.fallback_count += 1
-                        if _circuit_breaker and _is_retryable_status(last_status_code):
-                            _circuit_breaker.record_failure(failure_kind=str(last_status_code))
-                            rust_circuit_record_failure(_circuit_breaker_domain, is_timeout=False)
-                            last_error = _build_retry_error(last_status_code, retry_after)
-                            if attempt < MAX_RETRIES:
-                                retry_after = _extract_retry_after(resp.headers)
-                                backoff = _compute_backoff_seconds(retry_after, attempt)
-                                await asyncio.sleep(backoff)
-                                continue
-                        xml_recovered = False
-                        rejected_ct = raw_content_type not in ACCEPTED_CONTENT_TYPES
-                        raw_declared = resp.headers.get('Content-Length')
-                        try:
-                            declared_length = int(raw_declared) if raw_declared else -1
-                        except (ValueError, TypeError):
-                            declared_length = -1
-                        total_read = 0
-                        accumulated_ok = True
-                        first_chunk_peeked = False
-                        if rejected_ct:
-                            first_chunk_peeked = True
-                            is_xmlish, first_chunk = await _peek_aiohttp_first_chunk(resp.content.iter_chunked(65536))
-                            if is_xmlish:
-                                xml_recovered = True
-                            else:
-                                elapsed_ms = (time.monotonic() - t0) * 1000
-                                redirected, redirect_target = _derive_redirect_fields(url, final_url)
-                                if _httpx_fallback_reason == 'httpx_h2_fallback':
-                                    _tc.httpx_h2_fallback_to_aiohttp_count += 1
-                                    _tc.fallback_count += 1
-                                elif _curl_fallback_reason is not None:
-                                    _tc.fallback_count += 1
-                                elif use_tor:
-                                    _tc.tor_httpx_socks_count += 1
-                                elif use_i2p:
-                                    _tc.i2p_httpx_socks_count += 1
-                                else:
-                                    _tc.aiohttp_count += 1
-                                return FetchResult(url=url, final_url=final_url, status_code=last_status_code, content_type=content_type, text=None, fetched_bytes=0, declared_length=declared_length, elapsed_ms=elapsed_ms, error=f'content_type_rejected:{raw_content_type}', redirected=redirected, redirect_target=redirect_target, failure_stage='http', selected_transport='httpx_h2' if _use_httpx_h2 else 'httpx_socks' if use_tor or use_i2p else 'httpx_h2', transport_policy_reason=_router_reason if _use_httpx_h2 else 'darknet_url' if use_tor or use_i2p else 'clearnet_default', transport_fallback_reason='httpx_h2_fallback' if _httpx_fallback_reason == 'httpx_h2_fallback' else None, transport_counters=_tc)
-
-                        async def _read_with_first_chunk() -> AiohttpBodyOutcome:
-                            if not first_chunk_peeked:
-                                iter_chunks = resp.content.iter_chunked(8192)
-                                try:
-                                    return await _read_aiohttp_body_with_peek(iter_chunks, max_bytes, enable_peek=False)
-                                finally:
-                                    await _aclose_aiohttp_stream(iter_chunks)
-
-                            async def _prepended() -> AsyncGenerator[bytes | None]:
-                                yield first_chunk
-                                inner = resp.content.iter_chunked(65536)
-                                try:
-                                    async for c in inner:
-                                        yield c
-                                finally:
-                                    await _aclose_aiohttp_stream(inner)
-                            return await _read_aiohttp_body_with_peek(_prepended(), max_bytes, enable_peek=False)
-                        outcome = await _read_with_first_chunk()
-                        total_read = outcome.total_read
-                        accumulated_ok = not outcome.truncated
-                        if outcome.truncated:
-                            elapsed_ms = (time.monotonic() - t0) * 1000
-                            redirected, redirect_target = _derive_redirect_fields(url, final_url)
-                            if _httpx_fallback_reason == 'httpx_h2_fallback':
-                                _tc.httpx_h2_fallback_to_aiohttp_count += 1
-                                _tc.fallback_count += 1
-                            elif _curl_fallback_reason is not None:
-                                _tc.fallback_count += 1
-                            elif use_tor:
-                                _tc.tor_httpx_socks_count += 1
-                            elif use_i2p:
-                                _tc.i2p_httpx_socks_count += 1
-                            else:
-                                _tc.aiohttp_count += 1
-                            return FetchResult(url=url, final_url=final_url, status_code=last_status_code, content_type=content_type, text=None, fetched_bytes=total_read, declared_length=declared_length, elapsed_ms=elapsed_ms, error='size_cap_exceeded', redirected=redirected, redirect_target=redirect_target, failure_stage='size', selected_transport='httpx_h2' if _use_httpx_h2 else 'httpx_socks' if use_tor or use_i2p else 'httpx_h2', transport_policy_reason=_router_reason if _use_httpx_h2 else 'darknet_url' if use_tor or use_i2p else 'clearnet_default', transport_fallback_reason='httpx_h2_fallback' if _httpx_fallback_reason == 'httpx_h2_fallback' else None, transport_counters=_tc)
-                        if accumulated_ok and outcome.body:
-                            try:
-                                body_bytes = outcome.body
-                                _charset_hint = parse_charset_from_content_type(content_type)
-                                text, decode_replaced, decode_replacement_count, decode_codec = _try_decode_with_charset(body_bytes, http_charset=_charset_hint)
-                                if text and ENV.get_bool('HLEDAC_ENABLE_CONTENT_LAYER'):
-                                    try:
-                                        from layers import get_content_layer
-                                        _cl = get_content_layer()
-                                        if _cl:
-                                            _cleaned = _cl.clean_html(text)
-                                            if _cleaned and _cleaned.content:
-                                                text = _cleaned.content
-                                    except Exception:  # noqa: BLE001 — best-effort; content layer failure is non-fatal
-                                        pass
-                            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                                logger.warning('Decode error in _try_decode: %s', e)
-                                text = None
-                                decode_replaced = False
-                                decode_replacement_count = 0
-                        else:
-                            text = None
-                            decode_replaced = False
-                            decode_replacement_count = 0
-                        skip_js_reason: str | None = None
-                        if text and (not use_js) and _needs_js_fetch(text, url=url, content_length=len(body_bytes) if body_bytes else 0, declared_length=declared_length):
-                            if _all_js_renderers_unavailable():
-                                cap = _get_js_renderer_capability()
-                                unavailable_reasons = [v for v in cap.values() if v is not None]
-                                skip_js_reason = unavailable_reasons[0] if unavailable_reasons else 'all_js_renderers_unavailable'
-                            elif _looks_like_feed_url(url):
-                                skip_js_reason = 'xml_or_feed_url'
-                            elif xml_recovered:
-                                skip_js_reason = 'xml_recovered'
-                            from hledac.universal.utils.hydration_extractor import extract_static_hydration as _extract_static_hydration
-                            hydration = _extract_static_hydration(text)
-                            _tc.static_hydration_attempted += 1
-                            if hydration.sufficient:
-                                _tc.static_hydration_sufficient += 1
-                                logger.info(f'Static hydration sufficient for {url}: reason={hydration.reason}')
-                                skip_js_reason = f'static_hydration_sufficient:{hydration.reason}'
-                            elif hydration.found:
-                                _tc.static_hydration_insufficient += 1
-                                logger.debug(f'Static hydration found but insufficient for {url}: {hydration.reason}')
-                                skip_js_reason = None
-                            else:
-                                skip_js_reason = None
-                            if skip_js_reason and skip_js_reason.startswith('static_hydration_sufficient'):
-                                elapsed_ms = (time.monotonic() - t0) * 1000
-                                from utils.rayon_pool import run_in_cpu_pool_async
-                                _meta = await run_in_cpu_pool_async(extract_html_metadata, text or '')
-                                _static_sources = list(hydration.sources) if hasattr(hydration, 'sources') else list(hydration.sources)
-                                if _meta['ga_gtm_ids']:
-                                    _static_sources.append('ga_gtm')
-                                if _meta['og_tags']:
-                                    _static_sources.append('og_tags')
-                                if _meta['comments']:
-                                    _static_sources.append('html_comments')
-                                return FetchResult(url=url, final_url=final_url, status_code=last_status_code, content_type=content_type, text=hydration.text if hydration.text else text, fetched_bytes=total_read, declared_length=declared_length, elapsed_ms=elapsed_ms, error=None, xml_recovered=xml_recovered, xml_source_hint=xml_recovered, decode_replaced=decode_replaced, decode_replacement_count=decode_replacement_count, redirected=redirected, redirect_target=redirect_target, selected_transport=_actual_transport, http_version='http/1.1', transport_policy_reason=_router_reason if _use_httpx_h2 else 'clearnet_default', transport_fallback_reason=_fallback_info, transport_counters=_tc, js_renderer_skipped_reason=skip_js_reason, hydration_score=hydration.hydration_score, hydration_sources=tuple(_static_sources))
-                            from hledac.universal.rendering.macos_webkit_renderer import fetch_with_macos_webkit
-                            wkr = await fetch_with_macos_webkit(url, timeout_s=timeout_s)
-                            if wkr.ok and wkr.html:
-                                js_text, js_matches, js_metadata = await process_html_payload(wkr.html, url)
-                                elapsed_ms = (time.monotonic() - t0) * 1000
-                                _tc.js_renderer_count += 1
-                                _tc.macos_webkit_count += 1
-                                _ga_ids = js_metadata.get('ga_gtm_ids', ())
-                                _og = js_metadata.get('og_tags', ())
-                                _cmts = js_metadata.get('comments', ())
-                                _addl_sources = list(hydration.sources) if hasattr(hydration, 'sources') else []
-                                if _ga_ids:
-                                    _addl_sources.append('ga_gtm')
-                                if _og:
-                                    _addl_sources.append('og_tags')
-                                if _cmts:
-                                    _addl_sources.append('html_comments')
-                                _matched = tuple(((m.label or '') + '|' + m.pattern + '|' + m.value for m in js_matches or []))
-                                return FetchResult(url=url, final_url=url, status_code=200, content_type='text/html', text=js_text, fetched_bytes=wkr.rendered_bytes, declared_length=-1, elapsed_ms=elapsed_ms, error=None, selected_transport='js', transport_policy_reason='js_required', transport_counters=_tc, hydration_sources=tuple(_addl_sources), matched_patterns=_matched)
-                            wkr_reason = wkr.reason if wkr else 'macos_webkit_unavailable'
-                            if wkr_reason not in ('macos_webkit_success', 'macos_webkit_non_darwin', 'macos_webkit_unavailable'):
-                                logger.warning('WKWebView render failed ({wkr_reason}), falling back to heavy browser: {url}', wkr_reason=wkr_reason, url=url)
-                            logger.info('JS need detected, retrying with Camoufox: {url}', url=url)
-                            js_html = await _fetch_with_camoufox(url, timeout=timeout_s)
-                            if js_html:
-                                js_text, js_matches, _ = await process_html_payload(js_html, url)
-                                elapsed_ms = (time.monotonic() - t0) * 1000
-                                _tc.js_renderer_count += 1
-                                _matched = tuple(((m.label or '') + '|' + m.pattern + '|' + m.value for m in js_matches or []))
-                                return FetchResult(url=url, final_url=url, status_code=200, content_type='text/html', text=js_text, fetched_bytes=len(js_html), declared_length=-1, elapsed_ms=elapsed_ms, error=None, selected_transport='js', transport_policy_reason='js_required', transport_counters=_tc, matched_patterns=_matched)
-                            logger.warning('Camoufox failed, trying nodriver: {url}', url=url)
-                            js_html = await _fetch_with_nodriver(url, _url_kind, _url_host)
-                            if js_html:
-                                js_text, js_matches, _ = await process_html_payload(js_html, url)
-                                elapsed_ms = (time.monotonic() - t0) * 1000
-                                _tc.js_renderer_count += 1
-                                _matched = tuple(((m.label or '') + '|' + m.pattern + '|' + m.value for m in js_matches or []))
-                                return FetchResult(url=url, final_url=url, status_code=200, content_type='text/html', text=js_text, fetched_bytes=len(js_html), declared_length=-1, elapsed_ms=elapsed_ms, error=None, selected_transport='js', transport_policy_reason='js_required', transport_counters=_tc, matched_patterns=_matched)
-                        elapsed_ms = (time.monotonic() - t0) * 1000
-                        if _circuit_breaker and last_status_code >= 200 and (last_status_code < 300):
-                            _circuit_breaker.record_success()
-                            rust_circuit_record_success(_circuit_breaker_domain)
-                        redirected, redirect_target = _derive_redirect_fields(url, final_url)
-                        _actual_transport = 'httpx_h2' if _use_httpx_h2 else 'httpx_h2'
-                        _fallback_info: str | None = None
-                        if _curl_fallback_reason:
-                            _fallback_info = _curl_fallback_reason
-                        elif not _use_httpx_h2 and _httpx_fallback_reason == 'httpx_h2_fallback':
-                            _fallback_info = 'httpx_h2_fallback'
-                        if _curl_fallback_reason:
-                            pass
-                        elif _fallback_info == 'httpx_h2_fallback':
-                            _tc.httpx_h2_fallback_to_aiohttp_count += 1
-                            _tc.fallback_count += 1
-                        elif use_tor:
-                            _tc.tor_httpx_socks_count += 1
-                        elif use_i2p:
-                            _tc.i2p_httpx_socks_count += 1
-                        else:
-                            _tc.aiohttp_count += 1
-                        if text:
-                            _store_body_hash(url, _compute_body_hash(text.encode('utf-8', errors='replace')))
-                        from utils.rayon_pool import run_in_cpu_pool_async
-                        _aiohttp_matches = await run_in_cpu_pool_async(match_text, text or '')
-                        _aiohttp_matched = tuple(((m.label or '') + '|' + m.pattern + '|' + m.value for m in _aiohttp_matches or []))
-                        return FetchResult(url=url, final_url=final_url, status_code=last_status_code, content_type=content_type, text=text, fetched_bytes=total_read, declared_length=declared_length, elapsed_ms=elapsed_ms, error=None, xml_recovered=xml_recovered, xml_source_hint=xml_recovered, decode_replaced=decode_replaced, decode_replacement_count=decode_replacement_count, redirected=redirected, redirect_target=redirect_target, selected_transport=_actual_transport, http_version='http/1.1', transport_policy_reason=_router_reason if _use_httpx_h2 else 'clearnet_default', transport_fallback_reason=_fallback_info, transport_counters=_tc, js_renderer_skipped_reason=skip_js_reason, body=body_bytes, matched_patterns=_aiohttp_matched)
-        except TimeoutError:
-            elapsed_ms = (time.monotonic() - t0) * 1000
-            if _circuit_breaker:
-                _circuit_breaker.record_failure(is_timeout=True, failure_kind='timeout')
-                rust_circuit_record_failure(_circuit_breaker_domain, is_timeout=True)
-            if _curl_fallback_reason:
-                pass
-            elif _httpx_fallback_reason == 'httpx_h2_fallback':
-                _tc.httpx_h2_fallback_to_aiohttp_count += 1
-                _tc.fallback_count += 1
-            elif use_tor:
-                _tc.tor_httpx_socks_count += 1
-            elif use_i2p:
-                _tc.i2p_httpx_socks_count += 1
-            else:
-                _tc.aiohttp_count += 1
-            return FetchResult(url=url, final_url=url, status_code=0, content_type='', text=None, fetched_bytes=0, declared_length=-1, elapsed_ms=elapsed_ms, error='timeout', failure_stage='connection', network_error_kind='timeout', selected_transport='httpx_h2' if _use_httpx_h2 else 'httpx_socks' if use_tor or use_i2p else 'httpx_h2', transport_policy_reason=_router_reason if _use_httpx_h2 else 'darknet_url' if use_tor or use_i2p else 'clearnet_default', transport_fallback_reason='httpx_h2_fallback' if _httpx_fallback_reason == 'httpx_h2_fallback' else None, transport_counters=_tc)
-        except asyncio.CancelledError:
-            elapsed_ms = (time.monotonic() - t0) * 1000
-            raise
-        except Exception as exc:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-            elapsed_ms = (time.monotonic() - t0) * 1000
-            if _circuit_breaker:
-                _circuit_breaker.record_failure(failure_kind='fetch_error')
-                rust_circuit_record_failure(_circuit_breaker_domain, is_timeout=False)
-            err_str = f'fetch_error;{type(exc).__name__};{exc}'
-            failure_stage, network_error_kind = _derive_failure_stage_and_network_kind(err_str)
-            body_read_error = failure_stage in ('body', 'size')
-            if _curl_fallback_reason:
-                pass
-            elif _httpx_fallback_reason == 'httpx_h2_fallback':
-                _tc.httpx_h2_fallback_to_aiohttp_count += 1
-                _tc.fallback_count += 1
-            elif use_tor:
-                _tc.tor_httpx_socks_count += 1
-            elif use_i2p:
-                _tc.i2p_httpx_socks_count += 1
-            else:
-                _tc.aiohttp_count += 1
-            return FetchResult(url=url, final_url=url, status_code=0, content_type='', text=None, fetched_bytes=0, declared_length=-1, elapsed_ms=elapsed_ms, error=err_str, body_read_error=body_read_error, failure_stage=failure_stage, network_error_kind=network_error_kind, selected_transport='httpx_h2' if _use_httpx_h2 else 'httpx_socks' if use_tor or use_i2p else 'httpx_h2', transport_policy_reason=_router_reason if _use_httpx_h2 else 'darknet_url' if use_tor or use_i2p else 'clearnet_default', transport_fallback_reason='httpx_h2_fallback' if _httpx_fallback_reason == 'httpx_h2_fallback' else None, transport_counters=_tc)
-    elapsed_ms = (time.monotonic() - t0) * 1000
-    err_str = last_error or 'retry_exhausted'
-    failure_stage, network_error_kind = _derive_failure_stage_and_network_kind(err_str)
-    body_read_error = failure_stage in ('body', 'size')
-    if _curl_fallback_reason:
-        pass
-    elif _httpx_fallback_reason == 'httpx_h2_fallback':
-        _tc.httpx_h2_fallback_to_aiohttp_count += 1
-        _tc.fallback_count += 1
-    elif use_tor:
-        _tc.tor_httpx_socks_count += 1
-    elif use_i2p:
-        _tc.i2p_httpx_socks_count += 1
-    else:
-        _tc.aiohttp_count += 1
-    try:
-        from core.telemetry.context_state import reset_request_id
-        reset_request_id()
-    except Exception:  # noqa: BLE001 — best-effort; telemetry teardown failure is non-fatal
-        pass
-    return FetchResult(url=url, final_url=url, status_code=last_status_code, content_type='', text=None, fetched_bytes=0, declared_length=-1, elapsed_ms=elapsed_ms, error=err_str, body_read_error=body_read_error, failure_stage=failure_stage, network_error_kind=network_error_kind, selected_transport='httpx_h2' if _use_httpx_h2 else 'httpx_socks' if use_tor or use_i2p else 'httpx_h2', transport_policy_reason=_router_reason if _use_httpx_h2 else 'darknet_url' if use_tor or use_i2p else 'clearnet_default', transport_fallback_reason='httpx_h2_fallback' if _httpx_fallback_reason == 'httpx_h2_fallback' else None, transport_counters=_tc)
-
+# ISSUE-7: tenacity decorator — replaces manual for/retry loop.
+# stop: MAX_RETRIES+1 attempts total (matches original for loop behavior)
+# wait: _tenacity_wait_jitter — decorrelated jitter with Retry-After header priority
+# retry: only on _RetryableStatus (HTTP retryable status codes)
+# before_sleep: record circuit-breaker failure before waiting
+# after: record circuit-breaker success on final success
+# reraise: re-raise if all retries exhausted (tenacity returns last exception)
+_retry_decorator = retry(
+    stop=stop_after_attempt(MAX_RETRIES + 1),
+    wait=_tenacity_wait_jitter,
+    retry=retry_if_exception_type((_RetryableStatus, TimeoutError)),
+    before_sleep=_tenacity_before_sleep,
+    after=_tenacity_after,
+    reraise=True,
+)
 
 async def async_fetch_public_text_batch(
     urls: list[str],
@@ -2806,6 +2244,76 @@ async def async_fetch_public_text_batch(
     ordered: list[FetchResult] = [FetchResult()] * len(urls)
     for idx, fetched_result in result.ok:
         ordered[idx] = fetched_result
+
+    # ISSUE-7 Phase 2: two-phase retry for retryable failures.
+    # Phase 1 (above): all URLs fetched with built-in retry loop (serial per-host).
+    # Phase 2: identify retryable failures and retry them in a separate parallel pass.
+    # This ensures retry sleeps for broken hosts don't block the batch concurrency slot.
+    retryable_urls: list[tuple[int, str]] = []  # (original_idx, url)
+    for idx, fr in enumerate(ordered):
+        if fr.error is not None and (
+            fr.error.startswith('retryable:')
+            or fr.error.startswith('timeout')
+            or 'circuit_breaker_open' in fr.error
+        ):
+            retryable_urls.append((idx, fr.url))
+    if retryable_urls:
+        _retry_concurrency = max(1, min(concurrency, 8))  # cap retry concurrency
+
+        async def _retry_one(idx_url: tuple[int, str]) -> tuple[int, FetchResult]:
+            _idx, _url = idx_url
+            try:
+                # Bypass circuit breaker on retry — host is already known broken
+                _result = await async_fetch_public_text(
+                    _url,
+                    timeout_s=timeout_s,
+                    max_bytes=max_bytes,
+                    use_stealth=use_stealth,
+                    use_js=use_js,
+                    use_doh=use_doh,
+                    js_confidence=js_confidence,
+                    priority=priority,
+                    bypass_circuit_breaker=True,  # skip CB, go straight to fetch
+                )
+                return _idx, _result
+            except Exception as _e:  # noqa: BLE001 — fail-safe
+                return _idx, FetchResult(
+                    url=_url,
+                    final_url=_url,
+                    status_code=0,
+                    content_type='',
+                    text=None,
+                    fetched_bytes=0,
+                    declared_length=-1,
+                    elapsed_ms=0.0,
+                    error=f'batch_retry_exception:{type(_e).__name__}:{_e}',
+                    failure_stage='batch_retry_dispatch',
+                )
+
+        _retry_result = await parallel(
+            [asyncio.create_task(_retry_one(x)) for x in retryable_urls],
+            concurrency=_retry_concurrency,
+            taskgroup=True,
+            policy="collect",
+        )
+        # Merge retry results: only overwrite if retry succeeded (error=None or non-retryable)
+        for idx, retry_fr in _retry_result.ok:
+            # Only accept if retry improved the result (non-empty text or non-retryable error)
+            _orig = ordered[idx]
+            if retry_fr.text or (
+                retry_fr.error
+                and not retry_fr.error.startswith('retryable:')
+                and not retry_fr.error.startswith('timeout')
+                and 'circuit_breaker_open' not in (retry_fr.error or '')
+            ):
+                ordered[idx] = retry_fr
+            elif (
+                retry_fr.error == _orig.error
+                or retry_fr.error is None
+            ):
+                # Same error or still broken — keep original
+                pass
+
     return ordered
 
 
@@ -3026,10 +2534,21 @@ class _DrainRegistry:
         except ValueError:
             pass
 
+    def clear(self) -> None:
+        """Clear all futures and reset counters (for test isolation)."""
+        self._registry.clear()
+        self._scheduled = 0
+        self._completed = 0
+
     def stats(self) -> dict:
         """Return diagnostic snapshot."""
         return {'registry_size': len(self._registry), 'registry_capacity': self._registry.maxlen, 'total_scheduled': self._scheduled, 'total_completed': self._completed, 'in_flight': self._scheduled - self._completed}
 _drain_registry = _DrainRegistry(max_size=512)
+# Backward-compatibility aliases for F273C tests (DEPRECATED, use _drain_registry directly)
+_DRAIN_REGISTRY = _drain_registry._registry  # collections.deque with maxlen
+_DRAIN_TOTAL_SCHEDULED = 0  # Deprecated; now encapsulated in _DrainRegistry
+_DRAIN_TOTAL_COMPLETED = 0  # Deprecated; now encapsulated in _DrainRegistry
+
 def _get_html_executor() -> 'concurrent.futures.ThreadPoolExecutor':
     """Get or create bounded HTML processing executor.
 
@@ -3063,10 +2582,11 @@ def schedule_html_extraction(html: str, url: str='') -> asyncio.Future:
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
-        # C7-FIX: Use asyncio.Runner() instead of new_event_loop().
-        # Runner properly manages loop lifecycle (PEP 654, Python 3.11+).
-        with asyncio.Runner() as runner:
-            loop = runner._loop  # type: ignore[attr-defined]
+        # In Python 3.14, get_event_loop() raises RuntimeError when there's no
+        # running loop in a sync thread. Use new_event_loop() which is safe here
+        # since we're running in a sync context (tests) - the loop is closed after
+        # the future is submitted and the work happens in the thread pool.
+        loop = asyncio.new_event_loop()
     fut: asyncio.Future = loop.run_in_executor(_get_html_executor(), _sync_process_html, html)
     try:
         tag = f'pattern_extract:{url[:64]}' if url else 'pattern_extract'

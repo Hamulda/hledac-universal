@@ -24,7 +24,7 @@ Total workers capped at 24 (8 cores × 3 + main asyncio thread).
 
 DOMAIN LAYOUT (M1 8GB target)
 ==============================
-  html       — BeautifulSoup, lxml parsing, HTML extraction  (3 workers)
+  html       — BeautifulSoup, lxml parsing, HTML extraction  (8 workers, ISSUE-5)
   duckdb     — DuckDB sync queries (2 workers)
   infer      — CoreML/MLX sync bridge (2 workers, floor: 1→2 on M1)
   crypto     — yara-python, Pycryptodome (2 workers, floor: 1→2 on M1)
@@ -79,7 +79,7 @@ _TOTAL_THREAD_CAP: Final[int] = int(os.environ.get("HLEDAC_TOTAL_THREAD_CAP", "2
 
 # Per-domain worker presets (sum controlled by _TOTAL_THREAD_CAP)
 _DOMAIN_PRESETS: dict[str, int] = {
-    "html": 3,       # BeautifulSoup, lxml parsing
+    "html": 8,       # ISSUE-5: 3→8 workers: 100pages×200ms/8=2.5s < 6s target
     "duckdb": 2,     # DuckDB sync queries
     "infer": 1,      # CoreML/MLX sync bridge
     "crypto": 1,     # yara-python, Pycryptodome

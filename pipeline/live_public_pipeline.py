@@ -9,30 +9,26 @@ No LLM calls. No AO. No new storage schema.
 All heavy I/O (HTML parsing, pattern scanning) offloaded via asyncio.to_thread().
 """
 from __future__ import annotations
-import msgspec
-
-
 
 import asyncio
 import hashlib
 import html.parser
-
-from hledac.universal.utils.locks import LazyAsyncioLock
-import msgspec.json as _json
 import logging
 import os
-from pathlib import Path
-
-from hledac.universal.utils.bloom_filter import RotatingBloomFilter
 import re
 import sys
 import time
 import urllib.parse
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+import msgspec
+import msgspec.json as _json
+
+from hledac.universal.utils.bloom_filter import RotatingBloomFilter
+from hledac.universal.utils.locks import LazyAsyncioLock
 
 logger = logging.getLogger(__name__)
-from typing import TYPE_CHECKING, Any  # noqa: E402
-
-import msgspec  # noqa: E402
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
@@ -41,6 +37,8 @@ if TYPE_CHECKING:
 from hledac.universal.discovery.duckduckgo_adapter import (  # noqa: E402
     DiscoveryHit,
     classify_discovery_error,
+)
+from hledac.universal.discovery.duckduckgo_adapter import (
     search_multi_engine as _search_multi_engine_bootstrap,
 )
 
@@ -48,7 +46,6 @@ from hledac.universal.discovery.duckduckgo_adapter import (  # noqa: E402
 from hledac.universal.fetching.public_fetcher import (  # noqa: E402
     classify_fetch_error,
 )
-from hledac.universal.utils.executors import CPU_EXECUTOR  # noqa: E402
 from hledac.universal.utils.async_helpers import parallel, safe_create_task  # noqa: E402, safe_wait_for
 from hledac.universal.utils.config_introspection import safe_attr_get  # noqa: E402
 
@@ -796,7 +793,6 @@ def _extract_domain_from_query(query: str) -> str | None:
 
 
 # Sprint F193B: Explicit fetch policy — policy-driven JS/DoH/stealth, not dormant defaults
-from dataclasses import dataclass  # noqa: E402
 
 
 class FetchPolicy(msgspec.Struct, frozen=True):
@@ -1827,7 +1823,6 @@ async def _extract_live_public_findings_from_page(
     """
     # Lazy import to avoid TYPE_CHECKING-only circular issues at runtime
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-
     from utils.rayon_pool import run_in_cpu_pool_async
 
     # Extract context in thread to avoid blocking event loop
@@ -2490,7 +2485,6 @@ async def _inject_onion_hits(
     """
     from hledac.universal.fetching.public_fetcher import async_fetch_public_text
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-    from hledac.universal.utils.async_helpers import parallel, safe_wait_for
 
     # Quick check: skip if circuit is open
     if _onion_circuit_is_open():
@@ -3078,7 +3072,10 @@ async def async_run_live_public_pipeline(
                     if academic_enabled or has_academic_keywords or deep_research:
                         from hledac.universal.discovery.academic import ACADEMIC_ENABLED, search_all_academic
                         if ACADEMIC_ENABLED:
-                            from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+                            from hledac.universal.core.concurrency_registry import (
+                                ConcurrencyCategory,
+                                get_semaphore_for_testing,
+                            )
                             academic_semaphore = get_semaphore_for_testing(ConcurrencyCategory.ACADEMIC_SEARCH)
                             async def limited_academic_search():
                                 async with academic_semaphore:
@@ -3563,7 +3560,7 @@ async def async_run_live_public_pipeline(
     # ISSUE-D2: parallel() centralizes [I6][I7][I8] invariants at the gather boundary.
     # Same return shape as before (ok_results + error_results) so downstream
     # code at 3911/4225/4227 keeps working unchanged.
-    from hledac.universal.utils.async_helpers import parallel, safe_wait_for
+    from hledac.universal.utils.async_helpers import safe_wait_for
     _result = await parallel(tasks, policy="collect", ctx="live_public_page_fetch")
     ok_results, error_results = _result.ok, _result.errors
 
@@ -4268,8 +4265,8 @@ async def async_run_live_public_pipeline(
     # which had M1 crash vectors (get_event_loop().run_until_complete() in async context)
     if run_loop and hermes_engine is not None:
         try:
-            from hledac.universal.knowledge.duckdb_store import CanonicalFinding
             from hledac.universal.federated.bridge import FederatedBridge
+            from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
             # P17: Default RL loop time limit (5 minutes)
             _RL_LOOP_TIME_LIMIT_S = 300.0  # noqa: N806

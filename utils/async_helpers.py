@@ -32,7 +32,7 @@ import time
 import warnings
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Sequence
-from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast, overload
 
 import msgspec
 
@@ -87,6 +87,8 @@ __all__ = [
     "chunked_taskgroup",
     "monotonic_ms",
     "parallel",  # ISSUE-006 + ISSUE-D2: single canonical parallel runner
+    "parallel_ok",  # ISSUE-003: drop-in for safe_gather_ok, variadic *coros
+    "try_group",  # ISSUE-003: TaskGroup + except* for structured groups
     "parallel_taskgroup_star",  # C6: PEP 654 except* TaskGroup variant
     # Backward-compat aliases — prefer parallel() for new code:
     "safe_gather",
@@ -116,6 +118,7 @@ __all__ = [
 
 # ISSUE-D2: PEP 562 — module-level __getattr__ for deprecated names.
 # Deprecated names emit DeprecationWarning on access, directing callers to parallel().
+# NOTE: This dict MUST remain above the __getattr__ definition at the end of the file.
 _DEPRECATED_NAMES: dict[str, str] = {
     "safe_gather": "parallel(coros, policy='collect')",
     "safe_gather_strict": "parallel(coros, policy='raise')",
@@ -123,21 +126,11 @@ _DEPRECATED_NAMES: dict[str, str] = {
     "safe_gather_return_exceptions": "parallel(coros, policy='collect')",
     "bounded_gather": "parallel(coros, concurrency=N, policy='collect')",
     "gather_taskgroup": "parallel(coros, concurrency=N, taskgroup=True, policy='collect')",
+    # ISSUE-003: safe_gather_ok redirects to parallel_ok via __getattr__
+    "safe_gather_ok": "parallel_ok(*coros) or parallel(coros, policy='log')",
+    "safe_gather_fire_and_forget": "parallel(*coros, policy='log')",
+    "cancel_scope_drain": "try_group(*coros)",
 }
-
-
-def __getattr__(name: str) -> Any:
-    if name in _DEPRECATED_NAMES:
-        replacement = _DEPRECATED_NAMES[name]
-        warnings.warn(
-            f"{name} is deprecated. Use {replacement} instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        # Dynamically fetch the actual function so the warning fires on access,
-        # not at module load time, and the function itself is still usable.
-        return globals()[name]
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 logger = logging.getLogger(__name__)
 
@@ -178,13 +171,13 @@ _EAGER_START_SUPPORTED: bool = _PY_312_PLUS and not _UVLOOP_INSTALLED
 # (opentelemetry-api, opentelemetry-sdk absent) still boots cleanly.
 # External callers get a no-op stub that returns None instead of ImportError.
 
-from collections.abc import Callable
-
 # Type alias for the OTel context function signature used across the module.
 # Defined at module level so that external importers get a stable type.
 _OTelContextFn = Callable[[], dict[str, Any] | None]
 
-_noop_current_otel_context: _OTelContextFn = lambda: None
+
+def _noop_current_otel_context() -> dict[str, Any] | None:
+    return None
 
 
 try:
@@ -653,10 +646,10 @@ async def _parallel_taskgroup[T](
         match policy:
             case "raise":
                 if len(errors) == 1:
-                    raise errors[0]
+                    raise errors[0] from None
                 raise BaseExceptionGroup(f"parallel(taskgroup){' ' + ctx if ctx else ''}", errors)
             case "first":
-                raise errors[0]
+                raise errors[0] from None
             case "collect":
                 return ParallelResult(ok=ok_results, errors=errors, re_raised=None)
             case "log":
@@ -817,8 +810,49 @@ async def parallel_taskgroup_star[T](
 ConcurrencyBudgetResolver = Callable[[], Awaitable[int]]
 
 
+# ---------------------------------------------------------------------------
+# Overloaded signatures — give callers variadic *coros or Sequence[T]
+# ---------------------------------------------------------------------------
+
+@overload
+async def parallel[T](
+    *coros: Awaitable[T] | T,
+    policy: Literal["log"],
+    concurrency: int | ConcurrencyBudgetResolver | None = None,
+    timeout: float | None = None,
+    taskgroup: bool = False,
+    ctx: str = "",
+    logger_instance: logging.Logger | None = None,
+) -> list[T]: ...
+
+
+@overload
+async def parallel[T](
+    *coros: Awaitable[T] | T,
+    policy: ExceptionPolicy = "collect",
+    concurrency: int | ConcurrencyBudgetResolver | None = None,
+    timeout: float | None = None,
+    taskgroup: bool = False,
+    ctx: str = "",
+    logger_instance: logging.Logger | None = None,
+) -> ParallelResult: ...
+
+
+@overload
 async def parallel[T](
     coros: Sequence[Awaitable[T]],
+    *,
+    policy: Literal["log"],
+    concurrency: int | ConcurrencyBudgetResolver | None = None,
+    timeout: float | None = None,
+    taskgroup: bool = False,
+    ctx: str = "",
+    logger_instance: logging.Logger | None = None,
+) -> list[T]: ...
+
+
+async def parallel[T](
+    coros: Sequence[Awaitable[T]] | tuple[Awaitable[T], ...],
     *,
     policy: ExceptionPolicy = "collect",
     concurrency: int | ConcurrencyBudgetResolver | None = None,
@@ -826,7 +860,7 @@ async def parallel[T](
     taskgroup: bool = False,
     ctx: str = "",
     logger_instance: logging.Logger | None = None,
-) -> ParallelResult:
+) -> ParallelResult | list[T]:
     """ISSUE-006: Single canonical parallel runner with named exception policies.
 
     Unified replacement for bounded_gather, gather_taskgroup, safe_gather_ok,
@@ -1017,7 +1051,128 @@ async def parallel[T](
                     f"(sample: {sample_preview}"
                     f"{' +' + str(suppressed) + ' more' if suppressed else ''})"
                 )
-            return ParallelResult(ok=ok, errors=[], re_raised=None)
+            return ok  # list[T] for policy="log"
+
+
+# =============================================================================
+# ISSUE-003 consolidation: parallel_ok — drop-in for safe_gather_ok
+# ===========================================================================
+# Drop-in replacement for safe_gather_ok: returns list[T] (successes only),
+# all exceptions silently dropped (logged at DEBUG). Variadic *coros.
+# Equivalent to parallel(*coros, policy="log").
+# Deprecated: safe_gather_ok redirects here.
+
+
+async def parallel_ok[T](
+    *coros: Awaitable[T] | T,
+    label: str = "",
+    logger_instance: logging.Logger | None = None,
+) -> list[T]:
+    """ISSUE-003: Drop-in replacement for safe_gather_ok.
+
+    Returns a plain list of successful results, in original order, with all
+    Exception instances filtered out. CancelledError / non-Exception
+    BaseException are re-raised per I6/I7 invariants.
+
+    Equivalent to: ``parallel(*coros, policy="log", ctx=label)``
+
+    DEPRECATED alias: safe_gather_ok. Use parallel_ok() directly.
+
+    Args:
+        *coros: Coroutines or awaitables to gather. Plain values pass through.
+        label:  Context string for log messages.
+        logger_instance: Optional logger override.
+
+    Returns:
+        list[T] of successful results, exceptions silently dropped (logged at DEBUG).
+
+    Raises:
+        asyncio.CancelledError: if any coro was cancelled.
+        BaseException: for non-Exception BaseException (KeyboardInterrupt, SystemExit).
+    """
+    _log = logger_instance or logger
+    if not coros:
+        return []
+
+    raw = await asyncio.gather(
+        *(_wrap_awaitable(c) for c in coros), return_exceptions=True
+    )
+    ok, errors, re_raise = _classify_gathered(raw, label, _log)
+
+    if errors:
+        sample_preview = ", ".join(type(e).__name__ for e in errors[:_SAFE_GATHER_SAMPLE_CAP])
+        suppressed = max(0, len(errors) - _SAFE_GATHER_SAMPLE_CAP)
+        _log.debug(
+            f"[GHOST] parallel_ok{' ' + label if label else ''} "
+            f"dropped {len(errors)} exceptions "
+            f"(sample: {sample_preview}"
+            f"{' +' + str(suppressed) + ' more' if suppressed else ''})"
+        )
+
+    if re_raise is not None:
+        raise re_raise
+
+    return list(ok)
+
+
+# =============================================================================
+# ISSUE-003: try_group — TaskGroup + except* (PEP 654) for structured groups
+# ============================================================================
+# Thin wrapper around asyncio.TaskGroup that routes exceptions via except*.
+# Raises BaseExceptionGroup with annotated .errors for observability.
+# Use when you need structured cancellation + full exception detail.
+
+
+async def try_group[*Ts](
+    *coros: Awaitable[Ts],
+    ctx: str = "",
+) -> tuple[Ts, ...]:
+    """ISSUE-003: asyncio.TaskGroup with except* exception routing.
+
+    All coroutines run to completion (structured concurrency). If any raises
+    an Exception, all exceptions are collected into a BaseExceptionGroup and
+    raised. CancelledError is re-raised immediately (I6 invariant).
+
+    Unlike parallel() which can suppress/log exceptions, try_group always
+    propagates them as a group — making it suitable for critical paths
+    where silent failure is unacceptable.
+
+    Args:
+        *coros: Coroutines to run in the group.
+        ctx:    Context label for the BaseExceptionGroup.
+
+    Returns:
+        Tuple of results, in original order.
+
+    Raises:
+        BaseExceptionGroup: containing all exceptions from failed coroutines.
+        asyncio.CancelledError: if the caller's scope was cancelled.
+
+    Example:
+        try:
+            results = await try_group(fetch(urls[0]), fetch(urls[1]), fetch(urls[2]))
+        except BaseExceptionGroup as eg:
+            log.error("All fetches failed: %d errors", len(eg.errors))
+            raise
+    """
+    results: list[Any] = [None] * len(coros)
+
+    async def _run(idx: int, coro: Awaitable[Any]) -> None:
+        results[idx] = await coro
+
+    try:
+        async with asyncio.TaskGroup() as tg:
+            for idx, coro in enumerate(coros):
+                tg.create_task(_run(idx, coro), name=f"try_group[{idx}]", eager_start=True)
+    except* asyncio.CancelledError:
+        raise
+    except* BaseException as eg:
+        raise BaseExceptionGroup(
+            f"try_group{' ' + ctx if ctx else ''}",
+            list(eg.exceptions),
+        )
+
+    return tuple(results)  # type: ignore[return-value]
 
 
 # =============================================================================
@@ -1333,35 +1488,10 @@ async def safe_gather_ok[T](
         asyncio.CancelledError: if any coro was cancelled.
         BaseException: for non-Exception BaseException (KeyboardInterrupt, SystemExit).
 
-    DEPRECATED: Use ``parallel(coros, policy="log")`` instead.
+    DEPRECATED: Use ``parallel_ok(*coros)`` or ``parallel(coros, policy="log")`` instead.
     """
-    _log = logger_instance or logger
-    if not coros:
-        return []
-
-    # Pass wrapped coros directly to asyncio.gather. gather() in Python 3.12+
-    # uses TaskGroup-like batch allocation internally — more efficient than
-    # per-item loop.create_task(). Task/Future instances are awaitables and
-    # pass through gather() unchanged (gather calls their __await__).
-    # Plain values are wrapped by _wrap_awaitable so gather() can consume them.
-    raw = await asyncio.gather(*(_wrap_awaitable(c) for c in coros), return_exceptions=True)
-    ok, errors, re_raise = _classify_gathered(raw, label, _log)
-
-    # Bounded log for the dropped errors — same sample cap as fire_and_forget.
-    if errors:
-        sample_preview = ", ".join(type(e).__name__ for e in errors[:_SAFE_GATHER_SAMPLE_CAP])
-        suppressed = max(0, len(errors) - _SAFE_GATHER_SAMPLE_CAP)
-        _log.debug(
-            f"[GHOST] safe_gather_ok{' ' + label if label else ''} "
-            f"dropped {len(errors)} exceptions "
-            f"(sample: {sample_preview}"
-            f"{' +' + str(suppressed) + ' more' if suppressed else ''})"
-        )
-
-    if re_raise is not None:
-        raise re_raise
-
-    return ok
+    # Delegate to parallel_ok — redirect ensures the same implementation is used
+    return await parallel_ok(*coros, label=label, logger_instance=logger_instance)
 
 
 # P1-09: bounded_gather — semaphore-gated gather for I/O-bound loops
@@ -1508,7 +1638,7 @@ async def bounded_parallel_map[T, R](
             concurrency = 1
     else:
         # Default: SCRAPE_GENERAL category for general scraping operations
-        from core.concurrency_registry import concurrency_budget, ConcurrencyCategory
+        from core.concurrency_registry import ConcurrencyCategory, concurrency_budget
         concurrency = await concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL)
 
     sem = asyncio.Semaphore(concurrency)
@@ -2011,7 +2141,7 @@ async def chunked_taskgroup[T, R](
         if concurrency < 1:
             concurrency = 1
     else:
-        from core.concurrency_registry import concurrency_budget, ConcurrencyCategory
+        from core.concurrency_registry import ConcurrencyCategory, concurrency_budget
         concurrency = await concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL)
 
     all_results: list[R] = []

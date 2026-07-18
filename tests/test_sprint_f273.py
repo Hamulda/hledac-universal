@@ -224,9 +224,7 @@ class TestF273CPatternExtractionDrain(unittest.TestCase):
         from hledac.universal.fetching import public_fetcher
 
         # Reset the module-level registry between tests
-        public_fetcher._DRAIN_REGISTRY.clear()
-        public_fetcher._DRAIN_TOTAL_SCHEDULED = 0
-        public_fetcher._DRAIN_TOTAL_COMPLETED = 0
+        public_fetcher._drain_registry.clear()
 
     def test_drain_registry_starts_empty(self):
         from hledac.universal.fetching import public_fetcher
@@ -247,8 +245,8 @@ class TestF273CPatternExtractionDrain(unittest.TestCase):
         self.assertEqual(stats["registry_size"], 1)
         self.assertEqual(stats["total_scheduled"], 1)
 
-    def test_drain_completes_pending_futures(self, session_event_loop: asyncio.AbstractEventLoop):
-        """FIX F350M-R: Use session_event_loop fixture instead of asyncio.run()."""
+    def test_drain_completes_pending_futures(self, event_loop: asyncio.AbstractEventLoop):
+        """FIX F350M-R: Use event_loop fixture instead of asyncio.run()."""
         from hledac.universal.fetching import public_fetcher
 
         async def _run_drain():
@@ -264,13 +262,13 @@ class TestF273CPatternExtractionDrain(unittest.TestCase):
             )
             return completed, timed_out, elapsed
 
-        completed, timed_out, elapsed = session_event_loop.run_until_complete(_run_drain())
+        completed, timed_out, elapsed = event_loop.run_until_complete(_run_drain())
         # All 3 should complete (CPU_EXECUTOR has available workers)
         self.assertGreaterEqual(completed, 3)
         self.assertEqual(timed_out, 0)
 
-    def test_drain_stats_monotonic_counters(self, session_event_loop: asyncio.AbstractEventLoop):
-        """FIX F350M-R: Use session_event_loop fixture instead of asyncio.run()."""
+    def test_drain_stats_monotonic_counters(self, event_loop: asyncio.AbstractEventLoop):
+        """FIX F350M-R: Use event_loop fixture instead of asyncio.run()."""
         from hledac.universal.fetching import public_fetcher
 
         async def _run_drain():
@@ -286,7 +284,7 @@ class TestF273CPatternExtractionDrain(unittest.TestCase):
             )
             return completed, timed_out, public_fetcher.get_drain_stats()
 
-        completed, timed_out, stats = session_event_loop.run_until_complete(_run_drain())
+        completed, timed_out, stats = event_loop.run_until_complete(_run_drain())
         self.assertGreaterEqual(completed, 2)
         self.assertEqual(timed_out, 0)
         self.assertEqual(stats["registry_size"], 0)
@@ -300,11 +298,11 @@ class TestF273CPatternExtractionDrain(unittest.TestCase):
         # Direct cap test: ensure maxlen is set
         self.assertEqual(_DRAIN_REGISTRY.maxlen, 512)
 
-    def test_drain_zero_deadline_returns_immediately(self, session_event_loop: asyncio.AbstractEventLoop):
-        """FIX F350M-R: Use session_event_loop fixture instead of asyncio.run()."""
+    def test_drain_zero_deadline_returns_immediately(self, event_loop: asyncio.AbstractEventLoop):
+        """FIX F350M-R: Use event_loop fixture instead of asyncio.run()."""
         from hledac.universal.fetching import public_fetcher
 
-        completed, timed_out, elapsed = session_event_loop.run_until_complete(
+        completed, timed_out, elapsed = event_loop.run_until_complete(
             public_fetcher.drain_pending_extractions(deadline_s=0.0)
         )
         self.assertEqual((completed, timed_out, elapsed), (0, 0, 0.0))

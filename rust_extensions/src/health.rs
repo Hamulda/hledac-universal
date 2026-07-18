@@ -49,6 +49,7 @@
 use pyo3::prelude::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(feature = "advanced")]
 use crate::adaptive_scheduler;
 use crate::memory;
 use crate::url_set;
@@ -105,7 +106,10 @@ impl HealthInfo {
         // Thread pool state — cheap, no I/O
         let cpu_threads = crate::cpu_pool().current_num_threads();
         let io_threads = crate::io_pool().current_num_threads();
+        #[cfg(feature = "advanced")]
         let mixed_thresh = adaptive_scheduler::mixed_threshold();
+        #[cfg(not(feature = "advanced"))]
+        let mixed_thresh = 0;
         // mixed_pool(usize::MAX) to get the larger pool's thread count
         let mixed_threads = crate::mixed_pool(usize::MAX).current_num_threads();
 

@@ -65,7 +65,7 @@ pub fn io_pool_run_(
 #[pyo3(name = "mixed_pool_run")]
 pub fn mixed_pool_run_(
     _py: Python<'_>,
-    n_items: usize,
+    _n_items: usize,
     func: Py<PyAny>,
     args: Py<PyTuple>,
 ) -> PyResult<Py<PyAny>> {

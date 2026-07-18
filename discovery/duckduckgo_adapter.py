@@ -15,8 +15,6 @@ INVARIANTS (Sprint 8AC):
 """
 from __future__ import annotations
 
-
-
 import asyncio
 import logging
 import os
@@ -26,8 +24,8 @@ import urllib.parse as urlparse
 from typing import TYPE_CHECKING
 
 import httpx
-import msgspec
 
+from hledac.universal.discovery.base import BaseDiscoveryMixin, DiscoveryBatchResult, DiscoveryHit, DiscoveryResult
 from hledac.universal.network.session_runtime import async_get_httpx_session
 from hledac.universal.tools.discovery_replay import (
     read_cassette,
@@ -38,8 +36,8 @@ from hledac.universal.tools.discovery_replay import (
 from hledac.universal.transport.circuit_breaker import (
     checked_httpx_get as checked_aiohttp_get,
 )
-
-from hledac.universal.discovery.base import BaseDiscoveryMixin, DiscoveryResult
+from hledac.universal.utils.async_helpers import parallel
+from hledac.universal.utils.bloom_filter import RotatingBloomFilter
 
 _PUBLIC_REPLAY_ADAPTER = "public_duckduckgo"
 
@@ -64,10 +62,6 @@ MAX_HOST_SHARE_RATIO: float = 0.25
 # DTO contracts
 # ---------------------------------------------------------------------------
 
-
-
-# DiscoveryHit / DiscoveryBatchResult — re-exported from base.py (SSOT, F350M-R)
-from hledac.universal.discovery.base import DiscoveryBatchResult, DiscoveryHit
 
 # NOTE: The actual class definitions live in discovery/base.py (SSOT).
 # This module re-exports them for backward compatibility with existing call sites.
@@ -259,15 +253,17 @@ def _build_signals(
             break
 
     # Domain / host exact match — IOC-style domain in query matches URL host
-    if _IOC_DOMAIN_RE.search(url):
-        domain_in_url = _IOC_DOMAIN_RE.search(url).group(0) if _IOC_DOMAIN_RE.search(url) else ""
+    domain_match = _IOC_DOMAIN_RE.search(url)
+    if domain_match:
+        domain_in_url = domain_match.group(0)
         if domain_in_url and domain_in_url.lower() in lower_url:
             score += 0.35
             reasons.append("domain_hit")
 
     # IP address in query matches URL
-    if _IOC_IP_RE.search(query):
-        ip = _IOC_IP_RE.search(query).group(0)
+    ip_match = _IOC_IP_RE.search(query)
+    if ip_match:
+        ip = ip_match.group(0)
         if ip in url:
             score += 0.35
             reasons.append("ip_hit")
@@ -557,7 +553,6 @@ async def _ddgs_text_search(
     query: str,
     max_results: int,
     timeout_s: float,
-    proxy: str | None,
 ) -> list[dict]:
     """
     Compatibility async wrapper around synchronous DDGS.text().
@@ -601,8 +596,6 @@ async def _ddgs_text_search(
 # Does NOT survive across runs — no persistent cache required.
 # ---------------------------------------------------------------------------
 from collections import OrderedDict  # noqa: E402
-
-from hledac.universal.utils.async_helpers import safe_gather_ok  # noqa: E402
 
 _QUERY_CACHE: OrderedDict[str, DiscoveryBatchResult] = OrderedDict()
 _QUERY_CACHE_MAX = 20  # max entries; oldest evicted when full
@@ -750,7 +743,6 @@ async def async_search_public_web(
     query: str,
     max_results: int = DEFAULT_MAX_RESULTS,
     timeout_s: float = DEFAULT_TIMEOUT_S,
-    proxy: str | None = None,
 ) -> DiscoveryBatchResult:
     """
     Public web discovery via DuckDuckGo.
@@ -762,10 +754,7 @@ async def async_search_public_web(
     global _last_error
 
     # ---- input validation (must come before cache check for variant detection) ----
-    if query is None:
-        _last_error = "empty_query"
-        return DiscoveryBatchResult(hits=(), error="empty_query")
-    trimmed = query.strip() if isinstance(query, str) else str(query).strip()
+    trimmed = query.strip()
     if not trimmed:
         _last_error = "empty_query"
         return DiscoveryBatchResult(hits=(), error="empty_query")
@@ -852,7 +841,7 @@ async def async_search_public_web(
                 return (list(var_cached.hits), None)
             try:
                 async with asyncio.timeout(timeout_s):
-                    raw = await _ddgs_text_search(var_query, per_variant_results, timeout_s, proxy)
+                    raw = await _ddgs_text_search(var_query, per_variant_results, timeout_s)
             except asyncio.CancelledError:
                 return ([], "cancelled")
             except TimeoutError:
@@ -991,7 +980,7 @@ async def async_search_public_web(
     try:
         async with asyncio.timeout(timeout_s):
             raw_hits: list[dict] = await _ddgs_text_search(
-                trimmed, max_results, timeout_s, proxy
+                trimmed, max_results, timeout_s
             )
     except asyncio.CancelledError:
         _last_error = "cancelled"
@@ -1337,7 +1326,7 @@ async def _query_shodan_internetdb(ip: str) -> dict:
     REMOVAL CONDITION: po přechodu všech call-sites na registry/shodan_internetdb_lookup()."""
     try:
         s = await async_get_httpx_session()
-        data, status, err = await checked_aiohttp_get(
+        data, _status, err = await checked_aiohttp_get(
             s,
             f"https://internetdb.shodan.io/{ip}",
             timeout=httpx.Timeout(8),
@@ -1415,23 +1404,40 @@ async def search_multi_engine(
     query: str, max_results: int = 30
 ) -> list[dict]:
     """
-    F192E: Parallel search: DDG + Mojeek + CommonCrawl(domain query only).
+    ISSUE-6: Parallel multi-engine search with bounded concurrency.
+
+    Runs 5 search engines concurrently with concurrency=4:
+    - DuckDuckGo (async_search_public_web)
+    - Mojeek (_scrape_mojeek)
+    - CommonCrawl domain (_search_commoncrawl_domain)
+    - Wayback CDX (_search_wayback_cdx)
+    - CommonCrawl CDX (_search_commoncrawl_cdx)
+
     Bing excluded — actively blocks + CAPTCHA.
 
-    CommonCrawl CDX API is domain-specific (domain index, not general search).
+    Target: Wall-time 5s → 1.5s (5 engines × 1s sequential → 1.5s parallel)
     """
-    ddg_task    = async_search_public_web(query, max_results=max_results // 2)
-    mojeek_task = _scrape_mojeek(query, max_results // 2)
-    cc_task     = _search_commoncrawl_domain(query, max_results=max_results // 4)
+    # Per-engine result budget: distribute max_results across 5 engines
+    budget = max(1, max_results // 5)
+
+    # Create coroutine tasks for all engines (NOT yet started)
+    ddg_task    = async_search_public_web(query, max_results=budget)
+    mojeek_task = _scrape_mojeek(query, n=budget)
+    cc_domain   = _search_commoncrawl_domain(query, max_results=budget)
+    wayback_task = _search_wayback_cdx(query, max_results=budget)
+    cc_cdx_task  = _search_commoncrawl_cdx(query, max_results=budget)
+
+    # ISSUE-6: Run all 5 engines in parallel with concurrency=4 (semaphore-gated)
+    # F262D pattern: parallel() with policy="log" (fail-soft, exceptions logged)
+    _result = await parallel(
+        [ddg_task, mojeek_task, cc_domain, wayback_task, cc_cdx_task],
+        policy="log",
+        concurrency=4,  # ISSUE-6: M1-safe concurrency limit
+        ctx="duckduckgo_adapter:search_multi_engine",
+    )
 
     all_results: list[dict] = []
-    # F262D: migrated asyncio.gather → safe_gather_ok (fail-soft invariant preserved)
-    _ddg2_result = await parallel(
-        [ddg_task, mojeek_task, cc_task],
-        policy="log",
-        ctx="duckduckgo_adapter:1474",
-    )
-    for batch in _ddg2_result.ok:
+    for batch in _result.ok:
         if isinstance(batch, DiscoveryBatchResult) and batch.hits:
             all_results.extend([
                 {"title": h.title, "url": h.url, "snippet": h.snippet, "source": h.source}
@@ -1440,15 +1446,16 @@ async def search_multi_engine(
         elif isinstance(batch, list):
             all_results.extend(batch)
 
-    seen: set[str] = set()
+    # I7: URL deduplication via RotatingBloomFilter (bounded, Rust-accelerated)
+    bloom = RotatingBloomFilter(max_elements=5000, error_rate=0.01)
     deduped: list[dict] = []
     for r in all_results:
         raw_u = r.get("url", "")
         if not raw_u:
             continue
         norm = _normalize_url_for_dedup(raw_u)
-        if norm and norm not in seen:
-            seen.add(norm)
+        if norm and norm not in bloom:
+            bloom.add(norm)
             deduped.append(r)
     return deduped[:max_results]
 

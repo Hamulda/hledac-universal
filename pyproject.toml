@@ -307,18 +307,6 @@ m1-local = [
     #   uv sync --extra http3
     # This keeps the default M1 8GB footprint minimal.
 ]
-nogil = [
-    # F5.1: Free-threaded Python 3.14+ (PEP 703) support.
-    # Enables true multi-core parallelism in Rust extensions WITHOUT Python GIL.
-    # Impact: 7-8 M1 cores for CPU-bound work (graph traversal, simhash, etc.)
-    # Requires: Python 3.14+ built with --disable-gil (Py_GIL_DISABLED=1).
-    # Install with: uv sync --extra nogil
-    # NOTE: PyO3 is NOT a pip package — it's a Rust crate bundled in
-    # rust_extensions/Cargo.toml (compiled via maturin). This extra only
-    # documents the nogil feature for type checkers / CI. The actual
-    # PyO3 version is managed by rust_extensions/Cargo.toml.
-]
-
 [project.scripts]
 hledac = "hledac.universal.__main__:main"
 check-silent-excepts = "hledac.universal.scripts.check_silent_excepts:main"

@@ -10,21 +10,23 @@ No browser, no JS rendering, no auth-required APIs, no cloud-only dependencies.
 Sprint 8BN — Structured TI Ingest V1
 """
 from __future__ import annotations
+
 import asyncio
 import hashlib
-import json
 import logging
-import msgspec.json as _json
 import os
 import time
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
-from hledac.universal.utils.msgspec_json import loads as _msgspec_loads, dumps_str as _msgspec_dumps_str
+
 import httpx
 import msgspec
+
 from hledac.universal.network.session_runtime import async_get_httpx_session
 from hledac.universal.tools.discovery_replay import read_cassette, replay_enabled, replay_strict_enabled, write_cassette
 from hledac.universal.transport.circuit_breaker import checked_httpx_get, checked_httpx_post
+from hledac.universal.utils.msgspec_json import loads as _msgspec_loads
+
 try:
     from selectolax.parser import HTMLParser as _SelectolaxHTMLParser
     SELECTOLAX_AVAILABLE = True
@@ -141,7 +143,7 @@ class SourceAdapter(ABC):
     def _hash_fields(*fields: str) -> str:
         """Compute deterministic xxhash over pipe-separated fields."""
         import xxhash
-        return xxhash.xxh3_64('|'.join((f or '' for f in fields))).hexdigest()
+        return xxhash.xxh3_64('|'.join(f or '' for f in fields)).hexdigest()
 
     @staticmethod
     async def _fetch_text(url: str, timeout_s: float=30.0, max_bytes: int=5000000) -> tuple[str | None, str | None]:
@@ -400,7 +402,6 @@ async def fetch_feodo_c2() -> list[dict]:
 
 async def query_circl_pdns(domain: str, max_results: int=50) -> list[dict]:
     """CIRCL Passive DNS — community free tier, no authentication."""
-    import json as _json
     try:
         s = await async_get_httpx_session()
         text, status, err = await checked_httpx_get(s, f'https://www.circl.lu/pdns/query/{domain}', timeout=httpx.Timeout(15), failure_kind='circl_pdns')
@@ -456,7 +457,6 @@ async def certstream_monitor(keyword: str, duration_s: int=60, max_certs: int=20
     except ImportError:
         logger.debug('[Certstream] websockets not installed')
         return []
-    import json as _json
     results: list[dict] = []
     try:
         loop = asyncio.get_running_loop()
@@ -539,7 +539,7 @@ async def enrich_findings_greynoise_community(session: httpx.AsyncClient, findin
             if result['riot']:
                 finding['confidence'] = min(finding.get('confidence', 0.5) * 0.5, 0.3)
         await asyncio.sleep(0.3)
-    enriched = sum((1 for f in ip_findings if 'greynoise' in f))
+    enriched = sum(1 for f in ip_findings if 'greynoise' in f)
     logger.info(f'[GreyNoise/community] enriched {enriched}/{len(ip_findings)} IPs')
     return findings
 
@@ -830,6 +830,7 @@ class WaybackArchiveAdapter(SourceAdapter):
         return tuple(entries)
 from hledac.universal.tool_registry import register_task
 
+
 @register_task('domain_to_pdns')
 async def _handle_domain_to_pdns(task, scheduler):
     from hledac.universal.discovery.ti_feed_adapter import query_circl_pdns
@@ -1065,6 +1066,7 @@ async def _handle_i2p_eepsite_fetch(task, scheduler):
         if results:
             await safe_gather_ok(*[_buffer_one(r) for r in results], label='ti_feed_adapter:i2p_eepsite_fetch')
 import re as _cid_re_mod
+
 _CID_PATTERN = _cid_re_mod.compile('\\b(Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{58})\\b')
 _IPFS_GATEWAYS = ['https://ipfs.io/ipfs/', 'https://cloudflare-ipfs.com/ipfs/', 'https://gateway.pinata.cloud/ipfs/']
 
@@ -1223,7 +1225,9 @@ async def _handle_gopher_fetch(task, scheduler):
     if items:
         await safe_gather_ok(*[_buffer_one(item) for item in items], label='ti_feed_adapter:gopher_fetch')
 import re as _ip_re_mod
+
 from hledac.universal.utils.async_helpers import safe_gather_ok
+
 _IP_PATTERN = _ip_re_mod.compile('^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$')
 
 def _is_valid_ip(s: str) -> bool:
@@ -1355,7 +1359,7 @@ async def fetch_malwarebazaar_recent(tag: str | None=None, max_items: int=25) ->
 async def _handle_malwarebazaar_search(task, scheduler):
     """MalwareBazaar malware sample lookup — hash nebo tag."""
     ioc = task.ioc_value
-    if len(ioc) == 64 and all((c in '0123456789abcdefABCDEF' for c in ioc)):
+    if len(ioc) == 64 and all(c in '0123456789abcdefABCDEF' for c in ioc):
         try:
             s = await async_get_httpx_session()
             resp, err = await checked_httpx_post(s, 'https://mb-api.abuse.ch/api/v1/', json={'query': 'get_info', 'hash': ioc}, timeout=httpx.Timeout(15), failure_kind='malwarebazaar_info')

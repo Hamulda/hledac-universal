@@ -15,7 +15,7 @@ import asyncio
 import logging
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, AsyncIterator
 
 import msgspec
@@ -55,10 +55,10 @@ class DiscoveryResult(msgspec.Struct, frozen=True):
     source: str
     source_type: str
     rank: int = 0
-    retrieved_ts: float = field(default_factory=time.time)
+    retrieved_ts: float = msgspec.field(default_factory=time.time)
     score: float = 0.0
     reason: str | None = None
-    metadata: dict[str, str] = field(default_factory=dict)
+    metadata: dict[str, str] = msgspec.field(default_factory=dict)
 
 
 # -----------------------------------------------------------------------

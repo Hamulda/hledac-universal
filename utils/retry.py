@@ -1,5 +1,5 @@
 """
-Centralizovaný retry helpers — konzistentní retry politika pro celý projekt.
+Centralizovaný retry helpers -- konzistentní retry politika pro celý projekt.
 
 Retry strategy: exponential backoff + decorrelated jitter + telemetrie.
 
@@ -46,7 +46,7 @@ T = TypeVar("T")
 DEFAULT_MAX_ATTEMPTS = 3
 DEFAULT_BASE_DELAY = 0.5  # seconds
 DEFAULT_MAX_DELAY = 30.0  # seconds
-DEFAULT_JITTER_FACTOR = 0.25  # ±25% decorrelated jitter
+DEFAULT_JITTER_FACTOR = 0.25  # +/-25% decorrelated jitter
 
 # Retryable exception types (broad by default, narrow per-call)
 DEFAULT_RETRYABLE: tuple[type[Exception], ...] = (
@@ -89,15 +89,15 @@ async def retry_async(
         max_attempts: Maximum retry attempts (default 3).
         base_delay: Initial delay in seconds (default 0.5).
         max_delay: Cap on delay growth (default 30.0).
-        jitter: Add ±jitter_factor decorrelated jitter (default True).
-        jitter_factor: Jitter range (default ±25%).
+        jitter: Add +/-jitter_factor decorrelated jitter (default True).
+        jitter_factor: Jitter range (default +/-25%).
         retryable: Exception types to retry on. None = DEFAULT_RETRYABLE.
         cancel_is_retriable: If True, CancelledError triggers retry instead of
-            propagation. Default False (CancelledError propagates — correct for
+            propagation. Default False (CancelledError propagates -- correct for
             graceful SIGINT shutdown).
         on_retry: Optional callback fired before each retry: (attempt, delay, exc).
             Use for telemetry, logging, or circuit-breaker updates.
-        backoff_factor: Exponential base (default 2.0 = 0.5 → 1.0 → 2.0).
+        backoff_factor: Exponential base (default 2.0 = 0.5 -> 1.0 -> 2.0).
 
     Returns:
         The return value of coro_fn on success.
@@ -123,7 +123,7 @@ async def retry_async(
             return await coro_fn()
         except asyncio.CancelledError:
             if not cancel_is_retriable:
-                raise  # Propagate — correct for graceful shutdown
+                raise  # Propagate -- correct for graceful shutdown
             # cancel_is_retriable=True: fall through to retry
             last_exception = asyncio.CancelledError("retry after cancellation")
         except Exception as exc:  # noqa: BLE001
@@ -139,7 +139,7 @@ async def retry_async(
         delay = min(base_delay * (backoff_factor ** (attempt - 1)), max_delay)
 
         if jitter:
-            # Decorrelated jitter: ±jitter_factor of current delay
+            # Decorrelated jitter: +/-jitter_factor of current delay
             delay *= 1.0 + jitter_factor * (2.0 * _random.random() - 1.0)
             delay = max(base_delay * 0.1, delay)  # floor at 10% of base_delay
 
@@ -159,7 +159,7 @@ async def retry_async(
         try:
             await asyncio.sleep(delay)
         except asyncio.CancelledError:
-            # Cancelled mid-backoff — propagate cancellation,
+            # Cancelled mid-backoff -- propagate cancellation,
             # NOT the last exception. Cancellation always wins.
             raise
 
@@ -168,7 +168,7 @@ async def retry_async(
 
 
 class RetryLoop:
-    """Sync iterator for retry loops — use with `for attempt in RetryLoop():`.
+    """Sync iterator for retry loops -- use with `for attempt in RetryLoop():`.
 
     Generates (attempt_number, delay) pairs. Caller calls break on success.
 
@@ -241,11 +241,12 @@ class RetryLoop:
 
 
 def default_on_retry(attempt: int, delay: float, exc: Exception) -> None:
-    """Default retry callback — emit structured log + telemetry counter."""
+    """Default retry callback -- emit structured log + telemetry counter."""
     logger.debug("[RETRY] attempt=%d/%d delay=%.2fs exc=%r", attempt, "?", delay, exc)
 
 
-# --- Backoff-only (no jitter) — for testing determinism ----------------------
+# --- Backoff-only (no jitter) -- for testing determinism ----------------------
+
 
 async def retry_backoff_linear_async(
     coro_fn: Callable[[], Awaitable[T]],
@@ -257,7 +258,7 @@ async def retry_backoff_linear_async(
     retryable: type[Exception] | tuple[type[Exception], ...] | None = None,
     cancel_is_retriable: bool = False,
 ) -> T:
-    """Linear-backoff variant (no jitter) — for deterministic test scenarios."""
+    """Linear-backoff variant (no jitter)."""
     return await retry_async(
         coro_fn,
         max_attempts=max_attempts,
@@ -268,3 +269,4 @@ async def retry_backoff_linear_async(
         retryable=retryable,
         cancel_is_retriable=cancel_is_retriable,
     )
+

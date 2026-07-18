@@ -811,9 +811,6 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "advanced")]
     pipeline_compose::register(m)?;
 
-    // F5.2: GIL management — Python::with_gil() + rayon pools (ne pyo3-async)
-    gil::register_functions(m)?;
-
     // ISSUE #015: MLX async token streaming bridge — adaptive buffering + memory pressure feedback
     mlx_bridge::register(m)?;
 

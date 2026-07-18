@@ -1673,7 +1673,7 @@ requires-dist = [
     { name = "zeroconf" },
     { name = "zstandard", specifier = ">=0.25.0" },
 ]
-provides-extras = ["otel", "observability", "aiohttp-fallback", "ml", "mlx-embed", "http3", "m1-local", "nogil"]
+provides-extras = ["otel", "observability", "aiohttp-fallback", "ml", "mlx-embed", "http3", "m1-local"]
 
 [package.metadata.requires-dev]
 dev = [

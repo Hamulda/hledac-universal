@@ -169,7 +169,7 @@ class MLXUnifiedScheduler:
         U.M6: Telemetry atomická — bez race conditions
         U.M7: O(1) direct dispatch — žádný heap, žádný mutex v hot path
     """
-    __slots__ = tuple(('_ane_mutex', '_batcher', '_batcher_loaded', '_current_preset', '_embedder', '_embedder_loaded', '_finalizer', '_lane_metrics', '_llm_engine', '_memory_pressure', '_model_info', '_shutdown', '_stats', '_stats_lock', '_token_cache', '_worker_thread', '_worker_thread_loaded'))
+    __slots__ = tuple(('_ane_mutex', '_batcher', '_batcher_loaded', '_current_preset', '_embedder', '_embedder_loaded', '_finalizer', '_inference_semaphore', '_lane_metrics', '_llm_engine', '_memory_pressure', '_model_info', '_shutdown', '_stats', '_stats_lock', '_token_cache', '_worker_thread', '_worker_thread_loaded'))
 
     def __init__(self, llm_engine: DeepHermes3Engine, *, embedder: MLXEmbedder | None=None, batcher: MLXBatchedExecutor | None=None, worker_thread: MLXWorkerThread | None=None, token_cache: Any=None, ane_mutex: ANE_MLX_Mutex | None=None) -> None:
         """
@@ -197,6 +197,10 @@ class MLXUnifiedScheduler:
         self._embedder_loaded: bool = False
         self._batcher_loaded: bool = False
         self._worker_thread_loaded: bool = False
+        # ISSUE-010 FIX: Acquire MLX inference semaphore from engine for cross-lane
+        # serialization — embeddings must wait for in-flight LLM inference to complete
+        # before they can use the shared GPU memory bandwidth.
+        self._inference_semaphore = getattr(llm_engine, '_inference_semaphore', None) if llm_engine else None
         self._finalizer = weakref.finalize(self, _scheduler_at_exit, self)
         logger.debug('[MLXScheduler] Created — components: engine=%s, embedder=%s, batcher=%s, worker=%s', bool(llm_engine), bool(embedder), bool(batcher), bool(worker_thread))
 
@@ -254,19 +258,22 @@ class MLXUnifiedScheduler:
             pass
         return result
 
-    async def submit_embedding(self, texts: list[str], *, priority: LanePriority=LanePriority.EMBEDDING, batch_size: int | None=None) -> list[list[float]]:
+    async def submit_embedding(self, texts: list[str], *, batch_size: int | None=None) -> list[list[float]]:
         """
         Submit batch embedding request.
 
-        Routes through:
-        - ANE if available and not busy (via ANE_MLX_Mutex)
+        ISSUE-010 FIX: Cross-lane serialization via MLX inference semaphore.
+        Embedding batches now wait for in-flight LLM inference to complete before
+        executing, preventing GPU memory bandwidth contention.
+
+        Routing:
+        - ANE if available (via ANE_MLX_Mutex, held for entire operation)
         - MLXEmbedder with AdaptiveEmbeddingBatcher (Issue #23: dynamic mid-batch
           memory pressure feedback)
         - Memory-aware batch size reduction at high pressure
 
         Args:
             texts: List of text strings to embed
-            priority: Lane priority (default EMBEDDING)
             batch_size: Override batch size (None = adaptive via AdaptiveEmbeddingBatcher)
 
         Returns:
@@ -277,16 +284,27 @@ class MLXUnifiedScheduler:
         if not texts:
             return []
         start_ts = time_module.monotonic()
+
+        # ISSUE-010 FIX: Acquire inference semaphore to serialize with LLM lane.
+        # This prevents embedding batches from running concurrently with
+        # mlx_lm.generate() on the shared GPU memory bandwidth.
+        _inference_sem = self._inference_semaphore
+        if _inference_sem is not None:
+            await _inference_sem.acquire()
+
         ane_routed = False
-        if self._ane_mutex is not None:
-            try:
-                self._ane_mutex.acquire_ane(model_size_mb=50)
-                ane_routed = True
-                self._update_stats(ane_offload_count=1)
-            except MemoryError:
-                ane_routed = False
-                self._update_stats(gpu_fallback_count=1)
         try:
+            # ISSUE-010 FIX: Acquire ANE mutex and HOLD for entire embedding operation.
+            # Previously the mutex was released before the actual embed call, allowing
+            # concurrent ANE access from other paths (reranker, etc.).
+            if self._ane_mutex is not None:
+                try:
+                    self._ane_mutex.acquire_ane(model_size_mb=50)
+                    ane_routed = True
+                    self._update_stats(ane_offload_count=1)
+                except MemoryError:
+                    self._update_stats(gpu_fallback_count=1)
+
             embedder = await self._ensure_embedder()
             if batch_size is not None:
                 result = await self._do_embedding_batch(texts, batch_size)
@@ -298,6 +316,8 @@ class MLXUnifiedScheduler:
         finally:
             if ane_routed and self._ane_mutex is not None:
                 self._ane_mutex.release(runtime='ane')
+            if _inference_sem is not None:
+                _inference_sem.release()
         latency_ms = (time_module.monotonic() - start_ts) * 1000
         self._lane_metrics[LanePriority.EMBEDDING].record(latency_ms)
         self._update_stats(embedding_requests=len(texts), active_lane='embedding')
@@ -317,7 +337,8 @@ class MLXUnifiedScheduler:
 
         Args:
             coro: Async coroutine to execute
-            priority: Lane priority (default BACKGROUND)
+            priority: Lane priority (default BACKGROUND, reserved for future priority
+                      queuing — currently unused but part of the lane protocol)
 
         Returns:
             Result of coroutine

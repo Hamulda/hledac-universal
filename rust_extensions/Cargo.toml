@@ -73,10 +73,9 @@ core = [
 # Python fallback: DuckDBShadowStore.async_ingest_findings_batch via Python duckdb
 # Adds: duckdb crate (~20 MB compile, ~15 MB resident)
 data = [
-    "duckdb",
+    "dep:duckdb",
     "arrow_batch_builder",
     "async_query",
-    "data",
     "graph_traverse",
 ]
 
@@ -126,7 +125,6 @@ lsh_index = []        # Referenced by graph
 hot_edges = []         # Deprecated: module is hot_edges_rs, guarded by graph feature
 # NOTE: hot_edges_rs is the actual module name, hot_edges feature is legacy alias
 duckdb = []           # Referenced by data
-data = []             # Referenced by data; #[cfg(feature = "data")] in lib.rs
 feed_pipeline = []    # Referenced by advanced
 federated_qtable = [] # Referenced by advanced
 signal_batch = []     # Referenced by advanced

@@ -5,6 +5,8 @@
 /// This module imports patterns from ioc_patterns.rs — DO NOT redefine patterns here.
 
 use crate::gil::release_gil;
+#[cfg(feature = "advanced")]
+use crate::adaptive_scheduler;
 use crate::ioc_patterns::{
     CVE_PAT, DOMAIN_PAT, EMAIL_PAT, ENCODING_BASE32_PAT, ENCODING_BASE64_PAT,
     ENCODING_HEX_PAT, ENCODING_HIGH_ENTROPY_PAT, HASH_PAT, IPV4_PAT, IPV6_PAT,
@@ -154,7 +156,11 @@ pub fn batch_ioc_extract_fast<'py>(
         .filter_map(|item| item.extract::<String>().ok())
         .collect();
 
-    if n < crate::adaptive_scheduler::mixed_threshold() {
+    #[cfg(feature = "advanced")]
+    let thresh = adaptive_scheduler::mixed_threshold();
+    #[cfg(not(feature = "advanced"))]
+    let thresh = 0;
+    if n < thresh {
         // Serial path — zero GIL release needed, faster for small batches
         let mut results = Vec::with_capacity(n * 4); // rough estimate
         for text in &owned {
