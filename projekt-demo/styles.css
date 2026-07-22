@@ -1,0 +1,762 @@
+/* Reset */
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --bg: #050507;
+  --text: #f0f0f2;
+  --text-muted: #f0f0f2;
+  --border: rgba(255, 255, 255, 0.08);
+  --surface: rgba(255, 255, 255, 0.03);
+  --surface-hover: rgba(255, 255, 255, 0.055);
+  --font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --radius: 16px;
+  --accent: #ffffff;
+  --green: #22c55e;
+}
+
+html {
+  scroll-behavior: smooth;
+  height: 100%;
+}
+
+body {
+  font-family: var(--font);
+  background: #000000;
+  color: var(--text);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100%;
+  padding: 12px;
+}
+
+@media (min-width: 641px) {
+  body {
+    padding: 20px;
+  }
+}
+
+.page-wrapper {
+  background: #1f2937;
+  background-image: url("background.jpg");
+  background-size: cover;
+  background-position: center 40%;
+  border-radius: 16px;
+  overflow: hidden;
+  min-height: calc(100vh - 24px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+
+@media (min-width: 641px) {
+  .page-wrapper {
+    min-height: calc(100vh - 40px);
+  }
+}
+
+.container {
+  max-width: 780px;
+  width: 100%;
+  padding: 48px 24px;
+}
+
+/* Header */
+.header {
+  margin-bottom: 48px;
+}
+
+.header-top {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.logo {
+  flex-shrink: 0;
+}
+
+.logo-icon {
+  width: 42px;
+  height: 42px;
+  color: var(--text);
+}
+
+.header h1 {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.subtitle {
+  font-size: 14px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+/* Sections */
+.section {
+  margin-bottom: 40px;
+}
+
+/* ============================================
+   BENTO GRID
+   ============================================ */
+.bento-grid {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 12px;
+  position: relative;
+}
+
+
+.bento-card {
+  grid-column: span 5;
+}
+
+.bento-half {
+  grid-column: span 6;
+}
+
+.bento-half .bento-visual {
+  height: 140px;
+}
+
+.bento-wide .bento-visual,
+.bento-card:not(.bento-half):not(.bento-full) .bento-visual {
+  height: 160px;
+}
+
+.bento-wide {
+  grid-column: span 7;
+}
+
+.bento-full {
+  grid-column: span 12;
+}
+
+.bento-large {
+  grid-column: span 8;
+  height: 92px;
+}
+
+.bento-third {
+  grid-column: span 2;
+  height: 92px;
+}
+
+.bento-inner--logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  cursor: default;
+}
+
+.logo-card-icon {
+  width: 36px;
+  height: 36px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* Card inner wrapper */
+.bento-inner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  cursor: pointer;
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(40px);
+  -webkit-backdrop-filter: blur(40px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+  transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.bento-inner:hover {
+  background: rgba(0, 0, 0, 0.55);
+  border-color: rgba(255, 255, 255, 0.15);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.bento-inner--row {
+  flex-direction: row;
+  align-items: center;
+  min-height: 0;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+/* ============================================
+   SEAMLESS GLOW (#6) - on card level
+   ============================================ */
+.bento-glow {
+  position: absolute;
+  width: 280px;
+  height: 280px;
+  border-radius: 50%;
+  filter: blur(120px);
+  opacity: 0.06;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.bento-glow--green,
+.bento-glow--blue,
+.bento-glow--cyan,
+.bento-glow--purple,
+.bento-glow--white {
+  background: #ffffff;
+}
+
+.bento-glow--green {
+  top: 15%;
+  left: 25%;
+}
+
+.bento-glow--blue {
+  top: 5%;
+  right: 10%;
+}
+
+.bento-glow--cyan {
+  top: 20%;
+  left: 20%;
+}
+
+.bento-glow--purple {
+  top: 20%;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.bento-glow--white {
+  width: 280px;
+  height: 280px;
+  opacity: 0.06;
+  top: 50%;
+  left: 30%;
+  transform: translate(-50%, -50%);
+}
+
+/* ============================================
+   DUST PARTICLES & SHIMMER (#7)
+   ============================================ */
+.bento-inner::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  background-image:
+    radial-gradient(1px 1px at 12% 22%, rgba(255, 255, 255, 0.4), transparent),
+    radial-gradient(1px 1px at 42% 58%, rgba(255, 255, 255, 0.25), transparent),
+    radial-gradient(1px 1px at 72% 28%, rgba(255, 255, 255, 0.2), transparent),
+    radial-gradient(0.5px 0.5px at 58% 12%, rgba(255, 255, 255, 0.35), transparent),
+    radial-gradient(0.5px 0.5px at 22% 78%, rgba(255, 255, 255, 0.2), transparent),
+    radial-gradient(1px 1px at 85% 65%, rgba(255, 255, 255, 0.15), transparent),
+    radial-gradient(0.5px 0.5px at 92% 18%, rgba(255, 255, 255, 0.25), transparent),
+    radial-gradient(1px 1px at 5% 55%, rgba(255, 255, 255, 0.15), transparent);
+  animation: dust 8s ease-in-out infinite alternate;
+}
+
+.bento-card:nth-child(2) .bento-inner::before { animation-delay: -2s; }
+.bento-card:nth-child(3) .bento-inner::before { animation-delay: -4s; }
+.bento-card:nth-child(4) .bento-inner::before { animation-delay: -1.5s; }
+.bento-card:nth-child(5) .bento-inner::before { animation-delay: -5.5s; }
+
+@keyframes dust {
+  0% { opacity: 0.15; transform: translateY(0); }
+  50% { opacity: 0.35; }
+  100% { opacity: 0.15; transform: translateY(-5px); }
+}
+
+
+/* ============================================
+   VISUAL AREA
+   ============================================ */
+.bento-visual {
+  position: relative;
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 140px;
+  z-index: 1;
+}
+
+.bento-visual--compact {
+  min-height: auto;
+  padding: 0;
+  flex: 1;
+}
+
+/* ============================================
+   TEXT AREA
+   ============================================ */
+.bento-text {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 16px 20px 20px;
+}
+
+.bento-text--inline {
+  padding: 12px 20px;
+  flex: 1;
+  min-width: fit-content;
+}
+
+.bento-title {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  color: var(--text);
+  transition: all 0.15s ease;
+}
+
+.bento-desc {
+  display: block;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  line-height: 1.45;
+}
+
+.bento-desc code {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--text);
+}
+
+/* ============================================
+   CHECKBOX
+   ============================================ */
+.check-input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.check-box {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.18);
+  flex-shrink: 0;
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.check-box::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.7)' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'%3E%3C/polyline%3E%3C/svg%3E") center/contain no-repeat;
+  opacity: 0;
+  transform: scale(0.5);
+  transition: all 0.15s ease;
+}
+
+/* Use ~ (general sibling) since glow div sits between input and text */
+.check-input:checked ~ .bento-text .check-box {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.check-input:checked ~ .bento-text .check-box::after {
+  opacity: 1;
+  transform: scale(1);
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.9)' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'%3E%3C/polyline%3E%3C/svg%3E") center/contain no-repeat;
+}
+
+.check-input:checked ~ .bento-text .bento-title {
+  color: var(--text-muted);
+  text-decoration: line-through;
+  text-decoration-color: rgba(255, 255, 255, 0.2);
+}
+
+/* ============================================
+   SHARED TERMINAL STYLES
+   ============================================ */
+.terminal-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+}
+
+.terminal-line--path {
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 11px;
+  margin-bottom: 6px;
+}
+
+.terminal-prompt {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.terminal-cmd {
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.terminal-cursor {
+  width: 7px;
+  height: 15px;
+  background: rgba(34, 197, 94, 0.7);
+  border-radius: 1px;
+  animation: blink 1s step-end infinite;
+}
+
+.terminal-cursor--dim {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* ============================================
+   CARD 2: SESSION TABS (#2)
+   ============================================ */
+.sessions-panel {
+  width: 100%;
+  max-width: 210px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.sessions-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.session-tab {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 10px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.35);
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  white-space: nowrap;
+}
+
+.session-icon {
+  flex-shrink: 0;
+  opacity: 0.5;
+}
+
+.session-tab--active {
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.session-tab--active .session-icon {
+  opacity: 0.9;
+}
+
+.session-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 9px;
+  color: rgba(255, 255, 255, 0.2);
+  transition: color 0.15s ease;
+}
+
+.sessions-panel--wide {
+  max-width: 340px;
+}
+
+.sessions-body {
+  padding: 10px 12px 14px;
+}
+
+/* ============================================
+   CARD 3: SELECT / EDIT (#3) - green highlight
+   ============================================ */
+.select-mock {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.select-element {
+  position: relative;
+}
+
+.select-tag {
+  position: absolute;
+  top: -10px;
+  left: -2px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: rgba(34, 197, 94, 0.95);
+  background: rgba(34, 197, 94, 0.18);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+.select-outline {
+  padding: 10px 28px;
+  border: 2px solid rgba(34, 197, 94, 0.5);
+  border-radius: 6px;
+  font-size: 16px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.5);
+  background: rgba(34, 197, 94, 0.06);
+}
+
+.select-cursor {
+  position: absolute;
+  bottom: -4px;
+  right: -8px;
+  color: rgba(34, 197, 94, 0.85);
+  filter: drop-shadow(0 0 8px rgba(34, 197, 94, 0.35));
+}
+
+/* ============================================
+   CARD 4: MOBILE VIEW (#4) - refined
+   ============================================ */
+.mobile-mock {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.phone-frame {
+  width: 60px;
+  height: 110px;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  border-radius: 16px;
+  position: relative;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+}
+
+.phone-island {
+  width: 24px;
+  height: 8px;
+  background: rgba(0, 0, 0, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  margin: 6px auto 0;
+}
+
+.phone-screen {
+  flex: 1;
+  padding: 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.phone-line {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  width: 100%;
+}
+
+.phone-line--title {
+  height: 6px;
+  width: 60%;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.phone-line--short {
+  width: 70%;
+}
+
+.phone-block {
+  height: 20px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+}
+
+.phone-bar {
+  width: 28px;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 2px;
+  margin: 0 auto 5px;
+}
+
+.viewport-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.viewport-toolbar--horizontal {
+  flex-direction: row;
+  gap: 8px;
+}
+
+.vp-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.25);
+}
+
+.vp-btn--active {
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+/* ============================================
+   CARD 5: COMMAND PALETTE (#5) - press anim
+   ============================================ */
+.palette-mock {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.palette-keys {
+  display: flex;
+  gap: 6px;
+}
+
+.key-cap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 3px 0 rgba(255, 255, 255, 0.06);
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 16px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.7);
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+
+.key-cap--press {
+  animation: keyPress 3s ease-in-out infinite;
+}
+
+@keyframes keyPress {
+  0%, 72%, 84%, 100% {
+    transform: translateY(0);
+    box-shadow: 0 3px 0 rgba(255, 255, 255, 0.06);
+  }
+  78% {
+    transform: translateY(2px);
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04);
+  }
+}
+
+/* ============================================
+   FOOTER
+   ============================================ */
+.footer {
+  margin-top: 48px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+}
+
+.footer p {
+  font-size: 13px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* ============================================
+   RESPONSIVE
+   ============================================ */
+@media (max-width: 640px) {
+  .container {
+    padding: 32px 16px 64px;
+  }
+
+  .bento-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .bento-card,
+  .bento-half,
+  .bento-wide,
+  .bento-large,
+  .bento-full {
+    grid-column: span 2;
+  }
+
+  .bento-third {
+    grid-column: span 1;
+  }
+
+  .sessions-panel--wide {
+    max-width: 200px;
+  }
+
+  .bento-inner--row {
+    flex-direction: column;
+  }
+
+  .bento-text--inline {
+    padding: 0 20px 20px;
+  }
+
+  .bento-visual--compact {
+    padding: 24px 24px 16px;
+  }
+}
+
+@media (max-width: 420px) {
+  .bento-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .bento-card,
+  .bento-half,
+  .bento-wide,
+  .bento-large,
+  .bento-full {
+    grid-column: span 1;
+  }
+}

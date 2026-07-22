@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Getting Started</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="page-wrapper">
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-top">
+        <div class="logo">
+          <svg viewBox="0 0 572 575" fill="currentColor" class="logo-icon">
+            <path d="M432.513 296.075C507.478 296.075 568.6 355.206 571.642 429.29H572V575H293.031V429.29H293.389C296.431 355.206 357.549 296.076 432.513 296.075ZM278.969 393.927C278.969 493.679 197.958 574.544 98.0277 574.545H0V296.075H278.969V393.927ZM278.969 145.71H278.611C275.569 219.794 214.451 278.924 139.487 278.925C64.5217 278.925 3.3997 219.794 0.35751 145.71H0V0H278.969V145.71ZM572 278.925H293.031V181.073C293.031 81.3208 374.042 0.455893 473.972 0.455317H572V278.925Z" />
+          </svg>
+        </div>
+        <div>
+          <h1>Getting Started</h1>
+          <p class="subtitle">Try these steps to explore what Projekt can do.</p>
+        </div>
+      </div>
+    </header>
+
+    <!-- Bento Grid -->
+    <section class="section">
+      <ul class="bento-grid">
+        <!-- Card 1: Ask the agent (wide) -->
+        <li class="bento-card bento-wide">
+          <label class="bento-inner">
+            <input type="checkbox" class="check-input" />
+            <div class="bento-glow bento-glow--green"></div>
+            <div class="bento-visual">
+              <div class="sessions-panel sessions-panel--wide">
+                <div class="sessions-tabs">
+                  <div class="session-tab session-tab--active">
+                    <svg class="session-icon" viewBox="60 55 390 400" fill="currentColor" width="11" height="11">
+                      <path d="M142.27 316.619l73.655-41.326 1.238-3.589-1.238-1.996-3.589-.001-12.31-.759-42.084-1.138-36.498-1.516-35.361-1.896-8.897-1.895-8.34-10.995.859-5.484 7.482-5.03 10.717.935 23.683 1.617 35.537 2.452 25.782 1.517 38.193 3.968h6.064l.86-2.451-2.073-1.517-1.618-1.517-36.776-24.922-39.81-26.338-20.852-15.166-11.273-7.683-5.687-7.204-2.451-15.721 10.237-11.273 13.75.935 3.513.936 13.928 10.716 29.749 23.027 38.848 28.612 5.687 4.727 2.275-1.617.278-1.138-2.553-4.271-21.13-38.193-22.546-38.848-10.035-16.101-2.654-9.655c-.935-3.968-1.617-7.304-1.617-11.374l11.652-15.823 6.445-2.073 15.545 2.073 6.547 5.687 9.655 22.092 15.646 34.78 24.265 47.291 7.103 14.028 3.791 12.992 1.416 3.968 2.449-.001v-2.275l1.997-26.641 3.69-32.707 3.589-42.084 1.239-11.854 5.863-14.206 11.652-7.683 9.099 4.348 7.482 10.716-1.036 6.926-4.449 28.915-8.72 45.294-5.687 30.331h3.313l3.792-3.791 15.342-20.372 25.782-32.227 11.374-12.789 13.27-14.129 8.517-6.724 16.1-.001 11.854 17.617-5.307 18.199-16.581 21.029-13.75 17.819-19.716 26.54-12.309 21.231 1.138 1.694 2.932-.278 44.536-9.479 24.062-4.347 28.714-4.928 12.992 6.066 1.416 6.167-5.106 12.613-30.71 7.583-36.018 7.204-53.636 12.689-.657.48.758.935 24.164 2.275 10.337.556h25.301l47.114 3.514 12.309 8.139 7.381 9.959-1.238 7.583-18.957 9.655-25.579-6.066-59.702-14.205-20.474-5.106-2.83-.001v1.694l17.061 16.682 31.266 28.233 39.152 36.397 1.997 8.999-5.03 7.102-5.307-.758-34.401-25.883-13.27-11.651-30.053-25.302-1.996-.001v2.654l6.926 10.136 36.574 54.975 1.895 16.859-2.653 5.485-9.479 3.311-10.414-1.895-21.408-30.054-22.092-33.844-17.819-30.331-2.173 1.238-10.515 113.261-4.929 5.788-11.374 4.348-9.478-7.204-5.03-11.652 5.03-23.027 6.066-30.052 4.928-23.886 4.449-29.674 2.654-9.858-.177-.657-2.173.278-22.37 30.71-34.021 45.977-26.919 28.815-6.445 2.553-11.173-5.789 1.037-10.337 6.243-9.2 37.257-47.392 22.47-29.371 14.508-16.961-.101-2.451h-.859l-98.954 64.251-17.618 2.275-7.583-7.103.936-11.652 3.589-3.791 29.749-20.474z"/>
+                    </svg>
+                    <span>Claude Code</span>
+                  </div>
+                </div>
+                <div class="sessions-body">
+                  <div class="terminal-line terminal-line--path">~/projekt-demo</div>
+                  <div class="terminal-line">
+                    <span class="terminal-prompt">&gt;</span>
+                    <span class="terminal-cmd">Tell me about this project</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="bento-text">
+              <span class="check-box"></span>
+              <div>
+                <h3 class="bento-title">Ask the agent something</h3>
+                <p class="bento-desc">Type a message in the terminal and press <code>Enter</code></p>
+              </div>
+            </div>
+          </label>
+        </li>
+
+        <!-- Card 2: Open another session -->
+        <li class="bento-card">
+          <label class="bento-inner">
+            <input type="checkbox" class="check-input" />
+            <div class="bento-glow bento-glow--blue"></div>
+            <div class="bento-visual">
+              <div class="sessions-panel">
+                <div class="sessions-tabs">
+                  <div class="session-tab session-tab--active">
+                    <svg class="session-icon" viewBox="0 6 24 30" fill="currentColor" width="11" height="11"><path d="M18 30H6V18H18V30Z" opacity="0.4"/><path d="M18 12H6V30H18V12ZM24 36H0V6H24V36Z"/></svg>
+                    <span>OpenCode</span>
+                  </div>
+                  <div class="session-tab">
+                    <svg class="session-icon" viewBox="60 55 390 400" fill="currentColor" width="11" height="11">
+                      <path d="M142.27 316.619l73.655-41.326 1.238-3.589-1.238-1.996-3.589-.001-12.31-.759-42.084-1.138-36.498-1.516-35.361-1.896-8.897-1.895-8.34-10.995.859-5.484 7.482-5.03 10.717.935 23.683 1.617 35.537 2.452 25.782 1.517 38.193 3.968h6.064l.86-2.451-2.073-1.517-1.618-1.517-36.776-24.922-39.81-26.338-20.852-15.166-11.273-7.683-5.687-7.204-2.451-15.721 10.237-11.273 13.75.935 3.513.936 13.928 10.716 29.749 23.027 38.848 28.612 5.687 4.727 2.275-1.617.278-1.138-2.553-4.271-21.13-38.193-22.546-38.848-10.035-16.101-2.654-9.655c-.935-3.968-1.617-7.304-1.617-11.374l11.652-15.823 6.445-2.073 15.545 2.073 6.547 5.687 9.655 22.092 15.646 34.78 24.265 47.291 7.103 14.028 3.791 12.992 1.416 3.968 2.449-.001v-2.275l1.997-26.641 3.69-32.707 3.589-42.084 1.239-11.854 5.863-14.206 11.652-7.683 9.099 4.348 7.482 10.716-1.036 6.926-4.449 28.915-8.72 45.294-5.687 30.331h3.313l3.792-3.791 15.342-20.372 25.782-32.227 11.374-12.789 13.27-14.129 8.517-6.724 16.1-.001 11.854 17.617-5.307 18.199-16.581 21.029-13.75 17.819-19.716 26.54-12.309 21.231 1.138 1.694 2.932-.278 44.536-9.479 24.062-4.347 28.714-4.928 12.992 6.066 1.416 6.167-5.106 12.613-30.71 7.583-36.018 7.204-53.636 12.689-.657.48.758.935 24.164 2.275 10.337.556h25.301l47.114 3.514 12.309 8.139 7.381 9.959-1.238 7.583-18.957 9.655-25.579-6.066-59.702-14.205-20.474-5.106-2.83-.001v1.694l17.061 16.682 31.266 28.233 39.152 36.397 1.997 8.999-5.03 7.102-5.307-.758-34.401-25.883-13.27-11.651-30.053-25.302-1.996-.001v2.654l6.926 10.136 36.574 54.975 1.895 16.859-2.653 5.485-9.479 3.311-10.414-1.895-21.408-30.054-22.092-33.844-17.819-30.331-2.173 1.238-10.515 113.261-4.929 5.788-11.374 4.348-9.478-7.204-5.03-11.652 5.03-23.027 6.066-30.052 4.928-23.886 4.449-29.674 2.654-9.858-.177-.657-2.173.278-22.37 30.71-34.021 45.977-26.919 28.815-6.445 2.553-11.173-5.789 1.037-10.337 6.243-9.2 37.257-47.392 22.47-29.371 14.508-16.961-.101-2.451h-.859l-98.954 64.251-17.618 2.275-7.583-7.103.936-11.652 3.589-3.791 29.749-20.474z"/>
+                    </svg>
+                    <span>Claude Code</span>
+                  </div>
+                  <div class="session-add">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="11" height="11"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                  </div>
+                </div>
+                <div class="sessions-body">
+                  <div class="terminal-line">
+                    <span class="terminal-prompt">&gt;</span>
+                    <span class="terminal-cursor terminal-cursor--dim"></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="bento-text">
+              <span class="check-box"></span>
+              <div>
+                <h3 class="bento-title">Open another session</h3>
+                <p class="bento-desc">Run multiple agents side by side</p>
+              </div>
+            </div>
+          </label>
+        </li>
+
+        <!-- Card 3: Select and edit -->
+        <li class="bento-card bento-half">
+          <label class="bento-inner">
+            <input type="checkbox" class="check-input" />
+            <div class="bento-glow bento-glow--cyan"></div>
+            <div class="bento-visual">
+              <div class="select-mock">
+                <div class="select-element">
+                  <div class="select-outline">
+                    <span>Page Title</span>
+                  </div>
+                </div>
+                <svg class="select-cursor" viewBox="0 0 24 24" fill="currentColor" width="24" height="24"><path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/></svg>
+              </div>
+            </div>
+            <div class="bento-text">
+              <span class="check-box"></span>
+              <div>
+                <h3 class="bento-title">Select and edit an element</h3>
+                <p class="bento-desc">Click an element, then describe changes in the terminal</p>
+              </div>
+            </div>
+          </label>
+        </li>
+
+        <!-- Card 4: Try mobile view (wide) -->
+        <li class="bento-card bento-half">
+          <label class="bento-inner">
+            <input type="checkbox" class="check-input" />
+            <div class="bento-glow bento-glow--purple"></div>
+            <div class="bento-visual">
+              <div class="viewport-toolbar viewport-toolbar--horizontal">
+                <span class="vp-btn">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="30" height="30"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                </span>
+                <span class="vp-btn">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="30" height="30"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+                </span>
+                <span class="vp-btn vp-btn--active">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="30" height="30"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+                </span>
+              </div>
+            </div>
+            <div class="bento-text">
+              <span class="check-box"></span>
+              <div>
+                <h3 class="bento-title">Try mobile view</h3>
+                <p class="bento-desc">Switch viewports in the preview toolbar</p>
+              </div>
+            </div>
+          </label>
+        </li>
+
+        <!-- Card 5: Command palette -->
+        <li class="bento-card bento-large">
+          <label class="bento-inner bento-inner--row">
+            <input type="checkbox" class="check-input" />
+            <div class="bento-glow bento-glow--white"></div>
+            <div class="bento-text bento-text--inline">
+              <span class="check-box"></span>
+              <div>
+                <h3 class="bento-title">Open command palette</h3>
+                <p class="bento-desc">Access quick actions and slash commands</p>
+              </div>
+            </div>
+            <div class="bento-visual bento-visual--compact">
+              <div class="palette-mock">
+                <div class="palette-keys">
+                  <kbd class="key-cap">&#8984;</kbd>
+                  <kbd class="key-cap key-cap--press">K</kbd>
+                </div>
+              </div>
+            </div>
+          </label>
+        </li>
+
+        <!-- Card 6: OpenCode -->
+        <li class="bento-card bento-third">
+          <div class="bento-inner bento-inner--logo">
+            <svg viewBox="0 6 24 30" fill="currentColor" class="logo-card-icon"><path d="M18 30H6V18H18V30Z" opacity="0.4"/><path d="M18 12H6V30H18V12ZM24 36H0V6H24V36Z"/></svg>
+          </div>
+        </li>
+
+        <!-- Card 7: Claude -->
+        <li class="bento-card bento-third">
+          <div class="bento-inner bento-inner--logo">
+            <svg viewBox="60 55 390 400" fill="currentColor" class="logo-card-icon">
+              <path d="M142.27 316.619l73.655-41.326 1.238-3.589-1.238-1.996-3.589-.001-12.31-.759-42.084-1.138-36.498-1.516-35.361-1.896-8.897-1.895-8.34-10.995.859-5.484 7.482-5.03 10.717.935 23.683 1.617 35.537 2.452 25.782 1.517 38.193 3.968h6.064l.86-2.451-2.073-1.517-1.618-1.517-36.776-24.922-39.81-26.338-20.852-15.166-11.273-7.683-5.687-7.204-2.451-15.721 10.237-11.273 13.75.935 3.513.936 13.928 10.716 29.749 23.027 38.848 28.612 5.687 4.727 2.275-1.617.278-1.138-2.553-4.271-21.13-38.193-22.546-38.848-10.035-16.101-2.654-9.655c-.935-3.968-1.617-7.304-1.617-11.374l11.652-15.823 6.445-2.073 15.545 2.073 6.547 5.687 9.655 22.092 15.646 34.78 24.265 47.291 7.103 14.028 3.791 12.992 1.416 3.968 2.449-.001v-2.275l1.997-26.641 3.69-32.707 3.589-42.084 1.239-11.854 5.863-14.206 11.652-7.683 9.099 4.348 7.482 10.716-1.036 6.926-4.449 28.915-8.72 45.294-5.687 30.331h3.313l3.792-3.791 15.342-20.372 25.782-32.227 11.374-12.789 13.27-14.129 8.517-6.724 16.1-.001 11.854 17.617-5.307 18.199-16.581 21.029-13.75 17.819-19.716 26.54-12.309 21.231 1.138 1.694 2.932-.278 44.536-9.479 24.062-4.347 28.714-4.928 12.992 6.066 1.416 6.167-5.106 12.613-30.71 7.583-36.018 7.204-53.636 12.689-.657.48.758.935 24.164 2.275 10.337.556h25.301l47.114 3.514 12.309 8.139 7.381 9.959-1.238 7.583-18.957 9.655-25.579-6.066-59.702-14.205-20.474-5.106-2.83-.001v1.694l17.061 16.682 31.266 28.233 39.152 36.397 1.997 8.999-5.03 7.102-5.307-.758-34.401-25.883-13.27-11.651-30.053-25.302-1.996-.001v2.654l6.926 10.136 36.574 54.975 1.895 16.859-2.653 5.485-9.479 3.311-10.414-1.895-21.408-30.054-22.092-33.844-17.819-30.331-2.173 1.238-10.515 113.261-4.929 5.788-11.374 4.348-9.478-7.204-5.03-11.652 5.03-23.027 6.066-30.052 4.928-23.886 4.449-29.674 2.654-9.858-.177-.657-2.173.278-22.37 30.71-34.021 45.977-26.919 28.815-6.445 2.553-11.173-5.789 1.037-10.337 6.243-9.2 37.257-47.392 22.47-29.371 14.508-16.961-.101-2.451h-.859l-98.954 64.251-17.618 2.275-7.583-7.103.936-11.652 3.589-3.791 29.749-20.474z"/>
+            </svg>
+          </div>
+        </li>
+      </ul>
+    </section>
+
+  </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
