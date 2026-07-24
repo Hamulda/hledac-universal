@@ -157,39 +157,36 @@ async def to_thread_with_timeout(
 
 async def _rayon_join_async(handle: int, timeout: float | None = None) -> Any:
     """
-    Async wrapper around rayon_join with optional timeout.
+    Async wrapper around rayon_join_channel with optional timeout.
 
-    rayon_join is a blocking call — we run it in a thread via asyncio.to_thread
-    so the event loop remains responsive. asyncio.timeout provides deadline-aware
-    cancellation without leaving orphaned threads.
+    ISSUE 3.1: Uses rayon_join_channel (crossbeam-channel dispatch).
+    Runs in a thread via asyncio.to_thread so the event loop remains responsive.
+    asyncio.timeout provides deadline-aware cancellation.
     """
     try:
-        from hledac_rust_extensions import rayon_join
+        from hledac_rust_extensions import rayon_join_channel
     except ImportError:
         # Fallback: rayon not compiled — propagate the import error as RuntimeError
         raise RuntimeError(
-            "hledac_rust_extensions.rayon_join unavailable (not compiled). "
+            "hledac_rust_extensions.rayon_join_channel unavailable (not compiled). "
             "Run: cd rust_extensions && maturin develop"
         ) from None
 
     loop = asyncio.get_running_loop()
 
     def _join() -> Any:
-        return rayon_join(handle, timeout)
+        return rayon_join_channel(handle, timeout)
 
     if timeout is None:
         return await loop.run_in_executor(None, _join)
 
     # asyncio.timeout fires asyncio.CancelledError when deadline expires.
-    # rayon_join returns None on timeout (worker still running).
-    # We convert None → asyncio.TimeoutError so callers get proper exception.
+    # rayon_join_channel raises RuntimeError on timeout (worker still running).
+    # We convert it to asyncio.TimeoutError so callers get proper exception.
     try:
         return await loop.run_in_executor(None, _join)
     except asyncio.CancelledError:
-        # asyncio.timeout deadline fired — rayon worker may still be running.
-        # rayon_join returned None. Convert to TimeoutError so caller
-        # can distinguish this from a normal None return (rare edge case).
-        raise asyncio.TimeoutError(f"rayon_join timed out after {timeout}s") from None
+        raise asyncio.TimeoutError(f"rayon_join_channel timed out after {timeout}s") from None
 
 
 async def to_thread_rayon(
@@ -200,7 +197,10 @@ async def to_thread_rayon(
     timeout: float | None = None,
 ) -> T:
     """
-    Run a Python callable on the Rust rayon pool with optional timeout.
+    Run a Python callable on the Rust rayon pool via channel dispatch with optional timeout.
+
+    ISSUE 3.1: Uses rayon_submit_channel (crossbeam-channel → existing rayon pool
+    dispatcher, žádný thread::spawn per task). ~5μs/task vs ~500μs/task.
 
     This is the preferred replacement for asyncio.to_thread() when:
     1. The function releases the GIL internally (I/O, or nested asyncio.to_thread)
@@ -233,23 +233,23 @@ async def to_thread_rayon(
         instead (py314_executors.py, PEP 756).
     """
     try:
-        from hledac_rust_extensions import rayon_submit
+        from hledac_rust_extensions import rayon_submit_channel, rayon_join_channel
     except ImportError:
         raise RuntimeError(
-            "hledac_rust_extensions.rayon_submit unavailable (not compiled). "
+            "hledac_rust_extensions.rayon_submit_channel unavailable (not compiled). "
             "Run: cd rust_extensions && maturin develop"
         ) from None
 
-    # Spawn on rayon pool — returns opaque handle for join/abort
-    handle: int = rayon_submit(pool_type, len(args), func, args)
+    # Submit to rayon pool via channel — returns opaque handle for join/abort
+    handle: int = rayon_submit_channel(pool_type, len(args), func, args)
 
     try:
         return await _rayon_join_async(handle, timeout=timeout)
     except BaseException:
         # On any exit (timeout, error, cancellation), abort the rayon task
         try:
-            from hledac_rust_extensions import rayon_abort
-            rayon_abort(handle)
+            from hledac_rust_extensions import rayon_abort_channel
+            rayon_abort_channel(handle)
         except BaseException:
             pass  # Best-effort abort — don't mask the original exception
         raise

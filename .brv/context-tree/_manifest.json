@@ -3,13 +3,19 @@
     {
       "order": 3,
       "path": "_index.md",
-      "tokens": 574,
+      "tokens": 681,
       "type": "summary"
     },
     {
       "order": 2,
       "path": "architecture/_index.md",
-      "tokens": 1351,
+      "tokens": 545,
+      "type": "summary"
+    },
+    {
+      "order": 2,
+      "path": "knowledge_base/_index.md",
+      "tokens": 549,
       "type": "summary"
     },
     {
@@ -36,6 +42,12 @@
       "importance": 50,
       "path": "architecture/hledac_universal/context.md",
       "tokens": 117,
+      "type": "context"
+    },
+    {
+      "importance": 50,
+      "path": "architecture/hledac_universal/critical-invariants-as-cross-domain-enforcement-mechanism.md",
+      "tokens": 377,
       "type": "context"
     },
     {
@@ -102,6 +114,12 @@
     },
     {
       "importance": 50,
+      "path": "architecture/hledac_universal/sprint-lifecycle-cross-domain-contract.md",
+      "tokens": 334,
+      "type": "context"
+    },
+    {
+      "importance": 50,
       "path": "architecture/hledac_universal/sprint-pipeline-orchestrates-8-acquisition-lanes.md",
       "tokens": 332,
       "type": "context"
@@ -126,6 +144,14 @@
       "importance": 50,
       "path": "architecture/transport_layers/http_3_lane_implementation.md",
       "tokens": 64,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/transport_layers/issue_0_2_curl_cffi_caps_architecture_fix.abstract.md",
+      "abstractTokens": 45,
+      "importance": 50,
+      "path": "architecture/transport_layers/issue_0_2_curl_cffi_caps_architecture_fix.md",
+      "tokens": 45,
       "type": "context"
     },
     {
@@ -162,6 +188,12 @@
       "importance": 50,
       "path": "data/duckdb_store/duckdb_thread_count_and_settings.md",
       "tokens": 59,
+      "type": "context"
+    },
+    {
+      "importance": 50,
+      "path": "data/duckdb_store/duckpgqgraph-integration-gap.md",
+      "tokens": 358,
       "type": "context"
     },
     {
@@ -206,8 +238,8 @@
     },
     {
       "importance": 50,
-      "path": "facts/project/environment-gates-control-feature-activation.md",
-      "tokens": 327,
+      "path": "facts/project/context.md",
+      "tokens": 67,
       "type": "context"
     },
     {
@@ -227,63 +259,19 @@
       "type": "context"
     },
     {
-      "abstractPath": "facts/project/issue_g2_pep_734_isolation_infrastructure.abstract.md",
-      "abstractTokens": 56,
+      "abstractPath": "facts/project/issue_0_2_curl_cffi_caps_invariants.abstract.md",
+      "abstractTokens": 42,
       "importance": 50,
-      "path": "facts/project/issue_g2_pep_734_isolation_infrastructure.md",
-      "tokens": 56,
+      "path": "facts/project/issue_0_2_curl_cffi_caps_invariants.md",
+      "tokens": 42,
       "type": "context"
     },
     {
-      "abstractPath": "facts/project/parallel_async_helper.abstract.md",
-      "abstractTokens": 71,
+      "abstractPath": "facts/project/issue_2_3_rayon_dispatch_channel_fix.abstract.md",
+      "abstractTokens": 54,
       "importance": 50,
-      "path": "facts/project/parallel_async_helper.md",
-      "tokens": 71,
-      "type": "context"
-    },
-    {
-      "importance": 50,
-      "path": "facts/project/pyo3-bridges-python-and-rust-across-all-performance-paths.md",
-      "tokens": 301,
-      "type": "context"
-    },
-    {
-      "importance": 50,
-      "path": "facts/project/rust-pyo3-unifies-all-hot-paths.md",
-      "tokens": 335,
-      "type": "context"
-    },
-    {
-      "abstractPath": "facts/project/rust_extensions_overview.abstract.md",
-      "abstractTokens": 52,
-      "importance": 50,
-      "path": "facts/project/rust_extensions_overview.md",
-      "tokens": 52,
-      "type": "context"
-    },
-    {
-      "abstractPath": "facts/project/technology_stack.abstract.md",
-      "abstractTokens": 63,
-      "importance": 50,
-      "path": "facts/project/technology_stack.md",
-      "tokens": 63,
-      "type": "context"
-    },
-    {
-      "abstractPath": "facts/project/xxhash_rust_implementation.abstract.md",
-      "abstractTokens": 45,
-      "importance": 50,
-      "path": "facts/project/xxhash_rust_implementation.md",
-      "tokens": 45,
-      "type": "context"
-    },
-    {
-      "abstractPath": "knowledge_base/audit/kb_audit_2026_07_11.abstract.md",
-      "abstractTokens": 48,
-      "importance": 50,
-      "path": "knowledge_base/audit/kb_audit_2026_07_11.md",
-      "tokens": 48,
+      "path": "facts/project/issue_2_3_rayon_dispatch_channel_fix.md",
+      "tokens": 54,
       "type": "context"
     },
     {
@@ -295,13 +283,13 @@
       "type": "context"
     }
   ],
-  "generated_at": "2026-07-18T00:20:45.319Z",
+  "generated_at": "2026-07-24T21:07:46.105Z",
   "lane_tokens": {
-    "contexts": 3992,
+    "contexts": 3971,
     "stubs": 0,
-    "summaries": 1925
+    "summaries": 1775
   },
-  "source_fingerprint": "bc69423d53e6b8148ec09c601446e5a31c4c063482991d58beb69ac5a41b5519",
-  "total_tokens": 5917,
+  "source_fingerprint": "a2724b72e101ec38cbbf2327d53ddb24e600127b0bc0832f4c370bc78bf18135",
+  "total_tokens": 5746,
   "version": 1
 }

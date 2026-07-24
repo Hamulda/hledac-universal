@@ -1,0 +1,1 @@
+ISSUE-0.2 establishes curl_cffi availability checks via CAPS.require(CURL_CFFI) with FAIL-FAST fallback, blocking silent httpx fallback when JA3 spoofing is unavailable.

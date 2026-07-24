@@ -418,9 +418,23 @@ def _noop_current_otel_context() -> dict[str, Any] | None:
 
 
 try:
-    from otel._instrumentation_asyncio import current_otel_context  # noqa: E402, F401
+    from otel._instrumentation_asyncio import current_otel_context, create_task_with_context  # noqa: E402, F401
+
+    # ISSUE 4.2: OTel probe moved to module-level — one-time initialization
+    # eliminates try/except branch misprediction on every safe_create_task() call.
+    def _otel_create_task(coro: Any, *, name: str | None = None, eager_start: bool = True, otel_trace: bool = True) -> asyncio.Task[Any]:
+        return create_task_with_context(coro, name=name, eager_start=eager_start, otel_trace=otel_trace)
+
+    _safe_task_factory: Callable[..., asyncio.Task[Any]] = _otel_create_task
 except ImportError:
     current_otel_context: _OTelContextFn = _noop_current_otel_context
+
+    # Fallback: bare asyncio.create_task — no OTel context propagation.
+    # eager_start is supported on Python 3.12+ (this codebase runs 3.14).
+    def _fallback_create_task(coro: Any, *, name: str | None = None, eager_start: bool = True, **_: Any) -> asyncio.Task[Any]:
+        return asyncio.create_task(coro, name=name, eager_start=eager_start)
+
+    _safe_task_factory = _fallback_create_task
 
 
 def safe_create_task(
@@ -445,6 +459,9 @@ def safe_create_task(
     - Done-callback for cache cleanup
     - LRU eviction when task context cache exceeds 256 entries
 
+    ISSUE 4.2: _safe_task_factory is resolved once at module load — no
+    try/except ImportError branch on every call (eliminates branch misprediction).
+
     Args:
         coro:       The coroutine to wrap in a task.
         name:       Optional task name (passed to asyncio.create_task).
@@ -461,18 +478,7 @@ def safe_create_task(
     the safe path. OTel context capture is also fail-safe — any error is
     swallowed and the task runs without trace context.
     """
-    try:
-        from otel._instrumentation_asyncio import create_task_with_context  # noqa: E402
-        return create_task_with_context(
-            coro,
-            name=name,
-            eager_start=eager_start,
-            otel_trace=otel_trace,
-        )
-    except ImportError:
-        # OTel not installed — fall back to bare asyncio.create_task
-        # eager_start is supported on Python 3.12+ (this codebase runs 3.14)
-        return asyncio.create_task(coro, name=name, eager_start=eager_start)
+    return _safe_task_factory(coro, name=name, eager_start=eager_start, otel_trace=otel_trace)
 
 
 _T = TypeVar("_T", default=Any)
@@ -1349,7 +1355,7 @@ async def parallel_ok[T](
     if re_raise is not None:
         raise re_raise
 
-    return list(ok)
+    return ok
 
 
 # =============================================================================
@@ -1488,7 +1494,7 @@ async def safe_gather[T](
     if re_raise is not None:
         raise re_raise
 
-    return SafeGatherResult(ok=list(ok), errors=list(errors))
+    return SafeGatherResult(ok=ok, errors=errors)
 
 
 # =============================================================================
@@ -1553,7 +1559,7 @@ def _classify_gathered(
     raw: list[Any],
     label: str,
     _log: logging.Logger,
-) -> tuple[list[Any], list[Exception], asyncio.CancelledError | BaseException | None]:
+) -> tuple[list[Any], list[BaseException], asyncio.CancelledError | BaseException | None]:
     """Shared classification kernel for all safe_gather_* variants.
 
     Returns:
@@ -1594,7 +1600,7 @@ def _classify_gathered(
 
     # Slow path: at least one exception present. Full classification.
     ok: list[Any] = []
-    errors: list[Exception] = []
+    errors: list[BaseException] = []
     re_raise: asyncio.CancelledError | BaseException | None = None
 
     for i, item in enumerate(raw):
@@ -1792,7 +1798,7 @@ async def bounded_gather[T](
         ctx=ctx,
         logger_instance=logger_instance,
     )
-    return result.ok, list(result.errors)  # type: ignore[return-value]
+    return result.ok, result.errors
 
 
 # ISSUE-005: bounded_parallel_map — parallel map with bounded concurrency
@@ -2322,7 +2328,7 @@ async def gather_taskgroup[T](
         ctx=ctx,
         logger_instance=logger_instance,
     )
-    return result.ok, list(result.errors)  # type: ignore[return-value]
+    return result.ok, result.errors
 
 
 async def chunked_taskgroup[T, R](
@@ -2782,7 +2788,7 @@ async def retry_backoff_async(
                 base_delay=0.5,
             )
     """
-    import random as _random
+    # random already imported at module level (line 31) — no local import needed
 
     attempt = 0
 
@@ -2803,7 +2809,7 @@ async def retry_backoff_async(
 
         if jitter:
             # Decorrelated jitter: ±25% of current delay, seeded per attempt
-            delay *= (0.75 + _random.random() * 0.5)
+            delay *= (0.75 + random.random() * 0.5)
 
         try:
             await asyncio.sleep(delay)

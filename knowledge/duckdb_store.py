@@ -2518,9 +2518,9 @@ class DuckDBShadowStore:
             conn.commit()
             return count
 
-        from utils.rayon_pool import run_in_io_pool_async
-
-        return await run_in_io_pool_async(_sync_ingest)
+        from hledac.universal.runtime.worker_pool import get_rust_pool
+        pool = get_rust_pool("io")
+        return await pool.submit(_sync_ingest)
 
     class _DuckDBQueryExecutor:
         """

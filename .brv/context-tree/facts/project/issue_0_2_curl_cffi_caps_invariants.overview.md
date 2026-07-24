@@ -1,0 +1,7 @@
+- CAPS.require(CURL_CFFI) is mandatory for curl_cffi availability checks (replaces is_curl_cffi_available())
+- httpx fallback WITHOUT JA3 is explicitly blocked with FAIL-FAST behavior
+- All curl_cffi imports route through fetching/curl_cffi_fetch.py wrapper module
+- FAIL-FAST policy triggers when curl_cffi is unavailable - no silent degradation
+- Rule 1: ALWAYS use CAPS.require(CURL_CFFI) for availability checks
+- Rule 2: httpx fallback MUST have JA3 support enabled when used
+- Rule 3: All curl_cffi imports must route through fetching/curl_cffi_fetch.py

@@ -2240,6 +2240,15 @@ async def run_sprint(
             # When SIGINT arrives via asyncio.run() default handler (cli/parser path),
             # _cancel_event is set → cancels scheduler gracefully instead of loop.stop() hard-abort.
             # F350M-R ISSUE #31: safe_create_task with eager_start=True (hot-path startup)
+            # ISSUE-7.2: Start memory status poller (500ms interval) for dynamic Metal cache reconfiguration
+            # Replaces mx.metal.get_active_memory() with psutil.available as primary signal.
+            # Fails silently if Rust atomic not available — Python fallback is always present.
+            try:
+                from hledac.universal.utils.mlx_cache import start_memory_status_poller
+                await start_memory_status_poller(interval_s=0.5)
+            except Exception:
+                pass
+
             _cancel_waiter = safe_create_task(_cancel_event.wait(), eager_start=True)
             _scheduler_waiter = safe_create_task(scheduler.run(query), eager_start=True)
             done, _pending = await asyncio.wait(
@@ -2300,6 +2309,13 @@ async def run_sprint(
             except Exception as _aclose_err:
                 logger.debug(f"[F285] scheduler.aclose() in soft-fail path failed: {_aclose_err}")
         finally:
+            # ISSUE-7.2: Stop memory status poller on sprint exit
+            try:
+                from hledac.universal.utils.mlx_cache import stop_memory_status_poller
+                await stop_memory_status_poller()
+            except Exception:
+                pass
+
             # F266-LOCK: Always release sprint lock on exit — normal, exception, or SIGINT.
             # Idempotent: GraphLockManager.release() is safe to call multiple times.
             if _sprint_lock_mgr is not None:

@@ -1,0 +1,8 @@
+- FetchCoordinator now uses CAPS-aware curl_cffi integration instead of raw is_curl_cffi_available() checks
+- Created new wrapper module fetching/curl_cffi_fetch.py providing: is_curl_cffi_capable(), require_curl_cffi(), fetch_via_curl_cffi_with_caps_check()
+- Fetch flow order: Lightpanda (FAIL-FAST) → curl_cffi with CAPS check → JA3 spoofing → If unavailable FAIL-FAST
+- CURL_CFFI capability registered at capabilities.py:190
+- httpx fallback policy enforces FAIL-FAST when curl_cffi unavailable - no silent fallback without JA3
+- JA3 spoofing is guaranteed when curl_cffi is used (enforced via CAPS system)
+- Files modified: fetching/curl_cffi_fetch.py, coordinators/fetch_coordinator.py, fetching/public_fetcher.py
+- Author: dev-team

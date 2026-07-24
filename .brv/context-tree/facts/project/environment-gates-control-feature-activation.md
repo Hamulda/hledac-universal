@@ -6,7 +6,7 @@ type: synthesis
 title: Environment Gates Control Feature Activation
 summary: 14+ HLEDAC_* environment variables gate Arrow ingest, DuckDB tuning, query cache, and resource governor.
 tags: [config, feature-flags, environment, gates]
-related: []
+related: [facts/project/configuration_constants.md]
 keywords: [hledac-env, feature-gates, environment-variables, duckdb-config, arrow-ingest, query-cache]
 createdAt: '2026-07-18T00:18:19.623Z'
 updatedAt: '2026-07-18T00:18:19.623Z'

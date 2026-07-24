@@ -19,9 +19,9 @@ class IncrementalHNSW:
     Inkrementální USearch index s asyncio.Lock pro thread-safe add i query.
     Mapuje string ID na interní integery.
     """
-    __slots__ = tuple(('_id_to_int', '_int_to_id', '_lock', '_next_id', 'current_count', 'dim', 'index', 'max_elements'))
+    __slots__ = tuple(('_id_to_int', '_int_to_id', '_lock', '_next_id', 'current_count', 'dim', 'index', 'max_elements', 'ef_search'))
 
-    def __init__(self, dim: int, max_elements: int=100000, ef_construction: int=200, M: int=16):
+    def __init__(self, dim: int, max_elements: int=100000, ef_construction: int=200, M: int=16, ef_search: int=50):
         """
         Inicializuje inkrementální USearch index.
 
@@ -30,13 +30,21 @@ class IncrementalHNSW:
             max_elements: Maximální počet vektorů (hard limit)
             ef_construction: Parameter pro konstrukci indexu
             M: Počet propojení na uzel
+            ef_search: Query-time expansion factor (higher = better recall, slower)
         """
         if not USEARCH_AVAILABLE:
             raise RuntimeError('usearch not available, cannot create IncrementalHNSW')
         self.dim = dim
         self.max_elements = max_elements
+        self.ef_search = ef_search
         import usearch.index
-        self.index = usearch.index.Index(ndim=dim, metric='cos', dtype='f32', connectivity=M, expansion_add=min(ef_construction, 100), expansion_search=50)
+        # Adaptive expansion_add: higher for large indices (>100k vectors) for better HNSW quality
+        # usearch supports up to 1024, use 200-300 range for large indices
+        if max_elements > 100_000:
+            exp_add = min(ef_construction, 300)
+        else:
+            exp_add = min(ef_construction, 200)
+        self.index = usearch.index.Index(ndim=dim, metric='cos', dtype='f32', connectivity=M, expansion_add=exp_add, expansion_search=ef_search)
         self.current_count = 0
         self._lock = asyncio.Lock()
         self._id_to_int: dict[str, int] = {}
@@ -103,6 +111,13 @@ class IncrementalHNSW:
     def load(self, path: str, max_elements: int | None=None):
         """Načte index z disku."""
         self.index.load(path)
+        if max_elements is not None:
+            self.max_elements = max_elements
+        else:
+            # Restore max_elements from actual index size if available
+            actual_size = getattr(self.index, 'size', 0)
+            if actual_size > 0:
+                self.max_elements = actual_size
 
     async def close(self):
         """Uzavře index a uvolní prostředky."""

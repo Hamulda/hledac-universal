@@ -258,12 +258,23 @@ _RUST_AVAILABLE: bool | None = None
 
 
 def _check_rust_rayon_available() -> bool:
-    """Check if Rust rayon submit/join/abort extension is available."""
+    """Check if Rust rayon channel-dispatch extension is available.
+
+    ISSUE 3.1: Preferuje rayon_submit_channel (crossbeam-channel dispatch)
+    před starým rayon_submit (thread::spawn per task).
+    Kanálová dispatch: ~5μs/task vs ~500μs/task (thread::spawn overhead).
+    """
     global _RUST_AVAILABLE
     if _RUST_AVAILABLE is not None:
         return _RUST_AVAILABLE
     try:
-        from hledac_rust_extensions import rayon_submit, rayon_join, rayon_abort
+        # ISSUE 2.3: rayon_submit_channel — crossbeam-channel dispatch to existing
+        # rayon pool dispatcher (žádný thread::spawn per task).
+        from hledac_rust_extensions import (
+            rayon_submit_channel,
+            rayon_join_channel,
+            rayon_abort_channel,
+        )
         _RUST_AVAILABLE = True
     except ImportError:
         _RUST_AVAILABLE = False
@@ -273,8 +284,7 @@ def _check_rust_rayon_available() -> bool:
 class RustWorkerPool:
     """Pool backed by Rust rayon ThreadPool — M1 P-core QoS aware.
 
-    Provides cancelable asyncio.Future via rayon background thread.
-    JoinHandle::abort() maps to Future.cancel().
+    Provides cancelable asyncio.Future via rayon channel dispatch.
 
     pool_type:
       "cpu"   → rayon cpu_pool (4 P-cores): SIMD, hashing, pattern match
@@ -284,8 +294,9 @@ class RustWorkerPool:
     Fail-safe: if Rust extension unavailable, falls back to SharedWorkerPool
     (ThreadPoolExecutor) automatically.
 
-    Cancellation: Future.cancel() → rayon_abort(handle) → JoinHandle::abort()
-    on the background OS thread. This causes the rayon worker to terminate.
+    ISSUE 3.1: Uses rayon_submit_channel (crossbeam-channel dispatch to existing
+    rayon pool dispatcher — žádný thread::spawn per task).
+    ~5μs/task vs ~500μs/task thread::spawn overhead.
 
     M1 8GB thread budget (all rayon + asyncio singletons):
       cpu_pool: 4 threads (P-cores, QoS=utility)
@@ -305,7 +316,7 @@ class RustWorkerPool:
         self._async_lock: asyncio.Lock | None = None
 
     def _check_available(self) -> bool:
-        """Return True if Rust rayon extension is available."""
+        """Return True if Rust rayon channel dispatch extension is available."""
         return _check_rust_rayon_available()
 
     async def _get_async_lock(self) -> asyncio.Lock:
@@ -323,10 +334,12 @@ class RustWorkerPool:
         n_items: int = 0,
         **kwargs: Any,
     ) -> T:
-        """Submit work to the rayon pool, returning an awaitable result.
+        """Submit work to the rayon pool via channel dispatch, returning an awaitable.
 
-        Uses rayon_submit (background thread) + asyncio.to_thread(rayon_join).
-        Cancellation: Future.cancel() calls rayon_abort on the background thread.
+        ISSUE 3.1: Uses rayon_submit_channel (crossbeam-channel → existing rayon pool
+        dispatcher, žádný thread::spawn per task). ~5μs/task vs ~500μs/task.
+
+        Cancellation: Future.cancel() → rayon_abort_channel(handle) → cancel_flag set.
 
         Args:
             fn: Synchronous callable to run on the rayon pool.
@@ -344,13 +357,18 @@ class RustWorkerPool:
         if not self._check_available():
             # Fallback: use SharedWorkerPool
             warnings.warn(
-                f"Rust rayon unavailable, falling back to SharedWorkerPool for {self._pool_type} pool",
+                f"Rust rayon channel dispatch unavailable, falling back to SharedWorkerPool "
+                f"for {self._pool_type} pool",
                 RuntimeWarning,
                 stacklevel=2,
             )
             return await get_shared_pool().run(fn, *args, timeout=timeout, **kwargs)
 
-        from hledac_rust_extensions import rayon_submit, rayon_join, rayon_abort
+        from hledac_rust_extensions import (
+            rayon_submit_channel,
+            rayon_join_channel,
+            rayon_abort_channel,
+        )
 
         async_lock = await self._get_async_lock()
         async with async_lock:
@@ -359,8 +377,8 @@ class RustWorkerPool:
         loop = asyncio.get_running_loop()
 
         def _do_submit() -> int:
-            """Run in background thread: submit work to rayon and return handle."""
-            return rayon_submit(
+            """Run in asyncio-to_thread worker: submit work to rayon dispatcher and return handle."""
+            return rayon_submit_channel(
                 self._pool_type,
                 n_items,
                 fn,
@@ -368,16 +386,16 @@ class RustWorkerPool:
             )
 
         try:
-            # Submit to rayon in background thread, get opaque handle
+            # Submit to rayon dispatcher via channel in background thread, get opaque handle
             handle: int = await loop.run_in_executor(None, _do_submit)
 
             async def _await_result() -> T:
-                """Wait for rayon task to complete via rayon_join."""
+                """Wait for rayon task to complete via rayon_join_channel."""
                 try:
-                    result = await asyncio.to_thread(rayon_join, handle)
+                    result = await asyncio.to_thread(rayon_join_channel, handle, None)
                     return result  # type: ignore[return-value]
                 except RuntimeError as e:
-                    if "aborted" in str(e).lower() or "panicked" in str(e).lower():
+                    if "aborted" in str(e).lower() or "timed out" in str(e).lower():
                         raise RuntimeError(
                             f"Rayon {self._pool_type} task was aborted: {e}"
                         ) from None
@@ -390,12 +408,12 @@ class RustWorkerPool:
 
         finally:
             # Abort the rayon task on any exit path (timeout, cancellation, error).
-            # rayon_abort is safe to call even if the task already completed
-            # (JoinHandle already taken, no-op on already-joined thread).
-            # This prevents background thread leaks on asyncio.timeout fires.
+            # rayon_abort_channel is safe to call even if the task already completed
+            # (condvar already notified, no-op after result is set).
+            # This prevents dispatcher thread leaks on asyncio.timeout fires.
             try:
-                from hledac_rust_extensions import rayon_abort
-                rayon_abort(handle)
+                from hledac_rust_extensions import rayon_abort_channel
+                rayon_abort_channel(handle)
             except Exception:
                 pass  # Best-effort — don't mask original errors
             async with async_lock:
@@ -403,6 +421,8 @@ class RustWorkerPool:
 
     def submit_sync(self, fn: "Callable[..., T]", /, *args: Any, n_items: int = 0) -> T | None:
         """Synchronous submit — blocks until complete. For use in non-async contexts.
+
+        ISSUE 3.1: Uses rayon_submit_channel (crossbeam-channel dispatch).
 
         Falls back to direct call if Rust unavailable.
         """
@@ -412,23 +432,27 @@ class RustWorkerPool:
             except Exception:
                 return None
 
-        from hledac_rust_extensions import rayon_submit, rayon_join, rayon_abort
+        from hledac_rust_extensions import (
+            rayon_submit_channel,
+            rayon_join_channel,
+            rayon_abort_channel,
+        )
 
-        handle = rayon_submit(self._pool_type, n_items, fn, args)
+        handle = rayon_submit_channel(self._pool_type, n_items, fn, args)
         try:
-            return rayon_join(handle)
+            return rayon_join_channel(handle, None)
         except RuntimeError as e:
-            if "aborted" in str(e).lower() or "panicked" in str(e).lower():
+            if "aborted" in str(e).lower() or "timed out" in str(e).lower():
                 raise RuntimeError(
                     f"Rayon {self._pool_type} task was aborted: {e}"
                 ) from None
             raise
         except Exception:
-            # Best-effort abort on unexpected errors (e.g. timeout, Rust panic).
-            # rayon_join has already waited for the thread via helper thread,
+            # Best-effort abort on unexpected errors (e.g. Rust panic).
+            # rayon_join_channel has already waited via condvar,
             # so this is truly best-effort — the thread is already done.
             try:
-                rayon_abort(handle)
+                rayon_abort_channel(handle)
             except Exception:
                 pass
             raise

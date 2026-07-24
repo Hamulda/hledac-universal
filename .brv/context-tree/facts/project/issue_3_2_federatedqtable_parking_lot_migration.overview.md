@@ -1,0 +1,6 @@
+- Replaced DashMap with parking_lot::RwLock + AHashMap in federated_qtable.rs to fix PyO3 GIL segfaults caused by crossbeam shard locking conflicts
+- parking_lot::RwLock is Send+Sync by default without unsafe code, resolving thread safety issues in Python async/ThreadPoolExecutor contexts
+- Two-phase locking pattern used in atomic_q_update: read lock for max_q computation, then write lock for atomic CAS
+- Key format is lane::state_key|action with lane isolation via key prefix (MAX_LANES=3, MAX_QTABLE_ENTRIES=1024 per lane)
+- Auto-eviction triggers every ~100 updates when capacity reaches ≥50%, using bincode persistence with 2 MiB cap and flock-based atomic writes
+- Updated all .key()/.value() iterator calls to tuple destructuring (k, v); no API changes to Python fallback shim

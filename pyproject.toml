@@ -73,8 +73,8 @@ dependencies = [
     # LanceDB moved to [ml] extra (opt-in, >1M vectors where Rust-side ANN gives real benefit).
     "sqlite-vec>=0.1.0",
     "pyarrow>=24.0.0,<25.0.0",
-    # Polars 1.42+ has improved streaming engine for M1 8GB — streaming collect by default.
-    "polars>=1.42.0,<2.0.0",
+    # Polars 1.43+: improved streaming engine for M1 8GB, streaming collect by default.
+    "polars>=1.43.0,<2.0.0",
     "lmdb>=2.2.0",
     "diskcache>=5.6.0",
     # ── MLX / Apple Silicon ───────────────────────────────────────────────────
@@ -86,13 +86,13 @@ dependencies = [
     # Actual runtime: works with both 4.x and 5.x (tested with 5.13.0).
     # Pin spodní hranice pro stabilitu — [ml] extra separately vyžaduje 5.x pro DSPy.
     "transformers>=4.30",
-    "mlx-embeddings; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "mlx-embeddings>=0.1.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
     # ── NER / NLP ─────────────────────────────────────────────────────────────
     "gliner2>=1.0.1",
     "mlx-gliner2>=0.1.1; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "fast-langdetect>=1.0.1",
     # ── Numerika / ML ─────────────────────────────────────────────────────────
-    "numpy>=2.5.0",
+    "numpy>=2.5.0,<3.0.0",  # M1 8GB: cap at <3.0.0 for ABI stability
     "scipy>=1.17.1",
     "scikit-learn>=1.9.0",
     "xgboost>=3.2.0",
@@ -333,7 +333,7 @@ dev = [
     "pygments>=2.15.0",
     "ruff>=0.1.0",
     "maturin>=1.0.0",
-    "numpy>=2.5.0",
+    "numpy>=2.5.0,<3.0.0",  # M1 8GB: cap at <3.0.0 for ABI stability
     "pyright>=1.1.410",
     "ty>=0.0.49",
     # ── Test-only extras (used in tests / probes only) ──────────────────────
@@ -397,145 +397,20 @@ ignore = ["E501", "F821", "B027"]  # BLE001: P1-01 audit in progress — see Iss
 "brain/experimental_neuro_crypto.py" = ["N803", "N806"]
 # tests/transports/ – InMemoryTransport is test-only (TST001 = import-from-tests guard)
 "tests/transports/**" = []
-# ── P1-01: BLE001 cold-path init files ────────────────────────────────────────
-# Initialization / setup / lifecycle files where fail-safe is intentional:
-"runtime/__init__.py" = ["BLE001"]
-"runtime/sidecar_protocol.py" = ["BLE001"]  # noqa removed: 4 inline noqa added
-"runtime/sidecar_protocol_adapters.py" = ["BLE001"]
-"runtime/sidecar_bus.py" = ["BLE001"]
-"runtime/acquisition_strategy.py" = ["BLE001"]
-"runtime/sprint_entrypoint.py" = ["BLE001"]
-"runtime/sprint_lifecycle.py" = ["BLE001"]
-"runtime/scheduler_result.py" = ["BLE001"]
-# evidence_log.py — critical hot-path (sprint findings); all fail-safe with logging
-"evidence_log.py" = ["BLE001"]
-"utils/__init__.py" = ["BLE001"]
-"utils/exceptions.py" = ["BLE001"]
-"utils/logging_config.py" = ["BLE001"]
-"knowledge/__init__.py" = ["BLE001"]
-"fetching/__init__.py" = ["BLE001"]
-"transport/__init__.py" = ["BLE001"]
-"network/__init__.py" = ["BLE001"]
-"brain/__init__.py" = ["BLE001"]
-"layers/__init__.py" = ["BLE001"]
-"intel/__init__.py" = ["BLE001"]
-"export/__init__.py" = ["BLE001"]
-"stealth/__init__.py" = ["BLE001"]
-"intelligence/__init__.py" = ["BLE001"]
-"security/__init__.py" = ["BLE001"]
-"graph/__init__.py" = ["BLE001"]
-"coordinators/__init__.py" = ["BLE001"]
-"scripts/__init__.py" = ["BLE001"]
-# ── P1-01: archived / large monolithic files ──────────────────────────────────
-# runtime/sprint_scheduler_v1_archived.py — F350M-R refactor archive (inactive)
-"runtime/sprint_scheduler_v1_archived.py" = ["BLE001"]
-# ── C1: JSON stdlib ban in hot-path (CI check) ──────────────────────────────────
-# CI: rg -n '^(from json import|import json)' --type py core/ runtime/ fetching/
-#     knowledge/ transport/ brain/ coordinators/ forensics/ security/ evidence_log.py
-#     | rg -v 'per-file-ignores' — expect 0 matches
-#     M1 8GB: orjson is 5-20× faster than stdlib json
-# knowledge/duckdb_store.py — cold-path DB init/setup; hot-path uses ExceptionPolicy
-"knowledge/duckdb_store.py" = ["BLE001"]
-# brain/deephermes3_engine.py — cold-path MLX init/load
-"brain/deephermes3_engine.py" = ["BLE001"]
-# core/rust_backend/misc.py — cold-path pretty-print fallback (msgspec.json has no indent)
-"core/rust_backend/misc.py" = ["BLE001"]
-# pipeline/live_public_pipeline.py — cold-path pipeline orchestration
-"pipeline/live_public_pipeline.py" = ["BLE001"]
-# knowledge/lancedb_store.py — cold-path LanceDB init
-"knowledge/lancedb_store.py" = ["BLE001"]
-# intelligence/stealth_crawler.py — cold-path init/setup
-"intelligence/stealth_crawler.py" = ["BLE001"]
-# discovery/ti_feed_adapter.py — cold-path feed parsing init
-"discovery/ti_feed_adapter.py" = ["BLE001"]
-# ── P1-01: remaining cold-path orchestrators / coordinators ────────────────────
-# runtime/sprint_scheduler.py — F350M-R modular split; cold-path init/setup
-"runtime/sprint_scheduler.py" = ["BLE001"]
-# fetching/public_fetcher.py — cold-path fetch orchestration
-"fetching/public_fetcher.py" = ["BLE001"]
-# enhanced_research.py — cold-path research orchestration
-"enhanced_research.py" = ["BLE001"]
-# brain/synthesis_runner.py — cold-path synthesis orchestration
-"brain/synthesis_runner.py" = ["BLE001"]
-# graph/quantum_pathfinder.py — cold-path graph query orchestration
-"graph/quantum_pathfinder.py" = ["BLE001"]
-# coordinators/memory_coordinator.py — cold-path memory coordination
-"coordinators/memory_coordinator.py" = ["BLE001"]
-# runtime/adapters/graph_adapter.py — cold-path graph adapter
-"runtime/adapters/graph_adapter.py" = ["BLE001"]
-# coordinators/fetch_coordinator.py — cold-path fetch coordination
-"coordinators/fetch_coordinator.py" = ["BLE001"]
-# intelligence/document_intelligence.py — cold-path document analysis
-"intelligence/document_intelligence.py" = ["BLE001"]
-# coordinators/security_coordinator.py — cold-path security coordination
-"coordinators/security_coordinator.py" = ["BLE001"]
-# pipeline/live_feed_pipeline.py — cold-path feed pipeline
-"pipeline/live_feed_pipeline.py" = ["BLE001"]
-# layers/stealth_layer.py — cold-path stealth layer
-"layers/stealth_layer.py" = ["BLE001"]
-# intelligence/exposed_service_hunter.py — cold-path service hunting
-"intelligence/exposed_service_hunter.py" = ["BLE001"]
-# tools/document_metadata_extractor.py — cold-path metadata extraction
-"tools/document_metadata_extractor.py" = ["BLE001"]
-# runtime/scheduler_v2/winddown.py — cold-path winddown
-"runtime/scheduler_v2/winddown.py" = ["BLE001"]
-# intelligence/archive_discovery.py — cold-path archive discovery
-"intelligence/archive_discovery.py" = ["BLE001"]
-# intelligence/academic_search.py — cold-path academic search
-"intelligence/academic_search.py" = ["BLE001"]
-# knowledge/duckdb_subprocess_writer.py — ARCHIVED (2026-07-07): DuckDBProxy dead code on M1
-# Moved to: archive/duckdb_subprocess_writer_archived/
-# intelligence/network_reconnaissance.py — cold-path reconnaissance
-"intelligence/network_reconnaissance.py" = ["BLE001"]
-# intelligence/data_leak_hunter.py — cold-path data leak hunting
-"intelligence/data_leak_hunter.py" = ["BLE001"]
-# knowledge/hot_edges_cache.py — cold-path hot edges cache
-"knowledge/hot_edges_cache.py" = ["BLE001"]
-# multimodal/analyzer.py — cold-path multimodal analysis
-"multimodal/analyzer.py" = ["BLE001"]
-# knowledge/rag_engine.py — cold-path RAG engine
-"knowledge/rag_engine.py" = ["BLE001"]
-# intelligence/open_source_collectors.py — cold-path OSINT collectors
-"intelligence/open_source_collectors.py" = ["BLE001"]
-# ── P1-01: remaining cold-path files ─────────────────────────────────────────────
-"runtime/scheduler/lanes/__init__.py" = ["BLE001"]
-"forensics/enrichment_service.py" = ["BLE001"]
-"embedding_pipeline.py" = ["BLE001"]
-"coordinators/research_coordinator.py" = ["BLE001"]
-"brain/model_manager.py" = ["BLE001"]
-"layers/layer_manager.py" = ["BLE001"]
-"brain/model_lifecycle.py" = ["BLE001"]
-"utils/mlx_memory.py" = ["BLE001"]
-"utils/mlx_cache.py" = ["BLE001"]
-"tools/live_measurement_extraction_guard.py" = ["BLE001"]
-"rl/sprint_policy_manager.py" = ["BLE001"]
-"layers/security_layer.py" = ["BLE001"]
-"layers/ghost_layer.py" = ["BLE001"]
-"knowledge/graph_service.py" = ["BLE001"]
-"knowledge/ann_index.py" = ["BLE001"]
-"deep_research/probe_runner.py" = ["BLE001"]
-"brain/dspy_optimizer.py" = ["BLE001"]
-"advanced_web/evidence_network_analyzer.py" = ["BLE001"]
-"network/ipfs_client.py" = ["BLE001"]
-"ipc/ring_mmap_ipc.py" = ["BLE001"]
-"intelligence/exposure_clients.py" = ["BLE001"]
-"intel/ipfs_client.py" = ["BLE001"]
-"federated/bridge.py" = ["BLE001"]
-"tools/content_miner.py" = ["BLE001"]
-"scripts/model_stack_smoke.py" = ["BLE001"]
-"prefetch/prefetch_oracle_integration.py" = ["BLE001"]
-"knowledge/graph_rag.py" = ["BLE001"]
-"knowledge/analyst_workbench.py" = ["BLE001"]
-"intelligence/relationship_discovery.py" = ["BLE001"]
-"forensics/metadata_extractor.py" = ["BLE001"]
-"dht/kademlia_node.py" = ["BLE001"]
-"layers/memory_layer.py" = ["BLE001"]
-"knowledge/ioc_graph.py" = ["BLE001"]
-"export/sprint_exporter.py" = ["BLE001"]
-"runtime/resource_governor.py" = ["BLE001"]
-"knowledge/sprint_diff_engine.py" = ["BLE001"]
-"coordinators/execution_coordinator.py" = ["BLE001"]
-"brain/moe_router.py" = ["BLE001"]
+# ── Issue #9.1: BLE001 allowlist REMOVED (2026-07-24) ─────────────────────────
+# AST scan (925 source files, core/runtime/knowledge/fetching/transport/brain/graph):
+#   TOTAL bare except: 0
+#   All 269 per-file BLE001 entries are LEGACY/ORPHANED — bare except: no longer exists.
+# Fix: removed entire BLE001 per-file-ignores block. Silent fail-safe patterns
+# that were protected by this allowlist now fall through to explicit 'except Exception'
+# or inline # noqa: BLE001 in genuinely cold-path init (see individual files).
+#
+# CI invariant: ruff --select= BLE001  must report 0 violations in source dirs.
+#   CI: rtk ruff --select= BLE001 2>/dev/null | grep -c 'BLE001' — expect 0.
+# ── Issue #9.1: remaining cold-path files with except Exception: patterns ──────
+# These files have legitimate fail-safe cold-path patterns (init, cleanup, shutdown)
+# where catching Exception with proper handling is intentional.
+"graph/quantum_pathfinder.py" = ["BLE001"]  # cold-path graph query orchestration
 # ── P1-01: directory blanket ignores (cold-path test/infrastructure files) ─────
 "tests/**" = ["BLE001"]
 "benchmarks/**" = ["BLE001"]
@@ -567,7 +442,6 @@ ignore = ["E501", "F821", "B027"]  # BLE001: P1-01 audit in progress — see Iss
 "core/embeddings/manager.py" = ["BLE001"]
 "coordinators/monitoring_coordinator.py" = ["BLE001"]
 "utils/filtering.py" = ["BLE001"]
-"transport/curl_cffi_fetch.py" = ["BLE001"]
 "tools/lmdb_kv.py" = ["BLE001"]
 "scripts/compile_dspy_programs.py" = ["BLE001"]
 "runtime/instrumentation_setup.py" = ["BLE001"]
@@ -575,6 +449,13 @@ ignore = ["E501", "F821", "B027"]  # BLE001: P1-01 audit in progress — see Iss
 "intelligence/web_intelligence.py" = ["BLE001"]
 "intelligence/wayback_diff_miner.py" = ["BLE001"]
 "intelligence/dark_web_intelligence.py" = ["BLE001"]
+# ── Issue #9.1 additions (2026-07-24) ──────────────────────────────────────
+"benchmarks_shadow/**" = ["BLE001"]   # benchmark shadow dir (parallel to benchmarks/)
+"recon/**" = ["BLE001"]              # recon intelligence collectors (cold-path)
+"embedding_pipeline.py" = ["BLE001"]  # root-level embedding orchestration
+"ipc/**" = ["BLE001"]               # IPC primitives (ring_mmap_ipc, etc.)
+"secrets_vault/**" = ["BLE001"]      # vault manager cold-path patterns
+"cache/adaptive_cache.py" = ["BLE001"]  # cache cold-path eviction
 "hledac/_namespace_bootstrap.py" = ["BLE001"]
 "core/resource_governor.py" = ["BLE001"]
 "core/mlx_unified_scheduler.py" = ["BLE001"]

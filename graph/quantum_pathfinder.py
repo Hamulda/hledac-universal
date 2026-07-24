@@ -950,7 +950,7 @@ class DuckPGQGraph:
     Fallback: recursive CTE pokud duckpgq extension nedostupná.
     Výhody: vectorized Arrow IPC, zero-copy, zvládne 10M+ hran.
     """
-    __slots__ = tuple(('_BUFFER_FLUSH_SIZE', '_duckdb', '_ioc_buffer', '_lock_acquired', '_lock_mgr', '_obs_buffer', 'con', 'db_path'))
+    __slots__ = tuple(('_BUFFER_FLUSH_SIZE', '_closed', '_duckdb', '_ioc_buffer', '_lock_acquired', '_lock_mgr', '_obs_buffer', 'con', 'db_path'))
 
     def __init__(self, db_path: str | None=None, temp_dir: str | None=None):
         """Initialize DuckPGQGraph.
@@ -1013,6 +1013,7 @@ class DuckPGQGraph:
             logger.debug(f'[GRAPH] WAL pragma init failed: {e}')
         self._init_schema()
         self._ioc_buffer: list[tuple[str, str, float]] = []
+        self._closed = False  # ISSUE-5.1: close guard — also in __slots__
         self._obs_buffer: list[tuple[str, str, str, float, str]] = []
         self._BUFFER_FLUSH_SIZE: int = 500
 
@@ -1026,6 +1027,35 @@ class DuckPGQGraph:
             logger.info(f'[GRAPH] DuckDB checkpoint → {self.db_path}')
         except Exception as e:
             logger.warning(f'[GRAPH] Checkpoint failed: {e}')
+
+    def close(self) -> None:
+        """
+        ISSUE-5.1: Proper DuckDB connection shutdown.
+
+        Flushes buffers, checkpoints WAL, closes DuckDB connection,
+        and releases the graph lock. Safe to call multiple times.
+
+        Call this on sprint shutdown via graph_service.shutdown_graph().
+        """
+        try:
+            self.flush_buffers()
+        except Exception as e:
+            logger.debug(f'[GRAPH] close: flush_buffers failed: {e}')
+        try:
+            self.con.execute('CHECKPOINT;')
+        except Exception:
+            pass
+        try:
+            self.con.close()
+        except Exception as e:
+            logger.debug(f'[GRAPH] close: con.close() failed: {e}')
+        # Release graph lock so other processes can acquire it
+        if hasattr(self, '_lock_mgr') and self._lock_mgr is not None:
+            try:
+                self._lock_mgr.release()
+            except Exception as e:
+                logger.debug(f'[GRAPH] close: lock release failed: {e}')
+        self._closed = True
 
     async def buffer_ioc(self, ioc_type: str, value: str, confidence: float=1.0) -> None:
         """

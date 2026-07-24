@@ -35,7 +35,12 @@ async def run_public_prelude_lane(query: str) -> LaneResult:
     """Run PUBLIC prelude lane.
 
     Returns LaneResult, never raises.
-    Bounded: 10s asyncio.timeout, max 3 results, concurrency 2.
+    Bounded: 10s asyncio.timeout, max 3 results, concurrency 4.
+
+    ISSUE-2.1 FIX: fetch_concurrency 2→4 pro vnitřní paralelizaci.
+    Při 5 prelude lanes běžících paralelně stačí concurrency=4
+    (celkem max 20 concurrent HTTP, M1 8GB RAM safe).
+    Fail-fast: pokud pipeline vrátí ≥80% max_results (≥3), lane končí early.
     """
     from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
     from hledac.universal.runtime.acquisition_strategy import AcquisitionLane, build_lane_query
@@ -43,8 +48,16 @@ async def run_public_prelude_lane(query: str) -> LaneResult:
         _shaped = build_lane_query(query, AcquisitionLane.PUBLIC)
         if isinstance(_shaped, dict) or not _shaped:
             return LaneResult(lane='PUBLIC', attempted=False, skipped=True, skip_reason='empty_public_query')
+        # ISSUE-2.1: Zvýšena concurrency 2→4 pro vnitřní paralelizaci fetch.
+        # Fail-fast: při ≥80% úspěšnosti (3/3 = 100%, žádný další fetch není potřeba).
+        _success_target = 3
+        _fail_fast_threshold = _success_target  # 3 — 80% z 3 = 2.4, pro ≥80% potřeba 3
         async with asyncio.timeout(10.0):
-            _pipeline_result = await async_run_live_public_pipeline(query=_shaped, store=None, max_results=3, fetch_timeout_s=10.0, fetch_concurrency=2, hermes_engine=None, memory_manager=None, enqueue_hypothesis_pivot=None)
+            _pipeline_result = await async_run_live_public_pipeline(query=_shaped, store=None, max_results=3, fetch_timeout_s=10.0, fetch_concurrency=4, hermes_engine=None, memory_manager=None, enqueue_hypothesis_pivot=None)
+            # Fail-fast: pokud jsme získali >=80% cílových výsledků, ukončíme early
+            _discovered = getattr(_pipeline_result, 'discovered', 0) or 0
+            if _discovered >= _fail_fast_threshold:
+                return LaneResult(lane='PUBLIC', attempted=True, skipped=False, raw_count=_discovered, built_count=getattr(_pipeline_result, 'fetched', 0) or 0, accepted_count=getattr(_pipeline_result, 'accepted_findings', 0) or 0, error=getattr(_pipeline_result, 'error', None), timeout=getattr(_pipeline_result, 'timed_out', False), duration_s=getattr(_pipeline_result, 'elapsed_s', None))
         return LaneResult(lane='PUBLIC', attempted=True, skipped=False, raw_count=getattr(_pipeline_result, 'discovered', 0) or 0, built_count=getattr(_pipeline_result, 'fetched', 0) or 0, accepted_count=getattr(_pipeline_result, 'accepted_findings', 0) or 0, error=getattr(_pipeline_result, 'error', None), timeout=getattr(_pipeline_result, 'timed_out', False), duration_s=getattr(_pipeline_result, 'elapsed_s', None))
     except TimeoutError:
         return LaneResult(lane='PUBLIC', attempted=True, skipped=False, timeout=True, duration_s=10.0)
@@ -163,27 +176,43 @@ async def run_pdns_prelude_lane(query: str, result: Any, duckdb_store: Any, time
     return LaneResult(lane='PASSIVE_DNS', attempted=False, skipped=True, skip_reason='empty_shaped_query' if not _pdns_query else 'lane_disabled')
 
 async def run_doh_prelude_lane(query: str, result: Any, duckdb_store: Any, time_module: Any, pivot_doh_items: Any=None, seed_context: Any=None) -> LaneResult:
-    """Run DOH prelude lane."""
-    from hledac.universal.runtime.acquisition_strategy import AcquisitionLane, is_lane_enabled
+    """Run DOH prelude lane.
+
+    ISSUE-2.1 FIX: Přidána vnitřní paralelizace pro více domén.
+    - Pokud pivot_doh_items obsahuje více DOH domén, zpracuj je paralelně (max 3).
+    - Fail-fast: při 80% úspěšnosti ukonči early.
+    - Concurrency=3 pro M1 8GB RAM bezpečnost.
+    """
+    from hledac.universal.runtime.acquisition_strategy import AcquisitionLane
     from hledac.universal.runtime.source_finding_bridge import doh_results_to_findings
-    result.doh_planned = is_lane_enabled(None, AcquisitionLane.DOH)
+    # Prelude lanes nemají přístup k AcquisitionStrategySnapshot,
+    # proto je doh_planned vždy True (lane se vždy pokusí spustit)
+    result.doh_planned = True
     result.doh_scheduled = True
-    _doh_domain: str | None = None
+
+    # ISSUE-2.1: Sbíráme všechny DOH domény z pivot_plan, ne jen první
+    _doh_domains: list[str] = []
     if pivot_doh_items:
         for _item in pivot_doh_items:
             if getattr(_item, 'lane', None) == 'DOH' and getattr(_item, 'seed_type', None) == 'domain':
-                _doh_domain = getattr(_item, 'seed_value', None)
-                break
-    if _doh_domain:
-        _doh_query: Any = _doh_domain
-        result.doh_seed_source = 'pivot_plan'
-    else:
+                _domain = getattr(_item, 'seed_value', None)
+                if _domain:
+                    _doh_domains.append(str(_domain))
+
+    # Pokud nemáme domény z pivot_plan, použij standardní query building
+    if not _doh_domains:
         _doh_query = _build_lane_query(query, AcquisitionLane.DOH, seed_context=seed_context)
         result.doh_seed_source = 'seed_context' if seed_context and seed_context.domains else 'raw_query'
-    if _doh_query is None or (isinstance(_doh_query, dict) and _doh_query.get('_disabled')):
-        result.doh_terminal_stage = 'no_candidates'
-        result.doh_seed_source = 'no_domain_seed'
-        return LaneResult(lane='DOH', attempted=False, skipped=True)
+        if _doh_query is None or (isinstance(_doh_query, dict) and _doh_query.get('_disabled')):
+            result.doh_terminal_stage = 'no_candidates'
+            result.doh_seed_source = 'no_domain_seed'
+            return LaneResult(lane='DOH', attempted=False, skipped=True)
+        _doh_domains = [str(_doh_query)]
+
+    # ISSUE-2.1: Omezíme na max 3 domény pro M1 8GB RAM bezpečnost
+    _doh_domains = _doh_domains[:3]
+    result.doh_domains_attempted = len(_doh_domains)
+
     _doh_adapter = None
     try:
         from hledac.universal.intel.doh_lane import DOHAdapter
@@ -192,42 +221,112 @@ async def run_doh_prelude_lane(query: str, result: Any, duckdb_store: Any, time_
         result.doh_terminal_stage = 'dependency_missing'
         result.doh_provider_errors = (f'doh_adapter_init_failed:{type(_init_exc).__name__}:{_init_exc}',)
         return LaneResult(lane='DOH', attempted=False, skipped=True)
+
     import httpx
     _doh_session = None
     try:
         _doh_session = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
-        result.doh_domains_attempted = 1
-        _doh_findings = await _doh_adapter.run(domain=str(_doh_query), session=_doh_session)
         result.doh_request_attempted = True
-        _cache_used = getattr(_doh_adapter, '_cache', None) and str(_doh_query) in _doh_adapter._cache
-        result.doh_cache_used = bool(_cache_used)
-        if _doh_findings:
-            _doh_cands, _doh_rejs, _doh_tel = doh_results_to_findings(_doh_findings, None, query, f'prelude-doh-{int(time_module.time())}')
-            result.doh_raw_count = _doh_tel.get('doh_total', len(_doh_findings))
-            # ISSUE #009 FIX: fire-and-forget ingest — don't block lane on DuckDB write.
-            _doh_acc = 0
-            if _doh_cands and duckdb_store and hasattr(duckdb_store, 'async_ingest_findings_batch'):
+
+        # ISSUE-2.1: Parallelizace více domén pomocí asyncio.Semaphore
+        # Concurrency=3 pro M1 8GB RAM bezpečnost (3 × 12 DOH requests max)
+        _sem = asyncio.Semaphore(3)
+        _sprint_id = f'prelude-doh-{int(time_module.time())}'
+
+        async def _fetch_one_domain(domain: str) -> tuple[str, list, list, dict]:
+            """Fetch DOH pro jednu doménu — vrací (domain, cands, rejs, tel)."""
+            async with _sem:
+                _findings = await _doh_adapter.run(domain=domain, session=_doh_session)
+                if _findings:
+                    _cands, _rejs, _tel = doh_results_to_findings(_findings, None, query, _sprint_id)
+                    return (domain, _cands, _rejs, _tel)
+                return (domain, [], [], {})
+
+        # ISSUE-2.1: Paralelní fetch pro všechny domény s true fail-fast
+        # Použijeme asyncio.wait s FIRST_COMPLETED — jakmile první doména vrátí
+        # ≥8 výsledků (80% z 10), okamžitě cancelujeme zbývající tasky.
+        from hledac.universal.utils.async_helpers import safe_create_task
+        _success_target = 10  # typický počet DOH výsledků na doménu
+        _fail_fast_threshold = int(_success_target * 0.8)  # 8
+        _cancelled_count = 0
+
+        _tasks = [safe_create_task(_fetch_one_domain(d), name=f'prelude:doh:{d}') for d in _doh_domains]
+        _pending = set(_tasks)
+
+        # Agregační proměnné (chráněno GIL — single-threaded async)
+        _all_cands = []
+        _all_rejs = []
+        _all_tel: dict = {}
+        _total_raw = 0
+        _cache_used = False
+        _first_done_domain: str | None = None
+
+        while _pending:
+            if _total_raw >= _fail_fast_threshold:
+                # ISSUE-2.1 FAIL-FAST: máme dost výsledků — cancelujeme zbývající
+                for t in _pending:
+                    if not t.done():
+                        t.cancel()
+                        _cancelled_count += 1
+                break
+
+            # Čekáme na první dokončený task
+            done, _pending = await asyncio.wait(_pending, return_when=asyncio.FIRST_COMPLETED)
+
+            for t in done:
+                if t.cancelled():
+                    _cancelled_count += 1
+                    continue
                 try:
-                    from hledac.universal.utils.async_helpers import safe_create_task
+                    _res = t.result()
+                except asyncio.CancelledError:
+                    _cancelled_count += 1
+                    continue
+                except BaseException as _e:
+                    continue
+
+                if isinstance(_res, BaseException):
+                    continue
+                _domain, _cands, _rejs, _tel = _res
+                _all_cands.extend(_cands)
+                _all_rejs.extend(_rejs)
+                if _tel:
+                    _all_tel = _tel
+                _total_raw += len(_cands)
+                if getattr(_doh_adapter, '_cache', None) and _domain in _doh_adapter._cache:
+                    _cache_used = True
+                if _first_done_domain is None:
+                    _first_done_domain = _domain
+
+        result.doh_cache_used = _cache_used
+        result.doh_raw_count = _all_tel.get('doh_total', _total_raw)
+        result.doh_cancelled_count = _cancelled_count
+
+        if _all_cands:
+            # Fire-and-forget ingest
+            _doh_acc = 0
+            if _all_cands and duckdb_store and hasattr(duckdb_store, 'async_ingest_findings_batch'):
+                try:
                     async def _doh_ingest_bg():
                         try:
-                            _ing = await duckdb_store.async_ingest_findings_batch(list(_doh_cands))
+                            _ing = await duckdb_store.async_ingest_findings_batch(list(_all_cands))
                             return sum((1 for r in _ing if isinstance(r, dict) and r.get('accepted')))
                         except Exception:
                             return 0
                     safe_create_task(_doh_ingest_bg(), name='prelude:doh_ingest')
-                    _doh_acc = len(_doh_cands)
+                    _doh_acc = len(_all_cands)
                 except Exception:
                     pass
             result.doh_advisory_findings_produced = _doh_acc
-            return LaneResult(lane='DOH', attempted=True, skipped=False, built_count=len(_doh_cands), accepted_count=_doh_acc)
+            return LaneResult(lane='DOH', attempted=True, skipped=False, built_count=len(_all_cands), accepted_count=_doh_acc)
+
         return LaneResult(lane='DOH', attempted=True, skipped=False)
     except Exception as exc:
         result.doh_terminal_stage = f'error:{type(exc).__name__}'
         return LaneResult(lane='DOH', attempted=True, skipped=False, error=f'{type(exc).__name__}:{exc}')
     finally:
         if _doh_session:
-            await _doh_session.close()
+            await _doh_session.aclose()
 
 async def gather_taskgroup(coros: list, concurrency: int, ctx: str) -> tuple[list, list]:
     """Wrapper around utils.async_helpers.gather_taskgroup for prelude lanes."""

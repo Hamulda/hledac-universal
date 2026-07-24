@@ -2,7 +2,7 @@
 title: Configuration Constants
 summary: 'Project configuration: DuckDB memory limits, shodan rate formula, env feature gates, evidence_log timeout'
 tags: []
-related: []
+related: [facts/project/environment-gates-control-feature-activation.md]
 keywords: []
 createdAt: '2026-07-11T14:50:41.390Z'
 updatedAt: '2026-07-11T14:50:41.390Z'

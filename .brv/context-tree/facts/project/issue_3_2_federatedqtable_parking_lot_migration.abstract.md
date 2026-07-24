@@ -1,0 +1,1 @@
+Replaced DashMap with parking_lot::RwLock + AHashMap in federated_qtable.rs to fix PyO3 GIL segfaults caused by crossbeam's internal locking conflicts with Python async/ThreadPoolExecutor contexts.

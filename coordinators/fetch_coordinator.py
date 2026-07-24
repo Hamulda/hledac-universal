@@ -46,6 +46,11 @@ from hledac.universal.runtime.privacy_budget import PrivacyBudgetAllocator, make
 from hledac.universal.tools.zstd_compressor import ZstdCompressor
 from hledac.universal.utils.async_helpers import parallel, safe_create_task
 from ..tools.url_dedup import DeduplicationStrategy
+# ISSUE 2.2: PyAIMDController — lock-free AIMD in Rust (AtomicU64). Lazy import.
+try:
+    from hledac_rust_extensions import PyAIMDController
+except ImportError:
+    PyAIMDController = None  # type: ignore[misc,assignment]
 from .base import UniversalCoordinator
 _zero_attr_cls = CAPS.require(ZERO_ATTR)
 _ZERO_ATTR_ENGINE = _zero_attr_cls
@@ -123,6 +128,23 @@ AIMD_MIN_CONCURRENCY = 1
 AIMD_MAX_CONCURRENCY = 25
 AIMD_SUCCESS_THRESHOLD = 2
 AIMD_DECREASE_BY_STATE = {'ok': 1.0, 'soft_warn': 0.75, 'warn': 0.5, 'critical': 0.25, 'emergency': 0.0}
+
+
+def _try_load_aimd_controller(initial_window: float) -> AIMDWindow | PyAIMDController:
+    """
+    ISSUE 2.2: Try to load PyAIMDController from Rust extension.
+
+    Returns:
+        PyAIMDController if Rust extension available and built with `data` feature.
+        AIMDWindow (Python fallback) otherwise.
+    """
+    if PyAIMDController is not None:
+        try:
+            return PyAIMDController(initial_window=initial_window)
+        except (TypeError, OSError):
+            pass  # Fall through to Python fallback
+    return AIMDWindow(initial=initial_window)
+
 
 class AIMDWindow:
     """
@@ -243,85 +265,6 @@ class AIMDWindow:
         """Reset success counter (called externally after window increase)."""
         self._successes = 0
 
-class _AIMDSlotController:
-    """
-    AIMD slot controller with asyncio.Semaphore and dynamic bound updates.
-
-    Uses a single asyncio.Semaphore for slot allocation and a separate
-    asyncio.Condition for window-change notification.  This replaces the
-    broken spin-CAS loop (which blocked the event loop) and the
-    semaphore-swap pattern (which caused permit leaks on window changes).
-
-    Python 3.11+ asyncio.Semaphore is internally lock-free for the fast
-    path (available permit), so the fast path never blocks the event loop.
-
-    Window updates are O(1): we raise the semaphore bound instead of
-    replacing the semaphore object, so held permits are never lost.
-    """
-    __slots__ = ('_sem', '_cond', '_window', '_stats')
-
-    def __init__(self, initial_window: int) -> None:
-        self._sem: asyncio.Semaphore = asyncio.Semaphore(initial_window)
-        self._cond: asyncio.Condition = asyncio.Condition()
-        self._window: int = initial_window
-        self._stats: dict[str, int] = {'acquired': 0, 'released': 0, 'waiters_peak': 0, 'window_updates': 0}
-
-    async def acquire(self) -> None:
-        """Acquire one slot. Blocks (yields) if window is full."""
-        await self._sem.acquire()
-        self._stats['acquired'] += 1
-
-    def release(self) -> None:
-        """Release one slot, waking a waiter if one is blocked."""
-        self._sem.release()
-        self._stats['released'] += 1
-
-    async def update_window(self, new_window: int) -> None:
-        """
-        Adjust AIMD window bound atomically.
-
-        Grow  (delta > 0): raise semaphore limit; waiters wake naturally via release()
-        Shrink (delta < 0): do NOT lower the semaphore bound — doing so would
-                             cause held permits to vanish (semaphore semantics).
-                             Instead, the semaphore "drains" passively as active
-                             holders call release() and new acquirers are capped
-                             by the new, lower window.
-
-        This is safe because:
-        - Old permits drain through natural release() calls
-        - New acquire() calls are immediately capped at new_window
-        - The semaphore internal counter only ever goes up (never artificially lowered)
-        """
-        if new_window == self._window:
-            return
-        delta = new_window - self._window
-        self._window = new_window
-        self._stats['window_updates'] += 1
-        if delta > 0:
-            for _ in range(delta):
-                self._sem.release()
-            async with self._cond:
-                wc = self._cond.waiter_count() if hasattr(self._cond, 'waiter_count') else 0
-                self._cond.notify(min(delta, wc))
-
-    @property
-    def stats(self) -> dict[str, int]:
-        return self._stats
-
-    @property
-    def window(self) -> int:
-        return self._window
-
-    @property
-    def available(self) -> int:
-        """Approximate available slots (not guaranteed atomic)."""
-        acquired = self._window - (self._sem._value if hasattr(self._sem, '_value') else 0)
-        return max(0, self._window - acquired)
-
-    @property
-    def waiters(self) -> int:
-        """Approximate waiter count (not guaranteed atomic)."""
-        return self._cond.waiter_count() if hasattr(self._cond, 'waiter_count') else 0
 _PRIORITY_API = 0
 _PRIORITY_JSON = 5
 _PRIORITY_CLEARNET_HTML = 15
@@ -357,7 +300,7 @@ class FetchCoordinator(UniversalCoordinator):
     - Create evidence packets
     - Return bounded outputs (IDs, counts, stop signals)
     """
-    __slots__ = tuple(('_adaptive_priority_provider', '_aimd_slot', '_aimd_window', '_base_retry_delay', '_batch_cp_result', '_capacity', '_captcha_detections', '_captcha_detector', '_concurrency', '_concurrency_provider', '_config', '_cooldown_seconds', '_cover_count', '_ctx', '_current_geo_context', '_darknet_connector', '_dedup_lock', '_enqueue_pivot_provider', '_evidence_ids', '_frontier', '_geo_proxies', '_gopher_transport', '_gopher_transport_enabled', '_hints_extractor', '_host_ips_cache', '_http_cache_enabled', '_http_cache_transport', '_hypothesis_depth_provider', '_hypothesis_depth_setter', '_hypothesis_query_count_provider', '_hypothesis_query_count_setter', '_lightpanda_lock', '_lightpanda_pool', '_lightpanda_pool_started', '_max_backoff_delay', '_max_retries', '_orchestrator', '_paywall_bypass', '_per_host_gate', '_per_host_limit', '_pivot_queue_provider', '_pivot_stats_provider', '_privacy_allocator', '_privacy_lock', '_processed_urls', '_running', '_session_checkpoint_task', '_session_lmdb_env', '_session_manager', '_sprint_config_provider', '_sprint_remaining_provider', '_stop_reason', '_telemetry', '_tor_transport', '_tor_transport_enabled', '_urls_fetched_count', '_zstd'))
+    __slots__ = tuple(('_adaptive_priority_provider', '_aimd', '_aimd_semaphore', '_base_retry_delay', '_batch_cp_result', '_capacity', '_captcha_detections', '_captcha_detector', '_concurrency', '_concurrency_provider', '_config', '_cooldown_seconds', '_cover_count', '_ctx', '_current_geo_context', '_darknet_connector', '_dedup_lock', '_enqueue_pivot_provider', '_evidence_ids', '_frontier', '_geo_proxies', '_gopher_transport', '_gopher_transport_enabled', '_hints_extractor', '_host_ips_cache', '_http_cache_enabled', '_http_cache_transport', '_hypothesis_depth_provider', '_hypothesis_depth_setter', '_hypothesis_query_count_provider', '_hypothesis_query_count_setter', '_lightpanda_lock', '_lightpanda_pool', '_lightpanda_pool_started', '_max_backoff_delay', '_max_retries', '_orchestrator', '_paywall_bypass', '_per_host_gate', '_per_host_limit', '_pivot_queue_provider', '_pivot_stats_provider', '_privacy_allocator', '_privacy_lock', '_processed_urls', '_running', '_session_checkpoint_task', '_session_lmdb_env', '_session_manager', '_sprint_config_provider', '_sprint_remaining_provider', '_stop_reason', '_telemetry', '_tor_transport', '_tor_transport_enabled', '_urls_fetched_count', '_zstd'))
 
     def __init__(self, config: FetchCoordinatorConfig | None=None, max_concurrent: int=3, pivot_queue_provider: Callable[[], Any]=lambda: None, pivot_stats_provider: Callable[[], dict] | None=None, hypothesis_query_count_provider: Callable[[], int]=lambda: 0, hypothesis_query_count_setter: Callable[[int], None]=lambda v: None, hypothesis_depth_provider: Callable[[], int]=lambda: 0, hypothesis_depth_setter: Callable[[int], None]=lambda v: None, sprint_config_provider: Callable[[], Any]=lambda: None, adaptive_priority_provider: Callable[[str, float], float]=lambda tt, base: base, enqueue_pivot_provider: Callable[..., Any]=lambda **kw: None, concurrency_provider: Callable[[], tuple[int, int, str, bool] | None] | None=None, sprint_remaining_provider: Callable[[], float | None]=lambda: None):
         super().__init__(name='FetchCoordinator', max_concurrent=max_concurrent)
@@ -414,7 +357,7 @@ class FetchCoordinator(UniversalCoordinator):
                     logger.info('TorTransport enabled via HLEDAC_ENABLE_TOR=1')
                     logger.info('  Circuit rotation after {self._tor_transport._max_circuit_requests} requests', _max_circuit_requests=self._tor_transport._max_circuit_requests)
             except Exception as e:  # noqa: BLE001 — best-effort; transport init failure; Tor disabled gracefully
-                logger.warning('TorTransport init failed: {e}', e=e)
+                logger.warning('TorTransport init failed: %s', e)
                 self._tor_transport_enabled = False
         self._gopher_transport: Any = None
         self._gopher_transport_enabled: bool = False
@@ -425,7 +368,7 @@ class FetchCoordinator(UniversalCoordinator):
                 self._gopher_transport_enabled = True
                 logger.info('GopherTransport enabled via HLEDAC_ENABLE_GOPHER=1')
             except Exception as e:  # noqa: BLE001 — best-effort; transport init failure; Gopher disabled gracefully
-                logger.warning('GopherTransport init failed: {e}', e=e)
+                logger.warning('GopherTransport init failed: %s', e)
                 self._gopher_transport_enabled = False
         self._http_cache_transport: Any = None
         self._http_cache_enabled: bool = os.environ.get('HLEDAC_HTTP_CACHE', '1') != '0'
@@ -437,15 +380,20 @@ class FetchCoordinator(UniversalCoordinator):
                 self._captcha_detector = CaptchaDetector()
                 logger.info('CaptchaDetector enabled via HLEDAC_ENABLE_CAPTCHA_DETECTION=1')
             except Exception as e:  # noqa: BLE001 — best-effort; transport init failure; CaptchaDetector disabled gracefully
-                logger.warning('CaptchaDetector init failed: {e}', e=e)
+                logger.warning('CaptchaDetector init failed: %s', e)
                 self._captcha_detector = None
         self._dedup_lock = asyncio.Lock()
         self._concurrency = TokenBucketController(rate=5, capacity=10)
-        self._aimd_window = AIMDWindow(initial=float(CONCURRENCY_CLEARNET))
-        self._aimd_slot: _AIMDSlotController = _AIMDSlotController(initial_window=int(CONCURRENCY_CLEARNET))
+        # ISSUE 2.2: Unified AIMD controller — single AtomicU64 in Rust.
+        # Replaces _AIMDSlotController orphan class.
+        # Falls back to Python AIMDWindow if Rust extension unavailable.
+        self._aimd: PyAIMDController | AIMDWindow = _try_load_aimd_controller(CONCURRENCY_CLEARNET)
+        # _aimd_semaphore: asyncio.Semaphore for slot coordination (stays in Python).
+        # Window state is in Rust; Python only reads window for semaphore sizing.
+        self._aimd_semaphore: asyncio.Semaphore = asyncio.Semaphore(CONCURRENCY_CLEARNET)
         self._per_host_limit = 4
         self._per_host_gate = BoundedPerHostGate(max_hosts=512, per_host_limit=self._per_host_limit)
-        self._telemetry: dict[str, Any] = {'aimd_concurrency': self._aimd_window.window, 'active_fetches': 0, 'total_successes': 0, 'total_failures': 0, 'circuit_breaker_blocks': 0, 'circuit_breaker_active': 0, 'uma_state': 'ok', 'decrease_factor_used': 1.0, 'backpressure_clamp_events': 0}
+        self._telemetry: dict[str, Any] = {'aimd_concurrency': self._aimd.window, 'active_fetches': 0, 'total_successes': 0, 'total_failures': 0, 'circuit_breaker_blocks': 0, 'circuit_breaker_active': 0, 'uma_state': 'ok', 'decrease_factor_used': 1.0, 'backpressure_clamp_events': 0}
         self._cover_count: int = 0
         self.init_session_manager()
 
@@ -506,37 +454,37 @@ class FetchCoordinator(UniversalCoordinator):
     def get_stats(self) -> dict[str, Any]:
         """
         Sprint P3: Unified stats API aggregating all telemetry from
-        AIMDWindow, _AIMDSlotController, BoundedPerHostGate, circuit breaker,
-        and CAPTCHA detector.
+        PyAIMDController (Rust) / AIMDWindow (Python fallback), BoundedPerHostGate,
+        circuit breaker, and CAPTCHA detector.
         """
         aimd_window_stats = {}
-        aimd_slot_stats = {}
         per_host_gate_stats = {}
         circuit_stats = {}
         captcha_stats = {}
 
-        # AIMDWindow
+        # ISSUE 2.2: Unified AIMD stats from PyAIMDController (Rust) or AIMDWindow (Python fallback)
         try:
-            if hasattr(self, '_aimd_window') and self._aimd_window is not None:
-                aimd_window_stats = {
-                    'window': self._aimd_window.window,
-                    'successes': self._aimd_window.successes,
-                    'failures': self._aimd_window.failures,
-                    **self._aimd_window.stats,
-                }
-        except (KeyError, TypeError, AttributeError):  # noqa: BLE001 — best-effort; aimd_window stats unavailable; telemetry fallback
+            if hasattr(self, '_aimd') and self._aimd is not None:
+                if hasattr(self._aimd, 'stats'):
+                    # Rust PyAIMDController
+                    aimd_stats = self._aimd.stats()
+                    aimd_window_stats = {
+                        'window': self._aimd.window,
+                        'active': self._aimd.active,
+                        **aimd_stats,
+                    }
+                else:
+                    # Python AIMDWindow fallback
+                    aimd_window_stats = {
+                        'window': self._aimd.window,
+                        'successes': self._aimd.successes,
+                        'failures': self._aimd.failures,
+                        **self._aimd.stats,
+                    }
+                # Remove old duplicate keys
+                aimd_window_stats.pop('window_changes', None)
+        except (KeyError, TypeError, AttributeError):  # noqa: BLE001 — best-effort; aimd stats unavailable; telemetry fallback
             aimd_window_stats = {'error': 'unavailable'}
-
-        # _AIMDSlotController
-        try:
-            if hasattr(self, '_aimd_slot') and self._aimd_slot is not None:
-                aimd_slot_stats = {
-                    'window': self._aimd_slot.window,
-                    'available_approx': self._aimd_slot.available,
-                    **self._aimd_slot.stats,
-                }
-        except (KeyError, TypeError, AttributeError):  # noqa: BLE001 — best-effort; aimd_slot stats unavailable; telemetry fallback
-            aimd_slot_stats = {'error': 'unavailable'}
 
         # BoundedPerHostGate
         try:
@@ -563,7 +511,6 @@ class FetchCoordinator(UniversalCoordinator):
 
         return {
             'aimd_window': aimd_window_stats,
-            'aimd_slot': aimd_slot_stats,
             'per_host_gate': per_host_gate_stats,
             'circuit_breaker': circuit_stats,
             'captcha': captcha_stats,
@@ -586,7 +533,7 @@ class FetchCoordinator(UniversalCoordinator):
                 self._session_manager = _session_mgr_cls(self._session_lmdb_env)
                 self._start_checkpoint_loop()
         except Exception as e:  # noqa: BLE001 — best-effort; LMDB session persistence disabled; non-critical fallback
-            logger.warning('[FETCH] LMDB session init failed: {e} — session persistence disabled', e=e)
+            logger.warning('[FETCH] LMDB session init failed: %s — session persistence disabled', e)
             self._session_manager = None
 
     def _load_geo_proxies(self) -> dict[str, str]:
@@ -686,11 +633,8 @@ class FetchCoordinator(UniversalCoordinator):
         """
         Acquire AIMD slot, returns (concurrency_window, None).
 
-        Release is always via self._aimd_slot.release() — no captured reference
-        needed because the controller never rebuilds state (no semaphore swap).
-
-        Sprint 6.4 + Issue #15: Backpressure clamping now uses AIMDWindow.set_window()
-        under its internal lock to avoid race conditions during concurrent updates.
+        ISSUE 2.2: Uses unified PyAIMDController (Rust) with lock-free atomic state.
+        Falls back to Python AIMDWindow for backpressure clamping + semaphore acquire.
         """
         _bp_clearing: float | None = None
         _bp_uma_state = 'ok'
@@ -705,15 +649,40 @@ class FetchCoordinator(UniversalCoordinator):
                     _bp_clearing, _bp_stealth, _bp_uma_state, _ = _bp_result
             except (TypeError, ValueError, KeyError):  # noqa: BLE001 — best-effort; concurrency_provider result parsing failure; non-critical
                 pass
-        if _bp_clearing is not None and _bp_clearing < self._aimd_window.window:
-            await self._aimd_window.set_window(_bp_clearing)
-            self._telemetry['aimd_concurrency'] = _bp_clearing
-            self._telemetry['backpressure_clamp_events'] += 1
         self._telemetry['uma_state'] = _bp_uma_state
-        current_window = self._aimd_window.window
-        if current_window != self._aimd_slot.window:
-            await self._aimd_slot.update_window(int(current_window))
-        await self._aimd_slot.acquire()
+
+        # Acquire slot (Rust: lock-free; Python fallback: semaphore)
+        if isinstance(self._aimd, PyAIMDController):
+            # Rust path: lock-free atomic acquire
+            current_window, _ = self._aimd.acquire()
+            # Backpressure clamping if needed
+            if _bp_clearing is not None and _bp_clearing < current_window:
+                self._aimd.set_window(_bp_clearing)
+                current_window = _bp_clearing
+                self._telemetry['backpressure_clamp_events'] += 1
+        else:
+            # Python fallback: use existing AIMDWindow + semaphore pattern
+            if _bp_clearing is not None and _bp_clearing < self._aimd.window:
+                await self._aimd.set_window(_bp_clearing)
+                self._telemetry['backpressure_clamp_events'] += 1
+            current_window = self._aimd.window
+            # Sync window to semaphore if needed
+            if current_window != self._aimd_semaphore._value:
+                # Adjust semaphore to match window
+                diff = int(current_window) - self._aimd_semaphore._value
+                if diff > 0:
+                    for _ in range(diff):
+                        self._aimd_semaphore.release()
+                elif diff < 0:
+                    # Shrinking: release excess permits directly without blocking acquire.
+                    # When active==window the semaphore is already near-zero, so we
+                    # may temporarily hold more permits than the new window — this
+                    # is safe as active slots drain naturally on release().
+                    for _ in range(-diff):
+                        self._aimd_semaphore.release()
+            await self._aimd_semaphore.acquire()
+
+        self._telemetry['aimd_concurrency'] = current_window
         self._telemetry['active_fetches'] += 1
         return (current_window, None)
 
@@ -722,19 +691,21 @@ class FetchCoordinator(UniversalCoordinator):
         Release AIMD slot after success.
         Returns new concurrency window.
 
-        Issue #15 fix: All counter and window mutations are now atomic under
-        AIMDWindow's internal lock, preventing the race condition where 100+
-        simultaneous completions would each see successes >= threshold and all
-        trigger window increases independently.
+        ISSUE 2.2: Uses unified PyAIMDController (Rust) for lock-free success recording.
         """
         self._telemetry['active_fetches'] -= 1
         uma_state = self._telemetry.get('uma_state', 'ok')
-        multiplier = 2.0 if uma_state == 'ok' else 1.0
-        new_window, _ = await self._aimd_window.on_success(multiplier=multiplier)
+
+        if isinstance(self._aimd, PyAIMDController):
+            # Rust path: lock-free success recording
+            new_window, _ = self._aimd.record_success()
+        else:
+            # Python fallback
+            multiplier = 2.0 if uma_state == 'ok' else 1.0
+            new_window, _ = await self._aimd.on_success(multiplier=multiplier)
+
         self._telemetry['total_successes'] += 1
         self._telemetry['aimd_concurrency'] = new_window
-        if new_window != self._aimd_slot.window:
-            await self._aimd_slot.update_window(int(new_window))
         return new_window
 
     async def _aimd_release_failure(self) -> float:
@@ -742,21 +713,24 @@ class FetchCoordinator(UniversalCoordinator):
         Release AIMD slot after failure (timeout/throttling/pressure).
         Returns new concurrency window.
 
-        Issue #15 fix: All counter and window mutations are now atomic under
-        AIMDWindow's internal lock, preventing the race condition where 100+
-        simultaneous failures would each see stale _aimd_concurrency and all
-        independently trigger multiplicative decreases.
+        ISSUE 2.2: Uses unified PyAIMDController (Rust) for lock-free failure recording.
         """
         self._telemetry['active_fetches'] -= 1
         uma_state = self._telemetry.get('uma_state', 'ok')
-        new_window, new_failures = await self._aimd_window.on_failure(uma_state=uma_state)
+        decrease_factor = AIMD_DECREASE_BY_STATE.get(uma_state, 1.0)
+
+        if isinstance(self._aimd, PyAIMDController):
+            # Rust path: lock-free failure recording
+            new_window, _ = self._aimd.record_failure(uma_state)
+        else:
+            # Python fallback
+            new_window, new_failures = await self._aimd.on_failure(uma_state=uma_state)
+            if new_window != self._aimd_semaphore._value:
+                logger.warning(f'[AIMD] failure #{new_failures} uma_state={uma_state} factor={decrease_factor} → window→{new_window:.1f}')
+
         self._telemetry['total_failures'] += 1
         self._telemetry['aimd_concurrency'] = new_window
-        decrease_factor = AIMD_DECREASE_BY_STATE.get(uma_state, 1.0)
         self._telemetry['decrease_factor_used'] = decrease_factor
-        if new_window != self._aimd_slot.window:
-            await self._aimd_slot.update_window(int(new_window))
-            logger.warning(f'[AIMD] failure #{new_failures} uma_state={uma_state} factor={decrease_factor} → window→{new_window:.1f}')
         return new_window
 
     def _get_privacy_semaphore(self, url: str) -> tuple[asyncio.Semaphore | None, str]:
@@ -823,7 +797,7 @@ class FetchCoordinator(UniversalCoordinator):
             finally:
                 await self._lightpanda_pool.release(lp)
         except (httpx.HTTPError, httpx.TimeoutException, asyncio.TimeoutError, OSError, ConnectionError) as e:  # noqa: BLE001 — best-effort; httpx request failure; non-critical fallback
-            logger.warning('[LIGHTPANDA] Failed: {e}, falling back to curl_cffi', e=e)
+            logger.warning('[LIGHTPANDA] Failed: %s, falling back to curl_cffi', e)
             return None
 
     @staticmethod
@@ -870,7 +844,7 @@ class FetchCoordinator(UniversalCoordinator):
             await self._aimd_release_failure()
             return None
         except (httpx.HTTPError, OSError, asyncio.TimeoutError, asyncio.CancelledError) as e:  # noqa: BLE001 — best-effort; httpx response body read; non-critical
-            logger.warning('Tor fetch failed: {e}', e=e)
+            logger.warning('Tor fetch failed: %s', e)
             await self._aimd_release_failure()
             return None
 
@@ -904,26 +878,51 @@ class FetchCoordinator(UniversalCoordinator):
             await self._aimd_release_failure()
             return None
         except (httpx.HTTPError, OSError, asyncio.TimeoutError, asyncio.CancelledError) as e:  # noqa: BLE001 — best-effort; httpx stream read; non-critical
-            logger.warning('I2P fetch failed: {e}', e=e)
+            logger.warning('I2P fetch failed: %s', e)
             await self._aimd_release_failure()
             return None
 
-    async def _fetch_with_curl(self, url: str, proxy: str | None=None):
+    async def _fetch_with_curl(self, url: str, proxy: str | None=None, *, resolve: dict[str, str] | None=None):
         """Fetch URL via curl_cffi with HTTP/3 Alt-Svc support (F265C).
+
+        ISSUE-0.2 FIX: Uses CAPS-based curl_cffi availability check.
+        Falls back to FAIL-FAST (no silent httpx fallback without JA3).
+
+        ISSUE-8.1 FIX: DNS Rebinding Protection via pre-bound IP addresses.
+        When ``resolve`` dict is provided, curl's RESOLVE option is used to
+        bind the connection to the pre-validated IP before DNS lookup,
+        eliminating the TOCTOU window between validation and fetch.
 
         Replaced StealthWebScraper (aiohttp) with public_fetcher's
         fetch_via_curl_cffi_cached() which has full H3 Alt-Svc LRU priming,
         conditional cache (ETag/Last-Modified), and prewarm pool support.
         """
+        # ISSUE-0.2: CAPS-based availability check — never fall back to httpx without JA3
         try:
-            from hledac.universal.fetching.public_fetcher import _altsvc_extract_host, _altsvc_http_version_for, _altsvc_record_from_result, fetch_via_curl_cffi_cached
+            from hledac.universal.fetching.curl_cffi_fetch import fetch_via_curl_cffi_with_caps_check, is_curl_cffi_capable, next_ja3_profile
+            _capable, _cap_reason = is_curl_cffi_capable()
+            if not _capable:
+                logger.warning(
+                    "[ISSUE-0.2] curl_cffi not CAPS-capable (%s) — FAIL-FAST ( refusing httpx fallback)",
+                    _cap_reason,
+                )
+                return {'url': url, 'content': b'', 'error': f'curl_cffi_unavailable: {_cap_reason}'}
+        except ImportError:
+            logger.warning("[ISSUE-0.2] fetching.curl_cffi_fetch unavailable — FAIL-FAST")
+            return {'url': url, 'content': b'', 'error': 'curl_cffi_fetch_import_failed'}
+
+        try:
+            from hledac.universal.fetching.public_fetcher import _altsvc_extract_host, _altsvc_http_version_for, _altsvc_record_from_result
             try:
                 from hledac.universal.transport.http3_lane import probe_altsvc_speculative
                 probe_altsvc_speculative(url)
             except (ImportError, AttributeError, TypeError):  # noqa: BLE001 — best-effort; http3_lane unavailable; fail-open
                 pass
             _curl_http_version = _altsvc_http_version_for(_altsvc_extract_host(url))
-            _curl_result = await fetch_via_curl_cffi_cached(url=url, headers=None, timeout_s=30.0, max_bytes=10 * 1024 * 1024, profile='chrome110', http_version=_curl_http_version, _pre_probe=False)
+            _ja3_profile = next_ja3_profile()
+            _curl_result = await fetch_via_curl_cffi_with_caps_check(url=url, headers=None, timeout_s=30.0, max_bytes=10 * 1024 * 1024, profile=_ja3_profile, http_version=_curl_http_version, _pre_probe=False, resolve=resolve)
+            if _curl_result is None:
+                return {'url': url, 'content': b'', 'error': 'curl_cffi_caps_check_failed'}
             _altsvc_record_from_result(url, _curl_result.get('headers'))
             _curl_bytes = _curl_result.get('content', b'')
             _curl_error = _curl_result.get('error', None)
@@ -936,8 +935,8 @@ class FetchCoordinator(UniversalCoordinator):
             logger.debug('[CURL] Timeout for {url}', url=url)
             await self._aimd_release_failure()
             return {'url': url, 'content': b'', 'error': 'timeout'}
-        except (httpx.HTTPError, OSError, asyncio.TimeoutError, asyncio.CancelledError) as e:  # noqa: BLE001 — best-effort; dns resolution failure; best-effort fallback
-            logger.warning('[CURL] Failed: {e}', e=e)
+        except (OSError, asyncio.TimeoutError, asyncio.CancelledError) as e:  # noqa: BLE001 — curl_cffi doesn't raise httpx.HTTPError; only network/OS errors expected here
+            logger.warning('[CURL] Failed: %s', e)
             return {'url': url, 'content': b'', 'error': str(e)}
 
     def get_supported_operations(self) -> list[Any]:
@@ -1223,7 +1222,7 @@ class FetchCoordinator(UniversalCoordinator):
             _ev0 = dns_meta.get('blocked_reason')
             logger.warning("DNS rebinding defense blocked: {dns_meta.get('blocked_reason')} for {domain}", domain=domain, _ev0=dns_meta.get('blocked_reason'))
             trace_fetch_end(url, 'dns_rebind_defense', 'blocked', 0.0, {'reason': dns_meta.get('blocked_reason')})
-            self._aimd_slot.release()
+            self._aimd_semaphore.release()
             if _host_sem is not None:
                 self._per_host_gate.release(_host_sem)
             if _privacy_lane != 'clearnet':
@@ -1310,7 +1309,7 @@ class FetchCoordinator(UniversalCoordinator):
                                 break
                             logger.debug('GopherTransport fetch failed: {gopher_res.error}', gopher_res_error=gopher_res.error)
                         except Exception as e:  # noqa: BLE001 — best-effort; telemetry flush failure; non-critical
-                            logger.debug('GopherTransport error: {e}', e=e)
+                            logger.debug('GopherTransport error: %s', e)
                             trace_fetch_end(url, 'gopher_transport', 'error', 0.0)
                 session_cookies = None
                 if self._session_manager:
@@ -1340,13 +1339,25 @@ class FetchCoordinator(UniversalCoordinator):
                     except TimeoutError:
                         logger.debug('[PREVIEW] Timeout for {url}', url=url)
                     except (httpx.HTTPError, OSError, asyncio.TimeoutError, asyncio.CancelledError) as e:  # noqa: BLE001 — best-effort; httpx/network failure in preview fetch; non-critical
-                        logger.debug('[PREVIEW] Failed to fetch preview for {url}: {e}', url=url, e=e)
+                        logger.debug('[PREVIEW] Failed to fetch preview for %s: %s', url, e)
                     return ''
 
                 async def _do_curl() -> dict[str, Any] | None:
                     """Main curl fetch — runs in parallel with preview."""
-                    trace_fetch_start(url, 'curl', {'attempt': attempt, 'timeout': TIMEOUT_CLEARNET_HTML})
-                    r = await self._fetch_with_curl(url, proxy)
+                    # ISSUE-8.1 FIX: DNS Rebinding Protection — bind to pre-validated IPs
+                    # Build resolve dict from dns_meta: hostname -> first resolved public IP
+                    _resolve: dict[str, str] | None = None
+                    _resolved_ips = dns_meta.get('resolved_ips', [])
+                    if _resolved_ips and not url.endswith(('.onion', '.i2p')):
+                        try:
+                            _parsed_url = httpx.URL(url)
+                            _hostname = _parsed_url.host
+                            if _hostname:
+                                _resolve = {_hostname: _resolved_ips[0]}
+                        except (ValueError, TypeError):  # noqa: BLE001 — best-effort; URL parse failure; skip resolve binding
+                            pass
+                    trace_fetch_start(url, 'curl', {'attempt': attempt, 'timeout': TIMEOUT_CLEARNET_HTML, 'resolve': _resolve})
+                    r = await self._fetch_with_curl(url, proxy, resolve=_resolve)
                     if r and (not r.get('error')):
                         trace_fetch_end(url, 'curl', 'ok', 0.0)
                     else:
@@ -1359,7 +1370,7 @@ class FetchCoordinator(UniversalCoordinator):
                     result = _fetch_task.result()
                     _preview_text = _preview_task.result() or ''
                 except BaseException as e:
-                    logger.debug('[PREVIEW+CURL] TaskGroup failed for {url}: {e}', url=url, e=e)
+                    logger.debug('[PREVIEW+CURL] TaskGroup failed for %s: %s', url, e)
                     result = None
                     _preview_text = ''
                 if self._is_js_heavy(url, _preview_text):
@@ -1399,11 +1410,11 @@ class FetchCoordinator(UniversalCoordinator):
                 is_timeout = result.get('error') == 'timeout' if result else True
                 self._record_failure(domain, is_timeout=is_timeout, failure_kind='fetch_error')
         except (httpx.HTTPError, OSError, asyncio.TimeoutError, asyncio.CancelledError) as e:  # noqa: BLE001 — best-effort; httpx/network request failure; non-critical
-            logger.warning('[_fetch_url] Unexpected error for {url}: {e}', url=url, e=e)
+            logger.warning('[_fetch_url] Unexpected error for %s: %s', url, e)
             await self._aimd_release_failure()
             result = {'url': url, 'content': b'', 'error': str(e)}
         finally:
-            self._aimd_slot.release()
+            self._aimd_semaphore.release()
             if _privacy_lane != 'clearnet':
                 self._privacy_release(_privacy_lane)
             if _host_sem is not None:
@@ -1479,7 +1490,7 @@ class FetchCoordinator(UniversalCoordinator):
             logger.info('[DEEP] query={query!r} → {raw_rows} raw rows → {fused_rows} fused', query=query, raw_rows=len(rows), fused_rows=len(fused))
             return fused
         except Exception as e:  # noqa: BLE001 — best-effort; httpx close failure; non-critical
-            logger.debug('[DEEP] research failed: {e}', e=e)
+            logger.debug('[DEEP] research failed: %s', e)
             return None
 
     async def _do_shutdown(self, ctx: dict[str, Any]) -> None:

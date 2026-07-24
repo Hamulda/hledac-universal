@@ -1823,10 +1823,12 @@ async def _extract_live_public_findings_from_page(
     """
     # Lazy import to avoid TYPE_CHECKING-only circular issues at runtime
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-    from utils.rayon_pool import run_in_cpu_pool_async
+    from hledac.universal.runtime.worker_pool import get_rust_pool
 
-    # Extract context in thread to avoid blocking event loop
-    context: str = await run_in_cpu_pool_async(_pattern_context, page_text, hit_start, hit_end)
+    # Extract context in rayon pool — ISSUE 3.1 FIX: was run_in_cpu_pool_async
+    # which used cpu_pool_run (GIL wrapper only, no rayon). Now uses channel dispatch.
+    pool = get_rust_pool("cpu")
+    context: str = await pool.submit(_pattern_context, page_text, hit_start, hit_end)
 
     # Truncate to hard cap (double-check since context is already bounded)
     if len(context) > MAX_EXTRACTED_TEXT_CHARS:

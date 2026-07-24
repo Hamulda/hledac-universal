@@ -133,11 +133,12 @@ async def _extract_live_public_findings_from_page(
     All heavy work (context extraction) offloaded to thread executor.
     """
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-    from utils.rayon_pool import run_in_cpu_pool_async
+    from hledac.universal.runtime.worker_pool import get_rust_pool
     from .public_patterns import _make_finding_id, _pattern_context
 
-    # Extract context in thread to avoid blocking event loop
-    context: str = await run_in_cpu_pool_async(
+    # Extract context in rayon pool — ISSUE 3.1 FIX: was run_in_cpu_pool_async
+    pool = get_rust_pool("cpu")
+    context: str = await pool.submit(
         _pattern_context, page_text, hit_start, hit_end
     )
 

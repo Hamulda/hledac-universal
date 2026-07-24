@@ -133,11 +133,11 @@ def _shutdown_executor_guarded(
         if t.is_alive():
             # Timed out → force cancel remaining work
             ex.shutdown(wait=False, cancel_futures=True)
-    except Exception:
+    except Exception:  # noqa: BLE001
         # Any error → force shutdown
         try:
             ex.shutdown(wait=False, cancel_futures=True)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # Best-effort at interpreter exit
 
 
@@ -391,10 +391,10 @@ class _RustMPSCBytes:
             if self._retry_handle is not None:
                 try:
                     self._retry_handle.cancel()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 self._retry_handle = None
-        except Exception:
+        except Exception:  # noqa: BLE001
             self._pool = None
             self._sender_ptr = 0
             self._wake_fd = -1
@@ -428,7 +428,7 @@ class _RustMPSCBytes:
         if self._retry_handle is not None:
             try:
                 self._retry_handle.cancel()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._retry_handle = None
 
@@ -438,7 +438,7 @@ class _RustMPSCBytes:
             self._pending_retry = False
             try:
                 self._do_retry_init()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # Will reschedule if still in fallback
 
         try:
@@ -449,8 +449,8 @@ class _RustMPSCBytes:
             self._pending_retry = True
             # Exponential backoff: double delay, cap at 60s
             self._retry_delay = min(self._retry_delay * 2, 60.0)
-        except Exception:
-            # Loop might be closing — mark pending for next send/recv
+        except Exception:  # noqa: BLE001
+            logger.debug("[_RustMPSC] loop closing, marking pending retry", exc_info=True)
             self._pending_retry = True
 
     def _do_retry_init(self) -> None:
@@ -499,8 +499,8 @@ class _RustMPSCBytes:
                     logger.debug(f'[_RustMPSC] Switched to Rust MPSC, drained {len(drained)} items from asyncio.Queue')
 
             logger.info(f'[_RustMPSC] Rust MPSC now available — switched from asyncio fallback')
-        except Exception:
-            # Still not available — schedule another retry
+        except Exception:  # noqa: BLE001
+            logger.debug("[_RustMPSC] not available, scheduling retry", exc_info=True)
             self._pending_retry = True
             self._schedule_retry()
 
@@ -520,7 +520,8 @@ class _RustMPSCBytes:
         if self._impl == 'rust' and self._pool is not None:
             try:
                 return self._pool.send(self._sender_ptr, item)
-            except Exception:
+            except Exception:  # noqa: BLE001
+                logger.debug("[_RustMPSC] send failed, returning False", exc_info=True)
                 return False
         elif self._queue is not None:
             try:
@@ -546,7 +547,8 @@ class _RustMPSCBytes:
             try:
                 # PyO3: list[bytes] → Vec<&[u8]>
                 return self._pool.send_batch(self._sender_ptr, items)
-            except Exception:
+            except Exception:  # noqa: BLE001
+                logger.debug("[_RustMPSC] batch send failed, returning 0", exc_info=True)
                 return 0
         elif self._queue is not None:
             sent = 0
@@ -586,7 +588,8 @@ class _RustMPSCBytes:
         if self._impl == 'rust' and self._pool is not None:
             try:
                 return self._pool.recv_batch(max_items)
-            except Exception:
+            except Exception:  # noqa: BLE001
+                logger.debug("[_RustMPSC] legacy send failed, returning []", exc_info=True)
                 return []
         elif self._queue is not None:
             batch = []
@@ -708,7 +711,7 @@ class EvidenceLog:
                 self._persist_file = open(self._persist_path, 'ab' if self._encrypt_at_rest else 'a', encoding='utf-8' if not self._encrypt_at_rest else None, buffering=8192)
                 self._persist_path_str = str(self._persist_path)
                 logger.debug(f'EvidenceLog persistence: {self._persist_path}')
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.error(f'Failed to open evidence log: {e}')
                 self._enable_persist = False
         self._mpsc: _RustMPSCBytes = _RustMPSCBytes(capacity=2048, asyncio_fallback=False)
@@ -751,13 +754,13 @@ class EvidenceLog:
         if self._arrow_writer is not None:
             try:
                 self._arrow_writer.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._arrow_writer = None
         if self._persist_file and (not self._persist_file.closed):
             try:
                 self._persist_file.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     def __del__(self):
@@ -815,7 +818,7 @@ class EvidenceLog:
         if self._mpsc2_reader is not None:
             try:
                 self._mpsc2_reader.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._mpsc2_reader = None
         if self._initialized:
@@ -831,16 +834,16 @@ class EvidenceLog:
         await self._init_db()
         try:
             await self._migrate_from_file()
-        except Exception as _mig_err:
+        except Exception as _mig_err:  # noqa: BLE001
             logger.warning(f'[F11C] Migration from JSONL failed (non-fatal): {_mig_err}')
         try:
             self._flush_task = safe_create_task(self._flush_worker())
-        except Exception as _task_err:
+        except Exception as _task_err:  # noqa: BLE001
             logger.warning(f'[F11C] Flush worker task creation failed (non-fatal): {_task_err}')
             self._flush_task = None
         try:
             self._async_write_task = safe_create_task(self._async_write_worker())
-        except Exception as _write_task_err:
+        except Exception as _write_task_err:  # noqa: BLE001
             logger.warning(f'[F290] Async write worker task creation failed (non-fatal): {_write_task_err}')
             self._async_write_task = None
         # E2: Start cancel watcher — triggers aclose() when lifecycle cancel_event is set.
@@ -906,7 +909,7 @@ class EvidenceLog:
                 self._duckdb_enabled = True
                 logger.info(f'[DuckDB] Arrow IPC evidence enabled: {self._db_path}')
                 _ensure_duckdb_executor()
-            except Exception as _duck_err:
+            except Exception as _duck_err:  # noqa: BLE001
                 logger.warning(f'[DuckDB] Failed to initialize, falling back to SQLite: {_duck_err}')
                 self._duckdb_enabled = False
                 self._duckdb_conn = None
@@ -925,7 +928,7 @@ class EvidenceLog:
             ''')
             try:
                 await self._db.execute('PRAGMA integrity_check')
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             await self._db.execute('''
                 CREATE TABLE IF NOT EXISTS events (
@@ -989,7 +992,7 @@ class EvidenceLog:
                 raise
             old_file.rename(migrated_file)
             logger.info(f'Migrated {self._run_id} events to SQLite')
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning(f'Migration failed: {e}')
 
     async def _flush_worker(self) -> None:
@@ -1020,7 +1023,7 @@ class EvidenceLog:
                     await self._flush_batch_bytes(batch)
                     flush_latency_ms = (time.perf_counter() - flush_start) * 1000
                     trace_evidence_flush(len(batch), flush_latency_ms, 'ok', len(batch))
-                except Exception as _flush_err:
+                except Exception as _flush_err:  # noqa: BLE001
                     flush_latency_ms = (time.perf_counter() - flush_start) * 1000
                     logger.warning(f'Flush batch failed (dropping {len(batch)} events): {_flush_err}')
                     trace_evidence_flush(len(batch), flush_latency_ms, 'flush_error', 0)
@@ -1072,7 +1075,7 @@ class EvidenceLog:
         _afile: object | None = None
         try:
             _afile = await _f290_aiofiles.open(self._persist_path_str, 'ab', buffering=8192)
-        except Exception as _open_err:
+        except Exception as _open_err:  # noqa: BLE001
             logger.warning(f'[F290] aiofiles open failed, using sync fallback: {_open_err}')
             _afile = None
         _WRITE_FLUSH_THRESHOLD = 64
@@ -1087,20 +1090,20 @@ class EvidenceLog:
                 try:
                     await _afile.write(_combined)
                     await _afile.flush()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     # Fallback: sync write each item individually
                     try:
                         with open(cast(str, self._persist_path_str), 'ab') as _sf:
                             for _data in _write_buf:
                                 _sf.write(_data)
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
             else:
                 # Batch write: join all data and write in one syscall
                 try:
                     with open(cast(str, self._persist_path_str), 'ab') as _sf:
                         _sf.write(b''.join(_write_buf))
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             _write_buf.clear()
         while True:
@@ -1133,7 +1136,7 @@ class EvidenceLog:
         if _afile is not None:
             try:
                 await _afile.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
     _ARROW_SUB_BATCH = 256
 
@@ -1166,7 +1169,8 @@ class EvidenceLog:
                 for b in batch:
                     try:
                         decoded_batch.append(msgspec.msgpack.decode(b))
-                    except Exception:
+                    except Exception:  # noqa: BLE001
+                        logger.debug("[_flush_batch] item flush failed, skipping", exc_info=True)
                         continue
                 if not decoded_batch:
                     return
@@ -1181,7 +1185,7 @@ class EvidenceLog:
                     batch_arrow = pa.record_batch(arrays, schema=self._arrow_schema)
                     self._arrow_writer.write_batch(batch_arrow)
                 return
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.warning(f'[Arrow] IPC write failed, falling back to SQLite: {e}')
 
         # ISSUE-11: SQLite via ThreadPoolExecutor — GIL-free write
@@ -1217,7 +1221,8 @@ class EvidenceLog:
                 payload_str = payload_bytes.decode('utf-8', errors='replace') if isinstance(payload_bytes, bytes) else str(payload_bytes)
                 content_hash = event[6] if len(event) > 6 else ''
                 records.append((timestamp, event_type, payload_str, content_hash))
-            except Exception:
+            except Exception:  # noqa: BLE001
+                logger.debug("[_flush_batch] batch item failed, skipping", exc_info=True)
                 continue
 
         if not records:
@@ -1237,14 +1242,14 @@ class EvidenceLog:
                     records,
                 )
                 self._duckdb_conn.commit()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.warning(f'[_flush_duckdb_batch] DuckDB executemany failed: {e}')
 
         try:
             # C2: copy_context() propagates ContextVar (sprint_id, lane, mode) across thread boundary
             ctx = contextvars.copy_context()
             await loop.run_in_executor(ctx, _ensure_duckdb_executor(), _duckdb_insert_records)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning(f'[_flush_duckdb_batch] executor failed: {e}')
             # Fallback: direct SQLite
             await self._flush_sqlite_batch(batch)
@@ -1268,7 +1273,8 @@ class EvidenceLog:
                 payload_bytes = event[3] if len(event) > 3 else b''
                 content_hash = event[6] if len(event) > 6 else ''
                 records.append((timestamp, event_type, payload_bytes, content_hash))
-            except Exception:
+            except Exception:  # noqa: BLE001
+                logger.debug("[_write_payload] payload encoding failed, skipping", exc_info=True)
                 continue
 
         if not records:
@@ -1291,14 +1297,14 @@ class EvidenceLog:
                 )
                 conn.commit()
                 conn.close()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.warning(f'[_flush_sqlite_batch] SQLite insert failed: {e}')
 
         try:
             # C2: copy_context() propagates ContextVar (sprint_id, lane, mode) across thread boundary
             ctx = contextvars.copy_context()
             await loop.run_in_executor(ctx, _ensure_evidence_sqlite_executor(), _sqlite_insert)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning(f'[_flush_sqlite_batch] executor failed: {e}')
 
     async def _flush_batch(self, batch: list[dict[str, Any]]) -> None:
@@ -1319,7 +1325,7 @@ class EvidenceLog:
                     batch_arrow = pa.record_batch(arrays, schema=self._arrow_schema)
                     self._arrow_writer.write_batch(batch_arrow)
                 return
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.warning(f'[Arrow] IPC write failed, falling back to SQLite: {e}')
         records = []
         for event_data in batch:
@@ -1459,7 +1465,7 @@ class EvidenceLog:
                 t = threading.Thread(target=_sync_insert, daemon=True)
                 t.start()
                 trace_evidence_append(event.event_type, 0, 'sync_sqlite')
-            except Exception as _sync_err:
+            except Exception as _sync_err:  # noqa: BLE001
                 logger.debug(f'[F11C] Sync SQLite fallback failed (non-fatal): {_sync_err}')
         if self._enable_persist:
             try:
@@ -1474,7 +1480,7 @@ class EvidenceLog:
                         encrypted = encryptor.update(bytes_to_write) + encryptor.finalize()
                         bytes_to_write = nonce + encryptor.tag + encrypted
                         logger.debug(f'[ENCRYPT] stored bytes_in={len(line)} bytes_out={len(bytes_to_write)}')
-                    except Exception as e:
+                    except Exception as e:  # noqa: BLE001
                         logger.warning(f'[ENCRYPT] failed: {e}')
                 _sent = self._mpsc2.send(bytes_to_write)
                 if not _sent:
@@ -1496,7 +1502,7 @@ class EvidenceLog:
             self._dropped_count += 1
             try:
                 self._rebuild_indexes()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             return
         index = len(self._log) - 1
@@ -1511,7 +1517,7 @@ class EvidenceLog:
                 payload: dict[str, Any] = orjson.loads(event.payload) if event.payload else {}
                 _corr: dict[str, Any] | None = payload.get('_correlation')
                 shadow_record_finding(finding_id=event.event_id, query=payload.get('query', ''), source_type='evidence_packet', confidence=event.confidence, run_id=event.run_id, url=payload.get('url'), title=payload.get('title'), source=payload.get('source'), relevance_score=payload.get('relevance_score'), branch_id=_corr.get('branch_id') if _corr else None, provider_id=_corr.get('provider_id') if _corr else None, action_id=_corr.get('action_id') if _corr else None)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def _rebuild_indexes(self) -> None:
@@ -1627,7 +1633,7 @@ class EvidenceLog:
                 self._dropped_count += 1
                 try:
                     self._rebuild_indexes()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             else:
                 index = len(self._log) - 1
@@ -1676,7 +1682,7 @@ class EvidenceLog:
                         encryptor = cipher.encryptor()
                         encrypted = encryptor.update(bytes_to_write) + encryptor.finalize()
                         bytes_to_write = nonce + encryptor.tag + encrypted
-                    except Exception as _enc_err:
+                    except Exception as _enc_err:  # noqa: BLE001
                         logger.warning(f'[ENCRYPT] batch failed: {_enc_err}')
                 _jsonl_payloads.append(bytes_to_write)
             try:
@@ -1686,7 +1692,7 @@ class EvidenceLog:
                         line = e.to_jsonl_line()
                         bytes_to_write = line.encode('utf-8') + b'\n'
                         self._sync_write_fallback(line, bytes_to_write)
-            except Exception as _swal_err:
+            except Exception as _swal_err:  # noqa: BLE001
                 logger.critical(f'[F286] SWAL batch send failed: {_swal_err}')
 
         # analytics_hook per event (only evidence_packet type)
@@ -1711,7 +1717,7 @@ class EvidenceLog:
                         provider_id=_co.get('provider_id') if _co else None,
                         action_id=_co.get('action_id') if _co else None,
                     )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         return created
@@ -2004,7 +2010,8 @@ class EvidenceLog:
             # Parse only fields we need, not the whole payload
             try:
                 payload_dict = orjson.loads(event.payload) if event.payload else None
-            except Exception:
+            except Exception:  # noqa: BLE001
+                logger.debug("serialise_payload encoding failed", exc_info=True)
                 payload_dict = None
             payload_summary = self._summarize_payload(payload_dict)
             yield f'{i}. [{timestamp}] {event.event_type.upper()} (conf: {event.confidence:.2f})'
@@ -2162,7 +2169,7 @@ class EvidenceLog:
                 f.write(orjson.dumps(manifest, option=orjson.OPT_INDENT_2))
             logger.info(f'[EVIDENCE] Manifest written: {manifest_path}')
             return manifest_path
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f'Failed to write manifest: {e}')
             return None
 
@@ -2186,19 +2193,19 @@ class EvidenceLog:
                 await self._cancel_event.wait()
             except asyncio.CancelledError:
                 return
-            except Exception as _wait_err:
+            except Exception as _wait_err:  # noqa: BLE001
                 logger.debug('[E2] cancel_event.wait() failed: %s', _wait_err)
                 return
             # Cancel event was set — trigger aclose if not already closing/closed
             if not self._closing and not self._closed:
                 try:
                     await self.aclose()
-                except Exception as _aclose_err:
+                except Exception as _aclose_err:  # noqa: BLE001
                     logger.debug('[E2] aclose() from cancel watcher failed: %s', _aclose_err)
 
         try:
             self._cancel_watcher_task = safe_create_task(_watch_cancel(), name='_cancel_watcher')
-        except Exception as _watch_err:
+        except Exception as _watch_err:  # noqa: BLE001
             logger.debug('[E2] Failed to start cancel watcher: %s', _watch_err)
 
     async def aclose(self, timeout_s: float | None = None) -> None:
@@ -2230,7 +2237,7 @@ class EvidenceLog:
                     await asyncio.wait_for(self._cancel_watcher_task, timeout=2.0)
             except (TimeoutError, asyncio.CancelledError):
                 pass
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._cancel_watcher_task = None
         if self._flush_shutdown:
@@ -2280,14 +2287,14 @@ class EvidenceLog:
             try:
                 self._arrow_writer.close()
                 logger.info(f'[Arrow] IPC writer closed: {self._arrow_path}')
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.warning(f'[Arrow] Failed to close writer: {e}')
             finally:
                 self._arrow_writer = None
         if drained and self._db is not None:
             try:
                 await self._flush_batch_bytes(drained)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.warning(f'Failed to flush remaining items: {e}')
         if mpsc2_drained and self._persist_file:
             try:
@@ -2301,13 +2308,13 @@ class EvidenceLog:
                     for item in mpsc2_drained:
                         self._persist_file.write(item.decode('utf-8', errors='replace'))
                 self._persist_file.flush()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.warning(f'Failed to flush mpsc2 remaining items: {e}')
         if self._db is not None:
             try:
                 await self._db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
                 await self._db.close()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.warning(f'Failed to close SQLite: {e}')
             finally:
                 self._db = None
@@ -2315,7 +2322,7 @@ class EvidenceLog:
         if self._duckdb_conn is not None:
             try:
                 self._duckdb_conn.close()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.warning(f'Failed to close DuckDB: {e}')
             finally:
                 self._duckdb_conn = None
@@ -2332,7 +2339,7 @@ class EvidenceLog:
                 self._persist_file.flush()
                 os.fsync(self._persist_file.fileno())
                 self._persist_file.close()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.warning(f'Failed to close persist file: {e}')
             finally:
                 self._persist_file = None
@@ -2497,7 +2504,7 @@ class EvidenceLog:
             if total == 0:
                 return 1.0
             return confirmed / total
-        except Exception:
+        except Exception:  # noqa: BLE001
             return 1.0
 
     def get_evidence_by_finding_id(self, finding_id: str, event_types: list[str] | None=None) -> list[EvidenceEvent]:
@@ -2518,7 +2525,7 @@ class EvidenceLog:
                 if payload.get('finding_id') == finding_id or payload.get('id') == finding_id:
                     results.append(event)
             return results
-        except Exception:
+        except Exception:  # noqa: BLE001
             return []
 
     def get_error_rate(self) -> dict[str, Any]:

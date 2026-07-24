@@ -221,9 +221,16 @@ class HNSWVectorIndex:
             space_map = {'cosine': 'cos', 'l2': 'l2', 'ip': 'ip', 'euclidean': 'l2'}
             usearch_metric = space_map.get(self.space, 'cos')
             import usearch.index
-            self._index = usearch.index.Index(ndim=self.dim, metric=usearch_metric, dtype='f32', connectivity=self.M, expansion_add=min(self.ef_construction, 100), expansion_search=self.ef_search)
+            # Adaptive expansion_add: higher for large indices (>100k vectors) for better HNSW quality
+            # usearch supports up to 1024, use 200-300 range for large indices
+            element_count = getattr(self._index, 'size', 0) if self._index is not None else 0
+            if element_count > 100_000 or self.max_elements > 100_000:
+                exp_add = min(self.ef_construction, 300)
+            else:
+                exp_add = min(self.ef_construction, 200)
+            self._index = usearch.index.Index(ndim=self.dim, metric=usearch_metric, dtype='f32', connectivity=self.M, expansion_add=exp_add, expansion_search=self.ef_search)
             self._is_initialized = True
-            logger.info(f'USearch index initialized: dim={self.dim}, max_elements={self.max_elements}')
+            logger.info(f'USearch index initialized: dim={self.dim}, max_elements={self.max_elements}, expansion_add={exp_add}')
         except Exception as e:
             logger.error(f'Failed to initialize USearch index: {e}')
             self._available = False
@@ -344,16 +351,42 @@ class HNSWVectorIndex:
 
     def batch_search(self, query_vectors: np.ndarray, k: int=10, filter_ids: list[str] | None=None) -> list[tuple[list[str], list[float]]]:
         """
-        Batch search for multiple query vectors.
+        Batch search for multiple query vectors using native usearch batch API.
 
         Args:
             query_vectors: Array of shape (n_queries, dim)
             k: Number of results per query
-            filter_ids: Optional list of ids to filter results
+            filter_ids: Optional list of ids to filter results (not supported in batch, use post-filter)
 
         Returns:
             List of (ids, distances) tuples for each query
         """
+        if query_vectors.ndim == 1:
+            query_vectors = query_vectors.reshape(1, -1)
+
+        # Use native usearch batch search (v2.26+ supports VectorOrVectorsLike)
+        if self._available and self._is_initialized and self._index is not None:
+            try:
+                batch_results = self._index.search(query_vectors.astype(np.float32), count=k)
+                results = []
+                # BatchMatches supports indexing for individual query results
+                for i in range(len(query_vectors)):
+                    matches = batch_results[i] if hasattr(batch_results, '__iter__') else batch_results
+                    ids = []
+                    distances = []
+                    for match in matches:
+                        key = int(getattr(match, 'key', 0))
+                        dist = float(getattr(match, 'distance', 2.0))
+                        label_id = self._label_to_id.get(key, str(key))
+                        if filter_ids is None or label_id in filter_ids:
+                            ids.append(label_id)
+                            distances.append(dist)
+                    results.append((ids, distances))
+                return results
+            except Exception as e:
+                logger.warning(f'Batch search failed, falling back to loop: {e}')
+
+        # Fallback: sequential search with post-filtering
         results = []
         for query in query_vectors:
             ids, distances = self.search(query, k, filter_ids)

@@ -97,11 +97,14 @@ pub mod rate_limit;     // ISSUE #016: NVD API rate limiter — token bucket + M
 pub mod telemetry_agg;  // Real-time metrics aggregation
 pub mod health;         // Issue #22: health_check() endpoint
 pub mod circuit_breaker; // ISSUE-41: Lock-free per-domain circuit breaker with AtomicU32 + DashMap
+#[cfg(feature = "data")]
+pub mod aimd_controller; // ISSUE 2.2: Lock-free AIMD controller replacing Python AIMDWindow + _AIMDSlotController
 pub mod claims_extraction; // ISSUE-27: CPU-bound claims extraction (polarity, confidence, sentence split)
 pub mod sprint_policies;
 pub mod tls_metadata;    // Issue B5: TLS cert metadata — single Rust call replacing 5-level Python fallback
 pub mod gil;            // F5.2: GIL management — std::thread + rayon pools (ne pyo3-async)
-pub mod pool_run;      // Rayon pool runners — Python-callable cpu/io/mixed pool execute
+pub mod pool_run;      // Rayon pool runners — Python-callable cpu/io/mixed pool execute (legacy thread::spawn)
+pub mod rayon_dispatch; // ISSUE-2.3: Channel-based dispatch — eliminates double-thread overhead
 pub mod mlx_bridge;    // ISSUE #015: MLX async token streaming bridge + adaptive buffering
 pub mod collections;    // Bounded ring buffers — recent_iocs ring, M1 8GB safe
 #[cfg(feature = "data")]
@@ -764,6 +767,10 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // R4.1: Rayon pool runners — Python-callable wrappers for CPU/IO pools.
     pool_run::register_functions(m)?;
 
+    // ISSUE-2.3: Channel-based dispatch to rayon pools — replaces thread::spawn per-task.
+    // Eliminates double-thread overhead in UnifiedExecutor (asyncio.to_thread + rayon_submit).
+    rayon_dispatch::register_functions(m)?;
+
     // ISSUE-23: Rust-backed FederatedQTable with rayon parallel batch updates.
     #[cfg(feature = "advanced")]
     federated_qtable::register(m)?;
@@ -795,6 +802,11 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // ISSUE-41: Lock-free per-domain circuit breaker with AtomicU32 + DashMap.
     // Replaces Python threading.Lock with Rust Atomics for M1 8GB high-concurrency safety.
     circuit_breaker::register_functions(m)?;
+
+    // ISSUE 2.2: Lock-free AIMD controller — single AtomicU64 window,
+    // replaces Python AIMDWindow + _AIMDSlotController duplication.
+    #[cfg(feature = "data")]
+    aimd_controller::register(m)?;
 
     // ISSUE-026: Parallel text similarity clustering for temporal archaeologist.
     // Rayon-parallel trigram Jaccard grouping — replaces O(n²) serial _group_similar_snapshots.

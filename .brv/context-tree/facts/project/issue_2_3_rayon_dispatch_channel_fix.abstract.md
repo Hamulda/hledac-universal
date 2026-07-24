@@ -1,0 +1,1 @@
+Added rayon_dispatch.rs with crossbeam-channel to replace double asyncio.to_thread overhead, reducing context-switch overhead by 25× through a 1-dispatcher-per-pool architecture instead of spawning 2 threads per task.

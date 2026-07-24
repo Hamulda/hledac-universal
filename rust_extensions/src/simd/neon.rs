@@ -9,10 +9,12 @@
 //! - `vec.len() >= 4`
 //! - `vec.len() % 4 == 0`
 //!
-//! Note: 16-byte alignment is NOT required — vld1q/vst1q on Apple Silicon
-//! handle unaligned pointers natively (the HW performs unaligned access).
-//! Caller (`normalize_vector`) checks alignment and routes to scalar fallback
-//! for unaligned data; this function assumes aligned input.
+//! ## M1 NEON Alignment
+//!
+//! 16-byte alignment is NOT required — M1 hardware natively supports unaligned
+//! NEON loads/stores via `vld1q_f32`/`vst1q_f32`. Unlike some ARM cores that
+//! trap on unaligned access, Apple Silicon handles it transparently in hardware.
+//! The scalar fallback path is used only for length preconditions, not alignment.
 
 /// Errors that can occur in SIMD operations.
 /// Carries dimension information for debugging mismatches.
@@ -20,11 +22,30 @@
 pub struct EmbeddingError {
     pub expected: usize,
     pub actual: usize,
+    pub kind: EmbeddingErrorKind,
+}
+
+#[derive(Clone, Debug, Copy, PartialEq)]
+pub enum EmbeddingErrorKind {
+    DimensionMismatch,
+    ZeroVector,
 }
 
 impl EmbeddingError {
     pub fn dimension_mismatch(expected: usize, actual: usize) -> Self {
-        Self { expected, actual }
+        Self {
+            expected,
+            actual,
+            kind: EmbeddingErrorKind::DimensionMismatch,
+        }
+    }
+
+    pub fn zero_vector(dimension: usize) -> Self {
+        Self {
+            expected: dimension,
+            actual: 0,
+            kind: EmbeddingErrorKind::ZeroVector,
+        }
     }
 }
 
@@ -38,6 +59,8 @@ impl EmbeddingError {
 /// - `Ok(true)` — normalized successfully
 /// - `Ok(false)` — zero/near-zero vector, vector left unchanged
 /// - `Err(EmbeddingError)` — preconditions not met
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
 pub fn normalize_neon(vec: &mut [f32]) -> Result<bool, EmbeddingError> {
     let len = vec.len();
 
@@ -51,15 +74,35 @@ pub fn normalize_neon(vec: &mut [f32]) -> Result<bool, EmbeddingError> {
         ));
     }
 
-    let sum_sq: f32 = vec.iter().map(|x| x * x).sum();
+    // Compute sum of squares using NEON with tree-reduction.
+    // 4-way tree reduction: O(1) scalar ops regardless of chunk count.
+    // For len=1536: 384 chunks → 4 accumulators + 3 horizontal adds + 1 scalar = O(1).
+    let chunks = len / 4;
+    let sum_sq: f32 = unsafe {
+        let mut acc = [
+            core::arch::aarch64::vdupq_n_f32(0.0),
+            core::arch::aarch64::vdupq_n_f32(0.0),
+            core::arch::aarch64::vdupq_n_f32(0.0),
+            core::arch::aarch64::vdupq_n_f32(0.0),
+        ];
+        for chunk in 0..chunks {
+            let idx = chunk * 4;
+            let vals = core::arch::aarch64::vld1q_f32(vec.as_ptr().add(idx));
+            let sq = core::arch::aarch64::vmulq_f32(vals, vals);
+            acc[chunk & 3] = core::arch::aarch64::vaddq_f32(acc[chunk & 3], sq);
+        }
+        // Horizontal reduction: 4 accs → 1 scalar via pairwise vpadd
+        let sum01 = core::arch::aarch64::vpaddq_f32(acc[0], acc[1]);
+        let sum23 = core::arch::aarch64::vpaddq_f32(acc[2], acc[3]);
+        let total = core::arch::aarch64::vpaddq_f32(sum01, sum23);
+        core::arch::aarch64::vgetq_lane_f32(total, 0)
+    };
 
     if sum_sq <= 1e-8 || sum_sq.is_nan() {
         return Ok(false);
     }
 
     let inv_norm = 1.0 / sum_sq.sqrt();
-
-    let chunks = len / 4;
     unsafe {
         for chunk in 0..chunks {
             let idx = chunk * 4;
@@ -87,6 +130,8 @@ pub fn normalize_neon(vec: &mut [f32]) -> Result<bool, EmbeddingError> {
 ///
 /// # Returns
 /// Cosine similarity in [-1.0, 1.0], or Err on dimension mismatch.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
 pub fn cosine_neon(a: &[f32], b: &[f32]) -> Result<f32, EmbeddingError> {
     if a.len() != b.len() {
         return Err(EmbeddingError::dimension_mismatch(a.len(), b.len()));
@@ -101,93 +146,100 @@ pub fn cosine_neon(a: &[f32], b: &[f32]) -> Result<f32, EmbeddingError> {
     }
 
     let chunks = len / 4;
-    let mut dot: f32 = 0.0;
-
-    unsafe {
+    // 4-way tree reduction: O(1) scalar ops regardless of chunk count.
+    let dot: f32 = unsafe {
+        let mut acc = [
+            core::arch::aarch64::vdupq_n_f32(0.0),
+            core::arch::aarch64::vdupq_n_f32(0.0),
+            core::arch::aarch64::vdupq_n_f32(0.0),
+            core::arch::aarch64::vdupq_n_f32(0.0),
+        ];
         for chunk in 0..chunks {
             let idx = chunk * 4;
             let a_vals = core::arch::aarch64::vld1q_f32(a.as_ptr().add(idx));
             let b_vals = core::arch::aarch64::vld1q_f32(b.as_ptr().add(idx));
-            // Compute dot product using NEON: vmulq_f32 (mul) + vpaddq_f32 (pairwise sum) + vgetq_lane_f32 (extract)
             let prod = core::arch::aarch64::vmulq_f32(a_vals, b_vals);
-            let sum_pair = core::arch::aarch64::vpaddq_f32(prod, prod);
-            let sum_all = core::arch::aarch64::vpaddq_f32(sum_pair, sum_pair);
-            dot += core::arch::aarch64::vgetq_lane_f32(sum_all, 0);
+            acc[chunk & 3] = core::arch::aarch64::vaddq_f32(acc[chunk & 3], prod);
         }
-    }
+        // Horizontal reduction: 4 accs → 1 scalar
+        let sum01 = core::arch::aarch64::vpaddq_f32(acc[0], acc[1]);
+        let sum23 = core::arch::aarch64::vpaddq_f32(acc[2], acc[3]);
+        let total = core::arch::aarch64::vpaddq_f32(sum01, sum23);
+        core::arch::aarch64::vgetq_lane_f32(total, 0)
+    };
 
     Ok(dot)
 }
 
-/// Safe scalar fallback for normalize (used when len < 4 or unaligned).
-pub fn normalize_scalar(vec: &mut [f32]) -> bool {
+/// Safe scalar fallback for normalize (used when len < 4 or len % 4 != 0).
+/// Returns Err(EmbeddingError::zero_vector) for near-zero vectors.
+pub fn normalize_scalar(vec: &mut [f32]) -> Result<bool, EmbeddingError> {
     let sum_sq: f32 = vec.iter().map(|x| x * x).sum();
     if sum_sq <= 1e-8 || sum_sq.is_nan() {
-        return false;
+        return Err(EmbeddingError::zero_vector(vec.len()));
     }
     let inv_norm = 1.0 / sum_sq.sqrt();
     for v in vec.iter_mut() {
         *v *= inv_norm;
     }
-    true
+    Ok(true)
 }
 
-/// Safe scalar fallback for cosine (used when len < 4 or unaligned).
-pub fn cosine_scalar(a: &[f32], b: &[f32]) -> f32 {
+/// Safe scalar fallback for cosine (used when len < 4 or len % 4 != 0).
+/// Returns Err(EmbeddingError) for dimension mismatch — callers get consistent
+/// error regardless of which implementation (NEON or scalar) was attempted.
+pub fn cosine_scalar(a: &[f32], b: &[f32]) -> Result<f32, EmbeddingError> {
     if a.len() != b.len() {
-        return 0.0;
+        return Err(EmbeddingError::dimension_mismatch(a.len(), b.len()));
     }
-    a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
+    Ok(a.iter().zip(b.iter()).map(|(x, y)| x * y).sum())
 }
 
 // ─── Public API (routing) ────────────────────────────────────────────────────
 
 /// Normalize using best available SIMD, with scalar fallback.
-/// ISSUE-007: Returns Result — zero/near-zero vector is Err.
+/// ISSUE-007: Returns Result — zero/near-zero vector is Err(EmbeddingErrorKind::ZeroVector).
+///
+/// On aarch64: tries NEON first (unsafe but fast), falls back to scalar.
+/// On other arches: scalar only.
+#[cfg(target_arch = "aarch64")]
 pub fn normalize_simd(vec: &mut [f32]) -> Result<bool, EmbeddingError> {
-    #[cfg(target_arch = "aarch64")]
-    {
-        if vec.len() >= 4
-            && vec.len() % 4 == 0
-            && (vec.as_ptr() as usize) % 16 == 0
-        {
-            if let Ok(true) = normalize_neon(vec) {
-                return Ok(true);
+    if vec.len() >= 4 && vec.len() % 4 == 0 {
+        match unsafe { normalize_neon(vec) } {
+            Ok(true) => return Ok(true),
+            // near-zero vector — don't double-compute in scalar fallback
+            Ok(false) => return Err(EmbeddingError::zero_vector(vec.len())),
+            Err(_e) => {
+                // NEON precondition failure — fall through to scalar
             }
         }
-        if normalize_scalar(vec) {
-            return Ok(true);
-        } else {
-            return Err(EmbeddingError::dimension_mismatch(vec.len(), 0));
-        }
     }
-    #[cfg(not(target_arch = "aarch64"))]
-    {
-        if normalize_scalar(vec) {
-            Ok(true)
-        } else {
-            Err(EmbeddingError::dimension_mismatch(vec.len(), 0))
-        }
-    }
+    // Scalar path: handles both length-precondition fallback and near-zero case
+    normalize_scalar(vec)
+}
+
+/// Scalar-only normalize for non-aarch64 platforms.
+#[cfg(not(target_arch = "aarch64"))]
+pub fn normalize_simd(vec: &mut [f32]) -> Result<bool, EmbeddingError> {
+    normalize_scalar(vec)
 }
 
 /// Compute cosine similarity using best available SIMD.
+///
+/// On aarch64: tries NEON first (unsafe but fast), falls back to scalar.
+/// On other arches: scalar only.
+#[cfg(target_arch = "aarch64")]
 pub fn cosine_simd(a: &[f32], b: &[f32]) -> Result<f32, EmbeddingError> {
-    #[cfg(target_arch = "aarch64")]
-    {
-        if a.len() >= 4
-            && a.len() % 4 == 0
-            && (a.as_ptr() as usize) % 16 == 0
-            && (b.as_ptr() as usize) % 16 == 0
-        {
-            if let Ok(score) = cosine_neon(a, b) {
-                return Ok(score);
-            }
+    if a.len() >= 4 && a.len() % 4 == 0 {
+        if let Ok(score) = unsafe { cosine_neon(a, b) } {
+            return Ok(score);
         }
-        Ok(cosine_scalar(a, b))
     }
-    #[cfg(not(target_arch = "aarch64"))]
-    {
-        Ok(cosine_scalar(a, b))
-    }
+    cosine_scalar(a, b)
+}
+
+/// Scalar-only cosine for non-aarch64 platforms.
+#[cfg(not(target_arch = "aarch64"))]
+pub fn cosine_simd(a: &[f32], b: &[f32]) -> Result<f32, EmbeddingError> {
+    cosine_scalar(a, b)
 }

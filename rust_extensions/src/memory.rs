@@ -5,9 +5,31 @@
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 
 static PEAK_RSS_BYTES: AtomicU64 = AtomicU64::new(0);
+
+// ISSUE-7.2: AtomicU8 UMA state for fast reads without Python GIL acquisition.
+// 0=ok, 1=soft_warn, 2=warn, 3=critical, 4=emergency
+// Updated by memory_status_poller Python task, read by get_uma_state_u8().
+static UMA_STATE_ATOMIC: AtomicU8 = AtomicU8::new(0);
+
+/// Returns current UMA state as u8 (0=ok, 1=soft_warn, 2=warn, 3=critical, 4=emergency).
+///
+/// This is a lock-free read — no GIL acquisition, ~10ns vs ~1µs for psutil.
+/// Written by the memory_status_poller asyncio task at 500ms intervals.
+#[pyfunction]
+pub fn get_uma_state_u8() -> u8 {
+    UMA_STATE_ATOMIC.load(Ordering::Relaxed)
+}
+
+/// Sets the UMA state (called by memory_status_poller).
+///
+/// Returns the previous state.
+#[pyfunction]
+pub fn set_uma_state_u8(state: u8) -> u8 {
+    UMA_STATE_ATOMIC.swap(state, Ordering::Relaxed)
+}
 
 /// Returns current process RSS in GiB.
 ///
@@ -269,5 +291,8 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(get_metal_active_memory_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(get_metal_active_memory_gib, m)?)?;
     m.add_function(wrap_pyfunction!(get_memory_snapshot, m)?)?;
+    // ISSUE-7.2: AtomicU8 UMA state for fast non-blocking reads
+    m.add_function(wrap_pyfunction!(get_uma_state_u8, m)?)?;
+    m.add_function(wrap_pyfunction!(set_uma_state_u8, m)?)?;
     Ok(())
 }

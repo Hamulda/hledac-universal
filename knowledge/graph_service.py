@@ -828,7 +828,32 @@ def checkpoint() -> None:
 def reset_session() -> None:
     global _DUCKPGQ_GRAPH
     _DEFAULT_GRAPH_SERVICE.reset_session()
+    # ISSUE-5.1: close() before None to release DuckDB connection and lock
+    if _DUCKPGQ_GRAPH is not None:
+        try:
+            _DUCKPGQ_GRAPH.close()
+        except Exception:
+            pass
     _DUCKPGQ_GRAPH = None
+
+
+def shutdown_graph() -> None:
+    """
+    ISSUE-5.1: Shutdown the DuckPGQGraph singleton.
+
+    Flushes buffers, checkpoints WAL, closes DuckDB connection,
+    and releases the graph lock. Safe to call when graph is not initialized.
+
+    Call this during sprint winddown AFTER DuckDBShadowStore shutdown
+    to ensure proper shutdown order (DuckDB → Graph).
+    """
+    global _DUCKPGQ_GRAPH
+    if _DUCKPGQ_GRAPH is not None:
+        try:
+            _DUCKPGQ_GRAPH.close()
+        except Exception as e:
+            logger.debug(f'[GraphService] shutdown_graph: close failed: {e}')
+        _DUCKPGQ_GRAPH = None
 
 
 def graph_analytics_summary(top_k: int = MAX_GRAPH_ANALYTICS_TOP_K) -> dict:
@@ -864,5 +889,6 @@ __all__ = [
     "graph_stats",
     "checkpoint",
     "reset_session",
+    "shutdown_graph",
     "graph_analytics_summary",
 ]

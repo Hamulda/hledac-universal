@@ -139,6 +139,30 @@ _HOST_SESSION_TTL_S: float = _M1_BOUNDS.curl_host_session_ttl_s
 _host_sessions: dict[str, tuple[Any, float, str]] = {}
 _host_access_order: deque[str] = deque()  # LRU: move to end on access
 
+# ISSUE-8.1: Per-(host, resolve_target) session cache for DNS rebinding protection
+# Key: (host, frozenset of resolve bindings) -> AsyncSession
+# When resolve is needed, we need a dedicated session with CURLOPT_RESOLVE set
+_resolved_sessions: dict[tuple[str, frozenset[tuple[str, int, str]]], tuple[Any, float]] = {}
+_resolved_sessions_order: deque[tuple[str, frozenset[tuple[str, int, str]]]] = deque()
+_MAX_RESOLVED_SESSIONS: int = 64  # Max unique resolve bindings
+_RESOLVED_SESSION_TTL_S: float = 300.0  # 5 min TTL
+
+
+def _resolve_dict_to_curl_format(resolve: dict[str, str]) -> list[str]:
+    """
+    Convert Python resolve dict to curl_cffi CURLOPT_RESOLVE format.
+
+    Input:  {"example.com": "1.2.3.4"}
+    Output: ["example.com:443:1.2.3.4"]
+
+    curl_cffi expects list of "host:port:ip" strings for CURLOPT_RESOLVE.
+    Default port 443 for HTTPS.
+    """
+    result = []
+    for host, ip in resolve.items():
+        result.append(f"{host}:443:{ip}")
+    return result
+
 
 # Preferred profile fallback order
 # Targets: academia (Safari 17 Apple Silicon), government (Firefox 133+), mobile/android (Chrome Android 99+)
@@ -259,7 +283,7 @@ async def async_get_curl_cffi_session_for_host(
     try:
         parsed = urlparse(url)
         host = parsed.netloc or ""
-    except Exception:
+    except Exception:  # noqa: BLE001
         host = ""
 
     if not host:
@@ -386,7 +410,7 @@ async def _get_or_create_session(profile: str) -> Any | None:
                     try:
                         if hasattr(_sess, "aclose"):
                             await _sess.aclose()
-                    except Exception as e:
+                    except Exception as e:  # noqa: BLE001
                         logger.debug(f"Failed to close evicted session: {e}")
 
             safe_create_task(_close_evicted(), name="curl_cffi:close_evicted")
@@ -417,7 +441,7 @@ async def close_curl_cffi_sessions_async() -> None:
                 await session.aclose()
         except asyncio.CancelledError:
             raise
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.debug(f"Failed to close curl_cffi session: {e}")
 
     logger.debug(f"curl_cffi sessions closed: {len(profile_sessions)} profiles + {len(host_sessions)} hosts")
@@ -456,7 +480,7 @@ async def _blocking_altsvc_probe_for_url(url: str) -> Any:
     """
     try:
         from curl_cffi.requests import AsyncSession, HttpVersion  # type: ignore
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
 
     try:
@@ -473,7 +497,7 @@ async def _blocking_altsvc_probe_for_url(url: str) -> Any:
         )
 
         _use_extract_host = url_ops.extract_host if hasattr(url_ops, "extract_host") else _http3_extract_host
-    except Exception:
+    except Exception:  # noqa: BLE001
         _use_extract_host = None
 
     if _use_extract_host is None:
@@ -536,7 +560,7 @@ def decode_curl_cffi_result(result: dict, *, max_bytes: int = 5 * 1024 * 1024) -
             http_charset=result.get("http_charset_hint"),
             max_bytes=max_bytes,
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         logger.debug("decode_curl_cffi_result failed (fail-soft): %s", e)
         return None
 
@@ -570,7 +594,7 @@ async def fetch_via_tor_curl_cffi(
         _tor_curl_request_count = 0
         try:
             await tor_manager.rotate_circuit()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning(f"[TOR] circuit rotation failed: {e}")
 
     proxies = {"https": _TOR_CURL_PROXY}
@@ -625,9 +649,29 @@ async def fetch_via_curl_cffi(
     profile: str = "chrome136",
     proxies: dict[str, str] | None = None,
     http_version: Any = None,
+    *,
+    resolve: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """
     Fetch URL via curl_cffi stealth lane.
+
+    ISSUE-8.1 FIX: DNS Rebinding Protection via pre-resolved IP binding.
+
+    When ``resolve`` dict is provided (hostname -> IP), curl's RESOLVE option
+    is used to bind the connection to the pre-validated IP before DNS lookup.
+    This eliminates the TOCTOU window between DNS validation and fetch:
+    1. _validate_fetch_target() resolves hostname to IP via async_getaddrinfo
+    2. resolved IPs are passed here via ``resolve`` dict
+    3. curl connects directly to the pre-validated IP — no DNS re-resolution
+
+    This prevents DNS rebinding attacks where a hostname might resolve to
+    a public IP during validation but switch to a private IP before fetch.
+
+    Args:
+        resolve: Dict of hostname -> IP address to pre-bind.
+                 Example: {"example.com": "1.2.3.4"}
+                 When provided, curl will connect to 1.2.3.4:443 for example.com
+                 instead of performing a fresh DNS lookup.
 
     Returns FetchResult-compatible dict:
         url, final_url, content (bytes), status_code, content_type,
@@ -651,29 +695,61 @@ async def fetch_via_curl_cffi(
             tls_impersonate=profile,
         )
 
-    try:
-        ok, session, used_profile, _host = await async_get_curl_cffi_session_for_host(url, profile)
-        _ja3_log(profile=profile, url=url, used_profile=used_profile)
-        if not ok or session is None:
+    # ISSUE-8.1: DNS Rebinding Protection — resolve requires dedicated session
+    # curl_cffi does NOT support per-request resolve parameter; CURLOPT_RESOLVE
+    # must be set at session creation time via curl_options.
+    if resolve:
+        # Create a dedicated session with CURLOPT_RESOLVE bound
+        # This session is NOT added to the standard host cache because each
+        # resolve binding is unique per (hostname, IP) combination.
+        try:
+            from curl_cffi import curl
+            from curl_cffi.requests import AsyncSession as _AsyncSession
+
+            resolve_str_list = _resolve_dict_to_curl_format(resolve)
+            session = _AsyncSession(
+                impersonate=profile,
+                timeout=timeout_s,
+                max_clients=10,
+                curl_options={curl.CurlOpt.RESOLVE: resolve_str_list},
+            )
+            used_profile = profile
+            _ja3_log(profile=profile, url=url, used_profile=used_profile)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
             return _make_error_result(
                 url,
-                error=f"session_creation_failed: {used_profile}",
+                error=f"resolve_session_error: {e}",
                 failure_stage="unknown",
                 network_error_kind="other",
                 selected_transport="curl_cffi",
-                tls_impersonate=used_profile,
+                tls_impersonate=profile,
             )
-    except asyncio.CancelledError:
-        raise
-    except Exception as e:
-        return _make_error_result(
-            url,
-            error=f"session_error: {e}",
-            failure_stage="unknown",
-            network_error_kind="other",
-            selected_transport="curl_cffi",
-            tls_impersonate=profile,
-        )
+    else:
+        try:
+            ok, session, used_profile, _host = await async_get_curl_cffi_session_for_host(url, profile)
+            _ja3_log(profile=profile, url=url, used_profile=used_profile)
+            if not ok or session is None:
+                return _make_error_result(
+                    url,
+                    error=f"session_creation_failed: {used_profile}",
+                    failure_stage="unknown",
+                    network_error_kind="other",
+                    selected_transport="curl_cffi",
+                    tls_impersonate=used_profile,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            return _make_error_result(
+                url,
+                error=f"session_error: {e}",
+                failure_stage="unknown",
+                network_error_kind="other",
+                selected_transport="curl_cffi",
+                tls_impersonate=profile,
+            )
 
     try:
         # Issue 10.2: JA3 consistency — inject User-Agent matching TLS profile
@@ -682,15 +758,15 @@ async def fetch_via_curl_cffi(
         _merged_headers: dict[str, str] = dict(headers) if headers else {}
         if "User-Agent" not in _merged_headers:
             _merged_headers["User-Agent"] = get_ua_for_profile(used_profile)
-        kwargs = {"headers": _merged_headers, "timeout": timeout_s}
-        if proxies:
-            kwargs["proxies"] = proxies
-        if http_version is not None:
-            kwargs["http_version"] = http_version
-        response = await session.get(url, **kwargs)
+        # ISSUE-8.1: DNS Rebinding Protection — resolve is now bound to session via curl_options
+        # No need to pass resolve per-request; it's already set on the session
+        response = await session.get(url, headers=_merged_headers, timeout=timeout_s)
 
-        chunks = response.iter_content(chunk_size=65536)
-        content_bytes, _truncated = await read_body_with_cap(chunks, max_bytes)
+        # curl_cffi iter_content() returns a sync generator, not async iterator.
+        # Use response.content directly (already bytes) and truncate manually if needed.
+        _raw_content = response.content or b""
+        _truncated = len(_raw_content) > max_bytes
+        content_bytes = _raw_content[:max_bytes] if _truncated else _raw_content
         if _truncated:
             logger.debug(f"curl_cffi body truncated to {max_bytes} bytes for {url}")
 
@@ -738,7 +814,7 @@ async def fetch_via_curl_cffi(
         )
     except asyncio.CancelledError:
         raise
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         error_str = str(e).lower()
         if "timeout" in error_str:
             network_kind = "timeout"
@@ -821,11 +897,15 @@ async def fetch_via_curl_cffi_cached(
     proxies: dict[str, str] | None = None,
     http_version: Any = None,
     *,
+    resolve: dict[str, str] | None = None,
     ttl_s: int = 3600,
     _force_refresh: bool = False,
     _pre_probe: bool = False,
 ) -> dict[str, Any]:
     """fetch_via_curl_cffi with conditional-GET (304) shortcut.
+
+    ISSUE-8.1 FIX: Passes ``resolve`` dict through to fetch_via_curl_cffi
+    for DNS rebinding protection via pre-bound IP addresses.
 
     Args:
         url: Same as fetch_via_curl_cffi.
@@ -836,6 +916,7 @@ async def fetch_via_curl_cffi_cached(
         profile: TLS profile (passed through).
         proxies: Same as fetch_via_curl_cffi.
         http_version: HttpVersion.v3 from http3_lane (passed through).
+        resolve: ISSUE-8.1 — hostname -> IP dict for DNS rebinding protection.
         ttl_s: Cache freshness window in seconds. Default 1h.
         _force_refresh: Skip the cache entirely (always send no
             validators). For tests and one-off live fetches.
@@ -927,6 +1008,7 @@ async def fetch_via_curl_cffi_cached(
         profile=profile,
         proxies=proxies,
         http_version=http_version,
+        resolve=resolve,
     )
 
     if not result.get("success"):

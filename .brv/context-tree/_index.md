@@ -1,60 +1,69 @@
 ---
-children_hash: f8bc71604990e63cae6b189c3e4ad35788b57954c90216a7c4276491de3e6b4e
-compression_ratio: 0.0921496227323808
+children_hash: 73583ebc4f126b0b973523b172853543ca32da8ddbaa5909a2b993a6b527c885
+compression_ratio: 0.14391377852916315
 condensation_order: 3
 covers: [architecture/_index.md, data/_index.md, facts/_index.md, knowledge_base/_index.md, memory/_index.md, testing/_index.md]
-covers_token_total: 6229
+covers_token_total: 4732
 summary_level: d3
-token_count: 574
+token_count: 681
 type: summary
 ---
 <think>
-The user wants me to create a structural summary at the d1 level (domain level) for the memory_leaks domain. Looking at the structure, I need to create a concise ~20-30% compression that captures the core theme, architecture, key facts, and relationships from the child entries.
+The user is asking me to create a structural summary for the `testing` domain at the d2 level. Looking at the context, I need to condense the child entries (conftest, exit_codes, memory_leaks) into a cohesive domain summary.
 
-From the child entries provided:
-1. **context.md** - Overview of the domain
-2. **f350m_r_memory_leak_fixes.md** - Sprint f350mr memory leak fixes (4 major fixes)
-3. **uma_memory_management.md** - M1 8GB unified memory management
-4. **m1_8gb_ram_priority_optimizations.md** - Priority optimizations for M1 8GB RAM
-5. **m1resourcegovernor_implementation.md** - Resource governor implementation details
-6. **rust_mpsc_architecture_issue_007.md** - Rust MPSC architecture fix
+Let me analyze the child entries and create a concise summary:
 
-The core theme is M1 8GB RAM optimization and memory leak fixes. I need to synthesize this into a concise domain summary.
+1. **conftest/pytest_infrastructure_and_fixtures**: 33 fixtures, session-scoped event loop, memory profiling, MLX/Hermes/GraphService cleanup, lazy load optimization, centralized cleanup
+2. **exit_codes/exit_code_testing**: Exit code testing with smoke_runner.py, 4 exit codes (0/1/2/3), CI integration
+3. **memory_leaks/f350m_r_memory_leak_fixes**: Memory leak fixes from sprint F350m_r
 
-Let me create a structured summary:
+I need to:
+- Create a domain-level overview
+- Cover the testing infrastructure
+- Mention the 3 subdomains
+- Preserve key facts and patterns
+- Keep it concise (~20-30% of original)
+
+Let me write this as a proper _index.md for the testing domain.
 </think>
 
-# memory — Domain Summary
+# testing — Test Infrastructure & Quality Assurance
 
-## Core Theme
-M1 8GB Unified Memory (UMA) is the primary system constraint. The domain covers resource governor implementation, memory leak fixes, and M1-specific optimizations across storage, hashing, and ML pipelines.
+## Overview
 
-## Architecture
+The `testing` domain covers pytest infrastructure, exit code testing, and memory leak detection. Core principle: centralized cleanup via conftest fixtures replaces scattered `gc.collect()` calls.
 
-### Resource Governor
-5-state hysteresis machine (NORMAL → ELEVATED → CRITICAL → EMERGENCY → CIRED) with concurrency presets. Pre-flight guards abort sprints if memory pressure exceeds thresholds.
+## Subdomains
 
-### Memory Budget
-- DuckDB: 600MB (hard limit)
-- Metal cache: 512MiB–1GiB dynamic (wired 1.5 GiB max)
-- aioquic HTTP/3: Blocked at 5.5 GiB RSS
-- KV cache: 4-bit quantization, max 8192 tokens
-- Total headroom: ~2.25GB
+### conftest — Pytest Infrastructure (33 Fixtures)
 
-## Key Fixes (f350mr)
+**Session Fixtures:** `event_loop` (session-scoped, critical for M1 8GB), `duckdb_store`, `otel_tracer`
 
-| Issue | Fix |
-|-------|-----|
-| `asyncio.Task` leaks | `loop.run_until_complete()` in shutdown, not `asyncio.run()` |
-| Hermes3Engine | `mx.eval([])` before `mx.metal.clear_cache()` |
-| DuckDB threads | Capped at 2 for M1 8GB |
-| Evidence log | Shared MPSC pool (max_workers=4) via ISSUE-007 |
+**Memory Profiling:** `_session_tracer`, `memory_snapshot`, `memory_tracker`, `assert_memory_leak` — tracks RSS and tracemalloc
 
-## Rust MPSC Architecture (Issue-007)
-2048 slots × 512B = 1 MiB per crossbeam channel. `send_batch()` reduces latency from ~5µs to ~1µs per event.
+**Cleanup Guards (autouse):** `_mlx_model_pool_cleanup`, `_hermes_cache_cleanup`, `_graph_service_session_cleanup`, `_asyncio_task_leak_guard`, `_gc_and_close_loops`, `_cleanup`
 
-## Related Entries
-- `architecture/hledac_universal` — Sprint lifecycle
-- `data/duckdb_store` — DuckDB memory limits
-- `facts/project/technology_stack` — M1 constraints
-- `testing/conftest` — Memory profiling fixtures
+**Lazy Load:** `_LazyForceLoadFinder` prepended to `sys.meta_path` — on-demand import of 27 hledac.universal subpackages
+
+**Mock Factories:** Spec-limited mock factories save ~30-50MB session RAM
+
+### exit_codes — Exit Code Testing
+
+4 exit codes: 0=success, 1=runtime, 2=config, 3=programmer. CI integration via `smoke_runner.py` with 30s timeout.
+
+### memory_leaks — Memory Leak Detection
+
+RSS delta threshold: 1 MiB (session), 512 KiB (module). Tracemalloc delta: 100 KiB. 4 pass pattern for thorough collection.
+
+## Key Patterns
+
+- Session-scoped event loop eliminates loop recreation overhead on M1 8GB
+- Lazy load eliminates 27-module eager load at collection time
+- Memory profiling in CI catches leaks before merge
+- Centralized cleanup replaces 40+ scattered `gc.collect()` calls
+- `asyncio_mode=auto`, `asyncio_default_fixture_loop_scope=session`
+
+## Related
+
+- `memory/resource_governor/m1_8gb_ram_priority_optimizations` — P0 memory optimizations
+- `facts/project/hledac_universal_claude_md` — testing conventions from CLAUDE.md

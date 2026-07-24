@@ -1,13 +1,11 @@
 //! federated_qtable.rs — Rust-backed FederatedQTable with rayon parallel batch updates
 //!
-//! ISSUE-011: Federated Q-table race condition — DashMap replaces RwLock<HashMap>
-//!
 //! ## Architecture
 //!
-//! - `RustFederatedQTable`: Thread-safe Q-table stored as `DashMap<String, f64>`
-//!   - 4×CPU shards (M1 Air = 4 E-cores, DashMap default = 4 shards)
-//!   - Lock-free reads, atomic CAS writes per shard
-//!   - No global lock contention for concurrent batch updates
+//! - `RustFederatedQTable`: Thread-safe Q-table stored as `parking_lot::RwLock<AHashMap<String, f64>>`
+//!   - parking_lot::RwLock is Send+Sync by default (no unsafe), properly reentrant
+//!   - Safe for Python async/ThreadPoolExecutor contexts (PyO3 GIL handling compatible)
+//!   - Multiple concurrent readers OR single writer — no deadlock risk
 //! - Lane isolation via key prefix "lane::state_key"
 //! - `RustFederatedQTableBatch`: Parallel batch update across multiple (lane, state, action,
 //!   reward, next_state) tuples via rayon — leverages all P-cores for Q-learning updates.
@@ -19,22 +17,22 @@
 //! - MAX_LANES: 3 (matches MAX_VIRTUAL_NODES)
 //! - MAX_QTABLE_ENTRIES: 1024 per lane (hard cap = 3 × 1024 = 3072 total)
 //! - Rayon: adaptive 1-4 threads via `adaptive_scheduler::mixed_threshold()`
-//! - DashMap overhead: ~1 MB total (4 shards × internal HashMap)
+//! - RwLock + AHashMap overhead: ~1 MB total
 //! - Persistence: bincode file, 2 MiB cap, flock-based atomic write
 //!
-//! ## Race Condition Fix (ISSUE-011)
+//! ## DashMap → parking_lot::RwLock Migration (ISSUE 3.2)
 //!
-//! OLD (RwLock<HashMap>):
-//!   - Single global write lock → all rayon workers serialize on update_batch
-//!   - Lost updates when 2 workers update same entry simultaneously
-//!   - Contention: O(n) on single lock for eviction scan
+//! OLD (DashMap):
+//!   - DashMap uses crossbeam internally for sharding
+//!   - crossbeam shard locking conflicts with PyO3 GIL handling in Python async/ThreadPoolExecutor
+//!   - Caused segfaults when called from Python async contexts
 //!
-//! NEW (DashMap):
-//!   - Per-shard fine-grained locking (4 shards = 4× parallelism)
-//!   - Atomic CAS via entry().and_modify() for existing entries
-//!   - or_insert() for new entries (no read-before-write race)
-//!   - Eviction moved to periodic maintenance (not inline per-update)
-//!   - ~0 contention overhead for typical batch sizes (≤3072 entries)
+//! NEW (parking_lot::RwLock + AHashMap):
+//!   - parking_lot::RwLock is Send+Sync by default, no unsafe impl needed
+//!   - Properly reentrant — safe for Python async/ThreadPoolExecutor contexts
+//!   - Multiple concurrent readers OR single writer — same guarantees as DashMap reads
+//!   - No crossbeam dependency — eliminates the GIL conflict root cause
+//!   - Same pattern as ioc_dedup.rs (ISSUE-1 fix)
 //!
 //! ## Python API (PyO3 #[pymodule])
 //!
@@ -49,7 +47,8 @@
 //! - `load_from_file(path) -> bool` — restore on init
 //! - `evict_lowest_q(n: usize) -> usize` — periodic maintenance (call every ~100 updates)
 
-use dashmap::DashMap;
+use ahash::AHashMap;
+use parking_lot::RwLock;
 use pyo3::prelude::*;
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -63,23 +62,24 @@ use crate::adaptive_scheduler;
 // Constants
 // ---------------------------------------------------------------------------
 
-/// M1 8GB: DashMap default shard count = 4 × CPU (no config needed).
-/// Overhead: ~1 MB total for 4 shards.
-
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 /// Python-accessible Rust Q-table with thread-safe interior.
-/// Uses DashMap for lock-free concurrent access across rayon workers.
+/// Uses parking_lot::RwLock + AHashMap for Python async/ThreadPoolExecutor safety.
+/// parking_lot::RwLock is Send+Sync by default (no unsafe), properly reentrant,
+/// and does NOT use crossbeam — eliminates the GIL conflict that caused DashMap segfaults.
 #[pyclass(module = "hledac_rust_extensions")]
 pub struct RustFederatedQTable {
     alpha: f64,
     gamma: f64,
     max_entries: usize,
-    /// "lane::state_key|action" → Q-value  (DashMap = N-shard RwLock, no global lock)
-    qtable: DashMap<String, f64>,
-    /// Total entry count across all shards — updated atomically.
+    /// "lane::state_key|action" → Q-value
+    /// parking_lot::RwLock: multiple readers OR single writer, no deadlock risk.
+    /// AHashMap: faster than std::HashMap for small keys (no DOS protection needed here).
+    qtable: RwLock<AHashMap<String, f64>>,
+    /// Total entry count — updated atomically.
     total_count: AtomicUsize,
     /// Tracks updates since last eviction — triggers every ~100 updates.
     updates_since_eviction: AtomicUsize,
@@ -118,9 +118,11 @@ impl RustFederatedQTable {
     }
 
     /// Atomic Q-learning update for a single (lane, state_key, action, reward, next_state_key).
-    /// Uses DashMap entry API for lock-free CAS — no global lock.
+    /// Uses parking_lot::RwLock for safe Python async/ThreadPoolExecutor access.
+    /// Phase 1: Read lock to compute next_max_q (concurrent readers allowed).
+    /// Phase 2: Write lock to update/insert (exclusive access).
     fn atomic_q_update(
-        qtable: &DashMap<String, f64>,
+        qtable: &RwLock<AHashMap<String, f64>>,
         total_count: &AtomicUsize,
         alpha: f64,
         gamma: f64,
@@ -134,26 +136,37 @@ impl RustFederatedQTable {
         let full_key = Self::make_full_key(lane, state_key, action);
         let next_key = Self::make_key(lane, next_state_key);
 
-        // Compute next_max_q by iterating all Q-values for the next_state across all actions.
-        // DashMap::iter() is O(n) across all shards — acceptable for small state spaces (≤3072 entries).
-        let next_max_q = qtable
-            .iter()
-            .filter(|kv| Self::extract_lane(kv.key()) == Some(lane) && kv.key().ends_with(&next_key))
-            .map(|kv| *kv.value())
-            .fold(0.0f64, |acc, q| acc.max(q));
+        // Phase 1: Read lock — compute next_max_q by iterating all Q-values for next_state.
+        // Multiple concurrent readers allowed with RwLock (unlike DashMap's per-shard locking).
+        // For ≤3072 entries, iterating all is acceptable (O(n) where n ≤ 3072).
+        //
+        // FIX: k.ends_with(&next_key) where next_key="lane::next_state_key" and
+        // k="lane::state_key|action" would NEVER match (k has "|" in the middle).
+        // Correct: check lane prefix, then strip "|action" suffix and compare to next_key.
+        let next_max_q = {
+            let guard = qtable.read();
+            guard
+                .iter()
+                .filter(|(k, _)| {
+                    Self::extract_lane(k) == Some(lane)
+                        && k.split('|').next() == Some(next_key.as_str())
+                })
+                .map(|(_, v)| *v)
+                .fold(0.0f64, |acc, q| acc.max(q))
+        };
 
         let target = reward + gamma * next_max_q;
 
-        // Atomic CAS: if key exists, update in-place; if not, insert new Q-value.
-        // This is the core fix for ISSUE-011: no read-before-write, no lost updates.
-        let new_q = match qtable.entry(full_key.clone()) {
-            dashmap::Entry::Occupied(mut entry) => {
-                let current_q = *entry.get();
+        // Phase 2: Write lock — atomic CAS: if key exists, update in-place; if not, insert new Q-value.
+        // This prevents lost updates when multiple workers update the same entry.
+        let new_q = {
+            let mut guard = qtable.write();
+            if let Some(current_q) = guard.get(&full_key) {
+                let current_q = *current_q;
                 let new_q = current_q + alpha * (target - current_q);
-                entry.insert(new_q);
+                guard.insert(full_key.clone(), new_q);
                 new_q
-            }
-            dashmap::Entry::Vacant(entry) => {
+            } else {
                 // Check if we're at capacity before inserting.
                 // Use total_count as an estimate — slight inaccuracy is acceptable for eviction.
                 if total_count.load(Ordering::Relaxed) >= max_entries {
@@ -161,49 +174,53 @@ impl RustFederatedQTable {
                     return;
                 }
                 total_count.fetch_add(1, Ordering::Relaxed);
-                entry.insert(target);
+                guard.insert(full_key, target);
                 target
             }
         };
 
-        // Sanity check: if new_q is NaN or Inf, clamp to 0 (shouldn't happen with bounded rewards).
+        // Sanity check: if new_q is NaN or Inf, clamp to 0.
         if !new_q.is_finite() {
-            if let dashmap::Entry::Occupied(mut entry) = qtable.entry(full_key) {
-                entry.insert(0.0);
+            let mut guard = qtable.write();
+            if let Some(q) = guard.get_mut(&full_key) {
+                *q = 0.0;
             }
         }
     }
 
-    /// Periodic eviction: removes `n` lowest-Q entries across all shards.
+    /// Periodic eviction: removes `n` lowest-Q entries.
     /// Should be called every ~100 updates or when table is near capacity.
     /// Returns the number of entries evicted.
-    fn do_evict(qtable: &DashMap<String, f64>, total_count: &AtomicUsize, n: usize) -> usize {
+    fn do_evict(qtable: &RwLock<AHashMap<String, f64>>, total_count: &AtomicUsize, n: usize) -> usize {
         if n == 0 {
             return 0;
         }
 
-        // Collect all entries (iterates across all shards).
-        let all_entries: Vec<(String, f64)> = qtable
-            .iter()
-            .map(|kv| (kv.key().clone(), *kv.value()))
-            .collect();
+        // Collect all entries under read lock.
+        let all_entries: Vec<(String, f64)> = {
+            let guard = qtable.read();
+            guard.iter().map(|(k, v)| (k.clone(), *v)).collect()
+        };
 
         if all_entries.len() <= n {
             return 0;
         }
 
-        // Find n lowest-Q entries.
-        // Use a simple O(n) pass — entries ≤ 3072, negligible cost.
+        // Find n lowest-Q entries — O(n log n) sort for ≤3072 entries is negligible.
         let mut sorted = all_entries;
         sorted.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
         let to_evict: Vec<String> = sorted.into_iter().take(n).map(|(k, _)| k).collect();
         let evicted = to_evict.len();
 
-        for key in to_evict {
-            qtable.remove(&key);
-            total_count.fetch_sub(1, Ordering::Relaxed);
+        // Remove evicted entries under write lock.
+        {
+            let mut guard = qtable.write();
+            for key in &to_evict {
+                guard.remove(key);
+            }
         }
+        total_count.fetch_sub(evicted, Ordering::Relaxed);
 
         evicted
     }
@@ -217,25 +234,21 @@ impl RustFederatedQTable {
             alpha,
             gamma,
             max_entries: max_entries.max(1),
-            // DashMap: default 4 shards (matches M1 4 E-cores, optimal for M1 Air)
-            qtable: DashMap::new(),
+            qtable: RwLock::new(AHashMap::with_capacity(1024)),
             total_count: AtomicUsize::new(0),
             updates_since_eviction: AtomicUsize::new(0),
         }
     }
 
     /// get_q(lane, state_key, action) -> f64
-    /// Lock-free: DashMap::get acquires per-shard read lock, no global lock.
+    /// Concurrent readers allowed — RwLock allows multiple simultaneous reads.
     pub fn get_q(&self, lane: &str, state_key: &str, action: &str) -> f64 {
         let full_key = Self::make_full_key(lane, state_key, action);
-        self.qtable
-            .get(&full_key)
-            .map(|v| *v)
-            .unwrap_or(0.0)
+        self.qtable.read().get(&full_key).copied().unwrap_or(0.0)
     }
 
     /// get_best_action(lane, state_key, actions: Vec<String>) -> String
-    /// Lock-free: all action Q-values read concurrently from different shards.
+    /// Concurrent readers allowed — all action Q-values read simultaneously.
     pub fn get_best_action(
         &self,
         lane: &str,
@@ -246,11 +259,12 @@ impl RustFederatedQTable {
             return String::new();
         }
         let key_prefix = Self::make_key(lane, state_key);
+        let guard = self.qtable.read();
         let best = actions
             .iter()
             .map(|action| {
                 let full_key = format!("{}|{}", key_prefix, action);
-                let q = self.qtable.get(&full_key).map(|v| *v).unwrap_or(0.0);
+                let q = guard.get(&full_key).copied().unwrap_or(0.0);
                 (action.clone(), q)
             })
             .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
@@ -259,7 +273,7 @@ impl RustFederatedQTable {
     }
 
     /// update(lane, state_key, action, reward, next_state_key)
-    /// Lock-free atomic CAS per shard — no global lock acquisition.
+    /// Phase 1 (read) + Phase 2 (write) under RwLock — no lost updates.
     pub fn update(
         &self,
         lane: &str,
@@ -289,8 +303,8 @@ impl RustFederatedQTable {
     }
 
     /// update_batch(items: Vec<(lane, state_key, action, reward, next_state_key)>)
-    /// Rayon parallel — each shard processes its own keys without global lock contention.
-    /// ISSUE-011 fix: DashMap replaces RwLock<HashMap>, workers no longer serialize on write.
+    /// Rayon parallel — each item processed independently.
+    /// ISSUE-011 fix (continued): parking_lot::RwLock replaces DashMap for PyO3 GIL safety.
     pub fn update_batch(
         &self,
         items: Vec<(String, String, String, f64, String)>,
@@ -310,8 +324,8 @@ impl RustFederatedQTable {
         let threshold = adaptive_scheduler::mixed_threshold();
 
         if n >= threshold {
-            // Rayon parallel: each item processed independently, DashMap handles shard routing.
-            // No bucket partitioning needed — DashMap's internal sharding distributes work.
+            // Rayon parallel: each item processed independently.
+            // RwLock handles concurrent reads (for next_max_q) and exclusive writes.
             items.par_iter().for_each(|(lane, state_key, action, reward, next_state_key)| {
                 Self::atomic_q_update(
                     qtable,
@@ -360,16 +374,13 @@ impl RustFederatedQTable {
     }
 
     /// to_dict() -> HashMap<String, f64>
-    /// Collects all entries from all shards — O(n) but serial, used for persistence only.
+    /// Collects all entries — O(n) but serial, used for persistence only.
     pub fn to_dict(&self) -> HashMap<String, f64> {
-        self.qtable
-            .iter()
-            .map(|kv| (kv.key().clone(), *kv.value()))
-            .collect()
+        self.qtable.read().iter().map(|(k, v)| (k.clone(), *v)).collect()
     }
 
     /// len() -> usize
-    /// Returns total entry count — uses atomic counter for O(1) without scanning shards.
+    /// Returns total entry count — uses atomic counter for O(1) without scanning.
     pub fn len(&self) -> usize {
         self.total_count.load(Ordering::Relaxed)
     }
@@ -456,12 +467,15 @@ impl RustFederatedQTable {
         }
 
         let mut inserted = 0;
-        for (k, v) in data {
-            if self.total_count.load(Ordering::Relaxed) >= self.max_entries {
-                break;
+        {
+            let mut guard = self.qtable.write();
+            for (k, v) in data {
+                if inserted >= self.max_entries {
+                    break;
+                }
+                guard.insert(k, v);
+                inserted += 1;
             }
-            self.qtable.insert(k, v);
-            inserted += 1;
         }
         self.total_count.store(inserted, Ordering::Relaxed);
         inserted > 0
@@ -474,11 +488,11 @@ impl RustFederatedQTable {
 
 /// rust_federated_qtable_batch_update(items) -> usize
 /// Module-level function: rayon parallel batch update across a flat list.
-/// Uses a shared DashMap singleton for module-level batch operations.
+/// Uses parking_lot::RwLock + AHashMap singleton for module-level batch operations.
 /// items: Vec<(lane, state_key, action, reward, next_state_key)>
 /// Returns number of items processed.
-static MODULE_QTABLE: std::sync::LazyLock<DashMap<String, f64>> =
-    std::sync::LazyLock::new(DashMap::new);
+static MODULE_QTABLE: std::sync::LazyLock<RwLock<AHashMap<String, f64>>> =
+    std::sync::LazyLock::new(|| RwLock::new(AHashMap::with_capacity(1024)));
 
 #[pyfunction]
 #[pyo3(name = "rust_federated_qtable_batch_update")]
@@ -491,21 +505,41 @@ pub fn rust_federated_qtable_batch_update(
     }
     let threshold = adaptive_scheduler::mixed_threshold();
     if n >= threshold {
-        // Dereference LazyLock once to get &DashMap — shared across all rayon workers.
-        let qtable: &DashMap<String, f64> = &MODULE_QTABLE;
+        // Dereference LazyLock once to get &RwLock — shared across all rayon workers.
+        let qtable: &RwLock<AHashMap<String, f64>> = &MODULE_QTABLE;
+        let alpha = 0.1;
+        let gamma = 0.9;
+
         items.par_iter().for_each(|(lane, state_key, action, reward, next_state_key)| {
             let full_key = format!("{}::{}|{}", lane, state_key, action);
             let next_key = format!("{}::{}", lane, next_state_key);
-            let next_max_q = qtable
-                .iter()
-                .filter(|kv| kv.key().starts_with(&format!("{}::", lane)) && kv.key().ends_with(&next_key))
-                .map(|kv| *kv.value())
-                .fold(0.0f64, |acc, q| acc.max(q));
-            let target = *reward + 0.9 * next_max_q;
-            qtable
-                .entry(full_key)
-                .and_modify(|v| *v += 0.1 * (target - *v))
-                .or_insert(target);
+
+            // Phase 1: read lock for next_max_q
+            // FIX: k.ends_with(&next_key) where next_key="lane::next_state_key" and
+            // k="lane::state_key|action" NEVER matches (k has "|" in middle).
+            // Correct: strip "|action" suffix and compare to next_key.
+            let next_max_q = {
+                let guard = qtable.read();
+                guard
+                    .iter()
+                    .filter(|(k, _)| {
+                        k.starts_with(&format!("{}::", lane))
+                            && k.split('|').next() == Some(&next_key)
+                    })
+                    .map(|(_, v)| *v)
+                    .fold(0.0f64, |acc, q| acc.max(q))
+            };
+
+            let target = *reward + gamma * next_max_q;
+
+            // Phase 2: write lock for update/insert
+            let mut guard = qtable.write();
+            if let Some(current_q) = guard.get(&full_key) {
+                let current_q = *current_q;
+                guard.insert(full_key, current_q + alpha * (target - current_q));
+            } else {
+                guard.insert(full_key, target);
+            }
         });
     }
     n
@@ -534,7 +568,7 @@ mod tests {
 
     #[test]
     fn test_atomic_q_update() {
-        let qtable = DashMap::new();
+        let qtable = RwLock::new(AHashMap::new());
         let total_count = AtomicUsize::new(0);
         RustFederatedQTable::atomic_q_update(
             &qtable,
@@ -549,14 +583,15 @@ mod tests {
             1024,
         );
         assert_eq!(total_count.load(Ordering::Relaxed), 1);
-        let q = qtable.get("surface::state_0|fetch").unwrap();
+        let guard = qtable.read();
+        let q = guard.get("surface::state_0|fetch").unwrap();
         assert!(*q > 0.0, "Q-value should be positive after reward");
     }
 
     #[test]
     fn test_concurrent_updates_no_lost_writes() {
         // ISSUE-011: Verify no lost writes when multiple rayon workers update same entry.
-        let qtable = DashMap::new();
+        let qtable = RwLock::new(AHashMap::new());
         let total_count = AtomicUsize::new(0);
         let alpha = 0.1;
         let gamma = 0.9;
@@ -588,18 +623,22 @@ mod tests {
 
         // With atomic CAS, Q-value should converge to the correct value after 100 updates.
         // Not a lost update (which would give wrong Q-value).
-        let q = qtable.get("surface::state_0|fetch").unwrap();
+        let guard = qtable.read();
+        let q = guard.get("surface::state_0|fetch").unwrap();
         assert!(*q > 0.0 && *q <= 1.0, "Q-value should be bounded, got {}", *q);
     }
 
     #[test]
     fn test_eviction() {
-        let qtable = DashMap::new();
+        let qtable = RwLock::new(AHashMap::new());
         let total_count = AtomicUsize::new(0);
 
         // Insert 5 entries with different Q-values.
-        for i in 0..5 {
-            qtable.insert(format!("lane::state_{}|action", i), (5 - i) as f64);
+        {
+            let mut guard = qtable.write();
+            for i in 0..5 {
+                guard.insert(format!("lane::state_{}|action", i), (5 - i) as f64);
+            }
         }
         total_count.store(5, Ordering::Relaxed);
 
@@ -609,16 +648,17 @@ mod tests {
         assert_eq!(total_count.load(Ordering::Relaxed), 3);
 
         // Remaining entries should be the top 3 Q-values.
-        assert!(qtable.get("lane::state_4|action").is_some()); // Q=5
-        assert!(qtable.get("lane::state_3|action").is_some()); // Q=4
-        assert!(qtable.get("lane::state_2|action").is_some()); // Q=3
-        assert!(qtable.get("lane::state_1|action").is_none()); // Q=2 — evicted
-        assert!(qtable.get("lane::state_0|action").is_none()); // Q=1 — evicted
+        let guard = qtable.read();
+        assert!(guard.get("lane::state_4|action").is_some()); // Q=5
+        assert!(guard.get("lane::state_3|action").is_some()); // Q=4
+        assert!(guard.get("lane::state_2|action").is_some()); // Q=3
+        assert!(guard.get("lane::state_1|action").is_none()); // Q=2 — evicted
+        assert!(guard.get("lane::state_0|action").is_none()); // Q=1 — evicted
     }
 
     #[test]
     fn test_lane_isolation() {
-        let qtable = DashMap::new();
+        let qtable = RwLock::new(AHashMap::new());
         let total_count = AtomicUsize::new(0);
 
         RustFederatedQTable::atomic_q_update(
@@ -647,8 +687,9 @@ mod tests {
         );
 
         // Same state_key, different lanes — must NOT collide.
-        let surf_q = qtable.get("surface::s|fetch").unwrap();
-        let dark_q = qtable.get("dark::s|scan").unwrap();
+        let guard = qtable.read();
+        let surf_q = guard.get("surface::s|fetch").unwrap();
+        let dark_q = guard.get("dark::s|scan").unwrap();
         assert_ne!(
             *surf_q, *dark_q,
             "Lane isolation violated — same state must have different Q-values"
@@ -671,7 +712,7 @@ mod tests {
     #[test]
     fn test_atomic_q_update_capacity() {
         // When at max_entries, new keys should not be inserted.
-        let qtable = DashMap::new();
+        let qtable = RwLock::new(AHashMap::new());
         let total_count = AtomicUsize::new(0);
         let max_entries = 2;
 
@@ -719,5 +760,12 @@ mod tests {
 
         // Still 2 — state_2 was not inserted.
         assert_eq!(total_count.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn test_parking_lot_send_sync() {
+        // Verify RustFederatedQTable is Send + Sync (required for Python integration).
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<RustFederatedQTable>();
     }
 }

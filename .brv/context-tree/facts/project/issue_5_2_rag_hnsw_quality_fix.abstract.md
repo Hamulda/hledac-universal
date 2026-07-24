@@ -1,0 +1,1 @@
+The RAG Engine HNSW quality fix improves index quality and search performance by using adaptive expansion_add (200/300 based on index size) and native usearch v2.26+ batch API.

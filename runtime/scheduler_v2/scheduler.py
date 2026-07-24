@@ -1139,6 +1139,16 @@ class SprintSchedulerV2:
                     _sys.stdout.write(f"[aclean] evidence_log close error: {e}\n")
                     _sys.stdout.flush()
 
+            # ISSUE-5.1: Shutdown DuckPGQGraph singleton after DuckDB store
+            # DuckPGQGraph holds its own DuckDB connection — must be closed
+            # AFTER DuckDBShadowStore.aclose() to ensure proper shutdown order.
+            try:
+                from hledac.universal.knowledge.graph_service import shutdown_graph
+                shutdown_graph()
+            except Exception as e:
+                _sys.stdout.write(f"[aclean] graph shutdown error: {e}\n")
+                _sys.stdout.flush()
+
             _sys.stdout.write(f"[aclean] done\n")
             _sys.stdout.flush()
 

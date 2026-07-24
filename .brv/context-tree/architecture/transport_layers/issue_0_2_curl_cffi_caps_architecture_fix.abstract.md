@@ -1,0 +1,1 @@
+Fixed fetch transport architecture mismatch by creating CAPS-aware curl_cffi_fetch.py wrapper, ensuring FetchCoordinator uses capability-based checks with guaranteed JA3 spoofing.

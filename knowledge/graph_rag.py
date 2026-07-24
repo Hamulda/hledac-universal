@@ -596,12 +596,13 @@ class GraphRAGOrchestrator:
             return hashlib.sha256(name.encode('utf-8')).hexdigest()[:16]
         entity1_id = get_entity_id(entity1)
         entity2_id = get_entity_id(entity2)
-        try:
-            from utils.rayon_pool import run_in_io_pool
-            bfs_fn = partial(self._find_paths_bfs, entity1_id, entity2_id, max_hops, [], set())
-            paths = await asyncio.to_thread(run_in_io_pool, bfs_fn, 1)
-        except Exception:
-            paths = await asyncio.to_thread(self._find_paths_bfs, entity1_id, entity2_id, max_hops, [], set())
+        # ISSUE 3.1 FIX: Use RustWorkerPool with io pool for proper rayon dispatch.
+        # Previously used run_in_io_pool from utils.rayon_pool which was a GIL wrapper
+        # that doesn't actually dispatch to the rayon pool - it just runs in asyncio.to_thread.
+        from hledac.universal.runtime.worker_pool import get_rust_pool
+        pool = get_rust_pool("io")
+        bfs_fn = partial(self._find_paths_bfs, entity1_id, entity2_id, max_hops, [], set())
+        paths = await pool.submit(bfs_fn)
         logger.info(f"Found {len(paths)} paths between '{entity1}' and '{entity2}'")
         return paths
 

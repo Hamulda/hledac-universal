@@ -1,109 +1,102 @@
 ---
-children_hash: 1b313d788dc532f0ebd25f023dca4d722d0fecf02263cbb0d7e8af6b8853d759
-compression_ratio: 0.47495872317006055
+children_hash: da2a165b1eb76c84ea5a82a6ded7de577044f0aa47175dc8e961dab0596ef5ca
+compression_ratio: 0.4119469026548673
 condensation_order: 2
 covers: [feature-flags-gate-memory-management-across-stack.md, gil-reduction-pattern-batch-operations-over-single-calls.md, m1-8gb-resource-optimization-spans-storage-hashing-and-ml.md, resource_governor/_index.md]
-covers_token_total: 1817
+covers_token_total: 2260
 summary_level: d2
-token_count: 863
+token_count: 931
 type: summary
 ---
 <think>
-The user wants me to create a structural summary at the domain level (d1) for the resource_governor domain. They've provided:
+The user is asking me to create a structural summary at the domain level for the resource_governor topic. They've provided detailed knowledge entries and want me to synthesize them into a concise overview that preserves key facts, relationships, and patterns while referencing entry names for drill-down.
 
-1. All the child entries with their summaries
-2. A template showing how to structure the output
-3. The "Output ONLY the summary text" instruction
+Looking at the context, this is a curation task where I need to update/create a `_index.md` file at the domain level with this synthesized summary. The summary should:
+- Preserve key facts, relationships, and patterns
+- Reference entry names for drill-down
+- Target ~20-30% compression
+- Preserve entity names, file paths, API signatures, architectural decisions
+- Discard verbose examples and repeated explanations
 
-I need to synthesize the child entries into a concise structural overview that:
-- Captures the core theme and architecture
-- Preserves key facts, relationships, and patterns
-- References entry names for drill-down
-- Achieves ~20-30% compression
-- Outputs clean structured markdown
+Let me synthesize the information from the child entries into a concise domain-level summary. The structure should include:
+1. A clear domain overview
+2. Key architectural components
+3. Important patterns and relationships
+4. References to child entries for drill-down
 
-Let me analyze the key information:
-
-**Core Theme:**
-- M1 8GB Unified Memory Architecture (UMA) constraint
-- 5-state hysteresis state machine
-- Concurrency presets
-
-**Architecture:**
-- 5 states: NORMAL → ELEVATED → CRITICAL → EMERGENCY → CIRED
-- Flow: memory_check → hysteresis_state → concurrency_adjust → action_take
-- Concurrency presets per state
-
-**MPSC Batch Communication (Issue-007):**
-- Two crossbeam channels
-- 2048 slots × 512 bytes = 1 MiB
-- ~1µs/event vs 5µs for individual calls
-- msgspec gc=False optimization
-
-**Key Optimizations:**
-- P0: msgspec.Struct gc=False, GHOST_INVARIANTS CI
-- P1: Per-lane RSS delta telemetry, Rust graph analytics
-- P2: evidence_quality telemetry, adaptive thresholds
-
-**Related Entries:**
-- architecture/hledac_universal
-- data/duckdb_store
-- facts/project/technology_stack
-- testing/conftest
-
-Now I'll create the structural summary following the template format provided.
+I'll format this as a proper _index.md file for the resource_governor domain.
 </think>
 
-# Resource Governor — Domain Summary
+# Resource Governor
 
-## Core Theme
-M1 8GB Unified Memory Architecture (UMA) is the system-wide hardware constraint shaping all memory management decisions. ResourceGovernor implements a 5-state hysteresis state machine with concurrency presets to prevent OOM kills during inference pipelines.
+## Overview
 
-## Architecture
+The `resource_governor` domain manages M1 8GB Unified Memory Architecture (UMA) as a system-wide constraint, covering threshold configuration, concurrency control, swap safety policies, and zero-copy IPC optimization.
 
-### Hysteresis State Machine (5 States)
-**NORMAL → ELEVATED → CRITICAL → EMERGENCY → CIRED**
+## M1 8GB Unified Memory Architecture
+
+Hardware constraint: ~6.25GB usable budget with swap detection at 3.8 GiB.
+
+**Memory Allocation:**
+- DuckDB: 600MB cap, 2 threads, 1GB temp, chunk size 500
+- Metal cache: ceiling 1.5 GiB (kv_bits=4, max_kv_size=8192)
+- MPSC pool: 1 MiB total (2048 × 512B slots)
+
+**Problem:** Memory budgets hardcoded across 4 domains without canonical source of truth (`m1-8gb-memory-budget-fragmentation.md`).
+
+## ResourceGovernor 5-State Hysteresis
+
+State machine: NORMAL→ELEVATED→CRITICAL→EMERGENCY→CIRED
+
+**Concurrency Presets** (emergency→ok):
+- emergency: 0 workers
+- critical: 1 worker
+- warn: 3 workers
+- soft_warn: 5 workers
+- ok: 5 workers
+
+**Dependencies:** psutil for memory detection, concurrent.futures for worker pool management.
 
 Flow: `memory_check → hysteresis_state → concurrency_adjust → action_take`
 
-### Concurrency Presets by State
-| State | Workers | Fetch Limits |
-|-------|---------|--------------|
-| NORMAL | 5 | Full |
-| ELEVATED | 5 | Reduced |
-| CRITICAL | 1 | Minimal |
-| EMERGENCY | 0 | Suspended |
-| CIRED | 0 | Suspended |
+See `m1resourcegovernor_implementation.md`, `uma_memory_management.md`
 
-### MPSC Batch Communication (Issue-007)
-Two crossbeam bounded channels: `_mpsc` (asyncio_fallback=False) and `_mpsc2` (asyncio_fallback=True)
-- Capacity: 2048 slots × 512 bytes = **1 MiB total budget**
-- Performance: ~1µs/event vs 5µs for N× individual calls
-- Receiver requires `#[pyclass(unsendable)]` (not Send)
+## MPSC Batch Send Optimization (Issue-007)
 
-## Key Optimizations
+Python→Rust batch communication reduces GIL acquisition from N× to 1×.
 
-### P0 (High Leverage)
-- `msgspec.Struct gc=False` — saves ~200 bytes/future × N futures
-- GHOST_INVARIANTS CI enforcement via ruff/mypy plugins
+**Architecture:**
+- crossbeam bounded MPSC (capacity=2048)
+- Two channels: `_mpsc` (no asyncio), `_mpsc2` (asyncio integration)
+- Zero-copy via `msgspec.msgpack.encode()`
 
-### P1 (Medium Leverage)
-- Per-lane RSS delta telemetry for ResourceGovernor visibility
-- Rust graph analytics (10-100× speedup over Python igraph)
+**Performance:** ~1µs/event vs 5µs for N× individual calls
 
-### P2 (Ongoing)
-- evidence_quality telemetry (findings_with_citation / total_findings)
-- Adaptive ResourceGovernor thresholds based on swap history
+**Constraint:** `Receiver<QueueItem>` is NOT Send — requires `#[pyclass(unsendable)]`
 
-## Related Entries
+See `rust_mpsc_architecture_issue_007.md`, `issue_007_mpsc_batch_send_optimization.md`
 
-- **architecture/hledac_universal** — M1 Metal cache hard limit 1.5 GiB
-- **data/duckdb_store** — 600MB limit, 2 threads, 500 chunk size
-- **facts/project/technology_stack** — PyO3, msgspec, crossbeam dependencies
-- **testing/conftest** — Session-scoped event loop for M1 8GB
+## Zero-Copy Serialization Pattern
 
-## Dependencies
-- psutil (memory detection)
-- concurrent.futures (worker pool)
-- crossbeam (MPSC channels)
-- msgspec.msgpack (zero-copy encoding)
+`msgspec.Struct` with `gc=False` saves ~200 bytes per future instance.
+
+**Applications:**
+- MPSC batch events (2048 slots × 512B)
+- LayerStack UDS IPC via msgspec.msgpack
+
+**P0 Optimization:** Add `gc=False` to msgspec.Struct classes in evidence_log.py, finding.py, pipeline/*.py
+
+See `zero-copy-ipc-via-msgspec-msgpack-spans-memory-architecture.md`
+
+## Priority Optimization Matrix
+
+| Priority | Item | Impact |
+|----------|------|--------|
+| P0 | msgspec Struct gc=False | ~200B/future × 10K findings = 2MB saved |
+| P0 | GHOST_INVARIANTS CI enforcement | 10 invariants (I4, I6, etc.) |
+| P1 | Per-lane RSS delta telemetry | ResourceGovernor visibility |
+| P1 | Rust graph analytics | 10-100× speedup over Python igraph |
+| P2 | evidence_quality telemetry | findings_with_citation / total_findings |
+| P2 | Adaptive thresholds | Swap history-based adjustment |
+
+See `m1_8gb_ram_priority_optimizations.md`

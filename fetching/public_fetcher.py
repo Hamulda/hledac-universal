@@ -309,8 +309,11 @@ from hledac.universal.layers.ua_rotator import get_random_accept_language as _ca
 from hledac.universal.layers.ua_rotator import get_random_ua as _canonical_get_random_ua
 from hledac.universal.transport.base import CircuitBreaker, TransportDecision, fetch_via_httpx_h2, fetch_via_tor_curl_cffi, get_breaker, route_transport, should_use_curl_cffi
 from hledac.universal.transport.body_limiter import BodyReadResult, _read_body_into
-from hledac.universal.transport.curl_cffi_fetch import _blocking_altsvc_probe_for_url, fetch_via_curl_cffi_cached, fetch_via_i2p_curl_cffi
-from hledac.universal.transport.curl_cffi_runtime import is_curl_cffi_available
+# ISSUE-0.2: Import from fetching/curl_cffi_fetch.py (CAPS-aware wrapper)
+# This ensures CAPS-based availability checking for curl_cffi
+from hledac.universal.fetching.curl_cffi_fetch import _blocking_altsvc_probe_for_url, fetch_via_curl_cffi_cached, fetch_via_i2p_curl_cffi, is_curl_cffi_capable, require_curl_cffi
+# Backward compat: still import is_curl_cffi_available from curl_cffi_runtime
+from hledac.universal.transport.curl_cffi_runtime import is_curl_cffi_available as _runtime_is_curl_cffi_available
 from hledac.universal.transport.decompression import build_accept_encoding_header
 from hledac.universal.transport.session_pool import httpx_socks_client
 from hledac.universal.utils.concurrency import get_clearnet_semaphore, get_tor_semaphore
@@ -1195,7 +1198,7 @@ async def _get_tor_session():
         if not _SESSION_MGR._session_is_closed(injected_tor):
             _SESSION_MGR.record_tor_source('injected')
             return injected_tor
-    _cc_available, _cc_reason = is_curl_cffi_available()
+    _cc_available, _cc_reason = _runtime_is_curl_cffi_available()
     if _cc_available:
         _SESSION_MGR.record_tor_source('curl_cffi')
         return _TorCurlCffiWrapper()
@@ -1219,7 +1222,7 @@ async def _get_i2p_session():
         if not _SESSION_MGR._session_is_closed(injected_i2p):
             _SESSION_MGR.record_i2p_source('injected')
             return injected_i2p
-    _cc_available, _cc_reason = is_curl_cffi_available()
+    _cc_available, _cc_reason = _runtime_is_curl_cffi_available()
     if _cc_available:
         _SESSION_MGR.record_i2p_source('curl_cffi')
         return _I2pCurlCffiWrapper()
@@ -1382,7 +1385,7 @@ async def _renew_tor_circuit() -> bool:
             logger.debug('Tor circuit renewed via NEWNYM signal')
             return True
     except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-        logger.warning('Tor circuit renewal failed: {e}', e=e)
+        logger.warning('Tor circuit renewal failed: %s', e)
         return False
 
 async def _maybe_renew_tor_circuit() -> None:
@@ -2066,7 +2069,7 @@ async def _nodriver_locked(url: str, url_kind: str='', url_host: str='') -> str:
         except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             last_error = str(e)
             _ev0 = attempt + 1
-            logger.debug('nodriver attempt {attempt + 1} failed for {url}: {e}', url=url, e=e, _ev0=attempt + 1)
+            logger.debug('nodriver attempt %d failed for %s: %s', _ev0, url, e)
             if browser is not None:
                 browser.stop()
             await asyncio.sleep(0.2)
@@ -2123,7 +2126,7 @@ async def _playwright_locked(url: str, timeout: float) -> str:
             await browser.close()
         raise
     except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-        logger.warning('playwright fetch failed: {e}', e=e)
+        logger.warning('playwright fetch failed: %s', e)
         return ''
     finally:
         if browser is not None:
@@ -2408,7 +2411,10 @@ def _batch_sync_extract_links(items: list[tuple[str, str]]) -> list[list[str]]:
         return [[] for _ in items]
 
 async def process_html_payload(html: str, url: str) -> tuple[str, list, dict]:
-    """Offload HTML→text+pattern matching+metadata extraction to shared CPU_EXECUTOR.
+    """Offload HTML→text+pattern matching+metadata extraction to rayon CPU pool.
+
+    Uses RustWorkerPool with channel dispatch — work runs on 4 P-core rayon pool
+    instead of asyncio-to_thread thread. ~5μs dispatch vs ~50μs thread::spawn.
 
     Args:
         html: Raw HTML content.
@@ -2419,8 +2425,12 @@ async def process_html_payload(html: str, url: str) -> tuple[str, list, dict]:
         metadata dict keys: ga_gtm_ids, og_tags, comments (from extract_html_metadata).
         Never raises — malformed HTML returns (stripped_text, [], {}) on fallback.
     """
-    from utils.rayon_pool import run_in_cpu_pool_async
-    return await run_in_cpu_pool_async(_sync_process_html, html)
+    # ISSUE 3.1 FIX: Use RustWorkerPool directly — cpu_pool_run was just a GIL wrapper,
+    # not actual rayon pool dispatch. RustWorkerPool uses rayon_submit_channel which
+    # runs on 4 P-core rayon pool with true parallelism for GIL-releasing functions.
+    from hledac.universal.runtime.worker_pool import get_rust_pool
+    pool = get_rust_pool("cpu")
+    return await pool.submit(_sync_process_html, html)
 
 def _batch_sync_process_html(items: list[tuple[str, str]]) -> list[tuple[str, list[str], dict]]:
     """Batch HTML→text extraction via Rust rayon parallel processing.

@@ -1021,9 +1021,9 @@ class ModelLifecycle:
                         return (parsed if isinstance(parsed, dict) else None, True)
                     except Exception:
                         return (None, True)
-                from utils.rayon_pool import run_in_cpu_pool_async
-
-                return await run_in_cpu_pool_async(_run_constrained_generation)
+                from hledac.universal.runtime.worker_pool import get_rust_pool
+                pool = get_rust_pool("cpu")
+                return await pool.submit(_run_constrained_generation)
             except Exception as outlines_err:
                 logger.warning("[LIFECYCLE] Outlines json_schema failed (%s), fallback to mlx_lm", outlines_err)
 
@@ -1065,7 +1065,8 @@ class ModelLifecycle:
                         pass  # noqa: BLE001  # Non-fatal
                 return result
 
-            raw = await run_in_cpu_pool_async(_mlx_generate_raw)
+            pool = get_rust_pool("cpu")
+            raw = await pool.submit(_mlx_generate_raw)
             start = raw.find("{")
             end = raw.rfind("}") + 1
             if start >= 0 and end > start:

@@ -633,3 +633,196 @@ def mlx_cleanup_decorator(aggressive: bool = False):
             return async_wrapper
         return sync_wrapper
     return decorator
+
+
+# =============================================================================
+# ISSUE-7.2: Memory status poller — asyncio task for dynamic Metal cache reconfiguration
+# =============================================================================
+
+import asyncio
+import os
+import sys
+import time as _time_module
+from collections.abc import Callable
+
+# Rust atomic UMA state — 0=ok, 1=soft_warn, 2=warn, 3=critical, 4=emergency
+_rust_uma_state: Callable | None = None
+_set_uma_state_u8: Callable | None = None
+
+_RUST_MEMORY_AVAILABLE: bool = False
+try:
+    from hledac.universal.hledac_rust_extensions import (  # type: ignore[unresolved-import]
+        get_uma_state_u8 as _get_uma_state_u8_rust,
+        set_uma_state_u8 as _set_uma_state_u8_rust,
+    )
+    _rust_uma_state = _get_uma_state_u8_rust
+    _set_uma_state_u8 = _set_uma_state_u8_rust
+    _RUST_MEMORY_AVAILABLE = True
+except ImportError:
+    _RUST_MEMORY_AVAILABLE = False
+
+
+# Poller state — written by background task, read by get_dynamic_metal_cache_limit fast path
+_current_uma_state_u8: int = 0  # 0=ok initially
+_last_reconfigure_time: float = 0.0
+_RECONFIGURE_COOLDOWN_S: float = 2.0  # Don't reconfigure more than every 2s
+
+
+def _read_available_memory() -> int:
+    """
+    Read available memory in bytes using the most accurate source for M1.
+
+    Priority:
+    1. os.proc_available_memory() — macOS 13+ accurate probe (no psutil overhead)
+    2. psutil.virtual_memory().available — fallback for older macOS / other platforms
+    """
+    if sys.platform == "darwin" and hasattr(os, "proc_available_memory"):
+        try:
+            return os.proc_available_memory()
+        except Exception:
+            pass
+    try:
+        return int(psutil.virtual_memory().available)
+    except Exception:
+        return 0
+
+
+def _available_to_uma_state(available_bytes: int) -> int:
+    """
+    Map available memory (bytes) to UMA state u8.
+
+    Thresholds in bytes (exact integers to avoid float precision):
+      - >= 1_492_538_553 bytes (~1.39 GiB) → 0=ok
+      - >= 1_073_741_824 bytes (1.0 GiB)  → 1=soft_warn
+      - >= 751_619_276 bytes (~0.7 GiB)    → 2=warn
+      - >= 429_496_729 bytes (~0.4 GiB)    → 3=critical
+      - < 429_496_729 bytes                 → 4=emergency
+    """
+    if available_bytes >= 1_492_538_553:  # ~1.39 GiB
+        return 0  # ok
+    elif available_bytes >= 1_073_741_824:  # 1.0 GiB
+        return 1  # soft_warn
+    elif available_bytes >= 751_619_276:  # ~0.7 GiB
+        return 2  # warn
+    elif available_bytes >= 429_496_729:  # ~0.4 GiB
+        return 3  # critical
+    else:
+        return 4  # emergency
+
+
+# Cached uma_state string mapping for reconfigure calls
+_UMA_STATE_NAMES: tuple[str, ...] = ("ok", "soft_warn", "warn", "critical", "emergency")
+
+
+async def _memory_status_poller_task(interval_s: float = 0.5) -> None:
+    """
+    ISSUE-7.2: Background asyncio task that monitors UMA memory state every 500ms.
+
+    Responsibilities:
+    1. Poll os.proc_available_memory() (or psutil fallback) every 500ms
+    2. Map available → uma_state_u8
+    3. Write to Rust AtomicU8 for fast non-blocking reads (get_uma_state_u8)
+    4. When state changes, trigger reconfigure_metal_cache_limit() (with 2s cooldown)
+
+    This replaces mx.metal.get_active_memory() as the primary signal for Metal cache
+    management. On M1 8GB UMA, psutil.available is the accurate indicator of actual
+    memory pressure — mx.metal.get_active_memory() can report 0 bytes while the
+    unified memory bus is saturated.
+
+    Never raises — fail-safe task that logs errors and continues polling.
+    """
+    global _current_uma_state_u8, _last_reconfigure_time
+
+    logger.info("[ISSUE-7.2] memory_status_poller_task started (500ms interval)")
+
+    while True:
+        try:
+            await asyncio.sleep(interval_s)
+        except asyncio.CancelledError:
+            logger.info("[ISSUE-7.2] memory_status_poller_task cancelled")
+            break
+
+        try:
+            available = await asyncio.to_thread(_read_available_memory)
+        except Exception as e:
+            logger.debug(f"[ISSUE-7.2] read available memory failed: {e}")
+            continue
+
+        if available <= 0:
+            continue
+
+        new_state_u8 = _available_to_uma_state(available)
+
+        # Update Rust AtomicU8 — lock-free, ~10ns
+        if _set_uma_state_u8 is not None:
+            try:
+                _set_uma_state_u8(new_state_u8)
+            except Exception as e:
+                logger.debug(f"[ISSUE-7.2] set_uma_state_u8 failed: {e}")
+
+        # Trigger reconfigure if state changed and cooldown elapsed
+        if new_state_u8 != _current_uma_state_u8:
+            now = _time_module.monotonic()
+            if now - _last_reconfigure_time >= _RECONFIGURE_COOLDOWN_S:
+                state_name = _UMA_STATE_NAMES[new_state_u8] if new_state_u8 < len(_UMA_STATE_NAMES) else "unknown"
+                try:
+                    await asyncio.to_thread(reconfigure_metal_cache_limit, state_name)
+                    _last_reconfigure_time = now
+                    logger.info(
+                        f"[ISSUE-7.2] Metal cache reconfigured: state={state_name}, "
+                        f"available={available / 1024**2:.0f} MiB"
+                    )
+                except Exception as e:
+                    logger.debug(f"[ISSUE-7.2] reconfigure_metal_cache_limit failed: {e}")
+                _current_uma_state_u8 = new_state_u8
+
+
+_memory_poller_task: asyncio.Task | None = None
+
+
+async def start_memory_status_poller(interval_s: float = 0.5) -> None:
+    """
+    Start the background memory status poller task.
+
+    Call once from the main async entry point (e.g., __main__.py run_sprint).
+    The task runs for the lifetime of the process and is cancelled on shutdown.
+    """
+    global _memory_poller_task
+    if _memory_poller_task is not None and not _memory_poller_task.done():
+        return  # Already running
+
+    loop = asyncio.get_running_loop()
+    _memory_poller_task = loop.create_task(_memory_status_poller_task(interval_s))
+
+
+async def stop_memory_status_poller() -> None:
+    """Stop the background memory status poller task gracefully."""
+    global _memory_poller_task
+    if _memory_poller_task is not None:
+        _memory_poller_task.cancel()
+        try:
+            await _memory_poller_task
+        except asyncio.CancelledError:
+            pass
+        _memory_poller_task = None
+
+
+def get_current_uma_state_u8() -> int:
+    """
+    Get current UMA state u8 from Rust AtomicU8 (fast path, ~10ns, no GIL).
+
+    Returns 0-4: 0=ok, 1=soft_warn, 2=warn, 3=critical, 4=emergency.
+    Falls back to Python-side tracking if Rust functions unavailable.
+    """
+    if _rust_uma_state is not None:
+        try:
+            return _rust_uma_state()
+        except Exception:
+            pass
+    return _current_uma_state_u8
+
+
+def get_current_uma_state_name() -> str:
+    """Get current UMA state as string name."""
+    state_u8 = get_current_uma_state_u8()
+    return _UMA_STATE_NAMES[state_u8] if state_u8 < len(_UMA_STATE_NAMES) else "unknown"

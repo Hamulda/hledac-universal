@@ -25,7 +25,7 @@ Usage:
         except Exception as e:
             if not is_retryable(e):
                 raise
-```
+"""
 
 from __future__ import annotations
 

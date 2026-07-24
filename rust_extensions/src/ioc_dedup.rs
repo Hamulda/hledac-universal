@@ -30,8 +30,10 @@ use std::sync::Arc;
 use xxhash_rust::xxh3::xxh3_64;
 
 // madvise constants (Darwin)
+// MADV_WILLNEED = 7 on Darwin — initiate asynchronous readahead.
+// MADV_FREE = 5 on Darwin — mark pages as free (wrong for prefetch).
 #[cfg(target_os = "macos")]
-const MADV_WILLNEED: libc::c_int = 5; // Preload pages into RAM on macOS
+const MADV_WILLNEED: libc::c_int = libc::MADV_WILLNEED;
 
 // Arc<File>: reference-counted file handle shared across threads.
 // On Unix, File is Send+Sync because a fd (i32) is trivially safe to share.
@@ -217,7 +219,10 @@ impl MmapIocDedupStore {
     }
 
     fn rebuild_entries_from_bytes(&mut self, data: &[u8], num_entries: usize) {
-        self.entries = RwLock::new(AHashMap::with_capacity(num_entries.max(1000)));
+        // ISSUE-3 FIX: Build local HashMap first, then swap under one lock.
+        // Previously called entries.write().insert() inside the loop — lock
+        // acquisition overhead per item. Now: single atomic assignment.
+        let mut local_map = AHashMap::with_capacity(num_entries.max(1000));
         let mut pos = 0;
 
         for _ in 0..num_entries {
@@ -248,12 +253,24 @@ impl MmapIocDedupStore {
             let confidence = f32::from_le_bytes([data[pos+12], data[pos+13], data[pos+14], data[pos+15]]);
             pos += 16;
 
-            self.entries.write().insert(k, Arc::new(RwLock::new(IocEntry { normalized_value: normalized, ioc_type, first_seen_sprint: first, last_seen_sprint: last, occurrence_count: occurrence, confidence_max: confidence })));
+            local_map.insert(k, Arc::new(RwLock::new(IocEntry { normalized_value: normalized, ioc_type, first_seen_sprint: first, last_seen_sprint: last, occurrence_count: occurrence, confidence_max: confidence })));
         }
+
+        // Single atomic swap — one lock acquisition instead of num_entries.
+        self.entries = RwLock::new(local_map);
     }
 
     fn persist(&mut self) -> PyResult<()> {
         if !self.dirty { return Ok(()); }
+
+        // ISSUE-1 FIX: Single RwLock read — get entries.len() and state bytes together.
+        // Previously called entries.read() twice: once for len() and once in get_state_bytes().
+        let (num_entries, entries_bytes) = {
+            let entries = self.entries.read();
+            let num_entries = entries.len() as u32;
+            let bytes = Self::_serialize_entries(&entries);
+            (num_entries, bytes)
+        };
 
         // Atomic write: write to temp file, fsync, then rename.
         // rename() is atomic on POSIX (single filesystem, same inode).
@@ -268,7 +285,7 @@ impl MmapIocDedupStore {
         let mut header = [0u8; MMAP_HEADER_SIZE];
         header[0..4].copy_from_slice(MMAP_MAGIC);
         header[4] = MMAP_VERSION;
-        header[8..12].copy_from_slice(&(self.entries.read().len() as u32).to_le_bytes());
+        header[8..12].copy_from_slice(&num_entries.to_le_bytes());
         header[12..16].copy_from_slice(&self.current_sprint.to_le_bytes());
         header[16..24].copy_from_slice(&self.total_seen.to_le_bytes());
         header[24..32].copy_from_slice(&self.total_deduped.to_le_bytes());
@@ -278,7 +295,6 @@ impl MmapIocDedupStore {
         })?;
 
         // Write entries
-        let entries_bytes = self.get_state_bytes();
         tmp_file.write_all(&entries_bytes).map_err(|e| {
             pyo3::exceptions::PyIOError::new_err(format!("write entries failed: {}", e))
         })?;
@@ -294,6 +310,24 @@ impl MmapIocDedupStore {
             pyo3::exceptions::PyIOError::new_err(format!("rename failed: {}", e))
         })?;
 
+        // ISSUE-2 FIX: fsync parent directory on macOS for true durability.
+        // Without this, rename() commits to directory but data may not survive a crash.
+        #[cfg(target_os = "macos")]
+        if let Some(parent) = Path::new(&self.file_path).parent() {
+            if !parent.as_os_str().is_empty() {
+                let dir_file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(parent)
+                    .and_then(|d| {
+                        // Re-open to get a clean fd for sync
+                        std::fs::File::from(d.into_parts().0)
+                    });
+                if let Ok(dir_file) = dir_file {
+                    let _ = dir_file.sync_all();
+                }
+            }
+        }
+
         // Re-open file handle after atomic rename.
         let new_file = OpenOptions::new().read(true).write(true).open(&self.file_path)
             .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("re-open failed: {}", e)))?;
@@ -303,9 +337,9 @@ impl MmapIocDedupStore {
         Ok(())
     }
 
-    fn get_state_bytes(&self) -> Vec<u8> {
+    /// Serialize entries to bytes — caller holds the read lock.
+    fn _serialize_entries(entries: &AHashMap<u64, Arc<RwLock<IocEntry>>>) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(4096);
-        let entries = self.entries.read();
         for (k, e) in entries.iter() {
             bytes.extend_from_slice(&k.to_le_bytes());
             let entry = e.read();
@@ -525,7 +559,8 @@ impl MmapIocDedupStore {
     pub fn clear(&mut self) { self.entries.write().clear(); self.total_seen = 0; self.total_deduped = 0; self.dirty = true; }
     pub fn get_sprint(&self) -> u32 { self.current_sprint }
     pub fn path(&self) -> String { self.file_path.clone() }
-    pub fn byte_size(&self) -> usize { MMAP_HEADER_SIZE + self.get_state_bytes().len() }
+    pub fn byte_size(&self) -> usize { MMAP_HEADER_SIZE + Self::_serialize_entries(&self.entries.read()).len() }
+    pub fn get_state_bytes(&self) -> Vec<u8> { Self::_serialize_entries(&self.entries.read()) }
 }
 
 // Legacy in-memory IocDedupStore (kept for compat + tests)
