@@ -17,6 +17,8 @@ import logging
 import time
 from collections import deque
 from typing import TYPE_CHECKING
+
+from utils.locks import LazyAsyncioLock
 if TYPE_CHECKING:
     from collections.abc import Awaitable
     from core.resource_governor import GovernorDecision
@@ -286,7 +288,7 @@ class AdaptiveWorkerPool:
         max_workers = pool.get_max_workers()
     """
     _instance: AdaptiveWorkerPool | None = None
-    _instance_lock: asyncio.Lock = asyncio.Lock()
+    _instance_lock = LazyAsyncioLock()
     __slots__ = tuple(('_fetch_limit', '_io_only', '_last_evaluate', '_lock', '_max_workers', '_uma_state'))
 
     def __init__(self) -> None:

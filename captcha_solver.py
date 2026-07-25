@@ -8,6 +8,7 @@ Designed for M1/Apple Silicon with ANE acceleration.
 import asyncio
 import hashlib
 import logging
+import random
 import time
 from collections import OrderedDict
 logger = logging.getLogger(__name__)
@@ -275,8 +276,13 @@ class VisionCaptchaSolver:
                 logger.warning(f'2Captcha submit failed: {result}')
                 return None
             captcha_id = result.split('|')[1]
-            for _ in range(10):
-                await asyncio.sleep(3)
+            # Poll with exponential backoff + jitter (initial=1s, max=10s, ±25%)
+            base_delay = 1.0
+            for poll_i in range(10):
+                # Jitter: ±25% to avoid thundering herd when many clients poll
+                delay = min(base_delay * (2 ** poll_i), 10.0)
+                delay *= (0.75 + random.random() * 0.5)
+                await asyncio.sleep(delay)
                 poll_response = await session.get(f'http://2captcha.com/res.php?key={api_key}&action=get&id={captcha_id}')
                 res = poll_response.text  # httpx.Response.text is a property
                 if res.startswith('OK|'):

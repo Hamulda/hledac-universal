@@ -49,7 +49,10 @@ def _is_editable_install() -> bool:
     # __file__ is rust_extensions/hledac_rust_extensions/__init__.py
     # The parent of the package dir is the rust_extensions workspace root
     parent_dir = os.path.dirname(os.path.dirname(own_file))  # → rust_extensions/
-    marker = os.path.join(parent_dir, "hledac_rust_extensions.abi3.so")
+    # maturin develop on macOS outputs a .dylib; maturin build --release produces .so.
+    # We use .cdylib.so as the canonical workspace artifact name to distinguish
+    # from a true Stable ABI (abi3) wheel, which this build is not.
+    marker = os.path.join(parent_dir, "hledac_rust_extensions.cdylib.so")
     return os.path.isfile(marker)
 
 
@@ -63,7 +66,7 @@ def _find_workspace_so() -> str | None:
     pkg_dir = os.path.dirname(os.path.abspath(__file__))
     # one level up = rust_extensions/
     parent_dir = os.path.dirname(pkg_dir)
-    so_path = os.path.join(parent_dir, "hledac_rust_extensions.abi3.so")
+    so_path = os.path.join(parent_dir, "hledac_rust_extensions.cdylib.so")
     return so_path if os.path.isfile(so_path) else None
 
 

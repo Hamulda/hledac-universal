@@ -17,7 +17,7 @@ Categories: Deep Crawling & "Škvíry Internetu"
 import hashlib
 import logging
 import time
-from dataclasses import dataclass
+import httpx
 import msgspec
 from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
@@ -144,19 +144,17 @@ class DeepProbeScanner:
         if not domain:
             return []
         try:
-            import aiohttp
             cdx_url = f'https://web.archive.org/cdx/search/cdx?url={domain}/*&output=json&limit={MAX_DISCOVERED_URLS}&fl=original'
-            timeout = aiohttp.ClientTimeout(total=SCAN_TIMEOUT_S)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(cdx_url) as resp:
-                    if resp.status != 200:
-                        return []
-                    data = await resp.json()
-                    urls = []
-                    for row in data[1:]:
-                        if isinstance(row, list) and row:
-                            urls.append(row[0])
-                    return urls[:MAX_DISCOVERED_URLS]
+            async with httpx.AsyncClient(timeout=httpx.Timeout(SCAN_TIMEOUT_S)) as session:
+                resp = await session.get(cdx_url)
+                if resp.status_code != 200:
+                    return []
+                data = resp.json()
+                urls = []
+                for row in data[1:]:
+                    if isinstance(row, list) and row:
+                        urls.append(row[0])
+                return urls[:MAX_DISCOVERED_URLS]
         except Exception:
             return []
 
@@ -183,15 +181,13 @@ class DeepProbeScanner:
                 if len(checked) >= max_buckets:
                     break
                 try:
-                    import aiohttp
                     url = f'https://{bucket_name}.s3.amazonaws.com'
-                    timeout = aiohttp.ClientTimeout(total=5.0)
-                    async with aiohttp.ClientSession(timeout=timeout) as session:
-                        async with session.head(url, allow_redirects=True) as resp:
-                            if resp.status == 200:
-                                raw_results.append({'bucket': bucket_name, 'url': url, 'status': 200})
-                                fid = hashlib.sha256(bucket_name.encode()).hexdigest()[:16]
-                                findings.append(CanonicalFinding(finding_id=fid, query=domain, source_type='deep_probe', confidence=0.5, ts=time.time(), provenance=('deep_probe', 's3', bucket_name), payload_text=f'Open S3 bucket: {bucket_name}'))
+                    async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as session:
+                        resp = await session.head(url, follow_redirects=True)
+                        if resp.status_code == 200:
+                            raw_results.append({'bucket': bucket_name, 'url': url, 'status': 200})
+                            fid = hashlib.sha256(bucket_name.encode()).hexdigest()[:16]
+                            findings.append(CanonicalFinding(finding_id=fid, query=domain, source_type='deep_probe', confidence=0.5, ts=time.time(), provenance=('deep_probe', 's3', bucket_name), payload_text=f'Open S3 bucket: {bucket_name}'))
                 except Exception:
                     pass
             if len(checked) >= max_buckets:
@@ -248,14 +244,12 @@ async def scan_ipfs(query: str, store: Any=None, max_results: int=MAX_IPFS_RESUL
         for gateway in ['https://cloudflare-ipfs.com/ipfs/', 'https://ipfs.io/ipfs/']:
             url = f'{gateway}{cid}'
             try:
-                import aiohttp
-                timeout = aiohttp.ClientTimeout(total=IPFS_TIMEOUT_S)
-                async with aiohttp.ClientSession(timeout=timeout) as session:
-                    async with session.head(url, allow_redirects=True) as resp:
-                        if resp.status == 200:
-                            fid = hashlib.sha256(cid.encode()).hexdigest()[:16]
-                            findings.append(CanonicalFinding(finding_id=fid, query=query, source_type='deep_probe', confidence=0.7, ts=time.time(), provenance=('deep_probe', 'ipfs', cid), payload_text=f'IPFS content: {url}'))
-                            break
+                async with httpx.AsyncClient(timeout=httpx.Timeout(IPFS_TIMEOUT_S)) as session:
+                    resp = await session.head(url, follow_redirects=True)
+                    if resp.status_code == 200:
+                        fid = hashlib.sha256(cid.encode()).hexdigest()[:16]
+                        findings.append(CanonicalFinding(finding_id=fid, query=query, source_type='deep_probe', confidence=0.7, ts=time.time(), provenance=('deep_probe', 'ipfs', cid), payload_text=f'IPFS content: {url}'))
+                        break
             except Exception:
                 pass
         if len(findings) >= max_results:

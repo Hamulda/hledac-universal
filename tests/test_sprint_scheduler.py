@@ -1336,10 +1336,15 @@ class TestObservedRunReportSchema:
 
     def test_observed_run_report_no_duplicate_fields(self):
         """Verify ObservedRunReport has no duplicate field names via AST analysis."""
-        import hledac.universal.__main__ as main_module
+        import pathlib
 
-        source_file = main_module.__file__
-        assert source_file and source_file.endswith(".py"), f"Not a source file: {source_file}"
+        # Use pathlib to resolve the file directly — avoids importing the __main__ shim
+        # which auto-executes main() and breaks argparse when sys.argv contains pytest args.
+        # tests/ is 1 level below the project root
+        # project_root/tests/test_sprint_scheduler.py → project_root/__main__.py
+        root_main = pathlib.Path(__file__).resolve().parents[1] / "__main__.py"
+        source_file = str(root_main)
+        assert root_main.exists(), f"Source file not found: {root_main}"
 
         with open(source_file, "r", encoding="utf-8") as f:
             tree = ast.parse(f.read(), filename=source_file)

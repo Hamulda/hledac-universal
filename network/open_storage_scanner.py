@@ -50,33 +50,46 @@ class _OpenStorageScanner:
 
     async def scan_domain(self, domain: str) -> list[dict[str, Any]]:
         """Scan a single domain for open storage. Returns list of found URLs with metadata."""
-        results = []
         guesses = self._generate_guesses(domain)
+        if not guesses:
+            return []
 
         session = await async_get_httpx_session()
-        for url in guesses:
+
+        # P1-02: Parallelizace — 15 URL guesses paralelně místo sekvenčně
+        from hledac.universal.utils.async_helpers import parallel
+
+        async def _check_url(url: str) -> dict[str, Any] | None:
+            """Check single URL for open bucket. Returns result dict or None."""
             try:
                 async with asyncio.timeout(self._READ_TIMEOUT_S):
                     resp = await session.head(url)
                     if resp.status_code == 200:
-                        # Check content-type or headers to confirm it's a bucket listing
                         content_type = resp.headers.get("Content-Type", "")
                         if "xml" in content_type or "json" in content_type or "html" in content_type:
-                            results.append(
-                                {
-                                    "url": url,
-                                    "status": resp.status_code,
-                                    "type": self._classify_bucket(url),
-                                    "headers": dict(resp.headers),
-                                }
-                            )
+                            return {
+                                "url": url,
+                                "status": resp.status_code,
+                                "type": self._classify_bucket(url),
+                                "headers": dict(resp.headers),
+                            }
             except asyncio.TimeoutError:
-                continue
+                pass
             except asyncio.CancelledError:
                 raise
             except Exception:
-                continue
-        return results
+                pass
+            return None
+
+        # P1-02: Parallel scan — concurrency=5 for M1 safety, collect all results
+        results = await parallel(
+            [_check_url(url) for url in guesses],
+            policy="collect",
+            concurrency=5,
+            ctx="open_storage:scan_domain"
+        )
+
+        return [r for r in results.ok if r is not None]
 
     def _classify_bucket(self, url: str) -> str:
         """Classify bucket type based on URL."""

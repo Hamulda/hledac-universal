@@ -193,11 +193,18 @@ class MatrixPublicAdapter(msgspec.Struct, frozen=True):
         rooms = await self.search_public_rooms(search_term, limit=5)
         if not rooms:
             return []
+
+        # P1-02: Parallelizace — room message fetching paralelně místo sekvenčně
+        from utils.async_helpers import parallel
+
+        async def _get_messages(room: Any) -> list:
+            msgs = await self.get_room_messages(room.room_id, max_messages)
+            return msgs if msgs else []
+
+        results = await parallel([_get_messages(r) for r in rooms[:3]], policy="log", ctx="matrix:get_messages")
         all_messages = []
-        for room in rooms[:3]:
-            messages = await self.get_room_messages(room.room_id, max_messages)
-            if messages:
-                all_messages.extend(messages)
+        for msgs in results:
+            all_messages.extend(msgs)
         return all_messages
 
     def is_enabled(self) -> bool:

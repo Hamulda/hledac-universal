@@ -193,43 +193,47 @@ async def async_search_dht(
         seen_peers: set[tuple[str, int]] = set()
 
         async with asyncio.timeout(timeout_s):
-            for ih_candidate in candidates[:max_results]:
-                if len(hits) >= max_results:
-                    break
+            # P1-02: Parallelizace přes parallel() — DHT get_peers je ~100-500ms, paralelně ~500ms místo 5-10s
+            from utils.async_helpers import parallel
 
-                # Strip urn:btih: prefix for get_peers
+            async def _get_peers_for_candidate(ih_candidate: str) -> list[tuple[str, int, str]]:
+                """Fetch peers for one infohash candidate, return list of (ip, port, info_hash)."""
                 info_hash = ih_candidate.replace("urn:btih:", "")
-
                 try:
                     async with asyncio.timeout(5.0):
                         peers = await node.get_peers(info_hash)
-                except (TimeoutError, asyncio.CancelledError):
+                    return [(peer_ip, peer_port, info_hash) for peer_ip, peer_port in peers[:20]]
+                except (TimeoutError, asyncio.CancelledError, Exception):
+                    return []
+
+            # P1-02: Parallel fetch — concurrency=10 pro M1 safety
+            result = await parallel(
+                [_get_peers_for_candidate(c) for c in candidates[:max_results]],
+                policy="collect",
+                concurrency=10,
+                ctx="dht:get_peers"
+            )
+
+            # Flatten and deduplicate — result.ok is list of lists
+            all_peers: list[tuple[str, int, str]] = []
+            for peer_list in result.ok:
+                all_peers.extend(peer_list)
+            for peer_ip, peer_port, info_hash in all_peers:
+                if len(hits) >= max_results:
+                    break
+                if (peer_ip, peer_port) in seen_peers:
                     continue
-                except Exception:
-                    continue
-
-                # Deduplicate peers across infohashes
-                for peer_ip, peer_port in peers[:20]:
-                    if (peer_ip, peer_port) in seen_peers:
-                        continue
-                    seen_peers.add((peer_ip, peer_port))
-
-                    # Compose a synthetic URL for the hit
-                    #Torrent peer address as pseudo-URL
-                    hit_url = f"bt://{peer_ip}:{peer_port}/{info_hash[:16]}"
-
-                    hits.append(DiscoveryHit(
-                        url=hit_url,
-                        title=f"BT peer {peer_ip}:{peer_port}",
-                        snippet=f"infohash={info_hash[:16]}… via DHT",
-                        src="dht",
-                        retrieved_ts=time.time(),
-                        score=0.5,
-                        reason="dht_peer_match",
-                    ))
-
-                    if len(hits) >= max_results:
-                        break
+                seen_peers.add((peer_ip, peer_port))
+                hit_url = f"bt://{peer_ip}:{peer_port}/{info_hash[:16]}"
+                hits.append(DiscoveryHit(
+                    url=hit_url,
+                    title=f"BT peer {peer_ip}:{peer_port}",
+                    snippet=f"infohash={info_hash[:16]}… via DHT",
+                    src="dht",
+                    retrieved_ts=time.time(),
+                    score=0.5,
+                    reason="dht_peer_match",
+                ))
 
         elapsed = time.monotonic() - start
         return DiscoveryBatchResult(

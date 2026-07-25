@@ -83,19 +83,22 @@ class LazyAsyncioLock:
                     self._lock = lock
         return lock
 
+    async def __aenter__(self) -> None:
+        """Enter the async context — acquires the lock."""
+        await self.get().__aenter__()
+
+    async def __aexit__(self, *_: Any) -> None:
+        """Exit the async context — releases the lock."""
+        await self.get().__aexit__(*_)
+
+    # Keep acquire() for backward compatibility
     async def acquire(self) -> None:
-        """Acquire the lock (for 'async with' protocol)."""
-        await self.get().acquire()
+        """Acquire the lock (legacy method — prefer 'async with' protocol)."""
+        await self.get().__aenter__()
 
     def release(self) -> None:
         """Release the lock."""
         self.get().release()
-
-    async def __aenter__(self) -> None:
-        await self.acquire()
-
-    async def __aexit__(self, *args: Any) -> None:
-        self.release()
 
     @property
     def locked(self) -> bool:

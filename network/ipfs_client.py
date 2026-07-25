@@ -881,18 +881,16 @@ async def ipfs_search_as_findings(query: str, timeout_per_result: int = 30) -> l
     if not cids:
         return []
 
-    findings: list = []
+    # P1-02: Parallelizované přes parallel() — max 20 CIDs pro M1 bezpečnost
+    from utils.async_helpers import parallel
 
-    for cid in cids[:20]:  # Cap at 20 CIDs for M1 safety
+    async def _fetch_one_cid(cid: str) -> CanonicalFinding | None:
         try:
             content = await fetch_ipfs(cid, timeout=timeout_per_result)
             if content is None:
-                continue
-
-            finding_dict = ipfs_content_to_finding_dict(
-                cid, content, query, source_type="ipfs_search"
-            )
-            finding = CanonicalFinding(
+                return None
+            finding_dict = ipfs_content_to_finding_dict(cid, content, query, source_type="ipfs_search")
+            return CanonicalFinding(
                 finding_id=finding_dict["finding_id"],
                 query=finding_dict["query"],
                 source_type=finding_dict["source_type"],
@@ -901,8 +899,9 @@ async def ipfs_search_as_findings(query: str, timeout_per_result: int = 30) -> l
                 provenance=finding_dict["provenance"],
                 payload_text=finding_dict.get("payload_text"),
             )
-            findings.append(finding)
         except Exception:
-            continue
+            return None
 
-    return findings
+    # P1-02: Parallel fetch CIDs — cap 20 for M1 safety
+    results = await parallel([_fetch_one_cid(cid) for cid in cids[:20]], policy="log", concurrency=5, ctx="ipfs:_fetch_cids")
+    return [r for r in results if r is not None]

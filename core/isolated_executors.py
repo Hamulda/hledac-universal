@@ -64,6 +64,59 @@ class InterpreterChannelError(IsolatedExecutorError):
     """Raised when inter-interpreter communication fails."""
     pass
 
+# -----------------------------------------------------------------------------
+# P1-04: Safe function registry for isolated executor RPC
+# Replaces pickle.dumps(func) with name-based dispatch to prevent RCE.
+# Only pre-registered functions can be called in isolated interpreters.
+# -----------------------------------------------------------------------------
+
+_ISOLATED_FUNC_REGISTRY: dict[str, Callable[..., Any]] = {}
+_ISOLATED_FUNC_NAMES: set[str] = set()  # For O(1) lookup
+
+
+def register_isolated_function(name: str, func: Callable[..., Any]) -> None:
+    """
+    Register a function for isolated executor RPC.
+
+    SECURITY P1-04: Functions must be registered before they can be called
+    via IsolatedInterpreter.run_async(). This prevents arbitrary code
+    execution via malicious __reduce__ in pickle-serialized arguments.
+
+    Args:
+        name: Dotted name for the function (e.g., "duckdb.execute_query").
+        func: The callable to register.
+    """
+    _ISOLATED_FUNC_REGISTRY[name] = func
+    _ISOLATED_FUNC_NAMES.add(name)
+
+
+def register_isolated_function_decorator(name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """
+    Decorator to register a function for isolated executor RPC.
+
+    Usage:
+        @register_isolated_function_decorator("my_module.my_function")
+        def my_function(arg1, arg2):
+            return do_something(arg1, arg2)
+
+    Then call: pool.run_async("my_module.my_function", arg1, arg2)
+    """
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        register_isolated_function(name, func)
+        return func
+    return decorator
+
+
+def _get_registered_func(name: str) -> Callable[..., Any] | None:
+    """Get registered function by name, or None if not found."""
+    return _ISOLATED_FUNC_REGISTRY.get(name)
+
+
+def is_function_registered(name: str) -> bool:
+    """Check if a function name is registered."""
+    return name in _ISOLATED_FUNC_NAMES
+
+
 def _create_interpreter_channel() -> tuple[Any, Any]:
     """
     Create a bidirectional channel for interpreter communication.
@@ -198,26 +251,35 @@ class IsolatedInterpreter:
             self._closed = True
             self._cleanup()
 
-    async def run_async(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> T | None:
+    async def run_async(self, func_name: str, *args: Any, **kwargs: Any) -> T | None:
         """
-        Run a function in the isolated interpreter asynchronously.
+        Run a registered function in the isolated interpreter by name.
+
+        SECURITY P1-04: Replaced pickle with msgspec + name-based dispatch.
+        Function MUST be pre-registered via register_isolated_function().
 
         Args:
-            func: Callable to execute in the isolated interpreter.
-            *args: Positional arguments to pass to func.
-            **kwargs: Keyword arguments to pass to func.
+            func_name: Registered function name (e.g., "duckdb.execute_query").
+            *args: Positional arguments (JSON-serializable).
+            **kwargs: Keyword arguments (JSON-serializable).
 
         Returns:
-            Result of func(*args, **kwargs), or None on any error.
-
-        Fail-safe: returns None on timeout, interpreter crash, or channel error.
+            Result of registered_func(*args, **kwargs), or None on any error.
         """
         if not self.start():
             return None
+
+        # Validate function is registered
+        if func_name not in _ISOLATED_FUNC_REGISTRY:
+            logger.warning('[P1-04] Unregistered function: %s', func_name)
+            return None
+
         async with self._semaphore:
             try:
-                import pickle
-                payload = pickle.dumps((func, args, kwargs))
+                # Encode call as msgspec JSON — no arbitrary code execution
+                from hledac.universal.utils.safe_serialize import encode_call
+                payload = encode_call(func_name, args, kwargs)
+
                 if self._send_channel is not None:
                     self._send_channel.send(payload)
                     try:
@@ -227,29 +289,47 @@ class IsolatedInterpreter:
                         logger.warning('Interpreter eval timeout')
                         return None
                 else:
-                    code = f'\nimport pickle\n_func, _args, _kwargs = pickle.loads({repr(payload)})\npickle.dumps(_func(*_args, **_kwargs))\n'
+                    # No channel — use eval with safe_serialize
+                    import json as _json
+                    code = f'''
+import sys
+sys.path.insert(0, {repr(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))})
+from hledac.universal.utils.safe_serialize import decode_and_execute
+_result = decode_and_execute({repr(payload)})
+import json as _json
+_result_bytes = _json.dumps({{"ok": True, "result": _result}}).encode() if _result is not None else _json.dumps({{"ok": False}}).encode()
+_result_bytes
+'''
                     try:
                         async with asyncio.timeout(_INTERPRETER_EVAL_TIMEOUT_S):
                             result_bytes = await asyncio.to_thread(self._interp.run, code)
                     except asyncio.TimeoutError:
                         logger.warning('Interpreter run timeout')
                         return None
+
                 if result_bytes is None:
                     return None
-                return pickle.loads(result_bytes)
+
+                # Decode result
+                import json as _json
+                try:
+                    result_data = _json.loads(result_bytes.decode())
+                    return result_data.get("result") if result_data.get("ok") else None
+                except Exception:
+                    return None
             except Exception as e:
                 logger.warning(f'Isolated interpreter run failed: {e}')
                 return None
 
-    def run_sync(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> T | None:
+    def run_sync(self, func_name: str, *args: Any, **kwargs: Any) -> T | None:
         """
-        Run a function in the isolated interpreter synchronously.
+        Run a registered function in the isolated interpreter synchronously.
 
         Note:
             This blocks the calling thread. For async contexts, use run_async().
 
         Returns:
-            Result of func(*args, **kwargs), or None on any error.
+            Result of registered_func(*args, **kwargs), or None on any error.
         """
         try:
             loop = asyncio.get_running_loop()
@@ -257,14 +337,14 @@ class IsolatedInterpreter:
             # C7-FIX: Use asyncio.Runner() instead of new_event_loop/run_until_complete.
             # Avoids M1 Metal crash vector. Runner handles loop lifecycle automatically.
             with asyncio.Runner() as runner:
-                result = runner.run(self.run_async(func, *args, **kwargs))
+                result = runner.run(self.run_async(func_name, *args, **kwargs))
             # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
             try:
                 gc.collect()
             except Exception:
                 pass
             return result
-        return asyncio.run_coroutine_threadsafe(self.run_async(func, *args, **kwargs), loop).result()
+        return asyncio.run_coroutine_threadsafe(self.run_async(func_name, *args, **kwargs), loop).result()
 
     def __enter__(self) -> 'IsolatedInterpreter':
         self.start()
@@ -330,23 +410,48 @@ class IsolatedInterpreterPool:
                     return interp
             return None
 
-    async def run_async(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> T | None:
+    async def run_async(self, func_name: str, *args: Any, **kwargs: Any) -> T | None:
         """
-        Run function in isolated interpreter from pool.
+        Run registered function in isolated interpreter from pool by name.
 
         Uses round-robin allocation across available interpreters.
+        Falls back to direct execution via registry if:
+        - Function is not registered for isolated execution (P1-04)
+        - No interpreter is available
+
+        Args:
+            func_name: Registered function name (e.g., "duckdb.execute_query").
+            *args: Positional arguments (JSON-serializable).
+            **kwargs: Keyword arguments (JSON-serializable).
         """
-        interp = self._get_or_create()
-        if interp is None:
-            logger.warning('No isolated interpreter available, running in current interpreter')
+        # If not registered, try direct execution via registry
+        if func_name not in _ISOLATED_FUNC_NAMES:
+            func = _get_registered_func(func_name)
+            if func is None:
+                logger.warning('[P1-04] Unknown function: %s', func_name)
+                return None
             try:
                 return func(*args, **kwargs)
             except Exception as e:
                 logger.warning(f'Function execution failed: {e}')
                 return None
-        return await interp.run_async(func, *args, **kwargs)
 
-    def run_sync(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> T | None:
+        interp = self._get_or_create()
+        if interp is None:
+            # Fallback: run via registry directly
+            logger.warning('No isolated interpreter available, running via registry')
+            func = _get_registered_func(func_name)
+            if func is None:
+                return None
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                logger.warning(f'Function execution failed: {e}')
+                return None
+
+        return await interp.run_async(func_name, *args, **kwargs)
+
+    def run_sync(self, func_name: str, *args: Any, **kwargs: Any) -> T | None:
         """Synchronous version of run_async."""
         try:
             loop = asyncio.get_running_loop()
@@ -354,14 +459,14 @@ class IsolatedInterpreterPool:
             # C7-FIX: Use asyncio.Runner() instead of new_event_loop/run_until_complete.
             # Avoids M1 Metal crash vector. Runner handles loop lifecycle automatically.
             with asyncio.Runner() as runner:
-                result = runner.run(self.run_async(func, *args, **kwargs))
+                result = runner.run(self.run_async(func_name, *args, **kwargs))
             # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
             try:
                 gc.collect()
             except Exception:
                 pass
             return result
-        return asyncio.run_coroutine_threadsafe(self.run_async(func, *args, **kwargs), loop).result()
+        return asyncio.run_coroutine_threadsafe(self.run_async(func_name, *args, **kwargs), loop).result()
 
     def close_all(self) -> None:
         """
@@ -405,6 +510,9 @@ class IsolatedDuckDBExecutor:
         """
         Execute a DuckDB query function in isolated interpreter.
 
+        P1-04 FIX: Functions are auto-registered on first call for isolation.
+        For explicit name-based control, use run_async() directly with registered names.
+
         Args:
             query_func: Function that executes DuckDB query and returns results.
             *args: Positional arguments to pass to query_func.
@@ -415,13 +523,18 @@ class IsolatedDuckDBExecutor:
 
         Fail-safe: returns None on any error, never raises.
         """
+        # Auto-register function for P1-04 isolation
+        func_name = f"duckdb.query_{id(query_func)}"
+        if func_name not in _ISOLATED_FUNC_NAMES:
+            register_isolated_function(func_name, query_func)
+
         if not self._available:
             try:
                 return query_func(*args, **kwargs)
             except Exception as e:
                 logger.warning(f'Query execution failed (no isolation): {e}')
                 return None
-        result = await self._pool.run_async(query_func, *args, **kwargs)
+        result = await self._pool.run_async(func_name, *args, **kwargs)
         return result if result is not None else []
 
     def execute_query_sync(self, query_func: Callable[..., list[dict]], *args: Any, **kwargs: Any) -> list[dict] | None:
@@ -474,6 +587,8 @@ class IsolatedMLXExecutor:
         """
         Run MLX inference function in isolated interpreter.
 
+        P1-04 FIX: Functions are auto-registered on first call for isolation.
+
         Args:
             inference_func: Function that runs MLX inference.
             *args: Positional arguments (e.g., prompt, config).
@@ -484,13 +599,18 @@ class IsolatedMLXExecutor:
 
         Fail-safe: returns None on any error.
         """
+        # Auto-register function for P1-04 isolation
+        func_name = f"mlx.inference_{id(inference_func)}"
+        if func_name not in _ISOLATED_FUNC_NAMES:
+            register_isolated_function(func_name, inference_func)
+
         if not self._available:
             try:
                 return inference_func(*args, **kwargs)
             except Exception as e:
                 logger.warning(f'Inference failed (no isolation): {e}')
                 return None
-        result = await self._pool.run_async(inference_func, *args, **kwargs)
+        result = await self._pool.run_async(func_name, *args, **kwargs)
         return result
 
     def run_inference_sync(self, inference_func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -543,6 +663,8 @@ class IsolatedEvidenceBatchWriter:
         """
         Process evidence batch in isolated interpreter.
 
+        P1-04 FIX: Functions are auto-registered on first call for isolation.
+
         Args:
             process_func: Function that processes batch items.
             items: List of evidence items to process.
@@ -553,13 +675,18 @@ class IsolatedEvidenceBatchWriter:
 
         Fail-safe: returns original items on any error.
         """
+        # Auto-register function for P1-04 isolation
+        func_name = f"evidence.batch_{id(process_func)}"
+        if func_name not in _ISOLATED_FUNC_NAMES:
+            register_isolated_function(func_name, process_func)
+
         if not self._available:
             try:
                 return process_func(items, *args, **kwargs)
             except Exception as e:
                 logger.warning(f'Batch processing failed (no isolation): {e}')
                 return items
-        result = await self._pool.run_async(process_func, items, *args, **kwargs)
+        result = await self._pool.run_async(func_name, items, *args, **kwargs)
         return result if result is not None else items
 
     def process_batch_sync(self, process_func: Callable[..., list[dict]], items: list[dict], *args: Any, **kwargs: Any) -> list[dict]:

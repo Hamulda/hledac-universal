@@ -539,28 +539,40 @@ async def _fetch_and_process_page(
             )
 
         # ---- Per-page dedup + extract --------------------------------
+        # P1-02: Parallelizace přes parallel() — hits jsou malá množina, ale i tak je to 10-50ms ušetřených
         seen: set[tuple[str, str, str]] = set()
-        unique_findings: list = []
-
+        deduped_hits = []
         for hit in hits:
             key = (hit.label or "", hit.pattern, hit.value)
             if key in seen:
                 continue
             seen.add(key)
-            from .public_acceptance import _extract_live_public_findings_from_page
+            deduped_hits.append(hit)
 
-            findings_tuple = await _extract_live_public_findings_from_page(
-                query=query,
-                url=hit_url,
-                hit_label=hit.label if hit.label else "",
-                hit_pattern=hit.pattern,
-                hit_value=hit.value,
-                hit_start=hit.start,
-                hit_end=hit.end,
-                page_text=extracted_text,
-                discovery_score=discovery_score,
-            )
-            unique_findings.append(findings_tuple[0])
+        from .public_acceptance import _extract_live_public_findings_from_page
+
+        async def _extract_one_hit(hit: Any) -> Any | None:
+            """Extract finding from a single hit — runs in parallel via parallel()."""
+            try:
+                findings_tuple = await _extract_live_public_findings_from_page(
+                    query=query,
+                    url=hit_url,
+                    hit_label=hit.label if hit.label else "",
+                    hit_pattern=hit.pattern,
+                    hit_value=hit.value,
+                    hit_start=hit.start,
+                    hit_end=hit.end,
+                    page_text=extracted_text,
+                    discovery_score=discovery_score,
+                )
+                return findings_tuple[0]
+            except Exception:
+                return None
+
+        # P1-02: Parallel extraction — small N, but still wins on 10+ hits
+        from utils.async_helpers import parallel
+        results = await parallel([_extract_one_hit(h) for h in deduped_hits], policy="log", ctx="public_fetch:_extract_hit")
+        unique_findings = [r for r in results if r is not None]
 
         # ---- Storage --------------------------------------------------
         accepted_count = 0

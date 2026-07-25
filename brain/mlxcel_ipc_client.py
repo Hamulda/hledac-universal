@@ -77,6 +77,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, AsyncIterator
 
+from utils.locks import LazyAsyncioLock
+
 logger = logging.getLogger(__name__)
 
 # Default mlxcel binary locations (checked in order)
@@ -533,7 +535,7 @@ class MlxcelIpcClient:
 # ── Global singleton ───────────────────────────────────────────────────────────
 
 _client: MlxcelIpcClient | None = None
-_client_lock = asyncio.Lock()
+_client_lock = LazyAsyncioLock()
 # Track consecutive failures to avoid hammering a dead mlxcel
 _client_failure_count: int = 0
 _CLIENT_RETRY_INTERVAL: int = 5  # failures before retrying detection

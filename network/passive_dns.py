@@ -25,6 +25,7 @@ GHOST_INVARIANTS:
 """
 import asyncio
 import logging
+import random
 import time
 import httpx
 from hledac.universal.network.session_runtime import async_get_httpx_session
@@ -230,7 +231,10 @@ class PassiveDNSResolver:
                 try:
                     if resp.status_code >= 500:
                         if _retry_i < _MAX_DOH_RETRIES:
-                            await asyncio.sleep(_DOH_RETRY_DELAY_S * 2 ** _retry_i)
+                            # Jitter: ±20% to avoid thundering herd on server errors
+                            delay = _DOH_RETRY_DELAY_S * 2 ** _retry_i
+                            delay *= (0.8 + random.random() * 0.4)
+                            await asyncio.sleep(delay)
                             continue
                         return []
                     if resp.status_code != 200:
@@ -240,7 +244,10 @@ class PassiveDNSResolver:
                     await resp.aclose()
             except Exception as e:
                 if _retry_i < _MAX_DOH_RETRIES:
-                    await asyncio.sleep(_DOH_RETRY_DELAY_S * 2 ** _retry_i)
+                    # Jitter: ±20% to avoid thundering herd on connection errors
+                    delay = _DOH_RETRY_DELAY_S * 2 ** _retry_i
+                    delay *= (0.8 + random.random() * 0.4)
+                    await asyncio.sleep(delay)
                     continue
                 logger.debug(f'[DoH] Query failed for {resolver}: {e}')
                 return []

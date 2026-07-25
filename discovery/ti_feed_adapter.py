@@ -525,20 +525,32 @@ async def enrich_findings_greynoise_community(session: httpx.AsyncClient, findin
     Enrich IP findings with GreyNoise Community classification.
     Only enriches findings where ioc_type in ('ip', 'ipv4').
     Caps at max_lookups to respect daily rate limit.
+
+    P1-02: Parallelizované přes parallel() s rate-limit semaphore místo sekvenčního sleep.
+    Rate limit: ~50 requests/day = 1 request per ~30s = concurrency=1, ale přes parallel() s gather.
     """
     ip_findings = [f for f in findings if f.get('ioc_type') in ('ip', 'ipv4') and f.get('ioc')][:max_lookups]
     if not ip_findings:
         return findings
     logger.info(f'[GreyNoise/community] enriching {len(ip_findings)} IPs (cap={max_lookups})')
-    for finding in ip_findings:
-        result = await enrich_ip_greynoise_community(session, finding['ioc'])
-        if result:
-            finding['greynoise'] = result
-            if result['classification'] == 'malicious':
-                finding['confidence'] = min(finding.get('confidence', 0.5) + 0.15, 1.0)
-            if result['riot']:
-                finding['confidence'] = min(finding.get('confidence', 0.5) * 0.5, 0.3)
-        await asyncio.sleep(0.3)
+
+    # P1-02: Rate-limit semaphore místo sekvenčního sleep — concurrency=1 kvůli rate limitu
+    sem = asyncio.Semaphore(1)
+
+    async def _enrich_with_rate_limit(finding: dict) -> None:
+        async with sem:
+            result = await enrich_ip_greynoise_community(session, finding['ioc'])
+            if result:
+                finding['greynoise'] = result
+                if result['classification'] == 'malicious':
+                    finding['confidence'] = min(finding.get('confidence', 0.5) + 0.15, 1.0)
+                if result['riot']:
+                    finding['confidence'] = min(finding.get('confidence', 0.5) * 0.5, 0.3)
+            await asyncio.sleep(0.3)  # Rate limit mezi requesty
+
+    from utils.async_helpers import parallel
+    await parallel([_enrich_with_rate_limit(f) for f in ip_findings], policy="log", ctx="ti_feed:greynoise_enrich")
+
     enriched = sum(1 for f in ip_findings if 'greynoise' in f)
     logger.info(f'[GreyNoise/community] enriched {enriched}/{len(ip_findings)} IPs')
     return findings
@@ -837,8 +849,14 @@ async def _handle_domain_to_pdns(task, scheduler):
     results = await query_circl_pdns(task.ioc_value)
     if not results:
         return
-    for r in results:
-        await scheduler._buffer_ioc_pivot(r.get('ioc_type', 'domain'), r.get('ioc', ''), 0.75)
+    # P1-02 FIX: Parallelizace pres safe_gather_ok (stejny vzor jako domain_to_ct nize)
+    sem = asyncio.Semaphore(4)
+
+    async def _buffer_one(r) -> None:
+        async with sem:
+            await scheduler._buffer_ioc_pivot(r.get('ioc_type', 'domain'), r.get('ioc', ''), 0.75)
+    if results:
+        await safe_gather_ok(*[_buffer_one(r) for r in results], label='ti_feed_adapter:domain_to_pdns')
     if scheduler._duckdb_store is not None:
         from hledac.universal.knowledge.duckdb_store import CanonicalFinding
         findings = []

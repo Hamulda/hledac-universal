@@ -23,13 +23,14 @@ import msgspec
 from typing import Any
 from urllib.parse import urlparse
 try:
-    from curl_cffi.requests import AsyncSession
+    from curl_cffi.requests import AsyncSession as _AsyncSession
     CURL_CFFI_AVAILABLE = True
 except ImportError:
     CURL_CFFI_AVAILABLE = False
-    AsyncSession = None
+    _AsyncSession = None
 
-import aiohttp
+import httpx
+
 _IMPERSONATE_PROFILES = ['chrome136', 'safari17_0']
 from hledac.universal.transport.http3_lane import _cache_get as _h3_cache_get
 from hledac.universal.transport.http3_lane import fetch_http3_aioquic, is_dark_web_url, record_h3_support
@@ -106,7 +107,7 @@ class StealthManager:
             self.header_spoofer = HeaderSpoofer(self.config.header_config)
         if self.config.enable_fingerprint_randomizer:
             self.fingerprint_randomizer = FingerprintRandomizer(self.config.fingerprint_config)
-        self._sessions: OrderedDict[str, AsyncSession] = OrderedDict()
+        self._sessions: OrderedDict[str, _AsyncSession] = OrderedDict()
         self._max_sessions = 5
         self._profile_index = 0
         self._sessions_lock = asyncio.Lock()
@@ -376,7 +377,7 @@ class StealthSession:
     def __init__(self, manager: StealthManager):
         self.manager = manager
         self._cookies: dict[str, str] = {}
-        self._session: aiohttp.ClientSession | None = None
+        self._session: httpx.AsyncClient | None = None
         self._closed = False
         self._request_count = 0
 
@@ -399,14 +400,13 @@ class StealthSession:
             return cached
         try:
             session = await self._get_session()
-            _timeout = aiohttp.ClientTimeout(total=2.0)
-            async with session.head(url, allow_redirects=True, timeout=_timeout) as resp:
-                alt_svc = resp.headers.get('Alt-Svc', '')
-                supports_http3 = 'h3' in alt_svc.lower()
-                record_h3_support(url, supports_http3)
-                if supports_http3:
-                    logger.debug(f'HTTP/3 supported for {domain}')
-                return supports_http3
+            resp = await session.head(url, timeout=httpx.Timeout(connect=2.0))
+            alt_svc = resp.headers.get('Alt-Svc', '')
+            supports_http3 = 'h3' in alt_svc.lower()
+            record_h3_support(url, supports_http3)
+            if supports_http3:
+                logger.debug(f'HTTP/3 supported for {domain}')
+            return supports_http3
         except Exception as e:
             logger.debug(f'HTTP/3 detection failed for {domain}: {e}')
             record_h3_support(url, False)
@@ -424,12 +424,11 @@ class StealthSession:
             return None
         return await fetch_http3_aioquic(url=url, headers=headers)
 
-    async def _get_session(self) -> aiohttp.ClientSession:
-        """Lazy initialization of shared ClientSession with TCP tuning."""
-        if self._session is None or self._session.closed:
-            timeout = aiohttp.ClientTimeout(connect=DEFAULT_CONNECT_TIMEOUT, sock_read=DEFAULT_READ_TIMEOUT, total=DEFAULT_TOTAL_TIMEOUT)
-            connector = aiohttp.TCPConnector(ttl_dns_cache=TCP_TTL_DNS_CACHE, limit=TCP_LIMIT, limit_per_host=TCP_LIMIT_PER_HOST, keepalive_timeout=TCP_KEEPALIVE_TIMEOUT, enable_cleanup_closed=True)
-            self._session = aiohttp.ClientSession(timeout=timeout, cookie_jar=aiohttp.CookieJar(), connector=connector)
+    async def _get_session(self) -> httpx.AsyncClient:
+        """Lazy initialization of shared httpx.AsyncClient with TCP tuning."""
+        if self._session is None or self._session.is_closed:
+            timeout = httpx.Timeout(connect=DEFAULT_CONNECT_TIMEOUT, read=DEFAULT_READ_TIMEOUT, write=DEFAULT_TOTAL_TIMEOUT)
+            self._session = httpx.AsyncClient(timeout=timeout, follow_redirects=True)
         return self._session
 
     def get_headers(self, domain: str='default') -> dict[str, str]:
@@ -512,41 +511,39 @@ class StealthSession:
             logger.debug(f'Stealth {method} request to {url} (attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS}, max_bytes={max_bytes})')
             try:
                 session = await self._get_session()
-                async with session.request(method=method.upper(), url=url, headers=stealth_headers, allow_redirects=allow_redirects, data=data, **kwargs) as response:
-                    if self._is_transient_error(response.status) and attempt < MAX_RETRY_ATTEMPTS - 1:
-                        retry_after = response.headers.get('Retry-After')
-                        delay = self._calculate_retry_delay(attempt, retry_after)
-                        logger.warning(f'Transient error {response.status}, retrying in {delay:.2f}s (attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS})')
-                        await asyncio.sleep(delay)
-                        continue
-                    body_bytes = bytearray()
-                    truncated = False
-                    if response.content:
-                        chunk_size = min(8192, max_bytes)
-                        remaining = max_bytes
-                        async for chunk in response.content.iter_chunked(chunk_size):
-                            if len(chunk) > remaining:
-                                body_bytes.extend(chunk[:remaining])
-                                truncated = True
-                                logger.debug(f'Response truncated at {max_bytes} bytes')
-                                break
-                            body_bytes.extend(chunk)
-                            remaining -= len(chunk)
-                            if remaining <= 0:
-                                truncated = True
-                                break
-                    if response.cookies:
-                        for name, cookie in response.cookies.items():
-                            self._cookies[name] = cookie.value
-                    result = StealthResponse(status=response.status, final_url=str(response.url), headers=dict(response.headers), body_bytes=body_bytes, content_type=response.headers.get('Content-Type'), truncated=truncated)
-                    self.manager._request_count += 1
-                    if result.success:
-                        self.manager._success_count += 1
-                    else:
-                        self.manager._failure_count += 1
-                    logger.debug(f'Request completed: {response.status} ({len(body_bytes)} bytes)')
-                    return result
-            except TimeoutError as e:
+                response = await session.request(method=method.upper(), url=url, headers=stealth_headers, data=data, **kwargs)
+                if self._is_transient_error(response.status_code) and attempt < MAX_RETRY_ATTEMPTS - 1:
+                    retry_after = response.headers.get('Retry-After')
+                    delay = self._calculate_retry_delay(attempt, retry_after)
+                    logger.warning(f'Transient error {response.status_code}, retrying in {delay:.2f}s (attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS})')
+                    await asyncio.sleep(delay)
+                    continue
+                body_chunks: list[bytes] = []
+                truncated = False
+                remaining = max_bytes
+                for chunk in response.iter_bytes(chunk_size=min(8192, max_bytes)):
+                    if len(chunk) > remaining:
+                        body_chunks.append(chunk[:remaining])
+                        truncated = True
+                        logger.debug(f'Response truncated at {max_bytes} bytes')
+                        break
+                    body_chunks.append(chunk)
+                    remaining -= len(chunk)
+                    if remaining <= 0:
+                        truncated = True
+                        break
+                body_bytes = b''.join(body_chunks)
+                for name, value in dict(response.cookies).items():
+                    self._cookies[name] = value
+                result = StealthResponse(status=response.status_code, final_url=str(response.url), headers=dict(response.headers), body_bytes=body_bytes, content_type=response.headers.get('Content-Type'), truncated=truncated)
+                self.manager._request_count += 1
+                if result.success:
+                    self.manager._success_count += 1
+                else:
+                    self.manager._failure_count += 1
+                logger.debug(f'Request completed: {response.status_code} ({len(body_bytes)} bytes)')
+                return result
+            except httpx.TimeoutException as e:
                 last_exception = e
                 if attempt < MAX_RETRY_ATTEMPTS - 1 and self._is_transient_error(0, e):
                     delay = self._calculate_retry_delay(attempt)
@@ -605,15 +602,15 @@ class StealthSession:
         logger.debug(f'Stealth HEAD request to {url}')
         try:
             session = await self._get_session()
-            _timeout = aiohttp.ClientTimeout(total=timeout) if timeout is not None else aiohttp.ClientTimeout(total=DEFAULT_TOTAL_TIMEOUT)
-            async with session.head(url=url, headers=stealth_headers, allow_redirects=True, timeout=_timeout) as response:
-                self.manager._request_count += 1
-                if 200 <= response.status < 300:
-                    self.manager._success_count += 1
-                else:
-                    self.manager._failure_count += 1
-                return (response.status, dict(response.headers), str(response.url))
-        except TimeoutError:
+            _timeout = httpx.Timeout(timeout) if timeout is not None else httpx.Timeout(DEFAULT_TOTAL_TIMEOUT)
+            response = await session.head(url=url, headers=stealth_headers, timeout=_timeout)
+            self.manager._request_count += 1
+            if 200 <= response.status_code < 300:
+                self.manager._success_count += 1
+            else:
+                self.manager._failure_count += 1
+            return (response.status_code, dict(response.headers), str(response.url))
+        except httpx.TimeoutException:
             logger.warning(f'HEAD request timeout: {url}')
             self.manager._failure_count += 1
             raise
@@ -653,33 +650,31 @@ class StealthSession:
         logger.debug(f'Stealth GET preview request to {url} (range=0-{range_bytes - 1})')
         try:
             session = await self._get_session()
-            async with session.get(url=url, headers=stealth_headers, allow_redirects=True, **kwargs) as response:
-                body_bytes = bytearray()
-                truncated = False
-                if response.content:
-                    chunk_size = min(8192, max_bytes)
-                    remaining = max_bytes
-                    async for chunk in response.content.iter_chunked(chunk_size):
-                        if len(chunk) > remaining:
-                            body_bytes.extend(chunk[:remaining])
-                            truncated = True
-                            logger.debug(f'Preview truncated at {max_bytes} bytes')
-                            break
-                        body_bytes.extend(chunk)
-                        remaining -= len(chunk)
-                        if remaining <= 0:
-                            truncated = True
-                            break
-                if response.cookies:
-                    for name, cookie in response.cookies.items():
-                        self._cookies[name] = cookie.value
-                self.manager._request_count += 1
-                if 200 <= response.status < 300 or response.status == 206:
-                    self.manager._success_count += 1
-                else:
-                    self.manager._failure_count += 1
-                return {'body_bytes': body_bytes, 'headers': dict(response.headers), 'final_url': str(response.url), 'status': response.status, 'truncated': truncated}
-        except TimeoutError:
+            response = await session.get(url=url, headers=stealth_headers, **kwargs)
+            body_chunks: list[bytes] = []
+            truncated = False
+            remaining = max_bytes
+            for chunk in response.iter_bytes(chunk_size=min(8192, max_bytes)):
+                if len(chunk) > remaining:
+                    body_chunks.append(chunk[:remaining])
+                    truncated = True
+                    logger.debug(f'Preview truncated at {max_bytes} bytes')
+                    break
+                body_chunks.append(chunk)
+                remaining -= len(chunk)
+                if remaining <= 0:
+                    truncated = True
+                    break
+            body_bytes = b''.join(body_chunks)
+            for name, value in dict(response.cookies).items():
+                self._cookies[name] = value
+            self.manager._request_count += 1
+            if 200 <= response.status_code < 300 or response.status_code == 206:
+                self.manager._success_count += 1
+            else:
+                self.manager._failure_count += 1
+            return {'body_bytes': body_bytes, 'headers': dict(response.headers), 'final_url': str(response.url), 'status': response.status_code, 'truncated': truncated}
+        except httpx.TimeoutException:
             logger.warning(f'GET preview timeout: {url}')
             self.manager._failure_count += 1
             raise
@@ -721,8 +716,8 @@ class StealthSession:
     async def close(self):
         """Close session and cleanup."""
         self._closed = True
-        if self._session and (not self._session.closed):
-            await self._session.close()
+        if self._session and (not self._session.is_closed):
+            await self._session.aclose()
             self._session = None
         logger.debug('StealthSession closed')
 

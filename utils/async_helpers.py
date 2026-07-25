@@ -830,14 +830,24 @@ class ParallelResult(msgspec.Struct, frozen=True):
     """Canonical result of ``parallel()`` with policy-driven error routing.
 
     Attributes:
-        ok:        Successful results, in original order.
+        ok:        Successful results, in original order (positional list).
+                   When ``names`` is provided, also accessible via ``by_name[name]``.
+        by_name:   Dict mapping task name -> result (populated when ``names`` is passed).
         errors:    Exception instances (only populated when policy="collect").
         re_raised: BaseException re-raised per I6/I7 (CancelledError, etc.).
     """
 
     ok: list[Any] = msgspec.field(default_factory=list)
+    by_name: dict[str, Any] = msgspec.field(default_factory=dict)
     errors: list[BaseException] = msgspec.field(default_factory=list)
     re_raised: BaseException | None = None
+
+
+def _build_by_name(results: list[Any], names: Sequence[str] | None) -> dict[str, Any]:
+    """Build name->result dict from indexed results list, respecting original order."""
+    if not names:
+        return {}
+    return {name: results[i] for i, name in enumerate(names) if i < len(results)}
 
 
 async def _parallel_taskgroup[T](
@@ -847,6 +857,7 @@ async def _parallel_taskgroup[T](
     policy: ExceptionPolicy,
     ctx: str,
     logger_instance: logging.Logger,
+    names: Sequence[str] | None = None,
 ) -> ParallelResult:
     """TaskGroup path for parallel() — structured concurrency with sibling cancellation."""
 
@@ -883,7 +894,9 @@ async def _parallel_taskgroup[T](
                 )
                 raise exc from None
             errors.append(exc)
+        # results list is already in original order (indexed by idx)
         ok_results = [r for r in results if r is not None and not isinstance(r, BaseException)]
+        by_name = _build_by_name(results, names)
         # [FIX] Apply policy INSIDE the exception handler — the match block
         # at line 537 is never reached when BaseExceptionGroup is caught.
         match policy:
@@ -894,7 +907,7 @@ async def _parallel_taskgroup[T](
             case "first":
                 raise errors[0] from None
             case "collect":
-                return ParallelResult(ok=ok_results, errors=errors, re_raised=None)
+                return ParallelResult(ok=ok_results, by_name=by_name, errors=errors, re_raised=None)
             case "log":
                 if errors:
                     sample_preview = ", ".join(type(e).__name__ for e in errors[:_SAFE_GATHER_SAMPLE_CAP])
@@ -905,12 +918,14 @@ async def _parallel_taskgroup[T](
                         f"(sample: {sample_preview}"
                         f"{' +' + str(suppressed) + ' more' if suppressed else ''})"
                     )
-                return ParallelResult(ok=ok_results, errors=[], re_raised=None)
+                return ParallelResult(ok=ok_results, by_name=by_name, errors=[], re_raised=None)
     except asyncio.CancelledError:
         logger_instance.debug("[GHOST] parallel(taskgroup) CancelledError%s", (" " + ctx) if ctx else "")
         raise
 
+    # results list is already in original order (indexed by idx)
     ok_results = [r for r in results if r is not None and not isinstance(r, BaseException)]
+    by_name = _build_by_name(results, names)
 
     # Apply policy dispatch
     match policy:
@@ -919,13 +934,13 @@ async def _parallel_taskgroup[T](
                 if len(errors) == 1:
                     raise errors[0]
                 raise BaseExceptionGroup(f"parallel(taskgroup){' ' + ctx if ctx else ''}", errors)
-            return ParallelResult(ok=ok_results, errors=[], re_raised=None)
+            return ParallelResult(ok=ok_results, by_name=by_name, errors=[], re_raised=None)
         case "first":
             if errors:
                 raise errors[0]
-            return ParallelResult(ok=ok_results, errors=[], re_raised=None)
+            return ParallelResult(ok=ok_results, by_name=by_name, errors=[], re_raised=None)
         case "collect":
-            return ParallelResult(ok=ok_results, errors=errors, re_raised=None)
+            return ParallelResult(ok=ok_results, by_name=by_name, errors=errors, re_raised=None)
         case "log":
             if errors:
                 sample_preview = ", ".join(type(e).__name__ for e in errors[:_SAFE_GATHER_SAMPLE_CAP])
@@ -936,7 +951,7 @@ async def _parallel_taskgroup[T](
                     f"(sample: {sample_preview}"
                     f"{' +' + str(suppressed) + ' more' if suppressed else ''})"
                 )
-            return ParallelResult(ok=ok_results, errors=[], re_raised=None)
+            return ParallelResult(ok=ok_results, by_name=by_name, errors=[], re_raised=None)
 
 
 # C6: parallel_taskgroup_star — PEP 654 except* syntax for TaskGroup exceptions
@@ -1064,6 +1079,7 @@ async def parallel[T](
     concurrency: int | ConcurrencyBudgetResolver | None = None,
     timeout: float | None = None,
     taskgroup: bool = False,
+    names: Sequence[str] | None = None,
     ctx: str = "",
     logger_instance: logging.Logger | None = None,
 ) -> list[T]: ...
@@ -1076,6 +1092,7 @@ async def parallel[T](
     concurrency: int | ConcurrencyBudgetResolver | None = None,
     timeout: float | None = None,
     taskgroup: bool = False,
+    names: Sequence[str] | None = None,
     ctx: str = "",
     logger_instance: logging.Logger | None = None,
 ) -> ParallelResult: ...
@@ -1089,6 +1106,7 @@ async def parallel[T](
     concurrency: int | ConcurrencyBudgetResolver | None = None,
     timeout: float | None = None,
     taskgroup: bool = False,
+    names: Sequence[str] | None = None,
     ctx: str = "",
     logger_instance: logging.Logger | None = None,
 ) -> list[T]: ...
@@ -1101,6 +1119,7 @@ async def parallel[T](
     concurrency: int | ConcurrencyBudgetResolver | None = None,
     timeout: float | None = None,
     taskgroup: bool = False,
+    names: Sequence[str] | None = None,
     ctx: str = "",
     logger_instance: logging.Logger | None = None,
 ) -> ParallelResult | list[T]:
@@ -1138,6 +1157,10 @@ async def parallel[T](
         concurrency: Max simultaneous tasks. None = unbounded.
         timeout:     Total timeout in seconds. None = no timeout.
         taskgroup:   Use TaskGroup instead of gather (Python 3.11+).
+        names:       Optional sequence of names for dict-based result access.
+                     When provided, ``result.by_name[name]`` gives the result
+                     at that position (in original coros order). Eliminates
+                     positional unpack ambiguity when tasks complete out-of-order.
         ctx:         Context label for log messages.
         logger_instance: Optional logger override.
 
@@ -1200,6 +1223,7 @@ async def parallel[T](
             policy=policy,
             ctx=ctx,
             logger_instance=_log,
+            names=names,
         )
 
     # Gather path: all coroutines run to completion, results collected
@@ -1266,6 +1290,9 @@ async def parallel[T](
     if re_raise is not None:
         raise re_raise
 
+    # Build by_name dict for named access (results already in original order from asyncio.gather)
+    by_name = _build_by_name(raw, names)
+
     # Dispatch by policy
     match policy:
         case "raise":
@@ -1273,15 +1300,15 @@ async def parallel[T](
                 if len(errors) == 1:
                     raise errors[0]
                 raise BaseExceptionGroup(f"parallel{' ' + ctx if ctx else ''}", errors)
-            return ParallelResult(ok=ok, errors=[], re_raised=None)
+            return ParallelResult(ok=ok, by_name=by_name, errors=[], re_raised=None)
 
         case "first":
             if errors:
                 raise errors[0]
-            return ParallelResult(ok=ok, errors=[], re_raised=None)
+            return ParallelResult(ok=ok, by_name=by_name, errors=[], re_raised=None)
 
         case "collect":
-            return ParallelResult(ok=ok, errors=errors, re_raised=None)
+            return ParallelResult(ok=ok, by_name=by_name, errors=errors, re_raised=None)
 
         case "log":
             # Silently drop errors — already logged above

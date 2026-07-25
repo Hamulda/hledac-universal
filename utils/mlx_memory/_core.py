@@ -38,6 +38,8 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from utils.locks import LazyAsyncioLock
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable
 
@@ -620,7 +622,7 @@ _MLX_CACHE_MAX = 2
 _MLX_CACHE_LIMIT = _METAL_CACHE_LIMIT_BYTES
 _MLX_WIRED_LIMIT = _METAL_WIRED_LIMIT_BYTES
 
-_mlx_cache_lock: asyncio.Lock = asyncio.Lock()
+_mlx_cache_lock = LazyAsyncioLock()
 _mlx_evict_lock = threading.Lock()
 
 # Concurrency control
@@ -628,7 +630,7 @@ _MLX_SEMAPHORE: asyncio.Semaphore | None = None
 _MLX_SEMAPHORE_INIT = threading.Lock()
 
 
-def _get_cache_lock() -> asyncio.Lock:
+def _get_cache_lock() -> LazyAsyncioLock:
     """Get or create the cache async lock."""
     global _mlx_cache_lock
     return _mlx_cache_lock

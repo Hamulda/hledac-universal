@@ -187,6 +187,7 @@ dependencies = [
     "psutil>=5.9.0",
     "debugpy>=1.8.21",
     "pydantic-settings>=2.14.2",
+    "structlog>=24.4.0",
 ]
 
 [project.optional-dependencies]

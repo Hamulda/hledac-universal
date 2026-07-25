@@ -350,6 +350,61 @@ def _dispatch_sprint(args: argparse.Namespace) -> int:
         return 1
 
 
+async def _dispatch_sprint_async(args: argparse.Namespace) -> int:
+    """Run canonical sprint via core.__main__.run_sprint() — fully async, no Runner nesting."""
+    import asyncio
+    import logging
+    import os
+    import pathlib
+
+    from hledac.universal.core.__main__ import SprintFlags, dry_run_sprint, run_sprint
+
+    logger = logging.getLogger(__name__)
+    logger.info("[CLI] sprint: delegating to core.__main__.run_sprint()")
+
+    target: str = getattr(args, "sprint", None) or ""
+    duration: float = getattr(args, "duration", 1800.0)
+    windup_lead = getattr(args, "windup_lead", None)
+    aggressive: bool = getattr(args, "aggressive", True)
+    ui: bool = getattr(args, "ui", False)
+    deep_probe: bool = getattr(args, "deep_probe", False)
+    vault: bool = getattr(args, "vault", False)
+    force: bool = getattr(args, "force", False)
+    profile: str | None = getattr(args, "acquisition_profile", "default")
+    dry_run: bool = getattr(args, "dry_run", False)
+    export_dir: str = getattr(args, "export_dir", None) or str(pathlib.Path.home() / ".hledac" / "reports")
+
+    if vault:
+        os.environ["HLEDAC_VAULT_EXPORT"] = "1"
+
+    try:
+        if dry_run:
+            await dry_run_sprint(query=target, duration_s=duration)
+        else:
+            root_flags = SprintFlags(force=force)
+            shutdown_event = asyncio.Event()
+            await run_sprint(
+                query=target,
+                duration_s=duration,
+                export_dir=export_dir,
+                aggressive_mode=aggressive,
+                deep_probe_enabled=deep_probe,
+                ui_mode=ui,
+                windup_lead_s=windup_lead,
+                acquisition_profile=profile,
+                flags=root_flags,
+                shutdown_event=shutdown_event,
+            )
+        return 0
+    except (NameError, AttributeError, ImportError):
+        raise  # propagate to main() for code=3
+    except SystemExit as e:
+        return e.code if isinstance(e.code, int) else 1
+    except Exception as e:
+        logger.error("[CLI] sprint failed: %s", e, exc_info=True)
+        return 1
+
+
 def _dispatch_pivot(args: argparse.Namespace) -> int:
     """Run semantic pivot search."""
     import asyncio
@@ -389,3 +444,89 @@ def _dispatch_ct(args: argparse.Namespace) -> int:
     except Exception as e:
         logger.error("[CLI] ct failed: %s", e, exc_info=True)
         return 1
+
+
+async def _dispatch_pivot_async(args: argparse.Namespace) -> int:
+    """Run semantic pivot search — fully async, no Runner nesting."""
+    import logging
+
+    from hledac.universal.core.__main__ import run_semantic_pivot
+
+    logger = logging.getLogger(__name__)
+    target: str = getattr(args, "pivot", None) or ""
+    k: int = getattr(args, "pivot_k", 10)
+
+    logger.info("[CLI] pivot: delegating to core.__main__.run_semantic_pivot()")
+    try:
+        await run_semantic_pivot(query=target, top_k=k)
+        return 0
+    except Exception as e:
+        logger.error("[CLI] pivot failed: %s", e, exc_info=True)
+        return 1
+
+
+async def _dispatch_ct_async(args: argparse.Namespace) -> int:
+    """Run CT pivot — fully async, no Runner nesting."""
+    import logging
+
+    from hledac.universal.core.__main__ import run_ct_pivot
+
+    logger = logging.getLogger(__name__)
+    target: str = getattr(args, "ct_pivot", None) or ""
+
+    logger.info("[CLI] ct: delegating to core.__main__.run_ct_pivot()")
+    try:
+        await run_ct_pivot(domain=target)
+        return 0
+    except Exception as e:
+        logger.error("[CLI] ct failed: %s", e, exc_info=True)
+        return 1
+
+
+# --------------------------------------------------------------------------- #
+# Async dispatcher — P0-03: enables asyncio.to_thread for boot guard
+# --------------------------------------------------------------------------- #
+# Called from __main__.py:main() when asyncio event loop is available.
+# Boot guard runs in thread pool, parallel with command startup.
+
+
+async def dispatch_async(args: argparse.Namespace) -> int:
+    """
+    Async dispatcher — routes to async handler variants for non-blocking execution.
+
+    P0-03: Uses asyncio.to_thread() for boot-sensitive operations instead of
+    blocking the event loop. Boot guard runs in thread pool, parallel with command.
+    """
+    import asyncio
+    import logging
+
+    logger = logging.getLogger(__name__)
+    logger.debug("[CLI] dispatch_async: entering")
+
+    sub = getattr(args, "_subcommand", None)
+    sprint_target = getattr(args, "sprint", None)
+
+    if sub == "sprint":
+        return await _dispatch_sprint_async(args)
+    elif sub == "pivot":
+        return await _dispatch_pivot_async(args)
+    elif sub == "ct":
+        return await _dispatch_ct_async(args)
+    elif sprint_target is not None:
+        # Legacy flat syntax: --sprint 'query' without subcommand
+        return await _dispatch_sprint_async(args)
+    else:
+        # No subcommand and no legacy flags — show help
+        parser = build_parser()
+        parser.print_help()
+        print("\nSprint usage:")
+        print("  python -m hledac.universal sprint --sprint 'query'")
+        print("  python -m hledac.universal sprint --sprint 'LockBit ransomware' --duration 1800")
+        print()
+        print("Legacy usage (backward compatible):")
+        print("  python -m hledac.universal --sprint 'query'")
+        print()
+        print("Other commands:")
+        print("  python -m hledac.universal pivot --pivot 'ransomware CVE' --pivot-k 10")
+        print("  python -m hledac.universal ct --ct-pivot example.com")
+        return 0

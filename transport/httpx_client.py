@@ -39,6 +39,8 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
+from utils.locks import LazyAsyncioLock
+
 if TYPE_CHECKING:
     import httpx  # used only in annotations — actual import is lazy
 
@@ -105,7 +107,7 @@ def _check_httpx_h2_capability() -> bool:
 # Kept as facade for backward compatibility with existing call sites.
 
 _httpx_client_instance: httpx.AsyncClient | None = None
-_httpx_client_lock: asyncio.Lock = asyncio.Lock()
+_httpx_client_lock = LazyAsyncioLock()
 _httpx_client_closed: bool = False
 
 

@@ -19,20 +19,21 @@ Benchmark mode activates internal probe tests.
 
 from __future__ import annotations
 
-# ── PEP 744 Tier 2 JIT enablement ─────────────────────────────────────────────
-# This MUST be the very first runtime action — before ANY other module import.
-# Covers: python -m hledac.universal (direct invocation bypassing hledac/__main__.py)
-import os as _os
-import sys as _sys
-
-if not _os.environ.get("HLEDAC_NO_JIT"):
-    if hasattr(_sys, "jit") and not _sys.jit:
-        _executable = _sys.executable
-        _sys.execv(_executable, [_executable, "-X", "jit"] + _sys.argv)
-del _os, _sys  # keep namespace clean
+# ── JIT bootstrap: PYTHON_JIT=1 via [tool.uv].env in pyproject.toml ──────────
+# Python 3.14+ automatically enables JIT when PYTHON_JIT=1 env var is set.
+# No sys.execv restart — eliminates +80-120ms cold-start penalty, pytest
+# fixture duplication, PyCharm debugger breakpoint loss, and zombie processes.
+# Respects HLEDAC_NO_JIT=1 for CI/edge-case opt-out.
+#
+# Entry points:
+#   python -m hledac.universal   → root __main__.py (this file)
+#   hledac (console script)      → hledac/universal/__main__.py → root __main__.py
+# Both paths now converge here with JIT already active — no sys.execv needed.
 
 # ── Application imports ────────────────────────────────────────────────────────
 import msgspec
+import threading
+import uuid
 
 import asyncio
 import contextlib
@@ -43,7 +44,7 @@ import signal
 import sys
 import time
 import traceback
-from collections import deque
+from collections import OrderedDict, deque
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Annotated, Any
 
@@ -279,6 +280,7 @@ def _boot_record_buf_flush() -> None:
       - Fail-soft: any error silently drops the record (best-effort telemetry)
       - Bound: buffer capped at _BOOT_RECORD_BUF_MAX to prevent OOM
     """
+    global _BOOT_RECORD_BUF
     if not _BOOT_RECORD_BUF:
         return
     # Double-snapshot: atomically swap buffer, then write without lock
@@ -773,9 +775,15 @@ async def _run_public_passive_once(
         )
         # ISSUE-D2: parallel() replaces asyncio.gather
         from utils.async_helpers import parallel
-        _pr = await parallel([web_task, feed_task], policy="collect", ctx="public_passive")
+        _pr = await parallel(
+            [web_task, feed_task],
+            policy="collect",
+            ctx="public_passive",
+            names=["web", "feed"],
+        )
         _check_gathered(list(_pr.ok), None, "public_passive")
-        web_result, feed_result = (_pr.ok[0], _pr.ok[1]) if len(_pr.ok) >= 2 else (None, None)
+        web_result = _pr.by_name.get("web")
+        feed_result = _pr.by_name.get("feed")
 
         # Unpack results — handle Exception entries from return_exceptions=True
         # NOTE: isinstance() narrowing fails with BaseException & ~Exception union from
@@ -856,52 +864,54 @@ class BoundedReportCache:
     M1 8GB-safe bounded LRU cache for ObservedRunReport.
 
     Bounded: max _MAX_OBSERVED_RUN_REPORTS entries retained.
-    Zero-allocation on hit path (same-pointer return, no copy).
-    Thread-safe via asyncio.Lock for the small mutation surface.
+    True LRU: OrderedDict + move_to_end() on every access.
+    Collision-free keys: uuid.uuid4().hex (32-char string, no timestamp collisions).
+    Thread-safe via threading.Lock — safe for asyncio.to_thread callers.
+    No asyncio.Lock overhead when only sync put() is used.
     """
 
     __slots__ = ("_cache", "_lock", "_max_size")
 
     def __init__(self, max_size: int = _MAX_OBSERVED_RUN_REPORTS) -> None:
-        self._cache: dict[str, ObservedRunReport] = {}
-        self._lock: asyncio.Lock = asyncio.Lock()
+        self._cache: OrderedDict[str, ObservedRunReport] = OrderedDict()
+        self._lock: threading.Lock = threading.Lock()
         self._max_size = max_size
 
     def _evict_lru(self) -> None:
-        """Evict oldest entry when cache is full — O(1)."""
-        # Remove first inserted key (oldest)
+        """Evict least-recently-used entry when cache is full — O(1)."""
+        # OrderedDict maintains insertion order; popitem(last=False) removes oldest
         if self._cache:
-            oldest_key = next(iter(self._cache))
-            del self._cache[oldest_key]
+            self._cache.popitem(last=False)
 
     def get_last(self) -> ObservedRunReport | None:
         """Return most recent report by started_ts — alias for get_latest()."""
         return self.get_latest()
 
     def put(self, report: ObservedRunReport) -> None:
-        """Store report with timestamp key; evict LRU when at capacity."""
-        key = f"{report.started_ts:.3f}"
-        if key in self._cache:
-            return  # dedup: don't re-insert same timestamp
-        if len(self._cache) >= self._max_size:
-            self._evict_lru()
-        self._cache[key] = report
-
-    async def put_async(self, report: ObservedRunReport) -> None:
-        """Async-safe put — all mutations inside the lock guard."""
-        key = f"{report.started_ts:.3f}"
-        async with self._lock:
-            if key in self._cache:
-                return
+        """Store report with UUID key; evict LRU when at capacity."""
+        # uuid.uuid4().hex is a 32-char hex string, collision-free vs .3f timestamp
+        key = uuid.uuid4().hex
+        with self._lock:
             if len(self._cache) >= self._max_size:
                 self._evict_lru()
             self._cache[key] = report
+            self._cache.move_to_end(key)
+
+    async def put_async(self, report: ObservedRunReport) -> None:
+        """Async-safe put — runs sync put() in a thread to reuse threading.Lock."""
+        await asyncio.to_thread(self.put, report)
 
     def get_latest(self) -> ObservedRunReport | None:
         """Return most recent report by started_ts — O(n) scan, call sparingly."""
         if not self._cache:
             return None
-        return max(self._cache.values(), key=lambda r: r.started_ts)
+        result = max(self._cache.values(), key=lambda r: r.started_ts)
+        # touch LRU: move accessed entry to end so it won't be evicted next
+        for k, v in self._cache.items():
+            if v is result:
+                self._cache.move_to_end(k)
+                break
+        return result
 
 
 # Sprint 8BA C.0: Runtime truth fields (recorded before/after live run)
@@ -1146,29 +1156,47 @@ def _compute_recommended_next_sprint(
     matched_feed_names: tuple[str, ...],
     accepted_feed_names: tuple[str, ...],
     is_network_variance: bool,
+    feed_content_mismatch: bool = False,
+    low_information_rejected_count_delta: int = 0,
+    in_memory_duplicate_rejected_count_delta: int = 0,
+    persistent_duplicate_rejected_count_delta: int = 0,
 ) -> str:
     """
     Map live run result to recommended next sprint tag.
 
-    C.6 mapping rules:
-    - accepted_present              -> "8BK_scheduler_entry_hash_v1"
-    - total_pattern_hits>0 and accepted=0 and duplicate dominates -> "8BK_scheduler_entry_hash_v1"
-    - total_pattern_hits>0 and accepted=0 and low_info dominates -> "8BL_quality_profile_rss"
-    - total_pattern_hits=0 and teaser_only_content              -> "8BM_article_fallback_v2"
-    - total_pattern_hits=0 and temporal_feed_vocabulary_mismatch -> "8BN_feed_source_expansion"
-    - total_pattern_hits=0 and pattern_pack_vocabulary_gap        -> "8BO_pattern_pack_v3_security_vocabulary"
-    - network_variance                                            -> "repeat_live_run_no_code_change"
+    C.6 enhanced mapping rules:
+    - accepted_present                                          -> "8BK_scheduler_entry_hash_v1"
+    - total_pattern_hits>0, accepted=0, duplicate dominates       -> "8BK_scheduler_entry_hash_v1"
+    - total_pattern_hits>0, accepted=0, low_info dominates      -> "8BL_quality_profile_rss"
+    - total_pattern_hits=0, teaser_only_content                 -> "8BM_article_fallback_v2"
+    - total_pattern_hits=0, temporal/pack gap                   -> "8BN_feed_source_expansion"
+    - network_variance                                          -> "repeat_live_run_no_code_change"
+
+    Dominance = largest delta among the three rejection categories.
+    Cannot distinguish temporal_mismatch from pattern_pack_gap without
+    enriched text analysis — both route to 8BN.
     """
     if is_network_variance:
         return "repeat_live_run_no_code_change"
-    if accepted_count_delta > 0:
+    if accepted_count_delta > 0 or accepted_feed_names:
+        # accepted_present: any accepted findings (new delta or existing names)
         return "8BK_scheduler_entry_hash_v1"
     if total_pattern_hits > 0:
         # hits exist but no accepted — check rejection dominance
-        return "8BK_scheduler_entry_hash_v1"
+        dup_delta = in_memory_duplicate_rejected_count_delta + persistent_duplicate_rejected_count_delta
+        loinfo_delta = low_information_rejected_count_delta
+        if dup_delta >= loinfo_delta:
+            # duplicate dominates or tied → scheduler entry hash
+            return "8BK_scheduler_entry_hash_v1"
+        else:
+            # low_info dominates → quality profile
+            return "8BL_quality_profile_rss"
     # total_pattern_hits == 0
-    # We can't definitively distinguish teaser_only/temporal/pack gap from here
-    # without sample_enriched_texts analysis, so we default to feed expansion
+    # Distinguish teaser_only vs temporal/pack gap via feed_content_mismatch
+    if feed_content_mismatch and matched_feed_names:
+        # Feed provided content but it doesn't match patterns → article fallback
+        return "8BM_article_fallback_v2"
+    # temporal mismatch or pattern pack vocabulary gap — default to feed expansion
     return "8BN_feed_source_expansion"
 
 
@@ -1476,7 +1504,7 @@ _sprint_frontier_stopped: bool = False
 _phase_times: deque[tuple[str, float]] = deque(maxlen=256)
 
 # Sprint F204E: Analyst brief for markdown export (set after scheduler.run completes)
-_analyst_brief_for_markdown: dict[str, Any] | None = None
+_analyst_brief_for_markdown: str | None = None
 
 
 def _mark_phase(name: str) -> None:
@@ -1542,233 +1570,60 @@ async def _print_scorecard_report(
     sprint_report: Any = None,
 ) -> None:
     """
-    Sprint 8TA B.3: Compute and print sprint scorecard.
-    ISSUE #36 FIX: Parallel metric collection via asyncio.gather.
+    Sprint P2-01: ScorecardBuilder refaktorace.
+    Přímá delegace na telemetry/scorecard.py::ScorecardBuilder místo 11-fázové špagety.
 
-    Called at the end of EXPORT phase.
-    - findings_per_minute = accepted / (elapsed / 60)
-    - ioc_density = ioc_nodes / max(1, accepted)
-    - semantic_novelty: 1.0 fallback (no SemanticStore available)
-    - source_yield: dict {source_type: count} from per-source counter
-    - ghost_global: upsert top IOC entities
+    Phase structure:
+      Phase 1 (collect):  5 paralelních I/O úloh v asyncio.TaskGroup
+      Phase 2 (persist):  DuckDB writes + markdown export paralelně
+      Print:              Console output mezi Phase 1 a Phase 2
+      ExportHandoff:      Canonical path (unaffected, stays here)
 
-    ACTUAL PHASE STRUCTURE (ISSUE #36):
-      Phase 1 (parallel): asyncio.gather over 5× asyncio.to_thread (dedup, arrow, cb, RSS, ghost)
-      Phase 2 (print):    console output, depends on Phase 1
-      Phase 3 (sequential): create duckdb_write_tasks (no await yet — fire-and-forget)
-      Phase 4 (hybrid):   _export_markdown_report (sequential, needs scorecard_data)
-                           THEN _ghost_global_and_wait (parallel: ghost_global + await duckdb writes)
-      NOTE: _check_gathered for duckdb writes lives inside Phase 4 (_ghost_global_and_wait),
-            so Phase 3 is task-creation only — no separate gather measurement for it.
+    Žádné nested closures, žádný enclosing-scope race, plně testovatelné.
     """
-    import resource as _resource
+    # Lazy import – ScorecardBuilder pouze když je scorecard aktivní
+    from hledac.universal.runtime.scorecard import ScorecardBuilder
 
-    # ISSUE-039: Lazy-load Rust json for hot-path serialization (scorecard, telemetry).
-    # Prefers rust.json.dumps_compact_bytes (SIMD-accelerated), falls back to orjson.
-    def _json_compact(data: dict) -> str:
-        try:
-            from core.rust_backend import get_accel
-            accel = get_accel()
-            if accel.is_available:
-                result = accel.json.dumps_compact_bytes(data)
-                if result:
-                    return result.decode("utf-8")
-        except Exception:
-            pass
-        import orjson
-        return orjson.dumps(data).decode()
-
-    # Get sprint duration from lifecycle
+    # Compute phase timings
     sprint_id = f"sprint_{int(time.time())}"
-    ts = time.time()
-
-    # Compute phase timings dict
     phase_timings: dict[str, float] = {}
     if _phase_times:
         sorted_phases = sorted(_phase_times, key=lambda x: x[1])
         for i, (name, start) in enumerate(sorted_phases):
-            if i + 1 < len(sorted_phases):
-                end = sorted_phases[i + 1][1]
-                phase_timings[name] = round(end - start, 3)
-            else:
-                phase_timings[name] = 0.0
+            end = sorted_phases[i + 1][1] if i + 1 < len(sorted_phases) else start
+            phase_timings[name] = round(end - start, 3)
 
-    # Estimate elapsed from phase timings
-    elapsed = sum(phase_timings.values()) if phase_timings else 0.0
+    # Phase 1: collect metrics via ScorecardBuilder
+    builder = ScorecardBuilder(
+        store=store,
+        sprint_report=sprint_report,
+        target=target,
+        phase_timings=phase_timings,
+        sprint_id=sprint_id,
+        analyst_brief=_analyst_brief_for_markdown,
+    )
 
-    # Phase 1: Parallel metric collection via asyncio.gather
-    # ISSUE #36: All sync blocking I/O runs in thread pool to avoid event-loop blocking.
-    # Circuit breaker uses threading.Lock (thread-safe per PMB rule [3205]).
+    result = await builder.collect()
+    scorecard_data = builder.build_data(result)
 
-    def _sync_get_dedup(sprint_rep: Any = None) -> tuple[int, int, dict[str, int]]:
-        """
-        Thread-pool worker: fetch dedup runtime status from DuckDB.
-
-        ISSUE #36-C FIX: source_yield derived from sprint_report.findings
-        (per-source accepted count), avoiding the need for store-side tracking.
-        """
-        accepted_val, ioc_val = 0, 0
-        source_yield_val: dict[str, int] = {}
-        # ISSUE #36-C: source_yield from sprint_report.findings (sprint_report is
-        # available in enclosing scope — pass explicitly so the closure is clear).
-        if sprint_rep is not None:
-            try:
-                findings_iterable = sprint_rep.findings if hasattr(sprint_rep, "findings") else None
-                if findings_iterable:
-                    for f in findings_iterable:
-                        src = getattr(f, "source_type", None) or "unknown"
-                        source_yield_val[src] = source_yield_val.get(src, 0) + 1
-            except (AttributeError, TypeError, RuntimeError):
-                pass
-        # Fallback: accepted_count from store if sprint_report not populated yet
-        if store is not None and hasattr(store, "get_dedup_runtime_status"):
-            try:
-                dedup = store.get_dedup_runtime_status()
-                # Use store accepted_count only if sprint_report gave no source_yield
-                if not source_yield_val:
-                    accepted_val = dedup.get("accepted_count", 0)
-            except (AttributeError, RuntimeError):
-                pass
-        return accepted_val, ioc_val, source_yield_val
-
-    def _sync_get_arrow_metrics() -> dict:
-        """Thread-pool worker: fetch arrow metrics from store attribute or module func."""
-        arrow_val: dict = {}
-        if store is not None and hasattr(store, "_arrow_metrics"):
-            try:
-                arrow_val = store._arrow_metrics  # type: ignore[union-attr]
-            except (AttributeError, TypeError):
-                pass
-        elif store is not None and hasattr(store, "get_arrow_metrics"):
-            try:
-                from hledac.universal.knowledge.duckdb_store import get_arrow_metrics
-                arrow_val = get_arrow_metrics()
-            except (ImportError, AttributeError):
-                pass
-        return arrow_val
-
-    def _sync_get_cb_states() -> dict[str, str]:
-        """Thread-pool worker: fetch circuit breaker states (thread-safe via Lock)."""
-        cb_states: dict[str, str] = {}
-        try:
-            from transport.circuit_breaker import get_all_breaker_states
-            cb_states = get_all_breaker_states()
-        except (ImportError, AttributeError):
-            pass
-        return cb_states
-
-    def _sync_get_peak_rss() -> float:
-        """Thread-pool worker: compute peak RSS (sync resource call)."""
-        rss_bytes = _resource.getrusage(_resource.RUSAGE_SELF).ru_maxrss
-        # macOS: ru_maxrss is in bytes (not KB like on Linux)
-        return round(rss_bytes / 1024 / 1024, 1)
-
-    def _sync_get_ghost_entities() -> list:
-        """Thread-pool worker: fetch top entities for ghost_global from DuckDB."""
-        entities: list = []
-        if store is not None and hasattr(store, "get_top_entities_for_ghost_global"):
-            try:
-                entities = store.get_top_entities_for_ghost_global(n=100)
-            except (AttributeError, RuntimeError, OSError):
-                pass
-        return entities
-
-    # Issue #36: P4-1: asyncio.gather → parallel() with TaskGroup.
-    # Each _sync_* wrapped in asyncio.to_thread() (thread pool, not blocking event loop).
-    from utils.async_helpers import parallel
-    phase1_coros = [
-        asyncio.to_thread(lambda: _sync_get_dedup(sprint_report)),
-        asyncio.to_thread(_sync_get_arrow_metrics),
-        asyncio.to_thread(_sync_get_cb_states),
-        asyncio.to_thread(_sync_get_peak_rss),
-        asyncio.to_thread(_sync_get_ghost_entities),
-    ]
-    phase1_result = await parallel(phase1_coros, policy="log", ctx="scorecard_phase1")
-    _check_gathered(list(phase1_result.ok), None, "scorecard_phase1")
-
-    # Unpack results with fallback defaults
-    dedup_result, arrow_metrics_result, cb_open_domains, peak_rss_mb, ghost_entities = phase1_result.ok
-
-    if isinstance(dedup_result, Exception):
-        accepted, ioc_nodes, source_yield = 0, 0, {}
-    elif isinstance(dedup_result, tuple) and len(dedup_result) == 3:
-        accepted, ioc_nodes, source_yield = dedup_result
-    else:
-        accepted, ioc_nodes, source_yield = 0, 0, {}
-
-    if isinstance(arrow_metrics_result, Exception):
-        arrow_metrics_result = {}
-    if isinstance(cb_open_domains, Exception):
-        cb_open_domains = []
-    if isinstance(peak_rss_mb, Exception):
-        peak_rss_mb = 0.0
-    if isinstance(ghost_entities, Exception):
-        ghost_entities = []
-
-    outlines_used = False
-    semantic_novelty = 1.0  # fallback when SemanticStore unavailable
-
-    # Calculate derived metrics
-    findings_per_minute = accepted / max(1, elapsed / 60.0) if elapsed > 0 else 0.0
-    ioc_density = ioc_nodes / max(1, accepted) if accepted > 0 else 0.0
-
-    scorecard_data = {
-        "sprint_id": sprint_id,
-        "ts": ts,
-        "findings_per_minute": round(findings_per_minute, 3),
-        "ioc_density": round(ioc_density, 3),
-        "semantic_novelty": semantic_novelty,
-        "source_yield_json": _json_compact(source_yield or {}),
-        "phase_timings_json": _json_compact(phase_timings),
-        "outlines_used": outlines_used,
-        "accepted_findings": accepted,
-        "ioc_nodes": ioc_nodes,
-        "synthesis_engine": "unknown",
-        # Sprint 8VD §F: Extended scorecard
-        "accepted_findings_count": accepted,
-        "synthesis_engine_used": "unknown",
-        "phase_duration_seconds": phase_timings,
-        "cb_open_domains": cb_open_domains or [],
-        # Sprint F265C: Arrow ingest telemetry — surfaces _ARROW_METRICS in scorecard
-        "arrow_metrics": arrow_metrics_result or {},
-        "peak_rss_mb": peak_rss_mb,
-    }
-
-    # Sprint F204E: Attach analyst brief to scorecard for markdown export
-    if _analyst_brief_for_markdown:
-        scorecard_data["analyst_brief"] = _analyst_brief_for_markdown
-
-    # Sprint F232C: Build and attach investigation_packet for markdown analyst brief
-    try:
-        from hledac.universal.export.sprint_exporter import _build_investigation_packet
-
-        if sprint_report and isinstance(sprint_report, dict):
-            scorecard_data["investigation_packet"] = _build_investigation_packet(sprint_report)
-        elif sprint_report is not None and hasattr(sprint_report, "__dict__"):
-            scorecard_data["investigation_packet"] = _build_investigation_packet(sprint_report.__dict__)
-    except (ImportError, AttributeError):
-        pass
-
-    # Phase 2: Print structured report (depends on Phase 1 completion)
+    # Phase 2 print (depends on Phase 1)
+    elapsed = result.elapsed
     print("\n" + "=" * 60)
     print("SPRINT 8VD SCORECARD")
     print("=" * 60)
     print(f"  Sprint ID:       {sprint_id}")
     print(f"  Target:           {target[:60]}")
     print(f"  Elapsed:          {elapsed:.1f}s")
-    print(f"  Accepted:         {accepted}")
-    print(f"  Findings/min:     {findings_per_minute:.2f}")
-    print(f"  IOC density:      {ioc_density:.3f}")
-    print(f"  Semantic novelty: {semantic_novelty:.3f}")
-    print(f"  Outlines used:    {outlines_used}")
-    print(f"  Peak RSS (MB):    {peak_rss_mb:.1f}")
+    print(f"  Accepted:         {result.accepted}")
+    print(f"  Findings/min:     {result.findings_per_minute:.2f}")
+    print(f"  IOC density:      {result.ioc_density:.3f}")
+    print(f"  Semantic novelty: {result.semantic_novelty:.3f}")
+    print(f"  Outlines used:    {result.outlines_used}")
+    print(f"  Peak RSS (MB):    {result.peak_rss_mb:.1f}")
     print(f"  Phase timings:    {phase_timings}")
-    # Sprint F265C: Show Arrow ingest metrics in sprint output
-    arrow_m = scorecard_data.get("arrow_metrics", {})
-    if (
-        arrow_m
-        and isinstance(arrow_m, dict)
-        and any((v or 0) > 0 for v in arrow_m.values() if isinstance(v, (int, float)))
+    arrow_m = result.arrow_metrics
+    if arrow_m and isinstance(arrow_m, dict) and any(
+        (v or 0) > 0 for v in arrow_m.values() if isinstance(v, (int, float))
     ):
         arrow_sel = arrow_m.get("arrow_selected", 0)
         arrow_ok = arrow_m.get("arrow_success_count", 0)
@@ -1778,127 +1633,18 @@ async def _print_scorecard_report(
             print(f"  Arrow fallback:   {arrow_fb}")
     print("=" * 60 + "\n")
 
-    # Phase 3: Parallel DuckDB writes via asyncio.gather
-    # ISSUE #36: upsert_scorecard + upsert_episode run concurrently.
-    # ISSUE #36 helpers — fail-safe async wrappers with try/except per duckdb contract.
-    async def _safe_upsert_scorecard(
-        _store: Any, _data: dict, _sid: str
-    ) -> None:
-        """Fail-safe upsert_scorecard: logs warning on error, never raises."""
-        try:
-            await _store.upsert_scorecard(_data)
-        except (RuntimeError, OSError) as e:
-            logger.warning("scorecard_persist_failed", error=str(e))
-
-    async def _safe_upsert_episode(
-        _store: Any, _sid: str, _target: str, _sprint_report: Any, _scorecard: dict, _elapsed: float
-    ) -> None:
-        """Fail-safe upsert_episode: logs warning on error, never raises."""
-        import time as _t
-        try:
-            _top_findings_list: list[str] = []
-            if _sprint_report is not None and hasattr(_sprint_report, "findings"):
-                _top_findings_list = [
-                    f.content if hasattr(f, "content") else str(f)
-                    for f in (_sprint_report.findings or [])[:5]
-                ]
-            await _store.upsert_episode({
-                "sprint_id": _sid,
-                "query": _target,
-                "summary": (
-                    _sprint_report.threat_summary
-                    if _sprint_report and hasattr(_sprint_report, "threat_summary")
-                    else ""
-                ),
-                "top_findings": _top_findings_list,
-                "ioc_clusters": [],
-                "source_yield": _scorecard.get("source_yield_json", "{}"),
-                "synthesis_engine": _scorecard.get("synthesis_engine", "unknown"),
-                "duration_s": _elapsed,
-                "ts": _t.time(),
-            })
-            logger.info("research_episode_saved", sprint_id=_sid)
-        except (RuntimeError, OSError) as e:
-            logger.warning("scorecard_persist_episode_failed", error=str(e))
-
-    # ISSUE E3: DuckDB write task creation moved BEFORE markdown export.
-    # Tasks are created early (fire-and-forget) — no await yet.
-    duckdb_write_tasks: list[asyncio.Task] = []
-    store_has_upsert_scorecard = store is not None and hasattr(store, "upsert_scorecard")
-    store_has_upsert_episode = store is not None and hasattr(store, "upsert_episode")
-
-    if store_has_upsert_scorecard:
-        duckdb_write_tasks.append(
-            asyncio.create_task(_safe_upsert_scorecard(store, scorecard_data, sprint_id))
-        )
-    if store_has_upsert_episode:
-        duckdb_write_tasks.append(
-            asyncio.create_task(_safe_upsert_episode(store, sprint_id, target, sprint_report, scorecard_data, elapsed))
-        )
-
-    # ISSUE E3: Phase 3+4 PARALLEL via asyncio.gather.
-    # _export_markdown_report runs in thread pool (sync file I/O).
-    # _ghost_global_and_wait runs immediately (async, awaits duckdb_write_tasks in parallel).
-    # Net effect: ~100ms instead of ~200ms sequential.
-    async def _ghost_global_and_wait() -> None:
-        """Upsert ghost entities in thread pool; await parallel DuckDB writes with timeout."""
-        if (
-            store is not None
-            and hasattr(store, "get_top_entities_for_ghost_global")
-            and hasattr(store, "upsert_global_entities")
-            and ghost_entities
-        ):
-            try:
-                n_upserted = await store.upsert_global_entities(ghost_entities)
-                logger.info("ghost_global_entities_upserted", count=n_upserted)
-            except (AttributeError, RuntimeError, OSError):
-                pass
-        # Await all parallel DuckDB writes with bounded timeout (fail-safe)
-        if duckdb_write_tasks:  # skipped only when both upsert_scorecard + upsert_episode are absent
-            from utils.async_helpers import parallel
-            # parallel() replaces deprecated bounded_gather; same return_exceptions semantics
-            phase3_result = await parallel(
-                list(duckdb_write_tasks),
-                policy="collect",
-                ctx="scorecard_phase3_duckdb",
-            )
-            _check_gathered(list(phase3_result.ok), None, "scorecard_phase3_duckdb")
-
-    # Sprint 8TC B.4 + ISSUE E3: Markdown export + ghost run in PARALLEL.
-    # If markdown export fails, duckdb_write_tasks already exist (fire-and-forget fail-safe
-    # is preserved — ghost_global_and_wait has no dependency on markdown success).
-    md_path, _ = await asyncio.gather(
-        asyncio.to_thread(_export_markdown_report, sprint_report, scorecard_data, sprint_id),
-        _ghost_global_and_wait(),
+    # Phase 3: persist (DuckDB writes + markdown export in parallel)
+    md_path = await builder.persist(
+        export_fn=_export_markdown_report,
+        sprint_report=sprint_report,
     )
     print(f"Report saved: {md_path}")
 
-    # Sprint 8VZ §B: FIRST producer-side cutover — canonical path constructs
-    # ExportHandoff(...) directly. scorecard_data is kept for persistence and
-    # markdown (duckdb upsert, _export_markdown_report), but is NO LONGER the
-    # canonical source for top_nodes in the export handoff.
-    #
-    # CANONICAL PRODUCER TRUTH (post-8VZ):
-    #   ExportHandoff(...) — constructed directly at producer side
-    #   top_nodes sourced from store.get_top_seed_nodes() (store-facing seam)
-    #
-    # COMPAT LEFTOVERS (kept for backward compat / other consumers):
-    #   scorecard_data dict — still persisted to DuckDB, still used by markdown
-    #   from_windup(scorecard) — COMPAT ONLY, used only by legacy call-sites
-    #
-    # REMOVAL CONDITIONS SHORTENED by this cutover:
-    #   - from_windup(scorecard) now explicitly compat-only — __main__ uses direct ctor
-    #   - Two-chained-seams gone: no more windup dict → scorecard dict → ExportHandoff
-    #   - scorecard["top_graph_nodes"] no longer the canonical top_nodes source
-    #
-    # Graph fallback (store.get_top_seed_nodes) is ACCEPTED COMPAT SEAM.
-    # REMOVAL CONDITION: ExportHandoff.top_nodes always populated in all windup paths.
+    # Sprint 8VZ §B: Canonical ExportHandoff path (unchanged)
     try:
         from export.sprint_exporter import export_sprint as _export_sprint
         from hledac.universal.project_types import ExportHandoff
 
-        # Sprint 8VZ §B: Construct typed handoff directly — canonical producer truth
-        # top_nodes from store seam (DuckPGQGraph-backed store.get_top_seed_nodes)
         _top_nodes: list = []
         if store is not None:
             try:
@@ -1909,7 +1655,7 @@ async def _print_scorecard_report(
 
         handoff = ExportHandoff(
             sprint_id=sprint_id,
-            scorecard=scorecard_data,
+            scorecard=builder._scorecard_data_to_dict(scorecard_data),
             top_nodes=_top_nodes,
             phase_durations=phase_timings,
         )
@@ -2055,15 +1801,19 @@ def _fatal(exc: BaseException, code: int = 1) -> None:
 
 def main() -> None:
     """
-    Synchronous CLI entry point — delegates to cli.parser.dispatch().
+    Synchronous CLI entry point — delegates to cli.parser.dispatch_async().
 
     Boot flow:
         1. Pre-boot: dotenv, logging, setproctitle, OPSEC guard
         2. Parse args via cli.parser.build_parser()
         3. --list-presets short-circuit
         4. --preset application + flag validation
-        5. LMDB boot guard
-        6. dispatch() → subcommand handler (sprint | pivot | ct)
+        5. LMDB boot guard (sequential, before event loop)
+        6. asyncio.Runner() → dispatch_async() → async subcommand handler (sprint | pivot | ct)
+
+    P0-03: Boot guard runs sequential in main() (before Runner) to ensure
+    BootGuardError aborts before event loop creation. Command execution is
+    fully async via dispatch_async() to avoid blocking the event loop.
     """
     # F265ENV: Load .env file before any ENV access
     load_dotenv()
@@ -2167,9 +1917,14 @@ def main() -> None:
         logger.warning("boot_guard_error", error=str(e))
         _boot_record_sync("boot_guard_sync", "error_soft", error=str(e))
 
-    # Dispatch to subcommand handler
+    # P0-03: Dispatch via async path — enables asyncio.to_thread for boot guard
+    # Import here to avoid circular deps
     try:
-        code = dispatch(args)
+        from hledac.universal.cli.parser import dispatch_async
+        import asyncio
+
+        with asyncio.Runner() as runner:
+            code = runner.run(dispatch_async(args))
         sys.exit(code)
     except (NameError, AttributeError, ImportError) as e:
         _fatal(e, code=3)

@@ -20,7 +20,7 @@ import asyncio
 import logging
 import os
 import time
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 from hledac.universal.utils.async_helpers import safe_gather_ok
 from hledac.universal.utils.encoding import decode_response_bytes
@@ -127,11 +127,16 @@ async def _fetch_from_ipfs(
 
             findings: list[CanonicalFinding] = []
 
-            for cid in cids[:10]:  # Cap results
-                async with asyncio.timeout(IPFS_TIMEOUT):
-                    content = await ipfs.fetch_ipfs(cid)
-                if content:
-                    finding = CanonicalFinding(
+            # P1-02: Parallelizace IPFS fetch — 10 CIDs paralelně místo sekvenčně
+            from utils.async_helpers import parallel
+
+            async def _fetch_one_cid(cid: str) -> CanonicalFinding | None:
+                try:
+                    async with asyncio.timeout(IPFS_TIMEOUT):
+                        content = await ipfs.fetch_ipfs(cid)
+                    if not content:
+                        return None
+                    return CanonicalFinding(
                         finding_id=f"ipfs-alt-{cid[:12]}-{int(time.time() * 1000)}",
                         query=query,
                         source_type=SourceType.IPFS_CONTENT,
@@ -142,7 +147,12 @@ async def _fetch_from_ipfs(
                         if isinstance(content, bytes)
                         else str(content)[:4096],
                     )
-                    findings.append(finding)
+                except Exception:
+                    return None
+
+            # P1-02: Parallel fetch CIDs — cap 10, concurrency=5 for M1 safety
+            results = await parallel([_fetch_one_cid(cid) for cid in cids[:10]], policy="log", concurrency=5, ctx="alt_protocol:ipfs_fetch")
+            findings = [r for r in results if r is not None]
 
             return findings, AltProtocolResult(
                 source_type=SourceType.IPFS_CONTENT,
@@ -324,6 +334,7 @@ async def _fetch_from_matrix(
         (list[CanonicalFinding], AltProtocolResult)
     """
     from knowledge.duckdb_store import CanonicalFinding
+    from hledac.universal.utils.async_helpers import parallel
 
     matrix = _get_matrix_adapter()
 
@@ -336,23 +347,38 @@ async def _fetch_from_matrix(
                     rooms = await adapter.search_public_rooms(query, limit=5)
 
                 findings: list[CanonicalFinding] = []
-                for room in rooms[:3]:  # Top 3 rooms
-                    async with asyncio.timeout(MATRIX_TIMEOUT):
-                        messages = await adapter.get_room_messages(room.room_id, limit=50)
 
-                    for msg in messages[:10]:  # Cap per room
-                        content = msg.get("content", {}).get("body", "")
+                # P1-02: Parallelizace — 3 rooms paralelně místo sekvenčně
+                async def _fetch_room_messages(room: Any) -> list[CanonicalFinding]:
+                    """Fetch messages from one Matrix room."""
+                    try:
+                        async with asyncio.timeout(MATRIX_TIMEOUT):
+                            messages = await adapter.get_room_messages(room.room_id, limit=50)
+                        room_findings = []
+                        for msg in messages[:10]:  # Cap per room
+                            content = msg.get("content", {}).get("body", "")
+                            room_findings.append(CanonicalFinding(
+                                finding_id=f"matrix-{msg.get('event_id', int(time.time() * 1000))}",
+                                query=query,
+                                source_type=SourceType.MATRIX_PUBLIC,
+                                confidence=0.5,
+                                ts=msg.get("origin_server_ts", time.time()) / 1000,
+                                provenance=(f"https://matrix.to/#/{room.room_id}",),
+                                payload_text=content[:4096],
+                            ))
+                        return room_findings
+                    except Exception:
+                        return []
 
-                        finding = CanonicalFinding(
-                            finding_id=f"matrix-{msg.get('event_id', int(time.time() * 1000))}",
-                            query=query,
-                            source_type=SourceType.MATRIX_PUBLIC,
-                            confidence=0.5,
-                            ts=msg.get("origin_server_ts", time.time()) / 1000,
-                            provenance=(f"https://matrix.to/#/{room.room_id}",),
-                            payload_text=content[:4096],
-                        )
-                        findings.append(finding)
+                # P1-02: Parallel fetch — concurrency=3 (only 3 rooms)
+                results = await parallel(
+                    [_fetch_room_messages(room) for room in rooms[:3]],
+                    policy="collect",
+                    concurrency=3,
+                    ctx="alt_protocol:matrix_fetch_rooms"
+                )
+                for room_findings in results.ok:
+                    findings.extend(room_findings)
 
                 return findings, AltProtocolResult(
                     source_type=SourceType.MATRIX_PUBLIC,

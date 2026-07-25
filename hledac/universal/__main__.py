@@ -2,49 +2,41 @@
 Hledac Universal - Package __main__ Shim
 =======================================
 
-PEP 744 Tier 2 JIT self-restart bridge.
+Console-script entry point bridge.
 
-When invoked via the console script entry point:
+When invoked via the `hledac` console script (pyproject.toml [project.scripts]):
     hledac --sprint "query"
         ↓
-    python -m hledac.universal          ← python -m path
-        ↓
     hledac.universal.__main__.main()   ← THIS file (package __main__.py)
+        ↓
+    root __main__.py → main()           ← delegates to root
 
-Problem: python -m hledac.universal loads hledac/universal/__main__.py
-as __main__, not the root __main__.py. The root __main__.py has PEP 744
-JIT guard under `if __name__ == "__main__"` — that guard is SKIPPED
-when this file is loaded as the package __main__, because the entry
-is a direct call to main(), not a script execution.
+When invoked via `python -m hledac.universal`:
+    python -m hledac.universal
+        ↓
+    root __main__.py → main()           ← direct, bypasses this shim
 
-Fix: This file holds the PEP 744 guard as its FIRST action (module-level,
-before any other imports), then delegates to the root main().
-
-Usage:
-    python -m hledac.universal --sprint "query"
-    hledac --sprint "query"           ← console script → this file
+JIT: Python 3.14+ auto-enables JIT via PYTHON_JIT=1 in [tool.uv].env.
+No sys.execv restart needed — eliminates cold-start penalty, pytest fixture
+duplication, PyCharm debugger issues, and KeyboardInterrupt zombie processes.
 """
 
-# ── PEP 744 Tier 2 JIT enablement ─────────────────────────────────────────────
-# This MUST be the very first runtime action — before ANY other module import.
-import os as _os
-import sys as _sys
-
-if not _os.environ.get("HLEDAC_NO_JIT"):
-    if hasattr(_sys, "jit") and not _sys.jit:
-        _executable = _sys.executable
-        _sys.execv(_executable, [_executable, "-X", "jit"] + _sys.argv)
+# ── JIT bootstrap: PYTHON_JIT=1 via [tool.uv].env in pyproject.toml ──────────
+# Python 3.14+ automatically enables JIT when PYTHON_JIT=1 env var is set.
+# No sys.execv restart needed — eliminates +80-120ms cold-start penalty,
+# pytest fixture duplication, PyCharm debugger issues, and zombie processes.
+# HLEDAC_NO_JIT=1 still respected as opt-out for CI/edge cases.
+#
+# Canonical entry: `hledac` console script → this file → root __main__.py
+# The root __main__.py holds all real bootstrap logic (dotenv, logging,
+# LMDB boot guard, CLI dispatch).
 
 # ── Delegate to the canonical root main ─────────────────────────────────────────
-# The root __main__.py holds all the real bootstrap logic (dotenv, logging,
-# LMDB boot guard, CLI dispatch). This file only exists to bridge the
-# console-script → PEP 744 gap.
 # NOTE: cannot use `from hledac.universal.__main__` — that resolves to THIS
 # file (circular). Use runpy to load the root __main__.py by file path.
-import runpy as _runpy
 import pathlib as _pathlib
+import runpy as _runpy
 
 _root_main = _pathlib.Path(__file__).resolve().parent.parent.parent / "__main__.py"
 _main_mod = _runpy.run_path(str(_root_main), run_name="__hledac_main__")
-_main = _main_mod["main"]
-_main()
+_main_mod["main"]()

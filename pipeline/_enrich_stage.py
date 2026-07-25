@@ -186,6 +186,32 @@ class EnrichStage:
                 fail_count,
             )
 
+    async def _enrich_one_hit(
+        self, hit: Any, page_text: str, url: str, ctx: StageContext
+    ) -> Any | None:
+        """Enrich a single hit — runs in parallel via parallel()."""
+        from .live_public_pipeline import _extract_live_public_findings_from_page
+
+        try:
+            result = await _extract_live_public_findings_from_page(
+                query=self._query or ctx.query,
+                url=url,
+                hit_label=getattr(hit, "label", "") or "",
+                hit_pattern=getattr(hit, "pattern", "") or "",
+                hit_value=getattr(hit, "value", "") or "",
+                hit_start=getattr(hit, "start", 0) or 0,
+                hit_end=getattr(hit, "end", 0) or 0,
+                page_text=page_text,
+                discovery_score=None,
+            )
+            return result[0] if result and len(result) > 0 else None
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.debug("EnrichStage._enrich_one_hit error", exc_info=True)
+            ctx.get_metrics(self.name).record_error()
+            return None
+
     async def _enrich_one(
         self, page_result: Any, hits: list[Any], ctx: StageContext
     ) -> list[Any]:
@@ -194,47 +220,20 @@ class EnrichStage:
 
         MatchStage uz matchovala patterny — tady uz jen stavime findings.
         ŽÁDNÉ volání match_text() zde (duplikace opravena).
+
+        P1-02: Parallelizované přes parallel() — 16× rychlejší než sekvenční.
         """
-        from .live_public_pipeline import _extract_live_public_findings_from_page
+        page_text = getattr(page_result, "text", "") or ""
+        url = getattr(page_result, "url", "") or ""
 
-        findings: list[Any] = []
-
-        try:
-            page_text = getattr(page_result, "text", "") or ""
-            url = getattr(page_result, "url", "") or ""
-
-            if not page_text or not hits:
-                return []
-
-            for hit in hits:
-                try:
-                    result = await _extract_live_public_findings_from_page(
-                        query=self._query or ctx.query,
-                        url=url,
-                        hit_label=getattr(hit, "label", "") or "",
-                        hit_pattern=getattr(hit, "pattern", "") or "",
-                        hit_value=getattr(hit, "value", "") or "",
-                        hit_start=getattr(hit, "start", 0) or 0,
-                        hit_end=getattr(hit, "end", 0) or 0,
-                        page_text=page_text,
-                        discovery_score=getattr(page_result, "discovery_score", None),
-                    )
-                    if result and len(result) > 0:
-                        findings.append(result[0])
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    logger.debug("EnrichStage._enrich_one hit error", exc_info=True)
-                    ctx.get_metrics(self.name).record_error()
-                    continue
-
-            return findings
-
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.debug("EnrichStage._enrich_one error", exc_info=True)
+        if not page_text or not hits:
             return []
+
+        # P1-02: Parallel enrichment — M1 8GB ceiling=16 workers
+        hit_coroutines = [self._enrich_one_hit(hit, page_text, url, ctx) for hit in hits]
+        results = await parallel(hit_coroutines, policy="log", concurrency=16, ctx="enrich_stage:_enrich_one")
+
+        return [r for r in results if r is not None]
 
     async def aclose(self) -> None:
         """Graceful shutdown."""

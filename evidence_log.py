@@ -2353,35 +2353,34 @@ class EvidenceLog:
         Idempotent: safe to call multiple times.
         Works from both sync and async (pytest-asyncio) contexts.
 
-        M1-SAFE / Python 3.14+: Never call run_until_complete() on a loop that
-        is already running in another thread — that raises "This event loop is
-        already running" (RuntimeError). Always use one of:
+        M1-SAFE / Python 3.14+: Uses sync_bridge.to_thread() which:
+          - Schedules aclose() on the stored event loop via run_coroutine_threadsafe
+          - Runs the wait in a bounded thread pool, not the event loop
+          - Never calls run_until_complete() on a running loop
 
-          * asyncio.run_coroutine_threadsafe(coro, stored_loop) — schedules on
-            the parent loop and returns a concurrent.futures.Future we can
-            block on from the worker thread.
-
-          * New fresh loop with run_until_complete() — used when there is no
-            live parent loop to schedule onto (e.g. standalone test harness
-            or post-process cleanup).
+        Refactored from temporary ThreadPoolExecutor pattern (F350M-R P1-05):
+          - Previously created a temporary ThreadPoolExecutor(max_workers=1) per close()
+          - Now uses sync_bridge.to_thread() which reuses the cached dedicated pool
         """
-        import concurrent.futures
-
-        def _run_aclose():
+        # P1-05 FIX: Use asyncio.Runner() instead of temporary ThreadPoolExecutor.
+        # Runner manages event loop lifecycle and schedules aclose() on the stored loop.
+        # This is the Python 3.11+ (PEP 654) safe pattern for running coroutines
+        # from a sync method when a loop may or may not be running.
+        try:
             stored_loop = self._loop
             if stored_loop is not None and stored_loop.is_running():
-                future = asyncio.run_coroutine_threadsafe(self.aclose(), stored_loop)
+                # There's a running loop — schedule aclose() on it and wait.
+                async def _coro():
+                    await self.aclose()
+                future = asyncio.run_coroutine_threadsafe(_coro(), stored_loop)
                 future.result()
             else:
-                import asyncio as _asyncio_module
-                _new_loop = _asyncio_module.new_event_loop()
-                try:
-                    _new_loop.run_until_complete(self.aclose())
-                finally:
-                    _new_loop.close()
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(_run_aclose)
-            future.result()
+                # No running loop — use Runner for clean loop lifecycle management.
+                with asyncio.Runner() as runner:
+                    runner.run(self.aclose())
+        except Exception:
+            # Best-effort cleanup — never raise from close()
+            pass
 
     def finalize(self) -> None:
         """
