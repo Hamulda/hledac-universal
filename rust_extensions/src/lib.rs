@@ -96,7 +96,7 @@ pub mod dedup_bloom;    // Distribuovaný BloomFilter s Count-Min Sketch
 pub mod rate_limit;     // ISSUE #016: NVD API rate limiter — token bucket + MPSC
 pub mod telemetry_agg;  // Real-time metrics aggregation
 pub mod health;         // Issue #22: health_check() endpoint
-pub mod circuit_breaker; // ISSUE-41: Lock-free per-domain circuit breaker with AtomicU32 + DashMap
+pub mod circuit_breaker; // ISSUE-5.1: Lock-free per-domain circuit breaker with AtomicU32 + parking_lot::RwLock
 #[cfg(feature = "data")]
 pub mod aimd_controller; // ISSUE 2.2: Lock-free AIMD controller replacing Python AIMDWindow + _AIMDSlotController
 pub mod claims_extraction; // ISSUE-27: CPU-bound claims extraction (polarity, confidence, sentence split)
@@ -799,7 +799,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Pre-compiled regexes via LazyLock, mixed_pool adaptive threading.
     claims_extraction::register_functions(m)?;
 
-    // ISSUE-41: Lock-free per-domain circuit breaker with AtomicU32 + DashMap.
+    // ISSUE-5.1: Lock-free per-domain circuit breaker with AtomicU32 + parking_lot::RwLock.
     // Replaces Python threading.Lock with Rust Atomics for M1 8GB high-concurrency safety.
     circuit_breaker::register_functions(m)?;
 

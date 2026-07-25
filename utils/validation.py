@@ -217,7 +217,6 @@ class DataValidator:
         expected_python_type = type_mapping.get(expected_type)
         if expected_python_type:
             return isinstance(value, expected_python_type)
-            return True
 
     def _create_result(self, success: bool, errors: list[ValidationError], cache_key: str) -> ValidationResult:
         """Create validation result and cache it."""

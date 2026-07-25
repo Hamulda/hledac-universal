@@ -199,14 +199,6 @@ class IntelligentCache:
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
         return task
-        if self.config.persistence_path:
-            self._persistence_path = Path(self.config.persistence_path)
-            self._persistence_path.mkdir(parents=True, exist_ok=True)
-        else:
-            self._persistence_path = None
-        self._warm_keys = getattr(self.config, 'warm_keys', None)
-        self._warm_loader = getattr(self.config, 'warm_loader', None)
-        logger.debug('IntelligentCache created (ARC eviction)')
 
     async def initialize(self) -> bool:
         """

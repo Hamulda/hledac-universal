@@ -211,7 +211,7 @@ class SecurityLayer:
             Entry ID if successful
         """
         if self._audit_mode not in ('compliance', 'both'):
-            logger.debug('Privacy audit disabled (mode: {self._audit_mode})')
+            logger.debug('Privacy audit disabled (mode: %s)', self._audit_mode)
             return None
         if self._privacy_audit is None:
             await self._init_privacy_audit()

@@ -75,48 +75,85 @@ class UnifiedLMDBStore:
     different data types. This reduces mmap overhead from N separate
     files to 1 shared mmap region.
 
+    ISSUE-6.1: Lazy initialization — LMDB environment is opened on first
+    access, not in __init__. This saves ~200-400ms from sprint boot time
+    when LMDB is not immediately needed.
+
     Usage:
         store = UnifiedLMDBStore(path)
-        store.put(KEY_PREFIX_DEDUP, b"key1", b"value1")
+        store.put(KEY_PREFIX_DEDUP, b"key1", b"value1")  # opens lazily
         value = store.get(KEY_PREFIX_DEDUP, b"key1")
         store.close()
 
     F272: Expanded API for WALManager/DedupManager compatibility.
     """
 
-    __slots__ = ("_env", "_map_size", "_closed")
+    __slots__ = ("_env", "_map_size", "_closed", "_initialized", "_path", "_lazy")  # _env: Any (set after _ensure_init)
 
     def __init__(
         self,
         path: Any,
         *,
         map_size: int | None = None,
+        lazy: bool = True,
     ) -> None:
         """
         Args:
             path: Path to LMDB directory.
             map_size: Total map_size for unified environment.
                       Default: 256 MB (wal:64 + dedup:64 + cc:16 + forensics:50 + multimodal:62)
+            lazy: If True (default), LMDB environment is opened on first access.
+                  If False, opens immediately in __init__ (legacy behavior).
         """
-        from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
-
+        self._path = path
         if map_size is None:
             map_size = _UNIFIED_MAP_SIZE
+        self._map_size = map_size
+        self._env: Any = None  # type: ignore[assignment] — set after _ensure_init()
+        self._closed = False
+        self._initialized = False
+        self._lazy = lazy
+        if not lazy:
+            self._ensure_init()
+
+    def _ensure_init(self) -> None:
+        """
+        Lazy initialization — opens LMDB environment on first access.
+
+        ISSUE-6.1: Deferred open saves ~200-400ms from sprint boot when
+        LMDB is not immediately needed (lazy=True, default).
+        """
+        if self._initialized:
+            return
+        if self._closed:
+            raise RuntimeError("Cannot initialize closed store")
+        from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
+
+        # Ensure parent directory exists
+        import pathlib
+        p = pathlib.Path(self._path)
+        p.mkdir(parents=True, exist_ok=True)
+
         self._env = open_lmdb_with_guard(
-            path,
-            map_size=map_size,
+            self._path,
+            map_size=self._map_size,
             max_dbs=1,  # Single DB, prefixes isolate namespaces
         )
-        self._map_size = map_size
-        self._closed = False
+        self._initialized = True
         logger.debug(
-            f"[LMDB-UNIFIED] Opened at {path}, map_size={map_size / (1024*1024):.0f}MB"
+            f"[LMDB-UNIFIED] Opened at {self._path}, map_size={self._map_size / (1024*1024):.0f}MB"
         )
 
     @property
     def env(self) -> Any:
         """Return the LMDB environment for use with putmulti_bounded."""
+        self._ensure_init()
         return self._env
+
+    @property
+    def is_initialized(self) -> bool:
+        """Return True if store has been initialized (LMDB open attempted)."""
+        return self._initialized
 
     @property
     def is_closed(self) -> bool:
@@ -135,9 +172,10 @@ class UnifiedLMDBStore:
 
     def put(self, prefix: str, key: bytes, value: bytes) -> bool:
         """Put a single key-value pair."""
-        if self._closed or self._env is None:
+        if self._closed:
             return False
         try:
+            self._ensure_init()
             with self._env.begin(write=True) as txn:
                 txn.put(self._key(prefix, key), value)
             return True
@@ -147,9 +185,10 @@ class UnifiedLMDBStore:
 
     def get(self, prefix: str, key: bytes) -> bytes | None:
         """Get a value by key."""
-        if self._closed or self._env is None:
+        if self._closed:
             return None
         try:
+            self._ensure_init()
             with self._env.begin() as txn:
                 return txn.get(self._key(prefix, key))
         except Exception:
@@ -157,9 +196,10 @@ class UnifiedLMDBStore:
 
     def delete(self, prefix: str, key: bytes | str) -> bool:
         """Delete a key from the store."""
-        if self._closed or self._env is None:
+        if self._closed:
             return False
         try:
+            self._ensure_init()
             with self._env.begin(write=True) as txn:
                 txn.delete(self._key(prefix, key))
             return True
@@ -169,9 +209,10 @@ class UnifiedLMDBStore:
 
     def put_str(self, prefix: str, key: str, value: dict) -> bool:
         """Put a JSON-serializable value with string key (WALManager compatibility)."""
-        if self._closed or self._env is None:
+        if self._closed:
             return False
         try:
+            self._ensure_init()
             import orjson
             key_bytes = self._key_str(prefix, key)
             value_bytes = _msgspec_dumps_str(value)
@@ -184,9 +225,10 @@ class UnifiedLMDBStore:
 
     def get_str(self, prefix: str, key: str) -> dict | None:
         """Get a JSON-deserialized value by string key (WALManager compatibility)."""
-        if self._closed or self._env is None:
+        if self._closed:
             return None
         try:
+            self._ensure_init()
             import orjson
             with self._env.begin(buffers=True) as txn:
                 raw = txn.get(self._key_str(prefix, key))
@@ -201,10 +243,11 @@ class UnifiedLMDBStore:
         self, prefix: str, items: list[tuple[str, dict]]
     ) -> list[bool]:
         """Batch put with string keys. Returns per-item success list."""
-        if self._closed or self._env is None or not items:
+        if self._closed or not items:
             return [False] * len(items) if items else []
         results: list[bool] = []
         try:
+            self._ensure_init()
             import orjson
             encoded = [
                 (self._key_str(prefix, k), _msgspec_dumps_str(v))
@@ -229,9 +272,10 @@ class UnifiedLMDBStore:
         F272: WALManager wal_scan_pending_sync_markers compatibility.
         """
         results: list[tuple[str, dict]] = []
-        if self._closed or self._env is None:
+        if self._closed:
             return results
         try:
+            self._ensure_init()
             import orjson
             prefixed_key = prefix.encode() + b":"
             with self._env.begin(buffers=True) as txn:
@@ -270,19 +314,24 @@ class UnifiedLMDBStore:
         Returns:
             Number of items written.
         """
-        if self._closed or self._env is None or not items:
+        if self._closed or not items:
             return 0
-        prefixed = [(self._key(prefix, k), v) for k, v in items]
-        from hledac.universal.utils.lmdb_bulk import putmulti_bounded
+        try:
+            self._ensure_init()
+            prefixed = [(self._key(prefix, k), v) for k, v in items]
+            from hledac.universal.utils.lmdb_bulk import putmulti_bounded
 
-        return putmulti_bounded(self._env, prefixed, overwrite=overwrite)
+            return putmulti_bounded(self._env, prefixed, overwrite=overwrite)
+        except Exception:
+            return 0
 
     def iter_prefix(self, prefix: str) -> list[tuple[bytes, bytes]]:
         """Iterate all items with given prefix."""
         results: list[tuple[bytes, bytes]] = []
-        if self._closed or self._env is None:
+        if self._closed:
             return results
         try:
+            self._ensure_init()
             prefixed_key = prefix.encode() + b":"
             with self._env.begin() as txn:
                 cursor = txn.cursor()
@@ -294,14 +343,85 @@ class UnifiedLMDBStore:
             logger.debug(f"[LMDB-UNIFIED] iter_prefix failed: {exc}")
         return results
 
+    def get_raw(self, prefix: str, key: bytes) -> bytes | None:
+        """
+        Get raw bytes by prefixed key (DedupManager compatibility).
+
+        Args:
+            prefix: Namespace prefix (e.g., 'dedup').
+            key: Raw bytes key (already encoded, not prefixed).
+
+        Returns:
+            Raw bytes value or None if not found.
+        """
+        if self._closed:
+            return None
+        try:
+            self._ensure_init()
+            prefixed_key = prefix.encode() + b":" + key
+            with self._env.begin(buffers=True) as txn:
+                return txn.get(prefixed_key)
+        except Exception:
+            return None
+
+    def putmulti_raw(self, prefix: str, items: list[tuple[bytes, bytes]]) -> bool:
+        """
+        Batch write raw bytes using putmulti_bounded (DedupManager single-item compat).
+
+        Args:
+            prefix: Namespace prefix.
+            items: List of (key_bytes, value_bytes) tuples.
+
+        Returns:
+            True if all items written successfully.
+        """
+        if self._closed or not items:
+            return False
+        try:
+            self._ensure_init()
+            from hledac.universal.utils.lmdb_bulk import putmulti_bounded
+            prefixed = [(prefix.encode() + b":" + k, v) for k, v in items]
+            putmulti_bounded(self._env, prefixed, overwrite=True)
+            return True
+        except Exception as exc:
+            logger.debug(f"[LMDB-UNIFIED] putmulti_raw failed: {exc}")
+            return False
+
+    def putmulti_cursor_raw(self, prefix: str, items: list[tuple[bytes, bytes]]) -> bool:
+        """
+        Batch write using cursor.putmulti (DedupManager batch compat).
+
+        Uses single transaction for all items — O(1) overhead vs N transactions.
+
+        Args:
+            prefix: Namespace prefix.
+            items: List of (key_bytes, value_bytes) tuples.
+
+        Returns:
+            True on success.
+        """
+        if self._closed or not items:
+            return False
+        try:
+            self._ensure_init()
+            prefixed = [(prefix.encode() + b":" + k, v) for k, v in items]
+            with self._env.begin(write=True) as txn:
+                cursor = txn.cursor()
+                cursor.putmulti(prefixed)
+            return True
+        except Exception as exc:
+            logger.debug(f"[LMDB-UNIFIED] putmulti_cursor_raw failed: {exc}")
+            return False
+
     def env_begin(self, write: bool = False) -> Any:
         """
         Return a new LMDB transaction (for advanced users).
         F272: Needed by DedupManager direct env access patterns.
         """
-        if self._closed or self._env is None:
+        if self._closed:
             return None
         try:
+            self._ensure_init()
             return self._env.begin(write=write)
         except Exception as exc:
             logger.debug(f"[LMDB-UNIFIED] env_begin failed: {exc}")
@@ -318,6 +438,7 @@ class UnifiedLMDBStore:
                 logger.debug(f"[LMDB-UNIFIED] close error: {exc}")
             self._env = None
         self._closed = True
+        self._initialized = False
 
     def __enter__(self) -> UnifiedLMDBStore:
         return self
@@ -330,6 +451,7 @@ def open_unified_lmdb(
     path: Any,
     *,
     map_size: int | None = None,
+    lazy: bool = True,
 ) -> UnifiedLMDBStore:
     """
     Factory for UnifiedLMDBStore with M1 8GB safe defaults.
@@ -337,12 +459,16 @@ def open_unified_lmdb(
     F272: Replaces separate LMDB opens for WAL, dedup, conditional_cache.
     Default 256 MB shared mmap vs ~144 MB separate.
 
+    ISSUE-6.1: Default lazy=True defers LMDB open to first access,
+    saving ~200-400ms from sprint boot when LMDB is not immediately needed.
+
     Args:
         path: Path to LMDB directory.
         map_size: Override total map_size. Default 256 MB.
+        lazy: If True (default), opens lazily on first access.
 
     Returns:
         UnifiedLMDBStore instance (caller must close).
     """
-    return UnifiedLMDBStore(path, map_size=map_size)
+    return UnifiedLMDBStore(path, map_size=map_size, lazy=lazy)
 

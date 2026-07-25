@@ -52,7 +52,7 @@ class WALManager:
     """
     MAX_PENDING_SYNC_MARKERS: int = 10000
     DEAD_LETTER_PREFIX: str = 'deadletter_ingest:'
-    __slots__ = tuple(('_compact_interval_s', '_compact_write_threshold', '_finalize_handle', '_initialized', '_last_compact_ts', '_map_size', '_unified_store', '_use_unified', '_wal_lmdb', '_wal_path', '_write_count_since_compact'))
+    __slots__ = tuple(('_compact_interval_s', '_compact_write_threshold', '_finalize_handle', '_initialized', '_last_compact_ts', '_map_size', '_unified_store', '_use_unified', '_wal_lmdb', '_wal_path', '_write_count_since_compact', '__weakref__'))
 
     def __init__(self, wal_path: str, *, map_size: int=256 * 1024 * 1024, unified_store: Any=None) -> None:
         """

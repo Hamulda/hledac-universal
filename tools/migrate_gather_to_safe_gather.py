@@ -470,8 +470,7 @@ def _ensure_imports(source: str, needed: set[str]) -> str:
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             last_top_import_end_lineno = node.end_lineno or node.lineno
 
-    # If we also see a "
-" at the top, we
+    # If we also see a docstring at the top, we
     # want to keep our new import AFTER that (idiomatic Python).
     lines = source.splitlines(keepends=True)
 

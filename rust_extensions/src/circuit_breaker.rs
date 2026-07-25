@@ -1,4 +1,4 @@
-//! Lock-free per-domain circuit breaker using AtomicU32 + DashMap.
+//! Lock-free per-domain circuit breaker using AtomicU32 + parking_lot::RwLock.
 //!
 //! Design: Each domain has its own atomic state — no global lock contention.
 //! State machine: CLOSED(0) -> OPEN(1) -> HALF_OPEN(2) -> CLOSED(0)
@@ -19,9 +19,18 @@
 //!   - failure -> OPEN
 //!   - success (probes >= half_open_probes) -> CLOSED
 //!
-//! # Thread Safety
+//! # Thread Safety (ISSUE-5.1 Fix)
 //!
-//! - DashMap provides sharded locking — no global lock
+//! OLD (DashMap):
+//!   - DashMap uses crossbeam internally for sharding
+//!   - crossbeam shard locking conflicts with PyO3 GIL handling in Python async/ThreadPoolExecutor
+//!   - Caused segfaults when called from Python async contexts
+//!
+//! NEW (parking_lot::RwLock + AHashMap):
+//!   - parking_lot::RwLock is Send+Sync by default, no unsafe impl needed
+//!   - Properly reentrant — safe for Python async/ThreadPoolExecutor contexts
+//!   - Multiple concurrent readers OR single writer — no deadlock risk
+//!   - Same pattern as ioc_dedup.rs (ISSUE-1 fix) and federated_qtable.rs (ISSUE-3.2 fix)
 //! - AtomicU32 for failure_count — lock-free increment
 //! - AtomicU64 for last_failure_timestamp — lock-free write
 //! - AtomicU8 for state — fast state transitions
@@ -32,7 +41,8 @@
 //! HALF_OPEN_PROBES = 3: 3 successful probes to close circuit
 //! RECOVERY_TIMEOUT_S = 30.0: Seconds before attempting recovery
 
-use dashmap::DashMap;
+use ahash::AHashMap;
+use parking_lot::RwLock;
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, Ordering};
@@ -52,7 +62,7 @@ const HALF_OPEN_PROBES: u32 = 3;
 const RECOVERY_TIMEOUT_SECS: u64 = 30;
 
 // ---------------------------------------------------------------------------
-// Domain State (stored in DashMap per domain)
+// Domain State (stored in RwLock-protected AHashMap per domain)
 // ---------------------------------------------------------------------------
 
 struct DomainState {
@@ -154,30 +164,41 @@ impl DomainState {
 // Global Circuit Breaker Registry
 // ---------------------------------------------------------------------------
 
-static CIRCUIT_BREAKERS: LazyLock<DashMap<String, Arc<DomainState>>> =
-    LazyLock::new(DashMap::new);
+/// Global registry of circuit breakers per domain.
+/// parking_lot::RwLock: multiple concurrent readers OR single exclusive writer.
+/// ISSUE-5.1 fix: Replaces DashMap which caused PyO3 GIL segfaults in async contexts.
+static CIRCUIT_BREAKERS: LazyLock<RwLock<AHashMap<String, Arc<DomainState>>>> =
+    LazyLock::new(|| RwLock::new(AHashMap::with_capacity(64)));
 
-/// D7: get_or_create_state — read-mosty optimization.
+/// get_or_create_state — read-mostly optimization.
 ///
-/// Hot path (cache HIT): DashMap::get() s &str — žiadna alokácia.
+/// Hot path (cache HIT): RwLock read lock + AHashMap::get() — no allocation.
 /// Called on every fetch request (~100-1000× per sprint).
 ///
-/// MISS path: entry() + VacantEntry::insert — single allocation.
+/// MISS path: acquire write lock, double-check, insert.
+///
+/// ISSUE-5.1 fix: Uses parking_lot::RwLock instead of DashMap for PyO3 GIL safety.
 fn get_or_create_state(domain: &str) -> Arc<DomainState> {
-    // D7: Fast path — read-only get() for existing entries.
-    // Avoids entry() shard-lock + to_string() allocation on every call.
-    // to_string() called ONLY on MISS path (single allocation, not per-call).
-    if let Some(state) = CIRCUIT_BREAKERS.get(domain) {
+    // Fast path — read lock for existing entries.
+    // RwLock allows multiple concurrent readers.
+    {
+        let guard = CIRCUIT_BREAKERS.read();
+        if let Some(state) = guard.get(domain) {
+            return state.clone();
+        }
+    }
+
+    // MISS path — acquire write lock, double-check for race, then insert.
+    let mut guard = CIRCUIT_BREAKERS.write();
+    // Double-check: another thread may have inserted while we waited for write lock.
+    if let Some(state) = guard.get(domain) {
         return state.clone();
     }
 
-    // MISS path — entry() acquires VacantEntry, insert() allocates once.
+    // Insert new domain state.
     let state = Arc::new(DomainState::new());
-    CIRCUIT_BREAKERS
-        .entry(domain.to_string())
-        .insert(state.clone())
-        .or_insert_with(|| state.clone())
-        .clone()
+    guard.insert(domain.to_string(), state.clone());
+    state
 }
 
 // ---------------------------------------------------------------------------
@@ -244,7 +265,7 @@ pub fn circuit_breaker_half_open_probe(domain: &str) -> bool {
 /// Clear all circuit breaker state (for testing).
 #[pyfunction]
 pub fn circuit_breaker_clear_all() {
-    CIRCUIT_BREAKERS.clear();
+    CIRCUIT_BREAKERS.write().clear();
 }
 
 /// circuit_breaker_get_stats(domain: str) -> (state: u8, failure_count: u32, last_failure_age_s: u64)

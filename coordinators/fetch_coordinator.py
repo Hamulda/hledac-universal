@@ -355,7 +355,7 @@ class FetchCoordinator(UniversalCoordinator):
                 self._tor_transport_enabled = self._tor_transport.available
                 if self._tor_transport_enabled:
                     logger.info('TorTransport enabled via HLEDAC_ENABLE_TOR=1')
-                    logger.info('  Circuit rotation after {self._tor_transport._max_circuit_requests} requests', _max_circuit_requests=self._tor_transport._max_circuit_requests)
+                    logger.info('  Circuit rotation after %s requests', self._tor_transport._max_circuit_requests)
             except Exception as e:  # noqa: BLE001 — best-effort; transport init failure; Tor disabled gracefully
                 logger.warning('TorTransport init failed: %s', e)
                 self._tor_transport_enabled = False
@@ -840,7 +840,7 @@ class FetchCoordinator(UniversalCoordinator):
             async with session.get(url) as resp:
                 return {'status': resp.status, 'headers': dict(resp.headers), 'content': await resp.read()}
         except TimeoutError:
-            logger.debug('[TOR] Timeout for {url}', url=url)
+            logger.debug('[TOR] Timeout for %s', url)
             await self._aimd_release_failure()
             return None
         except (httpx.HTTPError, OSError, asyncio.TimeoutError, asyncio.CancelledError) as e:  # noqa: BLE001 — best-effort; httpx response body read; non-critical
@@ -874,7 +874,7 @@ class FetchCoordinator(UniversalCoordinator):
                 content = await resp.read()
                 return {'url': url, 'content': content, 'status': resp.status, 'headers': dict(resp.headers), 'content_type': resp.content_type}
         except TimeoutError:
-            logger.debug('[I2P] Timeout for {url}', url=url)
+            logger.debug('[I2P] Timeout for %s', url)
             await self._aimd_release_failure()
             return None
         except (httpx.HTTPError, OSError, asyncio.TimeoutError, asyncio.CancelledError) as e:  # noqa: BLE001 — best-effort; httpx stream read; non-critical
@@ -932,7 +932,7 @@ class FetchCoordinator(UniversalCoordinator):
                 _curl_text = None
             return {'url': url, 'final_url': _curl_result.get('final_url', url), 'content': _curl_bytes, 'text': _curl_text, 'status_code': _curl_result.get('status_code', 0), 'content_type': _curl_result.get('content_type', ''), 'headers': _curl_result.get('headers', {}), 'js_rendered': False, 'success': _curl_error is None, 'error': _curl_error}
         except TimeoutError:
-            logger.debug('[CURL] Timeout for {url}', url=url)
+            logger.debug('[CURL] Timeout for %s', url)
             await self._aimd_release_failure()
             return {'url': url, 'content': b'', 'error': 'timeout'}
         except (OSError, asyncio.TimeoutError, asyncio.CancelledError) as e:  # noqa: BLE001 — curl_cffi doesn't raise httpx.HTTPError; only network/OS errors expected here
@@ -992,7 +992,7 @@ class FetchCoordinator(UniversalCoordinator):
         if 'frontier' in ctx:
             self._frontier = deque(ctx['frontier'], maxlen=1000)
         _ev0 = len(self._frontier)
-        logger.info('FetchCoordinator started with {len(self._frontier)} URLs in frontier', _ev0=len(self._frontier))
+        logger.info('FetchCoordinator started with %s URLs in frontier', len(self._frontier))
 
     def _url_priority(self, url: str) -> int:
         """
@@ -1112,7 +1112,7 @@ class FetchCoordinator(UniversalCoordinator):
         for url, result in zip(urls_to_fetch, results, strict=False):
             if isinstance(result, Exception):
                 _ev0 = type(result).__name__
-                logger.debug('[BATCH] fetch exception for {url}: {type(result).__name__}: {result}', url=url, result=result, _ev0=type(result).__name__)
+                logger.debug('[BATCH] fetch exception for %s: %s: %s', url, type(result).__name__, result)
                 continue
             if result and result.get('success'):
                 self._urls_fetched_count += 1
@@ -1220,7 +1220,7 @@ class FetchCoordinator(UniversalCoordinator):
         dns_safe, dns_meta, canonical_allowed, canonical_reason, canonical_retry_after = await self._check_dns_and_circuit(url, domain)
         if not dns_safe:
             _ev0 = dns_meta.get('blocked_reason')
-            logger.warning("DNS rebinding defense blocked: {dns_meta.get('blocked_reason')} for {domain}", domain=domain, _ev0=dns_meta.get('blocked_reason'))
+            logger.warning("DNS rebinding defense blocked: %s for %s", dns_meta.get('blocked_reason'), domain)
             trace_fetch_end(url, 'dns_rebind_defense', 'blocked', 0.0, {'reason': dns_meta.get('blocked_reason')})
             self._aimd_semaphore.release()
             if _host_sem is not None:
@@ -1244,12 +1244,12 @@ class FetchCoordinator(UniversalCoordinator):
             while attempt <= max_retries:
                 if not dns_safe:
                     _blocked_reason = dns_meta.get('blocked_reason')
-                    logger.warning('DNS rebinding defense blocked: {blocked_reason} for {domain}', domain=domain, blocked_reason=_blocked_reason)
+                    logger.warning('DNS rebinding defense blocked: %s for %s', _blocked_reason, domain)
                     trace_fetch_end(url, 'dns_rebind_defense', 'blocked', 0.0, {'reason': dns_meta.get('blocked_reason')})
                     break
                 if not canonical_allowed:
                     self._telemetry['circuit_breaker_blocks'] = self._telemetry.get('circuit_breaker_blocks', 0) + 1
-                    logger.debug('[CircuitBreaker] Open for {domain}: {reason} (retry in {retry_after:.1f}s)', domain=domain, reason=canonical_reason, retry_after=canonical_retry_after)
+                    logger.debug('[CircuitBreaker] Open for %s: %s (retry in %.1fs)', domain, canonical_reason, canonical_retry_after)
                     trace_fetch_end(url, 'circuit_breaker', 'circuit_open', 0.0)
                     result = None
                     break
@@ -1258,7 +1258,7 @@ class FetchCoordinator(UniversalCoordinator):
                 route_decision = get_route_decision(url)
                 if url_transport is Transport.TOR:
                     if route_decision is RouteDecision.TOR_UNAVAILABLE:
-                        logger.debug('[TOR] Tor unavailable, dropping {url}', url=url)
+                        logger.debug('[TOR] Tor unavailable, dropping %s', url)
                         trace_fetch_end(url, 'tor', 'unavailable', 0.0)
                         return None
                     trace_fetch_start(url, 'tor', {'attempt': attempt, 'timeout': TIMEOUT_TOR})
@@ -1270,7 +1270,7 @@ class FetchCoordinator(UniversalCoordinator):
                             result = {'success': True, 'status': result.status_code, 'content': b'', 'url': url, 'final_url': result.final_url or url, 'content_type': result.content_type or 'text/html'}
                             trace_fetch_end(url, 'tor_transport', 'ok', 0.0)
                             break
-                        logger.debug('TorTransport fetch failed: {result.error}', result_error=result.error)
+                        logger.debug('TorTransport fetch failed: %s', result.error)
                     result = await self._fetch_with_tor(url, session=_pre_acquired_tor_session)
                     if result:
                         result['success'] = True
@@ -1283,7 +1283,7 @@ class FetchCoordinator(UniversalCoordinator):
                     trace_fetch_end(url, 'tor', 'failed', 0.0)
                 elif url_transport is Transport.I2P:
                     if route_decision is RouteDecision.I2P_UNAVAILABLE:
-                        logger.debug('[I2P] I2P router unavailable, dropping {url}', url=url)
+                        logger.debug('[I2P] I2P router unavailable, dropping %s', url)
                         trace_fetch_end(url, 'i2p', 'unavailable', 0.0)
                         return None
                     trace_fetch_start(url, 'i2p', {'attempt': attempt, 'timeout': TIMEOUT_I2P})
@@ -1296,7 +1296,7 @@ class FetchCoordinator(UniversalCoordinator):
                         result.setdefault('content_type', 'text/html')
                         trace_fetch_end(url, 'i2p', 'ok', 0.0)
                         break
-                    logger.debug('[I2P] Fetch failed and no fallback, dropping {url}', url=url)
+                    logger.debug('[I2P] Fetch failed and no fallback, dropping %s', url)
                     trace_fetch_end(url, 'i2p', 'failed', 0.0)
                 elif url_transport is Transport.GOPHER:
                     if self._gopher_transport_enabled and self._gopher_transport:
@@ -1307,7 +1307,7 @@ class FetchCoordinator(UniversalCoordinator):
                                 result = {'success': True, 'status': 200, 'content': gopher_res.content, 'url': url, 'final_url': url, 'content_type': 'text/plain'}
                                 trace_fetch_end(url, 'gopher_transport', 'ok', 0.0)
                                 break
-                            logger.debug('GopherTransport fetch failed: {gopher_res.error}', gopher_res_error=gopher_res.error)
+                            logger.debug('GopherTransport fetch failed: %s', gopher_res.error)
                         except Exception as e:  # noqa: BLE001 — best-effort; telemetry flush failure; non-critical
                             logger.debug('GopherTransport error: %s', e)
                             trace_fetch_end(url, 'gopher_transport', 'error', 0.0)
@@ -1337,7 +1337,7 @@ class FetchCoordinator(UniversalCoordinator):
                                     return text[:10000] if text else ''
                             return ''
                     except TimeoutError:
-                        logger.debug('[PREVIEW] Timeout for {url}', url=url)
+                        logger.debug('[PREVIEW] Timeout for %s', url)
                     except (httpx.HTTPError, OSError, asyncio.TimeoutError, asyncio.CancelledError) as e:  # noqa: BLE001 — best-effort; httpx/network failure in preview fetch; non-critical
                         logger.debug('[PREVIEW] Failed to fetch preview for %s: %s', url, e)
                     return ''
@@ -1374,7 +1374,7 @@ class FetchCoordinator(UniversalCoordinator):
                     result = None
                     _preview_text = ''
                 if self._is_js_heavy(url, _preview_text):
-                    logger.debug('[LIGHTPANDA] JS-heavy detected: {url}', url=url)
+                    logger.debug('[LIGHTPANDA] JS-heavy detected: %s', url)
                     trace_fetch_start(url, 'lightpanda', {'attempt': attempt})
                     lightpanda_result = await self._fetch_with_lightpanda(url, proxy)
                     if lightpanda_result and lightpanda_result.get('content'):
@@ -1395,7 +1395,7 @@ class FetchCoordinator(UniversalCoordinator):
                         wait_gen = wait_exponential_jitter(initial=base_delay, max=30.0, exp_base=2.0, jitter=1.0)
                         delay = wait_gen(retry_state)
                         delay = min(delay, 30.0)
-                        logger.debug('[RETRY] Attempt {attempt_number}/{max_retries} for {url} after {delay}s', max_retries=max_retries, url=url, attempt_number=attempt + 1, delay=delay)
+                        logger.debug('[RETRY] Attempt %s/%s for %s after %ss', attempt + 1, max_retries, url, delay)
                         trace_fetch_end(url, 'none', 'retry', 0.0, {'attempt': attempt, 'delay': delay})
                         await asyncio.sleep(delay)
                         attempt += 1
@@ -1422,7 +1422,7 @@ class FetchCoordinator(UniversalCoordinator):
         if result and result.get('status_code') in (401, 403):
             if self._session_manager:
                 await self._session_manager.rotate_credentials(domain)
-                logger.info('[SESSION] Rotated credentials for {domain}', domain=domain)
+                logger.info('[SESSION] Rotated credentials for %s', domain)
         if result and result.get('content'):
             content = result['content']
             if isinstance(content, bytes):
@@ -1431,7 +1431,7 @@ class FetchCoordinator(UniversalCoordinator):
                 bypass_result = await self._paywall_bypass.bypass(url, content)
                 if bypass_result:
                     _ev0 = bypass_result.get('bypassed')
-                    logger.info("[PAYWALL] Bypassed via {bypass_result.get('bypassed')}", _ev0=bypass_result.get('bypassed'))
+                    logger.info("[PAYWALL] Bypassed via %s", bypass_result.get('bypassed'))
                     result['content'] = bypass_result.get('content', '').encode()
                     result['bypassed'] = bypass_result.get('bypassed')
                     result['paywall'] = bypass_result.get('paywall')
@@ -1443,7 +1443,7 @@ class FetchCoordinator(UniversalCoordinator):
                 url_for_check = result.get('final_url') or result.get('url') or url
                 try:
                     if self._captcha_detector.is_captcha(content_bytes, url_for_check):
-                        logger.debug('[CAPTCHA] CAPTCHA detected at {url_for_check}, skipping', url_for_check=url_for_check)
+                        logger.debug('[CAPTCHA] CAPTCHA detected at %s, skipping', url_for_check)
                         self._captcha_detections += 1
                         return None
                 except Exception:  # noqa: BLE001 — best-effort; lightpanda close failure; non-critical
@@ -1483,11 +1483,11 @@ class FetchCoordinator(UniversalCoordinator):
                     rows.extend(part)
                 elif isinstance(part, Exception):
                     _ev0 = type(part).__name__
-                    logger.debug('[DEEP] {label} failed: {type(part).__name__}: {part}', label=label, part=part, _ev0=type(part).__name__)
+                    logger.debug('[DEEP] %s failed: %s: %s', label, type(part).__name__, part)
             if not rows:
                 return None
             fused = top_k(rows, k=limit)
-            logger.info('[DEEP] query={query!r} → {raw_rows} raw rows → {fused_rows} fused', query=query, raw_rows=len(rows), fused_rows=len(fused))
+            logger.info('[DEEP] query=%r → %s raw rows → %s fused', query, len(rows), len(fused))
             return fused
         except Exception as e:  # noqa: BLE001 — best-effort; httpx close failure; non-critical
             logger.debug('[DEEP] research failed: %s', e)
@@ -1556,7 +1556,7 @@ class FetchCoordinator(UniversalCoordinator):
                 safe_create_task(self._fire_cover_traffic_url(cover_url, delay, transport))
                 from metrics_registry import get_metrics_registry
                 get_metrics_registry().inc('cover_traffic_fired')
-                logger.debug('[COVER] fired cover traffic #{self._cover_count} for transport={transport}', _cover_count=self._cover_count, transport=transport)
+                logger.debug('[COVER] fired cover traffic #%s for transport=%s', self._cover_count, transport)
         except* (Exception, BaseException):  # noqa: BLE001 — best-effort; cover traffic outer TaskGroup failure; non-critical
             pass
 

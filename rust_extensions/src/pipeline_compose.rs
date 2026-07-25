@@ -45,10 +45,11 @@
 //! - `streaming_embedder` — batch embedding pipeline
 //! - `intelligence/relationship_discovery` — relationship pipeline
 
-use dashmap::DashSet;
+use parking_lot::Mutex;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 use rayon::prelude::*;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::mixed_pool;
@@ -883,12 +884,14 @@ pub fn pipeline_batch_stats(
     let min_len = item_data.iter().map(|(l, _)| l).min().unwrap_or(&0);
     let max_len = item_data.iter().map(|(l, _)| l).max().unwrap_or(&0);
 
-    // Unique count via DashSet: insert returns true only for new entries (first-seen).
-    // Rayon par_iter runs the filter concurrently across workers; DashSet is lock-free.
-    let seen = DashSet::with_capacity(n.min(MAX_PIPELINE_ITEMS));
+    // Unique count via Mutex<HashSet>: insert returns true only for new entries (first-seen).
+    // ISSUE-5.1 fix: Replaced DashSet (dashmap) with parking_lot::Mutex<HashSet>.
+    // parking_lot::Mutex is faster than DashSet's sharded locking for single-key local use.
+    // Rayon par_iter runs the filter concurrently across workers; Mutex provides thread-safety.
+    let seen = Mutex::new(HashSet::with_capacity(n.min(MAX_PIPELINE_ITEMS)));
     let unique_count: usize = item_data
         .par_iter()
-        .filter(|(_, h)| seen.insert(*h))
+        .filter(|(_, h)| seen.lock().insert(*h))
         .count();
 
     Ok((n, sum_len, *min_len, *max_len, unique_count))

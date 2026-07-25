@@ -349,9 +349,9 @@ class DedupManager:
       - Semantic dedup cache (embedding-based near-duplicate, optional)
     """
     DEDUP_NAMESPACE: str = 'dedup:'
-    __slots__ = tuple(('_bloom_filter', '_bloom_filter_error', '_dedup_hot_cache', '_dedup_hot_cache_order', '_dedup_lmdb', '_dedup_lmdb_boot_error', '_dedup_lmdb_last_error', '_dedup_lmdb_path_str', '_initialized', '_ioc_dedup_store', '_ioc_dedup_store_error', '_map_size', '_max_keys', '_semantic_dedup_boot_error', '_semantic_dedup_cache', '_semantic_lmdb_path'))
+    __slots__ = tuple(('_bloom_filter', '_bloom_filter_error', '_dedup_hot_cache', '_dedup_hot_cache_order', '_dedup_lmdb', '_dedup_lmdb_boot_error', '_dedup_lmdb_last_error', '_dedup_lmdb_path_str', '_initialized', '_ioc_dedup_store', '_ioc_dedup_store_error', '_map_size', '_max_keys', '_semantic_dedup_boot_error', '_semantic_dedup_cache', '_semantic_lmdb_path', '_unified_store', '_use_unified', '__weakref__'))
 
-    def __init__(self, dedup_lmdb_path: str | None=None, semantic_lmdb_path: str | None=None, *, map_size: int=_DEDUP_LMDB_MAP_SIZE, max_keys: int=1000000) -> None:
+    def __init__(self, dedup_lmdb_path: str | None=None, semantic_lmdb_path: str | None=None, *, map_size: int=_DEDUP_LMDB_MAP_SIZE, max_keys: int=1000000, unified_store: Any=None) -> None:
         """
         Args:
             dedup_lmdb_path: Path to dedup LMDB. If None, resolved from HLEDAC_DEDUP_LMDB_PATH env
@@ -359,7 +359,10 @@ class DedupManager:
             semantic_lmdb_path: Path to semantic dedup LMDB. If None, uses default.
             map_size: LMDB map size in bytes for dedup store.
             max_keys: Max keys in dedup LMDB.
+            unified_store: Optional UnifiedLMDBStore for consolidated storage.
         """
+        self._unified_store = unified_store
+        self._use_unified: bool = os.environ.get('HLEDAC_DEDUP_UNIFIED', '1') == '1' and unified_store is not None
         if dedup_lmdb_path is not None:
             self._dedup_lmdb_path_str: str | None = dedup_lmdb_path
         else:
@@ -599,6 +602,12 @@ class DedupManager:
                     return None
             except Exception:
                 pass
+        if self._use_unified and self._unified_store is not None:
+            key = self._dedup_key_from_fingerprint(fp)
+            raw = self._unified_store.get_raw('dedup', key)
+            if raw is None:
+                return None
+            return bytes(raw).decode('utf-8')
         if self._dedup_lmdb is None:
             return None
         try:
@@ -632,6 +641,11 @@ class DedupManager:
                 self._bloom_filter.add(fp)
             except Exception:
                 pass
+        if self._use_unified and self._unified_store is not None:
+            key = self._dedup_key_from_fingerprint(fp)
+            value_bytes = finding_id.encode('utf-8')
+            self._unified_store.putmulti_raw('dedup', [(key, value_bytes)])
+            return
         if self._dedup_lmdb is None:
             return
         try:
@@ -671,6 +685,10 @@ class DedupManager:
                             pass
             except Exception:
                 pass
+        if self._use_unified and self._unified_store is not None:
+            encoded = [(self._dedup_key_from_fingerprint(fp), finding_id.encode('utf-8')) for fp, finding_id in items]
+            self._unified_store.putmulti_cursor_raw('dedup', encoded)
+            return
         if self._dedup_lmdb is None:
             return
         try:

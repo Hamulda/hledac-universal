@@ -223,11 +223,6 @@ class ParallelExecutionOptimizer:
         if self._execution_predictor is None:
             self._execution_predictor = self._init_predictor()
         return self._execution_predictor
-        self._concurrency_controller = _ConcurrencyController()
-        self.thread_pool = None
-        self.async_pool = {}
-        self.m1_optimizations = {'performance_cores': 4, 'efficiency_cores': 4, 'max_concurrent_threads': 8, 'neural_engine_available': True, 'unified_memory': True}
-        self._init_execution_pools()
 
     def _prune_parallel_groups(self) -> None:
         """Prune oldest and expired parallel groups."""

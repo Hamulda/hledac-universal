@@ -90,7 +90,7 @@ def derive_verdict(gate_decision: str, f231_missing: list[str], swap_gib: float,
         return ReadinessResult(verdict='READY_DIAGNOSTIC_ONLY', next_action='run_with_hardware_taint', next_action_detail=f'swap={swap_gib:.2f}GiB in (2.0, 4.0]GiB — hardware taint', uma_swap_gib=swap_gib)
     else:
         return ReadinessResult(verdict='READY_TO_RESTART_AND_RUN', next_action='restart_then_run_live', next_action_detail=f'swap={swap_gib:.2f}GiB > 4.0GiB — restart required', uma_swap_gib=swap_gib)
-    return ReadinessResult(verdict='BLOCKED_BY_UNKNOWN', next_action='fix_contract_gate', next_action_detail=f'unhandled combination: gate={gate_decision} swap={swap_gib:.2f}')
+
 
 def build_result(decision_path: Path, artifact_pack_path: Path, f231_inventory_path: Path) -> ReadinessResult:
     decision_data = load_optional_json(decision_path) or {}

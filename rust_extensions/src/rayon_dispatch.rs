@@ -379,12 +379,13 @@ pub fn rayon_join_channel_(
 
     // condvar.wait releases the mutex while waiting — GIL is NOT held during wait
     // (Python threads park via _thread.park)
-    let (guard, timed_out) = shared.condvar.wait_timeout_while(
+    let (guard, wait_result) = shared.condvar.wait_timeout_while(
         shared.result.lock().unwrap(),
         timeout,
         |r| r.is_none(),
-    );
+    ).unwrap();
 
+    let timed_out = wait_result.timed_out();
     if timed_out {
         // Issue #3 fix: atomically set ABORTED state. If worker already set READY,
         // compare_exchange fails (worker won race) — don't overwrite its result.
@@ -441,11 +442,11 @@ pub fn rayon_abort_channel_(handle_ptr: usize) -> PyResult<()> {
 
     // Wait up to 5s for worker to acknowledge (set result or check cancel)
     let timeout = Duration::from_secs(5);
-    let (_guard, _timed_out) = shared.condvar.wait_timeout_while(
+    let (_guard, _wait_result) = shared.condvar.wait_timeout_while(
         shared.result.lock().unwrap(),
         timeout,
         |r| r.is_none(),
-    );
+    ).unwrap();
 
     Ok(())
 }

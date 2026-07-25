@@ -262,7 +262,7 @@ class LanceDBIdentityStore:
             return self._mlx_load_chunk_size
         except Exception:
             return self._mlx_load_chunk_size
-        return chunk_size
+
         self._colbert_reranker = None
         self._flashrank_ranker = None
         self._colbert_loaded = False

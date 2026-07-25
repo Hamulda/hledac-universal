@@ -1915,7 +1915,7 @@ async def _read_aiohttp_body_with_peek(chunks: AsyncIterator[bytes], max_bytes: 
             remaining = max_bytes - len(content_bytes)
             if remaining > 0:
                 content_bytes.extend(chunk[:remaining])
-            logger.debug('Aiohttp body truncated to {max_bytes} bytes after {chunks_consumed} chunks', max_bytes=max_bytes, chunks_consumed=chunks_consumed)
+            logger.debug('Aiohttp body truncated to %s bytes after %s chunks', max_bytes, chunks_consumed)
             truncated = True
             break
         content_bytes.extend(chunk)
@@ -2079,7 +2079,7 @@ async def _nodriver_locked(url: str, url_kind: str='', url_host: str='') -> str:
                     await page.close()
                 except Exception:  # noqa: BLE001 — best-effort; page close failure is non-fatal
                     pass
-    logger.warning('nodriver all {_NODRIVER_MAX_RETRIES} attempts failed for {url}: {last_error}', _NODRIVER_MAX_RETRIES=_NODRIVER_MAX_RETRIES, url=url, last_error=last_error)
+    logger.warning('nodriver all %s attempts failed for %s: %s', _NODRIVER_MAX_RETRIES, url, last_error)
     return ''
 
 async def _fetch_with_playwright(url: str, timeout: float=15.0) -> str:

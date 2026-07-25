@@ -3764,10 +3764,21 @@ class DuckDBShadowStore:
         if self._wal_manager is None:
             _wal_root = self._db_path.parent if self._db_path else None
             if _wal_root is not None:
-                self._wal_manager = WALManager(wal_path=str(_wal_root / "shadow_wal.lmdb"))
+                # ISSUE-6.1: F272 consolidation — use UnifiedLMDBStore for WAL namespace
+                # This merges WAL LMDB into the shared 256MB mmap instead of separate file
+                from .lmdb_subdb import UnifiedLMDBStore
+
+                _unified_lmdb = UnifiedLMDBStore(
+                    str(_wal_root / "sprint_unified.lmdb"),
+                    lazy=True,
+                )
+                self._wal_manager = WALManager(
+                    wal_path=str(_wal_root / "shadow_wal.lmdb"),
+                    unified_store=_unified_lmdb,  # F272: shared mmap for WAL namespace
+                )
                 self._wal_manager.initialize()
         if self._dedup_manager is None:
-            self._dedup_manager = DedupManager()
+            self._dedup_manager = DedupManager(unified_store=_unified_lmdb)  # F272: shared mmap for dedup namespace
         if replay_pending_limit:
             await self._bounded_startup_replay(
                 replay_pending_limit=replay_pending_limit, replay_timeout_s=replay_timeout_s
