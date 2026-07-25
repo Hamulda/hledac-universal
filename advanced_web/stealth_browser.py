@@ -25,7 +25,7 @@ class MemoryPressureError(Exception):
 logger = logging.getLogger(__name__)
 _MAX_CONCURRENT_TABS = 2
 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-_semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
+_semaphore = get_semaphore_for_testing(ConcurrencyCategory.JS_RENDERER)
 _CHROME_UAS = ['Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36', 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Mozilla/5.0 (Windows NT 11.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 12_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36']
 _TLS_FINGERPRINT_PAIRS: list[tuple[str, str]] = [('Chrome/126', 'chrome120'), ('Chrome/125', 'chrome120'), ('Chrome/124', 'chrome120'), ('Chrome/123', 'chrome120'), ('Chrome/122', 'chrome120'), ('Safari/605', 'safari17_0')]
 _TLS_FALLBACK_IMPERSONATE = 'chrome120'
@@ -156,13 +156,19 @@ class StealthBrowser:
         return await self._fetch_httpx(url, extract_structured)
 
     async def _fetch_nodriver(self, url: str, extract_structured: bool=True) -> dict[str, Any]:
-        """Fetch using nodriver CDP."""
+        """Fetch using nodriver CDP via BrowserPool (F-02).
+
+        BrowserPool eliminates the ~1.5-2 s Chromium cold-start penalty by
+        reusing idle browser instances. Memory pressure is checked before
+        acquire(); the pool is bounded to max_active=2 for M1 8GB safety.
+        """
         _check_browser_memory_pressure()
-        import nodriver as uc
+        from hledac.universal.utils.browser_pool import acquire_browser, release_browser
+
         tab = None
         browser = None
         try:
-            browser = await uc.start(headless=True, browser_args=['--disable-blink-features=AutomationControlled', '--no-sandbox', '--disable-dev-shm-usage'])
+            browser = await acquire_browser(tor_proxy=None)
             tab = await browser.get(url)
             await asyncio.sleep(2)
             content = await tab.content()
@@ -180,12 +186,12 @@ class StealthBrowser:
         finally:
             if tab:
                 try:
-                    tab.close()
+                    await tab.close()
                 except Exception:
                     pass
             if browser:
                 try:
-                    browser.stop()
+                    await release_browser(browser, tor_proxy=None)
                 except Exception:
                     pass
 

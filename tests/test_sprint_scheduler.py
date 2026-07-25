@@ -23,6 +23,7 @@ PUBLIC behavior only — no private implementation detail assertions.
 """
 
 import os
+import pathlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -130,7 +131,7 @@ def _import_scheduler():
 async def _instantiate_scheduler(minimal_config, mock_lifecycle, mock_adapter):
     """Create scheduler instance with minimal mocking."""
     SprintScheduler = _import_scheduler()  # noqa: N806
-    sched = SprintScheduler(minimal_config, ct_log_client=None)
+    sched = SprintScheduler(minimal_config, _ct_log_client=None)
     # Inject minimal dependencies to allow run() to start
     sched._duckdb_store = AsyncMock()
     sched._duckdb_store.async_ingest_findings_batch = AsyncMock(return_value=0)
@@ -148,7 +149,7 @@ async def test_record_hypothesis_feedback_failsoft_does_not_crash(minimal_config
     """
 
     SprintScheduler = _import_scheduler()  # noqa: N806
-    sched = SprintScheduler(minimal_config, ct_log_client=None)
+    sched = SprintScheduler(minimal_config, _ct_log_client=None)
     # Inject mock store with broken async_record_hypothesis_feedback
     sched._duckdb_store = mock_store
     mock_store.async_record_hypothesis_feedback.side_effect = RuntimeError("DB write failed")
@@ -179,7 +180,7 @@ async def test_prefetch_oracle_suggest_scores_failsoft_returns_empty(minimal_con
     verify: exception causes fallback to empty dict (default ordering preserved).
     """
     SprintScheduler = _import_scheduler()  # noqa: N806
-    sched = SprintScheduler(minimal_config, ct_log_client=None)
+    sched = SprintScheduler(minimal_config, _ct_log_client=None)
 
     # Simulate oracle with broken suggest_scores
     broken_oracle = MagicMock(spec=["suggest_scores"])
@@ -205,7 +206,7 @@ async def test_prefetch_oracle_suggest_scores_fallback_preserves_ordering(minima
     When suggest_scores fails, oracle_scores = {} and oracle_mult = 1.0 for all items.
     """
     SprintScheduler = _import_scheduler()  # noqa: N806
-    sched = SprintScheduler(minimal_config, ct_log_client=None)
+    sched = SprintScheduler(minimal_config, _ct_log_client=None)
 
     broken_oracle = MagicMock(spec=["suggest_scores"])
     broken_oracle.suggest_scores.side_effect = RuntimeError("oracle broken")
@@ -234,7 +235,7 @@ async def test_privacy_context_init_failsoft_does_not_crash(minimal_config, mock
     verify: exception in create_privacy_context does NOT crash __init__.
     """
     SprintScheduler = _import_scheduler()  # noqa: N806
-    sched = SprintScheduler(minimal_config, ct_log_client=None)
+    sched = SprintScheduler(minimal_config, _ct_log_client=None)
 
     # Mock layer_manager with broken privacy
     mock_lm = MagicMock(spec=["privacy"])
@@ -300,7 +301,7 @@ def test_sprint_id_getattr_failsoft_defaults_to_empty(minimal_config):
     verify: getattr(lifecycle, "sprint_id", "") raises → sprint_id = "".
     """
     SprintScheduler = _import_scheduler()  # noqa: N806
-    sched = SprintScheduler(minimal_config, ct_log_client=None)
+    sched = SprintScheduler(minimal_config, _ct_log_client=None)
 
     # Lifecycle without sprint_id attribute
     bad_lifecycle = MagicMock(spec=[])  # No attributes at all
@@ -398,7 +399,7 @@ async def test_hermes_prewarm_failsoft_continues_without_ToT(  # noqa: N802
     verify: prewarm failure → _hermes_engine = None (ToT skipped, sprint continues).
     """
     SprintScheduler = _import_scheduler()  # noqa: N806
-    sched = SprintScheduler(minimal_config, ct_log_client=None)
+    sched = SprintScheduler(minimal_config, _ct_log_client=None)
 
     # Simulate _prewarm_hermes failure using patch.object
     # (required because SprintScheduler uses __slots__ and doesn't allow attribute assignment)
@@ -430,7 +431,7 @@ async def test_governor_evaluate_failsoft_continues(minimal_config, mock_lifecyc
     verify: evaluate failure → no concurrency change (advisory only).
     """
     SprintScheduler = _import_scheduler()  # noqa: N806
-    sched = SprintScheduler(minimal_config, ct_log_client=None)
+    sched = SprintScheduler(minimal_config, _ct_log_client=None)
 
     # Mock broken governor
     mock_gov = AsyncMock()
@@ -604,7 +605,7 @@ async def test_real_async_feedback_recording_does_not_crash(minimal_config, mock
     (exception in store does not propagate).
     """
     SprintScheduler = _import_scheduler()  # noqa: N806
-    sched = SprintScheduler(minimal_config, ct_log_client=None)
+    sched = SprintScheduler(minimal_config, _ct_log_client=None)
     sched._duckdb_store = mock_store
 
     # Create actual async function that simulates failure
@@ -631,7 +632,7 @@ async def test_scheduler_healthy_after_multiple_failsoft_paths(minimal_config, m
     This is the PRIMARY behavioral assertion — scheduler must not crash.
     """
     SprintScheduler = _import_scheduler()  # noqa: N806
-    sched = SprintScheduler(minimal_config, ct_log_client=None)
+    sched = SprintScheduler(minimal_config, _ct_log_client=None)
 
     # Simulate degraded state
     sched._governor = None
@@ -661,7 +662,7 @@ async def test_synthesis_sidecar_skipped_when_env_disabled(minimal_config):
     verify: _result fields remain at defaults.
     """
     SprintScheduler = _import_scheduler()  # noqa: N806
-    sched = SprintScheduler(minimal_config, ct_log_client=None)
+    sched = SprintScheduler(minimal_config, _ct_log_client=None)
     sched._duckdb_store = AsyncMock()
     sched._duckdb_store.get_top_findings = AsyncMock(return_value=[])
     sched._duckdb_store.get_recent_findings = AsyncMock(return_value=[])
@@ -682,7 +683,7 @@ async def test_synthesis_sidecar_skipped_when_no_findings(minimal_config):
     verify: _result fields updated, no crash.
     """
     SprintScheduler = _import_scheduler()  # noqa: N806
-    sched = SprintScheduler(minimal_config, ct_log_client=None)
+    sched = SprintScheduler(minimal_config, _ct_log_client=None)
     sched._duckdb_store = AsyncMock()
     # Return empty list - no findings
     sched._duckdb_store.get_top_findings = AsyncMock(return_value=[])
@@ -701,7 +702,7 @@ async def test_synthesis_sidecar_skipped_when_uma_emergency(minimal_config):
     verify: _result.synthesis_engine = "uma_guard".
     """
     SprintScheduler = _import_scheduler()  # noqa: N806
-    sched = SprintScheduler(minimal_config, ct_log_client=None)
+    sched = SprintScheduler(minimal_config, _ct_log_client=None)
     sched._duckdb_store = AsyncMock()
     sched._duckdb_store.get_top_findings = AsyncMock(return_value=[{"ioc": "1.2.3.4", "text": "malware test"}])
 
@@ -731,7 +732,7 @@ async def test_synthesis_sidecar_graceful_on_error(minimal_config):
     verify: _result fields updated but no crash.
     """
     SprintScheduler = _import_scheduler()  # noqa: N806
-    sched = SprintScheduler(minimal_config, ct_log_client=None)
+    sched = SprintScheduler(minimal_config, _ct_log_client=None)
     sched._duckdb_store = AsyncMock()
     sched._duckdb_store.get_top_findings = AsyncMock(return_value=[{"ioc": "1.2.3.4", "text": "malware test"}])
     sched._duckdb_store.get_stix_graph = MagicMock(return_value=None)
@@ -795,7 +796,7 @@ async def test_synthesis_sidecar_skipped_when_zero_accepted_findings(minimal_con
     check, not at the post-query `if not findings` check.
     """
     SprintScheduler = _import_scheduler()  # noqa: N806
-    sched = SprintScheduler(minimal_config, ct_log_client=None)
+    sched = SprintScheduler(minimal_config, _ct_log_client=None)
     sched._duckdb_store = AsyncMock()
 
     # Duckdb WOULD return findings (proves the guard fires BEFORE the I/O)
@@ -832,7 +833,7 @@ async def test_synthesis_sidecar_runs_when_accepted_findings_present(minimal_con
     (regression guard for the early-exit — must not block the happy path).
     """
     SprintScheduler = _import_scheduler()  # noqa: N806
-    sched = SprintScheduler(minimal_config, ct_log_client=None)
+    sched = SprintScheduler(minimal_config, _ct_log_client=None)
     sched._duckdb_store = AsyncMock()
     sched._duckdb_store.get_top_findings = AsyncMock(return_value=[{"ioc": "1.2.3.4", "text": "real finding"}])
 
@@ -1111,7 +1112,7 @@ class TestF270InitOrder:
         assert hasattr(scheduler, "_governor"), "_governor missing"
         assert hasattr(scheduler, "_evidence_log"), "_evidence_log missing"
         assert hasattr(scheduler, "_sidecar_orchestrator"), "_sidecar_orchestrator missing"
-        assert hasattr(scheduler, "_sidecar_tasks"), "_sidecar_tasks missing"
+        # _sidecar_tasks is v1-only; V2 uses _sidecar_orchestrator
         assert hasattr(scheduler, "_acquisition_plan"), "_acquisition_plan missing"
 
     def test_v2_has_aclose_method(self):
@@ -1384,12 +1385,22 @@ class TestObservedRunReportSchema:
 
     def test_validate_observed_run_report_accepts_valid_data(self):
         """Verify validate_observed_run_report accepts properly structured data."""
-        from hledac.universal.__main__ import (
-            FeedHealthBreakdown,
-            ObservedRunReport,
-            UmaSnapshot,
-            validate_observed_run_report,
+        import importlib.util
+        import typing
+        spec = importlib.util.spec_from_file_location(
+            "hledac.__main__",
+            str(pathlib.Path(__file__).resolve().parents[1] / "__main__.py"),
         )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        # Inject typing.Annotated so type eval works in exec_module context
+        module.Annotated = typing.Annotated
+        module.TYPE_CHECKING = False
+        spec.loader.exec_module(module)
+        FeedHealthBreakdown = module.FeedHealthBreakdown
+        ObservedRunReport = module.ObservedRunReport
+        UmaSnapshot = module.UmaSnapshot
+        validate_observed_run_report = module.validate_observed_run_report
         import msgspec
 
         uma = msgspec.convert(
@@ -1444,12 +1455,21 @@ class TestObservedRunReportSchema:
 
     def test_validate_observed_run_report_meta_validators_rejected(self):
         """Verify that Annotated Meta validators reject invalid data via strict conversion."""
-        from hledac.universal.__main__ import (
-            FeedHealthBreakdown,
-            ObservedRunReport,
-            UmaSnapshot,
-            validate_observed_run_report,
+        import importlib.util
+        import typing
+        spec = importlib.util.spec_from_file_location(
+            "hledac.__main__",
+            str(pathlib.Path(__file__).resolve().parents[1] / "__main__.py"),
         )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        module.Annotated = typing.Annotated
+        module.TYPE_CHECKING = False
+        spec.loader.exec_module(module)
+        FeedHealthBreakdown = module.FeedHealthBreakdown
+        ObservedRunReport = module.ObservedRunReport
+        UmaSnapshot = module.UmaSnapshot
+        validate_observed_run_report = module.validate_observed_run_report
         import msgspec
 
         uma = msgspec.convert(

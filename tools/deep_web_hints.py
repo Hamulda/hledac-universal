@@ -16,6 +16,15 @@ import re
 from dataclasses import dataclass, field
 import msgspec
 logger = logging.getLogger(__name__)
+# selectolax — fast CSS selectors, 5-10× faster than BeautifulSoup (M1 8GB friendly)
+try:
+    from selectolax.parser import HTMLParser as SelectolaxParser
+    SELECTOLAX_AVAILABLE = True
+except ImportError:
+    SELECTOLAX_AVAILABLE = False
+    SelectolaxParser = None
+
+# BeautifulSoup — kept for backward compatibility only (deprecated path)
 try:
     from bs4 import BeautifulSoup, Tag
     BS4_AVAILABLE = True
@@ -80,16 +89,31 @@ class DeepWebHintsExtractor:
         if base_url is None:
             base_url = url
         try:
-            if BS4_AVAILABLE:
+            # PRIMARY: selectolax (5-10× faster than BeautifulSoup, M1 8GB friendly)
+            if SELECTOLAX_AVAILABLE:
+                parser = SelectolaxParser(html_preview)
+                hints.forms = self._extract_forms_selectolax(parser, base_url)
+                hints.api_candidates = self._extract_api_candidates_selectolax(parser, base_url)
+                hints.js_markers = self._extract_js_markers_selectolax(parser)
+                hints.onion_links = self._extract_onion_links_selectolax(parser)
+                hints.bundle_urls = self._extract_js_bundle_urls_selectolax(parser, base_url)
+            # FALLBACK: BeautifulSoup (deprecated path)
+            elif BS4_AVAILABLE:
                 soup = BeautifulSoup(html_preview, 'html.parser')
                 hints.forms = self._extract_forms(soup, base_url)
+                hints.api_candidates = self._extract_api_candidates(html_preview, base_url)
+                hints.js_markers = self._extract_js_markers(html_preview)
+                ONION_REGEX = re.compile('[a-z0-9]{16,56}\\.onion', re.IGNORECASE)
+                hints.onion_links = ONION_REGEX.findall(html_preview)[:50]
+                hints.bundle_urls = self._extract_js_bundle_urls(html_preview, base_url)
+            # ULTIMATE FALLBACK: pure regex (no dependencies)
             else:
                 hints.forms = self._extract_forms_fallback(html_preview, base_url)
-            hints.api_candidates = self._extract_api_candidates(html_preview, base_url)
-            hints.js_markers = self._extract_js_markers(html_preview)
-            ONION_REGEX = re.compile('[a-z0-9]{16,56}\\.onion', re.IGNORECASE)
-            hints.onion_links = ONION_REGEX.findall(html_preview)[:50]
-            hints.bundle_urls = self._extract_js_bundle_urls(html_preview, base_url)
+                hints.api_candidates = self._extract_api_candidates(html_preview, base_url)
+                hints.js_markers = self._extract_js_markers(html_preview)
+                ONION_REGEX = re.compile('[a-z0-9]{16,56}\\.onion', re.IGNORECASE)
+                hints.onion_links = ONION_REGEX.findall(html_preview)[:50]
+                hints.bundle_urls = self._extract_js_bundle_urls(html_preview, base_url)
         except Exception as e:
             self.logger.warning(f'Deep web hints extraction failed: {e}')
         hints.hints_hash = self._compute_hints_hash(hints)
@@ -123,6 +147,136 @@ class DeepWebHintsExtractor:
                     form_info['fields'].append(field_info)
             forms.append(form_info)
         return forms
+
+    # ─── SELECTOLAX PRIMARY METHODS (5-10× faster than BeautifulSoup/regex) ───────
+
+    def _extract_forms_selectolax(self, parser: SelectolaxParser, base_url: str) -> list[dict]:
+        """Extract form information using selectolax CSS selectors."""
+        forms = []
+        for form in parser.css('form')[:MAX_FORMS]:
+            form_info: dict = {'action': '', 'method': 'GET', 'fields': []}
+            action = form.attributes.get('action', '')
+            if action:
+                form_info['action'] = self._resolve_url(str(action), base_url)
+            method = str(form.attributes.get('method', 'GET')).upper()
+            form_info['method'] = method if method in ('GET', 'POST', 'PUT', 'DELETE') else 'GET'
+            for inp in form.css('input, textarea, select')[:MAX_FIELDS_PER_FORM]:
+                field_info: dict = {}
+                name = str(inp.attributes.get('name', '')) or str(inp.attributes.get('id', ''))
+                if name:
+                    field_info['name'] = name[:100]
+                inp_type = str(inp.attributes.get('type', 'text')).lower()
+                field_info['type'] = inp_type
+                placeholder = str(inp.attributes.get('placeholder', ''))
+                if placeholder:
+                    field_info['placeholder'] = placeholder[:50]
+                value = str(inp.attributes.get('value', ''))
+                if value and inp_type not in ('submit', 'hidden', 'checkbox', 'radio'):
+                    field_info['value'] = value[:50]
+                if field_info.get('name'):
+                    form_info['fields'].append(field_info)
+            forms.append(form_info)
+        return forms
+
+    def _extract_api_candidates_selectolax(self, parser: SelectolaxParser, base_url: str) -> list[str]:
+        """Extract API endpoint candidates using selectolax + CSS selector + regex."""
+        candidates: set[str] = set()
+        # Find all href/src attributes that look like API endpoints
+        for node in parser.css('[href], [src], a, link'):
+            tag = node.tag
+            if tag in ('a', 'link'):
+                href = str(node.attributes.get('href', ''))
+            else:
+                href = str(node.attributes.get('href', '')) or str(node.attributes.get('src', ''))
+            if not href:
+                continue
+            href_lower = href.lower()
+            for pattern in self._api_patterns:
+                if pattern.search(href_lower):
+                    resolved = self._resolve_url(href.strip(), base_url)
+                    candidates.add(resolved)
+                    if len(candidates) >= MAX_API_CANDIDATES:
+                        return list(candidates)
+        # Also scan inline JS for fetch/axios patterns
+        html_text = parser.html or ''
+        script_patterns = [
+            r'fetch\s*\(\s*["\']([^"\']+)["\']',
+            r'axios\.\w+\s*\(\s*["\']([^"\']+)["\']',
+            r'\.get\s*\(\s*["\']([^"\']+)["\']',
+            r'\.post\s*\(\s*["\']([^"\']+)["\']',
+            r'window\.fetch\s*\(\s*["\']([^"\']+)["\']',
+        ]
+        for pattern_str in script_patterns:
+            pattern = re.compile(pattern_str, re.IGNORECASE)
+            for match in pattern.findall(html_text):
+                if '/api/' in match or '/graphql' in match or '/v' in match:
+                    resolved = self._resolve_url(match.strip(), base_url)
+                    candidates.add(resolved)
+                    if len(candidates) >= MAX_API_CANDIDATES:
+                        return list(candidates)
+        return list(candidates)[:MAX_API_CANDIDATES]
+
+    def _extract_js_markers_selectolax(self, parser: SelectolaxParser) -> dict:
+        """Extract JavaScript framework markers using selectolax text search."""
+        markers: dict = {}
+        html_text = parser.html or ''
+        for name, pattern in self.JS_MARKERS.items():
+            try:
+                if re.search(pattern, html_text, re.IGNORECASE):
+                    markers[name] = True
+            except re.error:
+                pass
+        html_lower = html_text.lower()
+        if '__NEXT_DATA__' in html_text or 'next' in html_lower:
+            markers['next_data'] = True
+        if '__NUXT__' in html_text or 'nuxt' in html_lower:
+            markers['nuxt'] = True
+        return markers
+
+    def _extract_onion_links_selectolax(self, parser: SelectolaxParser) -> list[str]:
+        """Extract .onion links using selectolax."""
+        onion_links: list[str] = []
+        ONION_REGEX = re.compile(r'[a-z0-9]{16,56}\.onion', re.IGNORECASE)
+        seen: set[str] = set()
+        for node in parser.css('a[href]'):
+            href = str(node.attributes.get('href', ''))
+            if not href:
+                continue
+            # Quick check before regex
+            if '.onion' not in href.lower():
+                continue
+            matches = ONION_REGEX.findall(href)
+            for match in matches:
+                if match not in seen:
+                    seen.add(match)
+                    onion_links.append(match)
+                    if len(onion_links) >= 50:
+                        return onion_links
+        return onion_links
+
+    def _extract_js_bundle_urls_selectolax(self, parser: SelectolaxParser, base_url: str) -> list[str]:
+        """Extract external .js bundle URLs using selectolax CSS selectors."""
+        from urllib.parse import urljoin
+        urls: list[str] = []
+        seen: set[str] = set()
+        for node in parser.css('script[src]'):
+            src = str(node.attributes.get('src', ''))
+            if not src or not src.endswith('.js'):
+                continue
+            if src.startswith('/'):
+                resolved = urljoin(base_url, src)
+            elif src.startswith(('http://', 'https://')):
+                resolved = src
+            else:
+                resolved = urljoin(base_url, src)
+            if resolved not in seen:
+                seen.add(resolved)
+                urls.append(resolved)
+                if len(urls) >= 10:
+                    break
+        return urls
+
+    # ─── FALLBACK METHODS (regex-only, no external dependencies) ─────────────────
 
     def _extract_forms_fallback(self, html: str, base_url: str) -> list[dict]:
         """Extract forms without BeautifulSoup using regex."""

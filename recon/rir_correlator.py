@@ -166,16 +166,18 @@ async def _lookup_ip_batch_http(ips: list[str]) -> dict[str, dict[str, Any]]:
         payload = [{'query': ip} for ip in batch]
         try:
             async with asyncio.timeout(RIR_TIMEOUT_S):
-                async with httpx.AsyncClient() as client:
-                    resp = await client.post(_RIR_API_URL, json=payload, timeout=RIR_TIMEOUT_S)
-                    if resp.status_code == 200:
-                        data = await resp.json()
-                        if isinstance(data, list):
-                            for entry in data:
-                                if isinstance(entry, dict) and entry.get('status') == 'success':
-                                    ip = entry.get('query', '')
-                                    if ip:
-                                        results[ip] = {'asn': entry.get('as', ''), 'org': entry.get('org', ''), 'country': entry.get('countryCode', ''), 'netblock': _infer_netblock(entry.get('as', '')), 'query': ip}
+                # F-01: session_pool.httpx() returns shared singleton
+                from hledac.universal.transport.session_pool import session_pool
+                session = await session_pool.httpx()
+                resp = await session.post(_RIR_API_URL, json=payload, timeout=httpx.Timeout(RIR_TIMEOUT_S))
+                if resp.status_code == 200:
+                    data = await resp.json()
+                    if isinstance(data, list):
+                        for entry in data:
+                            if isinstance(entry, dict) and entry.get('status') == 'success':
+                                ip = entry.get('query', '')
+                                if ip:
+                                    results[ip] = {'asn': entry.get('as', ''), 'org': entry.get('org', ''), 'country': entry.get('countryCode', ''), 'netblock': _infer_netblock(entry.get('as', '')), 'query': ip}
         except Exception:
             pass
     return results

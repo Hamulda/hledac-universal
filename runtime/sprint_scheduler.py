@@ -28,10 +28,9 @@ def __getattr__(name: str):
 
         return SprintSchedulerV2
 
-    # ── v1-only types (PivotTask, SourceWork, context helpers) ──────────────
-    # These exist only in v1 archived. Re-export from the archived module.
+    # ── v1-only types (SourceWork, context helpers — still in archive) ─────
+    # PivotTask moved to runtime/pivot_types.py (F350M-R SC-03 fix).
     _v1_archived_names = {
-        "PivotTask",
         "SourceWork",
         "get_sprint_ctx",
         "reset_sprint_ctx",
@@ -51,6 +50,12 @@ def __getattr__(name: str):
         from runtime import sprint_scheduler_v1_archived as _v1
 
         return getattr(_v1, name)
+
+    # ── PivotTask — extracted to standalone module ───────────────────────
+    if name == "PivotTask":
+        from runtime.pivot_types import PivotTask
+
+        return PivotTask
 
     # ── Shared types ──────────────────────────────────────────────────────
     if name == "SprintSchedulerConfig":

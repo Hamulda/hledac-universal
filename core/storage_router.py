@@ -4,15 +4,16 @@
 and M1 8GB memory budget enforcement via ResourceGovernor.
 
 LAYERS (hot → cold):
-  HOT      — EmbeddingCache (np.memmap float16, L1+L2 LRU, 512 MB cap)
-  WARM     — LanceDB (Rust HNSW, disk-backed ANN, IVF-PQ quantized)
+  HOT      — SqliteVecStore (M1-native, sqlite-vec, ~5MB) for embeddings.float16
+  WARM     — LanceDB (opt-in via HLEDAC_VECTORS=lancedb, IVF-PQ quantized)
   COLD     — DuckDB (columnar SQL, IOC history, graph analytics)
   KEYVALUE — LMDB (Q-tables, hot-edges cache, ephemeral metadata)
   STRING   — diskcache / file cache (URLs, HTML, safetensors)
 
 DECISION TREE (data_kind string → StorageKind):
-  "embedding.float16[256]"       → HOT
-  "embedding.float32[768]"        → WARM (spills from HOT on emergency)
+  "embedding.float16[256]"       → HOT (SqliteVecStore)
+  "embedding.float16[384]"       → HOT (SqliteVecStore)
+  "embedding.float32[768]"        → WARM (LanceDB, opt-in)
   "ioc.findings"                  → COLD
   "qtable.federated"             → KEYVALUE (5s debounce, TTL 24h)
   "url.normalized"                → STRING (TTL 1h)

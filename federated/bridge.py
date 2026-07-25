@@ -363,7 +363,7 @@ class FederatedBridge:
                 payload = orjson.dumps(bounded)
             else:
                 import json as _json
-                payload = _json.dumps(bounded).encode('utf-8')
+                payload = _json.dumps(bounded)
         except Exception as e:
             logger.debug('[FED-BRIDGE] serialize failed: %s', e)
             return

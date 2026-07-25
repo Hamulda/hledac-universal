@@ -125,14 +125,16 @@ class ThreatIntelligenceAutomation:
     async def _gather_malware_domains(self, source_name: str, config: dict[str, Any]):
         """Gather malware domain intelligence"""
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as session:
-                response = await session.get(config['url'])
-                if response.status_code == 200:
-                    data = response.json()
-                    for entry in data:
-                        threat = ThreatIntelligence(threat_id=f"{source_name}_{hashlib.md5(entry.get('domain', '').encode()).hexdigest()[:8]}", threat_type='malware_domain', severity='high', source=source_name, indicators=[entry.get('domain', '')], description=entry.get('description', f"Malware domain: {entry.get('domain', '')}"), first_seen=datetime.fromisoformat(entry.get('first_seen', datetime.now(UTC).isoformat())), last_seen=datetime.fromisoformat(entry.get('last_seen', datetime.now(UTC).isoformat())), confidence=0.9, tags=['malware', 'domain', 'c2'])
-                        self.threat_intel_db[threat.threat_id] = threat
-                    logger.info(f'Updated {len(data)} malware domains from {source_name}')
+            # F-01: session_pool.httpx() returns shared singleton
+            from hledac.universal.transport.session_pool import session_pool
+            session = await session_pool.httpx()
+            response = await session.get(config['url'], timeout=httpx.Timeout(30.0))
+            if response.status_code == 200:
+                data = response.json()
+                for entry in data:
+                    threat = ThreatIntelligence(threat_id=f"{source_name}_{hashlib.md5(entry.get('domain', '').encode()).hexdigest()[:8]}", threat_type='malware_domain', severity='high', source=source_name, indicators=[entry.get('domain', '')], description=entry.get('description', f"Malware domain: {entry.get('domain', '')}"), first_seen=datetime.fromisoformat(entry.get('first_seen', datetime.now(UTC).isoformat())), last_seen=datetime.fromisoformat(entry.get('last_seen', datetime.now(UTC).isoformat())), confidence=0.9, tags=['malware', 'domain', 'c2'])
+                    self.threat_intel_db[threat.threat_id] = threat
+                logger.info(f'Updated {len(data)} malware domains from {source_name}')
         except Exception as e:
             logger.error(f'Error gathering malware domains from {source_name}: {e}')
 
@@ -146,40 +148,44 @@ class ThreatIntelligenceAutomation:
             headers = {}
             if config.get('api_key'):
                 headers['X-OTX-API-KEY'] = config['api_key']
-            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as session:
-                url = f"{config['url']}/pulses/subscribed"
-                response = await session.get(url, headers=headers)
-                if response.status_code == 200:
-                    data = response.json()
-                    for pulse in data.get('results', []):
-                        for indicator in pulse.get('indicators', []):
-                            threat = ThreatIntelligence(threat_id=f"{source_name}_{indicator.get('id', '')}", threat_type='ioc', severity=self._map_pulse_severity(pulse.get('TLP', 'white')), source=source_name, indicators=[indicator.get('indicator', '')], description=pulse.get('description', 'IOC indicator'), first_seen=datetime.fromisoformat(pulse.get('created', datetime.now(UTC).isoformat())), last_seen=datetime.now(UTC), confidence=0.8, tags=pulse.get('tags', []))
-                            self.threat_intel_db[threat.threat_id] = threat
-                    logger.info(f"Updated {len(data.get('results', []))} IOC pulses from {source_name}")
+            # F-01: session_pool.httpx() returns shared singleton
+            from hledac.universal.transport.session_pool import session_pool
+            session = await session_pool.httpx()
+            url = f"{config['url']}/pulses/subscribed"
+            response = await session.get(url, headers=headers, timeout=httpx.Timeout(30.0))
+            if response.status_code == 200:
+                data = response.json()
+                for pulse in data.get('results', []):
+                    for indicator in pulse.get('indicators', []):
+                        threat = ThreatIntelligence(threat_id=f"{source_name}_{indicator.get('id', '')}", threat_type='ioc', severity=self._map_pulse_severity(pulse.get('TLP', 'white')), source=source_name, indicators=[indicator.get('indicator', '')], description=pulse.get('description', 'IOC indicator'), first_seen=datetime.fromisoformat(pulse.get('created', datetime.now(UTC).isoformat())), last_seen=datetime.now(UTC), confidence=0.8, tags=pulse.get('tags', []))
+                        self.threat_intel_db[threat.threat_id] = threat
+                logger.info(f"Updated {len(data.get('results', []))} IOC pulses from {source_name}")
         except Exception as e:
             logger.error(f'Error gathering IOC indicators from {source_name}: {e}')
 
     async def _gather_vulnerabilities(self, source_name: str, config: dict[str, Any]):
         """Gather vulnerability intelligence"""
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as session:
-                url = f"{config['url']}?resultsPerPage=50"
-                response = await session.get(url)
-                if response.status_code == 200:
-                    data = response.json()
-                    for cve in data.get('vulnerabilities', []):
-                        cve_id = cve.get('cve', {}).get('id', '')
-                        indicators = [cve_id]
-                        for affected in cve.get('configurations', []):
-                            for product in affected.get('nodes', []):
-                                if 'cpeMatch' in product:
-                                    for match in product['cpeMatch']:
-                                        cpe = match.get('criteria', '')
-                                        if cpe:
-                                            indicators.append(cpe)
-                        threat = ThreatIntelligence(threat_id=f'{source_name}_{cve_id}', threat_type='vulnerability', severity=self._map_cvss_severity(cve.get('metrics', {}).get('cvssMetricV2', [])), source=source_name, indicators=indicators, description=cve.get('descriptions', [{}])[0].get('value', ''), first_seen=datetime.fromisoformat(cve.get('published', datetime.now(UTC).isoformat())), last_seen=datetime.fromisoformat(cve.get('lastModified', datetime.now(UTC).isoformat())), confidence=1.0, tags=['vulnerability', 'cve'])
-                        self.threat_intel_db[threat.threat_id] = threat
-                    logger.info(f"Updated {len(data.get('vulnerabilities', []))} CVEs from {source_name}")
+            # F-01: session_pool.httpx() returns shared singleton
+            from hledac.universal.transport.session_pool import session_pool
+            session = await session_pool.httpx()
+            url = f"{config['url']}?resultsPerPage=50"
+            response = await session.get(url, timeout=httpx.Timeout(30.0))
+            if response.status_code == 200:
+                data = response.json()
+                for cve in data.get('vulnerabilities', []):
+                    cve_id = cve.get('cve', {}).get('id', '')
+                    indicators = [cve_id]
+                    for affected in cve.get('configurations', []):
+                        for product in affected.get('nodes', []):
+                            if 'cpeMatch' in product:
+                                for match in product['cpeMatch']:
+                                    cpe = match.get('criteria', '')
+                                    if cpe:
+                                        indicators.append(cpe)
+                    threat = ThreatIntelligence(threat_id=f'{source_name}_{cve_id}', threat_type='vulnerability', severity=self._map_cvss_severity(cve.get('metrics', {}).get('cvssMetricV2', [])), source=source_name, indicators=indicators, description=cve.get('descriptions', [{}])[0].get('value', ''), first_seen=datetime.fromisoformat(cve.get('published', datetime.now(UTC).isoformat())), last_seen=datetime.fromisoformat(cve.get('lastModified', datetime.now(UTC).isoformat())), confidence=1.0, tags=['vulnerability', 'cve'])
+                    self.threat_intel_db[threat.threat_id] = threat
+                logger.info(f"Updated {len(data.get('vulnerabilities', []))} CVEs from {source_name}")
         except Exception as e:
             logger.error(f'Error gathering vulnerabilities from {source_name}: {e}')
 

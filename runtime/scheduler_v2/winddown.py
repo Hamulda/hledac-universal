@@ -132,10 +132,7 @@ class WinddownOrchestrator:
         await self._unload_hermes_at_teardown(ctx)
         self._unload_lazy_models(ctx)
 
-        # Phase 4: Sidecar shutdown with dedicated timeout (after parallel phase)
-        await self._graceful_sidecar_shutdown(ctx)
-
-        # Phase 5: DuckDB close - MUST be last
+        # Phase 4: DuckDB close - MUST be last
         await self._close_duckdb(ctx)
 
         # Final cleanup
@@ -264,7 +261,8 @@ class WinddownOrchestrator:
 
     async def _run_vacuum(self, ctx: Any) -> None:
         """Post-export DuckDB vacuum — reclaim space if DB > 2GB."""
-        _store = getattr(ctx, '_duckdb_store', None) or getattr(ctx, 'duckdb_store', None)
+        # SC-05 FIX: ctx._duckdb_store no longer exists. ctx.duckdb_store is the convenience property.
+        _store = ctx.duckdb_store
         if _store is not None:
             try:
                 await _store.async_vacuum_if_needed(threshold_bytes=2 * 1024 ** 3)
@@ -273,8 +271,9 @@ class WinddownOrchestrator:
 
     async def _close_dedup(self, ctx: Any) -> None:
         """Close persistent dedup at TEARDOWN."""
+        # SC-05 FIX: ctx._duckdb_store no longer exists. ctx.duckdb_store is the convenience property.
         try:
-            _ds = getattr(ctx, '_duckdb_store', None) or getattr(ctx, 'duckdb_store', None)
+            _ds = ctx.duckdb_store
             if _ds and hasattr(_ds, 'close_dedup'):
                 await _ds.close_dedup()
         except Exception:
@@ -340,7 +339,8 @@ class WinddownOrchestrator:
         """Run ANE semantic dedup advisory (near-duplicate detection)."""
         try:
             from hledac.universal.utils.semantic_dedup import run_ane_semantic_dedup
-            _store = getattr(ctx, '_duckdb_store', None) or getattr(ctx, 'duckdb_store', None)
+            # SC-05 FIX: ctx._duckdb_store no longer exists. ctx.duckdb_store is the convenience property.
+            _store = ctx.duckdb_store
             if _store:
                 await run_ane_semantic_dedup(_store)
         except Exception:
@@ -385,30 +385,10 @@ class WinddownOrchestrator:
                 pass
             _bg_tasks.clear()
 
-    async def _graceful_sidecar_shutdown(self, ctx: Any) -> None:
-        """Graceful sidecar task shutdown with 15s bounded timeout."""
-        # sidecar_tasks lives on SprintSchedulerV2, not on SprintContext._cycle
-        _scheduler = object.__getattribute__(self, '_scheduler')
-        _sidecar_tasks: set | None = getattr(_scheduler, '_sidecar_tasks', None) if _scheduler else None
-        if not _sidecar_tasks:
-            return
-        _pending = list(_sidecar_tasks)
-        try:
-            async with asyncio.timeout(15.0):
-                from hledac.universal.utils.async_helpers import parallel
-                await parallel(list(_pending), policy="log", ctx='sprint_scheduler:sidecar_tasks')
-        except TimeoutError:
-            for t in _pending:
-                if not t.done():
-                    t.cancel()
-        except Exception:
-            pass
-        finally:
-            _sidecar_tasks.clear()
-
     async def _close_duckdb(self, ctx: Any) -> None:
         """Close DuckDB store at teardown."""
-        _store = getattr(ctx, '_duckdb_store', None) or getattr(ctx, 'duckdb_store', None)
+        # SC-05 FIX: ctx._duckdb_store no longer exists. ctx.duckdb_store is the convenience property.
+        _store = ctx.duckdb_store
         if _store and hasattr(_store, 'async_close'):
             try:
                 await _store.async_close()

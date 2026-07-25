@@ -119,16 +119,16 @@ async def async_search_tvnews(
 
     start = time.monotonic()
 
-    # Lazy import httpx
+    # F-01: Canonical session pool — reuse httpx client instead of per-call instantiation
     try:
-        import httpx
-    except ImportError:
+        from hledac.universal.transport.session_pool import session_pool
+    except Exception as exc:
         elapsed = time.monotonic() - start
         return DiscoveryBatchResult(
             hits=(),
             error_type="import_error",
             elapsed_s=elapsed,
-            error="httpx_not_available",
+            error=f"session_pool_unavailable:{exc}",
         )
 
     # Build search params — TV News collection
@@ -143,20 +143,19 @@ async def async_search_tvnews(
         # Results are already returned in relevance order by Archive.org
     }
 
-    timeout = httpx.Timeout(timeout_s)
-
     try:
         async with asyncio.timeout(timeout_s):
-            async with httpx.AsyncClient(timeout=timeout) as session:
-                headers = {
-                    "User-Agent": "Hledac/1.0 (research bot; OSINT orchestrator)",
-                    "Accept": "application/json",
-                }
-                async with session.get(
-                    _SEARCH_URL,
-                    params=params,
-                    headers=headers,
-                ) as response:
+            # F-01: session_pool.httpx() is async — await the client from canonical pool
+            session = await session_pool.httpx()
+            headers = {
+                "User-Agent": "Hledac/1.0 (research bot; OSINT orchestrator)",
+                "Accept": "application/json",
+            }
+            async with session.get(
+                _SEARCH_URL,
+                params=params,
+                headers=headers,
+            ) as response:
                     elapsed = time.monotonic() - start
                     status = response.status
 

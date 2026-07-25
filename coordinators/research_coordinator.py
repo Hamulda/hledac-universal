@@ -28,7 +28,7 @@ from enum import Enum
 from typing import Any
 import msgspec
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
-from hledac.universal.utils.async_helpers import safe_wait_for, parallel
+from hledac.universal.utils.async_helpers import safe_wait_for, parallel, ParallelResult
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
 _level_stats_factory: defaultdict[str, dict[str, int]] = defaultdict(lambda: {'explored': 0, 'relevant': 0})
 logger = logging.getLogger(__name__)
@@ -633,29 +633,38 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         Returns:
             List of results from each step
         """
-        results = []
         agents = plan.get('agents', [])
-        logger.info(f'Executing research plan with {len(agents)} agents')
-        for agent_config in agents:
-            agent_type = agent_config.get('type', 'research')
-            task = agent_config.get('task', '')
+        logger.info(f'Executing research plan with {len(agents)} agents (parallel)')
+
+        async def _run_step(cfg: dict) -> dict:
+            """ISSUE-AP-01: Run single agent step with exception isolation."""
+            agent_type = cfg.get('type', 'research')
+            task = cfg.get('task', '')
             try:
                 if agent_type == 'academic':
-                    result = await self.search_academic(task)
+                    return await self.search_academic(task)
                 elif agent_type == 'archive':
-                    result = await self.search_archives(task)
+                    return await self.search_archives(task)
                 elif agent_type == 'crawl':
-                    url = agent_config.get('url', task)
-                    depth = agent_config.get('depth', 1)
-                    result = await self.crawl_url(url, depth)
+                    url = cfg.get('url', task)
+                    depth = cfg.get('depth', 1)
+                    return await self.crawl_url(url, depth)
                 else:
                     decision = DecisionResponse(decision_id=f'plan_{agent_type}', chosen_option='unified_ai', confidence=0.7, reasoning=task)
                     research_result = await self._execute_unified_ai_research(decision, task)
-                    result = {'success': getattr(research_result, 'success', None), 'source': 'unified_ai', 'result': research_result.full_result}
-                results.append(result)
+                    return {'success': getattr(research_result, 'success', None), 'source': 'unified_ai', 'result': research_result.full_result}
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 logger.error(f'Plan step failed: {e}')
-                results.append({'success': False, 'error': str(e), 'agent_type': agent_type})
+                return {'success': False, 'error': str(e), 'agent_type': agent_type}
+
+        # ISSUE-AP-01: Parallel execution — ~max(latencies) instead of sum(latencies)
+        # AP-01-OPT: 30s timeout per agent prevents indefinite hangs
+        _AGENT_TIMEOUT_S = 30.0
+        result = await parallel([_run_step(a) for a in agents], policy='collect', ctx='research_plan', timeout=_AGENT_TIMEOUT_S)
+        results = result.ok if isinstance(result, ParallelResult) else list(result)
+
         if graph_analysis:
             try:
                 entities = plan.get('entities') or (context or {}).get('entities') or []

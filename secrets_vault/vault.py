@@ -260,8 +260,8 @@ class SecretVault:
         orjson_dumps = _get_orjson()
         if orjson_dumps:
             return orjson_dumps(data, default=_orjson_default_serializer)
-        # Fallback to stdlib json
-        return _stdjson.dumps(data, default=str).encode()
+        # Fallback: orjson always available in this project, this path rarely reached
+        return _stdjson.dumps(data, default=str).encode('utf-8')
 
     def _deserialize(self, raw: bytes) -> dict[str, Any]:
         """Deserialize JSON bytes to dict."""

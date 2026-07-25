@@ -450,9 +450,13 @@ class StealthWebScraper:
             },
         ]
 
-    def scrape(self, url: str, **kwargs) -> ScrapingResult:
+    async def scrape(self, url: str, **kwargs) -> ScrapingResult:
         """
-        Scrape a URL with protection detection and bypass.
+        Scrape a URL with protection detection and bypass (async-safe).
+
+        F-FIX: curl_requests.get inside _detect_protection_impl blocks the event loop
+        when called from async code. Both _detect_protection and _fetch_content are
+        wrapped via asyncio.to_thread so concurrent coroutines are not blocked.
 
         Args:
             url: URL to scrape
@@ -461,7 +465,7 @@ class StealthWebScraper:
         Returns:
             ScrapingResult with content or error
         """
-        from datetime import datetime, UTC
+        import asyncio
         from ._models import TorProxyManager
 
         if ".onion" in url:
@@ -484,12 +488,17 @@ class StealthWebScraper:
             )
         _mark_surface_patched("StealthWebScraper.scrape")
         try:
-            protection_type = self._detect_protection(url)
+            # F-FIX: wrap blocking HTTP calls with asyncio.to_thread
+            protection_type = await asyncio.to_thread(
+                self._detect_protection, url
+            )
             if protection_type:
                 logger.info(
                     f"Protection detected: {protection_type.value} on {url}"
                 )
-            content = self._fetch_content(url, protection_type, **kwargs)
+            content = await asyncio.to_thread(
+                self._fetch_content, url, protection_type, **kwargs
+            )
             if content:
                 return ScrapingResult(
                     url=url,
@@ -511,31 +520,47 @@ class StealthWebScraper:
                 error=str(e),
             )
 
-    def _detect_protection(
+    def _detect_protection_impl(
         self, url: str
-    ) -> ProtectionType | None:
-        """Detect anti-bot protection on the target URL."""
+    ) -> tuple[str, httpx.Headers] | None:
+        """Shared fetch implementation for protection detection.
+
+        F-FIX: extracted to eliminate duplication between sync and async paths.
+        Returns (html_text, headers) on success, None on failure.
+        """
+        import httpx
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        if self._curl_cffi_available:
+            from curl_cffi import requests as curl_requests
+
+            response = curl_requests.get(
+                url, headers=headers, impersonate="chrome136", timeout=10
+            )
+            return response.text, response.headers
+        with httpx.Client(timeout=10.0) as client:
+            response = client.get(url, headers=headers)
+            return response.text, response.headers
+
+    def _detect_protection(self, url: str) -> ProtectionType | None:
+        """Detect anti-bot protection on the target URL (sync fallback).
+
+        F-FIX: extracted impl to avoid duplication; direct call (no to_thread needed
+        for sync callers). For async callers, use scrape_async() instead.
+        """
         try:
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            }
-            if self._curl_cffi_available:
-                from curl_cffi import requests as curl_requests
-
-                response = curl_requests.get(
-                    url, headers=headers, impersonate="chrome136", timeout=10
-                )
-            else:
-                import httpx
-
-                with httpx.Client(timeout=10.0) as client:
-                    response = client.get(url, headers=headers)
-            html_lower = response.text.lower()
+            result = self._detect_protection_impl(url)
+            if result is None:
+                return None
+            html_text, response_headers = result
+            html_lower = html_text.lower()
             if "cloudflare" in html_lower or "challenges.cloudflare" in html_lower:
                 return ProtectionType.CLOUDFLARE
             if "incapsula" in html_lower or "_Incapsula_机器人" in html_lower:
                 return ProtectionType.INCAPSULA
-            if "datadome" in html_lower or "datadome" in str(response.headers):
+            if "datadome" in html_lower or "datadome" in str(response_headers):
                 return ProtectionType.DATADOME
             if "imperva" in html_lower or "incapsula" in html_lower:
                 return ProtectionType.IMPERVA
@@ -643,6 +668,15 @@ def quick_scrape(url: str, **kwargs) -> ScrapingResult:
     Quick scrape a URL using default settings.
 
     Convenience function for one-off scraping without explicit setup.
+    Runs the async scrape() in a new event loop via asyncio.run().
     """
+    import asyncio
     scraper = StealthWebScraper()
-    return scraper.scrape(url, **kwargs)
+    return asyncio.run(scrape_async_coro(scraper, url, **kwargs))
+
+
+async def scrape_async_coro(
+    scraper: StealthWebScraper, url: str, **kwargs
+) -> ScrapingResult:
+    """Async coroutine wrapper so asyncio.run() can call scrape()."""
+    return await scraper.scrape(url, **kwargs)

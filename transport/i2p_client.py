@@ -92,23 +92,24 @@ async def is_i2p_available(proxy_type: str = "http") -> bool:
         import httpx
         import httpx_socks
 
-        socks5_transport = httpx_socks.AsyncProxyTransport.from_url(I2P_SOCKS_URL, rdns=True)
-        client_timeout = httpx.Timeout(5.0)
+        # F-01: session_pool.httpx() returns shared singleton; httpx_socks() returns SOCKS5 client
+        from hledac.universal.transport.session_pool import session_pool
+
         # Check HTTP proxy (port 4444)
         try:
-            async with httpx.AsyncClient(timeout=client_timeout, proxy=I2P_PROXY_URL) as session:
-                resp = await session.get(f"{I2P_PROXY_URL}/")
-                if resp.status_code < 500:
-                    _i2p_http_available = True
-                else:
-                    _i2p_http_available = False
+            session = await session_pool.httpx()
+            resp = await session.get(f"{I2P_PROXY_URL}/", timeout=httpx.Timeout(5.0), proxy=I2P_PROXY_URL)
+            if resp.status_code < 500:
+                _i2p_http_available = True
+            else:
+                _i2p_http_available = False
         except Exception:
             _i2p_http_available = False
         # Check SOCKS5 proxy (port 7654) via httpx-socks
         try:
-            async with httpx.AsyncClient(transport=socks5_transport, timeout=httpx.Timeout(3.0)) as session:
-                resp = await session.get("http://i2pwiki.i2p")
-                _i2p_socks_available = resp.status_code < 500
+            session = await session_pool.httpx_socks(I2P_SOCKS_URL)
+            resp = await session.get("http://i2pwiki.i2p", timeout=httpx.Timeout(3.0))
+            _i2p_socks_available = resp.status_code < 500
         except Exception:
             _i2p_socks_available = False
     except ImportError:
@@ -157,24 +158,24 @@ async def fetch_eepsite(
 
     try:
         import httpx
+        from hledac.universal.transport.session_pool import session_pool
 
-        client_timeout = httpx.Timeout(timeout)
-        async with httpx.AsyncClient(timeout=client_timeout, proxy=I2P_PROXY_URL) as session:
-            resp = await session.get(url)
-            if resp.status_code == 200:
-                content_length = resp.headers.get("Content-Length")
-                if content_length:
-                    if int(content_length) > max_size:
-                        logger.warning(f"I2P response too large: {content_length} bytes")
-                        return None
-                content = resp.text
-                if len(content.encode("utf-8")) > max_size:
-                    logger.warning("I2P response too large after decode")
+        session = await session_pool.httpx()
+        resp = await session.get(url, timeout=httpx.Timeout(timeout), proxy=I2P_PROXY_URL)
+        if resp.status_code == 200:
+            content_length = resp.headers.get("Content-Length")
+            if content_length:
+                if int(content_length) > max_size:
+                    logger.warning(f"I2P response too large: {content_length} bytes")
                     return None
-                return content
-            else:
-                logger.debug(f"I2P fetch failed: status {resp.status_code} for {url}")
+            content = resp.text
+            if len(content.encode("utf-8")) > max_size:
+                logger.warning("I2P response too large after decode")
                 return None
+            return content
+        else:
+            logger.debug(f"I2P fetch failed: status {resp.status_code} for {url}")
+            return None
 
     except TimeoutError:
         logger.debug(f"I2P fetch timeout: {url}")
@@ -212,24 +213,24 @@ async def fetch_eepsite_socks5(
 
     try:
         import httpx
-        import httpx_socks
-        transport = httpx_socks.AsyncProxyTransport.from_url(I2P_SOCKS_URL, rdns=True)
-        client_timeout = httpx.Timeout(timeout)
-        async with httpx.AsyncClient(transport=transport, timeout=client_timeout) as session:
-            resp = await session.get(url)
-            if resp.status_code == 200:
-                content_length = resp.headers.get("Content-Length")
-                if content_length and int(content_length) > max_size:
-                    logger.warning(f"I2P SOCKS5 response too large: {content_length}")
-                    return None
-                content = resp.text
-                if len(content.encode("utf-8")) > max_size:
-                    logger.warning("I2P SOCKS5 response too large after decode")
-                    return None
-                return content
-            else:
-                logger.debug(f"I2P SOCKS5 fetch failed: status {resp.status_code} for {url}")
+        from hledac.universal.transport.session_pool import session_pool
+
+        # F-01: session_pool.httpx_socks() returns client with SOCKS5 transport pre-configured
+        session = await session_pool.httpx_socks(I2P_SOCKS_URL)
+        resp = await session.get(url, timeout=httpx.Timeout(timeout))
+        if resp.status_code == 200:
+            content_length = resp.headers.get("Content-Length")
+            if content_length and int(content_length) > max_size:
+                logger.warning(f"I2P SOCKS5 response too large: {content_length}")
                 return None
+            content = resp.text
+            if len(content.encode("utf-8")) > max_size:
+                logger.warning("I2P SOCKS5 response too large after decode")
+                return None
+            return content
+        else:
+            logger.debug(f"I2P SOCKS5 fetch failed: status {resp.status_code} for {url}")
+            return None
     except ImportError:
         logger.debug("httpx-socks not available for SOCKS5 fetch")
         return None
@@ -353,15 +354,16 @@ async def get_i2p_router_info() -> dict | None:
 
     try:
         import httpx
-        client_timeout = httpx.Timeout(10.0)
-        async with httpx.AsyncClient(timeout=client_timeout, proxy=I2P_PROXY_URL) as session:
-            resp = await session.get(f"{I2P_PROXY_URL}/?page=stats")
-            if resp.status_code == 200:
-                text = resp.text
-                try:
-                    return _json.decode(text)
-                except Exception:
-                    return {"raw": text[:1000]}
+        from hledac.universal.transport.session_pool import session_pool
+
+        session = await session_pool.httpx()
+        resp = await session.get(f"{I2P_PROXY_URL}/?page=stats", timeout=httpx.Timeout(10.0), proxy=I2P_PROXY_URL)
+        if resp.status_code == 200:
+            text = resp.text
+            try:
+                return _json.decode(text)
+            except Exception:
+                return {"raw": text[:1000]}
     except Exception:
         pass
 

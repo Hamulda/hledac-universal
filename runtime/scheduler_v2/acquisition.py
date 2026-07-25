@@ -18,10 +18,8 @@ Design:
 from __future__ import annotations
 
 import asyncio
-import enum
 import logging
 import time as _time
-from collections import deque
 from typing import Any, Sequence
 
 import msgspec
@@ -33,53 +31,6 @@ from hledac.universal.utils.async_helpers import (
 )
 
 # ── Pipeline Phase Types ─────────────────────────────────────────────────────────
-
-
-class PipelinePhase(enum.Enum):
-    """Pipeline phases for cycle execution — ISSUE 3.2.
-
-    DISCOVERY: Parallel feed probing, produces candidate work items
-    SELECTION:  Prioritization via Q-table scoring (or rolling window)
-    FETCH:     Parallel URL fetching via AIMD window
-    ENRICHMENT: Parallel DuckDB + Rust enrichment
-    """
-
-    DISCOVERY = "discovery"
-    SELECTION = "selection"
-    FETCH = "fetch"
-    ENRICHMENT = "enrichment"
-
-
-class PipelineMetrics(msgspec.Struct):
-    """Per-phase metrics for pipeline cycle tracking — ISSUE 3.2.
-
-    Tracks items queued/produced/consumed and duration per phase
-    to enable pipeline bottleneck analysis and adaptive concurrency.
-    """
-
-    phase: str = ""
-    items_queued: int = 0
-    items_produced: int = 0
-    items_consumed: int = 0
-    duration_s: float = 0.0
-
-
-class _PipelineQueues(msgspec.Struct, frozen=True):
-    """ISSUE 3.2: Four-phase pipeline queues.
-
-    Discovery → Selection → Fetch → Enrichment
-    Each phase runs asynchronously — discovery does NOT block fetching.
-    Queues are bounded to prevent memory bloat on M1 8GB.
-    """
-
-    # DISCOVERY output: candidate URLs/domains from feed probing
-    discovery_queue: asyncio.Queue = msgspec.field(default_factory=lambda: asyncio.Queue(maxsize=500))
-    # SELECTION output: prioritized work items for fetching
-    selection_queue: asyncio.Queue = msgspec.field(default_factory=lambda: asyncio.Queue(maxsize=200))
-    # FETCH output: raw fetched content for enrichment
-    fetch_queue: asyncio.Queue = msgspec.field(default_factory=lambda: asyncio.Queue(maxsize=300))
-    # ENRICHMENT output: enriched findings ready for canonical write
-    enrichment_queue: asyncio.Queue = msgspec.field(default_factory=lambda: asyncio.Queue(maxsize=200))
 
 
 log = logging.getLogger(__name__)
@@ -145,303 +96,12 @@ class AcquisitionOrchestrator:
     def __init__(self) -> None:
         pass
 
-    # ── ISSUE 3.2: Four-Phase Pipeline ─────────────────────────────────────────
-
-    async def _run_pipeline_cycle(
-        self,
-        ctx: Any,
-        sources: Sequence[str],
-        duckdb_store: Any,
-    ) -> CycleResult:
-        """ISSUE 3.2: Four-phase pipeline cycle.
-
-        Phases (asyncio.Queue producer/consumer pattern):
-            DISCOVERY  → parallel feed probing, produces candidates
-            SELECTION  → Q-table prioritization / rolling window scoring
-            FETCH      → parallel URL fetching via AIMD window
-            ENRICHMENT → parallel DuckDB + Rust enrichment
-
-        All phases run asynchronously — discovery does NOT block fetching.
-        Uses bounded queues to prevent memory bloat on M1 8GB.
-
-        Args:
-            ctx: SprintContext
-            sources: ordered feed sources
-            duckdb_store: DuckDBShadowStore
-
-        Returns:
-            CycleResult with pipeline phase metrics
-        """
-        import time as _time
-
-        _phase_metrics: dict[str, PipelineMetrics] = {}
-        _start = _time.monotonic()
-
-        # Initialize pipeline queues (per-cycle, bounded for M1 8GB)
-        _queues = _PipelineQueues()
-
-        # Rolling window for URL prioritization (SELECTION phase)
-        _url_window: deque[str] = deque(maxlen=200)
-        _q_scores: dict[str, float] = {}
-
-        # Phase semaphores for bounded concurrency
-        _discovery_sem = asyncio.Semaphore(min(len(sources), 5))
-        _fetch_sem = asyncio.Semaphore(8)  # AIMD will adjust
-        _enrich_sem = asyncio.Semaphore(4)  # ISSUE A2: parallel enrichment workers (M1 8GB: 4 optimal)
-
-        async def _discovery_producer() -> None:
-            """DISCOVERY: Parallel feed probing, produces candidates to selection_queue."""
-            _ph_start = _time.monotonic()
-            _produced = 0
-
-            async def _probe_source(source: str) -> tuple[str, list[str]]:
-                async with _discovery_sem:
-                    try:
-                        # Feed probing produces candidate URLs
-                        _items = await self._probe_feed_source(ctx, source, duckdb_store)
-                        return (source, _items)
-                    except Exception:
-                        return (source, [])
-
-            try:
-                _results = await parallel(
-                    [_probe_source(s) for s in sources],
-                    taskgroup=True,
-                    policy="collect",
-                    ctx="pipeline:discovery",
-                )
-                for _source, _items in _results.ok:
-                    for _url in _items:
-                        if _url not in _url_window:
-                            _url_window.append(_url)
-                            _q_scores[_url] = 1.0  # Initial Q-score
-                        _produced += 1
-                        try:
-                            _queues.selection_queue.put_nowait((_url, _q_scores.get(_url, 1.0)))
-                        except asyncio.QueueFull:
-                            break  # Bounded queue — stop if full
-            except Exception:
-                pass  # Fail-safe: discovery errors don't stop pipeline
-            finally:
-                _phase_metrics["DISCOVERY"] = PipelineMetrics(
-                    phase="DISCOVERY",
-                    items_produced=_produced,
-                    duration_s=_time.monotonic() - _ph_start,
-                )
-
-        async def _selection_worker() -> None:
-            """SELECTION: Q-table prioritization, produces prioritized items to fetch_queue."""
-            _ph_start = _time.monotonic()
-            _consumed = 0
-            _produced = 0
-            _q_decay = 0.95  # Q-table decay factor
-
-            try:
-                while True:
-                    try:
-                        _url, _score = await asyncio.wait_for(
-                            _queues.selection_queue.get(), timeout=0.5
-                        )
-                    except asyncio.TimeoutError:
-                        break  # No more items
-
-                    _consumed += 1
-
-                    # Q-table update: apply decay and re-score
-                    _new_score = _score * _q_decay + 0.1
-                    _q_scores[_url] = _new_score
-
-                    try:
-                        _queues.fetch_queue.put_nowait((_url, _new_score))
-                        _produced += 1
-                    except asyncio.QueueFull:
-                        break
-            except Exception:
-                pass
-            finally:
-                _phase_metrics["SELECTION"] = PipelineMetrics(
-                    phase="SELECTION",
-                    items_consumed=_consumed,
-                    items_produced=_produced,
-                    duration_s=_time.monotonic() - _ph_start,
-                )
-
-        async def _fetch_worker() -> None:
-            """FETCH: Parallel URL fetching via AIMD window, produces raw content."""
-            _ph_start = _time.monotonic()
-            _consumed = 0
-            _produced = 0
-            _drain_timeout = 1.0  # seconds to wait after queue empties before giving up
-
-            async def _fetch_one(url_score: tuple[str, float]) -> tuple[str, Any] | None:
-                _url, _score = url_score
-                async with _fetch_sem:
-                    try:
-                        # Fetch URL with AIMD concurrency control
-                        _result = await self._fetch_url_aimd(ctx, _url, duckdb_store)
-                        if _result:
-                            try:
-                                _queues.fetch_queue.put_nowait((_url, _result))  # A3-F2 FIX: was enrichment_queue
-                                return (_url, _result)
-                            except asyncio.QueueFull:
-                                return None
-                    except Exception:
-                        pass
-                    return None
-
-            try:
-                # A3-F1 FIX: wait_for pattern instead of TOCTOU empty()+get_nowait()
-                while True:
-                    try:
-                        _item = await asyncio.wait_for(
-                            _queues.selection_queue.get(), timeout=_drain_timeout
-                        )
-                    except asyncio.TimeoutError:
-                        break  # Drain complete
-
-                    _items_batch: list[tuple[str, float]] = [_item]
-                    # Batch-gather remaining items already in queue (non-blocking drain)
-                    while len(_items_batch) < 32:  # batch cap for memory safety
-                        try:
-                            _items_batch.append(_queues.selection_queue.get_nowait())
-                        except asyncio.QueueEmpty:
-                            break
-
-                    _results = await parallel(
-                        [_fetch_one(item) for item in _items_batch],
-                        taskgroup=True,
-                        policy="collect",
-                        ctx="pipeline:fetch",
-                    )
-                    for _r in _results.ok:
-                        if _r is not None:
-                            _consumed += 1
-                            _produced += 1
-            except Exception:
-                pass
-            finally:
-                _phase_metrics["FETCH"] = PipelineMetrics(
-                    phase="FETCH",
-                    items_consumed=_consumed,
-                    items_produced=_produced,
-                    duration_s=_time.monotonic() - _ph_start,
-                )
-
-        # ISSUE A2 + A3-F3/F4: Parallel enrichment worker pool — replaces sequential loop
-        # Each worker processes fetch_queue items with bounded concurrency via _enrich_sem.
-        # Workers run until drain_timeout expires with no new items.
-        # A3-F3 FIX: per-worker metrics key to avoid overwrite from 4 concurrent workers.
-        async def _enrichment_worker(widx: int) -> None:
-            """ENRICHMENT: Parallel DuckDB + Rust enrichment, produces final findings."""
-            _ph_start = _time.monotonic()
-            _consumed = 0
-            _drain_timeout = 2.0  # seconds to wait after queue empties before giving up
-            _wkey = f"ENRICHMENT-{widx}"
-
-            while True:
-                try:
-                    _url, _content = await asyncio.wait_for(
-                        _queues.fetch_queue.get(), timeout=_drain_timeout
-                    )
-                except asyncio.TimeoutError:
-                    break  # Drain timeout — no new items in queue
-
-                async with _enrich_sem:
-                    try:
-                        # DuckDB + Rust enrichment
-                        await self._enrich_content(ctx, _url, _content, duckdb_store)
-                        _consumed += 1
-                    except Exception:
-                        pass  # Fail-safe: enrichment errors don't propagate
-
-            # A3-F3 FIX: per-worker metrics key — avoids 4 workers overwriting same key
-            _phase_metrics[_wkey] = PipelineMetrics(
-                phase="ENRICHMENT",
-                items_consumed=_consumed,
-                duration_s=_time.monotonic() - _ph_start,
-            )
-
-        # ── Run pipeline phases ─────────────────────────────────────────────────
-        try:
-            # DISCOVERY runs first (producer)
-            await _discovery_producer()
-
-            # SELECTION + FETCH + 4×ENRICHMENT_WORKER run concurrently (ISSUE A2)
-            async with asyncio.TaskGroup() as _tg:
-                _tg.create_task(_selection_worker(), name="selection")
-                _tg.create_task(_fetch_worker(), name="fetch")
-                for _i in range(4):  # ISSUE A2: 4 parallel enrichment workers
-                    _tg.create_task(_enrichment_worker(_i), name=f"enrichment-{_i}")
-        except Exception:
-            pass  # Fail-safe: pipeline errors return empty result
-
-        _total_duration = _time.monotonic() - _start
-
-        # Aggregate metrics into CycleResult
-        _total_findings = sum(m.items_consumed for m in _phase_metrics.values())
-        _feed_ok = "DISCOVERY" in _phase_metrics
-        _public_ok = "FETCH" in _phase_metrics
-
-        return CycleResult(
-            cycle_ok=True,
-            empty_work_items=_total_findings == 0,
-            aggressive_mode=ctx.config.aggressive_mode,
-            feed_results=(_feed_ok, _phase_metrics.get("DISCOVERY", PipelineMetrics()).items_produced),
-            public_results=(_public_ok, _phase_metrics.get("FETCH", PipelineMetrics()).items_consumed, False),
-        )
-
-    async def _probe_feed_source(
-        self,
-        ctx: Any,
-        source: str,
-        duckdb_store: Any,
-    ) -> list[str]:
-        """ISSUE 3.2: Probe a single feed source, return candidate URLs.
-
-        This is the DISCOVERY phase producer.
-        Returns list of discovered URLs from the source.
-        """
-        # TODO: Wire to actual feed probing logic
-        # For now, returns empty list — will be connected to live_feed_pipeline
-        return []
-
-    async def _fetch_url_aimd(
-        self,
-        ctx: Any,
-        url: str,
-        duckdb_store: Any,
-    ) -> Any:
-        """ISSUE 3.2: Fetch URL with AIMD concurrency control.
-
-        This is the FETCH phase consumer.
-        Returns fetched content for enrichment.
-        """
-        # TODO: Wire to FetchCoordinator.fetch() with AIMD
-        return None
-
-    async def _enrich_content(
-        self,
-        ctx: Any,
-        url: str,
-        content: Any,
-        duckdb_store: Any,
-    ) -> None:
-        """ISSUE 3.2: Enrich content via DuckDB + Rust enrichment.
-
-        This is the ENRICHMENT phase consumer.
-        Writes enriched findings to DuckDB canonical store.
-        """
-        # TODO: Wire to DuckDB async_ingest_findings_batch + Rust enrichment
-        pass
-
-    # ── End ISSUE 3.2 Pipeline ────────────────────────────────────────────────
-
     async def run(
         self,
         ctx: Any,  # SprintContext
         ordered_sources: list[str],
         duckdb_store: Any,
-        now_monotonic: float | None = None,
+        _now_monotonic: float | None = None,  # unused: shadowed inside loop; nominal API param
     ) -> AcquisitionPhaseResult:
         """Run acquisition cycles until runner signals terminal.
 
@@ -454,7 +114,7 @@ class AcquisitionOrchestrator:
         accepted_findings = 0
         empty_cycles = 0
         windup_entered = False
-        exit_path: str | None = None
+        exit_path = "terminal"
 
         _wall_clock_start = getattr(ctx, "_wall_clock_start", None) or 0.0
         _config = ctx.config
@@ -730,12 +390,9 @@ class AcquisitionOrchestrator:
                 # ── Check zero-findings alert ─────────────────────────────────
                 await self._check_zero_findings_alert(ctx)
 
-            # Normal loop exit
-            if exit_path is None and _runner.is_terminal():
-                exit_path = "terminal"
+            # exit_path is already "terminal" (default); all break paths override explicitly
 
         except asyncio.CancelledError:
-            exit_path = "cancelled"
             raise
 
         return AcquisitionPhaseResult(
@@ -753,7 +410,7 @@ class AcquisitionOrchestrator:
         self,
         ctx: Any,
         sources: Sequence[str],
-        now_monotonic: float | None,
+        _now_monotonic: float | None,
         duckdb_store: Any,
     ) -> CycleResult:
         """Run one bounded fetch cycle (stable or aggressive).
@@ -918,7 +575,7 @@ class AcquisitionOrchestrator:
 
         remaining_s = lifecycle.remaining_time() if lifecycle else 999.0
         _safety_floor = _config.effective_windup_lead_s
-        # P2-1: 5-branch TaskGroup — branch_timeout = remaining / 5 (was / 3)
+        # P2-1: 3-branch TaskGroup (feed, public, ct) — branch_timeout = remaining / 3
         _branch_timeout = max((remaining_s - _safety_floor) / 3.0, 5.0)
 
         # P1-06: asyncio.TaskGroup (PEP 654) replaces create_task + gather.
@@ -995,11 +652,11 @@ class AcquisitionOrchestrator:
 
     async def _run_feed_branch_aggressive(
         self,
-        ctx: Any,
+        _ctx: Any,
         work_items: list,
         fetch_one: Any,
-        semaphore: asyncio.Semaphore,
-        duckdb_store: Any,
+        _: asyncio.Semaphore,  # unused: semaphore is captured in fetch_one closure
+        _duckdb_store: Any,
     ) -> tuple[bool, int]:
         try:
             _result = await parallel([fetch_one(w) for w in work_items], taskgroup=True, policy='collect', ctx='acquisition:feed_branch_aggressive')
@@ -1101,7 +758,9 @@ class AcquisitionOrchestrator:
 
     async def _ensure_dedup_loaded(self, ctx: Any) -> None:
         """Ensure lazy dedup is loaded before first cycle."""
-        _ds = getattr(ctx, "_duckdb_store", None) or getattr(ctx, "duckdb_store", None)
+        # SC-05 FIX: ctx._duckdb_store no longer exists (removed from _CycleState).
+        # ctx.duckdb_store is a convenience property that unwraps InitResult.
+        _ds = ctx.duckdb_store
         if _ds and hasattr(_ds, "_dedup_loader"):
             try:
                 await _ds._dedup_loader.ensure_loaded()
@@ -1129,7 +788,7 @@ class AcquisitionOrchestrator:
         _cyc.last_cycle_start = _time.monotonic()
         return _cyc.effective_max_cycles
 
-    async def _build_seed_context(self, ctx: Any, query: str) -> Any:
+    async def _build_seed_context(self, ctx: Any, _query: str) -> Any:
         """Build seed context from query and acquisition plan."""
 
         class _SeedCtx(msgspec.Struct):
@@ -1147,9 +806,9 @@ class AcquisitionOrchestrator:
 
     async def _ensure_pre_windup_lane_terminal_states(
         self,
-        ctx: Any,
-        acquisition_plan: Any,
-        default_reason: str,
+        _ctx: Any,
+        _acquisition_plan: Any,
+        _default_reason: str,
     ) -> Any:
         """Check that required nonfeed lanes are terminal before windup."""
 
@@ -1161,20 +820,20 @@ class AcquisitionOrchestrator:
 
     async def _ensure_nonfeed_predispatch_before_finalization(
         self,
-        ctx: Any,
-        ordered_sources: list,
-        duckdb_store: Any,
-        reason: str,
+        _ctx: Any,
+        _ordered_sources: list,
+        _duckdb_store: Any,
+        _reason: str,
     ) -> None:
         """Run nonfeed pre-dispatch before finalization."""
         pass
 
     async def _ensure_mandatory_nonfeed_before_return(
         self,
-        ctx: Any,
-        ordered_sources: list,
-        duckdb_store: Any,
-        reason: str,
+        _ctx: Any,
+        _ordered_sources: list,
+        _duckdb_store: Any,
+        _reason: str,
     ) -> bool:
         """Ensure mandatory nonfeed lanes are terminal. Returns True if satisfied."""
         return True
@@ -1193,9 +852,9 @@ class AcquisitionOrchestrator:
 
     def _check_prewindup_barrier_sync(
         self,
-        ctx: Any,
-        ordered_sources: list,
-        duckdb_store: Any,
+        _ctx: Any,
+        _ordered_sources: list,
+        _duckdb_store: Any,
     ) -> bool:
         """Synchronous pre-windup barrier check."""
         return True
@@ -1214,7 +873,9 @@ class AcquisitionOrchestrator:
 
     async def _flush_dedup(self, ctx: Any) -> None:
         """Flush dedup at WINDUP entry."""
-        _ds = getattr(ctx, "_duckdb_store", None) or getattr(ctx, "duckdb_store", None)
+        # SC-05 FIX: ctx._duckdb_store no longer exists (removed from _CycleState).
+        # ctx.duckdb_store is a convenience property that unwraps InitResult.
+        _ds = ctx.duckdb_store
         if _ds and hasattr(_ds, "flush"):
             try:
                 await _ds.flush()
@@ -1366,7 +1027,7 @@ class AcquisitionOrchestrator:
         """Run epistemic gap advisory."""
         pass
 
-    def _prioritize_sources(self, ctx: Any, ordered_sources: list) -> list:
+    def _prioritize_sources(self, _ctx: Any, ordered_sources: list) -> list:
         """Re-prioritize sources using latest graph stats."""
         # TODO: implement actual prioritization using ctx.graph_stats
         return ordered_sources
@@ -1397,7 +1058,7 @@ class AcquisitionOrchestrator:
 
     async def _run_public_branch(
         self,
-        ctx: Any,
+        _ctx: Any,
         query: str,
         duckdb_store: Any,
         seed_ctx: Any,
@@ -1431,10 +1092,10 @@ class AcquisitionOrchestrator:
 
     async def _run_ct_branch(
         self,
-        ctx: Any,
+        _ctx: Any,
         query: str,
-        duckdb_store: Any,
-        seed_ctx: Any,
+        _duckdb_store: Any,
+        _seed_ctx: Any,
     ) -> dict[str, Any]:
         """Run CT discovery branch via run_ct_pivot.
 
@@ -1477,9 +1138,9 @@ class AcquisitionOrchestrator:
 
     def _feed_dominance_should_fetch(
         self,
-        ctx: Any,
-        work: Any,
-        nonfeed_terminal: bool,
+        _ctx: Any,
+        _work: Any,
+        _nonfeed_terminal: bool,
     ) -> tuple[bool, str]:
         """Check feed dominance budget before fetching."""
         return (True, "ok")
@@ -1487,7 +1148,7 @@ class AcquisitionOrchestrator:
     async def _maybe_dispatch_nonfeed_probe_lanes(
         self,
         ctx: Any,
-        duckdb_store: Any,
+        _duckdb_store: Any,
     ) -> None:
         """Dispatch nonfeed probe lanes (WAYBACK, PDNS, DOH, IPFS, BGP) in parallel.
 

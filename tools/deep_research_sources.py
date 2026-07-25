@@ -22,12 +22,22 @@ async def wayback_cdx_lookup(url_or_host: str, limit: int = 10, timeout_s: float
 
 
 async def rdap_lookup(domain: str, timeout_s: float = 8.0) -> dict | None:
-    timeout = httpx.Timeout(timeout_s)
-    async with httpx.AsyncClient(timeout=timeout) as session:
-        async with session.get(RDAP_DOMAIN + quote(domain, safe="")) as response:
-            if response.status_code >= 400:
-                return None
-            data = await response.json()
+    # F-01: Canonical session pool
+    try:
+        from hledac.universal.transport.session_pool import session_pool
+    except Exception:
+        return None
+    try:
+        session = await session_pool.httpx()
+        response = await session.get(
+            RDAP_DOMAIN + quote(domain, safe=""),
+            timeout=httpx.Timeout(timeout_s),
+        )
+        if response.status_code >= 400:
+            return None
+        data = await response.json()
+    except Exception:
+        return None
     return {
         "ldhName": data.get("ldhName"),
         "handle": data.get("handle"),
@@ -45,11 +55,23 @@ async def urlscan_search(query: str, size: int = 10, timeout_s: float = 8.0) -> 
         return []
     headers = {"API-Key": api_key}
     params = {"q": query, "size": str(size)}
-    timeout = httpx.Timeout(timeout_s)
-    async with httpx.AsyncClient(timeout=timeout, headers=headers) as session:
-        async with session.get(URLSCAN_SEARCH, params=params) as response:
-            response.raise_for_status()
-            data = await response.json()
+    # F-01: Canonical session pool
+    try:
+        from hledac.universal.transport.session_pool import session_pool
+    except Exception:
+        return []
+    try:
+        session = await session_pool.httpx()
+        response = await session.get(
+            URLSCAN_SEARCH,
+            params=params,
+            headers=headers,
+            timeout=httpx.Timeout(timeout_s),
+        )
+        response.raise_for_status()
+        data = await response.json()
+    except Exception:
+        return []
     results = data.get("results") or []
     out = []
     for i, row in enumerate(results, 1):

@@ -130,4 +130,3 @@ def get_otel_instrumented() -> Any:
 _lazy_resource_governor = _LazyImport("core.resource_governor", on_error=None)
 _lazy_graph_store = _LazyImport("knowledge.graph_store", on_error=None)
 _lazy_sprint_diff_engine = _LazyImport("knowledge.sprint_diff_engine", on_error=None)
-_lazy_duckdb_subprocess = _LazyImport("knowledge.duckdb_subprocess_adapter", on_error=None)

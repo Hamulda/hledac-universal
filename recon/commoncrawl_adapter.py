@@ -146,19 +146,26 @@ class CommonCrawlAdapter:
         if httpx is None:
             return CommonCrawlResult(query=domain, err='httpx_not_available')
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(_TIMEOUT_PER_REQUEST)) as client:
-                async with client.get(url, params=params, headers={'User-Agent': 'Mozilla/5.0 (compatible; HledacBot/1.0; +mailto@ investigace)'}) as resp:
-                    if resp.status_code == 429:
-                        self._stats['rate_limited'] += 1
-                        return CommonCrawlResult(query=domain, err='rate_limited', rate_limited=True, duration_s=time_mod.monotonic() - t0)
-                    if resp.status_code != 200:
-                        return CommonCrawlResult(query=domain, err=f'HTTP_{resp.status_code}', duration_s=time_mod.monotonic() - t0)
-                    body = b''
-                    async for chunk in resp.iter_bytes(chunk_size=65536):
-                        body += chunk
-                        if len(body) > _MAX_DATA_BYTES:
-                            break
-                    text = body.decode('utf-8', errors='replace')
+            # F-01: session_pool.httpx() returns shared singleton
+            from hledac.universal.transport.session_pool import session_pool
+            session = await session_pool.httpx()
+            resp = await session.get(
+                url,
+                params=params,
+                headers={'User-Agent': 'Mozilla/5.0 (compatible; HledacBot/1.0; +mailto@ investigace)'},
+                timeout=httpx.Timeout(_TIMEOUT_PER_REQUEST),
+            )
+            if resp.status_code == 429:
+                self._stats['rate_limited'] += 1
+                return CommonCrawlResult(query=domain, err='rate_limited', rate_limited=True, duration_s=time_mod.monotonic() - t0)
+            if resp.status_code != 200:
+                return CommonCrawlResult(query=domain, err=f'HTTP_{resp.status_code}', duration_s=time_mod.monotonic() - t0)
+            body = b''
+            async for chunk in resp.iter_bytes(chunk_size=65536):
+                body += chunk
+                if len(body) > _MAX_DATA_BYTES:
+                    break
+            text = body.decode('utf-8', errors='replace')
         except TimeoutError:
             return CommonCrawlResult(query=domain, err='timeout', timeout=True, duration_s=time_mod.monotonic() - t0)
         except Exception as e:

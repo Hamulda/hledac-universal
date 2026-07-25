@@ -122,8 +122,8 @@ class TestContentMinerLinkExtraction:
         links = miner._extract_links_selectolax(minimal_html, "https://example.com", max_links=10)
         assert isinstance(links, list)
         assert len(links) == 2
-        hrefs = [l["href"] for l in links]  # noqa: E741
-        assert "/relative" in hrefs
+        hrefs = [l["url"] for l in links]  # noqa: E741
+        assert "https://example.com/relative" in hrefs
         assert "https://example.com" in hrefs
 
     def test_skips_javascript_links(self, minimal_html: str) -> None:
@@ -136,9 +136,9 @@ class TestContentMinerLinkExtraction:
         html = '<a href="javascript:void(0)">JS Link</a><a href="/valid">Valid</a>'
         miner = RustMiner()
         links = miner._extract_links_selectolax(html, "https://example.com", max_links=10)
-        hrefs = [l["href"] for l in links]  # noqa: E741
+        hrefs = [l["url"] for l in links]  # noqa: E741
         assert "javascript:void(0)" not in hrefs
-        assert "/valid" in hrefs
+        assert "https://example.com/valid" in hrefs
 
     def test_max_links_respected(self, minimal_html: str) -> None:
         """max_links cap is enforced."""

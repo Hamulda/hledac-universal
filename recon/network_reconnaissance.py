@@ -871,17 +871,19 @@ async def lookup_asn(ip_or_prefix: str) -> list[ASNInfo]:
     """
     results: list[ASNInfo] = []
     try:
-        async with httpx.AsyncClient() as session:
-            url = f'https://ipinfo.io/{ip_or_prefix}/json'
-            async with session.get(url, timeout=httpx.Timeout(total=10)) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    if 'org' in data:
-                        org = data['org']
-                        parts = org.split()
-                        asn_num = int(parts[0].replace('AS', '')) if parts else 0
-                        prefix = ' '.join(parts[1:]) if len(parts) > 1 else ''
-                        results.append(ASNInfo(asn=asn_num, prefix=prefix, name=data.get('name', data.get('org', '')), country=data.get('country'), source='ipinfo.io'))
+        # F-01: session_pool.httpx() returns shared singleton
+        from hledac.universal.transport.session_pool import session_pool
+        session = await session_pool.httpx()
+        url = f'https://ipinfo.io/{ip_or_prefix}/json'
+        resp = await session.get(url, timeout=httpx.Timeout(total=10))
+        if resp.status == 200:
+            data = await resp.json()
+            if 'org' in data:
+                org = data['org']
+                parts = org.split()
+                asn_num = int(parts[0].replace('AS', '')) if parts else 0
+                prefix = ' '.join(parts[1:]) if len(parts) > 1 else ''
+                results.append(ASNInfo(asn=asn_num, prefix=prefix, name=data.get('name', data.get('org', '')), country=data.get('country'), source='ipinfo.io'))
     except Exception as e:
         logger.debug(f'lookup_asn({ip_or_prefix}): {e}')
     return results
@@ -907,21 +909,24 @@ async def lookup_crtsh(domain: str, limit: int=50) -> list[CTRawCertificate]:
     """
     results: list[CTRawCertificate] = []
     try:
-        async with httpx.AsyncClient() as session:
-            url = f'https://crt.sh/?q=%.{domain}&output=json'
-            async with session.get(url, timeout=httpx.Timeout(total=30), headers={'User-Agent': 'Hledac-OSINT/1.0'}) as resp:
-                if resp.status == 200:
-                    try:
-                        data = await resp.json()
-                    except Exception:
-                        text = await resp.text()
-                        if 'json' in (resp.headers.get('Content-Type', '') or ''):
-                            import json as _json
-                            data = _msgspec_loads(text) if text.strip().startswith('[') else []
-                        else:
-                            data = []
-                    for entry in data[:limit]:
-                        results.append(CTRawCertificate(common_name=entry.get('common_name', ''), name_value=entry.get('name_value', ''), issue_date=entry.get('not_before', ''), expiry_date=entry.get('not_after', ''), issuer_name=entry.get('issuer_name')))
+        # F-01: session_pool.httpx() returns shared singleton
+        from hledac.universal.transport.session_pool import session_pool
+        import httpx
+        session = await session_pool.httpx()
+        url = f'https://crt.sh/?q=%.{domain}&output=json'
+        resp = await session.get(url, timeout=httpx.Timeout(30.0), headers={'User-Agent': 'Hledac-OSINT/1.0'})
+        if resp.status_code == 200:
+            try:
+                data = await resp.json()
+            except Exception:
+                text = await resp.text()
+                if 'json' in (resp.headers.get('Content-Type', '') or ''):
+                    import json as _json
+                    data = _msgspec_loads(text) if text.strip().startswith('[') else []
+                else:
+                    data = []
+            for entry in data[:limit]:
+                results.append(CTRawCertificate(common_name=entry.get('common_name', ''), name_value=entry.get('name_value', ''), issue_date=entry.get('not_before', ''), expiry_date=entry.get('not_after', ''), issuer_name=entry.get('issuer_name')))
     except Exception as e:
         logger.debug(f'lookup_crtsh({domain}): {e}')
     return results
@@ -942,13 +947,16 @@ async def passive_dns_lookup(domain: str, api_key: str | None=None) -> dict[str,
         logger.debug('passive_dns_lookup: no API key provided')
         return result
     try:
-        async with httpx.AsyncClient() as session:
-            url = f'https://api.dnslookupapi.com/v1/dns/{domain}/history'
-            async with session.get(url, params={'api_key': api_key}, timeout=httpx.Timeout(total=15)) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    result['resolutions'] = data.get('records', [])
-                    result['subdomains'] = data.get('subdomains', [])
+        # F-01: session_pool.httpx() returns shared singleton
+        from hledac.universal.transport.session_pool import session_pool
+        import httpx
+        session = await session_pool.httpx()
+        url = f'https://api.dnslookupapi.com/v1/dns/{domain}/history'
+        resp = await session.get(url, params={'api_key': api_key}, timeout=httpx.Timeout(15.0))
+        if resp.status_code == 200:
+            data = await resp.json()
+            result['resolutions'] = data.get('records', [])
+            result['subdomains'] = data.get('subdomains', [])
     except Exception as e:
         logger.debug(f'passive_dns_lookup({domain}): {e}')
     return result

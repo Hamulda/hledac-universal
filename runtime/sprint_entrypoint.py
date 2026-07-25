@@ -66,7 +66,6 @@ from dotenv import load_dotenv
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
-    from hledac.universal.knowledge.duckdb_subprocess_adapter import DuckDBSubprocessAdapter
     from hledac.universal.knowledge.semantic_store import SemanticStore
     from hledac.universal.runtime.scheduler_result import SprintSchedulerResult
     from hledac.universal.runtime.scheduler_v2 import SprintSchedulerV2 as SprintScheduler
@@ -1452,7 +1451,7 @@ def _derive_top_source(hits_per_source: dict[str, int]) -> str:
 
 
 async def write_sprint_delta(
-    store: "DuckDBShadowStore | DuckDBSubprocessAdapter",
+    store: "DuckDBShadowStore",
     sprint_id: str,
     query: str,
     new_findings: int,
@@ -1621,22 +1620,22 @@ async def dry_run_sprint(query: str, duration_s: float = 300.0) -> None:
         ("circl_pdns", "https://cirolve.circl.lu/api/pdns?q=example.com"),
     ]
     try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(5.0),
-            headers={"User-Agent": "curl/8.4.0"},
-        ) as session:
-            async def check_source(name: str, url: str) -> tuple[str, bool]:
-                resp = await session.head(url)
-                return (name, resp.status_code < 500)
+        # F-01: session_pool.httpx() returns shared singleton
+        from hledac.universal.transport.session_pool import session_pool
+        session = await session_pool.httpx()
 
-            result = await parallel(
-                [check_source(name, url) for name, url in src_checks],
-                policy="collect",
-                ctx="source_availability",
-            )
-            for name, ok in result.ok:
-                online_sources[name] = ok
-            # errors are logged by safe_gather at DEBUG; treat as offline
+        async def check_source(name: str, url: str) -> tuple[str, bool]:
+            resp = await session.head(url)
+            return (name, resp.status_code < 500)
+
+        result = await parallel(
+            [check_source(name, url) for name, url in src_checks],
+            policy="collect",
+            ctx="source_availability",
+        )
+        for name, ok in result.ok:
+            online_sources[name] = ok
+        # errors are logged by safe_gather at DEBUG; treat as offline
     except Exception:  # noqa: BLE001
         pass  # network check is best-effort
     report["sources_online"] = online_sources
@@ -1970,12 +1969,12 @@ async def run_sprint(
     # DuckDB init now runs alone in ~1-2s (was sequential with 60s CoreML timeout).
     # Start both in parallel: DuckDB + (former CoreML parallel slot now eliminated).
 
-    # P1-1 + STORAGE-DUP-003: DuckDB in-process mode — subprocess isolation removed.
+    # P1-1 + STORAGE-DUP-003 + S-04: DuckDB in-process mode — subprocess isolation removed.
     # DuckDB runs in-process via DuckDBShadowStore (M1 8GB UMA safe).
-    # HLEDAC_DUCKDB_SUBPROCESS is now a no-op (subprocess path deleted).
-    from hledac.universal.knowledge.duckdb_subprocess_adapter import DuckDBSubprocessAdapter
+    # duckdb_subprocess_adapter.py ABSORBED into duckdb_store.py::make_shadow_store().
+    from hledac.universal.knowledge.duckdb_store import make_shadow_store
 
-    store = DuckDBSubprocessAdapter()
+    store = make_shadow_store()
 
     # Issue #21: Concurrent boot — DuckDB init + circuit breaker reset + MLX prewarm
     # run in parallel. Sequential was: await DuckDB (~1-2s) THEN prewarm thread spawn.
@@ -3338,8 +3337,10 @@ async def run_ct_pivot(domain: str) -> None:
         logger.warning("Tor unavailable — .onion sources disabled")
 
     try:
-        async with httpx.AsyncClient() as sess:
-            result = await ct_client.pivot_domain(domain, sess)
+        # F-01: session_pool.httpx() returns shared singleton
+        from hledac.universal.transport.session_pool import session_pool
+        sess = await session_pool.httpx()
+        result = await ct_client.pivot_domain(domain, sess)
         print(f"\nCT LOG PIVOT: {result['domain']}")
         print(f"  Cert count:  {result['cert_count']}")
         print(f"  First cert: {result['first_cert']}")

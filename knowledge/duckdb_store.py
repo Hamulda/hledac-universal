@@ -539,6 +539,22 @@ class RemoteParquetSource:
         self._configure_conn(self._conn)
         self._attach_source(self._conn)
 
+    async def _ensure_connection_async(self) -> None:
+        """
+        Async version — runs duckdb.connect() in a thread pool to avoid blocking the event loop.
+
+        S-07: sync duckdb.connect inside async context freezes the loop on M1 8GB.
+        DuckDB connect includes native memory allocation and initialisation that can take
+        50-200 ms — too long to block the event loop.
+        """
+        if self._conn is not None:
+            return
+        duckdb = self._get_duckdb()
+        # Run blocking connect + config + attach on thread pool (M1-safe)
+        self._conn = await asyncio.to_thread(duckdb.connect, ":memory:")
+        await asyncio.to_thread(self._configure_conn, self._conn)
+        await asyncio.to_thread(self._attach_source, self._conn)
+
     def _configure_conn(self, conn: Any) -> None:
         """Apply M1 8GB-safe DuckDB settings."""
         try:
@@ -754,17 +770,143 @@ class RemoteParquetSource:
         except Exception:  # noqa: BLE001 — best-effort; remote read; non-critical
             return None
 
-    def iter_batches_async(self):
+    async def _count_rows_async(self) -> int:
         """
-        Async iterator wrapping iter_batches on a thread pool.
+        Async version — runs DuckDB COUNT(*) on thread pool.
 
-        Yields batches on a thread pool to avoid blocking the event loop.
+        S-07: prevents event loop blocking during connection setup + query.
         """
-        async def _aiter():
-            for batch in self.iter_batches():
-                yield await asyncio.to_thread(lambda b=batch: b, batch)
+        await self._ensure_connection_async()
+        def _sync_count():
+            try:
+                cols = ", ".join(self.columns) if self.columns else "*"
+                count_sql = f"SELECT COUNT(*) FROM {self.alias}"
+                if self.sql_where:
+                    count_sql += f" WHERE {self.sql_where}"
+                result = self._conn.execute(count_sql).fetchone()
+                return result[0] if result else 0
+            except Exception:  # noqa: BLE001 — best-effort; row count; non-critical
+                return 0
+        return await asyncio.to_thread(_sync_count)
 
-        return _aiter()
+    async def iter_batches_async(self):
+        """
+        Async iterator — runs DuckDB batch iteration on a thread pool.
+
+        S-07: prevents event loop blocking during connection setup + remote read.
+        The entire batch iteration runs on the thread pool so the event loop
+        never sees a blocking DuckDB call.
+
+        Yields:
+            pyarrow.RecordBatch — zero-copy via DuckDB Arrow export.
+        """
+        await self._ensure_connection_async()
+
+        import pyarrow as pa
+
+        def _sync_iter():
+            """Run full iteration synchronously on thread pool."""
+            sql = self._build_sql()
+            result = self._conn.execute(sql)
+            try:
+                batches = result.fetch_arrow_batch(self.batch_size)
+                while len(batches) > 0:
+                    yield from batches
+                    batches = result.fetch_arrow_batch(self.batch_size)
+                return
+            except AttributeError:
+                pass  # Fall through to tuple-based path
+            while True:
+                rows = result.fetchmany(self.batch_size)
+                if not rows:
+                    break
+                columns = [desc[0] for desc in result.description]
+                col_arrays = [[row[i] for row in rows] for i in range(len(columns))]
+                table = pa.Table.from_pydict(dict(zip(columns, col_arrays)))
+                yield from table.to_batches(max_chunksize=self.batch_size)
+
+        # Run synchronous generator on thread pool and yield items to async caller
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue = asyncio.Queue(maxsize=2)
+
+        def _producer():
+            try:
+                for batch in _sync_iter():
+                    loop.call_soon_threadsafe(lambda b: queue.put_nowait(b), batch)
+            except Exception as e:  # noqa: BLE001 — best-effort; remote read; non-critical
+                logger.warning(f"[RemoteParquet] iter_batches_async error: {e}")
+            finally:
+                loop.call_soon_threadsafe(lambda: queue.put_nowait(None))
+
+        await asyncio.to_thread(_producer)
+        try:
+            while True:
+                batch = await queue.get()
+                if batch is None:
+                    break
+                yield batch
+        except asyncio.CancelledError:
+            # Drain queue to unblock producer thread on next iteration
+            while not queue.empty():
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+            raise
+
+    async def read_table_async(self):
+        """
+        Async version — reads entire remote Parquet as Arrow Table on thread pool.
+
+        S-07: prevents event loop blocking during connection setup + remote read.
+        WARNING: may OOM for large remote files — prefer iter_batches_async().
+
+        Returns:
+            pyarrow.Table or None on error.
+        """
+        await self._ensure_connection_async()
+
+        def _sync_read():
+            try:
+                import pyarrow as pa
+
+                sql = self._build_sql()
+                result = self._conn.execute(sql)
+                batches = list(result.fetchmany(self.batch_size * 10))  # safety cap
+                if not batches:
+                    return None
+                columns = [desc[0] for desc in result.description]
+                col_arrays = [[row[i] for row in batches] for i in range(len(columns))]
+                return pa.Table.from_pydict(dict(zip(columns, col_arrays)))
+            except Exception:  # noqa: BLE001 — best-effort; remote read; non-critical
+                return None
+
+        return await asyncio.to_thread(_sync_read)
+
+    async def to_polars_lazy_async(self):
+        """
+        Async version — returns Polars LazyFrame via DuckDB scan on thread pool.
+
+        S-07: prevents event loop blocking during connection setup + DuckDB scan.
+
+        Returns:
+            polars.LazyFrame or None on error.
+        """
+        await self._ensure_connection_async()
+
+        def _sync_scan():
+            try:
+                import polars as pl
+
+                sql = self._build_sql()
+                return self._conn.execute(sql).pl().lazy()
+            except ImportError:
+                raise ImportError("Polars not installed: pip install polars")
+            except Exception as e:  # noqa: BLE001 — best-effort; DuckDB scan; non-critical
+                logger.warning(f"[RemoteParquet] to_polars_lazy_async error: {e}")
+                return None
+
+        return await asyncio.to_thread(_sync_scan)
 
     def close(self) -> None:
         """Close DuckDB connection."""
@@ -8326,6 +8468,20 @@ class DuckDBShadowStore:
         return self._closed
 
     @property
+    def duckdb_mode(self) -> str:
+        """
+        Returns the active DuckDB runtime mode for sprint telemetry.
+
+        STORAGE-DUP-003: Always "inprocess" — IPC subprocess removed (S-04).
+        """
+        return "inprocess"
+
+    @property
+    def is_subprocess_mode(self) -> bool:
+        """Always False — subprocess mode removed (STORAGE-DUP-003)."""
+        return False
+
+    @property
     def db_path(self) -> Path | None:
         """Return the database path (None for :memory: mode)."""
         return self._db_path
@@ -9360,3 +9516,59 @@ def create_owned_store() -> DuckDBShadowStore:
             return DuckDBShadowStore()
     except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
         return DuckDBShadowStore()
+
+
+# ── S-04: DuckDB Shadow Store Factory (replaces duckdb_subprocess_adapter.py) ─────
+# STORAGE-DUP-003: Single in-process path only. Subprocess isolation removed.
+#
+# DuckDBSubprocessAdapter is absorbed here. The adapter was a pure wrapper that
+# delegated to DuckDBShadowStore — no subprocess isolation benefit on M1 8GB UMA.
+# Use make_shadow_store() instead of direct DuckDBShadowStore() instantiation for
+# all canonical sprint paths.
+
+
+def make_shadow_store(
+    db_path: "Path | str | None" = None,
+    temp_dir: "Path | str | None" = None,
+    uma_state: "str | None" = None,
+) -> DuckDBShadowStore:
+    """
+    Factory: create DuckDBShadowStore for canonical sprint paths.
+
+    Replaces DuckDBSubprocessAdapter (STORAGE-DUP-003 absorbed).
+
+    M1 8GB: always in-process via DuckDBShadowStore (Arrow zero-copy, WAL, internal batching).
+    Subprocess mode offers no RAM benefit on UMA architecture.
+
+    Args:
+        db_path: Optional explicit DB path. If None, resolves via paths.py RAMDisk convention.
+        temp_dir: Optional explicit temp directory. If None, resolves via paths.py.
+        uma_state: Optional UMA state hint passed to DuckDBShadowStore.
+
+    Returns:
+        DuckDBShadowStore: initialized in-process store (not a wrapper).
+    """
+    from pathlib import Path
+
+    _db_path: "Path | None" = Path(db_path) if db_path is not None else None
+    _temp_dir: "Path | None" = Path(temp_dir) if temp_dir is not None else None
+
+    # Resolve defaults if not provided — mirrors DuckDBSubprocessAdapter._resolve_path()
+    if _db_path is None:
+        try:
+            from hledac.universal.paths import DUCKDB_STORE_ROOT, RAMDISK_ACTIVE, RAMDISK_ROOT
+
+            if RAMDISK_ACTIVE:
+                _db_path = DUCKDB_STORE_ROOT / "shadow_analytics.duckdb"
+                _temp_dir = RAMDISK_ROOT / "duckdb_tmp"
+            else:
+                _db_path = DUCKDB_STORE_ROOT / "analytics.duckdb"
+        except Exception:  # noqa: BLE001 — degraded; will use :memory:
+            pass
+
+    return DuckDBShadowStore(
+        db_path=_db_path,
+        temp_dir=_temp_dir,
+        uma_state=uma_state,
+        lazy=False,
+    )

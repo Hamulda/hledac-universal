@@ -652,7 +652,7 @@ def _get_camoufox_lock() -> asyncio.Lock:
         _CAMOUFOX_LOCK_INIT = True
     return _CAMOUFOX_LOCK
 
-DEFAULT_UA: Final[str] = 'Mozilla/5.0 (compatible; research-bot/1.0; +passive-public-fetch)'
+DEFAULT_UA: Final[str] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
 _BROWSER_UA_POOL: tuple[str, ...] = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.210 Mobile Safari/537.36', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/133.0', 'Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15', 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0')
 _ACCEPT_LANGUAGE_POOL: tuple[str, ...] = ('en-US,en;q=0.9', 'en-GB,en;q=0.8', 'en-US,en;q=0.9,de;q=0.8', 'en-US,en;q=0.9,fr;q=0.8', 'en-US,en;q=0.9,es;q=0.8', 'en-US,en;q=0.9,ja;q=0.8', 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7', 'de-DE,de;q=0.9,en;q=0.8', 'fr-FR,fr;q=0.9,en;q=0.8', 'ja-JP,ja;q=0.9,en;q=0.8', 'en-US,en;q=0.9', 'en-AU,en;q=0.9', 'en-CA,en;q=0.9', 'en-IE,en;q=0.9', 'en-NZ,en;q=0.9')
 
@@ -1810,10 +1810,14 @@ def _compute_effective_max_bytes(requested: int) -> int:
         return hard
     return min(max(requested, 1), hard)
 _JS_RENDERER_SEMAPHORE: asyncio.Semaphore | None = None
-_JSC_RENDERER_COOLDOWN_S = 0.5
 
 def _get_js_renderer_semaphore() -> asyncio.Semaphore:
-    """F226A: Lazily-initialized, per-event-loop JS renderer Semaphore(1).
+    """F226A: Lazily-initialized, per-event-loop JS renderer Semaphore.
+
+    F-02 NOTE: Uses get_semaphore_for_testing (fixed OK limit) rather than
+    ConcurrencyBudgetRegistry dynamic adjustment. The BrowserPool.max_active=2
+    provides the M1 8GB hard cap; ConcurrencyBudgetRegistry.JS_RENDERER
+    category is registered for future dynamic UMA-aware adjustment.
 
     Thread-safe via functools.lru_cache internals (one lock, acquired once).
     Note: asyncio.Semaphore is created in the calling event loop context.
@@ -1822,32 +1826,35 @@ def _get_js_renderer_semaphore() -> asyncio.Semaphore:
     if _JS_RENDERER_SEMAPHORE is not None:
         return _JS_RENDERER_SEMAPHORE
     from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-    _JS_RENDERER_SEMAPHORE = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
+    _JS_RENDERER_SEMAPHORE = get_semaphore_for_testing(ConcurrencyCategory.JS_RENDERER)
     return _JS_RENDERER_SEMAPHORE
-
-async def _cooldown_after_browser_stop() -> None:
-    """
-    P14 FIX: Yield to event loop after browser.stop() so the OS can fully reap
-    the child process before the next renderer acquires the semaphore.
-    On macOS, browser processes (Chrome/Firefox) are multi-process — the main
-    process exits fast but sandbox/helper processes may linger for 50-100ms.
-    """
-    await asyncio.sleep(_JSC_RENDERER_COOLDOWN_S)
 
 async def _teardown_browser_pool() -> None:
     """
-    Teardown camoufox/nodriver shared state at sprint winddown.
+    Teardown nodriver BrowserPool + camoufox shared state at sprint winddown.
+
+    F-02: BrowserPool.close() stops all idle Chromium instances and marks the
+    pool as closed. BrowserPool is a lazy singleton — created on first use,
+    closed here at winddown.
 
     Called from sprint_scheduler run_winddown(). Fail-soft — any error is
     swallowed at DEBUG level. Must be idempotent (safe to call multiple times).
 
-    Browser instances are self-contained per fetch call (created and torn down
-    inline); this function resets the lazy singletons:
+    Resets:
+    - BrowserPool singleton: closes all idle browsers, clears global reference
     - _JS_RENDERER_SEMAPHORE: released and cleared so next sprint re-initializes
       in the correct event loop
     - _js_renderer_capability: reset to None so next sprint re-probes availability
     - yields cooldown to let any in-flight browser.stop() calls finish
     """
+    # F-02: Close BrowserPool (stops Chromium, clears singleton)
+    try:
+        from hledac.universal.utils.browser_pool import close_pool
+        await close_pool()
+    except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+        logger.debug('[browser_pool] BrowserPool.close() skipped: %s', _e)
+
+    # Legacy semaphore teardown (camoufox still uses it)
     global _JS_RENDERER_SEMAPHORE
     try:
         _sem = _JS_RENDERER_SEMAPHORE
@@ -1864,10 +1871,6 @@ async def _teardown_browser_pool() -> None:
         _js_renderer_cap.reset()
     except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
         logger.debug('[browser_pool] capability reset skipped: %s', _e)
-    try:
-        await asyncio.sleep(_JSC_RENDERER_COOLDOWN_S)
-    except Exception:  # noqa: BLE001 — best-effort; cooldown sleep failure is non-fatal
-        pass
     logger.debug('[winddown] browser pool torn down')
 
 class AiohttpBodyOutcome(msgspec.Struct, frozen=True, gc=False):
@@ -1998,7 +2001,6 @@ async def _camoufox_locked(url: str, timeout: float) -> str:
             except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 last_error = str(e)
                 logger.debug(f'Camoufox attempt {attempt + 1}/{_CAMOUFOX_MAX_RETRIES} (os={os_choice}) failed for {url}: {e}')
-                await _cooldown_after_browser_stop()
                 continue
         logger.warning(f'Camoufox all {_CAMOUFOX_MAX_RETRIES} attempts failed for {url}: {last_error}')
         return ''
@@ -2030,54 +2032,63 @@ _NODRIVER_MAX_RETRIES: int = 2
 async def _nodriver_locked(url: str, url_kind: str='', url_host: str='') -> str:
     """
     F226A: nodriver body wrapped inside the shared _JS_RENDERER_SEMAPHORE.
-    P2-4: Added Tor proxy routing + os-rotation retry for dark web resilience.
+    F-02: Replaced per-call uc.start() cold-start with BrowserPool.
+
+    BrowserPool eliminates the 1.5-2 s Chromium cold-start penalty by keeping
+    up to max_active=2 persistent idle browsers. Each URL fetch:
+      acquire() → reuse warm browser or launch if pool empty
+      release() → return to idle deque (bounded LRU)
 
     Cleanup invariants preserved:
     - page.close() in finally
-    - browser.stop() on cancellation + finally
+    - BrowserPool.release() handles browser lifecycle — no browser.stop() here
     - CancelledError re-raised (must propagate)
 
     B1: url_kind/url_host params — caller pre-classified via _classify_url_cached.
     When both are empty, falls back to _batch_classify_url_cached([url]) (legacy path).
     """
-    import nodriver as uc
+    # Lazy import to avoid early browser startup at module load
+    from hledac.universal.utils.browser_pool import acquire_browser, release_browser
+
     if not url_kind or not url_host:
         _url_kind_batch = _batch_classify_url_cached([url])
         url_kind = _url_kind_batch[0][0] if _url_kind_batch else 'clearnet'
     _is_onion = url_kind == 'onion'
-    browser = None
+
+    # F-02: Pass tor_proxy so BrowserPool routes through the correct pool
+    _tor_proxy: str | None = TOR_SOCKS_PROXY if _is_onion else None
+
     page = None
     last_error = ''
     for attempt in range(_NODRIVER_MAX_RETRIES):
+        browser = None
         try:
-            browser_args = ['--no-sandbox', '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
-            if _is_onion:
-                browser_args.append(f'--proxy-server={TOR_SOCKS_PROXY}')
-            browser = await uc.start(headless=True, browser_args=browser_args)
+            browser = await acquire_browser(tor_proxy=_tor_proxy)
             page = await browser.get(url)
             try:
                 await asyncio.sleep(2)
                 html = await page.get_content()
             finally:
                 if page is not None:
-                    await page.close()
+                    try:
+                        await page.close()
+                    except Exception:  # noqa: BLE001 — best-effort; page close failure is non-fatal
+                        pass
             return html
         except asyncio.CancelledError:
-            if browser is not None:
-                browser.stop()
+            # BrowserPool.release() is NOT called on cancellation — browser may be dead
+            # BrowserPool._browser_alive check on next acquire handles stale browsers
             raise
         except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             last_error = str(e)
             _ev0 = attempt + 1
             logger.debug('nodriver attempt %d failed for %s: %s', _ev0, url, e)
-            if browser is not None:
-                browser.stop()
             await asyncio.sleep(0.2)
         finally:
-            if page is not None:
+            if browser is not None:
                 try:
-                    await page.close()
-                except Exception:  # noqa: BLE001 — best-effort; page close failure is non-fatal
+                    await release_browser(browser, tor_proxy=_tor_proxy)
+                except Exception:  # noqa: BLE001 — best-effort; release failure is non-fatal
                     pass
     logger.warning('nodriver all %s attempts failed for %s: %s', _NODRIVER_MAX_RETRIES, url, last_error)
     return ''
@@ -2131,7 +2142,6 @@ async def _playwright_locked(url: str, timeout: float) -> str:
     finally:
         if browser is not None:
             await browser.close()
-        await _cooldown_after_browser_stop()
 
 
 # ISSUE-7: tenacity decorator — replaces manual for/retry loop.
@@ -2149,6 +2159,75 @@ _retry_decorator = retry(
     after=_tenacity_after,
     reraise=True,
 )
+
+async def async_fetch_public_text(
+    url: str,
+    timeout_s: float = 35.0,
+    max_bytes: int = MAX_BYTES_DEFAULT,
+    use_stealth: bool = False,
+    use_js: bool = False,
+    use_doh: bool = False,
+    js_confidence: float = 0.8,
+    priority: int = 5,
+    bypass_circuit_breaker: bool = False,
+) -> FetchResult:
+    """
+    Fetch a public URL — single-URL wrapper for async_fetch_public_text_batch.
+
+    Delegates to batch API so both paths share identical transport logic.
+    CancelledError propagates (not swallowed).
+
+    Parameters
+    ----------
+    url : str
+        Target URL (http or https only, .onion via Tor SOCKS5).
+    timeout_s : float
+        Per-request timeout in seconds (default 35 s, scaled x2 for Tor).
+    max_bytes : int
+        Maximum bytes to read from body (default 2 MB, hard cap 10 MB).
+    use_stealth : bool
+        If True, use StealthManager/StealthSession for enhanced stealth.
+    use_js : bool
+        If True, force JS rendering via Camoufox/nodriver.
+    use_doh : bool
+        If True, resolve hostname via DoH (cloudflare-dns) before connecting.
+    js_confidence : float
+        Confidence that JS is needed (0.0–1.0, default 0.8).
+    priority : int
+        Request priority 1–10 (default 5, lower = higher priority).
+    bypass_circuit_breaker : bool
+        If True, skip circuit breaker on retry (internal use).
+
+    Returns
+    -------
+    FetchResult
+        Typed result with final_url, status, content_type, text (or None),
+        byte counts, elapsed_ms, and optional error.
+    """
+    results = await async_fetch_public_text_batch(
+        urls=[url],
+        timeout_s=timeout_s,
+        max_bytes=max_bytes,
+        use_stealth=use_stealth,
+        use_js=use_js,
+        use_doh=use_doh,
+        js_confidence=js_confidence,
+        priority=priority,
+        concurrency=1,
+    )
+    return results[0] if results else FetchResult(
+        url=url,
+        final_url=url,
+        status_code=0,
+        content_type='',
+        text=None,
+        fetched_bytes=0,
+        declared_length=-1,
+        elapsed_ms=0.0,
+        error='batch_empty',
+        failure_stage='batch_dispatch',
+    )
+
 
 async def async_fetch_public_text_batch(
     urls: list[str],

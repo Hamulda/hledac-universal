@@ -5,12 +5,16 @@ Sprint 42: LinUCB contextual bandit přidán.
 Sprint 43: Geo + Language context features (14 dim).
 Sprint 3D: Uses open_lmdb() from paths.py for env-driven discipline.
 """
-import json
 import logging
 import math
 from pathlib import Path
 from typing import Any
 import numpy as np
+
+try:
+    import orjson as _json
+except ImportError:
+    import json as _json
 _LMDB_ROOT = None
 _open_lmdb = None
 logger = logging.getLogger(__name__)
@@ -126,7 +130,7 @@ class SourceBandit:
                 for src in self.SOURCES:
                     val = txn.get(src.encode())
                     if val:
-                        loaded = json.loads(val.decode())
+                        loaded = _json.loads(val)
                         stats[src]['pulls'] = loaded.get('pulls', 0)
                         stats[src]['rewards'] = loaded.get('rewards', 0.0)
         except Exception as e:
@@ -137,7 +141,7 @@ class SourceBandit:
         """Uloží statistiku pro jeden zdroj do LMDB."""
         try:
             with self._env.begin(write=True) as txn:
-                txn.put(source.encode(), json.dumps(self._stats[source]).encode())
+                txn.put(source.encode(), _json.dumps(self._stats[source]))
         except Exception as e:
             logger.warning(f'[BANDIT] Failed to save {source}: {e}')
 
@@ -194,9 +198,9 @@ class SourceBandit:
                         try:
                             data = unpack(raw)
                         except Exception:
-                            data = json.loads(raw.decode())
+                            data = _json.loads(raw)
                     else:
-                        data = json.loads(raw.decode())
+                        data = _json.loads(raw)
                     for src, d in data.items():
                         if len(d['A'][0]) == 8:
                             oldA = np.array(d['A'])
@@ -222,7 +226,7 @@ class SourceBandit:
             if MSGPACK_AVAILABLE:
                 packed = pack(data)
             else:
-                packed = json.dumps(data).encode()
+                packed = _json.dumps(data)
             with self._env.begin(write=True) as txn:
                 txn.put(b'linucb_arms', packed)
         except Exception as e:

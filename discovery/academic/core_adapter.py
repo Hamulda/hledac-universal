@@ -87,24 +87,26 @@ class COREAdapter:
                 url = f'{CORE_API_BASE}{endpoint}'
                 headers = self._auth_headers()
                 headers['Content-Type'] = 'application/json'
+                # F-01: session_pool.httpx() returns shared singleton
+                from hledac.universal.transport.session_pool import session_pool
                 import httpx
-                async with httpx.AsyncClient() as session:
-                    if method == 'POST' and data:
-                        async with asyncio.timeout(REQUEST_TIMEOUT_S):
-                            async with session.post(url, json=data, headers=headers) as resp:
-                                if resp.status_code != 200:
-                                    text = await resp.text()
-                                    logger.warning(f'CORE API error {resp.status_code}: {text[:200]}')
-                                    return None
-                                return await resp.json()
-                    else:
-                        async with asyncio.timeout(REQUEST_TIMEOUT_S):
-                            async with session.get(url, headers=headers) as resp:
-                                if resp.status_code != 200:
-                                    text = await resp.text()
-                                    logger.warning(f'CORE API error {resp.status_code}: {text[:200]}')
-                                    return None
-                                return await resp.json()
+                session = await session_pool.httpx()
+                if method == 'POST' and data:
+                    async with asyncio.timeout(REQUEST_TIMEOUT_S):
+                        resp = await session.post(url, json=data, headers=headers)
+                        if resp.status_code != 200:
+                            text = await resp.text()
+                            logger.warning(f'CORE API error {resp.status_code}: {text[:200]}')
+                            return None
+                        return await resp.json()
+                else:
+                    async with asyncio.timeout(REQUEST_TIMEOUT_S):
+                        resp = await session.get(url, headers=headers)
+                        if resp.status_code != 200:
+                            text = await resp.text()
+                            logger.warning(f'CORE API error {resp.status_code}: {text[:200]}')
+                            return None
+                        return await resp.json()
             except TimeoutError:
                 logger.warning('CORE API timeout')
                 return None

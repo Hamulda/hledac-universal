@@ -81,8 +81,9 @@ class SlottedBoundedList(BoundedList[T]):  # noqa: N801
     BoundedList subclass compatible with __slots__ host classes.
 
     Use this when the bounded list must live on a class that uses
-    __slots__. Declare the slotted field name in the subclass __slots__;
-    BoundedList.__init__ will store into it via object.__setattr__.
+    __slots__. The subclass does NOT declare its own __slots__;
+    it relies on BoundedList's __slots__ = ("_d",) inherited via C3 MRO.
+    object.__setattr__ bypasses the slots mechanism in __init__.
 
     Example:
         class MyService:
@@ -90,8 +91,6 @@ class SlottedBoundedList(BoundedList[T]):  # noqa: N801
             def __init__(self):
                 self._history = SlottedBoundedList[Event](maxlen=512)
     """
-
-    __slots__ = ()  # type: ignore[slot-missing-config]
 
     def __init__(self, maxlen: int) -> None:
         object.__setattr__(self, "_d", deque(maxlen=maxlen))

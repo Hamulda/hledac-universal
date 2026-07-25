@@ -289,17 +289,18 @@ class DeepSourceRegistry:
         network errors count as unreachable.
         """
         try:
-            import httpx
+            from hledac.universal.transport.session_pool import session_pool
         except Exception as exc:
-            logger.debug('_head_probe: httpx unavailable: %s', exc)
+            logger.debug('_head_probe: session_pool unavailable: %s', exc)
             return False
         if not (url.startswith('http://') or url.startswith('https://')):
             return False
         try:
             async with self._get_semaphore():
-                async with httpx.AsyncClient(timeout=httpx.Timeout(total=HEAD_TIMEOUT_S)) as session:
-                    async with session.head(url, follow_redirects=True) as resp:
-                        return resp.status_code < 500
+                # F-01: session_pool.httpx() returns shared singleton AsyncClient
+                session = await session_pool.httpx()
+                async with session.head(url, follow_redirects=True) as resp:
+                    return resp.status_code < 500
         except TimeoutError:
             return False
         except asyncio.CancelledError:

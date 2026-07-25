@@ -67,7 +67,7 @@ class RobotsParser:
         self._max_cache_size = max_cache_size
         self._cache: dict[str, RobotsDocument] = {}
         self._cache_access_time: dict[str, float] = {}
-        self._user_agent = 'Hledac-Bot/1.0'
+        self._user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
         self._session: httpx.AsyncClient | None = None
 
     async def __aenter__(self) -> RobotsParser:
@@ -156,8 +156,14 @@ class RobotsParser:
             return None
 
     def _parse_robots_content(self, content: str, source_url: str) -> RobotsDocument:
-        """Parse robots.txt content into structured format."""
-        doc = RobotsDocument(fetched_at=time.time(), ttl=self.cache_ttl)
+        """Parse robots.txt content into structured format.
+
+        Note: RobotsDocument is frozen (msgspec.Struct), so we build
+        intermediate plain dicts and construct the final struct at the end.
+        """
+        rules: dict[str, list[Rule]] = {}
+        crawl_delays: dict[str, float] = {}
+        sitemaps: list[str] = []
         current_agent = '*'
         line_no = 0
         for line in content.split('\n'):
@@ -171,25 +177,31 @@ class RobotsParser:
                 value = value.strip()
                 if directive == 'user-agent':
                     current_agent = value
-                    if current_agent not in doc.rules:
-                        doc.rules[current_agent] = []
+                    if current_agent not in rules:
+                        rules[current_agent] = []
                 elif directive == 'allow':
-                    if current_agent not in doc.rules:
-                        doc.rules[current_agent] = []
-                    doc.rules[current_agent].append(Rule(path=value, allow=True, line_no=line_no))
+                    if current_agent not in rules:
+                        rules[current_agent] = []
+                    rules[current_agent].append(Rule(path=value, allow=True, line_no=line_no))
                 elif directive == 'disallow':
-                    if current_agent not in doc.rules:
-                        doc.rules[current_agent] = []
-                    doc.rules[current_agent].append(Rule(path=value, allow=False, line_no=line_no))
+                    if current_agent not in rules:
+                        rules[current_agent] = []
+                    rules[current_agent].append(Rule(path=value, allow=False, line_no=line_no))
                 elif directive == 'crawl-delay':
                     try:
                         delay = float(value)
-                        doc.crawl_delays[current_agent] = delay
+                        crawl_delays[current_agent] = delay
                     except ValueError:
                         pass
                 elif directive == 'sitemap':
-                    doc.sitemaps.append(value)
-        return doc
+                    sitemaps.append(value)
+        return RobotsDocument(
+            fetched_at=time.time(),
+            ttl=self.cache_ttl,
+            rules=rules,
+            sitemaps=sitemaps,
+            crawl_delays=crawl_delays,
+        )
 
     def can_fetch(self, path: str, user_agent: str='*', robots_doc: RobotsDocument | None=None) -> bool:
         """
@@ -207,9 +219,39 @@ class RobotsParser:
             return True
         rules = robots_doc.rules.get(user_agent, robots_doc.rules.get('*', []))
         for rule in sorted(rules, key=lambda r: len(r.path), reverse=True):
-            if path.startswith(rule.path):
+            if self._path_matches(path, rule.path):
                 return rule.allow
         return True
+
+    def _path_matches(self, path: str, pattern: str) -> bool:
+        """
+        Match path against robots.txt pattern.
+
+        Supports:
+        - Literal prefix: /api/ (matches /api, /api/, /api/foo)
+        - $ suffix: /api/$ (exact match only)
+        - Wildcard *: /articles/* (matches /articles/anything)
+        - Google-style: /path* (matches anything starting with path)
+        """
+        if pattern == '/':  # root only
+            return path == '/'
+        if pattern.endswith('$'):
+            # Exact match required
+            base = pattern[:-1]
+            return path == base or path == base + '/'
+        if '*' in pattern:
+            # Glob-style: replace * with regex equivalent
+            import re as _re
+            # Escape special glob chars except *
+            escaped = _re.escape(pattern).replace(r'\*', '.*')
+            glob_pattern = f'^{escaped}'
+            try:
+                return bool(_re.fullmatch(glob_pattern, path))
+            except _re.error:
+                # Fall back to prefix if regex fails
+                return path.startswith(pattern.replace('*', ''))
+        # Default: prefix match (standard robots.txt behavior)
+        return path.startswith(pattern)
 
     def get_crawl_delay(self, user_agent: str='*', robots_doc: RobotsDocument | None=None) -> float:
         """

@@ -176,6 +176,17 @@ class _CycleState(msgspec.Struct):
     (acquisition, winddown) and passed via SprintContext._cycle. This prevents
     cross-cycle state leakage while keeping the phase orchestrator API clean.
 
+    SC-05 FIX: duckdb_store was REMOVED from here.
+    Rationale: DuckDB is a sprint-scoped singleton set once at sprint start.
+    It must live in SprintContext.duckdb_store (InitResult-wrapped) and
+    accessed via SprintContext.duckdb_store (convenience property) or
+    ctx.duckdb_store (raw store). Storing it in _CycleState caused:
+    - Triplication: self._duckdb_store + ctx.duckdb_store + ctx._cycle.duckdb_store
+    - init_duckdb_store writes to _CycleState, inject_duckdb_store writes to
+      _CycleState, and with_cycle(duckdb_store=...) also writes to _CycleState
+    - AcquisitionOrchestrator.run() receives duckdb_store as explicit param AND
+      ctx._cycle.duckdb_store — two sources of truth.
+
     Usage::
 
         ctx = ctx.with_cycle(barrier_retry_count=2)
@@ -185,8 +196,6 @@ class _CycleState(msgspec.Struct):
     'Monotonic timestamp when sprint started.'
     lifecycle: Any = None
     'SprintLifecycleManager instance.'
-    duckdb_store: Any = None
-    'DuckDBShadowStore — set once at sprint start.'
     stop_requested: bool = False
     'True when scheduler requests acquisition to stop.'
     prewindup_barrier_delayed: bool = False
@@ -279,6 +288,20 @@ class SprintContext(msgspec.Struct, frozen=True):
     def wall_clock_start(self) -> float:
         """Wall clock start — monotonic timestamp when sprint started."""
         return self._cycle.wall_clock_start
+
+    @property
+    def duckdb_store(self) -> Any:
+        """Raw DuckDB store — unwraps InitResult if present.
+
+        Convenience accessor for the common case of accessing the live store.
+        Returns the store directly or None if not initialized.
+        """
+        # Use object.__getattribute__ to read the 'duckdb_store' field
+        # (not the property) to avoid infinite recursion.
+        _init_result = object.__getattribute__(self, 'duckdb_store')
+        if _init_result is None:
+            return None
+        return _init_result.value if _init_result else None
 
     @property
     def is_terminal(self) -> bool:

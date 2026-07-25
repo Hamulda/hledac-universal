@@ -371,9 +371,9 @@ async def _file_read_handler(path: str, encoding: str = "utf-8", max_bytes: int 
     if not os.path.exists(path):
         raise FileNotFoundError(f"File not found: {path}")
     size = os.path.getsize(path)
-    min(size, max_bytes) if max_bytes else size
+    read_size = min(size, max_bytes) if max_bytes else size
     with open(path, encoding=encoding) as f:
-        content = f.read(max_bytes) if max_bytes else f.read()
+        content = f.read(read_size)
     return {"content": content, "path": path, "size_bytes": size, "encoding": encoding}
 
 
@@ -408,9 +408,10 @@ async def _python_execute_handler(
         raise _TimeoutError(f"Execution timed out after {timeout_seconds}s")
 
     _alarm_registered = False
+    _prev_handler = None
     if timeout_seconds and 1 <= timeout_seconds <= 300:
         try:
-            signal.signal(signal.SIGALRM, _timeout_handler)
+            _prev_handler = signal.signal(signal.SIGALRM, _timeout_handler)
             signal.alarm(timeout_seconds)
             _alarm_registered = True
         except (ValueError, OSError):
@@ -504,6 +505,8 @@ async def _python_execute_handler(
     finally:
         if _alarm_registered:
             signal.alarm(0)
+            if _prev_handler is not None:
+                signal.signal(signal.SIGALRM, _prev_handler)
         sys.stdout = old_stdout
         sys.stderr = old_stderr
     execution_time = (time.time() - start_time) * 1000

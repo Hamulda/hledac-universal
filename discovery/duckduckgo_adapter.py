@@ -37,7 +37,7 @@ from hledac.universal.transport.circuit_breaker import (
     checked_httpx_get as checked_aiohttp_get,
 )
 from hledac.universal.utils.async_helpers import parallel
-from hledac.universal.utils.bloom_filter import RotatingBloomFilter
+from hledac.universal.tools.url_dedup import get_default_bloom_filter
 
 _PUBLIC_REPLAY_ADAPTER = "public_duckduckgo"
 
@@ -1446,8 +1446,8 @@ async def search_multi_engine(
         elif isinstance(batch, list):
             all_results.extend(batch)
 
-    # I7: URL deduplication via RotatingBloomFilter (bounded, Rust-accelerated)
-    bloom = RotatingBloomFilter(max_elements=5000, error_rate=0.01)
+    # I7: URL deduplication via shared singleton BloomFilter (F06: was per-call RotatingBloomFilter)
+    bloom = get_default_bloom_filter()
     deduped: list[dict] = []
     for r in all_results:
         raw_u = r.get("url", "")

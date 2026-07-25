@@ -7,17 +7,13 @@ This stub re-exports all public symbols from the archived module.
 The stub itself is lazy-loading — the archived module is only imported
 when at least one symbol is accessed from this module.
 
-Pattern:
-    from runtime.sprint_scheduler_v1_archived import PivotTask
-    # → triggers import of archive/scheduler_archives/sprint_scheduler_v1_archived
-
 This maintains backward compatibility for:
 - runtime/__init__.py lazy imports
-- runtime/sprint_scheduler.py __getattr__ re-exports
+- runtime/sprint_scheduler.py __getattr__ re-exports (SourceWork, SprintRunContext, HealthReport, ...)
 - runtime/context/__init__.py re-exports
-- coordinators/fetch_coordinator.py imports
 
-No active production code should import from this module.
+No active production code should import from this module. PivotTask has been
+extracted to runtime/pivot_types.py.
 Canonical paths (use these):
     from runtime.scheduler_v2 import SprintSchedulerV2
     from runtime.sprint_scheduler import SprintScheduler  # → SprintSchedulerV2

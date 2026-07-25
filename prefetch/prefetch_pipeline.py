@@ -411,11 +411,13 @@ class ContinuousPrefetchPipeline:
         except ImportError:
             pass
         try:
+            # F-01: session_pool.httpx() returns shared singleton
+            from hledac.universal.transport.session_pool import session_pool
             import httpx
-            async with httpx.AsyncClient(timeout=self._fetch_timeout) as client:
-                resp = await client.get(url, follow_redirects=True)
-                if resp.status_code == 200:
-                    return {'url': url, 'content': resp.text, 'status': resp.status_code, 'fetched_at': time.time()}
+            session = await session_pool.httpx()
+            resp = await session.get(url, follow_redirects=True, timeout=httpx.Timeout(self._fetch_timeout))
+            if resp.status_code == 200:
+                return {'url': url, 'content': resp.text, 'status': resp.status_code, 'fetched_at': time.time()}
         except Exception:
             pass
         return None

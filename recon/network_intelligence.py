@@ -121,24 +121,26 @@ async def _get_bgp_via_ipinfo(prefix: str) -> dict[str, Any]:
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 
-        timeout = httpx.Timeout(10)
-        async with httpx.AsyncClient(timeout=timeout) as session:
-            async with session.get(url, headers=headers) as resp:
-                if resp.status_code == 200:
-                    data = await resp.json()
+        # F-01: session_pool.httpx() returns shared singleton
+        from hledac.universal.transport.session_pool import session_pool
+        import httpx
+        session = await session_pool.httpx()
+        resp = await session.get(url, headers=headers, timeout=httpx.Timeout(10))
+        if resp.status_code == 200:
+            data = await resp.json()
 
-                    # Extract ASN from org field (e.g., "AS15169 Google")
-                    org = data.get("org", "")
-                    if org.startswith("AS"):
-                        asn_part = org.split()[0]
-                        result["asn"] = asn_part.replace("AS", "")
-                        result["as_name"] = " ".join(org.split()[1:]) if len(org.split()) > 1 else None
+            # Extract ASN from org field (e.g., "AS15169 Google")
+            org = data.get("org", "")
+            if org.startswith("AS"):
+                asn_part = org.split()[0]
+                result["asn"] = asn_part.replace("AS", "")
+                result["as_name"] = " ".join(org.split()[1:]) if len(org.split()) > 1 else None
 
-                    result["country"] = data.get("country")
-                    result["announced"] = bool(result["asn"])
-                    result["found"] = True
+            result["country"] = data.get("country")
+            result["announced"] = bool(result["asn"])
+            result["found"] = True
 
-                    logger.info(f"BGP via ipinfo.io for {prefix}: ASN {result.get('asn')}")
+            logger.info(f"BGP via ipinfo.io for {prefix}: ASN {result.get('asn')}")
 
     except Exception as e:
         result["error"] = str(e)
@@ -265,39 +267,41 @@ async def _resolve_doh_direct(domain: str) -> dict[str, list[str]]:
         ("google", f"{GOOGLE_DOH}?name={domain}&type=A"),
     ]
 
-    timeout = httpx.Timeout(15)
-    async with httpx.AsyncClient(timeout=timeout) as session:
-        for provider, url in doh_endpoints:
-            try:
-                headers = {"Accept": "application/dns-json"}
+    # F-01: session_pool.httpx() returns shared singleton
+    from hledac.universal.transport.session_pool import session_pool
+    import httpx
+    session = await session_pool.httpx()
+    for provider, url in doh_endpoints:
+        try:
+            headers = {"Accept": "application/dns-json"}
 
-                async with session.get(url, headers=headers) as resp:
-                    if resp.status_code == 200:
-                        data = await resp.json()
+            resp = await session.get(url, headers=headers, timeout=httpx.Timeout(15))
+            if resp.status_code == 200:
+                data = await resp.json()
 
-                        # Parse DNS JSON response (RFC 8425)
-                        answers = data.get("Answer", [])
-                        for ans in answers:
-                            ans_type = ans.get("type")
-                            value = ans.get("data")
+                # Parse DNS JSON response (RFC 8425)
+                answers = data.get("Answer", [])
+                for ans in answers:
+                    ans_type = ans.get("type")
+                    value = ans.get("data")
 
-                            if ans_type == 1:  # A record
-                                result["a"].append(value)
-                            elif ans_type == 28:  # AAAA record
-                                result["aaaa"].append(value)
-                            elif ans_type == 15:  # MX record
-                                result["mx"].append(value)
-                            elif ans_type == 16:  # TXT record
-                                result["txt"].append(value)
+                    if ans_type == 1:  # A record
+                        result["a"].append(value)
+                    elif ans_type == 28:  # AAAA record
+                        result["aaaa"].append(value)
+                    elif ans_type == 15:  # MX record
+                        result["mx"].append(value)
+                    elif ans_type == 16:  # TXT record
+                        result["txt"].append(value)
 
-                        if result["a"] or result["aaaa"]:
-                            result["found"] = True
-                            result["doh_provider"] = provider
-                            break
+                if result["a"] or result["aaaa"]:
+                    result["found"] = True
+                    result["doh_provider"] = provider
+                    break
 
-            except Exception as e:
-                result["errors"].append(f"{provider}: {str(e)}")
-                logger.debug(f"Direct DoH {provider} failed for {domain}: {e}")
+        except Exception as e:
+            result["errors"].append(f"{provider}: {str(e)}")
+            logger.debug(f"Direct DoH {provider} failed for {domain}: {e}")
 
     return result
 

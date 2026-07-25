@@ -141,13 +141,106 @@ _HOST_SESSION_TTL_S: float = _M1_BOUNDS.curl_host_session_ttl_s
 _host_sessions: dict[str, tuple[Any, float, str]] = {}
 _host_access_order: deque[str] = deque()  # LRU: move to end on access
 
-# ISSUE-8.1: Per-(host, resolve_target) session cache for DNS rebinding protection
+# ISSUE-8.1 / F-03: Per-(host, resolve_target) session cache for DNS rebinding protection
 # Key: (host, frozenset of resolve bindings) -> AsyncSession
 # When resolve is needed, we need a dedicated session with CURLOPT_RESOLVE set
 _resolved_sessions: dict[tuple[str, frozenset[tuple[str, int, str]]], tuple[Any, float]] = {}
 _resolved_sessions_order: deque[tuple[str, frozenset[tuple[str, int, str]]]] = deque()
 _MAX_RESOLVED_SESSIONS: int = 64  # Max unique resolve bindings
 _RESOLVED_SESSION_TTL_S: float = 300.0  # 5 min TTL
+
+
+async def _get_or_create_resolved_session(
+    resolve: dict[str, str],
+    profile: str,
+    timeout_s: float,
+) -> tuple[Any, str]:
+    """
+    Get or create a curl_cffi AsyncSession with CURLOPT_RESOLVE bound.
+
+    Sessions are cached by (host, frozenset of resolve bindings) so repeated
+    requests to the same (hostname, IP) pair reuse the TLS session ticket
+    instead of paying for a new handshake on every request.
+
+    F-03: Fixes DNS-rebinding protection creating per-request sessions by
+    caching resolved sessions and reusing them for identical resolve bindings.
+    """
+    # Build canonical cache key from resolve dict
+    resolve_bindings = frozenset((host, 443, ip) for host, ip in resolve.items())
+    host = next((h for h in resolve), "")
+
+    # F-03: Empty resolve dict — no CURLOPT_RESOLVE needed, fall back to host cache
+    if not resolve_bindings:
+        return None, profile
+
+    async with _curl_cffi_lock:
+        now = time.monotonic()
+
+        # Check cache hit
+        cache_key = (host, resolve_bindings)
+        if cache_key in _resolved_sessions:
+            session, last_access = _resolved_sessions[cache_key]
+            if now - last_access < _RESOLVED_SESSION_TTL_S:
+                # Move to end of LRU
+                if cache_key in _resolved_sessions_order:
+                    _resolved_sessions_order.remove(cache_key)
+                _resolved_sessions_order.append(cache_key)
+                _resolved_sessions[cache_key] = (session, now)
+                logger.debug(f"[F-03] resolved session cache hit: {host}")
+                return session, profile
+            else:
+                # Expired — evict
+                try:
+                    if hasattr(session, "aclose"):
+                        safe_create_task(
+                            session.aclose(),
+                            name=f"curl_cffi:resolved_expire:{host}",
+                        )
+                except Exception:  # noqa: BLE001
+                    pass
+                del _resolved_sessions[cache_key]
+                if cache_key in _resolved_sessions_order:
+                    _resolved_sessions_order.remove(cache_key)
+
+    # Miss: create new session with CURLOPT_RESOLVE
+    try:
+        from curl_cffi import curl
+        from curl_cffi.requests import AsyncSession as _AsyncSession
+
+        resolve_str_list = _resolve_dict_to_curl_format(resolve)
+        session = _AsyncSession(
+            impersonate=profile,
+            timeout=timeout_s,
+            max_clients=10,
+            curl_options={curl.CurlOpt.RESOLVE: resolve_str_list},
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[F-03] resolve session creation failed: {e}")
+        raise
+
+    # Store in cache with LRU eviction
+    async with _curl_cffi_lock:
+        now = time.monotonic()
+        while len(_resolved_sessions) >= _MAX_RESOLVED_SESSIONS and _resolved_sessions_order:
+            oldest_key = _resolved_sessions_order.popleft()
+            if oldest_key in _resolved_sessions:
+                old_session, _ = _resolved_sessions.pop(oldest_key)
+                try:
+                    if hasattr(old_session, "aclose"):
+                        safe_create_task(
+                            old_session.aclose(),
+                            name=f"curl_cffi:resolved_evict:{oldest_key[0]}",
+                        )
+                except Exception:  # noqa: BLE001
+                    pass
+
+        _resolved_sessions[cache_key] = (session, now)
+        _resolved_sessions_order.append(cache_key)
+        logger.debug(f"[F-03] resolved session cached: {host} (profile={profile})")
+
+    return session, profile
 
 
 def _resolve_dict_to_curl_format(resolve: dict[str, str]) -> list[str]:
@@ -425,6 +518,7 @@ async def close_curl_cffi_sessions_async() -> None:
     CancelledError is re-raised.
     """
     global _curl_cffi_sessions, _curl_cffi_profiles_order, _host_sessions, _host_access_order
+    global _resolved_sessions, _resolved_sessions_order
 
     await asyncio.sleep(0)  # yield to event loop before closing
 
@@ -437,7 +531,12 @@ async def close_curl_cffi_sessions_async() -> None:
         _host_sessions.clear()
         _host_access_order.clear()
 
-    for session in profile_sessions + host_sessions:
+        # F-03: Close all resolved sessions (not just fire-and-forget on eviction)
+        resolved_sessions = [s for s, _ in _resolved_sessions.values()]
+        _resolved_sessions.clear()
+        _resolved_sessions_order.clear()
+
+    for session in profile_sessions + host_sessions + resolved_sessions:
         try:
             if hasattr(session, "aclose"):
                 await session.aclose()
@@ -446,7 +545,7 @@ async def close_curl_cffi_sessions_async() -> None:
         except Exception as e:  # noqa: BLE001
             logger.debug(f"Failed to close curl_cffi session: {e}")
 
-    logger.debug(f"curl_cffi sessions closed: {len(profile_sessions)} profiles + {len(host_sessions)} hosts")
+    logger.debug(f"curl_cffi sessions closed: {len(profile_sessions)} profiles + {len(host_sessions)} hosts + {len(resolved_sessions)} resolved")
 
 
 def get_curl_cffi_runtime_status() -> dict[str, Any]:
@@ -463,6 +562,10 @@ def get_curl_cffi_runtime_status() -> dict[str, Any]:
         "host_cache_size": len(_host_sessions),
         "host_cache_capacity": _MAX_HOST_SESSIONS,
         "host_cache_ttl_s": _HOST_SESSION_TTL_S,
+        # F-03: resolved session cache
+        "resolved_cache_size": len(_resolved_sessions),
+        "resolved_cache_capacity": _MAX_RESOLVED_SESSIONS,
+        "resolved_cache_ttl_s": _RESOLVED_SESSION_TTL_S,
     }
 
 
@@ -697,25 +800,16 @@ async def fetch_via_curl_cffi(
             tls_impersonate=profile,
         )
 
-    # ISSUE-8.1: DNS Rebinding Protection — resolve requires dedicated session
+    # ISSUE-8.1 / F-03: DNS Rebinding Protection — resolve requires dedicated session
     # curl_cffi does NOT support per-request resolve parameter; CURLOPT_RESOLVE
     # must be set at session creation time via curl_options.
+    # F-03 Fix: Session is now cached by (host, frozenset of resolve bindings)
+    # so repeated requests to the same (hostname, IP) reuse the TLS session.
     if resolve:
-        # Create a dedicated session with CURLOPT_RESOLVE bound
-        # This session is NOT added to the standard host cache because each
-        # resolve binding is unique per (hostname, IP) combination.
         try:
-            from curl_cffi import curl
-            from curl_cffi.requests import AsyncSession as _AsyncSession
-
-            resolve_str_list = _resolve_dict_to_curl_format(resolve)
-            session = _AsyncSession(
-                impersonate=profile,
-                timeout=timeout_s,
-                max_clients=10,
-                curl_options={curl.CurlOpt.RESOLVE: resolve_str_list},
+            session, used_profile = await _get_or_create_resolved_session(
+                resolve, profile, timeout_s
             )
-            used_profile = profile
             _ja3_log(profile=profile, url=url, used_profile=used_profile)
         except asyncio.CancelledError:
             raise

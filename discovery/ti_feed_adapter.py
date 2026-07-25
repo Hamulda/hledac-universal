@@ -653,6 +653,7 @@ async def search_github_gists(keyword: str, max_results: int=10) -> list[dict]:
             except Exception:
                 pass
         if not results:
+            # F-FIX: selectolax primary (faster), bs4 fallback
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(html_text, 'html.parser')
             for item in soup.select('.gist-snippet')[:max_results]:

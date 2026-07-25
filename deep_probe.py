@@ -145,16 +145,18 @@ class DeepProbeScanner:
             return []
         try:
             cdx_url = f'https://web.archive.org/cdx/search/cdx?url={domain}/*&output=json&limit={MAX_DISCOVERED_URLS}&fl=original'
-            async with httpx.AsyncClient(timeout=httpx.Timeout(SCAN_TIMEOUT_S)) as session:
-                resp = await session.get(cdx_url)
-                if resp.status_code != 200:
-                    return []
-                data = resp.json()
-                urls = []
-                for row in data[1:]:
-                    if isinstance(row, list) and row:
-                        urls.append(row[0])
-                return urls[:MAX_DISCOVERED_URLS]
+            # F-01: session_pool.httpx() returns shared singleton
+            from hledac.universal.transport.session_pool import session_pool
+            session = await session_pool.httpx()
+            resp = await session.get(cdx_url, timeout=httpx.Timeout(SCAN_TIMEOUT_S))
+            if resp.status_code != 200:
+                return []
+            data = resp.json()
+            urls = []
+            for row in data[1:]:
+                if isinstance(row, list) and row:
+                    urls.append(row[0])
+            return urls[:MAX_DISCOVERED_URLS]
         except Exception:
             return []
 
@@ -182,12 +184,14 @@ class DeepProbeScanner:
                     break
                 try:
                     url = f'https://{bucket_name}.s3.amazonaws.com'
-                    async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as session:
-                        resp = await session.head(url, follow_redirects=True)
-                        if resp.status_code == 200:
-                            raw_results.append({'bucket': bucket_name, 'url': url, 'status': 200})
-                            fid = hashlib.sha256(bucket_name.encode()).hexdigest()[:16]
-                            findings.append(CanonicalFinding(finding_id=fid, query=domain, source_type='deep_probe', confidence=0.5, ts=time.time(), provenance=('deep_probe', 's3', bucket_name), payload_text=f'Open S3 bucket: {bucket_name}'))
+                    # F-01: session_pool.httpx() returns shared singleton
+                    from hledac.universal.transport.session_pool import session_pool
+                    session = await session_pool.httpx()
+                    resp = await session.head(url, follow_redirects=True, timeout=httpx.Timeout(5.0))
+                    if resp.status_code == 200:
+                        raw_results.append({'bucket': bucket_name, 'url': url, 'status': 200})
+                        fid = hashlib.sha256(bucket_name.encode()).hexdigest()[:16]
+                        findings.append(CanonicalFinding(finding_id=fid, query=domain, source_type='deep_probe', confidence=0.5, ts=time.time(), provenance=('deep_probe', 's3', bucket_name), payload_text=f'Open S3 bucket: {bucket_name}'))
                 except Exception:
                     pass
             if len(checked) >= max_buckets:
@@ -244,12 +248,14 @@ async def scan_ipfs(query: str, store: Any=None, max_results: int=MAX_IPFS_RESUL
         for gateway in ['https://cloudflare-ipfs.com/ipfs/', 'https://ipfs.io/ipfs/']:
             url = f'{gateway}{cid}'
             try:
-                async with httpx.AsyncClient(timeout=httpx.Timeout(IPFS_TIMEOUT_S)) as session:
-                    resp = await session.head(url, follow_redirects=True)
-                    if resp.status_code == 200:
-                        fid = hashlib.sha256(cid.encode()).hexdigest()[:16]
-                        findings.append(CanonicalFinding(finding_id=fid, query=query, source_type='deep_probe', confidence=0.7, ts=time.time(), provenance=('deep_probe', 'ipfs', cid), payload_text=f'IPFS content: {url}'))
-                        break
+                # F-01: session_pool.httpx() returns shared singleton
+                from hledac.universal.transport.session_pool import session_pool
+                session = await session_pool.httpx()
+                resp = await session.head(url, follow_redirects=True, timeout=httpx.Timeout(IPFS_TIMEOUT_S))
+                if resp.status_code == 200:
+                    fid = hashlib.sha256(cid.encode()).hexdigest()[:16]
+                    findings.append(CanonicalFinding(finding_id=fid, query=query, source_type='deep_probe', confidence=0.7, ts=time.time(), provenance=('deep_probe', 'ipfs', cid), payload_text=f'IPFS content: {url}'))
+                    break
             except Exception:
                 pass
         if len(findings) >= max_results:

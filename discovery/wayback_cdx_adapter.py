@@ -55,15 +55,16 @@ async def async_search_wayback_cdx(
 
     start = time.monotonic()
 
+    # F-01: Canonical session pool
     try:
-        import httpx
-    except ImportError:
+        from hledac.universal.transport.session_pool import session_pool
+    except Exception as exc:
         elapsed = time.monotonic() - start
         return DiscoveryBatchResult(
             hits=(),
             error_type="import_error",
             elapsed_s=elapsed,
-            error="httpx_not_available",
+            error=f"session_pool_unavailable:{exc}",
         )
 
     params = {
@@ -76,32 +77,32 @@ async def async_search_wayback_cdx(
         "to": "2026",
     }
 
-    timeout = httpx.Timeout(total=timeout_s)
     try:
         async with asyncio.timeout(timeout_s):
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            # F-01: session_pool.httpx() returns shared singleton AsyncClient
+            session = await session_pool.httpx()
+            try:
+                response = await session.get(
+                    _WAYBACK_CDX_URL,
+                    params=params,
+                    headers={"User-Agent": "Hledac/1.0 (research bot)"},
+                )
+                status = response.status_code
+                data = response.json() if status == 200 else None
+                err = None
+                from urllib.parse import urlparse as _urlparse
+
+                get_breaker(_urlparse(_WAYBACK_CDX_URL).netloc).record_success()
+            except Exception as e:
+                err = str(e)
+                data = None
+                status = 0
+                from urllib.parse import urlparse as _urlparse
+
                 try:
-                    response = await client.get(
-                        _WAYBACK_CDX_URL,
-                        params=params,
-                        headers={"User-Agent": "Hledac/1.0 (research bot)"},
-                    )
-                    status = response.status_code
-                    data = response.json() if status == 200 else None
-                    err = None
-                    from urllib.parse import urlparse as _urlparse
-
-                    get_breaker(_urlparse(_WAYBACK_CDX_URL).netloc).record_success()
-                except Exception as e:
-                    err = str(e)
-                    data = None
-                    status = 0
-                    from urllib.parse import urlparse as _urlparse
-
-                    try:
-                        get_breaker(_urlparse(_WAYBACK_CDX_URL).netloc).record_failure(failure_kind="wayback_cdx")
-                    except Exception:
-                        pass
+                    get_breaker(_urlparse(_WAYBACK_CDX_URL).netloc).record_failure(failure_kind="wayback_cdx")
+                except Exception:
+                    pass
             if err:
                 elapsed = time.monotonic() - start
                 # Map circuit_breaker error strings to taxonomy

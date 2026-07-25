@@ -31,11 +31,13 @@ def main() -> int:
     try:
         import asyncio
 
-        import httpx
         async def check_lm():
-            async with httpx.AsyncClient(timeout=httpx.Timeout(3.0)) as session:
-                resp = await session.get("http://localhost:8080/health")
-                return resp.status_code == 200
+            # F-01: session_pool.httpx() returns shared singleton
+            from hledac.universal.transport.session_pool import session_pool
+            import httpx
+            session = await session_pool.httpx()
+            resp = await session.get("http://localhost:8080/health", timeout=httpx.Timeout(3.0))
+            return resp.status_code == 200
         lm_ok = asyncio.run(check_lm())
     except Exception as e:
         print(f"WARN: mlx_lm.server not reachable: {e}")

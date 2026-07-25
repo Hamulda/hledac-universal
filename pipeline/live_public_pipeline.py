@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 import msgspec
 import msgspec.json as _json
 
-from hledac.universal.utils.bloom_filter import RotatingBloomFilter
+from hledac.universal.tools.url_dedup import get_default_bloom_filter
 from hledac.universal.utils.locks import LazyAsyncioLock
 
 logger = logging.getLogger(__name__)
@@ -3512,7 +3512,7 @@ async def async_run_live_public_pipeline(
         public_noise_reject_reasons[noise_reason] += 1
     public_discovery_raw_count = len(hits)  # raw URLs from discovery (includes CT/CC injection)
     public_discovery_attempted = discovery_attempted
-    bloom_filter = RotatingBloomFilter(capacity=50000, error_rate=0.01)
+    bloom_filter = get_default_bloom_filter()
     _seen_url_count = 0
     tasks: list[asyncio.Task] = []
     MAX_FETCH_CANDIDATES = 500

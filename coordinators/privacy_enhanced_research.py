@@ -208,12 +208,14 @@ class PrivacyEnhancedResearch:
             return len(data)
         return 1
 
-    def get_audit_log(self, operation_type: str | None=None, limit: int=100) -> list[AuditRecord]:
+    def get_audit_log(self, operation_type: str | None=None, limit: int=100) -> tuple[AuditRecord, ...]:
         """Get audit log with optional filtering."""
         records = self._audit_log
         if operation_type:
             records = [r for r in records if r.operation_type == operation_type]
-        return list(records)[-limit:]
+        # tuple() is cheaper than list() for immutable copy; both allocate O(n).
+        # For high-frequency callers, consider streaming via iter(islice(...), limit).
+        return tuple(records)[-limit:]
 
     def cleanup_expired(self) -> int:
         """Clean up expired sessions. Returns count of cleaned sessions.

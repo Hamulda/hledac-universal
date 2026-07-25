@@ -56,22 +56,24 @@ class LightpandaManager:
             raise ImportError('httpx not available')
         url = 'https://github.com/lightpanda-io/browser/releases/latest/download/lightpanda-aarch64-macos'
         try:
-            async with httpx.AsyncClient() as session:
-                async with session.get(url) as response:
-                    if response.status_code == 200:
-                        content = await response.read()
-                        actual_hash = hashlib.sha256(content).hexdigest()
-                        expected_hash = os.environ.get('LIGHTPANDA_SHA256')
-                        if not expected_hash:
-                            raise ValueError('[LIGHTPANDA] LIGHTPANDA_SHA256 env var must be set to verify binary integrity before download. Set it to the trusted SHA256 hash.')
-                        if actual_hash != expected_hash:
-                            raise ValueError(f'[LIGHTPANDA] Hash mismatch! expected={expected_hash}, actual={actual_hash}')
-                        logger.info(f'[LIGHTPANDA] Hash verified: {actual_hash[:16]}...')
-                        with open(self._bin_path, 'wb') as f:
-                            f.write(content)
-                        os.chmod(self._bin_path, 493)
-                    else:
-                        logger.warning(f'[LIGHTPANDA] Download failed: {resp.status}')
+            # F-01: session_pool.httpx() returns shared singleton
+            from hledac.universal.transport.session_pool import session_pool
+            session = await session_pool.httpx()
+            response = await session.get(url)
+            if response.status_code == 200:
+                content = response.read()
+                actual_hash = hashlib.sha256(content).hexdigest()
+                expected_hash = os.environ.get('LIGHTPANDA_SHA256')
+                if not expected_hash:
+                    raise ValueError('[LIGHTPANDA] LIGHTPANDA_SHA256 env var must be set to verify binary integrity before download. Set it to the trusted SHA256 hash.')
+                if actual_hash != expected_hash:
+                    raise ValueError(f'[LIGHTPANDA] Hash mismatch! expected={expected_hash}, actual={actual_hash}')
+                logger.info(f'[LIGHTPANDA] Hash verified: {actual_hash[:16]}...')
+                with open(self._bin_path, 'wb') as f:
+                    f.write(content)
+                os.chmod(self._bin_path, 493)
+            else:
+                logger.warning(f'[LIGHTPANDA] Download failed: {response.status_code}')
         except Exception as e:
             logger.warning(f'[LIGHTPANDA] Download error: {e}')
             raise

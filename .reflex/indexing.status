@@ -1,12 +1,12 @@
 {
   "state": "completed",
-  "total_files": 1523,
-  "processed_files": 1523,
+  "total_files": 1556,
+  "processed_files": 1556,
   "cached_files": 0,
-  "parsed_files": 1523,
+  "parsed_files": 1556,
   "failed_files": 0,
-  "started_at": "2026-07-18T15:29:22.665375+00:00",
-  "updated_at": "2026-07-18T15:29:30.826300+00:00",
-  "completed_at": "2026-07-18T15:29:30.826300+00:00",
+  "started_at": "2026-07-25T21:09:00.381828+00:00",
+  "updated_at": "2026-07-25T21:09:15.016374+00:00",
+  "completed_at": "2026-07-25T21:09:15.016371+00:00",
   "error": null
 }

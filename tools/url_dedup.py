@@ -96,7 +96,6 @@ MAX_URL_ESTIMATE = 1_000_000
 import os as _os  # noqa: E402
 
 _home_at_import = _os.environ.get("HOME", "")
-del _os
 
 # Rust extension import guard — BloomFilter exposed as
 # RustRotatingBloomFilter for API compatibility with probables.

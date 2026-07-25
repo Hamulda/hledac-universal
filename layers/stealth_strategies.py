@@ -512,41 +512,45 @@ class CaptchaSolvingStrategy:
         if not api_key:
             return None
 
+        # F-01: Canonical session pool
         try:
+            from hledac.universal.transport.session_pool import session_pool
             import httpx
-        except ImportError:
+        except Exception:
             return None
 
         b64 = base64.b64encode(image_bytes).decode()
 
         try:
-            async with httpx.AsyncClient(timeout=30.0) as session:
-                # Submit
-                response = await session.post(
-                    self._config.provider_endpoint,
-                    data={"key": api_key, "method": "base64", "body": b64},
+            # F-01: session_pool.httpx() returns shared singleton — reuse for POST + poll loop
+            session = await session_pool.httpx()
+            # Submit
+            response = await session.post(
+                self._config.provider_endpoint,
+                data={"key": api_key, "method": "base64", "body": b64},
+                timeout=httpx.Timeout(30.0),
+            )
+            result = response.text
+
+            if not result.startswith("OK|"):
+                return None
+
+            captcha_id = result.split("|")[1]
+
+            # Poll
+            for _ in range(self._config.provider_max_polls):
+                await asyncio.sleep(self._config.provider_poll_interval)
+                poll_response = await session.get(
+                    f"http://2captcha.com/res.php?key={api_key}&action=get&id={captcha_id}",
+                    timeout=httpx.Timeout(10.0),
                 )
-                result = response.text
+                res = poll_response.text
 
-                if not result.startswith("OK|"):
-                    return None
-
-                captcha_id = result.split("|")[1]
-
-                # Poll
-                for _ in range(self._config.provider_max_polls):
-                    await asyncio.sleep(self._config.provider_poll_interval)
-                    poll_response = await session.get(
-                        f"http://2captcha.com/res.php?key={api_key}&action=get&id={captcha_id}",
-                        timeout=10.0,
-                    )
-                    res = poll_response.text
-
-                    if res.startswith("OK|"):
-                        return res.split("|")[1]
-                    if res == "CAPCHA_NOT_READY":
-                        continue
-                    break
+                if res.startswith("OK|"):
+                    return res.split("|")[1]
+                if res == "CAPCHA_NOT_READY":
+                    continue
+                break
 
         except Exception as e:
             logger.debug(f"2Captcha API error: {e}")

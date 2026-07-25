@@ -87,8 +87,9 @@ class TestDecisionMatrix:
 class TestStoragePolicy:
     def test_policy_frozen(self):
         policy = _DECISION_MATRIX["embedding.float16[256]"]
-        # Frozen dataclass: __dataclass_params__.frozen must be True
-        assert policy.__dataclass_params__.frozen is True
+        # msgspec.Struct with frozen=True is immutable — assignment raises AttributeError
+        with pytest.raises(AttributeError):
+            policy.kind = StorageKind.COLD
 
     def test_policy_slots(self):
         policy = _DECISION_MATRIX["embedding.float16[256]"]

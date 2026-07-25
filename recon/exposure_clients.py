@@ -21,7 +21,6 @@ Mixed model NENÍ design flaw — je to správné rozdělení:
 """
 import asyncio
 import atexit
-import json
 import logging
 import os
 import time
@@ -29,6 +28,11 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 import httpx
+
+try:
+    import orjson as _json
+except ImportError:
+    import json as _json
 from hledac.universal.recon._http_helpers import get_intelligence_session
 # S-01: Use UnifiedLMDB via get_unified_lmdb + SubDB
 from hledac.universal.core.lmdb_unified import get_unified_lmdb, SubDB
@@ -52,13 +56,13 @@ _CVE_CACHE_TTL = 24 * 60 * 60
 # Single-writer LMDB executor — MUST stay single-threaded for LMDB consistency.
 _DB_EXECUTOR = get_exposure_db_executor()
 
-def _default_serializer(obj: Any) -> bytes:
-    """Default JSON serializer pro LMDB cache."""
-    return json.dumps(obj).encode('utf-8')
+def _default_serializer(obj: Any):
+    """Default JSON serializer pro LMDB cache — orjson returns bytes directly."""
+    return _json.dumps(obj)
 
 def _default_deserializer(data: bytes) -> Any:
     """Default JSON deserializer pro LMDB cache."""
-    return json.loads(data.decode('utf-8'))
+    return _json.loads(data)
 
 class ExposureCache:
     """

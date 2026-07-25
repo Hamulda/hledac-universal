@@ -36,6 +36,8 @@ AUTHORIZED_PATTERNS = (
     "_test.py",       # test modules alt pattern
     "conftest.py",    # pytest fixtures
     "probe_",         # probe test files (recon/tests/, etc.)
+    "quick_scrape",   # convenience sync wrapper for async scrape()
+    "scraper.py",     # StealthWebScraper convenience wrapper module
 )
 
 
