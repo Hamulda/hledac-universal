@@ -176,8 +176,8 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         self._papers: dict[str, ResearchPaper] = {}
         self._citation_links: set[tuple[str, str]] = set()
         self._citation_links_order: deque = deque(maxlen=MAX_CITATION_LINKS)
-        self._meta_patterns: list[MetaPattern] = []
-        self._theories: list[ResearchTheory] = []
+        self._meta_patterns: deque[MetaPattern] = deque(maxlen=512)
+        self._theories: deque[ResearchTheory] = deque(maxlen=256)
         self._active_plans: dict[str, HierarchicalPlan] = {}
         self._deep_stats = {'excavations_completed': 0, 'total_papers_found': 0, 'max_depth_reached': 0, 'meta_patterns_detected': 0, 'theories_generated': 0, 'plans_executed': 0}
         self._fallback_chain = ['unified_ai', 'evidence', 'rag']

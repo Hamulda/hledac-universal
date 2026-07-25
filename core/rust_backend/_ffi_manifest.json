@@ -167,9 +167,6 @@
     "federated_qtable": [
       "federated_qtable.register"
     ],
-    "metal_pattern_matcher": [
-      "metal_pattern_matcher.register_functions"
-    ],
     "lancedb_bridge": [
       "PyHNSWBridge"
     ],
@@ -280,7 +277,6 @@
     "lz4_decompress_raw",
     "madvise.register_functions",
     "memory.register_functions",
-    "metal_pattern_matcher.register_functions",
     "mlx_bridge.register",
     "mpsc_pool.register",
     "parquet_reader.register",

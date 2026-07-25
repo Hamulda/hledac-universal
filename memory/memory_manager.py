@@ -50,6 +50,13 @@ try:
     from hledac.universal.utils.lmdb_bulk import putmulti_bounded
 except ImportError:
     putmulti_bounded = None
+
+# S-01: Import UnifiedLMDB for memory manager migration
+try:
+    from hledac.universal.core.lmdb_unified import get_unified_lmdb, SubDB
+except ImportError:
+    get_unified_lmdb = None
+    SubDB = None  # type: ignore[assignment]
 logger = logging.getLogger(__name__)
 DEFAULT_MAP_SIZE = 128 * 1024 * 1024
 MAX_KEYS_PER_SESSION = 1000
@@ -87,34 +94,42 @@ class MemoryManager:
     Provides session-based storage for entities, queries, and files.
     Each session has its own key namespace with automatic expiration.
     """
-    __slots__ = tuple(('_db_path', '_env', '_lock', '_map_size', '_max_keys_per_session', '_max_sessions', '_session_ttl_days'))
+    __slots__ = tuple(('_sub_db', '_env', '_lock', '_map_size', '_max_keys_per_session', '_max_sessions', '_session_ttl_days'))
 
     def __init__(self, db_path: str | None=None, map_size: int=DEFAULT_MAP_SIZE, max_keys_per_session: int=MAX_KEYS_PER_SESSION, max_sessions: int=MAX_SESSIONS, session_ttl_days: int=SESSION_TTL_DAYS):
         """
         Initialize Memory Manager.
 
         Args:
-            db_path: Path to LMDB database. If None, uses default location.
-            map_size: Maximum database size in bytes.
+            db_path: Deprecated, ignored. Kept for API compat.
+            map_size: Deprecated, ignored. Shared via UnifiedLMDB.
             max_keys_per_session: Maximum keys per session.
             max_sessions: Maximum number of sessions.
             session_ttl_days: Session TTL in days.
         """
         if not LMDB_AVAILABLE:
             raise ImportError('lmdb package not available')
-        try:
-            from hledac.universal.paths import DB_ROOT
-            self._db_path = Path(db_path) if db_path else DB_ROOT / 'memory_manager.lmdb'
-        except ImportError:
-            self._db_path = Path(db_path) if db_path else Path('~/memory_manager.lmdb').expanduser()
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._map_size = map_size
+        self._map_size = map_size  # kept for compat, not used
         self._max_keys_per_session = max_keys_per_session
         self._max_sessions = max_sessions
         self._session_ttl_days = session_ttl_days
-        self._env = lmdb.open(str(self._db_path), map_size=map_size, max_dbs=4, writemap=False, metasync=True)
+        # S-01: Use UnifiedLMDB singleton instead of separate env
+        if get_unified_lmdb is not None:
+            _store = get_unified_lmdb()
+            self._env = _store.env()
+            self._sub_db = _store.open_db(SubDB.SESSION_META)
+        else:
+            # Fallback for environments where UnifiedLMDB is not available
+            try:
+                from hledac.universal.paths import DB_ROOT
+                db_path_fallback = Path(db_path) if db_path else DB_ROOT / 'memory_manager.lmdb'
+            except ImportError:
+                db_path_fallback = Path(db_path) if db_path else Path('~/memory_manager.lmdb').expanduser()
+            db_path_fallback.parent.mkdir(parents=True, exist_ok=True)
+            self._env = lmdb.open(str(db_path_fallback), map_size=map_size, max_dbs=4, writemap=False, metasync=True)
+            self._sub_db = None
         self._lock = asyncio.Lock()
-        logger.info(f'MemoryManager initialized at {self._db_path}')
+        logger.info('MemoryManager initialized (UnifiedLMDB)' if self._sub_db is not None else f'MemoryManager initialized at fallback path')
 
     def _make_session_key(self, session_id: str, key: str) -> bytes:
         """Create a full LMDB key from session_id and key."""
@@ -144,9 +159,10 @@ class MemoryManager:
                 now = time.time()
                 session_meta = {'session_id': session_id, 'last_access': now, 'created': now}
                 if putmulti_bounded is not None:
-                    putmulti_bounded(self._env, [(full_key, data), (session_index_key, _json_dumps(session_meta))], overwrite=True)
+                    # S-01: Use sub_db for UnifiedLMDB isolation
+                    putmulti_bounded(self._env, [(full_key, data), (session_index_key, _json_dumps(session_meta))], overwrite=True, sub_db=self._sub_db)
                 else:
-                    with self._env.begin(write=True) as txn:
+                    with self._env.begin(write=True, db=self._sub_db) as txn:
                         txn.put(full_key, data)
                         txn.put(session_index_key, _json_dumps(session_meta))
                 return True
@@ -169,7 +185,7 @@ class MemoryManager:
             try:
                 full_key = self._make_session_key(session_id, key)
                 session_index_key = self._make_session_index_key(session_id)
-                with self._env.begin(write=False, buffers=True) as txn:
+                with self._env.begin(write=False, buffers=True, db=self._sub_db) as txn:
                     value = txn.get(full_key)
                     if value is None:
                         return None
@@ -198,7 +214,7 @@ class MemoryManager:
         async with self._lock:
             try:
                 full_key = self._make_session_key(session_id, key)
-                with self._env.begin(write=True) as txn:
+                with self._env.begin(write=True, db=self._sub_db) as txn:
                     return txn.delete(full_key)
             except Exception as e:
                 logger.error(f'MemoryManager delete failed: {e}')
@@ -218,15 +234,15 @@ class MemoryManager:
             try:
                 keys = []
                 prefix = f'session:{session_id}:'.encode()
-                with self._env.begin(write=False) as txn:
+                with self._env.begin(write=False, db=self._sub_db) as txn:
                     cursor = txn.cursor()
                     cursor.set_range(prefix)
                     while cursor.key():
                         key = cursor.key()
                         if not key.startswith(prefix):
                             break
-                        key_str = key.decode('utf-8')
-                        key_part = key_str[len(f'session:{session_id}:'):]
+                        # S-02: zero-copy — removeprefix then decode only the suffix (+1 allocs vs +2)
+                        key_part = key[len(prefix):].decode('utf-8')
                         keys.append(key_part)
                         cursor.next()
                 return keys
@@ -267,7 +283,7 @@ class MemoryManager:
         async with self._lock:
             try:
                 keys = await self.get_session_keys(session_id)
-                with self._env.begin(write=True) as txn:
+                with self._env.begin(write=True, db=self._sub_db) as txn:
                     for key in keys:
                         full_key = self._make_session_key(session_id, key)
                         txn.delete(full_key)
@@ -289,13 +305,14 @@ class MemoryManager:
             try:
                 sessions = []
                 prefix = b'sessions:'
-                with self._env.begin(write=False) as txn:
+                with self._env.begin(write=False, db=self._sub_db) as txn:
                     cursor = txn.cursor()
                     cursor.set_range(prefix)
                     while cursor.key():
                         key = cursor.key()
                         if not key.startswith(prefix):
                             break
+                        # S-02: zero-copy — removeprefix then decode only the suffix (+1 allocs vs +2)
                         session_id = key[len(prefix):].decode('utf-8')
                         sessions.append(session_id)
                         cursor.next()
@@ -319,7 +336,7 @@ class MemoryManager:
                 removed = 0
                 for session_id in sessions:
                     session_index_key = self._make_session_index_key(session_id)
-                    with self._env.begin(write=False, buffers=True) as txn:
+                    with self._env.begin(write=False, buffers=True, db=self._sub_db) as txn:
                         meta_bytes = txn.get(session_index_key)
                         if meta_bytes is None:
                             continue

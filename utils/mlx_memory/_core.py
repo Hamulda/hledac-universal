@@ -1,27 +1,26 @@
 """
-utils/mlx_memory/_core.py — Canonical MLX Runtime (F330-MLX-DUP-007)
+utils/mlx_memory/_core.py — MLX Runtime delegation (M-11 refactor)
 
-Jediný authoritative modul pro MLX runtime init, Metal cache management,
-model caching a cleanup sequencing na M1 8GB.
+Tento modul nyní DELEGUJE veškerou logiku na utils.mlx_cache.
 
-API:
+Přehled rolí po M-11:
+  - utils.mlx_cache:     Metal limits, cleanup sequencing, memory poller (CANONICAL)
+  - utils.mlx_memory:    Re-export pro zpětnou kompatibilitu + mlx_memory-specific API
+  - brain._hermes_cache:  HermesModelCache singleton pro LLM inference (SINGLETON)
+  - core.embeddings.pool: Embedding worker thread + Metal limits delegation
+
+Funkce v tomto modulu nyní delegují na mlx_cache kromě:
+  - get_mlx_memory_pressure() — mlx_memory-specific API pro mlx_bridge
+  - get_metal_stream_context() — thread-local stream context
+
+API (vše deleguje na mlx_cache kromě výše uvedených):
   MLX_AVAILABLE, init_mlx_buffers, configure_mlx_limits,
   clear_mlx_cache, get_mlx_memory_*, mlx_cleanup_sync,
   mlx_cleanup_aggressive, get_dynamic_metal_cache_limit,
   get_metal_limits_status, get_metal_stream_context,
-  get_mlx_model, evict_all, get_cache_stats, get_semaphore
+  evict_all, get_cache_stats, get_semaphore
 
-Canonical teardown: mx.eval([]) → gc.collect() → mx.clear_cache() → gc.collect()
-
-M1 8GB budget:
-  macOS baseline:   ~2.5 GiB
-  Orchestrátor:     ~1.0 GiB
-  LLM (Hermes-3):  ~2.0 GiB
-  KV cache:         ~0.75 GiB
-  Metal cache:      ~0.5–1.1 GiB  (dynamic ceiling 1.5 GiB)
-  Metal wired:       768 MiB       (fixed)
-
-GHOST_INVARIANT: M1 Metal cache limit 1.5 GiB ceiling on 8GB machines.
+Model caching: Používej brain._hermes_cache.hermes_cache() — jediný canonical entry point.
 """
 
 import asyncio
@@ -667,33 +666,35 @@ _CACHE_MISSES: int = 0
 
 async def get_mlx_model(model_name: str) -> tuple[Any, Any]:
     """
-    Get MLX model and tokenizer from cache or load from disk.
+    DEPRECATED — M-11: Use brain._hermes_cache.hermes_cache() instead.
+
+    This function is kept for backward compatibility only.
+    Delegates to the HermesModelCache singleton.
+
     LRU eviction when cache exceeds max 2 models.
     """
-    async with _get_cache_lock():
-        if model_name in _MLX_CACHE:
-            _MLX_CACHE.move_to_end(model_name)
-            global _CACHE_HITS
-            _CACHE_HITS += 1
-            return _MLX_CACHE[model_name]
-        global _CACHE_MISSES
-        _CACHE_MISSES += 1
+    import warnings
 
+    warnings.warn(
+        "get_mlx_model() is deprecated — use brain._hermes_cache.hermes_cache() instead. "
+        "This function will be removed in a future release.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    # Lazy import to avoid circular dependency
+    from brain._hermes_cache import hermes_cache
+
+    cache = hermes_cache()
+    result = cache.get_model(model_name)
+    if result is not None:
+        return result
+
+    # Not cached — load and put
     try:
         from mlx_lm import load as mlx_load
-    except ImportError:
-        return None, None
 
-    try:
-        model, tokenizer, *_ = await asyncio.to_thread(
-            mlx_load, model_name,
-        )
-        async with _get_cache_lock():
-            _MLX_CACHE[model_name] = (model, tokenizer)
-            if len(_MLX_CACHE) > _MLX_CACHE_MAX:
-                evicted_name, _ = _MLX_CACHE.popitem(last=False)
-                logger.info(f"MLX cache evicted: {evicted_name}")
-        logger.info(f"MLX model loaded and cached: {model_name}")
+        model, tokenizer, *_ = await asyncio.to_thread(mlx_load, model_name)
+        cache.put_model(model_name, model, tokenizer)
         return model, tokenizer
     except Exception as e:
         logger.warning(f"Failed to load MLX model {model_name}: {e}")

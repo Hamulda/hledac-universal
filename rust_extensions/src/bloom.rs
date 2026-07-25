@@ -20,10 +20,10 @@
 //! Trade-off vs in-memory: `MAP_SHARED` msync adds ~1-2 ms per add batch
 //! on macOS APFS (vs ~0 µs for `Vec<u64>`). For dedup, use the in-memory
 //! filter. For cross-restart persistence, use the mmap filter.
+use libc;
 use pyo3::prelude::*;
-use std::ffi::c_void;
+use std::ffi::{c_int, c_void};
 use std::fs::OpenOptions;
-use std::os::raw::c_int;
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::IntoRawFd;
 use std::path::Path;
@@ -376,31 +376,9 @@ pub fn bloom_check_batch(items: Vec<String>, capacity: usize) -> Vec<bool> {
 //
 // Linux + macOS only. No Windows.
 
-unsafe extern "C" {
-    fn mmap(
-        addr: *mut c_void,
-        length: usize,
-        prot: c_int,
-        flags: c_int,
-        fd: c_int,
-        offset: i64,
-    ) -> *mut c_void;
-    fn munmap(addr: *mut c_void, length: usize) -> c_int;
-    fn msync(addr: *mut c_void, length: usize, flags: c_int) -> c_int;
-    fn madvise(addr: *mut c_void, length: usize, advice: c_int) -> c_int;
-    fn close(fd: c_int) -> c_int;
-}
-
-const PROT_READ: c_int = 0x1;
-const PROT_WRITE: c_int = 0x2;
-const MAP_SHARED: c_int = 0x01;
-const MS_ASYNC: c_int = 0x1;
-const MS_SYNC: c_int = 0x4;
-// fcntl open flags (POSIX, same on macOS + Linux).
-const O_CREAT: c_int = 0x40;
-const O_TRUNC: c_int = 0x200;
-// MAP_FAILED = (void*)-1 — we compare against this sentinel on mmap failure.
-const MAP_FAILED: isize = -1isize;
+// libc provides mmap/munmap/msync/madvise/close and POSIX constants.
+// Using libc::mmap etc. instead of manual extern "C" declarations (R-08 fix).
+// MAP_FAILED = (void*)-1 sentinel for mmap failure check.
 
 const MMAP_HEADER_SIZE: usize = 64;
 const MMAP_MAGIC: &[u8; 4] = b"HBLM";
@@ -516,7 +494,7 @@ impl MmapBloomFilter {
             .write(true)
             .create(true)
             .truncate(false)
-            .custom_flags(O_CREAT | if reuse { 0 } else { O_TRUNC })
+            .custom_flags(libc::O_CREAT | if reuse { 0 } else { libc::O_TRUNC })
             .open(p)
             .map_err(|e| {
                 pyo3::exceptions::PyIOError::new_err(format!(
@@ -547,17 +525,17 @@ impl MmapBloomFilter {
 
         let fd = file.into_raw_fd();
         let map_ptr = unsafe {
-            mmap(
+            libc::mmap(
                 std::ptr::null_mut(),
                 byte_len,
-                PROT_READ | PROT_WRITE,
-                MAP_SHARED,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_SHARED,
                 fd,
                 0,
             )
         };
-        if map_ptr.is_null() || (map_ptr as isize) == MAP_FAILED {
-            unsafe { close(fd); }
+        if map_ptr.is_null() || map_ptr == libc::MAP_FAILED {
+            unsafe { libc::close(fd); }
             return Err(pyo3::exceptions::PyIOError::new_err(format!(
                 "MmapBloomFilter: mmap({} bytes) failed",
                 byte_len
@@ -580,7 +558,7 @@ impl MmapBloomFilter {
             }
             let bitmap_byte_len = num_u64s * 8;
             let _ = unsafe {
-                madvise(
+                libc::madvise(
                     bp as *mut c_void,
                     bitmap_byte_len,
                     MADV_NOCACHE,
@@ -705,12 +683,12 @@ impl MmapBloomFilter {
 
     /// Unsafe bit check without bounds validation (used in batch ops).
     #[inline]
-    unsafe fn check_bit_unchecked(&self, idx: usize) -> bool { unsafe {
-        let word = (idx / 64) as usize;
-        let bit = (idx % 64) as u32;
+    unsafe fn check_bit_unchecked(&self, idx: usize) -> bool {
+        let word = idx / 64;
+        let bit = idx % 64;
         let mask = 1u64 << bit;
         *self.bitmap_ptr().add(word) & mask != 0
-    }}
+    }
 
     /// Check if ALL indices in the iterator have their bits set.
     /// Used by contains_batch to avoid Vec<usize> allocation per item.
@@ -731,9 +709,9 @@ impl Drop for MmapBloomFilter {
         let ptr_guard = self.ptr.write();
         unsafe {
             // MS_SYNC on drop = durable close. Cheap (kernel coalesces).
-            let _ = msync(ptr_guard.0.as_ptr() as *mut c_void, self.byte_len, MS_SYNC);
-            let _ = munmap(ptr_guard.0.as_ptr() as *mut c_void, self.byte_len);
-            let _ = close(self.fd);
+            let _ = libc::msync(ptr_guard.0.as_ptr() as *mut c_void, self.byte_len, libc::MS_SYNC);
+            let _ = libc::munmap(ptr_guard.0.as_ptr() as *mut c_void, self.byte_len);
+            let _ = libc::close(self.fd);
         }
     }
 }
@@ -778,7 +756,7 @@ impl MmapBloomFilter {
         }
         // MS_ASYNC: durable later, not blocking.
         unsafe {
-            let _ = msync(self.bitmap_ptr() as *mut c_void, self.num_u64s * 8, MS_ASYNC);
+            let _ = libc::msync(self.bitmap_ptr() as *mut c_void, self.num_u64s * 8, libc::MS_ASYNC);
         }
         is_new
     }
@@ -845,7 +823,7 @@ impl MmapBloomFilter {
 
         // Single msync for the whole batch — amortizes sync overhead.
         unsafe {
-            let _ = msync(self.bitmap_ptr() as *mut c_void, self.num_u64s * 8, MS_ASYNC);
+            let _ = libc::msync(self.bitmap_ptr() as *mut c_void, self.num_u64s * 8, libc::MS_ASYNC);
         }
 
         results.into_iter().map(|(_, is_new)| is_new).collect()
@@ -991,7 +969,7 @@ impl MmapBloomFilter {
 
         // Single msync for the whole batch.
         unsafe {
-            let _ = msync(self.bitmap_ptr() as *mut c_void, self.num_u64s * 8, MS_ASYNC);
+            let _ = libc::msync(self.bitmap_ptr() as *mut c_void, self.num_u64s * 8, libc::MS_ASYNC);
         }
 
         results
@@ -1013,7 +991,7 @@ impl MmapBloomFilter {
     /// Force durable sync to disk. Cheap (kernel coalesces msyncs).
     fn sync(&self) -> bool {
         let _guard = self.ptr.read();
-        unsafe { msync(self.bitmap_ptr() as *mut c_void, self.byte_len, MS_SYNC) == 0 }
+        unsafe { libc::msync(self.bitmap_ptr() as *mut c_void, self.byte_len, libc::MS_SYNC) == 0 }
     }
 
     /// Reset the filter to empty (in-place, file remains mapped).
@@ -1137,13 +1115,33 @@ impl RotatingMmapBloomFilter {
     /// Bulk contains check — rayon-parallel, checks both generations.
     ///
     /// Returns `Vec<bool>` — one entry per input item.
-    /// CONC-SEQ-006 P1: Now uses par_iter because MmapBloomFilter is Sync.
-    /// ISSUE-D1: GIL released via py.allow_threads() so asyncio coroutines can progress.
+    /// ISSUE-R08-FIX: Was using serial self.contains() per item (rayon parallel
+    /// but bitmap probe was serial). Now mirrors MmapBloomFilter.contains_batch:
+    /// acquires ptr guards once, then computes indices and checks both generations
+    /// in parallel via check_indices().
     fn contains_batch(&self, items: Vec<String>) -> Vec<bool> {
         use rayon::prelude::*;
+        if items.is_empty() {
+            return vec![];
+        }
+        let active = self.active();
+        let previous = self.previous();
+        // Hold read locks for the duration of par_iter (RwLockReadGuard is Send+Sync).
+        let _active_guard = active.ptr.read();
+        let _previous_guard = previous.ptr.read();
         Python::with_gil(|py| {
             release_gil(py, || {
-                items.par_iter().map(|item| self.contains(item)).collect()
+                items
+                    .par_iter()
+                    .map(|item| {
+                        let active_indices = active.indices(item);
+                        if active.check_indices(active_indices) {
+                            return true;
+                        }
+                        let prev_indices = previous.indices(item);
+                        previous.check_indices(prev_indices)
+                    })
+                    .collect()
             })
         })
     }

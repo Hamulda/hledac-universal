@@ -25,6 +25,7 @@
 
 use pyo3::prelude::*;
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::cell::Cell;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
@@ -42,7 +43,7 @@ const METAL_CACHE_TTL_MS: u64 = 100;
 /// limit_bytes is cached alongside level so we skip the Python call
 /// when the cached entry is still valid.
 thread_local! {
-    static METAL_CACHE: (Instant, u8, u64) = (Instant::now(), 1, 0);
+    static METAL_CACHE: Cell<(Instant, u8, u64)> = Cell::new((Instant::now(), 1, 0));
 }
 
 /// Explicit memory-pressure signal — set by Python tests / production code.
@@ -154,8 +155,8 @@ fn get_metal_level_cached() -> u8 {
     }
 
     let now = Instant::now();
-    let (instant, level, _limit_bytes): (Instant, u8, u64) =
-        METAL_CACHE.with(|cell| *cell.get());
+    let (instant, level, _limit_bytes) =
+        METAL_CACHE.with(|cell| cell.get());
     if now.duration_since(instant) < Duration::from_millis(METAL_CACHE_TTL_MS) {
         return level;
     }
@@ -164,7 +165,7 @@ fn get_metal_level_cached() -> u8 {
         let limit_bytes = get_metal_limit_bytes(py);
         let active = crate::memory::get_metal_active_memory_bytes(py);
         let level = fraction_to_level(limit_bytes, active);
-        METAL_CACHE.with(|cell| *cell.get() = (now, level, limit_bytes));
+        METAL_CACHE.with(|cell| cell.set((now, level, limit_bytes)));
         level
     })
 }
@@ -281,7 +282,7 @@ pub fn update_memory_pressure(pressure: u8) {
     // starts fresh.  When pressure != PRESSURE_UNSET the cache is bypassed entirely, so
     // the entry value is immaterial — we store PRESSURE_UNSET (=1) to document the reset path.
     let now = Instant::now();
-    METAL_CACHE.with(|cell| *cell.get() = (now, PRESSURE_UNSET, 0));
+    METAL_CACHE.with(|cell| cell.set((now, PRESSURE_UNSET, 0)));
 }
 
 // ---------------------------------------------------------------------------

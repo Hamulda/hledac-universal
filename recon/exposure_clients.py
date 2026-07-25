@@ -30,7 +30,8 @@ from pathlib import Path
 from typing import Any
 import httpx
 from hledac.universal.recon._http_helpers import get_intelligence_session
-from hledac.universal.paths import open_lmdb
+# S-01: Use UnifiedLMDB via get_unified_lmdb + SubDB
+from hledac.universal.core.lmdb_unified import get_unified_lmdb, SubDB
 from hledac.universal.utils.msgspec_json import decode, encode
 from hledac.universal.utils.async_helpers import parallel
 from hledac.universal.utils.domain_executors import get_exposure_db_executor
@@ -73,12 +74,15 @@ class ExposureCache:
         self._env = None
         self._lock = asyncio.Lock()
 
-    def _open_env(self) -> Any:
-        """Otevře LMDB env lazy."""
+    def _open_env(self) -> tuple[Any, Any]:
+        """Otevře UnifiedLMDB env + sub-db lazy. Returns (env, sub_db)."""
         if self._env is None:
             self._cache_path.parent.mkdir(parents=True, exist_ok=True)
-            self._env = open_lmdb(self._cache_path, map_size=256 * 1024 * 1024)
-        return self._env
+            # S-01: Use UnifiedLMDB singleton instead of separate env
+            _store = get_unified_lmdb()
+            self._env = _store.env()
+            self._sub_db = _store.open_db(SubDB.EXPOSURE_DATA)
+        return self._env, self._sub_db
 
     def _make_key(self, key: str) -> bytes:
         return f'{self._prefix}:{key}'.encode()
@@ -89,9 +93,9 @@ class ExposureCache:
         Kontroluje TTL.
         """
         try:
-            env = self._open_env()
+            env, sub_db = self._open_env()
             db_key = self._make_key(key)
-            with env.begin() as txn:
+            with env.begin(db=sub_db) as txn:
                 raw = txn.get(db_key)
                 if raw is None:
                     return None
@@ -114,14 +118,14 @@ class ExposureCache:
         Single-writer přes DB_EXECUTOR.
         """
         try:
-            env = self._open_env()
+            env, sub_db = self._open_env()
             db_key = self._make_key(key)
             to_store = dict(data)
             to_store['_cached_at'] = time.monotonic()
             raw = _default_serializer(to_store)
 
             def _write() -> None:
-                with env.begin(write=True) as txn:
+                with env.begin(write=True, db=sub_db) as txn:
                     txn.put(db_key, raw)
             future = _DB_EXECUTOR.submit(_write)
             future.result(timeout=5.0)

@@ -36,9 +36,15 @@ use pyo3::prelude::*;
 use pyo3::types::PyTuple;
 use rayon::ThreadPool;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::{Arc, Condvar, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock};
 use std::thread;
+use std::any::Any;
 use std::time::Duration;
+
+// Use parking_lot: no poisoning (panic in one thread won't poison the mutex),
+// ~2x faster than std::sync::Mutex, and .lock() returns Guard directly (no Result).
+// This prevents unwrap() panics from propagating as Rust panics across the PyO3 FFI boundary.
+use parking_lot::{Condvar, Mutex};
 
 use crossbeam_channel::{bounded, Sender, Receiver};
 
@@ -67,14 +73,16 @@ struct WorkItem {
 /// Shared storage for task result + cancellation + completion signal.
 struct SharedTask {
     /// Result of the Python function call.
-    result: Mutex<Option<Result<Py<PyAny>, PyErr>>>,
+    /// parking_lot::Mutex: no poisoning, no unwrap needed, 2x faster.
+    result: parking_lot::Mutex<Option<Result<Py<PyAny>, PyErr>>>,
     /// Set by rayon_abort to request early cancellation.
     cancel_flag: AtomicBool,
     /// Atomic state: STATE_PENDING | STATE_READY | STATE_ABORTED.
     /// Prevents race between worker writing result and timeout setting aborted.
     state: AtomicU8,
     /// Signaled when result is ready.
-    condvar: Condvar,
+    /// parking_lot::Condvar paired with parking_lot::Mutex (compatible, both from parking_lot).
+    condvar: parking_lot::Condvar,
 }
 
 // ---------------------------------------------------------------------------
@@ -83,32 +91,32 @@ struct SharedTask {
 
 static RAYON_SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
-fn cpu_sender() -> &'static Mutex<Option<Sender<WorkItem>>> {
-    static SENDER: LazyLock<Mutex<Option<Sender<WorkItem>>>, fn() -> Mutex<Option<Sender<WorkItem>>>> =
+fn cpu_sender() -> &'static parking_lot::Mutex<Option<Sender<WorkItem>>> {
+    static SENDER: LazyLock<parking_lot::Mutex<Option<Sender<WorkItem>>>, fn() -> parking_lot::Mutex<Option<Sender<WorkItem>>>> =
         LazyLock::new(|| {
             let (tx, rx) = bounded(256);
             spawn_dispatcher("cpu", Arc::new(rx));
-            Mutex::new(Some(tx))
+            parking_lot::Mutex::new(Some(tx))
         });
     &SENDER
 }
 
-fn io_sender() -> &'static Mutex<Option<Sender<WorkItem>>> {
-    static SENDER: LazyLock<Mutex<Option<Sender<WorkItem>>>, fn() -> Mutex<Option<Sender<WorkItem>>>> =
+fn io_sender() -> &'static parking_lot::Mutex<Option<Sender<WorkItem>>> {
+    static SENDER: LazyLock<parking_lot::Mutex<Option<Sender<WorkItem>>>, fn() -> parking_lot::Mutex<Option<Sender<WorkItem>>>> =
         LazyLock::new(|| {
             let (tx, rx) = bounded(256);
             spawn_dispatcher("io", Arc::new(rx));
-            Mutex::new(Some(tx))
+            parking_lot::Mutex::new(Some(tx))
         });
     &SENDER
 }
 
-fn mixed_sender() -> &'static Mutex<Option<Sender<WorkItem>>> {
-    static SENDER: LazyLock<Mutex<Option<Sender<WorkItem>>>, fn() -> Mutex<Option<Sender<WorkItem>>>> =
+fn mixed_sender() -> &'static parking_lot::Mutex<Option<Sender<WorkItem>>> {
+    static SENDER: LazyLock<parking_lot::Mutex<Option<Sender<WorkItem>>>, fn() -> parking_lot::Mutex<Option<Sender<WorkItem>>>> =
         LazyLock::new(|| {
             let (tx, rx) = bounded(256);
             spawn_dispatcher("mixed", Arc::new(rx));
-            Mutex::new(Some(tx))
+            parking_lot::Mutex::new(Some(tx))
         });
     &SENDER
 }
@@ -186,7 +194,7 @@ where
 {
     // Cooperative cancellation check
     if work.shared.cancel_flag.load(Ordering::Acquire) {
-        let mut guard = work.shared.result.lock().unwrap();
+        let mut guard = work.shared.result.lock();
         *guard = Some(Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
             "Task was cancelled before starting",
         )));
@@ -209,7 +217,7 @@ where
         Ordering::AcqRel,
         Ordering::Acquire,
     ).is_ok() {
-        let mut guard = work.shared.result.lock().unwrap();
+        let mut guard = work.shared.result.lock();
         *guard = Some(py_result);
     }
 
@@ -277,15 +285,15 @@ pub fn rayon_submit_channel_(
     n_items: usize,
     func: Py<PyAny>,
     args: Py<PyTuple>,
-) -> PyResult<Py<Any>> {
+) -> PyResult<Py<PyAny>> {
     let func_clone = Py::clone_ref(&func, py);
     let args_clone = Py::clone_ref(&args, py);
 
     let shared: Arc<SharedTask> = Arc::new(SharedTask {
-        result: Mutex::new(None),
+        result: parking_lot::Mutex::new(None),
         cancel_flag: AtomicBool::new(false),
         state: AtomicU8::new(STATE_PENDING),
-        condvar: Condvar::new(),
+        condvar: parking_lot::Condvar::new(),
     });
 
     let work = WorkItem {
@@ -295,14 +303,14 @@ pub fn rayon_submit_channel_(
         shared: Arc::clone(&shared),
     };
 
-    let sender_mutex: &Mutex<Option<Sender<WorkItem>>> = match pool_type {
+    let sender_mutex: &parking_lot::Mutex<Option<Sender<WorkItem>>> = match pool_type {
         "cpu" => cpu_sender(),
         "io" => io_sender(),
         "mixed" => mixed_sender(),
         _ => cpu_sender(),
     };
 
-    let sender_guard = sender_mutex.lock().unwrap();
+    let sender_guard = sender_mutex.lock();
     if let Some(ref sender) = *sender_guard {
         match sender.send(work) {
             Ok(()) => {}
@@ -341,7 +349,7 @@ pub fn rayon_join_channel_(
     py: Python<'_>,
     handle_ptr: usize,
     timeout_s: Option<f64>,
-) -> PyResult<Py<Any>> {
+) -> PyResult<Py<PyAny>> {
     if handle_ptr == 0 {
         return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
             "Invalid handle: 0",
@@ -357,33 +365,48 @@ pub fn rayon_join_channel_(
         .map(|t| Duration::from_secs_f64(t.max(0.0)))
         .unwrap_or(Duration::MAX);
 
-    let (guard, wait_result) = shared.condvar.wait_timeout_while(
-        shared.result.lock().unwrap(),
-        timeout,
-        |r| r.is_none(),
-    ).unwrap();
-
-    let timed_out = wait_result.timed_out();
+    // parking_lot 0.12: use sleep loop with Instant tracking
+    let start = std::time::Instant::now();
+    let mut guard = shared.result.lock();
+    while (*guard).is_none() {
+        let remaining = timeout.saturating_sub(start.elapsed());
+        if remaining.is_zero() {
+            break;
+        }
+        drop(guard);
+        std::thread::sleep(std::time::Duration::from_millis(1.min(remaining.as_millis() as u64)));
+        guard = shared.result.lock();
+    }
+    let timed_out = (*guard).is_none();
     if timed_out {
-        // Atomically set ABORTED if still PENDING
+        // Try to claim ABORTED ownership atomically.
+        // If CAS fails → worker already won (wrote result and transitioned to READY).
+        // We must NOT overwrite the worker's valid result with a timeout error.
+        // If CAS succeeds → we own the result; write timeout error only if still None.
         let expected = STATE_PENDING;
-        let _ = shared.state.compare_exchange(
-            expected,
-            STATE_ABORTED,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        );
+        let we_own = shared.state
+            .compare_exchange(
+                expected,
+                STATE_ABORTED,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok();
         drop(guard);
 
-        let mut rguard = shared.result.lock().unwrap();
-        if rguard.is_none() {
-            *rguard = Some(Err(PyErr::new::<
-                pyo3::exceptions::PyRuntimeError,
-                _,
-            >("Rayon dispatch timed out")));
+        if we_own {
+            // WE are responsible for the result — write timeout error if worker didn't.
+            let mut rguard = shared.result.lock();
+            if rguard.is_none() {
+                *rguard = Some(Err(PyErr::new::<
+                    pyo3::exceptions::PyRuntimeError,
+                    _,
+                >("Rayon dispatch timed out")));
+            }
         }
+        // else: worker won the race — don't overwrite its valid result
 
-        let result = shared.result.lock().unwrap().take();
+        let result = shared.result.lock().take();
         return match result {
             Some(Ok(py_obj)) => Ok(py_obj.into_py(py)),
             Some(Err(err)) => Err(err),
@@ -422,11 +445,18 @@ pub fn rayon_abort_channel_(handle_ptr: usize) -> PyResult<()> {
 
     // Wait up to 5s for worker to acknowledge
     let timeout = Duration::from_secs(5);
-    let (_guard, _timed_out) = shared.condvar.wait_timeout_while(
-        shared.result.lock().unwrap(),
-        timeout,
-        |r| r.is_none(),
-    ).unwrap();
+    // parking_lot 0.12: use sleep loop with Instant tracking
+    let start = std::time::Instant::now();
+    let mut guard = shared.result.lock();
+    while (*guard).is_none() {
+        let remaining = timeout.saturating_sub(start.elapsed());
+        if remaining.is_zero() {
+            break;
+        }
+        drop(guard);
+        std::thread::sleep(std::time::Duration::from_millis(1.min(remaining.as_millis() as u64)));
+        guard = shared.result.lock();
+    }
 
     Ok(())
 }
@@ -443,13 +473,21 @@ pub fn rayon_abort_channel_(handle_ptr: usize) -> PyResult<()> {
 pub fn rayon_shutdown_channel_() -> PyResult<()> {
     RAYON_SHUTDOWN.store(true, Ordering::Release);
 
-    if let Ok(tx) = cpu_sender().lock() {
+    // parking_lot::Mutex::lock() returns MutexGuard directly (no Result),
+    // so we use a scoped block to drop the guard immediately after use.
+    {
+        let mut tx = cpu_sender().lock();
+
         let _ = tx.take();
     }
-    if let Ok(tx) = io_sender().lock() {
+    {
+        let mut tx = io_sender().lock();
+
         let _ = tx.take();
     }
-    if let Ok(tx) = mixed_sender().lock() {
+    {
+        let mut tx = mixed_sender().lock();
+
         let _ = tx.take();
     }
 

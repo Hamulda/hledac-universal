@@ -22,9 +22,10 @@
 //! M1 8GB safe, ~75% less stack memory than the default global pool).
 //!
 //! Fail-soft: any panic is converted to a Python RuntimeError via PyO3's
-//! automatic `#[pyfunction]` wrapping. No `unwrap()` in runtime paths — only
-//! in `LazyLock::new` (one-time regex compile, which legitimately can't fail
-//! for hard-coded patterns).
+//! automatic `#[pyfunction]` wrapping. `unwrap()` is used in runtime paths
+//! (e.g. URL fingerprint extraction in `assess_single_finding`) where the
+//! caller guarantees non-empty provenance. `LazyLock::new` uses `expect()`
+//! for one-time regex compilation of hard-coded patterns.
 
 use blake2::digest::{Update, VariableOutput};
 use blake2::Blake2bVar;

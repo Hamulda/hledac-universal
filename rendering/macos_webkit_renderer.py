@@ -23,6 +23,7 @@ import sys
 import time
 from dataclasses import dataclass
 from typing import Final
+from utils.sync_bridge import run_sync_async
 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
 _WEBKIT_SEMAPHORE: Final[asyncio.Semaphore] = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
 _DEFAULT_TIMEOUT_S: Final[float] = 10.0
@@ -128,12 +129,9 @@ def _probe_worker_capability() -> tuple[bool, str]:
                 return (True, MACOS_WEBKIT_REASONS.SUCCESS)
             return (False, result.get('reason', MACOS_WEBKIT_REASONS.WORKER_ERROR))
         try:
-            asyncio.get_running_loop()
+            return run_sync_async(_probe())
         except RuntimeError:
-            return asyncio.run(_probe())
-        _running_loop = asyncio.get_running_loop()
-        _probe_future = asyncio.run_coroutine_threadsafe(_probe(), _running_loop)
-        return _probe_future.result()
+            return (False, MACOS_WEBKIT_REASONS.UNAVAILABLE)
     except Exception:
         return (False, MACOS_WEBKIT_REASONS.UNAVAILABLE)
 

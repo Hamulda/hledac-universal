@@ -9,6 +9,10 @@ F273F: MADV_FREE_REUSABLE (value=7) for LMDB/DuckDB mmap regions —
 tells Darwin kernel that pages are reusable (not modified), allowing
 immediate reclaim without writing to disk. Critical for M1 8GB UMA
 where page cache pressure directly impacts Metal/MLX memory budget.
+
+R-03: madv_free_reusable and madv_free_reusable_on_path removed —
+they called madvise(NULL, 0, advice) which always returns EINVAL.
+Use madvise_lmdb_mmap(path, advice=1) for MAP_NOCACHE on LMDB/DuckDB.
 """
 
 
@@ -46,87 +50,44 @@ def _get_libc() -> ctypes.CDLL | None:
     return _libc_for_madvise
 
 
-def madv_free_reusable(fd: int) -> bool:
+def madvise_lmdb_mmap(path: str | os.PathLike, advice: int = 1) -> bool:
     """
-    F273F: Apply MADV_FREE_REUSABLE to an open file descriptor on Darwin.
+    R-03: Apply madvise to a file via Rust madvise_lmdb_mmap().
 
-    Tells the Darwin kernel that pages backing this mmap region are clean
-    and reusable — the kernel can reclaim them immediately without writing
-    to disk. This is the correct madvise flag for LMDB mmap and DuckDB WAL
-    regions on M1 8GB where every page in the page cache competes with the
-    Metal memory budget.
+    This is the correct implementation: opens the file, mmaps it with
+    MAP_NOCACHE (Darwin), then applies MADV_NOCACHE (advice=1) or
+    MADV_FREE_REUSABLE (advice=0) to the mapped region, then unmaps.
 
-    Fails silently: returns False on non-Darwin, missing libc, or syscall
-    failure. Never raises.
+    Replaces the broken madv_free_reusable_on_path() which called
+    madvise(NULL, 0, advice) — always returned EINVAL.
 
     Args:
-        fd: Open file descriptor (must be a valid mmap-backed fd).
+        path: Path to the file-backed artifact (LMDB .mdb, DuckDB .duckdb).
+        advice: 0=MADV_FREE_REUSABLE, 1=MADV_NOCACHE (default, recommended).
 
     Returns:
         True if madvise succeeded, False otherwise.
     """
     if platform.system() != "Darwin":
         return False
-    libc = _get_libc()
-    if libc is None:
-        return False
+    path_str = str(path)
     try:
-        # int madvise(void* addr, size_t len, int advice)
-        # Signature: madvise(caddr_t addr, size_t len, int advice)
-        libc.madvise.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int]
-        libc.madvise.restype = ctypes.c_int
-        # madvise requires a memory address; we pass 0 (NULL) to apply to entire file
-        # via the file descriptor's mapped region. NULL +0 + MADV_FREE_REUSABLE
-        # applies to all pages of the mmap.
-        result = libc.madvise(ctypes.c_void_p(0), ctypes.c_size_t(0), MADV_FREE_REUSABLE)
+        from hledac_rust_extensions import madvise_lmdb_mmap as _rust_madvise
+        result = _rust_madvise(path_str, advice)
         return result == 0
-    except (OSError, AttributeError):
-        return False
-
-
-def madv_free_reusable_on_path(path: str | os.PathLike) -> bool:
-    """
-    F273F: Open a file and apply MADV_FREE_REUSABLE to its mmap region.
-
-    Opens the file RDWR (or RDONLY fallback), seeks to 0, and applies
-    MADV_FREE_REUSABLE via madvise(). Fails silently. Always-on.
-
-    Use this after lmdb.open() or duckdb.connect() to hint the kernel
-    that the mmap region pages are reusable.
-
-    Args:
-        path: Path to the file-backed artifact (LMDB .mdb, DuckDB .duckdb).
-
-    Returns:
-        True if both open and madvise succeeded, False otherwise.
-    """
-    if platform.system() != "Darwin":
-        return False
-    try:
-        try:
-            fd = os.open(str(path), os.O_RDWR)
-        except OSError:
-            try:
-                fd = os.open(str(path), os.O_RDONLY)
-            except OSError:
-                return False
-        try:
-            return madv_free_reusable(fd)
-        finally:
-            os.close(fd)
-    except OSError:
+    except Exception:  # noqa: BLE001
         return False
 
 
 def madv_nocache_on_path(path: str | os.PathLike) -> bool:
     """
-    F273F + P3-2: Apply MADV_NOCACHE to file pages on Darwin.
+    F273F + P3-2 + R-03: Apply MADV_NOCACHE to file pages on Darwin.
 
     Tells the kernel not to cache the pages in the page cache — critical
     for M1 8GB UMA where page cache competes directly with Metal memory.
 
-    Uses Rust madvise_on_mmap_region() when available (has MAP_NOCACHE
-    support), falls back to ctypes madvise(MADV_NOCACHE=11) on failure.
+    Uses Rust madvise_lmdb_mmap() (has MAP_NOCACHE support with proper
+    page-aligned mmap), falls back to ctypes madvise(MADV_NOCACHE=11).
     Always-on, fail-safe (returns False on any error, never raises).
 
     Args:
@@ -135,40 +96,7 @@ def madv_nocache_on_path(path: str | os.PathLike) -> bool:
     Returns:
         True if MADV_NOCACHE was applied successfully, False otherwise.
     """
-    if platform.system() != "Darwin":
-        return False
-    path_str = str(path)
-
-    # Try Rust version first — has MAP_NOCACHE support and proper page alignment
-    try:
-        from hledac_rust_extensions import madvise_on_mmap_region
-
-        fd = os.open(path_str, os.O_RDWR)
-        try:
-            # madvise_on_mmap_region(fd, addr=0, length=0, advice=1)
-            # addr=0, length=0 with advice=1 means entire file with MADV_NOCACHE
-            result = madvise_on_mmap_region(fd, 0, 0, 1)
-            return result == 0
-        finally:
-            os.close(fd)
-    except Exception:  # noqa: BLE001
-        pass
-
-    # Fallback: ctypes madvise with MADV_NOCACHE (value 11)
-    libc = _get_libc()
-    if libc is None:
-        return False
-    try:
-        libc.madvise.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int]
-        libc.madvise.restype = ctypes.c_int
-        fd = os.open(path_str, os.O_RDWR)
-        try:
-            result = libc.madvise(ctypes.c_void_p(0), ctypes.c_size_t(0), MADV_NOCACHE)
-            return result == 0
-        finally:
-            os.close(fd)
-    except Exception:
-        return False
+    return madvise_lmdb_mmap(path, advice=1)  # MADV_NOCACHE
 
 
 def apply_fcntl_nocache(fd: int, content_length: int | None) -> None:
@@ -254,7 +182,6 @@ __all__ = [
     "NOCACHE_THRESHOLD_BYTES",
     "apply_fcntl_nocache",
     "apply_nocache_to_path",
-    "madv_free_reusable",
-    "madv_free_reusable_on_path",
+    "madvise_lmdb_mmap",
     "madv_nocache_on_path",
 ]

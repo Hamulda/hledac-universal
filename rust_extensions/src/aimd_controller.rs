@@ -19,9 +19,15 @@
 //! AIMD_MAX_CONCURRENCY = 200.0: hard ceiling (per domain, not global)
 //! AIMD_DECREASE_BY_STATE: uma_state → multiplicative decrease factor
 
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, AtomicU32, Ordering};
+
+// NOTE: This file uses parking_lot::Mutex and RwLock throughout.
+// parking_lot::Mutex has NO poisoning — lock() returns MutexGuard directly.
+// All .lock().unwrap() calls replaced with .lock() (no Result to unwrap).
+// parking_lot::RwLock allows many concurrent readers (get() calls are read-only).
+// std::sync::Mutex is NOT used anywhere in this file.
 
 #[cfg(feature = "data")]
 use pyo3::prelude::*;
@@ -36,13 +42,15 @@ const AIMD_MIN_CONCURRENCY: f64 = 1.0;
 const AIMD_MAX_CONCURRENCY: f64 = 200.0;
 
 /// Decrease factors per UMA state — multiplicative decrease when failure recorded.
-static AIMD_DECREASE_BY_STATE: std::sync::LazyLock<Mutex<HashMap<String, f64>>> =
+/// Uses RwLock: get() is read-only, allowing concurrent readers.
+/// Write (initialization) happens exactly once under LazyLock.
+static AIMD_DECREASE_BY_STATE: std::sync::LazyLock<RwLock<HashMap<String, f64>>> =
     std::sync::LazyLock::new(|| {
         let mut m = HashMap::new();
         m.insert("ok".to_string(), 0.5);       // healthy → halve window
         m.insert("pressure".to_string(), 0.25); // memory pressure → quarter
         m.insert("critical".to_string(), 0.125); // critical → 1/8
-        Mutex::new(m)
+        RwLock::new(m)
     });
 
 // ---------------------------------------------------------------------------
@@ -167,7 +175,7 @@ impl PyAIMDController {
 
         // Slow path: threshold crossed — acquire lock to update window atomically
         // This is the ONLY lock acquisition on the hot path.
-        let mut guard = self.stats.lock().unwrap();
+        let mut guard = self.stats.lock();
         // Re-check under lock (another coroutine may have already updated)
         let successes_val = self.successes.load(Ordering::Relaxed);
         if successes_val < AIMD_SUCCESS_THRESHOLD {
@@ -197,10 +205,9 @@ impl PyAIMDController {
 
     /// Record one failure, decreasing the window multiplicatively.
     ///
-    /// Single lock acquisition: factor lookup is O(1) HashMap get under the global
-    /// LazyLock, then combined with stats update under the instance lock.
-    /// Both are under the same instance lock to avoid holding the global lock
-    /// while doing the window update.
+    /// Lock ordering: global (read) → instance (write).
+    /// Global lock is held for minimum time (HashMap lookup only).
+    /// Instance lock covers the window + stats update.
     ///
     /// Returns (new_window, active_count_after_decrement).
     pub fn record_failure(&self, uma_state: &str) -> (f64, u32) {
@@ -210,16 +217,16 @@ impl PyAIMDController {
         // Decrement active first
         let active = self.active.fetch_sub(1, Ordering::Relaxed).saturating_sub(1);
 
-        // Get decrease factor from global map (fast O(1) lookup under global lock)
-        // Using get_unchecked is safe here because we hold the global lock
-        // for the minimum time possible (just the lookup)
+        // Get decrease factor from global map — SHORT hold, read lock only.
+        // RwLock allows concurrent readers; no write contention on global.
         let factor = {
-            let guard = AIMD_DECREASE_BY_STATE.lock().unwrap();
+            let guard = AIMD_DECREASE_BY_STATE.read();
             *guard.get(uma_state).unwrap_or(&1.0)
         };
 
-        // Single combined lock: update window + stats under instance lock
-        let mut guard = self.stats.lock().unwrap();
+        // Instance lock: update window + stats
+        // Lock ordering: global (read) → instance (write) prevents ABBA deadlock.
+        let mut guard = self.stats.lock();
         let old_bits = self.window.load(Ordering::Relaxed);
         let old = f64::from_bits(old_bits);
         let new = (old * factor).max(AIMD_MIN_CONCURRENCY);
@@ -255,7 +262,7 @@ impl PyAIMDController {
         let old = f64::from_bits(old_bits);
         self.window.store(clamped.to_bits(), Ordering::Relaxed);
         if (clamped - old).abs() > f64::EPSILON {
-            let mut guard = self.stats.lock().unwrap();
+            let mut guard = self.stats.lock();
             guard.clamp_events += 1;
             guard.window_changes += 1;
         }
@@ -289,7 +296,7 @@ impl PyAIMDController {
     ///
     /// Returns a dict with: increases, decreases, clamp_events, window_changes.
     pub fn stats(&self) -> HashMap<String, u64> {
-        let guard = self.stats.lock().unwrap();
+        let guard = self.stats.lock();
         let mut result = HashMap::new();
         result.insert("increases".to_string(), guard.increases);
         result.insert("decreases".to_string(), guard.decreases);

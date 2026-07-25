@@ -1,17 +1,24 @@
 """
-MLX Pool — shared worker thread + Metal memory limits for M1 8GB UMA.
+Embedding worker thread pool for MLX — M1 8GB UMA.
 
-Responsibilities:
-- Single shared MLX worker thread for all embedding inference
-- Metal cache/wired limit configuration (MEM-2 dynamic sizing)
-- mlx_cleanup_sync / mlx_cleanup_aggressive canonical cleanup
-- LRU cache for MLX LLM models (separate from embedding cache)
+M-11 role:
+  Canonical MLX model access is via brain._hermes_cache.hermes_cache().
+  This module provides the shared embedding worker thread infrastructure.
+
+Key responsibilities:
+  - Shared embedding worker thread (via get_mlx_model_worker)
+  - get_mlx_model: DEPRECATED — delegates to brain._hermes_cache.hermes_cache()
+  - Metal limits + cleanup: DELEGATED to utils.mlx_cache (canonical)
+
+M-11 architecture:
+  - utils.mlx_cache:           Metal limits + cleanup (CANONICAL)
+  - brain._hermes_cache:       HermesModelCache singleton for LLM inference (SINGLETON ENTRY POINT)
+  - core.embeddings.pool:      Embedding worker thread (NOT a model cache)
 
 Key invariants:
 - mx.eval([]) before mx.metal.clear_cache() — always
 - Fail-safe: MLX unavailable → no-op, never raises
 - Dynamic Metal cache: min(max(available*0.2, 512MiB), 1.5GiB)
-- Thread-safe via double-check locking
 """
 
 import asyncio
@@ -19,9 +26,9 @@ import gc
 import importlib.util
 import logging
 import threading
+import sys as _sys
 from typing import Any
 
-from core.psutil_shim import psutil
 from utils.mlx_cache import get_dynamic_metal_cache_limit
 
 logger = logging.getLogger(__name__)
@@ -37,8 +44,6 @@ def _detect_mlx_available() -> bool:
 
 MLX_AVAILABLE: bool = _detect_mlx_available()
 
-import sys as _sys  # noqa: E402
-
 
 def get_mx():
     """Lazy accessor for mlx.core — never holds module-level reference."""
@@ -47,107 +52,53 @@ def get_mx():
     return _sys.modules.get("mlx.core")
 
 
-# === LRU cache for MLX LLM models (not embeddings) ===
-_MLX_CACHE: dict[str, tuple[Any, Any]] = {}
-_MLX_CACHE_MAX = 2
-
-_MLX_SEMAPHORE: asyncio.Semaphore | None = None
-_MLX_EVICT_LOCK = threading.Lock()
-_MLX_CACHE_LOCK = threading.RLock()  # Protects OrderedDict mutations
-
-_CACHE_HITS = 0
-_CACHE_MISSES = 0
-
-# Import shared cache lock to eliminate duplication with cache.py
-from ._shared import get_cache_lock as _get_cache_lock
-
-
-def get_mlx_semaphore() -> asyncio.Semaphore:
-    """Semaphore limiting concurrent MLX inference to 1 (M1 8GB)."""
-    global _MLX_SEMAPHORE
-    if _MLX_SEMAPHORE is None:
-        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-        _MLX_SEMAPHORE = get_semaphore_for_testing(ConcurrencyCategory.MLX_INFERENCE)
-    return _MLX_SEMAPHORE
-
-
+# === Deprecated get_mlx_model — delegates to hermes_cache (M-11) ===
 async def get_mlx_model(model_name: str) -> tuple[Any, Any]:
-    """Get MLX LLM model and tokenizer from cache or load."""
-    async with _get_cache_lock():
-        # Thread-lock protects OrderedDict mutation across asyncio.to_thread workers
-        with _MLX_CACHE_LOCK:
-            if model_name in _MLX_CACHE:
-                _MLX_CACHE.move_to_end(model_name)
-                global _CACHE_HITS
-                _CACHE_HITS += 1
-                logger.debug(f"MLX cache hit: {model_name}")
-                return _MLX_CACHE[model_name]
+    """
+    DEPRECATED — M-11: Use brain._hermes_cache.hermes_cache() instead.
 
-            global _CACHE_MISSES
-            _CACHE_MISSES += 1
+    This function is kept for backward compatibility only.
+    Delegates to the HermesModelCache singleton.
+    """
+    import warnings
 
-        try:
-            from mlx_lm import load as mlx_load
-            logger.info(f"Loading MLX model: {model_name}")
-            model, tokenizer, *_ = await asyncio.to_thread(
-                mlx_load,
-                model_name,
-            )
-            with _MLX_CACHE_LOCK:
-                _MLX_CACHE[model_name] = (model, tokenizer)
-                if len(_MLX_CACHE) > _MLX_CACHE_MAX:
-                    evicted_name, _ = _MLX_CACHE.popitem(last=False)
-                    logger.info(f"MLX cache evicted: {evicted_name}")
+    warnings.warn(
+        "get_mlx_model() is deprecated — use brain._hermes_cache.hermes_cache() instead. "
+        "This function will be removed in a future release.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    # Lazy import to avoid circular dependency
+    from brain._hermes_cache import hermes_cache
 
-            logger.info(f"MLX model loaded and cached: {model_name}")
-            return model, tokenizer
-        except Exception as e:
-            logger.warning(f"Failed to load MLX model {model_name}: {e}")
-            return None, None
+    cache = hermes_cache()
+    result = cache.get_model(model_name)
+    if result is not None:
+        return result
 
+    # Not cached — load and put
+    try:
+        from mlx_lm import load as mlx_load
 
-def clear_mlx_cache() -> None:
-    with _MLX_CACHE_LOCK:
-        _MLX_CACHE.clear()
-    logger.info("MLX cache cleared")
+        model, tokenizer, *_ = await asyncio.to_thread(mlx_load, model_name)
+        cache.put_model(model_name, model, tokenizer)
+        return model, tokenizer
+    except Exception as e:
+        logger.warning(f"Failed to load MLX model {model_name}: {e}")
+        return None, None
 
 
-def evict_all() -> None:
-    global _MLX_CACHE
-    with _MLX_EVICT_LOCK:
-        _MLX_CACHE.clear()
-        logger.info("MLX cache evicted via evict_all()")
+# === Metal memory limits — DELEGATED to utils.mlx_cache (canonical) ===
+# All Metal limit management is handled by the canonical implementation in utils.mlx_cache.
+# These functions exist for backward compatibility with code that imports from here.
 
-
-def get_cache_stats() -> dict:
-    total = _CACHE_HITS + _CACHE_MISSES
-    hit_rate = _CACHE_HITS / total if total > 0 else 0.0
-    return {
-        "size": len(_MLX_CACHE),
-        "max": _MLX_CACHE_MAX,
-        "models": list(_MLX_CACHE.keys()),
-        "hits": _CACHE_HITS,
-        "misses": _CACHE_MISSES,
-        "total": total,
-        "hit_rate": hit_rate,
-    }
-
-
-def reset_cache_stats() -> None:
-    global _CACHE_HITS, _CACHE_MISSES
-    _CACHE_HITS = 0
-    _CACHE_MISSES = 0
-
-
-# === Metal memory limits (Sprint 8T / MEM-2) ===
 _METAL_CACHE_LIMIT_BYTES = int(1.5 * 1024 ** 3)
 _METAL_WIRED_LIMIT_BYTES = int(768 * 1024 ** 2)
+_METAL_CACHE_LIMIT = _METAL_CACHE_LIMIT_BYTES
+_METAL_WIRED_LIMIT = _METAL_WIRED_LIMIT_BYTES
 
-_MLX_CACHE_LIMIT = _METAL_CACHE_LIMIT_BYTES
-_MLX_WIRED_LIMIT = _METAL_WIRED_LIMIT_BYTES
-
-_MLX_METAL_LIMITS_CONFIGURED = False
-_MLX_METAL_LIMITS_LOCK = threading.Lock()
+_METAL_LIMITS_CONFIGURED = False
+_METAL_LIMITS_LOCK = threading.Lock()
 _MLX_INITIALIZED = False
 
 _last_setter_error: str | None = None
@@ -163,13 +114,13 @@ def _format_limit_mib(value: int | None) -> str:
 
 def _ensure_metal_memory_limits() -> bool:
     """Set Metal memory limits exactly once per process (thread-safe double-check)."""
-    global _MLX_METAL_LIMITS_CONFIGURED, _last_setter_error, _cache_limit_actual, _wired_limit_actual
+    global _METAL_LIMITS_CONFIGURED, _last_setter_error, _cache_limit_actual, _wired_limit_actual
 
-    if _MLX_METAL_LIMITS_CONFIGURED:
+    if _METAL_LIMITS_CONFIGURED:
         return True
 
-    with _MLX_METAL_LIMITS_LOCK:
-        if _MLX_METAL_LIMITS_CONFIGURED:
+    with _METAL_LIMITS_LOCK:
+        if _METAL_LIMITS_CONFIGURED:
             return True
 
         try:
@@ -177,13 +128,13 @@ def _ensure_metal_memory_limits() -> bool:
         except Exception as e:
             _last_setter_error = f"mlx.core import failed: {e}"
             logger.warning(f"[Sprint 8T] _ensure_metal_memory_limits: {_last_setter_error}")
-            _MLX_METAL_LIMITS_CONFIGURED = True
+            _METAL_LIMITS_CONFIGURED = True
             return False
 
         if not hasattr(mx, 'metal'):
             _last_setter_error = "mx.metal namespace missing"
             logger.warning(f"[Sprint 8T] _ensure_metal_memory_limits: {_last_setter_error}")
-            _MLX_METAL_LIMITS_CONFIGURED = True
+            _METAL_LIMITS_CONFIGURED = True
             return False
 
         errors = []
@@ -223,10 +174,10 @@ def _ensure_metal_memory_limits() -> bool:
                 errors.append(err)
 
         if errors and not setter_found:
-            _MLX_METAL_LIMITS_CONFIGURED = True
+            _METAL_LIMITS_CONFIGURED = True
             return False
 
-        _MLX_METAL_LIMITS_CONFIGURED = True
+        _METAL_LIMITS_CONFIGURED = True
         _last_setter_error = None
         logger.info(
             f"[Sprint 8T] Metal limits configured: "
@@ -239,7 +190,7 @@ def _ensure_metal_memory_limits() -> bool:
 def get_metal_limits_status() -> dict:
     return {
         "mlx_available": MLX_AVAILABLE,
-        "configured": _MLX_METAL_LIMITS_CONFIGURED,
+        "configured": _METAL_LIMITS_CONFIGURED,
         "cache_limit_bytes": _cache_limit_actual,
         "wired_limit_bytes": _wired_limit_actual,
         "last_error": _last_setter_error,
@@ -307,7 +258,7 @@ def init_mlx_buffers() -> bool:
     return True
 
 
-# === Cleanup canonical ===
+# === Cleanup — DELEGATED to utils.mlx_cache (canonical) ===
 
 def mlx_cleanup_sync() -> None:
     """

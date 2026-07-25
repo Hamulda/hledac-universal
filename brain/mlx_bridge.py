@@ -373,6 +373,17 @@ async def _prefetch_kv_cache(
         logger.debug("[MLXBridge] Prefetch failed: %s", e)
 
 
+# Module-level prefetch cache: prompt_hash -> KV cache object
+# Bounded LRU to avoid unbounded memory growth on M1 8GB
+# Thread-safe: protected by _prefetch_lock to avoid races from asyncio.to_thread()
+import threading
+
+_PREFETCH_CACHE_MAXSIZE: int = 32
+_PREFETCH_CACHE: dict[str, Any] = {}
+_PREFETCH_CACHE_ACCESS: dict[str, float] = {}  # monotonic timestamp for LRU
+_prefetch_lock: threading.Lock = threading.Lock()
+
+
 def _sync_prefetch(engine: DeepHermes3Engine, prompt: str) -> str:
     """
     Synchronous KV cache prefetch — runs in thread pool.
@@ -380,9 +391,11 @@ def _sync_prefetch(engine: DeepHermes3Engine, prompt: str) -> str:
     Computes the KV cache for the next prompt WITHOUT generating tokens.
     This pre-fills the KV cache so subsequent generation is faster.
 
-    Implementation:
-    - Uses mlx_lm.generate() with max_tokens=0 to trigger prefill only
-    - prefill computes attention keys/values but outputs nothing
+    Implementation (M-06 fix):
+    - Uses make_prompt_cache(model) to create reusable KV cache
+    - Calls model(mx.array([tokens]), cache=cache) for prefill
+    - mx.eval(cache) settles lazy Metal ops
+    - Stores in module-level _PREFETCH_CACHE[prompt_hash]
     - On M1 8GB: skip prefetch if memory pressure is CRITICAL
     """
     try:
@@ -393,21 +406,58 @@ def _sync_prefetch(engine: DeepHermes3Engine, prompt: str) -> str:
             logger.debug("[MLXBridge] Prefetch skipped: CRITICAL memory pressure")
             return ""
 
-        formatted = engine.format_chatml(
-            system_msg="You are a helpful assistant.",
-            user_msg=prompt,
+        if engine._model is None or engine._tokenizer is None:
+            logger.debug("[MLXBridge] Prefetch skipped: model not loaded")
+            return ""
+
+        import time as _time
+
+        # Thread-safe cache access: check HIT under lock, then compute + store
+        # Note: we do NOT hold the lock during MLX compute (expensive, blocks other threads)
+        # Race window: two threads may compute the same prompt simultaneously (waste but correct)
+        with _prefetch_lock:
+            prompt_hash = str(hash(prompt))  # deterministic, string key
+
+            if prompt_hash in _PREFETCH_CACHE:
+                _PREFETCH_CACHE_ACCESS[prompt_hash] = _time.monotonic()
+                logger.debug("[MLXBridge] Prefetch cache HIT for: %s", prompt[:50])
+                return prompt  # Early return with lock held is safe
+
+            # LRU eviction when cache is full
+            if len(_PREFETCH_CACHE) >= _PREFETCH_CACHE_MAXSIZE:
+                oldest_key = min(_PREFETCH_CACHE_ACCESS, key=lambda k: _PREFETCH_CACHE_ACCESS.get(k, 0.0))
+                del _PREFETCH_CACHE[oldest_key]
+                del _PREFETCH_CACHE_ACCESS[oldest_key]
+                logger.debug("[MLXBridge] Prefetch cache evicted: %s", oldest_key)
+
+        # MLX compute outside lock (non-blocking for other threads' cache checks)
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": prompt},
+        ]
+        formatted = engine._tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
         )
 
-        # max_tokens=0 forces prefill-only: computes KV cache, returns empty
-        _result = mlx_lm.generate(
-            model=engine.model_path,
-            tokenizer=engine.tokenizer,
-            prompt=formatted,
-            max_tokens=0,  # Prefill only, no decode
-            cache=True,    # Store in KV cache
-        )
-        logger.debug("[MLXBridge] Prefetch KV cache for: %s", prompt[:50])
-        return formatted
+        # Tokenize the formatted prompt (returns list of token IDs)
+        tokens = engine._tokenizer.encode(formatted)
+
+        # Create KV cache and prefill (correct mlx_lm pattern)
+        from mlx_lm.models.cache import make_prompt_cache
+
+        cache = make_prompt_cache(engine._model)
+        import mlx.core as mx
+
+        # Prefill: compute attention keys/values, store in cache
+        engine._model(mx.array([tokens]), cache=cache)
+        mx.eval(cache)
+
+        # Store in cache with lock
+        with _prefetch_lock:
+            _PREFETCH_CACHE[prompt_hash] = cache
+            _PREFETCH_CACHE_ACCESS[prompt_hash] = _time.monotonic()
+        logger.debug("[MLXBridge] Prefetch KV cache built for: %s", prompt[:50])
+        return prompt
     except Exception as e:
         logger.debug("[MLXBridge] Prefetch error: %s", e)
         return ""

@@ -321,6 +321,14 @@ class TestRustBackendMemoryFallback:
         assert isinstance(result, int)
         assert result > 0
 
+    def test_madvise_unsupported_returns_false(self):
+        """advise_free returns False on non-macOS or when Rust ext unavailable."""
+        from core.rust_backend import rust
+
+        result = rust.memory.advise_free(0, 4096)
+        assert isinstance(result, bool)
+        assert result is False
+
 
 class TestRustBackendHotEdgesFallback:
     """Hot edges domain — Python fallback tests."""

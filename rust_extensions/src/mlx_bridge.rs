@@ -527,19 +527,19 @@ pub fn batch_tokenize_(
 /// Probe total physical memory via sysctl HW_MEMSIZE on Darwin.
 /// Returns 0 if unavailable (non-Darwin or sysctl failure).
 fn probe_total_memory() -> usize {
-    #[cfg(target_os = "darwin")]
+    #[cfg(target_os = "macos")]
     {
         use libc::c_int;
-        let mib: [c_int; 2] = [6, 25]; // {CTL_HW, HW_MEMSIZE}
+        let mut mib: [c_int; 2] = [6, 25]; // {CTL_HW, HW_MEMSIZE}
         let mut total: u64 = 0;
         let mut len = std::mem::size_of::<u64>();
         unsafe {
             let ret = libc::sysctl(
-                mib.as_ptr(),
+                mib.as_mut_ptr(),
                 2,
                 &mut total as *mut _ as *mut libc::c_void,
                 &mut len,
-                std::ptr::null(),
+                std::ptr::null_mut() as *mut _,
                 0,
             );
             if ret == 0 {

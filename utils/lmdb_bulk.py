@@ -93,13 +93,14 @@ def _write_chunk(
     chunk: Sequence[tuple[bytes, bytes]],
     overwrite: bool,
     append: bool,
+    sub_db: Any = None,
 ) -> int:
     """Write a chunk of items in a single LMDB transaction.
 
     Opens one ``env.begin(write=True)`` per chunk and iterates ``put``
     inside. This is the inner core of the bulk pattern.
     """
-    with env.begin(write=True) as txn:
+    with env.begin(write=True, db=sub_db) as txn:
         for key, value in chunk:
             txn.put(key, value, overwrite=overwrite, append=append)
     return len(chunk)
@@ -111,6 +112,7 @@ def putmulti_bounded(
     max_batch: int = DEFAULT_BULK_BATCH,
     overwrite: bool = True,
     append: bool = False,
+    sub_db: Any = None,
 ) -> int:
     """Bounded LMDB bulk write helper.
 
@@ -156,7 +158,7 @@ def putmulti_bounded(
         for offset in range(0, len(normalised), max_batch):
             chunk = normalised[offset : offset + max_batch]
             try:
-                total_written += _write_chunk(env, chunk, overwrite, append)
+                total_written += _write_chunk(env, chunk, overwrite, append, sub_db)
             except Exception as exc:
                 logger.warning(
                     f"putmulti_bounded: chunk failed at item {total_written}"

@@ -200,7 +200,7 @@ class DeepSourceRegistry:
                     count = 0
                     for k, v in cur:
                         try:
-                            sid = k.decode('utf-8')
+                            sid = k.decode('utf-8')  # S-02: key IS the source_id (already plain str), decode only once
                             payload = orjson.loads(v)
                             ts = payload.get('last_verified')
                             existing = self._sources.get(sid)

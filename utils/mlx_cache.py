@@ -94,7 +94,10 @@ def get_mlx_semaphore() -> asyncio.Semaphore:
 
 async def get_mlx_model(model_name: str) -> tuple[Any, Any]:
     """
-    Get MLX model and tokenizer from cache or load from disk.
+    DEPRECATED — M-11: Use brain._hermes_cache.hermes_cache() instead.
+
+    This function is kept for backward compatibility only.
+    Delegates to the HermesModelCache singleton.
 
     Uses LRU eviction when cache exceeds max 2 models.
 
@@ -104,38 +107,34 @@ async def get_mlx_model(model_name: str) -> tuple[Any, Any]:
     Returns:
         Tuple of (model, tokenizer) or (None, None) on failure
     """
-    async with _get_cache_lock():
-        # Check cache first
-        if model_name in _MLX_CACHE:
-            _MLX_CACHE.move_to_end(model_name)
-            global _CACHE_HITS
-            _CACHE_HITS += 1  # noqa: N806
-            logger.debug(f"MLX cache hit: {model_name}")
-            return _MLX_CACHE[model_name]
-        global _CACHE_MISSES
-        _CACHE_MISSES += 1  # noqa: F823
+    import warnings
 
-        # Try to load model
-        try:
-            from mlx_lm import load as mlx_load
+    warnings.warn(
+        "get_mlx_model() is deprecated — use brain._hermes_cache.hermes_cache() instead. "
+        "This function will be removed in a future release.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    # Lazy import to avoid circular dependency
+    from brain._hermes_cache import hermes_cache
 
-            logger.info(f"Loading MLX model: {model_name}")
-            # mlx_lm.load returns (model, tokenizer) on stable, may include
-            # a third element (e.g. config) on newer versions — unpack tail-safe.
-            model, tokenizer, *_ = await asyncio.to_thread(  # type: ignore[misc]
-                mlx_load,
-                model_name,
-            )
+    cache = hermes_cache()
+    result = cache.get_model(model_name)
+    if result is not None:
+        return result
 
-            # Add to cache with LRU eviction (handled automatically by LRUCache)
-            _MLX_CACHE[model_name] = (model, tokenizer)
+    # Not cached — load and put
+    try:
+        from mlx_lm import load as mlx_load
 
-            logger.info(f"MLX model loaded and cached: {model_name}")
-            return model, tokenizer
-
-        except Exception as e:
-            logger.warning(f"Failed to load MLX model {model_name}: {e}")
-            return None, None
+        logger.info(f"Loading MLX model: {model_name}")
+        model, tokenizer, *_ = await asyncio.to_thread(mlx_load, model_name)
+        cache.put_model(model_name, model, tokenizer)
+        logger.info(f"MLX model loaded and cached: {model_name}")
+        return model, tokenizer
+    except Exception as e:
+        logger.warning(f"Failed to load MLX model {model_name}: {e}")
+        return None, None
 
 
 def clear_mlx_cache() -> None:

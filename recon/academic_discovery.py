@@ -32,6 +32,7 @@ import re
 from dataclasses import dataclass, field
 import msgspec
 from pathlib import Path
+from utils.sync_bridge import run_sync_async
 from typing import Any
 from hledac.universal.utils.msgspec_json import loads as _msgspec_loads, dumps_str as _msgspec_dumps_str
 
@@ -635,7 +636,7 @@ def _run_sync(async_func, /, *args, **kwargs):
         asyncio.get_running_loop()
     except RuntimeError:
         # No running loop — safe to instantiate and run the coroutine
-        return asyncio.run(async_func(*args, **kwargs))
+        return run_sync_async(async_func(*args, **kwargs))
     raise RuntimeError(
         "Cannot call sync academic_discovery wrapper from a running event loop. "
         "Use the async function directly instead."

@@ -485,6 +485,15 @@ def load_model(
     with _lifecycle_lock:
         _lifecycle_state["initialized"] = mlx_ready
 
+    # M-08: Invalidate all caches before model swap (if engine supports it)
+    # DeepHermes3Engine._invalidate_all_prompt_caches() clears _prompt_cache,
+    # _system_prompt_cache, _warmup_cache, _kv_cache_pool, _session_cache_pool
+    if model is not None and hasattr(model, '_invalidate_all_prompt_caches'):
+        try:
+            model._invalidate_all_prompt_caches(f'model_lifecycle_swap:{resolved_name}')
+        except Exception as _e:
+            logger.debug(f'[M-08] Cache invalidation before load failed: {_e}')
+
     # Delegate to engine.load() if available
     if model is not None and hasattr(model, 'load'):
         import inspect
@@ -960,7 +969,7 @@ class ModelLifecycle:
             # M1 8GB budget remains under 6.25 GB ceiling.
             try:
                 _warm_buffer = mx.zeros([12_000_000], dtype=mx.float32)  # 48 MB
-                mx.eval([])  # Force allocation — MLX lazy evaluation requires barrier
+                mx.eval(_warm_buffer)  # Force allocation — MLX lazy evaluation requires barrier
                 del _warm_buffer  # release immediately; page mapping persists
                 logger.debug("[LIFECYCLE] MLX Metal pre-warmed (48 MB buffer)")
             except Exception as e:
@@ -1055,19 +1064,24 @@ class ModelLifecycle:
                 formatted = full_prompt
 
             def _mlx_generate_raw() -> str:
-                result = ""
-                try:
-                    result = mlx_lm.generate(model, tokenizer, prompt=formatted, max_tokens=max_tokens, verbose=False)
-                finally:
-                    # Sprint 8UD B.2 + F179C: mx.eval([]) barrier before clear_cache
+                # L-01: Globální MLX Metal lock — serializuje všechny mlx_lm.generate() volání
+                from hledac.universal.core.mlx_inference_lock import _get_mlx_inference_lock
+
+                _lock = _get_mlx_inference_lock()
+                with _lock:
+                    result = ""
                     try:
-                        import mlx.core as _mx
-                        if _mx.metal.is_available():
-                            _mx.eval([])  # F179C: settle lazy eval
-                            if hasattr(_mx, "clear_cache"):
-                                _mx.clear_cache()
-                    except Exception:  # noqa: BLE001
-                        pass  # noqa: BLE001  # Non-fatal
+                        result = mlx_lm.generate(model, tokenizer, prompt=formatted, max_tokens=max_tokens, verbose=False)
+                    finally:
+                        # Sprint 8UD B.2 + F179C: mx.eval([]) barrier before clear_cache
+                        try:
+                            import mlx.core as _mx
+                            if _mx.metal.is_available():
+                                _mx.eval([])  # F179C: settle lazy eval
+                                if hasattr(_mx, "clear_cache"):
+                                    _mx.clear_cache()
+                        except Exception:  # noqa: BLE001
+                            pass  # noqa: BLE001  # Non-fatal
                 return result
 
             pool = get_rust_pool("cpu")

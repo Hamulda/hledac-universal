@@ -14,6 +14,7 @@ import asyncio
 import inspect
 import logging
 import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 import msgspec
@@ -118,7 +119,7 @@ class WorkflowEngine:
 
     def __init__(self, max_concurrency: int=5):
         self.max_concurrency = max_concurrency
-        self._execution_history = []
+        self._execution_history: deque[dict[str, Any]] = deque(maxlen=512)
 
     def validate(self, workflow: Workflow) -> bool:
         """
@@ -294,6 +295,6 @@ class WorkflowEngine:
                 resolved[key] = value
         return resolved
 
-    def get_execution_history(self) -> list[dict[str, Any]]:
+    def get_execution_history(self) -> deque[dict[str, Any]]:
         """Získat historii vykonávání"""
         return self._execution_history

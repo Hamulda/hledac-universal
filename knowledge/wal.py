@@ -219,12 +219,13 @@ class WALManager:
                 cursor = txn.cursor()
                 if cursor.set_range(prefix_bytes):
                     for key_bytes, value_bytes in cursor.iternext():
+                        # S-02: avoid bytes() copy when key_bytes IS already bytes
                         key = key_bytes.decode('utf-8') if isinstance(key_bytes, bytes) else bytes(key_bytes).decode('utf-8')
                         if not key.startswith(prefix):
                             break
                         try:
-                            vb = bytes(value_bytes) if isinstance(value_bytes, memoryview) else value_bytes
-                            value = orjson.loads(vb)
+                            # orjson.loads accepts bytes/bytearray/memoryview directly — zero-copy path
+                            value = orjson.loads(value_bytes)
                             results.append(value)
                         except Exception:
                             continue
@@ -344,8 +345,8 @@ class WALManager:
                         if not key.startswith(prefix):
                             break
                         try:
-                            vb = bytes(value_bytes) if isinstance(value_bytes, memoryview) else value_bytes
-                            value = orjson.loads(vb)
+                            # S-02: orjson.loads accepts bytes/bytearray/memoryview directly — zero-copy
+                            value = orjson.loads(value_bytes)
                             ts = value.get('ts', 0.0)
                             if len(oldest_keys) < evict_count:
                                 heapq.heappush(oldest_keys, (ts, key))

@@ -1061,14 +1061,9 @@ def batch_decompress_pages(wires: list[bytes]) -> list[bytes]:
     ...
 
 # F273F + P3-2: Darwin madvise (rust_extensions/src/madvise.rs)
-
-def madv_free_reusable(_fd: int) -> int:
-    """Apply MADV_FREE_REUSABLE to entire process mmap region via madvise(2). Returns 0 on success, -1 on failure."""
-    ...
-
-def madv_free_reusable_on_path(path: str) -> int:
-    """Open file and apply MADV_FREE_REUSABLE. Returns 0 on success, -1 on failure."""
-    ...
+# NOTE: madv_free_reusable and madv_free_reusable_on_path removed in R-03
+# (always returned -1 / EINVAL due to madvise(NULL, 0, advice)).
+# Use madvise_lmdb_mmap(path, advice=1) for LMDB/DuckDB files.
 
 def madvise_lmdb_mmap(path: str, advice: int = 1) -> int:
     """Apply madvise to LMDB .mdb file with MAP_NOCACHE.

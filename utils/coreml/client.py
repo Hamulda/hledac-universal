@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 import httpx
 from .models import BatchPredictRequest, BatchPredictResult, ComputeUnit, ConvertRequest, ConvertResult, HealthResult, PredictRequest, PredictResult
+from utils.sync_bridge import run_sync_async
 logger = logging.getLogger('coreml-client')
 
 class CoreMLServiceError(Exception):
@@ -111,7 +112,7 @@ class CoreMLClient:
         Synchronous wrapper for predict().
         Use in non-async code paths within hledac.
         """
-        return asyncio.run(self.predict(model, inputs))
+        return run_sync_async(self.predict(model, inputs))
 
     async def close(self) -> None:
         """Close the underlying HTTP client."""

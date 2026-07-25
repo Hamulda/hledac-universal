@@ -28,6 +28,7 @@ import msgspec
 from pathlib import Path
 from typing import Any, TypeVar
 from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok, safe_wait_for
+from hledac.universal.core.sync_bridge import stream_via_queue
 from hledac.universal.utils.cache import PyCacheDict
 from hledac.universal.utils.lru_cache import LRUCache
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode, encode_fast as _msgspec_encode_fast
@@ -147,7 +148,7 @@ def _get_metal_tier_thresholds() -> tuple[int, int, int]:
     Fallback: uses the static constants below if Rust call fails.
     """
     try:
-        from hledac.universal import rust_extensions as _rust
+        from hledac.universal import rust_extensions as _rust  # type: ignore[attr-defined]
         limit_bytes = _rust.get_metal_limit_bytes_py()
         if limit_bytes > 0:
             return (int(limit_bytes * 1.75), int(limit_bytes * 1.05), int(limit_bytes * 0.7))
@@ -360,8 +361,10 @@ class DeepHermes3Engine:
         {user_message}<|im_end|>
         <|im_start|>assistant
     """
-    __slots__ = ('_age_bump_interval', '_batch_default_flush_interval', '_batch_high_pressure_depth', '_batch_max_size', '_batch_medium_pressure_depth', '_batch_queue', '_batch_tie_breaker', '_batch_worker_shutting_down', '_batch_worker_task', '_draft_model_name', '_draft_model_obj', '_ema_alpha', '_flush_cycle_count', '_force_kv_quantize', '_inference_executor', '_inference_semaphore', '_kv_bits', '_kv_cache_enabled', '_kv_cache_pool_stats', '_kv_cache_stats', '_last_age_bump', '_last_bandit_arm', '_last_inference_at', '_lora_adapter_path', '_lora_cache_stats', '_max_kv_size', '_mlx_batcher', '_mlx_scheduler', '_mlx_worker_thread', '_model', '_model_breaker', '_model_ever_loaded', '_num_draft_tokens', '_outlines_generators', '_outlines_model', '_paged_kv_cache', '_paged_kv_keep', '_pending_futures', '_prefix_cache_stats', '_prompt_bandit', '_prompt_cache', '_sanitize_for_llm', '_session_cache_stats', '_speculative_enabled', '_supports_draft', '_supports_kv_quant', '_supports_stream_generate', '_system_prompt', '_system_prompt_cache', '_system_prompt_hash', '_telemetry_counters', '_telemetry_ema', '_tokenizer', '_warmup_cache', '_warmup_prompt_hash', 'config')
+    # Duplicate __slots__ removed - see line 366ium_pressure_depth', '_batch_queue', '_batch_tie_breaker', '_batch_worker_shutting_down', '_batch_worker_task', '_compile_executor', '_compile_in_progress', '_draft_model_name', '_generation_since_clear', '_draft_model_obj', '_ema_alpha', '_flush_cycle_count', '_force_kv_quantize', '_idle_unload_timeout_s', '_inference_executor', '_inference_semaphore', '_key_locks', '_kv_bits', '_kv_cache_enabled', '_kv_cache_pool', '_kv_cache_pool_maxsize', '_kv_cache_pool_memory_mb', '_kv_cache_pool_stats', '_lazy_ops_eval_count', '_kv_cache_stats', '_last_age_bump', '_last_bandit_arm', '_last_clear_at', '_last_gpu_memory', '_last_inference_at', '_lora_adapter_path', '_lora_cache_stats', '_max_kv_size', '_mlx_batcher', '_mlx_scheduler', '_mlx_worker_thread', '_model', '_model_breaker', '_model_ever_loaded', '_num_draft_tokens', '_outlines_generators', '_outlines_model', '_paged_kv_cache', '_paged_kv_keep', '_pending_futures', '_post_executor', '_prep_executor', '_prefix_cache', '_prefix_cache_maxsize', '_prefix_cache_stats', '_prompt_bandit', '_prompt_cache', '_sanitize_for_llm', '_session_cache_maxsize', '_session_cache_memory_mb', '_session_cache_pool', '_session_cache_stats', '_speculative_enabled', '_stream_cancelled', '_supports_draft', '_supports_kv_quant', '_supports_stream_generate', '_system_prompt', '_system_prompt_cache', '_system_prompt_hash', '_telemetry_counters', '_telemetry_ema', '_tokenizer', '_warmup_cache', '_warmup_prompt_hash', 'config')
     _DEEP_THINKING_PREFIX = 'You are a deep thinking AI, you may use extremely long chains of thought to deeply consider the problem and deliberate with yourself via systematic reasoning processes to help come to a correct solution prior to answering. You should enclose your thoughts and internal monologue inside <think> </think> tags, and then provide your solution or response to the problem.'
+
+    __slots__ = ('_active_iteration_count', '_age_bump_interval', '_batch_default_flush_interval', '_batch_flush_interval', '_batch_high_pressure_depth', '_batch_max_size', '_batch_medium_pressure_depth', '_batch_queue', '_batch_tie_breaker', '_batch_worker_shutting_down', '_batch_worker_task', '_compile_executor', '_compile_in_progress', '_draft_model_name', '_generation_since_clear', '_draft_model_obj', '_ema_alpha', '_flush_cycle_count', '_force_kv_quantize', '_idle_unload_timeout_s', '_inference_executor', '_inference_semaphore', '_key_locks', '_kv_bits', '_kv_cache_enabled', '_kv_cache_pool', '_kv_cache_pool_maxsize', '_kv_cache_pool_memory_mb', '_kv_cache_pool_stats', '_lazy_ops_eval_count', '_kv_cache_stats', '_last_age_bump', '_last_bandit_arm', '_last_clear_at', '_last_gpu_memory', '_last_inference_at', '_lora_adapter_path', '_lora_cache_stats', '_max_kv_size', '_mlx_batcher', '_mlx_scheduler', '_mlx_worker_thread', '_model', '_model_breaker', '_model_ever_loaded', '_num_draft_tokens', '_outlines_generators', '_outlines_model', '_paged_kv_cache', '_paged_kv_keep', '_pending_futures', '_post_executor', '_prep_executor', '_prefix_cache', '_prefix_cache_maxsize', '_prefix_cache_stats', '_prompt_bandit', '_prompt_cache', '_sanitize_for_llm', '_session_cache_maxsize', '_session_cache_memory_mb', '_session_cache_pool', '_session_cache_stats', '_speculative_enabled', '_stream_cancelled', '_supports_draft', '_supports_kv_quant', '_supports_stream_generate', '_system_prompt', '_system_prompt_cache', '_system_prompt_hash', '_telemetry_counters', '_telemetry_ema', '_tokenizer', '_warmup_cache', '_warmup_prompt_hash', 'config')
 
     def __init__(self, model_path: str | None=None, sanitize_for_llm: Callable[[str], str] | None=None):
         """
@@ -401,6 +404,8 @@ class DeepHermes3Engine:
         self._kv_cache_stats = {'cache_uses': 0, 'cache_prefills': 1, 'quantized_count': 0, 'parallel_prefills': 0}
         self._system_prompt_cache = None
         self._last_inference_at: float | None = None
+        self._generation_since_clear: int = 0  # L-04: throttle mx.clear_cache()
+        self._last_clear_at: float | None = None
         self._model_ever_loaded: bool = False
         self._system_prompt = 'You are a helpful research assistant.'
         _raw_max_kv = os.environ.get('HLEDAC_KV_CACHE_POOL_MAXSIZE', '')
@@ -471,7 +476,7 @@ class DeepHermes3Engine:
         self._batch_medium_pressure_depth = 64
         self._batch_high_pressure_depth = 192
         self._telemetry_ema = {'enqueue_to_dispatch_ms': 0.0, 'dispatch_to_result_ms': 0.0, 'batch_size': 0, 'queue_depth': 0}
-        self._telemetry_counters = {'batch_submitted': 0, 'batch_executed': 0, 'batch_fallback_single': 0, 'schema_mismatch_flushes': 0, 'length_bin_mismatch_flushes': 0, 'batch_shattered': 0, 'prompt_mismatch_flushes': 0, 'emergency_guard_triggered': 0, 'emergency_batch_rejected': 0, 'emergency_single_rejected': 0, 'emergency_pending_failed': 0, 'adaptive_flush_default_entries': 0, 'adaptive_flush_medium_entries': 0, 'adaptive_flush_fast_entries': 0, 'metal_pressure_fast_flush': 0}
+        self._telemetry_counters = {'batch_submitted': 0, 'batch_executed': 0, 'batch_fallback_single': 0, 'schema_mismatch_flushes': 0, 'length_bin_mismatch_flushes': 0, 'batch_shattered': 0, 'prompt_mismatch_flushes': 0, 'emergency_guard_triggered': 0, 'emergency_batch_rejected': 0, 'emergency_single_rejected': 0, 'emergency_pending_failed': 0, 'adaptive_flush_default_entries': 0, 'adaptive_flush_medium_entries': 0, 'adaptive_flush_fast_entries': 0, 'metal_pressure_fast_flush': 0, 'cache_invalidation_count': 0}
         self._pending_futures = set()
         self._ema_alpha = 0.3
         self._flush_cycle_count = 0
@@ -506,6 +511,22 @@ class DeepHermes3Engine:
         """GAP-3/1: Initialize per-model circuit breaker."""
         from transport.circuit_breaker import ModelCircuitBreaker
         self._model_breaker = ModelCircuitBreaker(model_id=model_id)
+
+    @property
+    def model(self) -> Any:
+        """Canonical model reference — shares the loaded model with callers.
+
+        M-05 fix: MemoryLayer previously loaded a separate BF16 Hermes-3 via
+        mlx_lm.load() directly, causing ~6GB Metal allocation independent of
+        this engine. Now MemoryLayer._load_model() delegates to this engine's
+        shared _model reference via this property.
+        """
+        return self._model
+
+    @property
+    def tokenizer(self) -> Any:
+        """Canonical tokenizer reference shared with this engine."""
+        return self._tokenizer
 
     async def _ensure_batch_worker(self) -> None:
         """Ensure batch worker is started (lazy start)."""
@@ -594,7 +615,7 @@ class DeepHermes3Engine:
         if not hasattr(self.__class__, '_batch_tie_breaker'):
             self.__class__._batch_tie_breaker = itertools.count()
         tie = next(self._batch_tie_breaker)
-        future._enqueue_ns = time.monotonic_ns()
+        future._enqueue_ns = time.monotonic_ns()  # type: ignore[attr-defined]
         assert isinstance(self._batch_queue, asyncio.PriorityQueue)
         await self._batch_queue.put((priority, tie, schema_key, payload))
         self._telemetry_ema['enqueue_to_dispatch_ms'] = self._ema_alpha * 0.0 + (1 - self._ema_alpha) * self._telemetry_ema.get('enqueue_to_dispatch_ms', 0.0)
@@ -842,16 +863,22 @@ class DeepHermes3Engine:
 
         def _sync_prep() -> str:
             # Issue #14: sanitize before formatting (full prep pipeline)
-            sanitized = self._sanitize_for_llm(prompt) if self._sanitize_for_llm else prompt
-            sanitized = sanitized[:MAX_LLM_PROMPT_CHARS]
-            return DeepHermes3Engine._format_chatml(system, sanitized)
+            raw_sanitized = self._sanitize_for_llm(prompt) if self._sanitize_for_llm else prompt
+            sanitized = raw_sanitized[:MAX_LLM_PROMPT_CHARS]
+            return self._format_chatml(system_msg=system, user_msg=sanitized)
 
         formatted_prompt = await loop.run_in_executor(self._prep_executor, _sync_prep)
 
         # Stage 2: GPU exec — serial (MLX single command queue)
+        # M-03: Tokenize once — avoids double encode in _build_generate_kwargs
+        try:
+            batch_prompt_tokens = self._tokenizer.encode(formatted_prompt)
+        except Exception:
+            batch_prompt_tokens = None
         timeout_s = _get_hermes_timeout_s()
-        raw_text = await self._submit_inference(
-            timeout_s, self._run_inference, formatted_prompt, temperature, max_tokens, None
+        # M-01: _run_inference returns (response, kv_cache_after); discard cache here
+        raw_text, _ = await self._submit_inference(
+            timeout_s, self._run_inference, formatted_prompt, temperature, max_tokens, None, None, batch_prompt_tokens
         )
 
         # Stage 3: CPU post — parallel across prompts (post pool, 2 workers)
@@ -864,13 +891,13 @@ class DeepHermes3Engine:
                 try:
                     data = _msgspec_decode(match.group())
                     if hasattr(schema_cls, 'model_validate'):
-                        return schema_cls.model_validate(data)
-                    return schema_cls.model_construct(**data)
+                        return schema_cls.model_validate(data)  # type: ignore[union-attr]
+                    return schema_cls.model_construct(**data)  # type: ignore[union-attr]
                 except Exception:
                     pass
             logger.debug(f'[STRUCTURED] Parse failed, using default for {schema_cls.__name__}')
             fields = dict.fromkeys(getattr(schema_cls, 'model_fields', {}).keys())
-            return schema_cls.model_construct(**fields) if hasattr(schema_cls, 'model_construct') else schema_cls(**fields)
+            return schema_cls.model_construct(**fields) if hasattr(schema_cls, 'model_construct') else schema_cls(**fields)  # type: ignore[union-attr]
 
         return await loop.run_in_executor(self._post_executor, _parse_structured)
     async def flush_all(self, timeout: float=5.0) -> int:
@@ -947,12 +974,12 @@ class DeepHermes3Engine:
         self._tokenizer = tokenizer
         try:
             if os.getenv('HLEDAC_HALF_PRECISION', '1') != '0':
-                model.set_dtype(mx.float16)
+                model.set_dtype(mx.float16)  # type: ignore[union-attr]
                 logger.info('[HERMES] Model dtype set to float16 (half precision)')
         except Exception as e:
             logger.warning('[HERMES] Could not set float16 dtype: %s', e)
         cache.put_model(model_path, model, tokenizer)
-        mc, lc = len(cache)
+        mc, lc = len(cache)  # type: ignore[arg-type]
         logger.info(f'[HERMES] Model cached ({mc} models, {lc} loras)')
         cache.start_monitor()
         self._compile_in_progress = True
@@ -986,7 +1013,7 @@ class DeepHermes3Engine:
             def _do_compile() -> None:
                 """Fire-and-forget compile — sets flag when done."""
                 try:
-                    with get_metal_stream_context():
+                    with get_metal_stream_context():  # type: ignore[name-defined]
                         mx.eval([])
                         try:
                             compiled_model = mx.compile(model)
@@ -1029,7 +1056,7 @@ class DeepHermes3Engine:
                 logger.info('[GAP-3/1] Circuit breaker reset after successful model load')
             if KV_CACHE_AVAILABLE:
                 try:
-                    from mlx_lm.utils import make_prompt_cache
+                    from mlx_lm.utils import make_prompt_cache  # type: ignore[attr-defined]
                     self._prompt_cache = make_prompt_cache(self._model)
                     self._kv_cache_enabled = True
                     KV_CACHE_AVAILABLE = True
@@ -1044,7 +1071,7 @@ class DeepHermes3Engine:
                 self._kv_cache_enabled = False
             if OUTLINES_AVAILABLE:
                 try:
-                    self._outlines_model = outlines.from_mlxlm(self._model, self._tokenizer)
+                    self._outlines_model = outlines.from_mlxlm(self._model, self._tokenizer)  # type: ignore[name-defined]
                     logger.info('✓ Outlines model initialized')
                 except Exception as e:
                     logger.warning(f'Outlines init failed: {e}, continuing without it')
@@ -1110,14 +1137,17 @@ class DeepHermes3Engine:
             if self._supports_stream_generate:
                 import mlx_lm
                 from hledac.universal.utils.mlx_memory import get_metal_stream_context
+                from hledac.universal.core.mlx_inference_lock import _get_mlx_inference_lock
 
                 def _prefill():
+                    _mlx_lock = _get_mlx_inference_lock()
                     with get_metal_stream_context():
                         try:
                             import mlx.core as _mx
                             _mx.eval([])
-                            for _ in mlx_lm.stream_generate(model=self._model, tokenizer=self._tokenizer, prompt=self._system_prompt, prompt_cache=self._system_prompt_cache, max_tokens=1):
-                                pass
+                            with _mlx_lock:
+                                for _ in mlx_lm.stream_generate(model=self._model, tokenizer=self._tokenizer, prompt=self._system_prompt, prompt_cache=self._system_prompt_cache, max_tokens=1):  # type: ignore[arg-type]
+                                    pass
                         finally:
                             _safe_mlx_eval_and_clear_cache('system_prompt_cache_prefill')
                 await asyncio.to_thread(_prefill)
@@ -1187,12 +1217,14 @@ class DeepHermes3Engine:
                         import mlx_lm
 
                         def _do_prefill():
-                            with get_metal_stream_context():
+                            _mlx_lock = _get_mlx_inference_lock()  # type: ignore[name-defined]
+                            with get_metal_stream_context():  # type: ignore[name-defined]
                                 try:
                                     import mlx.core as _mx
                                     _mx.eval([])
-                                    for _ in mlx_lm.stream_generate(model=self._model, tokenizer=self._tokenizer, prompt=self._system_prompt, prompt_cache=self._system_prompt_cache, max_tokens=1):
-                                        pass
+                                    with _mlx_lock:
+                                        for _ in mlx_lm.stream_generate(model=self._model, tokenizer=self._tokenizer, prompt=self._system_prompt, prompt_cache=self._system_prompt_cache, max_tokens=1):  # type: ignore[arg-type]
+                                            pass
                                 finally:
                                     _safe_mlx_eval_and_clear_cache('system_prompt_cache_parallel_prefill')
                         await asyncio.to_thread(_do_prefill)
@@ -1215,17 +1247,17 @@ class DeepHermes3Engine:
                         parts.append(f"<|im_start|>user\n{ex.get('user', '')}<|im_end|>")
                         parts.append(f"<|im_start|>assistant\n{ex.get('assistant', '')}<|im_end|>")
                     warmup_prompt = '\n'.join(parts)
-                    tokens = self._tokenizer.encode(warmup_prompt)
+                    tokens = self._tokenizer.encode(warmup_prompt)  # type: ignore[union-attr]
                     token_count = len(tokens)
                     if token_count > 1000:
-                        warmup_prompt = self._tokenizer.decode(tokens[:1000])
+                        warmup_prompt = self._tokenizer.decode(tokens[:1000])  # type: ignore[union-attr]
                     canonical_parts = [system_prompt]
                     for ex in few_shot_examples[:3]:
                         canonical_parts.append(f"{ex.get('user', '')}|{ex.get('assistant', '')}")
                     canonical_text = '\n'.join(canonical_parts)
                     prompt_hash = _get_xxh3_hex(canonical_text)
                     _warmup_disk_path = WARMUP_CACHE_DIR / f'warmup_{prompt_hash}.safetensors'
-                    _has_warmup_disk_now = await asyncio.to_thread(_warmup_disk_path.exists) if warmup_hash else False
+                    _has_warmup_disk_now = await asyncio.to_thread(_warmup_disk_path.exists) if prompt_hash else False
                     if _has_warmup_disk_now:
                         if await self._restore_warmup_cache(_warmup_disk_path, prompt_hash):
                             logger.info('[P1-3] Warmup cache restored from disk (parallel)')
@@ -1365,7 +1397,7 @@ class DeepHermes3Engine:
                         data[f'layer_{i}_values'] = values
                     if hasattr(self._system_prompt_cache, 'offset'):
                         try:
-                            data['_offset'] = mx.array([int(self._system_prompt_cache.offset)])
+                            data['_offset'] = mx.array([int(self._system_prompt_cache.offset)])  # type: ignore[union-attr]
                         except Exception:
                             pass
                     if data:
@@ -1427,7 +1459,7 @@ class DeepHermes3Engine:
                         offset_val = int(arr.item())
                     else:
                         offset_val = int(arr)
-                    self._system_prompt_cache.offset = offset_val
+                    self._system_prompt_cache.offset = offset_val  # type: ignore[union-attr]
                 except Exception:
                     pass
             if restored > 0:
@@ -1487,7 +1519,7 @@ class DeepHermes3Engine:
         """
         sanitized = (sanitize_fn(prompt) if sanitize_fn else None) or fallback_sanitize(prompt, max_length=max_prompt_chars)
         sanitized = sanitized[:max_prompt_chars]
-        formatted = DeepHermes3Engine._format_chatml(system, sanitized)
+        formatted = self._format_chatml(system_msg=system, user_msg=sanitized)
         formatted = formatted[:max_prompt_chars]
         prefix_tokens = None
         cache_key = hashlib.sha256((system or '').encode()).hexdigest()
@@ -1504,12 +1536,12 @@ class DeepHermes3Engine:
                 prefix_cache_stats['prefix_cache_misses'] = prefix_cache_stats.get('prefix_cache_misses', 0) + 1
                 prefix_cache_stats['prefix_cache_size'] = len(prefix_cache)
                 while len(prefix_cache) > prefix_cache_maxsize:
-                    evicted_key, _ = prefix_cache.popitem(last=False)
+                    evicted_key, _ = prefix_cache.popitem(last=False)  # type: ignore[call-arg]
                     prefix_cache_stats['prefix_cache_evictions'] = prefix_cache_stats.get('prefix_cache_evictions', 0) + 1
                     logger.debug(f'[CACHE] Prefix cache evicted key {evicted_key[:8]}')
             except Exception:
                 pass
-        return formatted, None, tokenizer, prefix_tokens
+        return formatted, None, tokenizer, prefix_tokens  # type: ignore[return-value]
 
     def _measure_kv_cache_bytes(self, cache: Any, tokens: list[int]) -> int:
         """
@@ -1529,7 +1561,7 @@ class DeepHermes3Engine:
             import mlx.core as mx
             if hasattr(mx, 'get_active_memory'):
                 mem_before = int(mx.get_active_memory())
-                _ = self._model(mx.array([tokens]), cache=cache)
+                _ = self._model(mx.array([tokens]), cache=cache)  # type: ignore[operator]
                 mx.eval(cache)
                 mem_after = int(mx.get_active_memory())
                 return max(0, mem_after - mem_before)
@@ -1575,7 +1607,7 @@ class DeepHermes3Engine:
                     self._kv_cache_pool_stats['pool_hits'] += 1
                     return self._kv_cache_pool[prompt_hash][0]
                 self._kv_cache_pool_stats['pool_misses'] += 1
-                tokens = self._tokenizer.encode(system_prompt)
+                tokens = self._tokenizer.encode(system_prompt)  # type: ignore[union-attr]
                 cache = make_prompt_cache(self._model)
                 cache_size = self._measure_kv_cache_bytes(cache, tokens)
                 pool_budget_bytes = self._kv_cache_pool_memory_mb * 1024 * 1024
@@ -1621,9 +1653,14 @@ class DeepHermes3Engine:
             if prompt_hash in self._session_cache_pool:
                 # LRUCache.__getitem__ automatically marks as MRU
                 self._session_cache_stats['session_cache_hits'] += 1
+                # M-01: compute live hit ratio for telemetry
+                total = self._session_cache_stats['session_cache_hits'] + self._session_cache_stats['session_cache_misses']
+                self._session_cache_stats['session_cache_hit_ratio'] = float(self._session_cache_stats['session_cache_hits'] / total) if total > 0 else 0.0
                 logger.debug(f'[SESSION-CACHE] Hit for prompt hash {prompt_hash[:8]}')
                 return (self._session_cache_pool[prompt_hash][0], prompt_hash)
             self._session_cache_stats['session_cache_misses'] += 1
+            total = self._session_cache_stats['session_cache_hits'] + self._session_cache_stats['session_cache_misses']
+            self._session_cache_stats['session_cache_hit_ratio'] = self._session_cache_stats['session_cache_hits'] / total if total > 0 else 0.0
             return None
         except Exception as e:
             logger.debug(f'[SESSION-CACHE] Lookup failed: {e}')
@@ -1642,6 +1679,10 @@ class DeepHermes3Engine:
             cache_size: Measured size in bytes via _measure_kv_cache_bytes
         """
         if not self._kv_cache_enabled:
+            return
+        # M-01: reject None — storing None defeats session cache (every hit = full prefill)
+        if kv_cache is None:
+            logger.debug('[SESSION-CACHE] Skipping store: kv_cache is None')
             return
         try:
             prompt_hash = _get_xxh3_hex(formatted_prompt)
@@ -1818,7 +1859,7 @@ class DeepHermes3Engine:
         except Exception:
             return True
 
-    def _build_generate_kwargs(self, formatted_prompt: str, temp: float, max_tok: int, prefix_cache, adapter_path: str | None=None) -> dict:
+    def _build_generate_kwargs(self, formatted_prompt: str, temp: float, max_tok: int, prefix_cache, adapter_path: str | None=None, prompt_tokens: list[int] | None=None) -> dict:
         """
         Build mlx_lm.generate() kwargs — shared between stream and direct paths.
 
@@ -1833,6 +1874,11 @@ class DeepHermes3Engine:
         LoRA (Sprint LoRA-1): when adapter_path is set, use the LoRA-fused model
         from _lora_cache. When None, use base model. KV cache size is halved
         when LoRA is active to compensate for LoRA Metal SRAM footprint.
+
+        M-03 FIX: prompt_tokens (pre-computed token list) avoids double tokenization.
+        If prompt_tokens is provided, _get_kv_cache_kwargs() uses its length directly
+        instead of re-encoding formatted_prompt. Caller is responsible for tokenizing
+        once and passing the tokens list.
         """
         from mlx_lm.sample_utils import make_sampler
         kv_bits = self._get_adaptive_kv_bits()
@@ -1874,12 +1920,18 @@ class DeepHermes3Engine:
                 _active_model, _active_tokenizer = _lora_tuple
                 _active_adapter = adapter_path
                 self._lora_cache_stats['lora_applications'] += 1
-        _kv_kwargs = self._get_kv_cache_kwargs(input_tokens=len(_active_tokenizer.encode(formatted_prompt)), max_tokens=max_tok)
+        # M-03: Use pre-computed prompt_tokens if available (avoids double encode).
+        # Note: when prompt_tokens is already computed, LoRA tokenizer swap is not needed
+        # since we use the tokens directly — LoRA affects only new tokenization.
+        _input_tokens_count: int | None = len(prompt_tokens) if prompt_tokens is not None else None
+        _kv_kwargs = self._get_kv_cache_kwargs(input_tokens=_input_tokens_count, max_tokens=max_tok)
         if _active_adapter is not None and 'max_kv_size' in _kv_kwargs:
             _orig_size = _kv_kwargs['max_kv_size']
             _kv_kwargs['max_kv_size'] = max(2048, _orig_size // 2)
             logger.debug(f"[LoRA] KV cache reduced: {_orig_size} → {_kv_kwargs['max_kv_size']} (adapter={_active_adapter})")
-        generate_kwargs = {'model': _active_model, 'tokenizer': _active_tokenizer, 'prompt': formatted_prompt, 'sampler': make_sampler(temp=temp), 'max_tokens': max_tok, 'kv_bits': kv_bits, 'verbose': False, **_kv_kwargs}
+        # M-03: Pass prompt_tokens directly to mlx_lm.generate() — avoids re-tokenizing
+        _prompt_arg: str | list[int] = prompt_tokens if prompt_tokens is not None else formatted_prompt
+        generate_kwargs = {'model': _active_model, 'tokenizer': _active_tokenizer, 'prompt': _prompt_arg, 'sampler': make_sampler(temp=temp), 'max_tokens': max_tok, 'kv_bits': kv_bits, 'verbose': False, **_kv_kwargs}
         if kv_cache is not None:
             generate_kwargs['prompt_cache'] = kv_cache
         if self._speculative_enabled and self._draft_model_obj is not None and self._supports_draft:
@@ -1888,23 +1940,88 @@ class DeepHermes3Engine:
         self._kv_cache_stats['cache_uses'] += 1
         return generate_kwargs
 
-    def _mlx_clear_and_timestamp(self) -> None:
+    # L-04: Throttling constants — mx.clear_cache() called at most every N generations
+    # or when memory pressure is HIGH/CRITICAL. Avoids 1-20ms per-call penalty.
+    _CLEAR_INTERVAL: int = 20  # generations between clears (M1 8GB: ~20 inferences window)
+
+    # M-08: Cache invalidation — called before and after model swap
+    def _invalidate_all_prompt_caches(self, reason: str) -> None:
         """
-        Issue #20+31 FIX: Canonical MLX cleanup per GHOST_INVARIANTS.md:80.
-        Sequence: gc.collect() -> mx.eval([]) -> mx.clear_cache() -> gc.collect()
+        M-08 FIX: Invalidate all prompt/KV caches on model swap.
+
+        Root cause: load_model() resetovalo pouze _prompt_cache, ale
+        _system_prompt_cache, _warmup_cache, _kv_cache_pool, _session_cache_pool
+        zůstávaly s referencemi na starý model → stale Metal allocations,
+        potenciální kompatibilita cache ↔ nový model (různé dimenze/quantization).
+
+        Volá se z load_model() na ZAČÁTKU (před načtením nového modelu)
+        i NA KONCI (pro jistotu po každém model swap).
+
+        Args:
+            reason: Telemetrie label pro debugging (např. "model_swap_start", "model_swap_end")
         """
+        self._prompt_cache = None
+        self._system_prompt_cache = None
+        self._warmup_cache = None
+        self._warmup_prompt_hash = None
+        self._kv_cache_pool.clear()
+        self._session_cache_pool.clear()
+        self._mlx_clear_and_timestamp(force_clear=True)
+        self._telemetry_counters['cache_invalidation_count'] += 1
+        logger.debug(f'[M-08] All prompt caches invalidated: {reason}')
+
+    def _mlx_clear_and_timestamp(self, force_clear: bool = False) -> None:
+        """
+        L-04 FIX: Throttled MLX Metal cache clear.
+
+        Clears Metal allocator cache only when:
+          - force_clear=True  (timeout retry path — memory may be fragmented)
+          - _generation_since_clear >= _CLEAR_INTERVAL
+          - UMA pressure state is HIGH or CRITICAL
+
+        This eliminates the 1-20ms per-call penalty from unconditional clear,
+        while preserving the original sequence: gc.collect() -> mx.eval([]) ->
+        mx.clear_cache() -> gc.collect().
+
+        Args:
+            force_clear: Force clear even if throttle threshold not met.
+                         Used by timeout-retry path where fragmentation risk
+                         outweighs cache preservation benefit.
+        """
+        _should_clear = force_clear
+        if not _should_clear:
+            if self._generation_since_clear >= self._CLEAR_INTERVAL:
+                _should_clear = True
+            else:
+                # Check memory pressure — HIGH/CRITICAL requires immediate relief
+                try:
+                    from hledac.universal.core.resource_governor import sample_uma_status
+                    _uma = sample_uma_status()
+                    _uma_state = getattr(_uma, 'state', 'ok')
+                    if _uma_state in ('high', 'critical'):
+                        _should_clear = True
+                except Exception:
+                    pass  # fail-open: don't clear if sampling fails
+
+        # Always update timestamp and counter regardless of whether we clear
+        import time as _time
+        self._last_inference_at = _time.monotonic()
+        self._generation_since_clear = 0  # reset counter after recording
+        self._last_clear_at = self._last_inference_at
+
+        if not _should_clear:
+            return
+
         try:
             import mlx.core as _mx
-            import gc
-            gc.collect()
+            import gc as _gc
+            _gc.collect()
             _mx.eval([])
             if hasattr(_mx, 'clear_cache'):
                 _mx.clear_cache()
-            gc.collect()
+            _gc.collect()
         except Exception:
             pass
-        import time
-        self._last_inference_at = time.monotonic()
 
     async def apply_lora_adapter_async(self, adapter_path: str | None) -> None:
         """
@@ -2030,9 +2147,14 @@ class DeepHermes3Engine:
         logger.debug(f'[LoRA] KV cache reduced: {current_size} → {reduced_size} (LoRA active)')
         return {**base_kv_kwargs, 'max_kv_size': reduced_size}
 
-    def _run_inference(self, formatted_prompt: str, temp: float, max_tok: int, prefix_cache=None, adapter_path: str | None=None) -> str:
+    def _run_inference(self, formatted_prompt: str, temp: float, max_tok: int, prefix_cache=None, adapter_path: str | None=None, prompt_tokens: list[int] | None=None) -> tuple[str, Any]:
         """
         Run MLX inference synchronously in thread pool (Sprint 75).
+
+        M-01 FIX: Returns (response, kv_cache_after) so the caller can store
+        the populated KV cache. Previously returned only response.strip(),
+        losing the post-prefill kv_cache object and defeating session caching
+        (every cache hit still required full prefill on reuse).
 
         P0-1 FIX: Reactive Metal stream fallback — if Stream(gpu) error occurs
         inside the stream context, retry WITHOUT the stream context (direct
@@ -2046,31 +2168,47 @@ class DeepHermes3Engine:
         LoRA (Sprint LoRA-1): adapter_path triggers LoRA model from cache
         in _build_generate_kwargs.
 
+        M-03 FIX: prompt_tokens (pre-computed token list) avoids double tokenization.
+        If provided, mlx_lm.generate() receives token list directly instead of
+        re-encoding the string prompt.
+
         Args:
             formatted_prompt: Formatted prompt for generation
             temp: Temperature setting
             max_tok: Maximum tokens to generate
             prefix_cache: Optional KV cache for prompt prefix
             adapter_path: Optional LoRA adapter path (resolved from _lora_cache)
+            prompt_tokens: Pre-computed token list (M-03 fix — avoids double encode)
 
         Returns:
-            Generated text
+            Tuple of (generated text, kv_cache object after prefill).
+            The kv_cache carries the populated KV state and is what must be
+            stored in the session cache — NOT the input prefix_cache.
         """
         from mlx_lm import generate as mlx_generate
-        generate_kwargs = self._build_generate_kwargs(formatted_prompt, temp, max_tok, prefix_cache, adapter_path=adapter_path)
+        # L-01: Globální MLX Metal lock — serializuje všechny mlx_lm.generate() volání
+        from hledac.universal.core.mlx_inference_lock import _get_mlx_inference_lock
+
+        generate_kwargs = self._build_generate_kwargs(formatted_prompt, temp, max_tok, prefix_cache, adapter_path=adapter_path, prompt_tokens=prompt_tokens)
+        # M-01: capture kv_cache for return — needed by caller for session cache store
+        kv_cache_after = generate_kwargs.get('prompt_cache')
+        _mlx_lock = _get_mlx_inference_lock()
         try:
             import mlx.core as _mx
             _mx.eval([])
         except Exception:
             pass
         try:
-            response = mlx_generate(**generate_kwargs)
+            with _mlx_lock:
+                response = mlx_generate(**generate_kwargs)
         except Exception as _err:
             logger.warning('[P0-1] mlx_generate failed: %s', _err)
-            self._mlx_clear_and_timestamp()
+            self._mlx_clear_and_timestamp(force_clear=True)  # L-04: force clear after error (fragmented cache)
             raise RuntimeError(f'MLX inference failed: {_err}') from _err
-        self._mlx_clear_and_timestamp()
-        return response.strip()
+        self._generation_since_clear += 1  # L-04: increment BEFORE throttled clear
+        self._mlx_clear_and_timestamp()  # L-04: throttled — clears only when threshold reached or HIGH pressure
+        # M-01: return (response, kv_cache_after) so caller can store populated cache
+        return response.strip(), kv_cache_after
 
     async def _ensure_mlx_batcher(self) -> Any:
         """
@@ -2219,7 +2357,7 @@ class DeepHermes3Engine:
                     logger.warning('[P0-2] main-thread inference timeout (attempt %d/%d), retrying in %.1fs', _attempt + 1, _retries + 1, _base_delay)
                     await asyncio.sleep(_base_delay)
                     _base_delay *= 1.5
-                    self._mlx_clear_and_timestamp()
+                    self._mlx_clear_and_timestamp(force_clear=True)  # L-04: force clear after timeout (fragmented KV cache)
                     continue
                 logger.warning('[P0-2] main-thread inference timeout after %d attempts — propagating', _retries + 1)
                 raise
@@ -2343,7 +2481,7 @@ class DeepHermes3Engine:
             if self._kv_cache_enabled:
                 if system_msg:
                     try:
-                        prefix_cache = self._get_prefix_cache(system)
+                        prefix_cache = self._get_prefix_cache(system_msg)
                     except Exception:
                         pass
                 elif self._system_prompt_cache is not None:
@@ -2353,12 +2491,20 @@ class DeepHermes3Engine:
                 cached_kv, _ = session_result
                 prefix_cache = cached_kv
                 logger.debug('[SESSION-CACHE] Using cached KV for inference')
+            # M-03: Tokenize once here — avoids double encode in _build_generate_kwargs
+            try:
+                gen_prompt_tokens = self._tokenizer.encode(formatted_prompt)
+            except Exception:
+                gen_prompt_tokens = None
             timeout_s = _get_hermes_timeout_s()
-            response = await self._submit_inference(timeout_s, self._run_inference, formatted_prompt, temp, max_tok, prefix_cache, adapter_path)
+            # M-01: _run_inference returns (response, populated_kv_cache)
+            # — store the populated cache, NOT the input prefix_cache
+            # M-03: Pass prompt_tokens to avoid double encode
+            response, populated_kv = await self._submit_inference(timeout_s, self._run_inference, formatted_prompt, temp, max_tok, prefix_cache, adapter_path, gen_prompt_tokens)
             if self._kv_cache_enabled and session_result is None:
                 try:
                     estimated_size = len(formatted_prompt) * 64
-                    self._store_session_cache(formatted_prompt, prefix_cache, estimated_size)
+                    self._store_session_cache(formatted_prompt, populated_kv, estimated_size)
                 except Exception:
                     pass
             if record_model_success is not None:
@@ -2451,6 +2597,14 @@ class DeepHermes3Engine:
                 return self._format_chatml(system, sanitized)[:MAX_LLM_PROMPT_CHARS]
             loop = asyncio.get_running_loop()
             formatted_prompt = await loop.run_in_executor(self._prep_executor, _sync_stream_prep)
+            # M-03: Tokenize once in thread pool — avoids double encode in _stream_tokens
+            try:
+                stream_prompt_tokens = await loop.run_in_executor(
+                    None,  # default executor
+                    lambda: self._tokenizer.encode(formatted_prompt)
+                )
+            except Exception:
+                stream_prompt_tokens = None
         except Exception as e:
             logger.warning('[STREAM] prompt formatting failed: %s', e)
             return
@@ -2463,7 +2617,9 @@ class DeepHermes3Engine:
             logger.debug('[SESSION-CACHE] Stream using cached KV')
         async with self._inference_semaphore:
             try:
-                async for token in asyncio.to_thread(self._stream_tokens, formatted_prompt, max_tok, temp, stream_prefix_cache):
+                async for token in stream_via_queue(
+                    self._stream_tokens, formatted_prompt, max_tok, temp, stream_prefix_cache, stream_prompt_tokens
+                ):
                     if token:
                         yield token
             except asyncio.CancelledError:
@@ -2477,7 +2633,7 @@ class DeepHermes3Engine:
         except Exception:
             pass
 
-    def _stream_tokens(self, formatted_prompt: str, max_tok: int, temp: float, prefix_cache: Any=None) -> Iterator[str]:
+    def _stream_tokens(self, formatted_prompt: str, max_tok: int, temp: float, prefix_cache: Any=None, prompt_tokens: list[int] | None=None) -> Iterator[str]:
         """
         Sync token generator — runs in asyncio.to_thread, safe for M1.
 
@@ -2496,6 +2652,11 @@ class DeepHermes3Engine:
         we only pre-create it to attach 4-bit quantisation when the runtime
         supports it. F265C-METAL: max_kv_size is no longer hardcoded to 8192.
 
+        M-03 FIX: prompt_tokens (pre-computed token list) avoids double tokenization.
+        When prompt_tokens is provided, mlx_lm.stream_generate() receives it directly
+        instead of re-encoding the string prompt. _get_kv_cache_kwargs uses len(prompt_tokens)
+        directly, avoiding redundant encode() call.
+
         Yielded values:
           - str token (decoded text fragment) for the caller
           - Robust to both MLX API shapes: chunk.text (object) and (token, _)
@@ -2512,6 +2673,20 @@ class DeepHermes3Engine:
                 if prefix_cache is not None:
                     kv_cache = prefix_cache
                     logger.debug('[STREAM] Reusing cached KV from session pool')
+                elif self._paged_kv_cache:
+                    # M-07: RotatingKVCache — zero-copy rotation, no mid-stream realloc
+                    from mlx_lm.models.cache import RotatingKVCache
+                    num_layers = len(self._model.layers)
+                    kv_cache = [RotatingKVCache(max_size=max_tok, keep=self._paged_kv_keep) for _ in range(num_layers)]
+                    logger.debug('[STREAM] RotatingKVCache: keep=%d, max_size=%d, layers=%d', self._paged_kv_keep, max_tok, num_layers)
+                    if self._supports_kv_quant:
+                        for layer in kv_cache:
+                            if hasattr(layer, 'quantize'):
+                                try:
+                                    layer.quantize(group_size=64, bits=kv_bits)
+                                    self._kv_cache_stats['quantized_count'] += 1
+                                except Exception:
+                                    pass
                 else:
                     kv_cache = make_prompt_cache(self._model, max_kv_size=max_tok)
                     if self._supports_kv_quant:
@@ -2523,7 +2698,9 @@ class DeepHermes3Engine:
                                     pass
             else:
                 kv_cache = None
-            stream_kwargs = {'max_tokens': max_tok, 'sampler': make_sampler(temp=temp), 'kv_bits': kv_bits, **self._get_kv_cache_kwargs(input_tokens=len(self._tokenizer.encode(formatted_prompt)), max_tokens=max_tok), 'verbose': False}
+            # M-03: Use pre-computed prompt_tokens if available (avoids double encode)
+            _input_tokens_count: int | None = len(prompt_tokens) if prompt_tokens is not None else None
+            stream_kwargs = {'max_tokens': max_tok, 'sampler': make_sampler(temp=temp), 'kv_bits': kv_bits, **self._get_kv_cache_kwargs(input_tokens=_input_tokens_count, max_tokens=max_tok), 'verbose': False}
             if kv_cache is not None:
                 stream_kwargs['prompt_cache'] = kv_cache
             if self._speculative_enabled and self._draft_model_obj is not None and self._supports_draft:
@@ -2538,8 +2715,9 @@ class DeepHermes3Engine:
                 pass
             _token_buffer = []
             _tokens_generated = 0
-            _kv_cache_reset_interval = 512
-            for chunk in stream_generate(self._model, self._tokenizer, prompt=formatted_prompt, **stream_kwargs):
+            # M-03: Use pre-computed prompt_tokens if available — avoids re-encoding
+            _prompt_arg: str | list[int] = prompt_tokens if prompt_tokens is not None else formatted_prompt
+            for chunk in stream_generate(self._model, self._tokenizer, prompt=_prompt_arg, **stream_kwargs):
                 if hasattr(chunk, 'text'):
                     tok = chunk.text
                 elif isinstance(chunk, tuple) and len(chunk) >= 1:
@@ -2550,20 +2728,6 @@ class DeepHermes3Engine:
                     _eval_counter += 1
                     _tokens_generated += 1
                     _token_buffer.append(tok)
-                    if _tokens_generated % _kv_cache_reset_interval == 0 and kv_cache is not None:
-                        try:
-                            kv_cache = make_prompt_cache(self._model, max_kv_size=max_tok)
-                            if self._supports_kv_quant:
-                                for layer in kv_cache:
-                                    if hasattr(layer, 'quantize'):
-                                        try:
-                                            layer.quantize(group_size=64, bits=kv_bits)
-                                        except Exception:
-                                            pass
-                            stream_kwargs['prompt_cache'] = kv_cache
-                            self._kv_cache_stats['stream_cache_resets'] = self._kv_cache_stats.get('stream_cache_resets', 0) + 1
-                        except Exception:
-                            pass
                     if _eval_counter % CLEAR_GRANULARITY_TOKENS == 0:
                         try:
                             import mlx.core as _m3_mx
@@ -3157,6 +3321,8 @@ class DeepHermes3Engine:
 
     async def load_model(self, model_id: str) -> bool:
         """Load specified model by path identifier (P0-04: uses HermesModelCache singleton)."""
+        # M-08: Invalidate all caches BEFORE loading new model (prevents stale Metal allocations)
+        self._invalidate_all_prompt_caches(f'model_swap_start:{model_id}')
         cache = hermes_cache()
         result = cache.get_model(model_id)
         if result is not None:
@@ -3164,12 +3330,20 @@ class DeepHermes3Engine:
             self.config.model_path = model_id
             logger.info(f'[HERMES] Model retrieved from cache (LRU updated): {model_id}')
             self._model_ever_loaded = True
+            # Re-initialize prompt cache for cached model (engine-specific, not in hermes_cache LRU)
+            try:
+                from mlx_lm.utils import make_prompt_cache
+                self._prompt_cache = make_prompt_cache(self._model)
+                self._kv_cache_enabled = True
+            except Exception:
+                self._prompt_cache = None
+                self._kv_cache_enabled = False
             return True
         from brain.ane_embedder import get_ane_mlx_mutex
         mutex = get_ane_mlx_mutex()
         try:
             from mlx_lm import load
-            from mlx_lm.utils import make_prompt_cache
+            from mlx_lm.utils import make_prompt_cache  # type: ignore[attr-defined]
             mutex.acquire_mlx(model_size_mb=2000.0)
             if os.getenv('HLEDAC_HERMES_NO_CACHE', '0') == '1':
                 self._model, self._tokenizer = await asyncio.to_thread(load, model_id)
@@ -3177,7 +3351,7 @@ class DeepHermes3Engine:
                 logger.info(f'[HERMES] Loading model from disk: {model_id}')
                 self._model, self._tokenizer = await asyncio.to_thread(load, model_id)
                 cache.put_model(model_id, self._model, self._tokenizer)
-                mc, lc = len(cache)
+                mc, lc = len(cache)  # type: ignore[arg-type]
                 logger.info(f'[HERMES] Model cached ({mc} models, {lc} loras)')
             self.config.model_path = model_id
             global KV_CACHE_AVAILABLE
@@ -3189,6 +3363,10 @@ class DeepHermes3Engine:
                 self._prompt_cache = None
                 self._kv_cache_enabled = False
                 KV_CACHE_AVAILABLE = False
+            # M-08 NOTE: End-of-load invalidation NOT needed here because:
+            # 1. _invalidate_all_prompt_caches() was already called at model_swap_start
+            # 2. Fresh prompt_cache was just created via make_prompt_cache() above
+            # 3. Stale KV/prompt from previous model already cleared by the start invalidation
             logger.info(f'✓ Model loaded: {model_id}')
             self._model_ever_loaded = True
             return True

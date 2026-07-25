@@ -9,7 +9,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 aho-corasick = "1.1"
-pyo3 = { version = "0.23", features = ["extension-module"] }
+pyo3 = { version = "0.24", features = ["extension-module", "abi3-py312"] }
 rayon = "1.12"
 regex = "1.11"
 regex-automata = { version = "=0.4.15", default-features = false, features = ["meta"] }
@@ -151,12 +151,13 @@ strip = "symbols"
 panic = "abort"
 
 [build-dependencies]
-pyo3-build-config = "0.23"
+pyo3-build-config = "0.24"
 
 [lints.rust]
 unused = "warn"
 dead_code = "warn"
 unused_imports = "warn"
+unexpected_cfgs = "allow"
 
 # ---------------------------------------------------------------------------
 # Target-specific flags

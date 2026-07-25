@@ -41,6 +41,7 @@ import msgspec
 from datetime import UTC, datetime
 from typing import Any
 from brain.evidence_fusion import DempsterShafer
+from utils.sync_bridge import run_sync_async
 try:
     import dspy as _dspy
     DSPY_AVAILABLE = True
@@ -655,13 +656,10 @@ class HypothesisEngine:
             self.add_evidence(obs)
         if self.inference_engine:
             try:
-                try:
-                    _ = asyncio.get_running_loop()
-                except RuntimeError:
-                    explanations = asyncio.run(self.inference_engine.abductive_reasoning(observations, context))
-                else:
-                    explanations = []
-                    logger.debug('generate_hypotheses called from async context, skipping inference engine')
+                explanations = run_sync_async(self.inference_engine.abductive_reasoning(observations, context))
+            except RuntimeError:
+                explanations = []
+                logger.debug('generate_hypotheses called from async context, skipping inference engine')
                 for exp in explanations:
                     hypothesis = self._create_hypothesis_from_explanation(exp)
                     generated.append(hypothesis)
@@ -1037,16 +1035,11 @@ class HypothesisEngine:
             target = ranked[0]
             test = self.design_test(target)
             try:
-                loop = asyncio.get_running_loop()
+                result = run_sync_async(self.execute_test(test, {**context, 'hypothesis': target}))
+                self.update_hypothesis(target, result)
             except RuntimeError:
-                result = asyncio.run(self.execute_test(test, {**context, 'hypothesis': target}))
-            else:
-                try:
-                    result = loop.run_until_complete(self.execute_test(test, {**context, 'hypothesis': target}))
-                    self.update_hypothesis(target, result)
-                except RuntimeError:
-                    logger.warning('execute_test called from async context, skipping')
-                    continue
+                logger.warning('execute_test called from async context, skipping')
+                continue
             if iteration % 3 == 0:
                 for h in list(self._hypotheses.values())[:5]:
                     if h.status == HypothesisStatus.ACTIVE.value:
@@ -1647,14 +1640,9 @@ class HypothesisEngine:
                 result = await suggest_pivots(findings, context)
                 return result if result else []
             try:
-                loop = asyncio.get_running_loop()
+                pivots = run_sync_async(_dspy_suggest())
             except RuntimeError:
-                pivots = asyncio.run(_dspy_suggest())
-            else:
-                try:
-                    pivots = loop.run_until_complete(_dspy_suggest())
-                except RuntimeError:
-                    pivots = []
+                pivots = []
             if pivots:
                 queries = []
                 for p in pivots[:max_to_add]:

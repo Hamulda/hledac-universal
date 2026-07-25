@@ -44,6 +44,14 @@ class _PythonMemoryDomain:
         """Python fallback: get total memory via psutil or ctypes."""
         return _python_get_total_memory()
 
+    def advise_free(self, ptr: int, len: int) -> bool:
+        """Python fallback: MADV_FREE_REUSABLE not available on non-macOS."""
+        import sys
+        if sys.platform != "darwin":
+            return False
+        # Fallback for non-macOS Unix — MADV_FREE_REUSABLE is macOS-specific
+        return False
+
 
 def _python_get_available_memory() -> int:
     """Python fallback: get available system memory."""

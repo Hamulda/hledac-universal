@@ -234,7 +234,8 @@ __all__ = [
     "RemoteParquetSource",
     "export_findings_to_parquet",
 ]
-from hledac.universal.tools.file_cache import apply_nocache_to_path, madv_free_reusable_on_path
+from hledac.universal.tools.file_cache import apply_nocache_to_path
+from hledac.universal.tools.file_cache import madv_nocache_on_path  # R-03: was madv_free_reusable_on_path (broken: madvise NULL+0)
 from hledac.universal.utils.async_helpers import parallel
 
 from .dedup import DedupManager
@@ -2189,7 +2190,7 @@ class DuckDBShadowStore:
         _db_path = self._db_path
         _is_memory_mode = _db_path is None or str(_db_path) == ":memory:"
         if not _is_memory_mode and _db_path is not None:
-            madv_free_reusable_on_path(_db_path)
+            madv_nocache_on_path(_db_path)
             apply_nocache_to_path(_db_path)
         memory_limit_val = _validate_duckdb_setting(str(runtime["memory_limit"]), "memory_limit")
         max_temp_val = _validate_duckdb_setting(self._max_temp, "max_temp")
@@ -2403,7 +2404,7 @@ class DuckDBShadowStore:
             conn.execute("SET memory_limit = '1GB'")
             conn.execute("PRAGMA threads = 2")
             conn.execute("SET preserve_insertion_order = false")
-            madv_free_reusable_on_path(self._db_path)
+            madv_nocache_on_path(self._db_path)
             apply_nocache_to_path(self._db_path)
             try:
                 conn.execute("ALTER TABLE sprint_delta ADD COLUMN findings_per_minute REAL DEFAULT 0")
@@ -8633,8 +8634,8 @@ class DuckDBShadowStore:
                         if not key.startswith(prefix):
                             break
                         try:
-                            vb = bytes(value_bytes) if isinstance(value_bytes, memoryview) else value_bytes
-                            value = _ORJSON_DECODER(vb)
+                            # S-02: orjson.loads accepts bytes/bytearray/memoryview directly — zero-copy
+                            value = _ORJSON_DECODER(value_bytes)
                             ts = value.get("ts", 0.0)
                             markers.append((ts, key))
                         except Exception:  # noqa: BLE001 — best-effort; memory operation; non-critical
@@ -8721,8 +8722,8 @@ class DuckDBShadowStore:
                         if not key.startswith(prefix):
                             break
                         try:
-                            vb = bytes(value_bytes) if isinstance(value_bytes, memoryview) else value_bytes
-                            value = _ORJSON_DECODER(vb)
+                            # S-02: orjson.loads accepts bytes/bytearray/memoryview directly — zero-copy
+                            value = _ORJSON_DECODER(value_bytes)
                             results.append(value)
                         except Exception:  # noqa: BLE001 — best-effort; memory operation; non-critical
                             continue

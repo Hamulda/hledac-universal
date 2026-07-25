@@ -498,16 +498,28 @@ pub fn lmdb_async_put<'py>(
     value: Vec<u8>,
 ) -> PyResult<bool> {
     let env = _resolve_env(py, path_or_env)?;
-    py.allow_threads(|| {
-        let txn = env.getattr("begin")?.call1((true,))?;
-        let result = txn.call_method1("put", (key.as_slice(), value.as_slice()));
-        match result {
-            Ok(_) => {
-                let _ = txn.call_method0("commit");
-                true
+    let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
+    py.allow_threads(move || {
+        let env_owned = env_owned;
+        Python::with_gil(|py| {
+            let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
+            let txn = match env.getattr("begin") {
+                Ok(t) => t,
+                Err(e) => return Err(e),
+            };
+            let txn = match txn.call1((true,)) {
+                Ok(t) => t,
+                Err(e) => return Err(e),
+            };
+            let result = txn.call_method1("put", (key.as_slice(), value.as_slice()));
+            match result {
+                Ok(_) => {
+                    let _ = txn.call_method0("commit");
+                    Ok(true)
+                }
+                Err(_) => Ok(false),
             }
-            Err(_) => false,
-        }
+        })
     })
 }
 
@@ -520,15 +532,31 @@ pub fn lmdb_async_get<'py>(
     key: Vec<u8>,
 ) -> PyResult<Option<Vec<u8>>> {
     let env = _resolve_env(py, path_or_env)?;
+    // Clone to get owned refcount - env_owned is Send+Sync and keeps Python object alive
+    let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
     py.allow_threads(|| {
-        let txn = env.getattr("begin")?.call1((false,))?;
-        let result: Option<Vec<u8>> = txn
-            .call_method1("get", (key.as_slice(),))?
-            .extract()
-            .ok()
-            .unwrap_or(None);
-        drop(txn);
-        Ok(result)
+        // Move env_owned into this closure - Py is Send+Sync
+        let env_owned = env_owned;
+        Python::with_gil(|py| {
+            let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
+            let txn = match env.getattr("begin") {
+                Ok(t) => t,
+                Err(e) => return Err(e),
+            };
+            let txn = match txn.call1((false,)) {
+                Ok(t) => t,
+                Err(e) => return Err(e),
+            };
+            let result: Option<Vec<u8>> = match txn.call_method1("get", (key.as_slice(),)) {
+                Ok(r) => match r.extract() {
+                    Ok(v) => v,
+                    Err(_) => None,
+                },
+                Err(_) => None,
+            };
+            drop(txn);
+            Ok(result)
+        })
     })
 }
 
@@ -543,25 +571,41 @@ pub fn lmdb_async_put_batch<'py>(
     max_batch: usize,
 ) -> PyResult<usize> {
     let env = _resolve_env(py, path_or_env)?;
+    let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
     let max_batch = max_batch.min(10_000);
     py.allow_threads(|| {
-        let mut total_written = 0;
-        for chunk in items.chunks(max_batch.max(1)) {
-            let result: Result<(), _> = (|| {
-                let txn = env.getattr("begin")?.call1((true,))?;
-                for (k, v) in chunk {
-                    txn.call_method1("put", (k.as_slice(), v.as_slice()))?;
+        let env_owned = env_owned;
+        Python::with_gil(|py| {
+            let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
+            let mut total_written = 0;
+            for chunk in items.chunks(max_batch.max(1)) {
+                let result: Result<(), PyErr> = (|| {
+                    let txn = match env.getattr("begin") {
+                        Ok(t) => t,
+                        Err(e) => return Err(e),
+                    };
+                    let txn = match txn.call1((true,)) {
+                        Ok(t) => t,
+                        Err(e) => return Err(e),
+                    };
+                    for (k, v) in chunk {
+                        if txn.call_method1("put", (k.as_slice(), v.as_slice())).is_err() {
+                            return Err(pyo3::exceptions::PyIOError::new_err("put failed"));
+                        }
+                    }
+                    if txn.call_method0("commit").is_err() {
+                        return Err(pyo3::exceptions::PyIOError::new_err("commit failed"));
+                    }
+                    Ok(())
+                })();
+                if result.is_ok() {
+                    total_written += chunk.len();
+                } else {
+                    break;
                 }
-                txn.call_method0("commit")?;
-                Ok(())
-            })();
-            if result.is_ok() {
-                total_written += chunk.len();
-            } else {
-                break;
             }
-        }
-        Ok(total_written)
+            Ok(total_written)
+        })
     })
 }
 
@@ -575,19 +619,33 @@ pub fn lmdb_async_get_many<'py>(
     keys: Vec<Vec<u8>>,
 ) -> PyResult<Vec<Option<Vec<u8>>>> {
     let env = _resolve_env(py, path_or_env)?;
+    let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
     py.allow_threads(|| {
-        let mut results: Vec<Option<Vec<u8>>> = Vec::with_capacity(keys.len());
-        for key in keys {
-            let txn = env.getattr("begin")?.call1((false,))?;
-            let val: Option<Vec<u8>> = txn
-                .call_method1("get", (key.as_slice(),))?
-                .extract()
-                .ok()
-                .unwrap_or(None);
-            drop(txn);
-            results.push(val);
-        }
-        Ok(results)
+        let env_owned = env_owned;
+        Python::with_gil(|py| {
+            let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
+            let mut results: Vec<Option<Vec<u8>>> = Vec::with_capacity(keys.len());
+            for key in keys {
+                let txn = match env.getattr("begin") {
+                    Ok(t) => t,
+                    Err(_) => break,
+                };
+                let txn = match txn.call1((false,)) {
+                    Ok(t) => t,
+                    Err(_) => break,
+                };
+                let val: Option<Vec<u8>> = match txn.call_method1("get", (key.as_slice(),)) {
+                    Ok(r) => match r.extract() {
+                        Ok(v) => v,
+                        Err(_) => None,
+                    },
+                    Err(_) => None,
+                };
+                drop(txn);
+                results.push(val);
+            }
+            Ok(results)
+        })
     })
 }
 
@@ -602,40 +660,58 @@ pub fn lmdb_async_scan_prefix<'py>(
     limit: usize,
 ) -> PyResult<Vec<(Vec<u8>, Vec<u8>)>> {
     let env = _resolve_env(py, path_or_env)?;
+    let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
     let limit = limit.min(100_000);
     py.allow_threads(|| {
-        let mut results: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
-        let txn = env.getattr("begin")?.call1((false,))?;
-        let mut cursor: Bound<'_, PyAny> = txn.call_method0("cursor")?;
+        let env_owned = env_owned;
+        Python::with_gil(|py| {
+            let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
+            let mut results: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+            let txn = match env.getattr("begin") {
+                Ok(t) => t,
+                Err(_) => return Ok(results),
+            };
+            let txn = match txn.call1((false,)) {
+                Ok(t) => t,
+                Err(_) => return Ok(results),
+            };
+            let cursor: Bound<'_, PyAny> = match txn.call_method0("cursor") {
+                Ok(c) => c,
+                Err(_) => return Ok(results),
+            };
 
-        let py_iter: Bound<'_, PyAny> = cursor.call_method0("iter")?;
-        let mut rust_iter = match py_iter.try_iter() {
-            Ok(iter) => iter,
-            Err(_) => return Ok(results),
-        };
-
-        for item in rust_iter {
-            let item = match item {
+            let py_iter: Bound<'_, PyAny> = match cursor.call_method0("iter") {
                 Ok(i) => i,
-                Err(_) => continue,
+                Err(_) => return Ok(results),
             };
-            let pair: Vec<Vec<u8>> = match item.extract() {
-                Ok(p) => p,
-                Err(_) => continue,
+            let mut rust_iter = match py_iter.try_iter() {
+                Ok(iter) => iter,
+                Err(_) => return Ok(results),
             };
-            if pair.len() != 2 {
-                continue;
-            }
-            if pair[0].starts_with(&prefix) {
-                results.push((pair[0].clone(), pair[1].clone()));
-                if results.len() >= limit {
-                    break;
+
+            for item in rust_iter {
+                let item = match item {
+                    Ok(i) => i,
+                    Err(_) => continue,
+                };
+                let pair: Vec<Vec<u8>> = match item.extract() {
+                    Ok(p) => p,
+                    Err(_) => continue,
+                };
+                if pair.len() != 2 {
+                    continue;
+                }
+                if pair[0].starts_with(&prefix) {
+                    results.push((pair[0].clone(), pair[1].clone()));
+                    if results.len() >= limit {
+                        break;
+                    }
                 }
             }
-        }
-        drop(cursor);
-        drop(txn);
-        Ok(results)
+            drop(cursor);
+            drop(txn);
+            Ok(results)
+        })
     })
 }
 
@@ -648,16 +724,28 @@ pub fn lmdb_async_delete<'py>(
     key: Vec<u8>,
 ) -> PyResult<bool> {
     let env = _resolve_env(py, path_or_env)?;
-    py.allow_threads(|| {
-        let txn = env.getattr("begin")?.call1((true,))?;
-        let result = txn.call_method1("delete", (key.as_slice(),));
-        match result {
-            Ok(_) => {
-                let _ = txn.call_method0("commit");
-                true
+    let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
+    py.allow_threads(move || {
+        let env_owned = env_owned;
+        Python::with_gil(|py| {
+            let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
+            let txn = match env.getattr("begin") {
+                Ok(t) => t,
+                Err(e) => return Err(e),
+            };
+            let txn = match txn.call1((true,)) {
+                Ok(t) => t,
+                Err(e) => return Err(e),
+            };
+            let result = txn.call_method1("delete", (key.as_slice(),));
+            match result {
+                Ok(_) => {
+                    let _ = txn.call_method0("commit");
+                    Ok(true)
+                }
+                Err(_) => Ok(false),
             }
-            Err(_) => false,
-        }
+        })
     })
 }
 

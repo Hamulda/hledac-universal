@@ -2,6 +2,7 @@
 
 import asyncio
 
+from utils.sync_bridge import run_sync_async
 from hledac.universal.utils.async_generators import async_chunked_pipeline
 
 
@@ -24,4 +25,4 @@ async def main():
     print(f'Total iterations: {count}')
     print(f'Result lengths: {[len(r) for r in results[:5]]}...')
 
-asyncio.run(main())
+run_sync_async(main())

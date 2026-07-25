@@ -13,6 +13,7 @@ Based on research_privacy_enhancer concept from integration files.
 import hashlib
 import logging
 import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 import msgspec
@@ -87,7 +88,7 @@ class PrivacyEnhancedResearch:
 
     def __init__(self, config: PrivacyConfig | None=None):
         self.config = config or PrivacyConfig()
-        self._audit_log: list[AuditRecord] = []
+        self._audit_log: deque[AuditRecord] = deque(maxlen=2048)
         self._active_sessions: dict[str, float] = {}
         self._operation_counter = 0
         logger.info(f'PrivacyEnhancedResearch initialized (level: {self.config.level.value})')
@@ -183,8 +184,6 @@ class PrivacyEnhancedResearch:
         """Log audit record."""
         record = AuditRecord(timestamp=time.time(), operation_id=operation_id, operation_type=operation_type, privacy_level=self.config.level, anonymized_query=anon_request.anonymized_query, result_count=result_count, retention_until=self._calculate_retention(), metadata={'duration': duration, 'error': error, 'query_hash': self._hash_query(anon_request.original_query)})
         self._audit_log.append(record)
-        if len(self._audit_log) > 10000:
-            self._audit_log = self._audit_log[-10000:]
         logger.debug(f'Audit logged: {operation_id} ({operation_type})')
 
     def _calculate_retention(self) -> float:
@@ -214,15 +213,19 @@ class PrivacyEnhancedResearch:
         records = self._audit_log
         if operation_type:
             records = [r for r in records if r.operation_type == operation_type]
-        return records[-limit:]
+        return list(records)[-limit:]
 
     def cleanup_expired(self) -> int:
-        """Clean up expired sessions. Returns count of cleaned sessions."""
+        """Clean up expired sessions. Returns count of cleaned sessions.
+
+        Note: _audit_log is a deque(maxlen=2048) — expired entries beyond the
+        retention window are auto-evicted when the deque rotates. Manual
+        _audit_log cleanup is unnecessary and was removed.
+        """
         now = time.time()
         expired = [op_id for op_id, retention in self._active_sessions.items() if now > retention]
         for op_id in expired:
             del self._active_sessions[op_id]
-        self._audit_log = [r for r in self._audit_log if time.time() <= r.retention_until]
         return len(expired)
 
     def get_privacy_stats(self) -> dict[str, Any]:

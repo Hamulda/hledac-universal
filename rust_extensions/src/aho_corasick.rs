@@ -43,7 +43,7 @@ impl InternStore {
         // Box::leak the owned String — this is the single allocation per unique label.
         // map.insert borrows s directly (HashMap<&str, &'static str>).
         let leaked: &'static str = Box::leak(s.to_string().into_boxed_str());
-        map.insert(leaked, leaked);
+        map.insert(s.to_string(), leaked);
         leaked
     }
 

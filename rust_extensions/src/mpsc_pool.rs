@@ -383,22 +383,26 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pyo3::prelude::*;
 
-    // Helper: create a pool, unwrapping the Result.
-    fn make_pool(capacity: Option<usize>) -> MPSCPool {
-        MPSCPool::with_capacity(capacity.unwrap_or(MPSC_DEFAULT_CAPACITY)).unwrap()
+    // Helper: create a pool, returning PyErr on failure (NOT panic).
+    // ISSUE-007 FIX: with_capacity returns Result, so make_pool must handle it.
+    //unwrap() on Err caused panic at 0 capacity — now returns Err for test assertion.
+    fn make_pool(capacity: Option<usize>) -> Result<MPSCPool, PyErr> {
+        MPSCPool::with_capacity(capacity.unwrap_or(MPSC_DEFAULT_CAPACITY))
+            .map_err(|e| pyo3::exceptions::PyOSError::new_err(e.to_string()))
     }
 
     #[test]
     fn test_pool_create() {
-        let pool = make_pool(None);
+        let pool = make_pool(None).unwrap();
         assert!(!pool.is_empty());
         assert_eq!(pool.len(), 0);
     }
 
     #[test]
     fn test_add_sender() {
-        let mut pool = make_pool(None);
+        let mut pool = make_pool(None).unwrap();
         let ptr1 = pool.add_sender();
         let ptr2 = pool.add_sender();
         assert!(ptr1 != 0);
@@ -407,7 +411,7 @@ mod tests {
 
     #[test]
     fn test_send_and_recv() {
-        let mut pool = make_pool(None);
+        let mut pool = make_pool(None).unwrap();
         let sender_ptr = pool.add_sender();
 
         assert!(pool.send(sender_ptr, b"hello"));
@@ -423,7 +427,7 @@ mod tests {
 
     #[test]
     fn test_full_backpressure() {
-        let mut pool = make_pool(Some(2));
+        let mut pool = make_pool(Some(2)).unwrap();
         let sender_ptr = pool.add_sender();
 
         assert!(pool.send(sender_ptr, b"a"));
@@ -434,7 +438,7 @@ mod tests {
 
     #[test]
     fn test_multi_sender() {
-        let mut pool = make_pool(None);
+        let mut pool = make_pool(None).unwrap();
         let s1 = pool.add_sender();
         let s2 = pool.add_sender();
 
@@ -448,7 +452,7 @@ mod tests {
 
     #[test]
     fn test_recv_batch_limits() {
-        let mut pool = make_pool(None);
+        let mut pool = make_pool(None).unwrap();
         let sender_ptr = pool.add_sender();
 
         for i in 0..10 {
@@ -458,5 +462,17 @@ mod tests {
         let batch = pool.recv_batch(Some(3));
         assert_eq!(batch.len(), 3);
         assert_eq!(pool.len(), 7);
+    }
+
+    // ISSUE-007 FIX: acceptance test — zero capacity must return PyErr, not panic.
+    #[test]
+    fn test_mpsc_pool_zero_capacity_returns_pyresult() {
+        let result = make_pool(Some(0));
+        assert!(result.is_err(), "capacity=0 must return Err, not panic");
+        let err = result.unwrap_err();
+        // Error message should mention the invalid capacity
+        let msg = err.to_string();
+        assert!(msg.contains("capacity") || msg.contains("0") || msg.contains("bounded"),
+            "Error message should indicate capacity issue, got: {}", msg);
     }
 }

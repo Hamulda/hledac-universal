@@ -191,6 +191,7 @@ pub fn memory_pressure_level() -> u8 {
 /// rather than mach_vm_behavior_set (not exposed in libc crate on macOS).
 ///
 /// Returns true on success, false on failure.
+#[cfg(target_os = "macos")]
 #[pyfunction]
 pub fn advise_free(ptr: usize, len: usize) -> bool {
     if ptr == 0 || len == 0 {
@@ -287,6 +288,7 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(current_rss_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(peak_rss_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(memory_pressure_level, m)?)?;
+    #[cfg(target_os = "macos")]
     m.add_function(wrap_pyfunction!(advise_free, m)?)?;
     m.add_function(wrap_pyfunction!(get_metal_active_memory_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(get_metal_active_memory_gib, m)?)?;

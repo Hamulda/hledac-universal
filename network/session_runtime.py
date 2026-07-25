@@ -466,12 +466,10 @@ def _reset_session_runtime_for_tests() -> None:
     """
     # ISSUE-010: Delegate to session_pool for actual session close
     from transport.session_pool import close_httpx as _close_httpx
+    from utils.sync_bridge import run_sync_async
 
-    # Test-only: asyncio.run() creates and tears down its own loop safely.
-    # This is correct here because this function is ONLY called from test
-    # fixtures where no other async code is running concurrently.
     try:
-        asyncio.run(_close_httpx())
+        run_sync_async(_close_httpx())
     except Exception:  # noqa: BLE001
         pass
 

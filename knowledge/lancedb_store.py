@@ -33,7 +33,7 @@ from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str,
 import numpy as np
 import orjson
 from context_optimization.mmr import maximal_marginal_relevance
-from hledac.universal.tools.file_cache import apply_nocache_to_path, madv_free_reusable_on_path
+from hledac.universal.tools.file_cache import apply_nocache_to_path, madv_nocache_on_path  # R-03: was madv_free_reusable_on_path (broken)
 logger = logging.getLogger(__name__)
 _uma_budget = None
 
@@ -777,7 +777,7 @@ class LanceDBIdentityStore:
             cache_path = Path(self.uri).parent / 'embedding_cache'
             cache_path.mkdir(parents=True, exist_ok=True)
             self._cache_env = open_lmdb_with_guard(cache_path, map_size=self._MAX_CACHE_SIZE)
-            madv_free_reusable_on_path(cache_path)
+            madv_nocache_on_path(cache_path)
             apply_nocache_to_path(cache_path)
             self._cache_db = self._cache_env.open_db()
             self._memory_history = deque(maxlen=10)

@@ -174,7 +174,7 @@ impl RustFederatedQTable {
                     return;
                 }
                 total_count.fetch_add(1, Ordering::Relaxed);
-                guard.insert(full_key, target);
+                guard.insert(full_key.clone(), target);
                 target
             }
         };

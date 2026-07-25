@@ -160,7 +160,10 @@ class MoERouter:
 
     async def _load_expert(self, expert_name: str) -> bool:
         """
-        Lazy load experta přes mlx_lm.load().
+        Lazy load experta přes mlx_lm.load() bez blokování event loopu.
+
+        Issue M-04: mlx_lm.load() je synchroní blocking call (1-20s).
+        Běží v MLXWorker thread, event loop zůstává volný pro jiné coroutines.
 
         Args:
             expert_name: Jméno experta k načtení
@@ -175,12 +178,15 @@ class MoERouter:
             await self._evict_lru_expert()
         try:
             from mlx_lm import load
+            from hledac.universal.core.mlx_inference_lock import run_in_mlx_worker
+
             model_path = self.config.model_paths.get(expert_name)
             if not model_path:
                 logger.error(f'No model path configured for expert: {expert_name}')
                 return False
-            logger.info(f'Loading expert: {expert_name} from {model_path}')
-            model, tokenizer = load(model_path)
+            logger.info(f'Loading expert: {expert_name} from {model_path} (non-blocking)')
+            # Issue M-04: run mlx_lm.load() in worker thread — event loop stays FREE
+            model, tokenizer = await run_in_mlx_worker(load, model_path)
             try:
                 from mlx_lm.utils import make_prompt_cache
                 self._prompt_cache_by_expert[expert_name] = make_prompt_cache(model)
@@ -190,7 +196,7 @@ class MoERouter:
                 self._prompt_cache_by_expert[expert_name] = None
             self._experts[expert_name] = (model, tokenizer)
             self._expert_usage[expert_name] = 1
-            logger.info(f"✓ Expert '{expert_name}' loaded")
+            logger.info(f"✓ Expert '{expert_name}' loaded (non-blocking)")
             return True
         except Exception as e:
             logger.error(f"Failed to load expert '{expert_name}': {e}")
@@ -480,7 +486,10 @@ class MoERouter:
 
     async def _generate_with_expert(self, expert_name: str, query: str, context: dict[str, Any], system_prompt: str | None=None) -> str:
         """
-        Generovat pomocí konkrétního experta.
+        Generovat pomocí konkrétního experta bez blokování event loopu.
+
+        Issue M-04: mlx_lm.generate() je synchroní blocking call (1-60s).
+        Běží v MLXWorker thread, event loop zůstává volný pro jiné coroutines.
 
         Args:
             expert_name: Jméno experta
@@ -495,13 +504,26 @@ class MoERouter:
             return f'Error: Expert {expert_name} not loaded'
         try:
             from mlx_lm import generate
+            from hledac.universal.core.mlx_inference_lock import run_in_mlx_worker
+
             model, tokenizer = self._experts[expert_name]
             formatted_prompt = self._format_expert_prompt(expert_name, query, context, system_prompt)
             if self._sanitize_for_llm is not None:
                 formatted_prompt = self._sanitize_for_llm(formatted_prompt)[:MAX_LLM_PROMPT_CHARS]
             else:
                 formatted_prompt = fallback_sanitize(formatted_prompt, max_length=MAX_LLM_PROMPT_CHARS)[:MAX_LLM_PROMPT_CHARS]
-            response = generate(model, tokenizer, prompt=formatted_prompt, temp=self.config.temperature, max_tokens=self.config.max_tokens_per_expert, max_kv_size=8192, kv_bits=4, prompt_cache=self._prompt_cache_by_expert.get(expert_name), verbose=False)
+            # Issue M-04: run mlx_lm.generate() in worker thread — event loop stays FREE
+            response = await run_in_mlx_worker(
+                generate,
+                model, tokenizer,
+                prompt=formatted_prompt,
+                temp=self.config.temperature,
+                max_tokens=self.config.max_tokens_per_expert,
+                max_kv_size=8192,
+                kv_bits=4,
+                prompt_cache=self._prompt_cache_by_expert.get(expert_name),
+                verbose=False,
+            )
             return response.strip()
         except Exception as e:
             logger.error(f'Expert {expert_name} generation failed: {e}')

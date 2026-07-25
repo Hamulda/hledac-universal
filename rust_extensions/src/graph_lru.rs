@@ -14,7 +14,12 @@
 use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+// parking_lot: no poisoning (panic in one thread won't poison the mutex),
+// ~2x faster than std::sync::Mutex, and .lock() returns Guard directly (no Result).
+// This prevents unwrap() panics from propagating as Rust panics across the PyO3 FFI boundary.
+use parking_lot::Mutex;
 
 use pyo3::prelude::*;
 
@@ -246,6 +251,7 @@ impl<K: Clone + Hash + Eq + std::fmt::Display, V: Clone> GraphLRUCache<K, V> {
 // Python wrapper
 #[pyclass]
 pub struct PyGraphLRUCache {
+    // parking_lot::Mutex: no poisoning, no unwrap needed, ~2x faster than std::sync::Mutex.
     cache: Arc<Mutex<GraphLRUCache<String, Vec<u8>>>>,
 }
 
@@ -261,13 +267,13 @@ impl PyGraphLRUCache {
     }
 
     fn get(&self, key: String) -> Option<Vec<u8>> {
-        self.cache.lock().unwrap()
+        self.cache.lock()
             .entries.get(&key)
             .map(|e| e.value.clone())
     }
 
     fn put(&self, key: String, value: Vec<u8>) -> bool {
-        let mut cache = self.cache.lock().unwrap();
+        let mut cache = self.cache.lock();
         let size = GraphLRUCache::<String, Vec<u8>>::estimate_size(&value);
         let key_bytes = key.clone();
 
@@ -296,24 +302,34 @@ impl PyGraphLRUCache {
     }
 
     fn len(&self) -> usize {
-        self.cache.lock().unwrap().len()
+        self.cache.lock().len()
     }
 
     fn is_empty(&self) -> bool {
-        self.cache.lock().unwrap().is_empty()
+        self.cache.lock().is_empty()
     }
 
     fn clear(&self) {
-        self.cache.lock().unwrap().clear();
+        self.cache.lock().clear();
     }
 
     fn stats(&self) -> HashMap<String, usize> {
-        let cache = self.cache.lock().unwrap();
-        let mut stats = HashMap::new();
-        stats.insert("entries".to_string(), cache.entries.len());
-        stats.insert("bytes".to_string(), cache.current_bytes);
-        stats.insert("max_entries".to_string(), cache.max_entries);
-        stats.insert("max_bytes".to_string(), cache.max_bytes);
+        // Capture values under lock, then build HashMap outside lock.
+        // Pre-allocate HashMap capacity to avoid reallocation.
+        let (entries, bytes, max_entries, max_bytes) = {
+            let cache = self.cache.lock();
+            (
+                cache.entries.len(),
+                cache.current_bytes,
+                cache.max_entries,
+                cache.max_bytes,
+            )
+        };
+        let mut stats = HashMap::with_capacity(4);
+        stats.insert("entries".to_string(), entries);
+        stats.insert("bytes".to_string(), bytes);
+        stats.insert("max_entries".to_string(), max_entries);
+        stats.insert("max_bytes".to_string(), max_bytes);
         stats
     }
 }

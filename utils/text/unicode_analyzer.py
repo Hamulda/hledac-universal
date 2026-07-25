@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from hledac.universal.utils.async_helpers import safe_create_task
+from utils.sync_bridge import run_sync_async
 import logging
 import unicodedata
 from dataclasses import dataclass, field
@@ -425,17 +426,9 @@ class UnicodeAttackAnalyzer:
         """Context manager exit."""
         if self._initialized:
             try:
-                loop = asyncio.get_running_loop()
-                if loop.is_running():
-                    safe_create_task(self.cleanup())
-                else:
-                    import threading
-                    threading.Thread(target=asyncio.run, args=(self.cleanup(),), daemon=True).start()
-            except RuntimeError:
-                try:
-                    asyncio.run(self.cleanup())
-                except Exception as e:
-                    logger.warning(f'[F206AC] unicode_analyzer cleanup failed: {e}')
+                run_sync_async(self.cleanup())
+            except Exception as e:
+                logger.warning(f'[F206AC] unicode_analyzer cleanup failed: {e}')
 
 def create_unicode_analyzer(config: UnicodeConfig | None=None) -> UnicodeAttackAnalyzer | None:
     """

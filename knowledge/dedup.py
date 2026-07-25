@@ -607,7 +607,7 @@ class DedupManager:
             raw = self._unified_store.get_raw('dedup', key)
             if raw is None:
                 return None
-            return bytes(raw).decode('utf-8')
+            return raw.decode('utf-8')  # S-02: raw IS bytes from LMDB buffers=True
         if self._dedup_lmdb is None:
             return None
         try:
@@ -616,7 +616,7 @@ class DedupManager:
                 raw = txn.get(key)
                 if raw is None:
                     return None
-                return bytes(raw).decode('utf-8')
+                return raw.decode('utf-8')  # S-02: raw IS bytes from LMDB buffers=True
         except Exception:
             self._dedup_lmdb_last_error = f'lookup failed for fp={fp[:8]}'
             return None

@@ -8,6 +8,7 @@ Funkce:
 - Parallel plan evaluation
 """
 import asyncio
+from collections import deque
 from hledac.universal.utils.async_helpers import safe_create_task
 import logging
 import time
@@ -58,7 +59,7 @@ class RollbackManager:
     __slots__ = tuple(('_checkpoints',))
 
     def __init__(self):
-        self._checkpoints: list[dict[str, Any]] = []
+        self._checkpoints: deque[dict[str, Any]] = deque(maxlen=128)
 
     def create_checkpoint(self, state: dict[str, Any]) -> int:
         """
@@ -90,7 +91,7 @@ class RollbackManager:
 
     def clear(self) -> None:
         """Vymazat všechny checkpointy"""
-        self._checkpoints = []
+        self._checkpoints.clear()
 
 class PredictivePlanner:
     """
@@ -108,7 +109,7 @@ class PredictivePlanner:
         self.min_confidence = min_confidence
         self.metrics = PredictionMetrics()
         self.rollback_manager = RollbackManager()
-        self._prediction_history = []
+        self._prediction_history: deque[dict[str, Any]] = deque(maxlen=512)
 
     async def plan_with_prediction(self, planner_func, executor_func, context: dict[str, Any], max_speculative_steps: int=3) -> dict[str, Any]:
         """

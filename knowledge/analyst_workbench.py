@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from knowledge.evidence_chain import EvidenceChain
 from hledac.universal.core.protocols import safe_get_finding_field
+from utils.sync_bridge import run_sync_async
 __all__ = ['AnalystWorkbench', 'AnalystAnswer', 'AnalystBrief', 'EvidencePointer', 'RelatedEntity', 'create_analyst_workbench', 'get_evidence_chain', 'MAX_CORROBORATION_SUMMARY']
 MAX_CONTEXT_BYTES: int = 8192
 MAX_TOP_K: int = 20
@@ -532,12 +533,7 @@ class AnalystWorkbench:
 
         For use in sync contexts. Prefer ask() in async contexts.
         """
-        import asyncio
-        try:
-            loop = asyncio.get_running_loop()
-            return loop.run_until_complete(self.ask(question, use_model=use_model, model_name=model_name))
-        except RuntimeError:
-            return asyncio.run(self.ask(question, use_model=use_model, model_name=model_name))
+        return run_sync_async(self.ask(question, use_model=use_model, model_name=model_name))
 
     async def get_evidence_chain(self, finding_id: str) -> EvidenceChain | None:
         """

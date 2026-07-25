@@ -230,6 +230,12 @@ class _BatchItem(msgspec.Struct):
     future: asyncio.Future = field(default=None, compare=False)
     wait_since: float = field(default_factory=time.time, compare=False)
 
+    def __lt__(self, other: _BatchItem) -> bool:
+        """Heap ordering: lower priority (more negative = higher voi_score) wins. Ties broken by counter."""
+        if not isinstance(other, _BatchItem):
+            return NotImplemented
+        return (self.priority, self.counter) < (other.priority, other.counter)
+
 class ModelQuery(msgspec.Struct):
     """Model query with metadata."""
     query_id: str

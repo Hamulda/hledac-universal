@@ -315,14 +315,10 @@ impl MmapIocDedupStore {
         #[cfg(target_os = "macos")]
         if let Some(parent) = Path::new(&self.file_path).parent() {
             if !parent.as_os_str().is_empty() {
-                let dir_file = std::fs::OpenOptions::new()
+                if let Ok(dir_file) = std::fs::OpenOptions::new()
                     .write(true)
                     .open(parent)
-                    .and_then(|d| {
-                        // Re-open to get a clean fd for sync
-                        std::fs::File::from(d.into_parts().0)
-                    });
-                if let Ok(dir_file) = dir_file {
+                {
                     let _ = dir_file.sync_all();
                 }
             }

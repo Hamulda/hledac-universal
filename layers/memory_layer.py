@@ -132,7 +132,7 @@ class _MemoryStateManager:
     - Thermal awareness and throttling
     - Automatic mitigation actions
     """
-    __slots__ = tuple(('_current_state', '_finalizer', '_health_check_task', '_max_history', '_metrics_history', '_running', '_state_change_callbacks', '_state_transitions', '_stopped', '_thermal_sampler', 'config'))
+    __slots__ = tuple(('_current_state', '_finalizer', '_health_check_task', '_max_history', '_metrics_history', '_running', '_state_change_callbacks', '_state_transitions', '_stopped', '_thermal_sampler', '__weakref__', 'config'))
 
     def __init__(self, config: MemoryConfig):
         self.config = config
@@ -442,14 +442,17 @@ class MemoryLayer:
         # Register state change callback
         memory.on_state_change(lambda old, new: print(f"{old} → {new}"))
     """
-    __slots__ = tuple(('_cache_clears', '_context_swaps', '_gc_calls', '_loaded_models', '_model_states', '_state_manager', '_stealth', '_storage', 'config'))
+    __slots__ = tuple(('_cache_clears', '_context_swaps', '_ctx', '_deep_hermes_engine', '_gc_calls', '_loaded_models', '_model_states', '_state_manager', '_stealth', '_storage', 'config'))
 
-    def __init__(self, config: MemoryConfig | None=None):
+    def __init__(self, config: MemoryConfig | None=None, deep_hermes_engine: Any=None):
         """
         Initialize MemoryLayer.
 
         Args:
             config: Memory configuration (uses defaults if None)
+            deep_hermes_engine: DeepHermes3Engine instance to share model from.
+                M-05 fix: Previously loaded a separate BF16 Hermes-3 (~6GB Metal).
+                Now reuses the engine's cached model to avoid duplicate allocation.
         """
         self.config = config or MemoryConfig()
         self._state_manager = _MemoryStateManager(self.config)
@@ -460,14 +463,33 @@ class MemoryLayer:
         self._context_swaps = 0
         self._gc_calls = 0
         self._cache_clears = 0
+        # M-05: injected engine — shares model with DeepHermes3Engine canonical path
+        self._deep_hermes_engine = deep_hermes_engine
+        self._ctx: Any = None  # Layer Protocol: set in mount()
         self._state_manager.on_state_change(self._on_state_change)
         logger.info(f'MemoryLayer initialized (limit: {self.config.memory_limit_mb}MB)')
     layer_name: str = 'memory'
-    _ctx: Any | None = field(default=None, repr=False)
 
     async def mount(self, ctx: Any) -> None:
-        """Layer Protocol: mount."""
+        """Layer Protocol: mount.
+
+        M-05: If deep_hermes_engine was not injected at construction time,
+        lazily resolve it from ctx (set there by the sprint runtime wiring).
+        """
         self._ctx = ctx
+        # M-05: Lazily resolve engine from ctx if not injected at construction
+        if self._deep_hermes_engine is None:
+            try:
+                self._deep_hermes_engine = ctx.get('deephermes3_engine')
+                if self._deep_hermes_engine is not None:
+                    logger.info('M-05: DeepHermes3Engine resolved from context')
+            except Exception:
+                pass
+            if self._deep_hermes_engine is None:
+                try:
+                    self._deep_hermes_engine = ctx.get('hermes_engine')
+                except Exception:
+                    pass
         await self.initialize()
         ctx.set('memory', self)
         ctx.set_meta(memory_pressure=0.0)
@@ -626,16 +648,36 @@ class MemoryLayer:
         return state_models.get(state, [])
 
     async def _load_model(self, model_name: str) -> Any:
-        """Load a model by name"""
+        """Load a model by name.
+
+        M-05 fix: For hermes-3, delegates to the injected DeepHermes3Engine
+        instance to reuse its already-loaded model (cached via HermesModelCache).
+        Previously loaded a separate BF16 Hermes-3 directly via mlx_lm.load(),
+        causing ~6GB Metal allocation independent of DeepHermes3Engine.
+        """
         logger.debug(f'Loading model: {model_name}')
         if model_name == 'hermes-3':
-            try:
-                from mlx_lm import load as mlx_load
-                model, tokenizer = mlx_load('mlx-community/Hermes-3-Llama-3.2-3B-bf16')
-                return {'model': model, 'tokenizer': tokenizer}
-            except Exception as e:
-                logger.error(f'Failed to load Hermes-3: {e}')
+            # M-05: Use the injected engine's already-loaded model reference.
+            # DeepHermes3Engine loads via HermesModelCache (4bit, ~2GB) and
+            # _ensure_model_loaded() ensures it's already warm before first use.
+            engine = self._deep_hermes_engine
+            if engine is None:
+                logger.error('M-05: deep_hermes_engine not injected — cannot share model')
                 return None
+            model = engine.model
+            if model is None:
+                # Engine loaded but model not yet initialized — trigger lazy load
+                try:
+                    await engine._ensure_model_loaded()
+                    model = engine.model
+                except Exception as e:
+                    logger.error(f'M-05: failed to ensure Hermes-3 model loaded: {e}')
+                    return None
+            if model is not None:
+                logger.debug('M-05: Hermes-3 model shared from DeepHermes3Engine')
+                return {'model': model, 'tokenizer': engine.tokenizer}
+            logger.error('M-05: Hermes-3 model is None after ensure_model_loaded')
+            return None
         return None
 
     async def _unload_model(self, model_name: str) -> None:

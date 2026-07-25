@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from hledac.universal.paths import LMDB_ROOT
-from hledac.universal.tools.file_cache import apply_nocache_to_path, madv_free_reusable_on_path
+from hledac.universal.tools.file_cache import apply_nocache_to_path, madv_nocache_on_path  # R-03: was madv_free_reusable_on_path (broken)
 from hledac.universal.utils.msgspec_json import decode, encode
 
 if TYPE_CHECKING:
@@ -125,8 +125,9 @@ def sync_save_sprint_seeds(sprint_id: str, seeds: list[str]) -> None:
 
         _LMDB_PATH.parent.mkdir(parents=True, exist_ok=True)
         with lmdb.open(str(_LMDB_PATH), map_size=_LMDB_MAP_SIZE, readahead=False) as env:
-            # F273F: Darwin page cache hint — reclaimable pages don't compete with Metal budget
-            madv_free_reusable_on_path(_LMDB_PATH)
+            # F273F + R-03: Darwin page cache hint — reclaimable pages don't compete with Metal budget
+            # R-03: madv_nocache_on_path replaces broken madv_free_reusable_on_path (madvise NULL+0)
+            madv_nocache_on_path(_LMDB_PATH)
             apply_nocache_to_path(_LMDB_PATH)
             key = _make_key(sprint_id)
             val = encode(seeds)
@@ -156,8 +157,9 @@ def sync_load_sprint_seeds(sprint_id: str) -> list[str]:
         if not _LMDB_PATH.exists():
             return []
         with lmdb.open(str(_LMDB_PATH), map_size=_LMDB_MAP_SIZE, readahead=False, readonly=True) as env:
-            # F273F: mark pages as reusable so kernel can reclaim without writeback
-            madv_free_reusable_on_path(_LMDB_PATH)
+            # F273F + R-03: mark pages as reusable so kernel can reclaim without writeback
+            # R-03: madv_nocache_on_path replaces broken madv_free_reusable_on_path (madvise NULL+0)
+            madv_nocache_on_path(_LMDB_PATH)
             key = _make_key(sprint_id)
             with env.begin() as txn:
                 raw = txn.get(key)

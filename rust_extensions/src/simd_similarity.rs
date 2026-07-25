@@ -64,7 +64,7 @@ const MAX_QUERIES: usize = 100;
 /// Normalize a vector in-place using ARM NEON (aarch64).
 /// Returns false on zero-vector.
 #[cfg(target_arch = "aarch64")]
-unsafe fn normalize_neon(vec: &mut [f32]) -> bool { unsafe {
+unsafe fn normalize_neon(vec: &mut [f32]) -> bool {
     use core::arch::aarch64::*;
 
     let n = vec.len();
@@ -118,7 +118,7 @@ unsafe fn normalize_neon(vec: &mut [f32]) -> bool { unsafe {
     }
 
     true
-}}
+}
 
 /// Normalize a vector in-place using SSE (x86_64).
 /// Returns false on zero-vector.
@@ -218,7 +218,7 @@ fn normalize(vec: &mut [f32]) -> bool {
 /// ISSUE-007: now validates length match — original had no check.
 #[cfg(target_arch = "aarch64")]
 #[inline]
-unsafe fn dot_neon(a: &[f32], b: &[f32]) -> f32 { unsafe {
+unsafe fn dot_neon(a: &[f32], b: &[f32]) -> f32 {
     use core::arch::aarch64::*;
 
     let n = a.len();
@@ -248,7 +248,7 @@ unsafe fn dot_neon(a: &[f32], b: &[f32]) -> f32 { unsafe {
         dot += a[j] * b[j];
     }
     dot
-}}
+}
 
 /// Compute dot product using SSE3 (x86_64).
 /// Caller guarantees a and b have the same length.
@@ -288,7 +288,7 @@ unsafe fn dot_sse3(a: &[f32], b: &[f32]) -> f32 {
 
 /// Dispatcher: dot product with best available SIMD.
 #[inline]
-unsafe fn dot(a: &[f32], b: &[f32]) -> f32 { unsafe {
+unsafe fn dot(a: &[f32], b: &[f32]) -> f32 {
     #[cfg(target_arch = "aarch64")]
     {
         dot_neon(a, b)
@@ -302,7 +302,7 @@ unsafe fn dot(a: &[f32], b: &[f32]) -> f32 { unsafe {
         // scalar fallback — not used on aarch64/x86_64 but kept for completeness
         a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
     }
-}}
+}
 
 // ---------------------------------------------------------------------------
 // Core cosine scoring — pre-normalized candidates
