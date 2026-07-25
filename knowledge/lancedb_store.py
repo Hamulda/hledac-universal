@@ -25,7 +25,7 @@ import logging
 import os
 import sys
 import time
-from collections import OrderedDict, defaultdict, deque
+from collections import defaultdict, deque
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -128,34 +128,170 @@ def _resolve_lancedb_cache_size() -> int:
     return _HLEDAC_DEFAULT_CACHE_MB * 1024 * 1024
 _WRITEBACK_MAX = 1000
 _WRITEBACK_BATCH_SIZE = 100
-_WRITE_QUEUE: asyncio.Queue[tuple[list[dict[str, Any]], float]] | None = None
-_WRITE_QUEUE_LOCK = LazyAsyncioLock()
-_WRITE_WORKER_TASK: asyncio.Task | None = None
+
+# Multi-writer architecture: per-table queues + multiple writer tasks
+# M5 fix: replaces single global queue with sharded per-table queues
+_NUM_WRITERS = 4  # M1 8GB: 4 writers × I/O-bound = good parallelism
+_queues: dict[str, asyncio.Queue[tuple[list[dict[str, Any]], float]]] = {}
+_queues_lock = LazyAsyncioLock()
+_writer_tasks: list[asyncio.Task] = []
+_writer_shutdown = False
+
+
+async def _get_table_queue(table_name: str) -> asyncio.Queue:
+    """Get or create a per-table write queue (sharded by table name).
+
+    Multiple tables → multiple queues → writes to different tables run in parallel.
+    """
+    async with _queues_lock:
+        if table_name not in _queues:
+            _queues[table_name] = asyncio.Queue(maxsize=100)
+        return _queues[table_name]
+
+
+async def _ensure_write_workers() -> None:
+    """Start multiple write workers if not already running (idempotent).
+
+    M5: Replaces single _ensure_write_worker with multi-writer pool.
+    Each writer round-robins across all table queues.
+    """
+    global _writer_tasks, _writer_shutdown
+    if _writer_tasks:
+        return
+    _writer_shutdown = False
+    for i in range(_NUM_WRITERS):
+        t = asyncio.create_task(_writer_loop(i))
+        _writer_tasks.append(t)
+    logger.info(f'[LANCEDB:QW] {_NUM_WRITERS} write workers started')
+
+
+async def _writer_loop(writer_id: int) -> None:
+    """Background worker that drains write queues round-robin.
+
+    M5: Multi-writer — each worker collects from ALL table queues,
+    allowing parallel writes to different tables.
+
+    Batch collection: gather up to 10 items across all queues per tick
+    to amortize queue overhead while staying responsive.
+    """
+    while True:
+        try:
+            items: list[tuple[asyncio.Queue, list[dict[str, Any]], float, str]] = []
+            async with _queues_lock:
+                queue_names = list(_queues.keys())
+
+            # Round-robin collect from all table queues (batch of up to 10)
+            for qname in queue_names:
+                if len(items) >= 10:
+                    break
+                async with _queues_lock:
+                    q = _queues.get(qname)
+                    if q is None:
+                        continue
+
+                if q.empty():
+                    continue
+                try:
+                    batch, deadline = q.get_nowait()
+                    if batch is None:
+                        q.task_done()
+                        continue
+                    if time.monotonic() > deadline + 30:
+                        logger.debug('[LANCEDB:QW] Skipping stale batch (deadline expired)')
+                        q.task_done()
+                        continue
+                    items.append((q, batch, deadline, qname))
+                except asyncio.QueueEmpty:
+                    pass
+
+            if not items:
+                await asyncio.sleep(0.01)  # Brief yield before re-scanning
+                continue
+
+            # Process collected items (grouped by table for efficiency)
+            by_table: dict[str, list[tuple[list[dict[str, Any]], float]]] = {}
+            for q, batch, deadline, qname in items:
+                if qname not in by_table:
+                    by_table[qname] = []
+                by_table[qname].append((batch, deadline))
+
+            for qname, batches in by_table.items():
+                if not batches:
+                    continue
+                try:
+                    # Flatten batches for same table
+                    all_records = []
+                    for batch, deadline in batches:
+                        all_records.extend(batch)
+
+                    # Get table reference from first batch to determine table
+                    # We store the batch with its queue, so we get table from caller
+                    # For multi-table safety: use a shared registry
+                    table = _get_table_for_queue_name(qname)
+                    if table is not None:
+                        await safe_wait_for(
+                            asyncio.to_thread(table.add, all_records),
+                            timeout=30.0,
+                            label=f'lancedb_table_add:{qname}'
+                        )
+                        logger.debug(f'[LANCEDB:QW] writer={writer_id} wrote {len(all_records)} records to {qname}')
+                except asyncio.TimeoutError:
+                    logger.warning(f'[LANCEDB:QW] writer={writer_id} add timed out after 30s')
+                except Exception as e:
+                    logger.warning(f'[LANCEDB:QW] writer={writer_id} add failed: {e}')
+
+            # Mark all queues done
+            for q, batch, deadline, qname in items:
+                q.task_done()
+
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass
+
+
+# Registry: table_name → table object (for multi-writer writes)
+_table_registry: dict[str, Any] = {}
+_table_registry_lock = LazyAsyncioLock()
+
+
+def _register_table(table_name: str, table: Any) -> None:
+    """Register a table for multi-writer access."""
+    global _table_registry
+    _table_registry[table_name] = table
+
+
+def _get_table_for_queue_name(table_name: str) -> Any:
+    """Get table reference by queue name."""
+    return _table_registry.get(table_name)
+
 
 async def _get_write_queue() -> asyncio.Queue:
-    """Get or create the global write queue (singleton, async-safe)."""
-    global _WRITE_QUEUE
-    if _WRITE_QUEUE is None:
-        async with _WRITE_QUEUE_LOCK:
-            if _WRITE_QUEUE is None:
-                _WRITE_QUEUE = asyncio.Queue(maxsize=1)
-    return _WRITE_QUEUE
+    """Legacy compatibility — returns the default table queue.
+
+    Deprecated: prefer _get_table_queue(table_name) for sharded writes.
+    """
+    return await _get_table_queue('entities')
+
 
 async def _ensure_write_worker(table: Any) -> None:
-    """Start the write worker if not already running (idempotent, thread-safe)."""
-    global _WRITE_WORKER_TASK
-    if _WRITE_WORKER_TASK is not None and (not _WRITE_WORKER_TASK.done()):
-        return
-    queue = await _get_write_queue()
-    _WRITE_WORKER_TASK = asyncio.create_task(_write_worker(table, queue))
-    logger.info('[LANCEDB:QW] Write worker started')
+    """Legacy compatibility wrapper — starts multi-writer pool.
+
+    Deprecated: use _ensure_write_workers() instead.
+    Registers the table and starts the writer pool.
+    """
+    table_name = getattr(table, '_table_name', 'entities')
+    _register_table(table_name, table)
+    await _ensure_write_workers()
+
 
 async def _write_worker(table: Any, queue: asyncio.Queue) -> None:
-    """Background worker that drains the write queue serially.
+    """Legacy single-writer (redirected to multi-writer pool).
 
-    This is the single-writer bottleneck that prevents LanceDB 0.33+ segfaults
-    when multiple asyncio tasks try to write concurrently.
+    This function is kept for backward compatibility with existing tests.
+    The actual work is done by _writer_loop in the multi-writer pool.
     """
+    # Drain the provided queue (redirect to new architecture)
     while True:
         try:
             batch, deadline = await queue.get()
@@ -163,6 +299,7 @@ async def _write_worker(table: Any, queue: asyncio.Queue) -> None:
                 break
             if time.monotonic() > deadline + 30:
                 logger.debug('[LANCEDB:QW] Skipping stale batch (deadline expired)')
+                queue.task_done()
                 continue
             try:
                 await safe_wait_for(asyncio.to_thread(table.add, batch), timeout=30.0, label='lancedb_table_add')
@@ -209,7 +346,11 @@ class LanceDBIdentityStore:
     _BINARY_FILTER_COUNT = 500
     _MMR_TOP_K = 50
     _EVICTION_THRESHOLD_RATIO = 0.85
-    __slots__ = tuple(('_cache_db', '_cache_env', '_embedding_dim', '_mlx_embeddings', '_mlx_embeddings_total_count', '_mlx_id_to_idx', '_mlx_ids', '_mlx_load_chunk_size', '_orch', '_table', 'db', 'uri'))
+    # Compact thresholds
+    _COMPACT_FRAGMENT_THRESHOLD = 1000  # Trigger compact after N inserts
+    _COMPACT_TIME_THRESHOLD_S = 300.0  # Trigger compact after N seconds
+    _COMPACT_MIN_INTERVAL_S = 60.0  # Minimum interval between compacts
+    __slots__ = tuple(('_cache_db', '_cache_env', '_embedding_dim', '_mlx_embeddings', '_mlx_embeddings_total_count', '_mlx_id_to_idx', '_mlx_ids', '_mlx_load_chunk_size', '_orch', '_table', 'db', 'uri', '_binary_embeddings', '_compact_in_flight', '_insert_count_since_compact', '_last_compact_ts'))
 
     def __init__(self, uri: str=str(_DEFAULT_URI), orchestrator=None):
         """
@@ -279,7 +420,7 @@ class LanceDBIdentityStore:
         self._mrl_enabled = False
         self._mlx_embed_manager = None
         self._fallback_dim = 256
-        self._writeback_buffer: OrderedDict = OrderedDict()
+        self._writeback_buffer: dict = {}
         self._writeback_lock = asyncio.Lock()
         self._access_counts = defaultdict(int)
         self._index_build_status: dict[str, Any] = {'in_progress': False, 'started_at': None, 'completed_at': None, 'failed': False, 'index_type': None, 'progress_percent': 0}
@@ -296,6 +437,12 @@ class LanceDBIdentityStore:
         self._ivfpq_nprobes: int = max(1, min(64, int(os.environ.get('HLEDAC_LANCEDB_IVFPQ_NPROBES', '8'))))
         self._ivfpq_trained: bool = False
         self._ivfpq_lock: asyncio.Lock = asyncio.Lock()
+        # Compact tracking
+        self._compact_in_flight: bool = False
+        self._insert_count_since_compact: int = 0
+        self._last_compact_ts: float = 0.0
+        # Binary embeddings (for fast pre-filter)
+        self._binary_embeddings: Any = None
         try:
             from knowledge.lancedb_auto_tuner import make_default_tuner
             self._autotune = make_default_tuner(table_name='entities', state_dir=Path(uri).parent, num_sub_vectors=self._ivfpq_num_sub_vectors, vector_column='embedding', key_column='id')
@@ -580,12 +727,22 @@ class LanceDBIdentityStore:
 
     async def shutdown(self) -> None:
         """Cleanup resources."""
-        for task_name in ['_cache_maintenance_task', '_write_worker_task']:
+        global _writer_tasks, _writer_shutdown
+        for task_name in ['_cache_maintenance_task']:
             task = getattr(self, task_name, None)
             if task:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
+        # M5: shutdown multi-writer pool
+        if _writer_tasks:
+            _writer_shutdown = True
+            for t in _writer_tasks:
+                t.cancel()
+            for t in _writer_tasks:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await t
+            _writer_tasks = []
         await self._flush_writeback()
         if self._cache_env is not None:
             try:
@@ -1185,8 +1342,11 @@ class LanceDBIdentityStore:
         try:
             now = datetime.now(UTC)
             data = [{'id': entity_id, 'embedding': embedding, 'aliases': aliases, 'first_seen': now, 'last_seen': now}]
-            await _ensure_write_worker(self._table)
-            queue = await _get_write_queue()
+            # M5 multi-writer: register table and use per-table queue
+            table_name = 'entities'
+            _register_table(table_name, self._table)
+            await _ensure_write_workers()
+            queue = await _get_table_queue(table_name)
             deadline = time.monotonic() + 60.0
             try:
                 await safe_wait_for(queue.put((data, deadline)), timeout=max(0.0, deadline - time.monotonic()), label='lancedb_queue_put')
@@ -1475,7 +1635,9 @@ class LanceDBIdentityStore:
         ctx = {'thermal': 'NORMAL', 'on_battery': False, 'available_gb': 8.0}
         try:
             if self._orch and hasattr(self._orch, '_memory_mgr') and self._orch._memory_mgr:
-                ctx = self._orch._memory_mgr.get_reranking_context()
+                # ISSUE-P3-02: get_reranking_context() calls _on_battery_power() which uses
+                # subprocess.run() - must run in thread pool to avoid blocking event loop
+                ctx = await asyncio.to_thread(self._orch._memory_mgr.get_reranking_context)
         except Exception:
             pass
         thermal = ctx.get('thermal', 'NORMAL')
@@ -1755,7 +1917,7 @@ class LanceDBAcademicStore:
         - embedding: 384d FastEmbed vector
     """
     EMBEDDING_DIM = 384
-    __slots__ = tuple(('_db', '_db_path', '_dim', '_embed_model', '_embedder', '_embedder_backend', '_initialized', '_lancedb_has_fts', '_table'))
+    __slots__ = tuple(('_db', '_db_path', '_dim', '_embed_model', '_embedder', '_embedder_backend', '_initialized', '_lancedb_has_fts', '_table', '_ivfpq_nprobes'))
 
     def __init__(self, db_path: str | None=None, dim: int=384) -> None:
         """
@@ -1777,6 +1939,8 @@ class LanceDBAcademicStore:
         self._embed_model = 'BAAI/bge-small-en-v1.5'
         self._initialized = False
         self._lancedb_has_fts = False
+        # M1 8GB IVF-PQ nprobes (same heuristic as LanceDBIdentityStore)
+        self._ivfpq_nprobes: int = max(1, min(64, int(os.environ.get('HLEDAC_LANCEDB_IVFPQ_NPROBES', '8'))))
 
     async def initialize(self) -> None:
         """Initialize table and embedder."""

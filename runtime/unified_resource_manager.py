@@ -250,7 +250,7 @@ class UnifiedResourceManager:
             active_count = sum(1 for t in self._active_tasks.values() if not t.done())
             if active_count < effective_limit:
                 break
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0)
 
         async with self._lock:
             # E4: safe_create_task propagates OTel trace context into child task

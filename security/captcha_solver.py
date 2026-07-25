@@ -39,7 +39,7 @@ import asyncio
 import hashlib
 import logging
 import time
-from collections import OrderedDict
+from utils.lru_cache import LRUCache
 logger = logging.getLogger(__name__)
 _COREML_AVAILABLE = False
 _VN_AVAILABLE = False
@@ -110,7 +110,7 @@ class VisionCaptchaSolver:
         - VNCoreMLModel for text recognition
         - Result caching with 1-hour expiration
     """
-    _result_cache: OrderedDict = OrderedDict()
+    _result_cache: LRUCache = LRUCache(max_size=MAX_CACHE_SIZE)
     _cache_timestamps: dict[str, float] = {}
     CACHE_TTL = 3600
     MAX_CACHE_SIZE = 100
@@ -186,8 +186,7 @@ class VisionCaptchaSolver:
             # does NOT automatically move existing keys to end in Python 3.7+)
             self._result_cache.move_to_end(cache_key)
         while len(self._result_cache) >= self.MAX_CACHE_SIZE:
-            oldest_key = next(iter(self._result_cache))
-            del self._result_cache[oldest_key]
+            oldest_key, _ = self._result_cache.pop_lru()
             self._cache_timestamps.pop(oldest_key, None)
         self._result_cache[cache_key] = result
         self._cache_timestamps[cache_key] = time.time()

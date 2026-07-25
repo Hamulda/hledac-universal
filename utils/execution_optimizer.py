@@ -10,7 +10,7 @@ import multiprocessing
 import os
 import threading
 import time
-from collections import OrderedDict, defaultdict, deque
+from collections import defaultdict, deque
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -21,6 +21,7 @@ import msgspec.json as _json
 import numpy as np
 import psutil
 from .async_helpers import safe_create_task, safe_gather_ok, parallel
+from .lru_cache import LRUCache
 if TYPE_CHECKING:
     pass
 logger = logging.getLogger(__name__)
@@ -154,8 +155,8 @@ class ParallelExecutionOptimizer:
         else:
             self.config = self._load_config('')
         self.task_history = deque(maxlen=1000)
-        self.worker_metrics: OrderedDict[str, dict] = OrderedDict()
-        self.parallel_groups: OrderedDict[str, dict] = OrderedDict()
+        self.worker_metrics: LRUCache[str, dict] = LRUCache(max_size=self.MAX_WORKER_METRICS)
+        self.parallel_groups: LRUCache[str, dict] = LRUCache(max_size=self.MAX_PARALLEL_GROUPS)
         self._execution_predictor = None
         self.load_balancer = LoadBalancer()
         self.resource_monitor = ResourceMonitor()
@@ -229,27 +230,23 @@ class ParallelExecutionOptimizer:
         now = time.time()
         expired = [gid for gid, data in self.parallel_groups.items() if now - data.get('ts', 0) > self.PARALLEL_GROUP_TTL_SECS]
         for gid in expired:
-            del self.parallel_groups[gid]
-        while len(self.parallel_groups) > self.MAX_PARALLEL_GROUPS:
-            self.parallel_groups.popitem(last=False)
+            self.parallel_groups.pop(gid, None)
+        while len(self.parallel_groups) >= self.MAX_PARALLEL_GROUPS:
+            self.parallel_groups.pop_lru()
 
     def _prune_worker_metrics(self) -> None:
         """Prune oldest worker metrics if over cap."""
-        while len(self.worker_metrics) > self.MAX_WORKER_METRICS:
-            self.worker_metrics.popitem(last=False)
+        while len(self.worker_metrics) >= self.MAX_WORKER_METRICS:
+            self.worker_metrics.pop_lru()
 
     def add_parallel_group(self, group_id: str, group_data: dict) -> None:
         """Add a parallel group with bounded storage and TTL."""
         group_data['ts'] = time.time()
-        if group_id in self.parallel_groups:
-            self.parallel_groups.move_to_end(group_id)
         self.parallel_groups[group_id] = group_data
         self._prune_parallel_groups()
 
     def update_worker_metrics(self, worker_id: str, metrics: dict) -> None:
         """Update worker metrics with bounded storage."""
-        if worker_id in self.worker_metrics:
-            self.worker_metrics.move_to_end(worker_id)
         self.worker_metrics[worker_id] = metrics
         self._prune_worker_metrics()
 

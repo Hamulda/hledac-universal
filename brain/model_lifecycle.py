@@ -87,12 +87,13 @@ F186D CONTRACT HARDENING:
 
 
 import gc
-import msgspec
 import logging
 import os
 import threading
 from collections.abc import Callable
 from typing import Any
+
+from hledac.universal.core.locks import LockCategory, register_lock
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +189,7 @@ class EmergencyUnloadSeam:
 # Singleton with double-checked locking (thread-safe on Python 3.14+)
 _seam: EmergencyUnloadSeam | None = None
 _seam_lock = threading.Lock()
+register_lock(LockCategory.MPC, _seam_lock, "model_lifecycle._seam_lock")
 
 
 def get_emergency_seam() -> EmergencyUnloadSeam:
@@ -315,6 +317,7 @@ def _get_mlx_safe() -> Any:
 # load_model() (sync, called from executor threads) and other callers.
 # ---------------------------------------------------------------------------
 _lifecycle_lock = threading.Lock()
+register_lock(LockCategory.METRICS, _lifecycle_lock, "model_lifecycle._lifecycle_lock")
 _lifecycle_state: dict = {
     "loaded": False,
     "current_model": None,
@@ -927,7 +930,9 @@ class ModelLifecycle:
                 mx.metal.set_cache_limit(get_dynamic_metal_cache_limit())
 
             model_path_str = str(self._model_path)
-            result = mlx_lm.load(model_path_str)
+            # C2-FIX: mlx_lm.load() is blocking I/O (disk read + Metal kernel compilation).
+            # Wrapped in asyncio.to_thread() to avoid blocking the event loop.
+            result = await asyncio.to_thread(mlx_lm.load, model_path_str)
             # mlx_lm.load returns (model, tokenizer) or (model, tokenizer, config)
             if isinstance(result, tuple) and len(result) >= 2:
                 self._model, self._tokenizer = result[0], result[1]

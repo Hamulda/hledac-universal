@@ -1,0 +1,14 @@
+version: 1
+processes: []
+stackButtons: []
+testSuites: []
+laneOverlayPolicies: []
+automations: []
+ai:
+  customProviders:
+    - id: MiniMax
+      name: MiniMax
+      baseURL: https://api.minimax.io/v1
+      npm: "@ai-sdk/openai-compatible"
+      models:
+        - MiniMax-M2.7

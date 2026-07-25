@@ -2101,7 +2101,7 @@ async def run_sprint(
         extreme_mode=extreme_mode,
     )
 
-    scheduler = SprintSchedulerV2(config, flags=flags)
+    scheduler = SprintSchedulerV2(_config=config, _flags=flags)
 
     # Sprint F11C: Wire EvidenceLog — fail-safe, M1 8GB safe
     _elog: EvidenceLog | None = None

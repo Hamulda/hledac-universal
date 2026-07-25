@@ -19,185 +19,97 @@ Wiring:
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+import msgspec
 from typing import Any
 
 from runtime.scheduler_v2.protocol import InitResult, SprintContext
 from hledac.universal.utils.async_helpers import parallel
 
 
-# Issue #047 fix: @dataclass(slots=True) eliminates __slots__/__init__ duplication.
-# __slots__ is auto-generated from field declarations — single source of truth.
-# Type-safe, Python 3.10+ feature, 2-3× faster than manual __slots__.
-@dataclass(slots=True)
-class SprintSchedulerV2:
-    # P1-9: Canonical aclose timeout — matches DEFAULT_ACLOSE_TIMEOUT_S.
-    DEFAULT_TIMEOUT_S = 10.0
+class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
     """SprintScheduler v2 — greenfield rewrite with Protocol-based phase composition.
 
     Replaces the 33 449 LOC `SprintScheduler` with a thin orchestrator that
     delegates to typed Phase implementations. All state is passed explicitly
     via SprintContext rather than stored in instance attributes.
 
-    Issue #047 fix: @dataclass(slots=True) — __slots__ auto-generated from fields,
-    __init__ auto-generated, no duplication between __slots__ tuple and __init__ body.
+    O1 fix: msgspec.Struct with frozen=False replaces @dataclass(slots=True) +
+    object.__setattr__ workaround. msgspec.Struct is ~3-5× faster than dataclass,
+    supports mutable fields natively, and requires no __slots__ duplication.
+    msgspec.Struct does not allow explicit __init__ — use field defaults and
+    __post_init__ hook (called by msgspec after __init__).
     """
+    # P1-9: Canonical aclose timeout — matches DEFAULT_ACLOSE_TIMEOUT_S.
+    DEFAULT_TIMEOUT_S = 10.0
 
-    # ── Safe repr for __new__ test fixtures ────────────────────────────────
-    # When tests use SprintScheduler.__new__(cls) without calling __init__,
-    # slots are uninitialized and the dataclass-generated __repr__ raises
-    # AttributeError on the first slot it accesses. Override with a safe repr.
-    def __repr__(self) -> str:
-        try:
-            return f"SprintSchedulerV2(config={getattr(self, '_config', None)!r})"
-        except Exception:  # noqa: BLE001 — fail-soft: __repr__ safety net for test fixtures with uninitialized slots
-            return f"SprintSchedulerV2(id={hex(id(self))})"
-
-    # ── __new__ for test fixtures ──────────────────────────────────────────
-    # Tests use SprintScheduler.__new__(cls) to bypass __init__ (avoids heavy deps).
-    # This initializes all slots to None so inject_* methods work without a full run().
-    def __new__(cls, *args: Any, **kwargs: Any) -> "SprintSchedulerV2":
-        obj = super().__new__(cls)
-        # Initialize all slots to None — required for inject_* methods that access slots
-        for slot in cls.__slots__:  # type: ignore[attr-defined]
-            object.__setattr__(obj, slot, None)
-        return obj
-
-    # ── Constructor params ───────────────────────────────────────────────────
-    _config: Any = field(default=None)
-    _result: Any = field(default=None)
-    _ct_log_client: Any = field(default=None)
-    _ioc_graph: Any = field(default=None)
-    _flags: Any = field(default=None)
+    # ── Constructor params (msgspec generates __init__ from these) ───────────
+    _config: Any = None
+    _result: Any = None  # Created lazily in run() if None
+    _ct_log_client: Any = None
+    _flags: Any = None
+    _ioc_graph: Any = None
 
     # ── Runtime state (set in run() / _initialize_sprint_run()) ──────────────
-    _cancel_event: asyncio.Event | None = field(default=None)
-    _ctx: SprintContext | None = field(default=None)
-    _wall_clock_start: float = field(default=0.0)
+    _cancel_event: asyncio.Event | None = None
+    _ctx: SprintContext | None = None
+    _wall_clock_start: float = 0.0
 
     # ── Phase orchestrators (transient per run) ──────────────────────────────
-    _lifecycle: Any = field(default=None)
-    _runner: Any = field(default=None)
-    _duckdb_store: Any = field(default=None)
-    _hermes_engine: Any = field(default=None)
-    _governor: Any = field(default=None)
-    _evidence_log: Any = field(default=None)
-    _sidecar_orchestrator: Any = field(default=None)
-    _sidecar_tasks: set = field(default_factory=set)
-    _acquisition_plan: Any = field(default=None)
+    _lifecycle: Any = None
+    _runner: Any = None
+    _duckdb_store: Any = None
+    _hermes_engine: Any = None
+    _governor: Any = None
+    _evidence_log: Any = None
+    _sidecar_orchestrator: Any = None
+    _sidecar_tasks: set = msgspec.field(default_factory=set)
+    _acquisition_plan: Any = None
 
     # ── Winddown extras (transient) ─────────────────────────────────────────
-    _synth_windup_task: Any = field(default=None)
-    _privacy_layer: Any = field(default=None)
-    _privacy_context_id: Any = field(default=None)
-    _prev_chain_hash: Any = field(default=None)
-    _sprint_id: str = field(default="unknown")
-    _rel_discovery_engine: Any = field(default=None)
+    _synth_windup_task: Any = None
+    _privacy_layer: Any = None
+    _privacy_context_id: Any = None
+    _prev_chain_hash: Any = None
+    _sprint_id: str = "unknown"
+    _rel_discovery_engine: Any = None
 
     # ── Injectable service references (set by inject_* methods) ─────────────
-    _policy_manager: Any = field(default=None)
-    _prefetch_pipeline: Any = field(default=None)
-    _temporal_predictor: Any = field(default=None)
-    _pivot_planner: Any = field(default=None)
-    _analyst_workbench: Any = field(default=None)
-    _forensics_enricher: Any = field(default=None)
-    _multimodal_enricher: Any = field(default=None)
-    _enrichment_services: Any = field(default=None)
-    _source_economics: Any = field(default=None)
-    _communication_layer: Any = field(default=None)
-    _stealth_layer: Any = field(default=None)
-    _ghost_layer: Any = field(default=None)
-    # Issue #047: _prefetch_oracle and _security_coordinator were MISSING from
-    # __slots__ in the original code — added here so inject methods work correctly.
-    _prefetch_oracle: Any = field(default=None)
-    _security_coordinator: Any = field(default=None)
-    _layer_manager: Any = field(default=None)
+    _policy_manager: Any = None
+    _prefetch_pipeline: Any = None
+    _temporal_predictor: Any = None
+    _pivot_planner: Any = None
+    _analyst_workbench: Any = None
+    _forensics_enricher: Any = None
+    _multimodal_enricher: Any = None
+    _enrichment_services: Any = None
+    _source_economics: Any = None
+    _communication_layer: Any = None
+    _stealth_layer: Any = None
+    _ghost_layer: Any = None
+    _prefetch_oracle: Any = None
+    _security_coordinator: Any = None
+    _layer_manager: Any = None
 
-    def __init__(
-        self,
-        config: Any,
-        ct_log_client: Any = None,
-        flags: Any = None,
-        *,
-        ioc_graph: Any = None,
-    ) -> None:
-        # Issue #047 fix: __post_init__ handles lazy imports and _result init.
-        # __init__ generated by @dataclass(slots=True) assigns constructor params
-        # to fields BEFORE __post_init__ runs, so we call it here explicitly.
-        self.__post_init__(config, ct_log_client, flags, ioc_graph)
+    def __post_init__(self) -> None:
+        """Post-initialization: lazily create _result if not provided.
 
-    def __post_init__(
-        self,
-        config: Any,
-        ct_log_client: Any | None,
-        flags: Any | None,
-        ioc_graph: Any | None,
-    ) -> None:
-        """Post-initialization: lazy imports and _result creation.
-
-        Issue #047 fix: Lazy imports moved from __init__ body to __post_init__
-        to avoid circular import issues with MLX/Metal initialization.
+        O1 fix: msgspec.Struct calls __post_init__ after __init__.
+        Direct field assignment (no object.__setattr__ needed with frozen=False).
         """
-        # Lazy imports to avoid M1 Metal initialization at import time
-        from runtime.scheduler_config import SprintSchedulerConfig
-        from runtime.scheduler_result import SprintSchedulerResult
-
-        object.__setattr__(self, '_config', config)
-        # Issue #9: caller-owned result — created here for BC, but documented as owned by caller
-        object.__setattr__(self, '_result', SprintSchedulerResult())
-        object.__setattr__(self, '_ct_log_client', ct_log_client)
-        object.__setattr__(self, '_ioc_graph', ioc_graph)
-        object.__setattr__(self, '_flags', flags)
-        object.__setattr__(self, '_cancel_event', None)
-        object.__setattr__(self, '_ctx', None)
-        object.__setattr__(self, '_wall_clock_start', 0.0)
-        object.__setattr__(self, '_lifecycle', None)
-        object.__setattr__(self, '_runner', None)
-        object.__setattr__(self, '_duckdb_store', None)
-        object.__setattr__(self, '_hermes_engine', None)
-        object.__setattr__(self, '_governor', None)
-        object.__setattr__(self, '_evidence_log', None)
-        object.__setattr__(self, '_sidecar_orchestrator', None)
-        object.__setattr__(self, '_sidecar_tasks', set())
-        object.__setattr__(self, '_acquisition_plan', None)
-        # Winddown extras
-        object.__setattr__(self, '_synth_windup_task', None)
-        object.__setattr__(self, '_privacy_layer', None)
-        object.__setattr__(self, '_privacy_context_id', None)
-        object.__setattr__(self, '_prev_chain_hash', None)
-        object.__setattr__(self, '_sprint_id', "unknown")
-        object.__setattr__(self, '_rel_discovery_engine', None)
-        # Injectable services (default None — set via inject_* methods)
-        object.__setattr__(self, '_policy_manager', None)
-        object.__setattr__(self, '_prefetch_pipeline', None)
-        object.__setattr__(self, '_temporal_predictor', None)
-        object.__setattr__(self, '_pivot_planner', None)
-        object.__setattr__(self, '_analyst_workbench', None)
-        object.__setattr__(self, '_forensics_enricher', None)
-        object.__setattr__(self, '_multimodal_enricher', None)
-        object.__setattr__(self, '_enrichment_services', None)
-        object.__setattr__(self, '_source_economics', None)
-        object.__setattr__(self, '_communication_layer', None)
-        object.__setattr__(self, '_stealth_layer', None)
-        object.__setattr__(self, '_ghost_layer', None)
-        object.__setattr__(self, '_prefetch_oracle', None)
-        object.__setattr__(self, '_security_coordinator', None)
-
-    # ── Prevent any attribute from being set outside __post_init__ ──────────
-    # Issue #047: slots=True ensures only declared fields can be set.
-    # inject_* methods set attributes after __post_init__, so we use
-    # object.__setattr__ in __post_init__ to bypass dataclass field assignment
-    # restrictions (fields are already assigned by generated __init__).
-    # For inject_* methods: they use self._x = value, which is allowed
-    # because dataclass fields are regular instance attributes.
+        # Lazily create SprintSchedulerResult if caller didn't provide one.
+        # This preserves the BC behavior where run() expects _result to exist.
+        if self._result is None:
+            from runtime.scheduler_result import SprintSchedulerResult
+            # Issue #9: caller-owned result — created here for BC
+            object.__setattr__(self, '_result', SprintSchedulerResult())
 
     async def run(self, query: str) -> Any:
         """Run the sprint — orchestrate prelude → acquisition → winddown phases."""
         import time as _time
 
         _wall_clock_start = _time.monotonic()
-        object.__setattr__(self, '_wall_clock_start', _wall_clock_start)
-        object.__setattr__(self, '_cancel_event', asyncio.Event())
+        self._wall_clock_start = _wall_clock_start
+        self._cancel_event = asyncio.Event()
 
         # Phase 1: Build SprintContext with required fields
         # All services injected via with_services() in _initialize_sprint_run
@@ -241,14 +153,14 @@ class SprintSchedulerV2:
             result=self._result,
             cancel_event=self._cancel_event,
         )
-        object.__setattr__(self, '_lifecycle', _lifecycle_mgr)
-        object.__setattr__(self, '_runner', _lifecycle_mgr)
+        self._lifecycle = _lifecycle_mgr
+        self._runner = _lifecycle_mgr
 
         # Issue #029: Build acquisition plan BEFORE with_cycle(acquisition_plan=...)
         # Previously built in _run_prelude_and_first_cycle, but with_cycle at line ~198
         # reads self._acquisition_plan which was still None — a read-before-write race.
         _acq_plan = await self._build_acquisition_plan(query)
-        object.__setattr__(self, '_acquisition_plan', _acq_plan)
+        self._acquisition_plan = _acq_plan
 
         # Issue #21: Concurrent init — all four services boot in parallel.
         # Sequential was: duckdb → governor → hermes → evidence_log → sidecar (~3-5s sum).
@@ -266,19 +178,19 @@ class SprintSchedulerV2:
             ctx="scheduler_v2:_init_services",
         )
         (_duckdb_store, _governor, _hermes_engine, _evidence_log) = _init_result.ok
-        object.__setattr__(self, '_duckdb_store', _duckdb_store)
-        object.__setattr__(self, '_governor', _governor)
-        object.__setattr__(self, '_hermes_engine', _hermes_engine)
-        object.__setattr__(self, '_evidence_log', _evidence_log)
+        self._duckdb_store = _duckdb_store
+        self._governor = _governor
+        self._hermes_engine = _hermes_engine
+        self._evidence_log = _evidence_log
 
         # Sidecar orchestrator — needs duckdb reference, runs after duckdb init
         _sidecar_orch = await self._init_sidecar_orchestrator(query)
-        object.__setattr__(self, '_sidecar_orchestrator', _sidecar_orch)
+        self._sidecar_orchestrator = _sidecar_orch
 
         # Build per-cycle state and update SprintContext in one call
         # Note: with_cycle takes raw values for _CycleState fields; InitResult services
         # are passed via with_services instead
-        object.__setattr__(self, '_ctx', self._ctx.with_cycle(
+        self._ctx = self._ctx.with_cycle(
             wall_clock_start=wall_clock_start,
             lifecycle=_lifecycle_mgr,
             duckdb_store=_duckdb_store.value if _duckdb_store else None,
@@ -287,17 +199,17 @@ class SprintSchedulerV2:
             sidecar_tasks=self._sidecar_tasks,
             hermes_engine=_hermes_engine.value if _hermes_engine else None,
             evidence_log=_evidence_log.value if _evidence_log else None,
-        ))
+        )
 
         # Inject services into ctx (type-safe via with_services)
-        object.__setattr__(self, '_ctx', self._ctx.with_services(
+        self._ctx = self._ctx.with_services(
             duckdb_store=_duckdb_store,
             governor=_governor,
             hermes_engine=_hermes_engine,
             evidence_log=_evidence_log,
             runner=_lifecycle_mgr,
             lifecycle=_lifecycle_mgr,
-        ))
+        )
 
         # Hermes prewarm (fire-and-forget)
         safe_create_task(self._prewarm_hermes())
@@ -751,7 +663,7 @@ class SprintSchedulerV2:
         _sidecar_raw = self._sidecar_orchestrator.value if self._sidecar_orchestrator else None
 
         # Wire per-cycle state via type-safe with_cycle() — single call replaces 12 _ctx._xxx assignments
-        object.__setattr__(self, '_ctx', self._ctx.with_cycle(
+        self._ctx = self._ctx.with_cycle(
             wall_clock_start=self._wall_clock_start,
             lifecycle=self._lifecycle,
             duckdb_store=_duckdb_raw,
@@ -763,7 +675,7 @@ class SprintSchedulerV2:
             effective_max_cycles=self._config.max_cycles,
             enrichment_services=None,
             sidecar_orchestrator=_sidecar_raw,
-        ))
+        )
 
         _phase_result = await _orch.run(
             ctx=self._ctx,
@@ -791,7 +703,7 @@ class SprintSchedulerV2:
 
         # Wire winddown-specific per-cycle state via type-safe with_cycle()
         # Single call replaces 13 self._ctx._xxx = ... assignments
-        object.__setattr__(self, '_ctx', self._ctx.with_cycle(
+        self._ctx = self._ctx.with_cycle(
             duckdb_store=_duckdb_raw,
             sidecar_orchestrator=self._sidecar_orchestrator,
             synth_windup_task=getattr(self, '_synth_windup_task', None),
@@ -803,7 +715,7 @@ class SprintSchedulerV2:
             sprint_id=getattr(self, '_sprint_id', 'unknown'),
             int_counter_layout=getattr(self._result, '_int_counter_layout', None),
             rel_discovery_engine=getattr(self, '_rel_discovery_engine', None),
-        ))
+        )
 
         _orch = WinddownOrchestrator(scheduler=self)
         await _orch.run(
@@ -822,16 +734,16 @@ class SprintSchedulerV2:
     @sprint_id.setter
     def sprint_id(self, value: str) -> None:
         """Set sprint_id (backward compat for tests)."""
-        object.__setattr__(self, '_sprint_id', value)
+        self._sprint_id = value
 
     # ── Inject methods (v1 compat stubs) ──────────────────────────────────
 
     def inject_evidence_log(self, elog: Any) -> None:
         """Inject a pre-initialized EvidenceLog (wraps in InitResult.success)."""
-        object.__setattr__(self, '_evidence_log', InitResult.success(elog, 0.0))
+        self._evidence_log = InitResult.success(elog, 0.0)
         if self._ctx:
             # Set both public (SprintContext) and private (_CycleState) fields
-            object.__setattr__(self, '_ctx', self._ctx.with_cycle(evidence_log=elog))
+            self._ctx = self._ctx.with_cycle(evidence_log=elog)
 
     # E2: Wire sprint cancel_event to EvidenceLog for lifecycle-bound shutdown.
     def inject_cancel_event(self, cancel_event: asyncio.Event) -> None:
@@ -841,82 +753,82 @@ class SprintSchedulerV2:
             _elog_raw.inject_cancel_event(cancel_event)
 
     def inject_policy_manager(self, policy_manager: Any) -> None:
-        object.__setattr__(self, '_policy_manager', policy_manager)
+        self._policy_manager = policy_manager
         # PolicyManager is not a SprintContext service; no ctx update needed
 
     def inject_communication_layer(self, layer: Any) -> None:
         # v2: layer is a private scheduler attribute only; no SprintContext update needed
-        object.__setattr__(self, '_communication_layer', layer)
+        self._communication_layer = layer
 
     def inject_stealth_layer(self, layer: Any) -> None:
         # v2: layer is a private scheduler attribute only; no SprintContext update needed
-        object.__setattr__(self, '_stealth_layer', layer)
+        self._stealth_layer = layer
 
     def inject_ghost_layer(self, layer: Any) -> None:
         # v2: layer is a private scheduler attribute only; no SprintContext update needed
-        object.__setattr__(self, '_ghost_layer', layer)
+        self._ghost_layer = layer
 
     def inject_security_coordinator(self, coordinator: Any) -> None:
-        object.__setattr__(self, '_security_coordinator', coordinator)
+        self._security_coordinator = coordinator
         # SecurityCoordinator is not a governor; no ctx update needed
 
     def inject_prefetch_oracle(self, oracle: Any) -> None:
-        object.__setattr__(self, '_prefetch_oracle', oracle)
+        self._prefetch_oracle = oracle
         if self._ctx:
-            object.__setattr__(self, '_ctx', self._ctx.with_cycle(enrichment_services=oracle))
+            self._ctx = self._ctx.with_cycle(enrichment_services=oracle)
 
     def inject_duckdb_store(self, store: Any) -> None:
         """Inject a pre-initialized DuckDBShadowStore (wraps in InitResult.success)."""
-        object.__setattr__(self, '_duckdb_store', InitResult.success(store, 0.0))
+        self._duckdb_store = InitResult.success(store, 0.0)
         if self._ctx:
             # Set both public (SprintContext) and private (_CycleState) fields
-            object.__setattr__(self, '_ctx', self._ctx.with_cycle(duckdb_store=store))
+            self._ctx = self._ctx.with_cycle(duckdb_store=store)
 
     def inject_prefetch_pipeline(self, pipeline: Any) -> None:
-        object.__setattr__(self, '_prefetch_pipeline', pipeline)
+        self._prefetch_pipeline = pipeline
         if self._ctx:
-            object.__setattr__(self, '_ctx', self._ctx.with_cycle(enrichment_services=pipeline))
+            self._ctx = self._ctx.with_cycle(enrichment_services=pipeline)
 
     def inject_temporal_predictor(self, predictor: Any) -> None:
-        object.__setattr__(self, '_temporal_predictor', predictor)
+        self._temporal_predictor = predictor
         if self._ctx:
-            object.__setattr__(self, '_ctx', self._ctx.with_cycle(temporal_predictor=predictor))
+            self._ctx = self._ctx.with_cycle(temporal_predictor=predictor)
 
     def inject_pivot_planner(self, planner: Any) -> None:
-        object.__setattr__(self, '_pivot_planner', planner)
+        self._pivot_planner = planner
         if self._ctx:
-            object.__setattr__(self, '_ctx', self._ctx.with_cycle(pivot_planner=planner))
+            self._ctx = self._ctx.with_cycle(pivot_planner=planner)
 
     def inject_analyst_workbench(self, workbench: Any) -> None:
-        object.__setattr__(self, '_analyst_workbench', workbench)
+        self._analyst_workbench = workbench
         if self._ctx:
-            object.__setattr__(self, '_ctx', self._ctx.with_cycle(analyst_workbench=workbench))
+            self._ctx = self._ctx.with_cycle(analyst_workbench=workbench)
 
     def inject_forensics_enricher(self, enricher: Any) -> None:
-        object.__setattr__(self, '_forensics_enricher', enricher)
+        self._forensics_enricher = enricher
         if self._ctx:
-            object.__setattr__(self, '_ctx', self._ctx.with_cycle(forensics_enricher=enricher))
+            self._ctx = self._ctx.with_cycle(forensics_enricher=enricher)
 
     def inject_multimodal_enricher(self, enricher: Any) -> None:
-        object.__setattr__(self, '_multimodal_enricher', enricher)
+        self._multimodal_enricher = enricher
 
     def inject_enrichment_services(self, services: Any) -> None:
-        object.__setattr__(self, '_enrichment_services', services)
+        self._enrichment_services = services
         if self._ctx:
-            object.__setattr__(self, '_ctx', self._ctx.with_cycle(enrichment_services=services))
+            self._ctx = self._ctx.with_cycle(enrichment_services=services)
 
     def inject_source_economics(self, economics: Any) -> None:
-        object.__setattr__(self, '_source_economics', economics)
+        self._source_economics = economics
 
     def inject_privacy_layer(self, layer: Any) -> None:
-        object.__setattr__(self, '_privacy_layer', layer)
+        self._privacy_layer = layer
         if self._ctx:
-            object.__setattr__(self, '_ctx', self._ctx.with_cycle(privacy_layer=layer))
+            self._ctx = self._ctx.with_cycle(privacy_layer=layer)
 
     def inject_ioc_graph(self, ioc_graph: Any) -> None:
-        object.__setattr__(self, '_ioc_graph', ioc_graph)
+        self._ioc_graph = ioc_graph
         if self._ctx:
-            object.__setattr__(self, '_ctx', self._ctx.with_services(graph_service=ioc_graph))
+            self._ctx = self._ctx.with_services(graph_service=ioc_graph)
 
     # ── Hypothesis feedback (F203G) ─────────────────────────────────────────────
 
@@ -1045,9 +957,13 @@ class SprintSchedulerV2:
             _log.debug("[F259] SynthesisRunner import failed: %s", e)
             self._result.synthesis_engine = "import_failed"
             return
-
+        # P2-02: Use try/finally to guarantee runner.close() even on exception.
+        # Previously close() was only on success path (line 1080) — synthesize_findings()
+        # exception left model loaded (Hermes3 ~2GB on M1 8GB = significant leak).
+        runner: SynthesisRunner | None = None
         try:
-            runner = SynthesisRunner(ModelLifecycle())
+            lifecycle_instance = ModelLifecycle()
+            runner = SynthesisRunner(lifecycle_instance)
             runner.set_compression_threshold(4000)
             runner._duckdb_store = duckdb_store
             if lifecycle is not None:
@@ -1077,12 +993,19 @@ class SprintSchedulerV2:
                 _log.info("[F259] Synthesis complete: success=%s, findings=%d", self._result.synthesis_success, self._result.synthesis_findings_count)
             else:
                 self._result.synthesis_text = ""
-            await runner.close()
         except Exception as e:
             _log.debug("[F259] Synthesis failed: %s", e)
             self._result.synthesis_success = False
             self._result.synthesis_engine = "error"
             self._result.synthesis_text = ""
+        finally:
+            # P2-02: ALWAYS close runner — finally guarantees execution even on exception.
+            # This fixes the ~2GB Hermes3 model leak when synthesize_findings() raises.
+            if runner is not None:
+                try:
+                    await runner.close()
+                except Exception:  # noqa: BLE001 — best-effort; cleanup must not raise
+                    _log.debug("[F259] runner.close() raised (ignored)")
 
     async def health_check(self) -> Any:
         """Stub health check — returns None (pass)."""

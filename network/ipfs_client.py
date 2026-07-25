@@ -17,8 +17,9 @@ import logging
 import os
 import re
 import time as _time
-from collections import OrderedDict
 from typing import Final
+
+from hledac.universal.utils.lru_cache import LRUCache
 from urllib.parse import urlparse
 
 import httpx
@@ -52,7 +53,7 @@ CID_PATTERN = re.compile(r'\b(Qm[1-9A-HJ-NP-Za-km-z]{44}|bafy[a-z2-7]{52,})\b')
 #         session (no breaker hit, no shared state corruption)
 # - [SP6] Thread-safe via asyncio.Lock (single event loop, no race)
 MAX_POOL_SIZE: Final[int] = 8
-_SESSION_POOL: OrderedDict[str, httpx.AsyncClient] = OrderedDict()
+_SESSION_POOL: LRUCache[str, httpx.AsyncClient] = LRUCache(max_size=MAX_POOL_SIZE)
 _SESSION_POOL_LOCK: asyncio.Lock | None = None
 
 
@@ -106,18 +107,7 @@ async def _get_ipfs_session(
             _SESSION_POOL.move_to_end(pool_key)
             return existing
 
-        # LRU eviction before insert
-        while len(_SESSION_POOL) >= MAX_POOL_SIZE:
-            try:
-                _old_key, old_sess = _SESSION_POOL.popitem(last=False)
-                if old_sess is not None and not old_sess.is_closed:
-                    try:
-                        await old_sess.aclose()
-                    except Exception:  # noqa: BLE001
-                        pass
-            except Exception:
-                break
-
+        # LRUCache handles eviction automatically when at max_size
         try:
             sess = httpx.AsyncClient(timeout=timeout, transport=transport)
             _SESSION_POOL[pool_key] = sess
@@ -133,6 +123,12 @@ async def close_ipfs_session_pool() -> None:
     async with lock:
         sessions = list(_SESSION_POOL.values())
         _SESSION_POOL.clear()
+    for sess in sessions:
+        try:
+            if sess is not None and not sess.is_closed:
+                await sess.aclose()
+        except Exception:  # noqa: BLE001
+            pass
     for sess in sessions:
         try:
             if sess is not None and not sess.is_closed:

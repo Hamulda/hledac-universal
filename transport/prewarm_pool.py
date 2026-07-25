@@ -277,20 +277,17 @@ async def _probe_warm(session: Any) -> bool:
     #   3. No asyncio.run() is used (which would be M1 crash vector)
     def _do_probe_blocking() -> bool:
         # synchronous helper — runs in thread, no asyncio
+        # C7-FIX: Use asyncio.Runner() instead of new_event_loop/run_until_complete.
+        # Runner handles loop lifecycle automatically and is the modern Python 3.11+ pattern.
         try:
-            # session.head() is awaited via asyncio.to_thread below;
-            # here we call the underlying coroutine-producing method.
-            # Since we are inside a plain thread (not an event loop),
-            # we need to run the coroutine via a mini event loop.
             import asyncio
-            loop = asyncio.new_event_loop()
-            try:
-                result = loop.run_until_complete(
-                    session.head(probe_url, timeout=_PROBE_TIMEOUT_S)
-                )
+
+            async def _probe_async() -> bool:
+                result = await session.head(probe_url, timeout=_PROBE_TIMEOUT_S)
                 return result.status_code is not None
-            finally:
-                loop.close()
+
+            with asyncio.Runner() as runner:
+                return runner.run(_probe_async())
         except Exception:  # noqa: BLE001
             return False
 

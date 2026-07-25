@@ -15,7 +15,6 @@ import asyncio
 import logging
 import secrets
 import time
-from collections import OrderedDict
 from collections.abc import Coroutine
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -37,6 +36,7 @@ from hledac.universal.transport.http3_lane import fetch_http3_aioquic, is_dark_w
 from ..recon.stealth_crawler import HeaderConfig, HeaderSpoofer
 from ..layers.stealth_layer import BrowserProfile, FingerprintConfig, FingerprintRandomizer
 from ..utils.rate_limiter import RateLimitConfig, RateLimiter, RateLimitExceeded
+from ..utils.lru_cache import LRUCache
 logger = logging.getLogger(__name__)
 
 # Crypto-safe jitter — F350M-R
@@ -107,12 +107,12 @@ class StealthManager:
             self.header_spoofer = HeaderSpoofer(self.config.header_config)
         if self.config.enable_fingerprint_randomizer:
             self.fingerprint_randomizer = FingerprintRandomizer(self.config.fingerprint_config)
-        self._sessions: OrderedDict[str, _AsyncSession] = OrderedDict()
+        self._sessions: LRUCache[str, _AsyncSession] = LRUCache(max_size=5)
         self._max_sessions = 5
         self._profile_index = 0
         self._sessions_lock = asyncio.Lock()
-        self._hosts: BoundedHostState = BoundedHostState(maxlen=500)
-        self._cache: BoundedHostState = BoundedHostState(maxlen=500)
+        self._hosts: LRUCache[str, HostTelemetry] = LRUCache(max_size=500)
+        self._cache: LRUCache[str, tuple[str, float, str | None, str | None]] = LRUCache(max_size=500)
         self._cache_ttl = 300
         self._cache_lock = asyncio.Lock()
         self._concurrency = TokenBucketController(rate=5, capacity=10)
@@ -721,19 +721,6 @@ class StealthSession:
             self._session = None
         logger.debug('StealthSession closed')
 
-class BoundedHostState(OrderedDict):
-    """LRU bounded dictionary s maxlen."""
-    __slots__ = tuple(('_maxlen',))
-
-    def __init__(self, maxlen: int=500):
-        super().__init__()
-        self._maxlen = maxlen
-
-    def __setitem__(self, key, val):
-        super().__setitem__(key, val)
-        if len(self) > self._maxlen:
-            self.popitem(last=False)
-
 class HostTelemetry:
     """Host telemetry pro backoff a retry rozhodování."""
     __slots__ = ('semaphore', 'errors', 'latencies', 'last_success', 'last_error')
@@ -783,7 +770,7 @@ class StealthManagerExtensions:
                 self._sessions.move_to_end(profile)
                 return self._sessions[profile]
             if len(self._sessions) >= self._max_sessions:
-                oldest_profile, oldest_session = self._sessions.popitem(last=False)
+                oldest_profile, oldest_session = self._sessions.pop_lru()
                 try:
                     await oldest_session.aclose()
                 except Exception as e:
@@ -815,8 +802,9 @@ class StealthManagerExtensions:
         parsed_url = urlparse(url)
         domain = parsed_url.netloc
         async with self._cache_lock:
-            if url in self._cache:
-                text, ts, etag, last_modified = self._cache[url]
+            entry = self._cache.get(url)
+            if entry is not None:
+                text, ts, etag, last_modified = entry
                 if time.time() - ts < self._cache_ttl:
                     return text
         ht = await self._get_host_telemetry(domain)
@@ -832,8 +820,9 @@ class StealthManagerExtensions:
             session = await self._get_session(prof)
             headers = {}
             async with self._cache_lock:
-                if url in self._cache:
-                    _, _, etag, last_modified = self._cache[url]
+                entry = self._cache.get(url)
+                if entry is not None:
+                    _, _, etag, last_modified = entry
                     if etag:
                         headers['If-None-Match'] = etag
                     elif last_modified:
@@ -841,7 +830,9 @@ class StealthManagerExtensions:
             resp = await session.get(url, headers=headers, follow_redirects=True, **kwargs)
             if resp.status_code == 304:
                 async with self._cache_lock:
-                    text, ts, _, _ = self._cache[url]
+                    entry = self._cache.get(url)
+                    if entry is not None:
+                        text, ts, _, _ = entry
                 return text
             resp.raise_for_status()
             text = resp.text

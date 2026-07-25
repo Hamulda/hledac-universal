@@ -1,30 +1,36 @@
 //! pool_run — Python-callable rayon pool runners (channel-based dispatch)
 //!
-//! ISSUE 5.2 FIX: Replaces thread::spawn-per-task with crossbeam-channel dispatch.
+//! CONSOLIDATED (R2 fix): Merged rayon_dispatch.rs into pool_run.rs.
+//! Previously there were two identical implementations — pool_run.rs (with dead
+//! rayon_submit/rayon_join aliases) and rayon_dispatch.rs (with the correct
+//! rayon_submit_channel/rayon_join_channel names).
 //!
-//! ## The Problem (old implementation)
+//! ## Architecture
 //!
-//!     asyncio.to_thread(rayon_submit, ...)  ← OS thread #1 (asyncio pool)
-//!         → thread::spawn(move || { pool.install(...) })  ← OS thread #2 (new)
-//!             → rayon worker (inside pool.install)
+//! One dispatcher thread per pool type (cpu, io, mixed) that runs
+//! pool.install() and consumes from a bounded sync_channel (capacity=256).
+//! The dispatcher pulls work items from the channel and executes them on
+//! the rayon pool threads via pool.install().
 //!
-//! 2× OS thread creation per task = ~25× context-switch overhead on 4 P-cores.
+//! The GIL is held by the asyncio.to_thread worker thread during both
+//! submit and join. The rayon pool workers acquire the GIL via
+//! Python::with_gil() for Python callbacks — no contention because the
+//! asyncio worker is blocked on the condvar during pool execution.
 //!
-//! ## The Fix (new implementation)
+//! ## M1 8GB Safety
 //!
-//! New flow — single asyncio.to_thread call, work-stealing via channel:
-//!     asyncio.to_thread(rayon_submit, ...)  ← OS thread (asyncio pool, holds GIL)
-//!         → CHANNEL.send(work_item)         ← ~5μs (bounded send)
-//!             → rayon worker RECV from channel  ← existing pool threads
-//!                 → Python::with_gil(|py| func.call(py))
-//!                     → store result + signal condvar
-//!         → returns immediately
+//! - 1 dispatcher thread per pool type (3 total, not per-task)
+//! - Bounded channel (256 items) provides natural back-pressure
+//! - Existing rayon pool threads are reused — no per-task allocation
+//! - Zero heap allocations on the hot path (after init)
 //!
-//!     asyncio.to_thread(rayon_join, ...)   ← OS thread (asyncio pool, holds GIL)
-//!         → condvar.wait()                ← blocking wait on existing thread
-//!             → returns result
+//! ## Function Naming
 //!
-//! Cost per task: ~5μs (channel send) vs ~500μs (thread::spawn + join).
+//! - `cpu_pool_run` / `io_pool_run` / `mixed_pool_run` — sync GIL wrappers
+//!   (call Python directly with GIL held, no pool usage — for tiny workloads)
+//! - `rayon_submit_channel` / `rayon_join_channel` / `rayon_abort_channel` /
+//!   `rayon_shutdown_channel` — channel-based dispatch to rayon pools
+//!   (~5μs/task vs ~500μs for thread::spawn)
 
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
@@ -255,18 +261,23 @@ pub fn mixed_pool_run_(
 }
 
 // ---------------------------------------------------------------------------
-// rayon_submit — channel-based dispatch, returns handle for join/abort
+// rayon_submit_channel — channel-based dispatch, returns handle for join/abort
 // ---------------------------------------------------------------------------
 
+/// Submit a Python function to the rayon pool via channel dispatch.
+/// Returns immediately (does NOT block on the result).
+/// Result is retrieved via rayon_join_channel.
+///
+/// GIL: caller (asyncio.to_thread) must hold the GIL during this call.
 #[pyfunction]
-#[pyo3(name = "rayon_submit")]
-pub fn rayon_submit_(
+#[pyo3(name = "rayon_submit_channel")]
+pub fn rayon_submit_channel_(
     py: Python<'_>,
     pool_type: &str,
     n_items: usize,
     func: Py<PyAny>,
     args: Py<PyTuple>,
-) -> PyResult<Py<PyAny>> {
+) -> PyResult<Py<Any>> {
     let func_clone = Py::clone_ref(&func, py);
     let args_clone = Py::clone_ref(&args, py);
 
@@ -309,20 +320,32 @@ pub fn rayon_submit_(
         ));
     }
 
-    // Return pointer to SharedTask — Python passes this to rayon_join
+    // Return pointer to SharedTask — Python passes this to rayon_join_channel
     let ptr = Box::into_raw(Box::new(shared)) as usize;
     Ok(ptr.into_py(py))
 }
 
 // ---------------------------------------------------------------------------
-// rayon_join — wait for rayon_submit task to complete
+// rayon_join_channel — wait for rayon_submit_channel task to complete
 // ---------------------------------------------------------------------------
 
+/// Wait for a rayon_submit_channel task to complete.
+///
+/// GIL: caller (asyncio.to_thread) must hold the GIL during this call
+/// (the condvar wait releases the GIL).
+///
+/// timeout_s: seconds to wait. None = indefinite.
 #[pyfunction]
-#[pyo3(name = "rayon_join")]
-pub fn rayon_join_(py: Python<'_>, handle_ptr: usize, timeout_s: Option<f64>) -> PyResult<Py<PyAny>> {
+#[pyo3(name = "rayon_join_channel")]
+pub fn rayon_join_channel_(
+    py: Python<'_>,
+    handle_ptr: usize,
+    timeout_s: Option<f64>,
+) -> PyResult<Py<Any>> {
     if handle_ptr == 0 {
-        return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Invalid handle: 0"));
+        return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "Invalid handle: 0",
+        ));
     }
 
     // Reconstruct Arc from raw pointer and Clone so Box release doesn't drop inner Arc
@@ -378,12 +401,14 @@ pub fn rayon_join_(py: Python<'_>, handle_ptr: usize, timeout_s: Option<f64>) ->
 }
 
 // ---------------------------------------------------------------------------
-// rayon_abort — signal cancellation and wait for worker acknowledgment
+// rayon_abort_channel — signal cancellation and wait for worker acknowledgment
 // ---------------------------------------------------------------------------
 
+/// Abort a rayon dispatch task.
+/// Sets cancel flag and waits up to 5s for worker acknowledgment.
 #[pyfunction]
-#[pyo3(name = "rayon_abort")]
-pub fn rayon_abort_(handle_ptr: usize) -> PyResult<()> {
+#[pyo3(name = "rayon_abort_channel")]
+pub fn rayon_abort_channel_(handle_ptr: usize) -> PyResult<()> {
     if handle_ptr == 0 {
         return Ok(());
     }
@@ -407,12 +432,15 @@ pub fn rayon_abort_(handle_ptr: usize) -> PyResult<()> {
 }
 
 // ---------------------------------------------------------------------------
-// rayon_shutdown — graceful shutdown of all dispatcher threads
+// rayon_shutdown_channel — graceful shutdown of all dispatcher threads
 // ---------------------------------------------------------------------------
 
+/// Graceful shutdown — sets shutdown flag, closes all senders,
+/// and waits for dispatcher threads to exit (via channel close).
+/// Safe to call multiple times.
 #[pyfunction]
-#[pyo3(name = "rayon_shutdown")]
-pub fn rayon_shutdown_() -> PyResult<()> {
+#[pyo3(name = "rayon_shutdown_channel")]
+pub fn rayon_shutdown_channel_() -> PyResult<()> {
     RAYON_SHUTDOWN.store(true, Ordering::Release);
 
     if let Ok(tx) = cpu_sender().lock() {
@@ -428,13 +456,22 @@ pub fn rayon_shutdown_() -> PyResult<()> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Deprecated aliases — removed in R2 (were exact duplicates of channel versions)
+// ---------------------------------------------------------------------------
+// NOTE: rayon_submit / rayon_join / rayon_abort / rayon_shutdown were removed.
+// They were identical to the _channel versions and no Python code used them.
+// If you need these names, use the _channel variants instead.
+
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // GIL wrappers — sync fast path for tiny workloads (no pool used)
     m.add_function(wrap_pyfunction!(cpu_pool_run_, m)?)?;
     m.add_function(wrap_pyfunction!(io_pool_run_, m)?)?;
     m.add_function(wrap_pyfunction!(mixed_pool_run_, m)?)?;
-    m.add_function(wrap_pyfunction!(rayon_submit_, m)?)?;
-    m.add_function(wrap_pyfunction!(rayon_join_, m)?)?;
-    m.add_function(wrap_pyfunction!(rayon_abort_, m)?)?;
-    m.add_function(wrap_pyfunction!(rayon_shutdown_, m)?)?;
+    // Channel-based dispatch to rayon pools (~5μs/task)
+    m.add_function(wrap_pyfunction!(rayon_submit_channel_, m)?)?;
+    m.add_function(wrap_pyfunction!(rayon_join_channel_, m)?)?;
+    m.add_function(wrap_pyfunction!(rayon_abort_channel_, m)?)?;
+    m.add_function(wrap_pyfunction!(rayon_shutdown_channel_, m)?)?;
     Ok(())
 }

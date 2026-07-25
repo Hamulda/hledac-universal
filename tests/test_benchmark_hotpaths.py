@@ -12,6 +12,7 @@ import time
 import pytest
 
 # Lazy import: lmdb loaded only when benchmark tests that need it actually run
+import lmdb  # noqa: E402 — required at module level for lmdb.open() at line 94
 
 # Baseline thresholds (M1 MacBook Air 8GB, measured 2026-07-02)
 # If hardware differs, set env vars to override.

@@ -32,7 +32,7 @@ import logging
 import time
 
 from hledac.universal.utils.locks import LazyAsyncioLock
-from collections import OrderedDict
+from hledac.universal.utils.lru_cache import LRUCache
 from dataclasses import dataclass
 import msgspec
 from enum import Enum, auto
@@ -269,7 +269,7 @@ class _DnsCache:
 
     def __init__(self, max_size: int = 256, ttl_s: float = 60.0) -> None:
         self._cache: dict[str, tuple[list[str], float]] = {}
-        self._order: OrderedDict[str, None] = OrderedDict()
+        self._order: LRUCache[str, None] = LRUCache(max_size=max_size)
         self._lock = asyncio.Lock()
         self._max_size = max_size
         self._ttl_s = ttl_s
@@ -303,12 +303,10 @@ class _DnsCache:
             if infos:
                 ips = [info[4][0] for info in infos if len(info) > 4]
                 async with self._lock:
-                    if host in self._order:
-                        self._order.pop(host, None)
-                    while len(self._cache) >= self._max_size and self._order:
-                        oldest = self._order.popitem(last=False)
-                        if oldest[0] in self._cache:
-                            self._cache.pop(oldest[0], None)
+                    self._order.pop(host, None)
+                    while len(self._cache) >= self._max_size:
+                        oldest_key, _ = self._order.pop_lru()
+                        self._cache.pop(oldest_key, None)
                     self._cache[host] = (ips, now)
                     self._order[host] = None
                 return ips

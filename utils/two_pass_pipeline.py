@@ -121,7 +121,7 @@ class TwoPassPipeline:
             except asyncio.QueueEmpty:
                 if self._done.is_set():
                     break
-                await asyncio.sleep(0.01)
+                await asyncio.sleep(0)
                 continue
             except Exception:
                 self._stats.consumer_errors += 1

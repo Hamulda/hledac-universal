@@ -20,8 +20,9 @@ Never use this for coroutine objects — use async_lru from cachetools instead.
 
 import threading
 import time
-from collections import OrderedDict
 from typing import Any, TypeVar
+
+from utils.lru_cache import LRUCache
 
 K = TypeVar("K", default=object)
 V = TypeVar("V", default=object)
@@ -668,8 +669,8 @@ class BoundedLoRACache:
     """
     Bounded LRU cache for MLX LoRA adapter models.
 
-    Enforces maxsize with O(1) LRU eviction (move_to_end + popitem).
-    Thread-safe. Fail-safe: any error returns None/False.
+    Enforces maxsize with O(1) LRU eviction via LRUCache.
+    Thread-safe (LRUCache internal lock). Fail-safe: any error returns None/False.
 
     Invariants:
         - maxsize enforced on every put(): oldest entry evicted if at capacity
@@ -679,9 +680,8 @@ class BoundedLoRACache:
     """
 
     __slots__ = (
-        "_data",
+        "_cache",
         "_maxsize",
-        "_lock",
         "_hits",
         "_misses",
         "_evictions",
@@ -689,8 +689,7 @@ class BoundedLoRACache:
 
     def __init__(self, maxsize: int = 2) -> None:
         self._maxsize: int = max(1, maxsize)
-        self._data: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
-        self._lock = threading.Lock()
+        self._cache: LRUCache[str, tuple[Any, Any]] = LRUCache(max_size=maxsize, thread_safe=True)
         self._hits: int = 0
         self._misses: int = 0
         self._evictions: int = 0
@@ -703,14 +702,12 @@ class BoundedLoRACache:
         Returns None on miss.
         """
         try:
-            with self._lock:
-                entry = self._data.get(key)
-                if entry is None:
-                    self._misses += 1
-                    return None
-                self._data.move_to_end(key)
-                self._hits += 1
-                return entry[0], entry[1]
+            entry = self._cache.get(key)
+            if entry is None:
+                self._misses += 1
+                return None
+            self._hits += 1
+            return entry[0], entry[1]
         except Exception:
             return None
 
@@ -722,26 +719,26 @@ class BoundedLoRACache:
         Returns True on success, False on error.
         """
         try:
-            with self._lock:
-                # Update existing entry — refresh LRU
-                if key in self._data:
-                    self._data[key] = value
-                    self._data.move_to_end(key)
-                    return True
-                # Evict oldest until we have space
-                while len(self._data) >= self._maxsize:
-                    self._data.popitem(last=False)
-                    self._evictions += 1
-                self._data[key] = value
+            # If key exists, update value
+            if key in self._cache:
+                self._cache[key] = value
                 return True
+            # Evict oldest until we have space
+            while len(self._cache) >= self._maxsize:
+                try:
+                    self._cache.popitem(last=False)
+                    self._evictions += 1
+                except KeyError:
+                    break
+            self._cache[key] = value
+            return True
         except Exception:
             return False
 
     def contains(self, key: str) -> bool:
         """Check key exists. Thread-safe. O(1)."""
         try:
-            with self._lock:
-                return key in self._data
+            return key in self._cache
         except Exception:
             return False
 
@@ -752,25 +749,22 @@ class BoundedLoRACache:
         Thread-safe.
         """
         try:
-            with self._lock:
-                if not self._data:
-                    return None
-                key = next(iter(self._data))
-                raw = self._data.pop(key)
-                self._evictions += 1
-                return key, (raw[0], raw[1])
+            key, raw = self._cache.popitem(last=False)
+            self._evictions += 1
+            return key, raw
+        except KeyError:
+            return None
         except Exception:
             return None
 
     def clear(self) -> bool:
         """Clear all entries. Thread-safe. Returns True."""
         try:
-            with self._lock:
-                self._data.clear()
-                self._hits = 0
-                self._misses = 0
-                self._evictions = 0
-                return True
+            self._cache.clear()
+            self._hits = 0
+            self._misses = 0
+            self._evictions = 0
+            return True
         except Exception:
             return False
 
@@ -778,8 +772,7 @@ class BoundedLoRACache:
     def size(self) -> int:
         """Current number of entries."""
         try:
-            with self._lock:
-                return len(self._data)
+            return len(self._cache)
         except Exception:
             return 0
 
@@ -795,25 +788,23 @@ class BoundedLoRACache:
     def stats(self) -> dict[str, int]:
         """Hit/miss/eviction stats for cache efficiency monitoring."""
         try:
-            with self._lock:
-                return {
-                    "hits": self._hits,
-                    "misses": self._misses,
-                    "evictions": self._evictions,
-                    "size": len(self._data),
-                    "maxsize": self._maxsize,
-                }
+            return {
+                "hits": self._hits,
+                "misses": self._misses,
+                "evictions": self._evictions,
+                "size": len(self._cache),
+                "maxsize": self._maxsize,
+            }
         except Exception:
             return {"hits": 0, "misses": 0, "evictions": 0, "size": 0, "maxsize": self._maxsize}
 
     def __repr__(self) -> str:
         try:
-            with self._lock:
-                return (
-                    f"BoundedLoRACache(maxsize={self._maxsize}, "
-                    f"size={len(self._data)}, hits={self._hits}, "
-                    f"misses={self._misses}, evictions={self._evictions})"
-                )
+            return (
+                f"BoundedLoRACache(maxsize={self._maxsize}, "
+                f"size={len(self._cache)}, hits={self._hits}, "
+                f"misses={self._misses}, evictions={self._evictions})"
+            )
         except Exception:
             return f"BoundedLoRACache(maxsize={self._maxsize})"
 

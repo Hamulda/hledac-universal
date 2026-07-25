@@ -175,7 +175,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         self._threads: dict[str, ResearchThread] = {}
         self._papers: dict[str, ResearchPaper] = {}
         self._citation_links: set[tuple[str, str]] = set()
-        self._citation_links_order: deque = deque()
+        self._citation_links_order: deque = deque(maxlen=MAX_CITATION_LINKS)
         self._meta_patterns: list[MetaPattern] = []
         self._theories: list[ResearchTheory] = []
         self._active_plans: dict[str, HierarchicalPlan] = {}
@@ -700,18 +700,40 @@ class UniversalResearchCoordinator(UniversalCoordinator):
             level_stats[depth]['explored'] += 1
             if config.progress_callback:
                 await config.progress_callback({'depth': depth, 'papers_found': len(thread.papers), 'current_paper': current_paper.title[:50]})
-            citations = await self._fetch_citations(current_paper, 'backward')
-            references = await self._fetch_citations(current_paper, 'forward')
+            citations, references = await asyncio.gather(
+                self._fetch_citations(current_paper, 'backward'),
+                self._fetch_citations(current_paper, 'forward')
+            )
             all_related = citations + references
-            scored_papers = []
-            for paper in all_related:
-                if paper.id in explored:
-                    continue
-                relevance = self._calculate_relevance(paper, query, current_paper.relevance_score, depth + 1, config)
-                if relevance >= config.min_relevance_score:
-                    paper.depth = depth + 1
-                    paper.relevance_score = relevance
-                    scored_papers.append((paper, relevance))
+            # Parallel relevance calculation via asyncio.to_thread (GIL released in string ops)
+            # Threshold: only parallelize when enough items to amortize thread pool overhead
+            _PARALLEL_RELEVANCE_THRESHOLD = 20
+            if len(all_related) >= _PARALLEL_RELEVANCE_THRESHOLD:
+                # Build list of (paper, relevance) futures, skip already-explored
+                pending = [
+                    (paper, asyncio.to_thread(
+                        self._calculate_relevance, paper, query, current_paper.relevance_score, depth + 1, config
+                    ))
+                    for paper in all_related if paper.id not in explored
+                ]
+                # Execute all in parallel, gather maintains order
+                results = await asyncio.gather(*[r for _, r in pending])
+                scored_papers = [
+                    (paper, relevance)
+                    for (paper, _), relevance in zip(pending, results)
+                    if relevance >= config.min_relevance_score
+                ]
+            else:
+                # Sequential for small batches - lower overhead than thread pool dispatch
+                scored_papers = []
+                for paper in all_related:
+                    if paper.id in explored:
+                        continue
+                    relevance = self._calculate_relevance(paper, query, current_paper.relevance_score, depth + 1, config)
+                    if relevance >= config.min_relevance_score:
+                        paper.depth = depth + 1
+                        paper.relevance_score = relevance
+                        scored_papers.append((paper, relevance))
             scored_papers.sort(key=lambda x: x[1], reverse=True)
             top_papers = scored_papers[:config.max_breadth]
             for paper, _score in top_papers:

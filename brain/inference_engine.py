@@ -28,13 +28,14 @@ import concurrent.futures
 import hashlib
 import logging
 import time
-from collections import OrderedDict, defaultdict, deque
+from collections import defaultdict, deque
 from collections.abc import Callable, Iterator
 from enum import Enum
 from typing import Any
 import msgspec
 
 from brain.deephermes3_engine import _get_xxh3_hex
+from utils.lru_cache import LRUCache
 import numpy as np
 try:
     from utils.eig import EIGCalculator
@@ -301,8 +302,8 @@ class InferenceEngine:
         self.use_mlx = use_mlx and MLX_AVAILABLE
         self.streaming_batch_size = streaming_batch_size
         self._thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        self._evidence: OrderedDict[str, InferenceEvidence] = OrderedDict()
-        self._evidence_graph: OrderedDict[str, set[str]] = OrderedDict()
+        self._evidence: LRUCache[str, InferenceEvidence] = LRUCache(max_size=self.MAX_EVIDENCE_ITEMS)
+        self._evidence_graph: LRUCache[str, set[str]] = LRUCache(max_size=self.MAX_GRAPH_NODES)
         self._inference_rules: list[InferenceRule] = []
         self._graph_pruned_count = 0
         self._evidence_pruned_count = 0

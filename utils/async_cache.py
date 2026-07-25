@@ -56,7 +56,7 @@ import functools
 import inspect
 import sys
 import weakref
-from collections import OrderedDict
+from utils.lru_cache import LRUCache
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
@@ -110,7 +110,7 @@ class AsyncLRUCache(Generic[T, U]):
         if maxsize <= 0:
             raise ValueError(f"maxsize must be positive, got {maxsize}")
         self._maxsize = maxsize
-        self._cache: OrderedDict[T, U] = OrderedDict()
+        self._cache: LRUCache[T, U] = LRUCache(max_size=maxsize)
         # Per-key locks: lazy (None at init, created on first use)
         self._locks: dict[T, asyncio.Lock | None] = {}
         # LRU order tracker for lock dict pruning
@@ -149,7 +149,7 @@ class AsyncLRUCache(Generic[T, U]):
             self._cache[key] = value
             return
         if len(self._cache) >= self._maxsize:
-            evicted_key, evicted_value = self._cache.popitem(last=False)
+            evicted_key, evicted_value = self._cache.pop_lru()
             if self._on_evict is not None:
                 try:
                     self._on_evict(evicted_key, evicted_value)

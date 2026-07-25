@@ -11,7 +11,7 @@ GHOST_INVARIANTS:
 - Always-on: no feature flags
 """
 
-from typing import Any
+from typing import Any, Iterator
 
 from runtime.protocols.graph_protocol import GraphProtocol
 
@@ -101,12 +101,12 @@ class DuckPGQGraphAdapter(GraphProtocol):
         except Exception:
             return []
 
-    def export_edge_list(self) -> list[tuple[str, str, str, float]]:
-        """Delegate to DuckPGQGraph.export_edge_list()."""
+    def export_edge_list(self) -> Iterator[tuple[str, str, str, float]]:
+        """Delegate to DuckPGQGraph.export_edge_list() as generator."""
         try:
-            return self._graph.export_edge_list()
+            yield from self._graph.export_edge_list()
         except Exception:
-            return []
+            return
 
     def stats(self) -> dict[str, Any]:
         """Delegate to DuckPGQGraph.stats()."""
@@ -518,17 +518,17 @@ class GraphFacade:
                 return []
         return []
 
-    def export_edge_list(self) -> list[tuple[str, str, str, float]]:
+    def export_edge_list(self) -> Iterator[tuple[str, str, str, float]]:
         """Export edge list — analytics path."""
         graph = self._store._ioc_graph
         if graph is None:
-            return []
+            return
         if hasattr(graph, "export_edge_list"):
             try:
-                return graph.export_edge_list()
+                yield from graph.export_edge_list()
             except Exception:
-                return []
-        return []
+                return
+        return
 
     def stats(self) -> dict[str, Any]:
         """Graph stats — analytics path."""

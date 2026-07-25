@@ -30,7 +30,7 @@ Verify:
 import hashlib
 import re
 import time
-from typing import Any, List, Optional, Tuple
+from typing import Any
 try:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 except ImportError:

@@ -457,13 +457,17 @@ class ScorecardBuilder:
                 )
                 # parallel(policy="log") filtered exceptions → no manual _check_gathered needed
 
-        # Markdown export + ghost run in PARALLEL
-        # export_fn is sync (file I/O) → run in thread pool
-        md_path = await asyncio.gather(
-            asyncio.to_thread(export_fn, sprint_report, data, self._sprint_id),
-            ghost_global_and_await(),
+        # Markdown export + ghost run in PARALLEL via parallel(policy="log")
+        # parallel() handles return_exceptions internally — no _check_gathered needed
+        paths = await parallel(
+            [
+                asyncio.to_thread(export_fn, sprint_report, data, self._sprint_id),
+                ghost_global_and_await(),
+            ],
+            policy="log",
+            ctx="scorecard_markdown_export",
         )
-        return md_path[0]  # first element is Path
+        return paths[0]  # first element is Path
 
     def _scorecard_data_to_dict(self, data: ScorecardData) -> dict[str, Any]:
         """Convert ScorecardData to dict for DuckDB persistence."""

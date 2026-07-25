@@ -230,19 +230,13 @@ class EmbeddingCache:
         self.stats = CacheStats()
         self._file_size = 0
         self._version: int = _CACHE_VERSION
-        # ISSUE-ZOOMOUT: run _init_memmap in thread to avoid event loop in __init__
+        # C7-FIX: Use asyncio.Runner() instead of new_event_loop/run_until_complete.
+        # Runner handles loop lifecycle automatically and is the modern Python 3.11+ pattern.
+        # This is M1 Metal-safe and prevents event loop leak on M1 8GB.
         try:
             import asyncio
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(self._init_memmap())
-            finally:
-                loop.close()
-                try:
-                    gc.collect()
-                except Exception:
-                    pass
+            with asyncio.Runner() as runner:
+                runner.run(self._init_memmap())
         except Exception:
             pass
 

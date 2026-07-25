@@ -23,7 +23,6 @@ import logging
 import os
 import re
 import time
-from collections import OrderedDict
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 import msgspec
@@ -32,6 +31,8 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin, urlparse
 import httpx
+
+from utils.lru_cache import LRUCache
 _HTTpx_SOCKS_AVAILABLE = False
 try:
     import httpx_socks
@@ -264,9 +265,9 @@ class DarkWebCrawler:
         self.max_pages_per_site = max_pages_per_site
         self.request_delay = request_delay
         self.respect_robots_txt = respect_robots_txt
-        self.discovered_services: OrderedDict[str, HiddenService] = OrderedDict()
-        self.visited_urls: OrderedDict[str, bool] = OrderedDict()
-        self.content_cache: OrderedDict[str, DarkWebContent] = OrderedDict()
+        self.discovered_services: LRUCache[str, HiddenService] = LRUCache(max_size=self.MAX_DISCOVERED_SERVICES)
+        self.visited_urls: LRUCache[str, bool] = LRUCache(max_size=self.MAX_VISITED_URLS)
+        self.content_cache: LRUCache[str, DarkWebContent] = LRUCache(max_size=self.MAX_CONTENT_CACHE)
         self.url_queue: asyncio.Queue = asyncio.Queue(maxsize=self.MAX_URL_QUEUE)
         self.stats = {'pages_crawled': 0, 'services_discovered': 0, 'bitcoin_addresses': 0, 'monero_addresses': 0, 'pgp_keys_found': 0, 'errors': 0}
         # ISSUE-017: BFS engine — Rust URL dedup + bounded concurrency

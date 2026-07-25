@@ -17,13 +17,14 @@ import logging
 import math
 import os
 import secrets
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field as _dc_field
 import msgspec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     pass
 import numpy as np
+import orjson
 try:
     import compression.zstd as _zstd
     ZSTD_AVAILABLE = True
@@ -53,7 +54,7 @@ class SprintPolicyState(msgspec.Struct):
     sprint_sequence_number: int = 0
     epsilon: float = _DEFAULT_EPSILON
     total_reward: float = 0.0
-    sprint_rewards: list[float] = field(default_factory=list)
+    sprint_rewards: list[float] = msgspec.field(default_factory=list)
     qmix_weights: dict[str, Any] | None = None
     last_train_sprint: int = -1
     last_action: int = 0
@@ -61,12 +62,12 @@ class SprintPolicyState(msgspec.Struct):
     last_train_step: int = -1
     cumulative_train_steps: int = 0
     last_loss: float = 0.0
-    loss_history: list[float] = field(default_factory=list)
-    mean_q_value_history: list[float] = field(default_factory=list)
-    epsilon_history: list[float] = field(default_factory=list)
+    loss_history: list[float] = msgspec.field(default_factory=list)
+    mean_q_value_history: list[float] = msgspec.field(default_factory=list)
+    epsilon_history: list[float] = msgspec.field(default_factory=list)
     last_train_step_sprint: int = 0
     training_steps_completed: int = 0
-    epistemic_strength_history: list[float] = field(default_factory=list)
+    epistemic_strength_history: list[float] = msgspec.field(default_factory=list)
 
 def _serialize_weights(weights: Any) -> dict[str, Any]:
     """Serialize MLX array weights to JSON-compatible dict. Returns {} if weights is None."""
@@ -361,8 +362,7 @@ class SprintPolicyManager:
             if not getattr(self, '_policy_path_explicit', False):
                 log.debug('[SprintPolicyManager] Default policy_path — discarding stale disk state to avoid cross-session contamination')
                 return
-            import dataclasses as _dc
-            _known = {f.name for f in _dc.fields(SprintPolicyState)}
+            _known = set(SprintPolicyState.__struct_fields__)
             _filtered = {k: v for k, v in data.items() if k in _known}
             self._state = SprintPolicyState(**_filtered)
             log.debug('[SprintPolicyManager] Loaded state: sprint=%d epsilon=%.3f total_reward=%.2f', self._state.sprint_sequence_number, self._state.epsilon, self._state.total_reward)

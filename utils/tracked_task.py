@@ -27,7 +27,7 @@ Usage:
 
 import asyncio
 import logging
-from typing import Any, Optional
+from typing import Any
 from collections.abc import Callable, Coroutine
 
 from hledac.universal.utils.async_helpers import safe_create_task

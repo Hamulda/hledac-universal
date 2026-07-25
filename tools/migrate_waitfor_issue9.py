@@ -32,7 +32,6 @@ Ruff pravidlo F911 (E911) zakazuje asyncio.wait_for() s výjimkou:
 import re
 import sys
 from pathlib import Path
-from typing import Optional
 
 
 def find_call_extent(lines: list[str], start: int) -> tuple[int, int] | None:

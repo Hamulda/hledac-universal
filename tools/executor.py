@@ -161,44 +161,6 @@ class ToolExecutor:
             return await offload_to("cpu_blocking_pool", handler, **kwargs)
 
 
-_DNS_TUNNEL_EXECUTOR: asyncio.AbstractEventLoop | None = None
-_DNS_TUNNEL_EXECUTOR_LOCK = threading.Lock()
-
-
-def _get_dns_tunnel_executor() -> asyncio.AbstractEventLoop:
-    """Get or create DNS tunnel dedicated event loop.
-
-    F350M-R FIX: Thread-safe creation + try/finally cleanup guard.
-    Prevents event loop leak on M1 8GB (~30-50MB/session).
-    """
-    global _DNS_TUNNEL_EXECUTOR
-    with _DNS_TUNNEL_EXECUTOR_LOCK:
-        if _DNS_TUNNEL_EXECUTOR is None or _DNS_TUNNEL_EXECUTOR.is_closed():
-            _DNS_TUNNEL_EXECUTOR = asyncio.new_event_loop()
-        return _DNS_TUNNEL_EXECUTOR
-
-
-def _close_dns_tunnel_executor() -> None:
-    """Close DNS tunnel executor. Call on shutdown."""
-    global _DNS_TUNNEL_EXECUTOR
-    with _DNS_TUNNEL_EXECUTOR_LOCK:
-        if _DNS_TUNNEL_EXECUTOR is not None and not _DNS_TUNNEL_EXECUTOR.is_closed():
-            try:
-                pending = [t for t in asyncio.all_tasks(_DNS_TUNNEL_EXECUTOR) if not t.done()]
-                for t in pending:
-                    t.cancel()
-                if pending:
-                    _DNS_TUNNEL_EXECUTOR.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-            except Exception:
-                pass
-            finally:
-                try:
-                    _DNS_TUNNEL_EXECUTOR.close()
-                except Exception:
-                    pass
-            _DNS_TUNNEL_EXECUTOR = None
-
-
 async def execute_dns_tunnel_async(args: dict) -> dict:
     """Async execution of DNS tunnel check in M1-safe manner."""
     if not isinstance(args, dict):
@@ -245,10 +207,14 @@ async def execute_dns_tunnel_async(args: dict) -> dict:
 
 
 def execute_dns_tunnel_sync(args: dict) -> dict:
-    """Synchronous wrapper — runs in ThreadPoolExecutor for M1 safety."""
+    """Synchronous wrapper — runs in ThreadPoolExecutor for M1 safety.
+
+    C7-FIX: Use asyncio.Runner() instead of persistent event loop.
+    Runner handles loop lifecycle automatically and is the modern Python 3.11+ pattern.
+    """
     try:
-        loop = _get_dns_tunnel_executor()
-        return loop.run_until_complete(execute_dns_tunnel_async(args))
+        with asyncio.Runner() as runner:
+            return runner.run(execute_dns_tunnel_async(args))
     except Exception as e:
         return {"error": str(e), "findings": []}
 

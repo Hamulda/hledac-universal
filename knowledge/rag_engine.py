@@ -784,9 +784,11 @@ class RAGEngine:
         doc_embeddings_list = all_embeddings[1:]
         doc_embeddings = {doc.id: doc_embeddings_list[i] for i, doc in enumerate(documents)}
 
-        # Dense + sparse retrieval (oba CPU bound, běží sequential —相依)
-        dense_results = self._dense_retrieval(query_embedding, doc_embeddings, top_k * 2)
-        sparse_results = bm25.search(query, top_k=top_k * 2)
+        # Dense + sparse retrieval — paralelně přes asyncio.gather (oba CPU-bound)
+        # ISSUE-S3: sequential → parallel: dense_retrieval (numpy dot) + BM25.search běží concurrent
+        dense_coro = asyncio.to_thread(self._dense_retrieval, query_embedding, doc_embeddings, top_k * 2)
+        sparse_coro = asyncio.to_thread(bm25.search, query, top_k=top_k * 2)
+        dense_results, sparse_results = await asyncio.gather(dense_coro, sparse_coro)
         sparse_doc_ids = [(bm25.documents[idx].id, score) for idx, score in sparse_results]
         doc_scores: dict[str, dict[str, float]] = _dense_sparse_factory.copy()
         for doc_id, score in dense_results:
@@ -1024,9 +1026,11 @@ class RAGEngine:
                 ]
             query_embedding = all_embeddings[0]
 
-        # ANN HNSW search (Rust/GIL-free) + BM25 search sequential
-        dense_results = self._hnsw_retrieval(query_embedding, top_k * 2, filters)
-        sparse_results = bm25.search(query, top_k=top_k * 2)
+        # ANN HNSW search (Rust/GIL-free) + BM25 search — paralelně přes asyncio.gather
+        # ISSUE-S3: sequential → parallel: HNSW search + BM25.search běží concurrent
+        dense_coro = asyncio.to_thread(self._hnsw_retrieval, query_embedding, top_k * 2, filters)
+        sparse_coro = asyncio.to_thread(bm25.search, query, top_k=top_k * 2)
+        dense_results, sparse_results = await asyncio.gather(dense_coro, sparse_coro)
         sparse_doc_ids = [(bm25.documents[idx].id, score) for idx, score in sparse_results]
         doc_scores: dict[str, dict[str, float]] = _dense_sparse_factory.copy()
         for chunk in dense_results:

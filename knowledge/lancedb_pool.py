@@ -31,6 +31,8 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from hledac.universal.core.locks import LockCategory, register_lock
+
 logger = logging.getLogger(__name__)
 
 # Pool configuration
@@ -40,6 +42,7 @@ _POOL_WARM_UP = True  # Pre-warm default connections
 # Global registry: path -> (connection, refcount, lock)
 _registry: dict[str, tuple[Any, int, threading.Lock]] = {}
 _registry_lock = threading.Lock()
+register_lock(LockCategory.CACHE, _registry_lock, "lancedb_pool._registry_lock")
 
 # ISSUE-003/ISSUE-014 fix: _async_locks moved to ContextVar.
 # This fixes:
@@ -53,6 +56,7 @@ _registry_lock = threading.Lock()
 # when called within an async context.
 _async_locks_var: contextvars.ContextVar[dict[str, asyncio.Lock]] = contextvars.ContextVar('_async_locks_var')
 _async_locks_lock = threading.Lock()  # Still needed for _registry access
+register_lock(LockCategory.CACHE, _async_locks_lock, "lancedb_pool._async_locks_lock")
 
 
 def _get_async_locks_dict() -> dict[str, asyncio.Lock]:

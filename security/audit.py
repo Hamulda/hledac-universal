@@ -10,7 +10,6 @@ Pro:
 ISSUE-001 Phase 2: SQLite3 → DuckDB Migration
 - AuditLogger now uses DuckDB via DuckDBAuditStore
 """
-
 import asyncio
 import msgspec
 import hashlib
@@ -22,7 +21,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
-
 logger = logging.getLogger(__name__)
 
 class AuditLevel(Enum):
@@ -106,8 +104,9 @@ class AuditLogger:
         ...     details={"query": "sensitive_topic"},
         ... )
     """
+    __slots__ = tuple(('_duckdb_store', '_hmac_key', '_initialized', 'config'))
 
-    def __init__(self, config: AuditConfig | None = None) -> None:
+    def __init__(self, config: AuditConfig | None=None) -> None:
         self.config = config or AuditConfig()
         self._duckdb_store: Any = None
         self._initialized = False
@@ -119,77 +118,37 @@ class AuditLogger:
         """Initialize DuckDB-backed audit store."""
         if self._initialized:
             return
-
         from knowledge.duckdb_audit_store import DuckDBAuditStore
-
-        # Create DuckDB store without passing config since AuditConfig types differ
         self._duckdb_store = DuckDBAuditStore()
         await self._duckdb_store.initialize()
         self._initialized = True
-        logger.info("[AUDIT] AuditLogger initialized (DuckDB)")
+        logger.info('[AUDIT] AuditLogger initialized (DuckDB)')
 
-    async def log(
-        self,
-        event_type: AuditEventType,
-        action: str,
-        resource: str,
-        details: dict[str, Any] | None = None,
-        level: AuditLevel = AuditLevel.INFO,
-        user_id: str | None = None,
-        session_id: str | None = None,
-    ) -> bool:
+    async def log(self, event_type: AuditEventType, action: str, resource: str, details: dict[str, Any] | None=None, level: AuditLevel=AuditLevel.INFO, user_id: str | None=None, session_id: str | None=None) -> bool:
         """Log audit event to DuckDB."""
         if not self._initialized:
             await self.initialize()
         if level.value < self.config.min_level.value:
             return True
-
-        event = AuditEvent(
-            timestamp=datetime.now(UTC),
-            event_type=event_type,
-            action=action,
-            resource=resource,
-            user_id=user_id,
-            session_id=session_id,
-            details=details or {},
-            level=level,
-            _hmac_key=self._hmac_key,
-        )
+        event = AuditEvent(timestamp=datetime.now(UTC), event_type=event_type, action=action, resource=resource, user_id=user_id, session_id=session_id, details=details or {}, level=level, _hmac_key=self._hmac_key)
         try:
             await self._duckdb_store.log(event)
             if self.config.log_to_console:
-                logger.info(f"AUDIT: {event.event_type.value} - {event.action} on {event.resource}")
+                logger.info(f'AUDIT: {event.event_type.value} - {event.action} on {event.resource}')
             return True
         except Exception as e:
-            logger.error(f"Failed to log audit event: {e}")
+            logger.error(f'Failed to log audit event: {e}')
             return False
 
-    async def query(
-        self,
-        event_type: AuditEventType | None = None,
-        resource: str | None = None,
-        start_time: datetime | None = None,
-        end_time: datetime | None = None,
-        limit: int = 100,
-    ) -> list[AuditEvent]:
+    async def query(self, event_type: AuditEventType | None=None, resource: str | None=None, start_time: datetime | None=None, end_time: datetime | None=None, limit: int=100) -> list[AuditEvent]:
         """Query audit events from DuckDB."""
         if not self._initialized:
             await self.initialize()
         if self._duckdb_store is None:
             return []
-        return await self._duckdb_store.query(
-            event_type=event_type,
-            resource=resource,
-            start_time=start_time,
-            end_time=end_time,
-            limit=limit,
-        )
+        return await self._duckdb_store.query(event_type=event_type, resource=resource, start_time=start_time, end_time=end_time, limit=limit)
 
-    async def get_report(
-        self,
-        start_time: datetime | None = None,
-        end_time: datetime | None = None,
-    ) -> dict[str, Any]:
+    async def get_report(self, start_time: datetime | None=None, end_time: datetime | None=None) -> dict[str, Any]:
         """Generate audit report from DuckDB."""
         if not self._initialized:
             await self.initialize()

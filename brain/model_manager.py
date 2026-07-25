@@ -26,14 +26,9 @@ from hledac.universal.brain.quantization_selector import QuantizationSelector
 from hledac.universal.utils.concurrency import adjust_fetch_workers
 from hledac.universal.utils.exceptions import MemoryPressureError
 from hledac.universal.utils.executor_decorator import offload_to
-
-T = TypeVar("T")
+T = TypeVar('T')
 MLX_AVAILABLE = False
-
-# ── mlxcel detection ─────────────────────────────────────────────────────────
-
 _MLXCEL_DETECTED: bool = False
-
 
 def _detect_mlxcel() -> bool:
     """
@@ -49,31 +44,19 @@ def _detect_mlxcel() -> bool:
     global _MLXCEL_DETECTED
     if _MLXCEL_DETECTED:
         return True
-
-    # Paths checked by MlxcelIpcClient._find_binary()
-    _SEARCH_PATHS = [
-        Path.home() / ".local" / "bin" / "mlxcel",
-        Path.home() / "bin" / "mlxcel",
-        Path("/usr/local/bin/mlxcel"),
-        Path("/opt/homebrew/bin/mlxcel"),
-        Path("/opt/bin/mlxcel"),
-    ]
+    _SEARCH_PATHS = [Path.home() / '.local' / 'bin' / 'mlxcel', Path.home() / 'bin' / 'mlxcel', Path('/usr/local/bin/mlxcel'), Path('/opt/homebrew/bin/mlxcel'), Path('/opt/bin/mlxcel')]
     for path in _SEARCH_PATHS:
         if path.exists():
             _MLXCEL_DETECTED = True
-            logger.info("[MLXCEL] Detected mlxcel binary at %s", path)
+            logger.info('[MLXCEL] Detected mlxcel binary at %s', path)
             return True
-
-    # Also check PATH
-    for directory in os.environ.get("PATH", "").split(os.pathsep):
-        candidate = Path(directory) / "mlxcel"
+    for directory in os.environ.get('PATH', '').split(os.pathsep):
+        candidate = Path(directory) / 'mlxcel'
         if candidate.exists():
             _MLXCEL_DETECTED = True
-            logger.info("[MLXCEL] Detected mlxcel binary at %s", candidate)
+            logger.info('[MLXCEL] Detected mlxcel binary at %s', candidate)
             return True
-
     return False
-
 
 def _mlxcel_is_available() -> bool:
     """Runtime check: mlxcel binary detected on system."""
@@ -168,9 +151,6 @@ class ModelType(Enum):
     MODERNBERT = auto()
     GLINER = auto()
 
-
-# ── MlxcelHermesAdapter ──────────────────────────────────────────────────────
-
 class MlxcelHermesAdapter:
     """
     F4XX: Out-of-Process Hermes adapter — routes ALL inference through mlxcel.
@@ -187,8 +167,7 @@ class MlxcelHermesAdapter:
     Fallback: If mlxcel becomes unavailable at runtime, generate() raises
     MlxcelUnavailable and callers should fall back to DeepHermes3Engine.
     """
-
-    __slots__ = ("_client", "_config", "_initialized")
+    __slots__ = ('_client', '_config', '_initialized')
 
     def __init__(self) -> None:
         self._client = None
@@ -199,9 +178,10 @@ class MlxcelHermesAdapter:
     def _default_config() -> Any:
         """Return a minimal config object matching DeepHermes3Engine expectations."""
         from dataclasses import dataclass
-        @dataclass
+
+        @dataclass(True)
         class _Cfg:
-            model_path: str = "mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit"
+            model_path: str = 'mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit'
             max_tokens: int = 1024
             temperature: float = 0.7
             context_window: int = 8192
@@ -215,21 +195,12 @@ class MlxcelHermesAdapter:
             from hledac.universal.brain.mlxcel_ipc_client import get_mlxcel_client
             self._client = await get_mlxcel_client()
             self._initialized = True
-            logger.info("[MLXCEL ADAPTER] Client initialized")
+            logger.info('[MLXCEL ADAPTER] Client initialized')
         except Exception as e:
-            logger.warning("[MLXCEL ADAPTER] Failed to init mlxcel client: %s", e)
+            logger.warning('[MLXCEL ADAPTER] Failed to init mlxcel client: %s', e)
             self._initialized = False
 
-    async def generate(
-        self,
-        prompt: str,
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-        system_msg: str | None = None,
-        *,
-        thinking: bool = True,
-        adapter_path: str | None = None,
-    ) -> str:
+    async def generate(self, prompt: str, temperature: float | None=None, max_tokens: int | None=None, system_msg: str | None=None, *, thinking: bool=True, adapter_path: str | None=None) -> str:
         """
         Generate text via mlxcel subprocess (same signature as DeepHermes3Engine.generate).
 
@@ -238,34 +209,17 @@ class MlxcelHermesAdapter:
         """
         if not self._initialized:
             await self.initialize()
-
         if self._client is None:
             from hledac.universal.brain.mlxcel_ipc_client import MlxcelUnavailable
-            raise MlxcelUnavailable("mlxcel client not available")
-
+            raise MlxcelUnavailable('mlxcel client not available')
         try:
-            result = await self._client.generate(
-                prompt=prompt,
-                temperature=temperature or self._config.temperature,
-                max_tokens=max_tokens or self._config.max_tokens,
-                system_msg=system_msg,
-                thinking=thinking,
-                adapter_path=adapter_path,
-            )
+            result = await self._client.generate(prompt=prompt, temperature=temperature or self._config.temperature, max_tokens=max_tokens or self._config.max_tokens, system_msg=system_msg, thinking=thinking, adapter_path=adapter_path)
             return result.text
         except Exception as e:
             from hledac.universal.brain.mlxcel_ipc_client import MlxcelUnavailable
-            raise MlxcelUnavailable(f"mlxcel generate failed: {e}") from e
+            raise MlxcelUnavailable(f'mlxcel generate failed: {e}') from e
 
-    async def generate_stream(
-        self,
-        prompt: str,
-        max_tokens: int = 512,
-        system_msg: str | None = None,
-        temperature: float | None = None,
-        *,
-        thinking: bool = True,
-    ) -> AsyncIterator[str]:
+    async def generate_stream(self, prompt: str, max_tokens: int=512, system_msg: str | None=None, temperature: float | None=None, *, thinking: bool=True) -> AsyncIterator[str]:
         """
         Stream generated tokens via mlxcel subprocess.
 
@@ -274,27 +228,19 @@ class MlxcelHermesAdapter:
         """
         if not self._initialized:
             await self.initialize()
-
         if self._client is None:
             from hledac.universal.brain.mlxcel_ipc_client import MlxcelUnavailable
-            raise MlxcelUnavailable("mlxcel client not available")
-
+            raise MlxcelUnavailable('mlxcel client not available')
         try:
-            async for chunk in self._client.generate_stream(
-                prompt=prompt,
-                temperature=temperature or self._config.temperature,
-                max_tokens=max_tokens,
-                system_msg=system_msg,
-                thinking=thinking,
-            ):
+            async for chunk in self._client.generate_stream(prompt=prompt, temperature=temperature or self._config.temperature, max_tokens=max_tokens, system_msg=system_msg, thinking=thinking):
                 yield chunk
         except Exception as e:
-            logger.warning("[MLXCEL ADAPTER] Stream error: %s", e)
+            logger.warning('[MLXCEL ADAPTER] Stream error: %s', e)
 
     def apply_lora_adapter(self, adapter_path: str | None) -> None:
         """LoRA adapter not yet supported via mlxcel IPC (stub for API compatibility)."""
         if adapter_path is not None:
-            logger.debug("[MLXCEL ADAPTER] LoRA adapter not yet supported via IPC")
+            logger.debug('[MLXCEL ADAPTER] LoRA adapter not yet supported via IPC')
 
     @property
     def stats(self) -> Any:
@@ -381,9 +327,9 @@ class ModelManager:
         in-process mlx-lm Python bindings) — nouzový fallback.
         """
         if _mlxcel_is_available():
-            logger.info("[MODEL MANAGER] mlxcel detected — routing Hermes via MlxcelHermesAdapter")
+            logger.info('[MODEL MANAGER] mlxcel detected — routing Hermes via MlxcelHermesAdapter')
             return MlxcelHermesAdapter()
-        logger.info("[MODEL MANAGER] mlxcel not available — using DeepHermes3Engine (in-process mlx-lm)")
+        logger.info('[MODEL MANAGER] mlxcel not available — using DeepHermes3Engine (in-process mlx-lm)')
         from .deephermes3_engine import DeepHermes3Engine
         return DeepHermes3Engine()
 
@@ -602,7 +548,8 @@ class ModelManager:
             raise RuntimeError('mlx_lm required for Hermes model download')
         model_id = 'mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit'
         try:
-            mlx_lm.load(model_id)
+            # C2-FIX: mlx_lm.load() is blocking I/O. Wrapped in offload_to() to avoid blocking event loop.
+            await offload_to('cpu_io_pool', mlx_lm.load, model_id)
             logger.info(f'[MODEL DOWNLOAD] Hermes-3 already cached at {model_id}')
             return
         except Exception:
@@ -611,7 +558,7 @@ class ModelManager:
         logger.info('[MODEL DOWNLOAD] Reducing HTTP worker pool to 3 during download')
         await adjust_fetch_workers(3)
         try:
-            await offload_to("cpu_io_pool", mlx_lm.download, model_id)
+            await offload_to('cpu_io_pool', mlx_lm.download, model_id)
             logger.info('[MODEL DOWNLOAD] Hermes-3 downloaded successfully')
         finally:
             logger.info('[MODEL DOWNLOAD] Restoring HTTP worker pool to 25')

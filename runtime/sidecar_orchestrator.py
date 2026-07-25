@@ -914,9 +914,14 @@ class SidecarOrchestrator:
         except (ImportError, ModuleNotFoundError):
             service = None
 
-        for target_id in all_target_ids:
+        # Issue #A1: parallel upsert via asyncio.gather — N×T ms → ~T ms
+        # DuckDB writes are I/O-bound; gather with semaphore caps concurrency
+        # to avoid M1 8GB RSS spikes.
+        _MAX_CONCURRENT_UPSERTS = 8
+
+        async def _upsert_one(target_id: str) -> None:
             if service is None:
-                continue
+                return
             try:
                 update = TargetMemoryUpdate(
                     target_id=target_id,
@@ -932,7 +937,20 @@ class SidecarOrchestrator:
             except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # Fail-soft
 
-    def reset(self) -> None:
+        sem = _asyncio.Semaphore(_MAX_CONCURRENT_UPSERTS)
+
+        async def _upsert_one_bounded(target_id: str) -> None:
+            async with sem:
+                await _upsert_one(target_id)
+
+        tasks = [_asyncio.create_task(_upsert_one_bounded(tid)) for tid in all_target_ids]
+        await _asyncio.gather(*tasks, return_exceptions=True)
+        # NOTE: gather with return_exceptions=True — each _upsert_one catches all
+        # exceptions internally (pass). No exception can propagate to gather's
+        # result list, so log.error here is permanently unreachable. Kept as
+        # documentation of the intended contract.
+
+    def teardown(self) -> None:
         """Clear in-memory state. Called on sprint teardown."""
         if hasattr(self, "_dispatcher") and self._dispatcher is not None:
             self._dispatcher.reset()

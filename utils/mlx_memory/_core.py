@@ -32,13 +32,14 @@ import logging
 import sys
 import threading
 import time as _time
-from collections import OrderedDict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from utils.locks import LazyAsyncioLock
+
+from hledac.universal.core.locks import LockCategory, register_lock
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable
@@ -140,7 +141,9 @@ _METAL_WIRED_LIMIT_BYTES = _METAL_WIRED_LIMIT_BYTES
 
 _mlx_initialized: bool = False
 _mlx_init_lock = threading.Lock()
+register_lock(LockCategory.CACHE, _mlx_init_lock, "mlx_memory._mlx_init_lock")
 _mlx_metal_limits_lock = threading.Lock()
+register_lock(LockCategory.CACHE, _mlx_metal_limits_lock, "mlx_memory._mlx_metal_limits_lock")
 _last_setter_error: str | None = None
 _cache_limit_actual: int | None = None
 _wired_limit_actual: int | None = None
@@ -617,17 +620,19 @@ def get_metal_stream_context():
 
 # ── Model Cache (LRU, max 2 models) ──────────────────────────────────────────
 
-_MLX_CACHE: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
+_MLX_CACHE: dict[str, tuple[Any, Any]] = {}
 _MLX_CACHE_MAX = 2
 _MLX_CACHE_LIMIT = _METAL_CACHE_LIMIT_BYTES
 _MLX_WIRED_LIMIT = _METAL_WIRED_LIMIT_BYTES
 
 _mlx_cache_lock = LazyAsyncioLock()
 _mlx_evict_lock = threading.Lock()
+register_lock(LockCategory.CACHE, _mlx_evict_lock, "mlx_memory._mlx_evict_lock")
 
 # Concurrency control
 _MLX_SEMAPHORE: asyncio.Semaphore | None = None
 _MLX_SEMAPHORE_INIT = threading.Lock()
+register_lock(LockCategory.CACHE, _MLX_SEMAPHORE_INIT, "mlx_memory._MLX_SEMAPHORE_INIT")
 
 
 def _get_cache_lock() -> LazyAsyncioLock:

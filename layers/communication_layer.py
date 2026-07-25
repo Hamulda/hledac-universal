@@ -565,7 +565,7 @@ class CommunicationLayer:
                             item = heapq.heappop(self._batch_heap)
                             batch.append(item)
                 if is_empty:
-                    await asyncio.sleep(0.01)
+                    await asyncio.sleep(0)
                     continue
                 if not batch:
                     continue

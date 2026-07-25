@@ -12,7 +12,7 @@ import asyncio
 import importlib.util
 import logging
 import threading
-from collections import OrderedDict
+from utils.lru_cache import LRUCache
 from typing import Any
 
 from core.psutil_shim import psutil
@@ -56,7 +56,7 @@ def get_mx():
     return _sys.modules.get("mlx.core")
 
 # LRU cache for MLX models (max 2 models)
-_MLX_CACHE: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
+_MLX_CACHE: LRUCache[str, tuple[Any, Any]] = LRUCache(max_size=2)
 _MLX_CACHE_MAX = 2
 
 # Lazy locks
@@ -127,11 +127,8 @@ async def get_mlx_model(model_name: str) -> tuple[Any, Any]:
                 model_name,
             )
 
-            # Add to cache with LRU eviction
+            # Add to cache with LRU eviction (handled automatically by LRUCache)
             _MLX_CACHE[model_name] = (model, tokenizer)
-            if len(_MLX_CACHE) > _MLX_CACHE_MAX:
-                evicted_name, _ = _MLX_CACHE.popitem(last=False)
-                logger.info(f"MLX cache evicted: {evicted_name}")
 
             logger.info(f"MLX model loaded and cached: {model_name}")
             return model, tokenizer

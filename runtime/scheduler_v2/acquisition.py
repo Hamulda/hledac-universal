@@ -187,6 +187,7 @@ class AcquisitionOrchestrator:
         # Phase semaphores for bounded concurrency
         _discovery_sem = asyncio.Semaphore(min(len(sources), 5))
         _fetch_sem = asyncio.Semaphore(8)  # AIMD will adjust
+        _enrich_sem = asyncio.Semaphore(4)  # ISSUE A2: parallel enrichment workers (M1 8GB: 4 optimal)
 
         async def _discovery_producer() -> None:
             """DISCOVERY: Parallel feed probing, produces candidates to selection_queue."""
@@ -270,6 +271,7 @@ class AcquisitionOrchestrator:
             _ph_start = _time.monotonic()
             _consumed = 0
             _produced = 0
+            _drain_timeout = 1.0  # seconds to wait after queue empties before giving up
 
             async def _fetch_one(url_score: tuple[str, float]) -> tuple[str, Any] | None:
                 _url, _score = url_score
@@ -279,7 +281,7 @@ class AcquisitionOrchestrator:
                         _result = await self._fetch_url_aimd(ctx, _url, duckdb_store)
                         if _result:
                             try:
-                                _queues.enrichment_queue.put_nowait((_url, _result))
+                                _queues.fetch_queue.put_nowait((_url, _result))  # A3-F2 FIX: was enrichment_queue
                                 return (_url, _result)
                             except asyncio.QueueFull:
                                 return None
@@ -288,17 +290,25 @@ class AcquisitionOrchestrator:
                     return None
 
             try:
-                # Drain selection queue with bounded parallelism
-                _items: list[tuple[str, float]] = []
-                while not _queues.selection_queue.empty():
+                # A3-F1 FIX: wait_for pattern instead of TOCTOU empty()+get_nowait()
+                while True:
                     try:
-                        _items.append(_queues.selection_queue.get_nowait())
-                    except asyncio.QueueEmpty:
-                        break
+                        _item = await asyncio.wait_for(
+                            _queues.selection_queue.get(), timeout=_drain_timeout
+                        )
+                    except asyncio.TimeoutError:
+                        break  # Drain complete
 
-                if _items:
+                    _items_batch: list[tuple[str, float]] = [_item]
+                    # Batch-gather remaining items already in queue (non-blocking drain)
+                    while len(_items_batch) < 32:  # batch cap for memory safety
+                        try:
+                            _items_batch.append(_queues.selection_queue.get_nowait())
+                        except asyncio.QueueEmpty:
+                            break
+
                     _results = await parallel(
-                        [_fetch_one(item) for item in _items],
+                        [_fetch_one(item) for item in _items_batch],
                         taskgroup=True,
                         policy="collect",
                         ctx="pipeline:fetch",
@@ -317,43 +327,51 @@ class AcquisitionOrchestrator:
                     duration_s=_time.monotonic() - _ph_start,
                 )
 
-        async def _enrichment_worker() -> None:
+        # ISSUE A2 + A3-F3/F4: Parallel enrichment worker pool — replaces sequential loop
+        # Each worker processes fetch_queue items with bounded concurrency via _enrich_sem.
+        # Workers run until drain_timeout expires with no new items.
+        # A3-F3 FIX: per-worker metrics key to avoid overwrite from 4 concurrent workers.
+        async def _enrichment_worker(widx: int) -> None:
             """ENRICHMENT: Parallel DuckDB + Rust enrichment, produces final findings."""
             _ph_start = _time.monotonic()
             _consumed = 0
+            _drain_timeout = 2.0  # seconds to wait after queue empties before giving up
+            _wkey = f"ENRICHMENT-{widx}"
 
-            try:
-                while not _queues.fetch_queue.empty():
-                    try:
-                        _url, _content = _queues.fetch_queue.get_nowait()
-                    except asyncio.QueueEmpty:
-                        break
+            while True:
+                try:
+                    _url, _content = await asyncio.wait_for(
+                        _queues.fetch_queue.get(), timeout=_drain_timeout
+                    )
+                except asyncio.TimeoutError:
+                    break  # Drain timeout — no new items in queue
 
+                async with _enrich_sem:
                     try:
                         # DuckDB + Rust enrichment
                         await self._enrich_content(ctx, _url, _content, duckdb_store)
                         _consumed += 1
                     except Exception:
                         pass  # Fail-safe: enrichment errors don't propagate
-            finally:
-                _phase_metrics["ENRICHMENT"] = PipelineMetrics(
-                    phase="ENRICHMENT",
-                    items_consumed=_consumed,
-                    duration_s=_time.monotonic() - _ph_start,
-                )
+
+            # A3-F3 FIX: per-worker metrics key — avoids 4 workers overwriting same key
+            _phase_metrics[_wkey] = PipelineMetrics(
+                phase="ENRICHMENT",
+                items_consumed=_consumed,
+                duration_s=_time.monotonic() - _ph_start,
+            )
 
         # ── Run pipeline phases ─────────────────────────────────────────────────
         try:
             # DISCOVERY runs first (producer)
             await _discovery_producer()
 
-            # SELECTION + FETCH + ENRICHMENT run concurrently
-            await parallel(
-                [_selection_worker(), _fetch_worker(), _enrichment_worker()],
-                taskgroup=True,
-                policy="collect",
-                ctx="pipeline:selection_fetch_enrichment",
-            )
+            # SELECTION + FETCH + 4×ENRICHMENT_WORKER run concurrently (ISSUE A2)
+            async with asyncio.TaskGroup() as _tg:
+                _tg.create_task(_selection_worker(), name="selection")
+                _tg.create_task(_fetch_worker(), name="fetch")
+                for _i in range(4):  # ISSUE A2: 4 parallel enrichment workers
+                    _tg.create_task(_enrichment_worker(_i), name=f"enrichment-{_i}")
         except Exception:
             pass  # Fail-safe: pipeline errors return empty result
 
@@ -1267,8 +1285,13 @@ class AcquisitionOrchestrator:
             log.debug("[F259] SynthesisRunner import failed: %s", e)
             ctx.result.synthesis_engine = "import_failed"
             return
+        # P2-02: Use try/finally to guarantee runner.close() even on exception.
+        # Previously close() was only on success path (line 1324) — synthesize_findings()
+        # exception left model loaded (Hermes3 ~2GB on M1 8GB = significant leak).
+        runner: SynthesisRunner | None = None
         try:
-            runner = SynthesisRunner(ModelLifecycle())
+            lifecycle_instance = ModelLifecycle()
+            runner = SynthesisRunner(lifecycle_instance)
             runner.set_compression_threshold(4000)
             runner._duckdb_store = duckdb_store
             if lifecycle is not None:
@@ -1321,12 +1344,19 @@ class AcquisitionOrchestrator:
                     log.debug("[F285] batcher stats collection failed")
             else:
                 ctx.result.synthesis_text = ""
-            await runner.close()
         except Exception as e:  # noqa: BLE001 — best-effort; telemetry/stats; best-effort
             log.debug("[F259] Synthesis failed: %s", e)
             ctx.result.synthesis_success = False
             ctx.result.synthesis_engine = "error"
             ctx.result.synthesis_text = ""
+        finally:
+            # P2-02: ALWAYS close runner — finally guarantees execution even on exception.
+            # This fixes the ~2GB Hermes3 model leak when synthesize_findings() raises.
+            if runner is not None:
+                try:
+                    await runner.close()
+                except Exception:  # noqa: BLE001 — best-effort; cleanup must not raise
+                    log.debug("[F259] runner.close() raised (ignored)")
 
     async def _run_epistemic_gap_advisory(
         self,

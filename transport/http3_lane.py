@@ -55,7 +55,7 @@ import asyncio
 import functools
 import logging
 import time
-from collections import OrderedDict
+from utils.lru_cache import LRUCache
 from typing import Any
 from urllib.parse import urlparse
 
@@ -94,11 +94,11 @@ _ENABLED: bool = _resolve_enabled()
 # Lazy singletons (created on first request, not at import).
 #
 # The LRU cache does NOT need a lock: we run in a single-threaded asyncio
-# loop, and ``OrderedDict`` operations are atomic with respect to ``await``.
+# loop, and ``LRUCache`` operations are atomic with respect to ``await``.
 # Adding a lock here would only protect against a future migration to
 # ``asyncio.to_thread`` callers, which we explicitly forbid in CLAUDE.md
 # (``Nepoužívej asyncio.run() v ThreadPoolExecutor — M1 crash vector``).
-_lru_cache: OrderedDict[str, tuple[float, bool]] = OrderedDict()
+_lru_cache: LRUCache[str, tuple[float, bool]] = LRUCache(max_size=_H3_CACHE_MAX)
 _semaphore: asyncio.Semaphore | None = None
 # PATCH 4: throttle speculative Alt-Svc probes (max 16 concurrent via _probe_semaphore)
 # Uses ConcurrencyCategory.HTTP_LANE from concurrency_registry (shared semaphore).

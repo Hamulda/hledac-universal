@@ -503,6 +503,17 @@ async def dispatch_async(args: argparse.Namespace) -> int:
     logger = logging.getLogger(__name__)
     logger.debug("[CLI] dispatch_async: entering")
 
+    # Wire async log handler — runs inside asyncio.Runner context
+    # Activated by HLEDAC_ASYNC_LOG=1 (default OFF for stability)
+    try:
+        from hledac.universal.runtime.observability_async_handler import (
+            configure_async_logging,
+        )
+
+        await configure_async_logging()
+    except Exception:
+        pass
+
     sub = getattr(args, "_subcommand", None)
     sprint_target = getattr(args, "sprint", None)
 

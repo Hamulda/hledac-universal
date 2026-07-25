@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
+import msgspec
 import pytest
 
 from hledac.universal.rl.actions import ACTION_CONTINUE, ACTION_DEEP_DIVE
@@ -341,7 +342,8 @@ class TestInvariants:
             total_reward=123.5,
             sprint_rewards=[1.0, 2.0, 3.0],
         )
-        tmp_policy_path.write_text(json.dumps(state.__dict__))
+        # msgspec.Struct doesn't have __dict__ — use msgspec.json.encode
+        tmp_policy_path.write_text(msgspec.json.encode(state).decode())
         loaded = json.loads(tmp_policy_path.read_text())
         assert loaded["sprint_sequence_number"] == 42
         assert loaded["epsilon"] == 0.07

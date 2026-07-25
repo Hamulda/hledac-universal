@@ -15,7 +15,7 @@ Canonical replacements:
 
 import asyncio
 import inspect
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -46,8 +46,8 @@ class TestScanCtFix:
         # Verify basic attributes
         assert scheduler._config is not None
         assert scheduler._config.sprint_duration_s == 3
-        assert hasattr(scheduler, "_seen_hashes")
-        assert hasattr(scheduler, "_entries_per_source")
+        # SprintSchedulerV2 does not have _seen_hashes or _entries_per_source
+        # (those were v1 attributes replaced by bounded dedup in v2)
 
 
 class TestStealthCrawlerFix:
@@ -55,15 +55,19 @@ class TestStealthCrawlerFix:
 
     def test_fetch_html_sync_returns_string_not_coroutine(self):
         """_fetch_html should return str | None, not a coroutine"""
-        from hledac.universal.intel.stealth_crawler import StealthCrawler
+        from hledac.universal.recon.stealth.scraper import StealthCrawler
 
-        crawler = StealthCrawler()
+        # Patch __init__ to skip dependency checks and set _curl_cffi_available directly
+        def mock_init(self, use_header_spoofer=True):
+            self._curl_cffi_available = True
+            self._httpx_available = False
+            self._session = None
+            self._header_spoofer = None
 
-        # Mock _fetch_with_curl_cffi to return valid HTML
-        crawler._fetch_with_curl_cffi = MagicMock(return_value="<html><body>test</body></html>")
-        crawler._requests_available = False
-
-        result = crawler._fetch_html("https://example.com", {"User-Agent": "test"})
+        with patch.object(StealthCrawler, "__init__", mock_init), \
+             patch.object(StealthCrawler, "_fetch_with_curl_cffi", return_value="<html><body>test</body></html>"):
+            crawler = StealthCrawler()
+            result = crawler._fetch_html("https://example.com", {"User-Agent": "test"})
 
         # Must NOT be a coroutine
         assert not inspect.iscoroutine(result)
@@ -73,20 +77,17 @@ class TestStealthCrawlerFix:
 
     def test_search_duckduckgo_returns_list_not_coroutine(self):
         """_search_duckduckgo should return List[SearchResult], not a coroutine"""
-        from hledac.universal.intel.stealth_crawler import StealthCrawler
+        from hledac.universal.recon.stealth.scraper import StealthCrawler
 
-        crawler = StealthCrawler()
-
-        # Mock _fetch_html to return valid HTML
         valid_html = """
         <html><body>
         <a class="result__a" href="https://example.com">Example</a>
         <a class="result__a" href="https://test.com">Test</a>
         </body></html>
         """
-        crawler._fetch_html = MagicMock(return_value=valid_html)
-
-        result = crawler._search_duckduckgo("test query", num_results=5)
+        with patch.object(StealthCrawler, "_fetch_html", return_value=valid_html):
+            crawler = StealthCrawler()
+            result = crawler._search_duckduckgo("test query", num_results=5)
 
         # Must NOT be a coroutine
         assert not inspect.iscoroutine(result)

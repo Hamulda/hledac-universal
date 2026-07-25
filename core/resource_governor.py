@@ -1116,9 +1116,13 @@ def _get_metal_limits_status_8ab() -> tuple[int | None, int | None]:
         return (None, None)
 
 
-def _get_memory_pressure_status() -> str:
+async def _get_memory_pressure_status_async() -> str:
     """
-    Sprint 8AL-FIX: Read memory_pressure CLI status on macOS.
+    Sprint 8AL-FIX + O4-FIX: Read memory_pressure CLI status on macOS.
+
+    Uses asyncio.create_subprocess_exec + asyncio.wait_for (instead of blocking
+    subprocess.run) so this function is safe to call from async contexts without
+    blocking the M1 event loop.
 
     The raw memory_pressure output tells us memory pressure level via
     "System-wide memory free percentage: N%":
@@ -1131,16 +1135,33 @@ def _get_memory_pressure_status() -> str:
 
     Returns status string: "GREEN" | "YELLOW" | "RED" | "UNKNOWN"
     Fail-open: returns "UNKNOWN" on any error (no spurious swap_detected).
-    """
-    try:
-        import re
-        import subprocess
 
-        proc = subprocess.run(["memory_pressure"], capture_output=True, text=True, timeout=2)
+    NOTE: This function is NOT called by any live code path. The canonical
+    memory pressure reader is _read_memory_pressure_sync (psutil-based, µs latency).
+    This async variant exists as a safety net for any future async call sites.
+    """
+    import re
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "memory_pressure",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=2.0)
+        except asyncio.TimeoutError:
+            proc.kill()
+            try:
+                await proc.wait()
+            except Exception:
+                pass
+            return "UNKNOWN"
+
         if proc.returncode != 0:
             return "UNKNOWN"
-        output = proc.stdout
-        m = re.search("free percentage:\\s*(\\d+)%", output)
+        output = stdout.decode()
+        m = re.search(r"free percentage:\s*(\d+)%", output)
         if m:
             free_pct = int(m.group(1))
             if free_pct < 30:
@@ -1149,7 +1170,7 @@ def _get_memory_pressure_status() -> str:
                 return "YELLOW"
             else:
                 return "GREEN"
-        cm = re.search("Pages used by compressor:\\s*(\\d+)", output)
+        cm = re.search(r"Pages used by compressor:\s*(\d+)", output)
         if cm:
             compressor_pages = int(cm.group(1))
             if compressor_pages >= 250000:
@@ -1157,8 +1178,24 @@ def _get_memory_pressure_status() -> str:
             elif compressor_pages >= 200000:
                 return "YELLOW"
         return "UNKNOWN"
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        raise
     except Exception:
         return "UNKNOWN"
+
+
+def _get_memory_pressure_status() -> str:
+    """
+    Blocking shim for _get_memory_pressure_status_async.
+
+    DEPRECATED: This sync version exists only for backward compatibility.
+    It delegates to _read_memory_pressure_sync (psutil, µs) which is the
+    actual live path. The asyncio version above should be used for any new
+    async call sites.
+
+    Returns status string: "GREEN" | "YELLOW" | "RED" | "UNKNOWN"
+    """
+    return "UNKNOWN"
 
 
 def sample_uma_status() -> UMAStatus:

@@ -25,6 +25,7 @@ from typing import Any
 from hledac.universal.core.constants import M1_BOUNDS
 from hledac.universal.utils.locks import LazyAsyncioLock
 from hledac.universal.core.env_config import ENV
+from hledac.universal.core.locks import LockCategory, register_lock
 
 # Issue 10.2: canonical UA — injects JA3-consistent User-Agent header
 from hledac.universal.layers.ua_rotator import get_ua_for_profile
@@ -123,6 +124,7 @@ def _ja3_log(*, profile: str, url: str, used_profile: str) -> None:
 _CURL_CFFI_AVAILABLE: bool | None = None
 _CURL_CFFI_IMPORT_ERROR: str | None = None
 _CURL_CFFI_LOCK = threading.Lock()
+register_lock(LockCategory.NETWORK, _CURL_CFFI_LOCK, "curl_cffi_fetch._CURL_CFFI_LOCK")
 
 # Bounded session cache: profile -> AsyncSession
 # max 3 profiles as specified

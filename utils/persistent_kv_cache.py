@@ -10,7 +10,7 @@ ARCHITECTURA:
 │  PersistentKVCache (singleton, process-wide)            │
 │  ├── _lmdb_env: LMDB for metadata (hash → CacheEntry)│
 │  ├── _cache_dir: Path to safetensors files            │
-│  └── _lru_order: OrderedDict[str, float] for LRU       │
+│  └── _lru_order: LRUCache[str, float] for LRU         │
 │                                                         │
 │  CacheEntry (LMDB value, msgpack):                     │
 │  ├── prompt_hash: str (xxhash)                        │
@@ -42,10 +42,11 @@ import msgspec
 import hashlib
 import logging
 import time
-from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from utils.lru_cache import LRUCache  # noqa: I001
 
 import msgspec  # noqa: E402 (lazy, ok at module level for msgpack encode/decode)
 
@@ -159,7 +160,7 @@ class PersistentKVCache:
         self._lmdb_db: Any = None
         self._cache_dir = (cache_dir or _DEFAULT_CACHE_DIR).resolve()
         self._cache_subdir = self._cache_dir / _CACHE_SUBDIR
-        self._lru_order: OrderedDict[str, float] = OrderedDict()
+        self._lru_order: LRUCache[str, float] = LRUCache()
         self._total_bytes: int = 0
         self._max_size_bytes: int = int(max_size_gb * 1024 * 1024 * 1024)
         self._max_entries: int = max_entries
@@ -275,18 +276,24 @@ class PersistentKVCache:
         if not self._initialized or self._lmdb_env is None:
             return
         try:
+            items: list[tuple[str, float]] = []
             with self._lmdb_env.begin() as txn:
                 cursor = txn.cursor(self._lmdb_db)
                 for key, value in cursor:
                     try:
                         entry = CacheEntry.decode(value)
-                        self._lru_order[key.decode()] = entry.last_accessed
+                        items.append((key.decode(), entry.last_accessed))
                         self._total_bytes += entry.size_bytes
                     except Exception:
                         continue
-            self._lru_order = OrderedDict(
-                sorted(self._lru_order.items(), key=lambda x: x[1])
-            )
+            # Sort by last_accessed (oldest first = LRU order)
+            items.sort(key=lambda x: x[1])
+            # Rebuild LRUCache internal structures in sorted order
+            self._lru_order._data.clear()
+            self._lru_order._order.clear()
+            for key, ts in items:
+                self._lru_order._data[key] = ts
+                self._lru_order._order.append(key)
             logger.debug(
                 "[PKV] Loaded %d entries, total=%.1fMB",
                 len(self._lru_order),
@@ -345,7 +352,7 @@ class PersistentKVCache:
                 await asyncio.to_thread(_delete_lmdb)
 
             if key in self._lru_order:
-                del self._lru_order[key]
+                self._lru_order.pop(key)
             self._total_bytes = max(0, self._total_bytes - freed)
         except Exception as e:
             logger.debug("[PKV] Evict failed for %s: %s", key, e)

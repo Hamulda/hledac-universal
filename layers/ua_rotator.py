@@ -25,6 +25,8 @@ import secrets
 import threading
 from typing import Literal
 
+from hledac.universal.core.locks import LockCategory, register_lock
+
 # Crypto-safe RNG — F350M-R
 _RNG = secrets.SystemRandom()
 
@@ -152,6 +154,7 @@ _ACCEPT_ENCODING_POOL: tuple[str, ...] = (
 # --------------------------------------------------------------------------------
 
 _ua_lock = threading.Lock()
+register_lock(LockCategory.CACHE, _ua_lock, "ua_rotator._ua_lock")
 
 
 def get_random_ua() -> str:

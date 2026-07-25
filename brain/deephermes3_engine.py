@@ -21,7 +21,7 @@ import logging
 import os
 import threading
 import time
-from collections import OrderedDict
+from collections import deque
 from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass
 import msgspec
@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok, safe_wait_for
 from hledac.universal.utils.cache import PyCacheDict
+from hledac.universal.utils.lru_cache import LRUCache
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode, encode_fast as _msgspec_encode_fast
 from hledac.universal.utils.import_resolver import lazy, lazy_callable
 from brain._hermes_cache import hermes_cache
@@ -414,7 +415,7 @@ class DeepHermes3Engine:
             self._kv_cache_pool_memory_mb: int = max(32, _mem_mb) if _mem_mb is not None else 256
         except (ValueError, TypeError):
             self._kv_cache_pool_memory_mb: int = 256
-        self._kv_cache_pool: OrderedDict[str, tuple[Any, float, int]] = OrderedDict()
+        self._kv_cache_pool: LRUCache[str, tuple[Any, float, int]] = LRUCache(max_size=self._kv_cache_pool_maxsize)
         self._kv_cache_pool_stats = {'pool_maxsize': self._kv_cache_pool_maxsize, 'pool_memory_mb': self._kv_cache_pool_memory_mb, 'pool_hits': 0, 'pool_misses': 0, 'pool_evictions': 0, 'pool_evictions_memory': 0}
         self._key_locks: PyCacheDict[str, threading.Lock] = PyCacheDict(1024, 300.0)
         _raw_session_mem = os.getenv('HLEDAC_SESSION_CACHE_MEMORY_MB', '')
@@ -429,7 +430,7 @@ class DeepHermes3Engine:
             self._session_cache_maxsize: int = max(1, _session_max) if _session_max is not None else 8
         except (ValueError, TypeError):
             self._session_cache_maxsize: int = 8
-        self._session_cache_pool: OrderedDict[str, tuple[Any, str, float, int]] = OrderedDict()
+        self._session_cache_pool: LRUCache[str, tuple[Any, str, float, int]] = LRUCache(max_size=self._session_cache_maxsize)
         self._session_cache_stats = {'session_cache_hits': 0, 'session_cache_misses': 0, 'session_cache_evictions': 0, 'session_cache_memory_mb': self._session_cache_memory_mb, 'session_cache_maxsize': self._session_cache_maxsize}
         _raw_max = os.environ.get('HLEDAC_HERMES_PREFIX_CACHE_MAXSIZE', '')
         try:
@@ -437,7 +438,7 @@ class DeepHermes3Engine:
             self._prefix_cache_maxsize: int = max(1, _max) if _max is not None else 64
         except (ValueError, TypeError):
             self._prefix_cache_maxsize: int = 64
-        self._prefix_cache: OrderedDict[str, Any] = OrderedDict()
+        self._prefix_cache: LRUCache[str, Any] = LRUCache(max_size=self._prefix_cache_maxsize)
         self._idle_unload_timeout_s: float = float(os.getenv('HLEDAC_IDLE_UNLOAD_TIMEOUT_S', '1800.0'))
         self._prefix_cache_stats = {'prefix_cache_maxsize': self._prefix_cache_maxsize, 'prefix_cache_size': 0, 'prefix_cache_evictions': 0, 'prefix_cache_hits': 0, 'prefix_cache_misses': 0}
         self._inference_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
@@ -916,13 +917,18 @@ class DeepHermes3Engine:
         P0-04: Uses HermesModelCache singleton — single RLock for all access,
         active background pressure monitor corrects passive-only insert-time eviction.
         HLEDAC_HERMES_NO_CACHE=1 bypasses cache (debug escape hatch).
+
+        C2-FIX: mlx_lm.load() is blocking I/O (disk read + Metal kernel compilation).
+        Wrapped in asyncio.to_thread() to avoid blocking the event loop.
         """
         if self._model is not None and self._tokenizer is not None:
             logger.debug('[HERMES] Model already loaded, skipping cache check')
             return
         if os.getenv('HLEDAC_HERMES_NO_CACHE', '0') == '1':
             logger.debug('[HERMES] HLEDAC_HERMES_NO_CACHE=1 — loading from disk')
-            model, tokenizer = __import__('mlx_lm').load(self.config.model_path)
+            model, tokenizer = await asyncio.to_thread(
+                __import__('mlx_lm').load, self.config.model_path
+            )
             self._model = model
             self._tokenizer = tokenizer
             return
@@ -934,7 +940,9 @@ class DeepHermes3Engine:
             logger.debug('[HERMES] Model retrieved from cache (LRU updated), skipping reload')
             return
         logger.info(f'[HERMES] Loading model from disk: {model_path}')
-        model, tokenizer = __import__('mlx_lm').load(model_path)
+        model, tokenizer = await asyncio.to_thread(
+            __import__('mlx_lm').load, model_path
+        )
         self._model = model
         self._tokenizer = tokenizer
         try:
@@ -1484,15 +1492,15 @@ class DeepHermes3Engine:
         prefix_tokens = None
         cache_key = hashlib.sha256((system or '').encode()).hexdigest()
         if cache_key in prefix_cache:
-            prefix_cache.move_to_end(cache_key)
+            # LRUCache.__getitem__ below automatically marks as MRU
             prefix_cache_stats['prefix_cache_hits'] = prefix_cache_stats.get('prefix_cache_hits', 0) + 1
             prefix_cache_stats['prefix_cache_size'] = len(prefix_cache)
             logger.debug(f'[CACHE] Prefix cache hit for key {cache_key[:8]}')
         elif tokenizer:
             try:
                 prefix_tokens = tokenizer.encode(system)
+                # LRUCache.__setitem__ inserts at MRU position automatically
                 prefix_cache[cache_key] = prefix_tokens
-                prefix_cache.move_to_end(cache_key)
                 prefix_cache_stats['prefix_cache_misses'] = prefix_cache_stats.get('prefix_cache_misses', 0) + 1
                 prefix_cache_stats['prefix_cache_size'] = len(prefix_cache)
                 while len(prefix_cache) > prefix_cache_maxsize:
@@ -1553,7 +1561,7 @@ class DeepHermes3Engine:
             from mlx_lm.models.cache import make_prompt_cache
             prompt_hash = hashlib.md5(system_prompt.encode()).hexdigest()
             if prompt_hash in self._kv_cache_pool:
-                self._kv_cache_pool.move_to_end(prompt_hash)
+                # LRUCache.__getitem__ automatically marks as MRU
                 self._kv_cache_pool_stats['pool_hits'] += 1
                 logger.debug(f'[KV-CACHE][F289] Pool hit for system prompt hash {prompt_hash[:8]}')
                 return self._kv_cache_pool[prompt_hash][0]
@@ -1563,7 +1571,7 @@ class DeepHermes3Engine:
                 self._key_locks[prompt_hash] = lock
             with lock:
                 if prompt_hash in self._kv_cache_pool:
-                    self._kv_cache_pool.move_to_end(prompt_hash)
+                    # LRUCache.__getitem__ automatically marks as MRU
                     self._kv_cache_pool_stats['pool_hits'] += 1
                     return self._kv_cache_pool[prompt_hash][0]
                 self._kv_cache_pool_stats['pool_misses'] += 1
@@ -1577,7 +1585,7 @@ class DeepHermes3Engine:
                         break
                     evicted_key = max(self._kv_cache_pool, key=lambda k: self._kv_cache_pool[k][2])
                     evicted_size = self._kv_cache_pool[evicted_key][2]
-                    del self._kv_cache_pool[evicted_key]
+                    self._kv_cache_pool.pop(evicted_key)
                     total_bytes -= evicted_size
                     self._kv_cache_pool_stats['pool_evictions'] += 1
                     self._kv_cache_pool_stats['pool_evictions_memory'] += evicted_size
@@ -1601,7 +1609,7 @@ class DeepHermes3Engine:
         Cache key = xxhash of formatted_prompt (fast, stable across restarts).
         LRU eviction when pool exceeds memory budget or max entries.
 
-        Thread-safe via GIL (OrderedDict operations are atomic for dict reads).
+        Thread-safe via GIL (dict operations are atomic for dict reads).
 
         Returns:
             Tuple of (kv_cache, prompt_hash) on hit, None on miss.
@@ -1611,7 +1619,7 @@ class DeepHermes3Engine:
         try:
             prompt_hash = _get_xxh3_hex(formatted_prompt)
             if prompt_hash in self._session_cache_pool:
-                self._session_cache_pool.move_to_end(prompt_hash)
+                # LRUCache.__getitem__ automatically marks as MRU
                 self._session_cache_stats['session_cache_hits'] += 1
                 logger.debug(f'[SESSION-CACHE] Hit for prompt hash {prompt_hash[:8]}')
                 return (self._session_cache_pool[prompt_hash][0], prompt_hash)
@@ -1638,7 +1646,7 @@ class DeepHermes3Engine:
         try:
             prompt_hash = _get_xxh3_hex(formatted_prompt)
             if prompt_hash in self._session_cache_pool:
-                self._session_cache_pool.move_to_end(prompt_hash)
+                # LRUCache.__setitem__ will update and mark as MRU
                 return
             pool_budget_bytes = self._session_cache_memory_mb * 1024 * 1024
             total_bytes = sum((entry[3] for entry in self._session_cache_pool.values())) + cache_size
@@ -1647,7 +1655,7 @@ class DeepHermes3Engine:
                     break
                 evicted_key = max(self._session_cache_pool, key=lambda k: self._session_cache_pool[k][3])
                 evicted_size = self._session_cache_pool[evicted_key][3]
-                del self._session_cache_pool[evicted_key]
+                self._session_cache_pool.pop(evicted_key)
                 total_bytes -= evicted_size
                 self._session_cache_stats['session_cache_evictions'] += 1
                 logger.debug(f'[SESSION-CACHE] Evicted hash {evicted_key[:8]} (size={evicted_size / 1024 / 1024:.1f}MB)')
@@ -1898,7 +1906,7 @@ class DeepHermes3Engine:
         import time
         self._last_inference_at = time.monotonic()
 
-    def apply_lora_adapter(self, adapter_path: str | None) -> None:
+    async def apply_lora_adapter_async(self, adapter_path: str | None) -> None:
         """
         Set or swap the active LoRA adapter (lazy-load with bounded LRU cache).
 
@@ -1906,9 +1914,41 @@ class DeepHermes3Engine:
         Single RLock — works from asyncio loop thread and ThreadPoolExecutor.
         Active background monitor handles critical memory pressure independently.
 
+        C2-FIX: mlx_lm.lora.load_lora_model() is blocking I/O.
+        Wrapped in asyncio.to_thread() to avoid blocking the event loop.
+
         Args:
             adapter_path: Path to LoRA adapter safetensors file, or None to use base model.
         """
+        if adapter_path == self._lora_adapter_path:
+            return
+        if adapter_path is None:
+            self._lora_adapter_path = None
+            logger.debug('[LoRA] Switched to base model (no adapter)')
+            return
+        cache = hermes_cache()
+        lora_result = cache.get_lora(adapter_path)
+        if lora_result is not None:
+            self._lora_adapter_path = adapter_path
+            self._lora_cache_stats['lora_cache_hits'] += 1
+            logger.debug(f'[LoRA] Cache hit (LRU updated): {adapter_path}')
+            return
+        try:
+            import mlx_lm
+            logger.info(f'[LoRA] Loading adapter: {adapter_path}')
+            lora_model, lora_tokenizer = await asyncio.to_thread(
+                mlx_lm.lora.load_lora_model, self._model, adapter_path
+            )
+            cache.put_lora(adapter_path, lora_model, lora_tokenizer)
+            self._lora_adapter_path = adapter_path
+            self._lora_cache_stats['lora_cache_misses'] += 1
+            logger.info(f'[LoRA] Adapter loaded and cached: {adapter_path}')
+        except Exception as _e:
+            logger.warning(f'[LoRA] Failed to load adapter {adapter_path}: {_e}')
+            self._lora_adapter_path = None
+
+    def apply_lora_adapter(self, adapter_path: str | None) -> None:
+        """Sync wrapper for apply_lora_adapter_async (for non-async contexts)."""
         if adapter_path == self._lora_adapter_path:
             return
         if adapter_path is None:
@@ -2297,7 +2337,7 @@ class DeepHermes3Engine:
                 MAX_LLM_PROMPT_CHARS,
             )
             if adapter_path is not None:
-                self.apply_lora_adapter(adapter_path)
+                await self.apply_lora_adapter_async(adapter_path)
             logger.debug(f'Generating with temp={temp}, max_tokens={max_tok}, lora={adapter_path}')
             prefix_cache = None
             if self._kv_cache_enabled:

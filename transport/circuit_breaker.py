@@ -46,6 +46,8 @@ import logging
 import secrets
 import threading
 import time
+
+from hledac.universal.core.locks import LockCategory, register_lock
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Final
@@ -72,6 +74,8 @@ __all__ = [
     "TRANSPORT_CIRCUIT_HALF_OPEN",
     "TRANSPORT_CIRCUIT_OPEN",
     "checked_aiohttp_get",
+    "get_all_breaker_states",
+    "get_all_breaker_states_async",
     "get_breaker",
     "get_transport_event_callback",
     "record_failure",
@@ -584,6 +588,7 @@ def rust_circuit_record_failure(domain: str, is_timeout: bool = False) -> None:
 _BREAKERS: PyCacheDict[str, CircuitBreaker] = PyCacheDict(maxsize=MAX_TRACKED_DOMAINS)
 # ISSUE-010 FIX preserved: atomic get_breaker() still needs lock for compound ops
 _breakers_lock = threading.Lock()
+register_lock(LockCategory.NETWORK, _breakers_lock, "circuit_breaker._breakers_lock")
 
 
 def _get_effective_ttl(domain: str) -> float:
@@ -621,9 +626,43 @@ def get_breaker(domain: str) -> CircuitBreaker:
         return _BREAKERS[domain]
 
 
-def get_all_breaker_states() -> dict[str, str]:
+def _sync_snapshot_breakers() -> dict[str, str]:
+    """Thread-safe snapshot bez nested locking — lock-free read pattern.
+
+    Elimituje nested locking (registry lock → per-breaker RLock).
+    Registry lock chrání pouze snapshot klíčů; per-breaker state read
+    je chráněn individuálním per-breaker RLock.
+
+    Bezpečné pro volání z:
+    - asyncio.to_thread (thread pool)
+    - sync context (přímo)
+    - async context (přes anyio.to_thread.run_sync)
+    """
     with _breakers_lock:
-        return {d: b.get_state() for d, b in _BREAKERS.items()}
+        domains = list(_BREAKERS.keys())
+    # Per-breaker RLock read — žádný registry lock během iterace
+    return {d: _BREAKERS[d].get_state() for d in domains if d in _BREAKERS}
+
+
+def get_all_breaker_states() -> dict[str, str]:
+    """Vrátí snapshot stavů všech breakerů — lock-free read pattern.
+
+    Odstraňuje nested locking (registry lock → per-breaker RLock).
+    Bezpečné pro volání z thread pool (asyncio.to_thread) i sync kontextu.
+    """
+    return _sync_snapshot_breakers()
+
+
+async def get_all_breaker_states_async() -> dict[str, str]:
+    """Async-friendly: to_thread run, žádný nested locking.
+
+    anyio.to_thread.run_suppressed_stream_configuration() tie into
+    asyncio event loop's own thread pool executor.
+    Safe pro volání z async context kde chceme non-blocking result.
+    """
+    import anyio
+
+    return await anyio.to_thread.run_sync(_sync_snapshot_breakers)
 
 
 def get_all_breaker_snapshots() -> list[CircuitBreakerSnapshot]:

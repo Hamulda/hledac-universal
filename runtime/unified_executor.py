@@ -174,7 +174,7 @@ class UnifiedExecutor:
             current_window = controller.window
             if stats.active_workers >= current_window:
                 # At capacity — wait for slot
-                await asyncio.sleep(0.01)
+                await asyncio.sleep(0)
 
         stats.active_workers += 1
 
@@ -243,7 +243,7 @@ class UnifiedExecutor:
         if controller is not None:
             current_window = controller.window
             if stats.active_workers >= current_window:
-                await asyncio.sleep(0.01)
+                await asyncio.sleep(0)
 
         stats.active_workers += 1
 

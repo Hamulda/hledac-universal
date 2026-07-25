@@ -30,7 +30,6 @@ import importlib.util
 import os
 import sys
 import types
-from typing import List, Optional
 
 # Resolve the project root: two levels up from this file.
 #   /…/hledac/universal/hledac/_namespace_bootstrap.py

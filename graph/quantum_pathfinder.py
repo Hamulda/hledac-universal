@@ -26,7 +26,7 @@ import logging
 import math
 import os as _os
 import msgspec
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +80,11 @@ def _duckdb_fetch_bounded(con: Any, sql: str, params: list[Any] | None=None, bat
         return
     if hasattr(result, 'fetch_record_batch'):
         try:
-            reader = result.fetch_record_batch(batch_size)
+            # DuckDB 1.5+: fetch_record_batch is deprecated, use to_arrow_reader()
+            try:
+                reader = result.to_arrow_reader(batch_size)
+            except AttributeError:
+                reader = result.fetch_record_batch(batch_size)
             while True:
                 try:
                     batch = reader.read_next_batch()
@@ -92,18 +96,24 @@ def _duckdb_fetch_bounded(con: Any, sql: str, params: list[Any] | None=None, bat
                     try:
                         import polars as _pl
                         pdf = _pl.from_arrow(batch)
-                        yield list(pdf.iter_rows(named=False))
+                        yield list(pdf.iter_rows(named=False))  # tuple rows, not dicts
                     except ImportError:
-                        cols = batch.columns
-                        nrows, ncols = (batch.num_rows, len(cols))
-                        yield [tuple((cols[j][i].as_py() if hasattr(cols[j][i], 'as_py') else cols[j][i] for j in range(ncols))) for i in range(nrows)]
+                        raise Exception("polars unavailable")  # cascade to outer handler
                 except Exception:
-                    cols = batch.columns
-                    nrows, ncols = (batch.num_rows, len(cols))
-                    yield [tuple((cols[j][i].as_py() if hasattr(cols[j][i], 'as_py') else cols[j][i] for j in range(ncols))) for i in range(nrows)]
+                    # Polars/pyarrow extraction failed — fall back to manual row-by-row.
+                    # Slow but always correct; peak RAM still bounded by batch_size.
+                    try:
+                        cols = batch.columns
+                        nrows, ncols = batch.num_rows, len(cols)
+                        yield [[
+                            cols[j][i].as_py() if hasattr(cols[j][i], 'as_py') else cols[j][i]
+                            for j in range(ncols)
+                        ] for i in range(nrows)]
+                    except Exception:
+                        pass  # malformed batch — skip, keep streaming
             return
         except Exception:
-            pass
+            pass  # fetch_record_batch itself unavailable — fall through to fetchmany
     try:
         while True:
             rows = result.fetchmany(batch_size)
@@ -1129,34 +1139,38 @@ class DuckPGQGraph:
             logger.warning(f'[GRAPH] merge_from_parquet failed: {e}')
             return 0
 
-    def export_edge_list(self) -> list[tuple[str, str, str, float]]:
+    def export_edge_list(self) -> Iterator[tuple[str, str, str, float]]:
         """
-        Exportuje hrany grafu jako list tuplů pro GNN inference.
-        Formát: [(src_value, dst_value, rel_type, weight), ...]
+        Exportuje hrany grafu jako generator pro GNN inference.
+        Formát: yield (src_value, dst_value, rel_type, weight)
+        Proudové zpracování: O(1) paměťová náročnost místo O(n).
 
         Bounded streaming: never materialises the full 50k-row result in RAM.
         Peak memory ≈ batch_size × row_size (~16 MB) instead of ~400 MB.
         """
         try:
-            rows: list[tuple[str, str, str, float]] = []
-            for batch in _duckdb_fetch_bounded(self.con, '\n                SELECT s.value, d.value, e.rel_type, e.weight\n                FROM ioc_edges e\n                JOIN ioc_nodes s ON s.id = e.src_id\n                JOIN ioc_nodes d ON d.id = e.dst_id\n                ORDER BY e.weight DESC\n                LIMIT 50000\n                '):
-                rows.extend(batch)
-            return rows
+            for batch in _duckdb_fetch_bounded(self.con, '''
+                SELECT s.value AS src_value, d.value AS dst_value, e.rel_type, e.weight
+                FROM ioc_edges e
+                JOIN ioc_nodes s ON s.id = e.src_id
+                JOIN ioc_nodes d ON d.id = e.dst_id
+                ORDER BY e.weight DESC
+                LIMIT 50000
+                '''):
+                yield from batch
         except Exception as e:
             logger.warning(f'[GRAPH] export_edge_list failed: {e}')
-            return []
 
     def get_top_nodes_by_degree(self, n: int=20) -> list[dict]:
         """Top N IOC nodes seřazených podle out-degree (nejpropojeno)."""
         import duckdb
         try:
             rows_gen = _duckdb_fetch_bounded(self.con, '\n                SELECT n.value, n.ioc_type, n.confidence,\n                       COUNT(e.dst_id) as degree\n                FROM ioc_nodes n\n                LEFT JOIN ioc_edges e ON e.src_id = n.id\n                GROUP BY n.id, n.value, n.ioc_type, n.confidence\n                ORDER BY degree DESC\n                LIMIT ?\n                ', [n])
-            cols = ['value', 'ioc_type', 'confidence', 'degree']
             result: list[dict] = []
             for batch in rows_gen:
                 for row in batch:
-                    if isinstance(row, (list, tuple)) and len(row) == len(cols):
-                        result.append(dict(zip(cols, row)))
+                    if isinstance(row, dict):
+                        result.append(row)
             return result
         except (duckdb.Error, ImportError) as e:
             logger.warning(f'[GRAPH] get_top_nodes_by_degree failed: {e}')
@@ -1296,8 +1310,13 @@ class DuckPGQGraph:
             WHERE rn <= 1000
             ORDER BY pagerank DESC
             """
-            rows = self.con.execute(query).fetchall()
-            return {str(row[0]): float(row[1]) for row in rows if row[0] is not None}
+            # Bounded batch processing — peak RAM stays below batch_size × row_size
+            pagerank_scores: dict[str, float] = {}
+            for batch in _duckdb_fetch_bounded(self.con, query, batch_size=1024):
+                for row in batch:
+                    if row.get('node_id') is not None:
+                        pagerank_scores[str(row['node_id'])] = float(row['pagerank'])
+            return pagerank_scores
         except Exception as e:
             logger.warning(f'[GRAPH] pagerank failed: {e}')
             return {}
@@ -1392,15 +1411,14 @@ class DuckPGQGraph:
                )
             ORDER BY label, node_value
             """
-            rows = self.con.execute(query).fetchall()
-
-            # Group by community label
+            # Bounded batch processing — peak RAM stays below batch_size × row_size
             communities: dict[int, list[str]] = {}
-            for row in rows:
-                label = int(row[0]) if row[0] is not None else 0
-                value = str(row[1]) if row[1] is not None else ""
-                if value:
-                    communities.setdefault(label, []).append(value)
+            for batch in _duckdb_fetch_bounded(self.con, query, batch_size=2048):
+                for row in batch:
+                    label = int(row.get('label', 0)) if row.get('label') is not None else 0
+                    value = str(row.get('node_value', '')) if row.get('node_value') is not None else ""
+                    if value:
+                        communities.setdefault(label, []).append(value)
 
             # Clean up: compact labels to 0..N-1
             if communities:
@@ -1510,7 +1528,14 @@ class DuckPGQGraph:
 
     def find_connected_batch(self, values: list[str], max_hops: int = 2) -> dict[str, list[dict]]:
         """
-        P1-1: Batch version of find_connected — single DuckDB round-trip.
+        S1-FIX: Parallel batch traversal via duckdb_pool ThreadPoolExecutor.
+
+        Uses loop.run_in_executor() directly with the named duckdb_pool executor,
+        bypassing asyncio.to_thread() + Runner() overhead. The duckdb_pool workers
+        execute the actual DB queries (not just wait for Runner.run() to complete).
+
+        DuckDB WAL mode (journal_mode=WAL, busy_timeout=5000, threads=2) ensures
+        thread-safe concurrent reads across the 2-worker duckdb_pool.
 
         Args:
             values: List of IOC values to query.
@@ -1518,7 +1543,7 @@ class DuckPGQGraph:
 
         Returns:
             Dict mapping each input value to its list of connected node dicts.
-            Falls back to individual find_connected calls on error (fail-soft).
+            Falls back to sequential on error (fail-soft).
 
         Note:
             When the Rust `graph_traverse` module is compiled with --features data,
@@ -1528,13 +1553,49 @@ class DuckPGQGraph:
         """
         if not values:
             return {}
-        result: dict[str, list[dict]] = {}
-        for value in values:
-            try:
-                result[value] = self._find_connected_base(value, max_hops)
-            except Exception:  # noqa: BLE001
-                result[value] = []
-        return result
+        import asyncio
+
+        # Sync path: no event loop available — sequential fallback
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            out: dict[str, list[dict]] = {}
+            for value in values:
+                try:
+                    out[value] = self._find_connected_base(value, max_hops)
+                except Exception:  # noqa: BLE001
+                    out[value] = []
+            return out
+
+        # Async path: use duckdb_pool executor directly (not asyncio.to_thread)
+        try:
+            from hledac.universal.utils.executor_decorator import get_named_pool
+
+            pool = get_named_pool("duckdb_pool")
+            executor = pool._get_executor()
+            loop = asyncio.get_running_loop()
+
+            # Submit all calls to duckdb_pool executor in one gather — workers actually work
+            futures = [
+                loop.run_in_executor(executor, self._find_connected_base, value, max_hops)
+                for value in values
+            ]
+
+            gathered = loop.run_until_complete(asyncio.gather(*futures, return_exceptions=True))
+
+            return {
+                v: r if not isinstance(r, Exception) else []
+                for v, r in zip(values, gathered)
+            }
+        except Exception:  # noqa: BLE001
+            # Fallback to sequential on any error
+            out = {}
+            for value in values:
+                try:
+                    out[value] = self._find_connected_base(value, max_hops)
+                except Exception:  # noqa: BLE001
+                    out[value] = []
+            return out
 
     def _find_connected_base(self, value: str, max_hops: int) -> list[dict]:
         """Core find_connected implementation — used by find_connected and find_connected_with_similarity."""
@@ -1615,7 +1676,11 @@ class DuckPGQGraph:
             if similarities.ndim == 2:
                 similarities = similarities[0]
             sim_raw = similarities.tolist()
-            sim_list: list[float] = list(sim_raw) if isinstance(sim_raw, list) else [float(sim_raw)]
+            # sim_raw may be list[float] or list[int] depending on MLX version
+            if isinstance(sim_raw, list):
+                sim_list: list[float] = [float(x) for x in sim_raw]
+            else:
+                sim_list = [float(sim_raw)]
             scored = []
             for i, item in enumerate(connected):
                 score = float(sim_list[i]) if i < len(sim_list) else 0.0
@@ -1685,7 +1750,8 @@ def _find_paths_between_iocs_sync(con, source_ioc: str, target_ioc: str, max_hop
             return []
         try:
             import polars as pl
-            pdf = pl.from_arrow(rows)
+            from typing import cast
+            pdf: pl.DataFrame = cast(pl.DataFrame, pl.from_arrow(rows))
             rows_iter = pdf.iter_rows(named=True)
         except ImportError:
             rows_iter = (dict(zip(rows.column_names, vals, strict=False)) for vals in rows.to_pylist())

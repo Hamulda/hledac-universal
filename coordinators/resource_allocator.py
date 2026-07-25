@@ -26,6 +26,11 @@ import os
 import subprocess
 import time as time_module
 from collections import deque
+
+# M1 8GB safe default: 500 × ~200-400B per ResourceAllocation(frozen Struct) ≈ 100-200KB
+# Makes it configurable for larger machines via env var
+_MAX_COMPLETED_ALLOCATIONS_DEFAULT = 500
+_MAX_COMPLETED_ALLOCATIONS_ENV = "HLEDAC_MAX_COMPLETED_ALLOCATIONS"
 from dataclasses import dataclass
 import msgspec
 from datetime import UTC, datetime
@@ -182,7 +187,10 @@ class IntelligentResourceAllocator:
         self.config = self._load_config(config_path or '')
         self._pending_requests_dict: dict[str, ResourceRequest] = {}
         self.active_allocations = {}
-        self.completed_allocations = deque(maxlen=2000)
+        _max_completed = int(os.environ.get(
+            _MAX_COMPLETED_ALLOCATIONS_ENV, _MAX_COMPLETED_ALLOCATIONS_DEFAULT
+        ))
+        self.completed_allocations = deque(maxlen=_max_completed)
         self.resource_history = []
         self._prediction_model = None
         self._anomaly_detector = None

@@ -20,7 +20,7 @@ import struct
 import threading
 import time
 from abc import ABC, abstractmethod
-from collections import OrderedDict, defaultdict
+from collections import defaultdict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -180,8 +180,9 @@ class SemanticDeduplicator(BaseDeduplicator):
                 l1_max_mb=256.0,
             )
         else:
-            # Fallback: pure Python OrderedDict (legacy)
-            self.embedding_cache = OrderedDict()
+            # Fallback: pure Python LRUCache (replaces OrderedDict)
+            from utils.lru_cache import LRUCache
+            self.embedding_cache: Any = LRUCache(max_size=5000)
         self.embedding_cache_size = 0
         self.max_cache_size_mb = 256
         self._embedding_model = None

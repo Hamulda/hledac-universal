@@ -21,9 +21,7 @@ M1 8GB UMA constraints:
 
 Sprint R-1 (2026-07-18)
 """
-
 from __future__ import annotations
-
 import asyncio
 import atexit
 import contextlib
@@ -37,72 +35,36 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Generator
-
 from core.env_config import ENV
-
 if TYPE_CHECKING:
     pass
 
-# =============================================================================
-# Pool Identifiers
-# =============================================================================
-
-
 class PoolKind(Enum):
     """Canonical pool identifiers."""
-    DUCKDB_RO = auto()  # Read-only DuckDB connections
-    DUCKDB_RW = auto()  # Read-write DuckDB connections
-    MLX = auto()        # MLX compute stream
-    ANE = auto()         # Apple Neural Engine
-    COREML = auto()      # CoreML compute
-    CPU_IO = auto()      # asyncio.to_thread bounded pool
-    CPU_BLOCKING = auto()  # ThreadPoolExecutor for blocking I/O
-
-
-# =============================================================================
-# Pool Configuration
-# =============================================================================
-
-# M1 8GB UMA calibrated defaults
+    DUCKDB_RO = auto()
+    DUCKDB_RW = auto()
+    MLX = auto()
+    ANE = auto()
+    COREML = auto()
+    CPU_IO = auto()
+    CPU_BLOCKING = auto()
 _DUCKDB_POOL_SIZE = 4
-_DUCKDB_POOL_MAX = 8  # Absolute max to prevent unbounded growth
-
+_DUCKDB_POOL_MAX = 8
 _MLX_POOL_SIZE = 1
 _ANE_POOL_SIZE = 1
 _COREML_POOL_SIZE = 1
-
-# CPU pools sized per ConcurrencyPreset defaults (fallback when governor unavailable)
 _CPU_IO_WORKERS_DEFAULT = 8
 _CPU_BLOCKING_WORKERS_DEFAULT = 4
-
-# =============================================================================
-# Thread-Local State
-# =============================================================================
-
-# Per-thread pool state to avoid contention on pool lock
 _thread_local = threading.local()
-
-# Per-thread current connection holder for duckdb_ro context manager
-_current_duckdb_conn: ContextVar[Any | None] = ContextVar("current_duckdb_conn", default=None)
-
-# =============================================================================
-# Health Check
-# =============================================================================
-
+_current_duckdb_conn: ContextVar[Any | None] = ContextVar('current_duckdb_conn', default=None)
 
 def _health_check_duckdb(conn: Any) -> bool:
     """Verify DuckDB connection is still alive."""
     try:
-        conn.execute("SELECT 1")
+        conn.execute('SELECT 1')
         return True
     except Exception:
         return False
-
-
-# =============================================================================
-# ConcurrencyPreset (imported from resource_governor without circular dep)
-# =============================================================================
-
 
 def _get_max_workers_from_governor() -> int:
     """
@@ -112,23 +74,16 @@ def _get_max_workers_from_governor() -> int:
     """
     try:
         from core.resource_governor import evaluate_uma_state, ConcurrencyPreset
-        # Get current system memory state
         import psutil
         mem = psutil.virtual_memory()
-        system_used_gib = mem.used / (1024 ** 3)
+        system_used_gib = mem.used / 1024 ** 3
         state = evaluate_uma_state(system_used_gib)
         preset = ConcurrencyPreset.from_state(state)
         return preset.max_workers
     except Exception:
         return _CPU_IO_WORKERS_DEFAULT
 
-
-# =============================================================================
-# DuckDB Pool Implementation
-# =============================================================================
-
-
-@dataclass
+@dataclass(frozen=True, slots=True)
 class _DuckDBPoolStats:
     """DuckDB pool statistics."""
     acquire_count: int = 0
@@ -137,7 +92,6 @@ class _DuckDBPoolStats:
     new_connections: int = 0
     pool_hits: int = 0
     pool_misses: int = 0
-
 
 class _DuckDBPool:
     """
@@ -149,19 +103,15 @@ class _DuckDBPool:
     - Per-db_path pools to avoid cross-database pollution
     - Thread-safe with minimal lock contention
     """
+    __slots__ = tuple(('_health_check', '_lock', '_max_absolute', '_max_size', '_pools', '_round_robin', '_stats', '_total_connections'))
 
-    def __init__(
-        self,
-        max_size: int = _DUCKDB_POOL_SIZE,
-        max_absolute: int = _DUCKDB_POOL_MAX,
-        health_check: bool = True,
-    ) -> None:
+    def __init__(self, max_size: int=_DUCKDB_POOL_SIZE, max_absolute: int=_DUCKDB_POOL_MAX, health_check: bool=True) -> None:
         self._max_size = max_size
         self._max_absolute = max_absolute
         self._health_check = health_check
         self._lock = threading.Lock()
         self._pools: dict[str, deque[Any]] = {}
-        self._round_robin: dict[str, int] = {}  # db_path -> next index
+        self._round_robin: dict[str, int] = {}
         self._total_connections: int = 0
         self._stats = _DuckDBPoolStats()
 
@@ -173,7 +123,7 @@ class _DuckDBPool:
                 self._round_robin[db_path] = 0
             return self._pools[db_path]
 
-    def _create_connection(self, db_path: str, read_only: bool = True) -> Any:
+    def _create_connection(self, db_path: str, read_only: bool=True) -> Any:
         """Create new DuckDB connection with lazy import."""
         try:
             import duckdb
@@ -182,9 +132,7 @@ class _DuckDBPool:
         except ImportError:
             return None
 
-    def acquire(
-        self, db_path: str, read_only: bool = True
-    ) -> tuple[Any, str] | tuple[None, None]:
+    def acquire(self, db_path: str, read_only: bool=True) -> tuple[Any, str] | tuple[None, None]:
         """
         Acquire connection from pool.
 
@@ -194,16 +142,13 @@ class _DuckDBPool:
         """
         self._stats.acquire_count += 1
         pool = self._get_pool(db_path)
-
-        # Try to get from pool first (round-robin within pool)
         with self._lock:
             pool_len = len(pool)
             if pool_len > 0:
                 idx = self._round_robin.get(db_path, 0) % pool_len
                 try:
                     conn = pool[idx]
-                    if self._health_check and not _health_check_duckdb(conn):
-                        # Health check failed, remove and close
+                    if self._health_check and (not _health_check_duckdb(conn)):
                         del pool[idx]
                         self._total_connections -= 1
                         try:
@@ -212,42 +157,34 @@ class _DuckDBPool:
                             pass
                         self._stats.health_check_failures += 1
                     else:
-                        # Valid connection found
                         self._round_robin[db_path] = (idx + 1) % pool_len
                         self._stats.pool_hits += 1
-                        # Remove from pool while in use
                         del pool[idx]
-                        return conn, db_path
+                        return (conn, db_path)
                 except (IndexError, TypeError):
                     pass
-
         self._stats.pool_misses += 1
-
-        # Create new connection if under absolute limit
         with self._lock:
             if self._total_connections < self._max_absolute:
                 conn = self._create_connection(db_path, read_only)
                 if conn is not None:
                     self._total_connections += 1
                     self._stats.new_connections += 1
-                    return conn, db_path
-
-        # At absolute limit, try to reuse a pooled connection
+                    return (conn, db_path)
         with self._lock:
             if len(pool) > 0:
                 conn = pool.popleft()
                 self._total_connections -= 1
-                if self._health_check and not _health_check_duckdb(conn):
+                if self._health_check and (not _health_check_duckdb(conn)):
                     try:
                         conn.close()
                     except Exception:
                         pass
                     self._stats.health_check_failures += 1
                     self._stats.pool_misses += 1
-                    return None, None
-                return conn, db_path
-
-        return None, None
+                    return (None, None)
+                return (conn, db_path)
+        return (None, None)
 
     def release(self, conn: Any, db_path: str | None) -> None:
         """
@@ -255,13 +192,10 @@ class _DuckDBPool:
         """
         if conn is None or db_path is None:
             return
-
         self._stats.release_count += 1
         pool = self._get_pool(db_path)
-
         with self._lock:
-            # Health check before returning to pool
-            if self._health_check and not _health_check_duckdb(conn):
+            if self._health_check and (not _health_check_duckdb(conn)):
                 try:
                     conn.close()
                 except Exception:
@@ -269,13 +203,10 @@ class _DuckDBPool:
                 self._stats.health_check_failures += 1
                 self._total_connections -= 1
                 return
-
-            # Return to pool if has space
             max_pool_size = pool.maxlen if pool.maxlen is not None else self._max_size
             if len(pool) < max_pool_size:
                 pool.append(conn)
             else:
-                # Pool full, close connection
                 try:
                     conn.close()
                 except Exception:
@@ -299,29 +230,16 @@ class _DuckDBPool:
             self._pools.clear()
             self._round_robin.clear()
             self._total_connections = 0
-
-
-# Global DuckDB pools
 _duckdb_ro_pool = _DuckDBPool(max_size=_DUCKDB_POOL_SIZE)
 _duckdb_rw_pool = _DuckDBPool(max_size=2, max_absolute=4)
-
-
-# =============================================================================
-# CPU Thread Pools
-# =============================================================================
-
 
 class _CPUPool:
     """
     Bounded CPU thread pool with adaptive sizing based on M1ResourceGovernor.
     """
+    __slots__ = tuple(('_adaptive_max', '_executor', '_kind', '_lock', '_max_workers', '_name', '_semaphore'))
 
-    def __init__(
-        self,
-        name: str,
-        max_workers: int,
-        kind: PoolKind,
-    ) -> None:
+    def __init__(self, name: str, max_workers: int, kind: PoolKind) -> None:
         self._name = name
         self._max_workers = max_workers
         self._kind = kind
@@ -340,10 +258,7 @@ class _CPUPool:
             if self._executor is None:
                 max_w = self._get_adaptive_max()
                 self._adaptive_max = max_w
-                self._executor = ThreadPoolExecutor(
-                    max_workers=max_w,
-                    thread_name_prefix=f"hledac_{self._name}",
-                )
+                self._executor = ThreadPoolExecutor(max_workers=max_w, thread_name_prefix=f'hledac_{self._name}')
             return self._executor
 
     def get_semaphore(self) -> asyncio.Semaphore:
@@ -357,50 +272,27 @@ class _CPUPool:
         """Resize pool (graceful, existing work completes)."""
         with self._lock:
             if self._executor is not None and max_workers != self._adaptive_max:
-                # Create new executor with new size
                 old = self._executor
-                self._executor = ThreadPoolExecutor(
-                    max_workers=max_workers,
-                    thread_name_prefix=f"hledac_{self._name}",
-                )
+                self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix=f'hledac_{self._name}')
                 self._adaptive_max = max_workers
-                # Shutdown old executor (doesn't interrupt running work)
                 old.shutdown(wait=False)
-                # Also recreate semaphore
                 self._semaphore = asyncio.Semaphore(max_workers)
 
-    def shutdown(self, wait: bool = True) -> None:
+    def shutdown(self, wait: bool=True) -> None:
         """Shutdown the pool."""
         with self._lock:
             if self._executor is not None:
                 self._executor.shutdown(wait=wait)
                 self._executor = None
             self._semaphore = None
-
-
-# Global CPU pools
-_cpu_io_pool = _CPUPool(
-    name="cpu_io",
-    max_workers=_CPU_IO_WORKERS_DEFAULT,
-    kind=PoolKind.CPU_IO,
-)
-
-_cpu_blocking_pool = _CPUPool(
-    name="cpu_blocking",
-    max_workers=_CPU_BLOCKING_WORKERS_DEFAULT,
-    kind=PoolKind.CPU_BLOCKING,
-)
-
-
-# =============================================================================
-# MLX/ANE/CoreML Pools (Lazy Singletons)
-# =============================================================================
-
+_cpu_io_pool = _CPUPool(name='cpu_io', max_workers=_CPU_IO_WORKERS_DEFAULT, kind=PoolKind.CPU_IO)
+_cpu_blocking_pool = _CPUPool(name='cpu_blocking', max_workers=_CPU_BLOCKING_WORKERS_DEFAULT, kind=PoolKind.CPU_BLOCKING)
 
 class _MLXPool:
     """
     MLX compute stream pool (single stream, lazy initialization).
     """
+    __slots__ = tuple(('_loaded', '_lock', '_stream'))
 
     def __init__(self) -> None:
         self._stream: Any | None = None
@@ -432,11 +324,11 @@ class _MLXPool:
         except ImportError:
             return False
 
-
 class _ANEPool:
     """
     Apple Neural Engine pool (single stream, lazy initialization).
     """
+    __slots__ = tuple(('_loaded', '_lock', '_model'))
 
     def __init__(self) -> None:
         self._model: Any | None = None
@@ -468,11 +360,11 @@ class _ANEPool:
         except ImportError:
             return False
 
-
 class _CoreMLPool:
     """
     CoreML compute pool (single stream, lazy initialization).
     """
+    __slots__ = tuple(('_loaded', '_lock', '_runtime'))
 
     def __init__(self) -> None:
         self._runtime: Any | None = None
@@ -503,25 +395,12 @@ class _CoreMLPool:
             return True
         except ImportError:
             return False
-
-
-# Global MLX/ANE/CoreML pools
 _mlx_pool = _MLXPool()
 _ane_pool = _ANEPool()
 _coreml_pool = _CoreMLPool()
 
-
-# =============================================================================
-# Context Manager Interface
-# =============================================================================
-
-
 @contextlib.contextmanager
-def with_resource(
-    kind: PoolKind,
-    db_path: str | None = None,
-    read_only: bool = True,
-) -> Generator[Any, None, None]:
+def with_resource(kind: PoolKind, db_path: str | None=None, read_only: bool=True) -> Generator[Any, None, None]:
     """
     Context manager for acquiring/releasing pooled resources.
 
@@ -551,42 +430,38 @@ def with_resource(
     """
     resource: Any = None
     acquired_db_path: str | None = None
-
     try:
         match kind:
             case PoolKind.DUCKDB_RO:
                 if db_path is None:
-                    raise ValueError("db_path required for DUCKDB_RO pool")
+                    raise ValueError('db_path required for DUCKDB_RO pool')
                 resource, acquired_db_path = _duckdb_ro_pool.acquire(db_path, read_only=True)
                 if resource is None:
-                    raise RuntimeError(f"DuckDB pool exhausted for {db_path}")
+                    raise RuntimeError(f'DuckDB pool exhausted for {db_path}')
             case PoolKind.DUCKDB_RW:
                 if db_path is None:
-                    raise ValueError("db_path required for DUCKDB_RW pool")
+                    raise ValueError('db_path required for DUCKDB_RW pool')
                 resource, acquired_db_path = _duckdb_rw_pool.acquire(db_path, read_only=False)
                 if resource is None:
-                    raise RuntimeError(f"DuckDB pool exhausted for {db_path}")
+                    raise RuntimeError(f'DuckDB pool exhausted for {db_path}')
             case PoolKind.MLX:
                 resource = _mlx_pool.acquire()
-                if resource is None and not _mlx_pool.is_available:
-                    raise RuntimeError("MLX not available")
+                if resource is None and (not _mlx_pool.is_available):
+                    raise RuntimeError('MLX not available')
             case PoolKind.ANE:
                 resource = _ane_pool.acquire()
-                if resource is None and not _ane_pool.is_available:
-                    raise RuntimeError("ANE not available")
+                if resource is None and (not _ane_pool.is_available):
+                    raise RuntimeError('ANE not available')
             case PoolKind.COREML:
                 resource = _coreml_pool.acquire()
-                if resource is None and not _coreml_pool.is_available:
-                    raise RuntimeError("CoreML not available")
+                if resource is None and (not _coreml_pool.is_available):
+                    raise RuntimeError('CoreML not available')
             case PoolKind.CPU_IO | PoolKind.CPU_BLOCKING:
-                # For CPU pools, return the executor directly
                 pool = _cpu_io_pool if kind == PoolKind.CPU_IO else _cpu_blocking_pool
                 resource = pool.get_executor()
             case _:
-                raise ValueError(f"Unknown pool kind: {kind}")
-
+                raise ValueError(f'Unknown pool kind: {kind}')
         yield resource
-
     finally:
         match kind:
             case PoolKind.DUCKDB_RO:
@@ -604,18 +479,10 @@ def with_resource(
             case PoolKind.COREML:
                 if resource is not None:
                     _coreml_pool.release(resource)
-            # CPU pools don't need explicit release
-
-
-# =============================================================================
-# Async Context Manager for CPU Pools
-# =============================================================================
-
 
 class _AsyncPoolContextManager:
     """Async context manager for CPU pools with semaphore."""
-
-    __slots__ = ("_pool", "_semaphore", "_executor")
+    __slots__ = ('_pool', '_semaphore', '_executor')
 
     def __init__(self, pool: _CPUPool) -> None:
         self._pool = pool
@@ -632,12 +499,7 @@ class _AsyncPoolContextManager:
         if self._semaphore is not None:
             self._semaphore.release()
 
-
-def with_resource_async(
-    kind: PoolKind,
-    db_path: str | None = None,
-    read_only: bool = True,
-) -> Any:
+def with_resource_async(kind: PoolKind, db_path: str | None=None, read_only: bool=True) -> Any:
     """
     Async context manager for acquiring/releasing pooled resources.
 
@@ -648,14 +510,11 @@ def with_resource_async(
         pool = _cpu_io_pool if kind == PoolKind.CPU_IO else _cpu_blocking_pool
         return _AsyncPoolContextManager(pool)
     else:
-        # Fall back to sync context manager for other pools
         return _SyncPoolContextManagerWrapper(kind, db_path, read_only)
-
 
 class _SyncPoolContextManagerWrapper:
     """Sync context manager wrapper for async context."""
-
-    __slots__ = ("_kind", "_db_path", "_read_only", "_ctx")
+    __slots__ = ('_kind', '_db_path', '_read_only', '_ctx')
 
     def __init__(self, kind: PoolKind, db_path: str | None, read_only: bool) -> None:
         self._kind = kind
@@ -671,17 +530,7 @@ class _SyncPoolContextManagerWrapper:
         if self._ctx is not None:
             self._ctx.__exit__(*exc_info)
 
-
-# =============================================================================
-# run_in_executor helpers with pool integration
-# =============================================================================
-
-
-async def run_in_io_pool(
-    func: Any,
-    *args: Any,
-    **kwargs: Any,
-) -> Any:
+async def run_in_io_pool(func: Any, *args: Any, **kwargs: Any) -> Any:
     """
     Run function in bounded CPU I/O pool.
 
@@ -691,12 +540,7 @@ async def run_in_io_pool(
     executor = _cpu_io_pool.get_executor()
     return await loop.run_in_executor(executor, lambda: func(*args, **kwargs))
 
-
-async def run_in_blocking_pool(
-    func: Any,
-    *args: Any,
-    **kwargs: Any,
-) -> Any:
+async def run_in_blocking_pool(func: Any, *args: Any, **kwargs: Any) -> Any:
     """
     Run blocking function in bounded CPU blocking pool.
 
@@ -706,13 +550,7 @@ async def run_in_blocking_pool(
     executor = _cpu_blocking_pool.get_executor()
     return await loop.run_in_executor(executor, lambda: func(*args, **kwargs))
 
-
-# =============================================================================
-# Pool Statistics
-# =============================================================================
-
-
-@dataclass
+@dataclass(frozen=True, slots=True)
 class PoolStats:
     """Aggregated pool statistics."""
     duckdb_ro: _DuckDBPoolStats = field(default_factory=_DuckDBPoolStats)
@@ -723,24 +561,9 @@ class PoolStats:
     ane_available: bool = False
     coreml_available: bool = False
 
-
 def get_pool_stats() -> PoolStats:
     """Get snapshot of all pool statistics."""
-    return PoolStats(
-        duckdb_ro=_duckdb_ro_pool.stats,
-        duckdb_rw=_duckdb_rw_pool.stats,
-        cpu_io_max=_cpu_io_pool._adaptive_max,
-        cpu_blocking_max=_cpu_blocking_pool._adaptive_max,
-        mlx_available=_mlx_pool.is_available,
-        ane_available=_ane_pool.is_available,
-        coreml_available=_coreml_pool.is_available,
-    )
-
-
-# =============================================================================
-# Shutdown
-# =============================================================================
-
+    return PoolStats(duckdb_ro=_duckdb_ro_pool.stats, duckdb_rw=_duckdb_rw_pool.stats, cpu_io_max=_cpu_io_pool._adaptive_max, cpu_blocking_max=_cpu_blocking_pool._adaptive_max, mlx_available=_mlx_pool.is_available, ane_available=_ane_pool.is_available, coreml_available=_coreml_pool.is_available)
 
 def _cleanup_pools() -> None:
     """Cleanup all pools at interpreter exit."""
@@ -748,16 +571,7 @@ def _cleanup_pools() -> None:
     _duckdb_rw_pool.close_all()
     _cpu_io_pool.shutdown(wait=False)
     _cpu_blocking_pool.shutdown(wait=False)
-
-
-# Register atexit handler
 atexit.register(_cleanup_pools)
-
-
-# =============================================================================
-# Adaptive Resize (called from M1ResourceGovernor)
-# =============================================================================
-
 
 def resize_cpu_pools(preset: Any) -> None:
     """
@@ -766,24 +580,9 @@ def resize_cpu_pools(preset: Any) -> None:
     Called by M1ResourceGovernor when memory state changes.
     """
     try:
-        new_max = max(1, getattr(preset, "max_workers", _CPU_IO_WORKERS_DEFAULT))
+        new_max = max(1, getattr(preset, 'max_workers', _CPU_IO_WORKERS_DEFAULT))
     except Exception:
         new_max = _CPU_IO_WORKERS_DEFAULT
     _cpu_io_pool.resize(new_max)
     _cpu_blocking_pool.resize(max(1, new_max // 2))
-
-
-# =============================================================================
-# Exports
-# =============================================================================
-
-__all__ = [
-    "PoolKind",
-    "PoolStats",
-    "with_resource",
-    "with_resource_async",
-    "run_in_io_pool",
-    "run_in_blocking_pool",
-    "get_pool_stats",
-    "resize_cpu_pools",
-]
+__all__ = ['PoolKind', 'PoolStats', 'with_resource', 'with_resource_async', 'run_in_io_pool', 'run_in_blocking_pool', 'get_pool_stats', 'resize_cpu_pools']

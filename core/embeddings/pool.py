@@ -19,7 +19,6 @@ import gc
 import importlib.util
 import logging
 import threading
-from collections import OrderedDict
 from typing import Any
 
 from core.psutil_shim import psutil
@@ -49,7 +48,7 @@ def get_mx():
 
 
 # === LRU cache for MLX LLM models (not embeddings) ===
-_MLX_CACHE: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
+_MLX_CACHE: dict[str, tuple[Any, Any]] = {}
 _MLX_CACHE_MAX = 2
 
 _MLX_SEMAPHORE: asyncio.Semaphore | None = None

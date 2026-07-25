@@ -11,7 +11,7 @@ import json
 import logging
 import sys
 import time
-from collections import OrderedDict, defaultdict
+from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 import msgspec
@@ -19,6 +19,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 from .async_helpers import safe_create_task, safe_gather_ok, safe_gather_fire_and_forget
+from .lru_cache import LRUCache
 _MLX_AVAILABLE = None
 _MLX_CORE = None
 
@@ -82,17 +83,17 @@ class _ARC:
     - B1: Ghosts of recently evicted T1 pages
     - B2: Ghosts of recently evicted T2 pages
 
-    Uses OrderedDict for O(1) operations on list boundaries.
+    Uses LRUCache (dict + list hybrid) for O(1) LRU operations.
     """
     __slots__ = tuple(('_b1', '_b2', '_current_bytes', '_current_entries', '_t1', '_t2', 'max_entries', 'max_size_bytes'))
 
     def __init__(self, max_entries: int, max_size_bytes: int):
         self.max_entries = max_entries
         self.max_size_bytes = max_size_bytes
-        self._t1: OrderedDict = OrderedDict()
-        self._t2: OrderedDict = OrderedDict()
-        self._b1: OrderedDict = OrderedDict()
-        self._b2: OrderedDict = OrderedDict()
+        self._t1: LRUCache = LRUCache(max_size=max_entries)
+        self._t2: LRUCache = LRUCache(max_size=max_entries)
+        self._b1: LRUCache = LRUCache(max_size=max_entries)
+        self._b2: LRUCache = LRUCache(max_size=max_entries)
         self._current_entries = 0
         self._current_bytes = 0
 
@@ -121,20 +122,20 @@ class _ARC:
 
     def evict_one(self, cache: dict[str, CacheEntry]) -> str | None:
         """Evict one item and return its key. Returns None if nothing to evict."""
-        if len(self._t1) > len(self._t2) and self._t1:
-            key, size = self._t1.popitem(last=False)
+        if len(self._t1) > len(self._t2) and len(self._t1) > 0:
+            key, size = self._t1.pop_lru()
             self._b1[key] = size
             self._current_entries -= 1
             self._current_bytes -= size
             return key
-        elif self._t2:
-            key, size = self._t2.popitem(last=False)
+        elif len(self._t2) > 0:
+            key, size = self._t2.pop_lru()
             self._b2[key] = size
             self._current_entries -= 1
             self._current_bytes -= size
             return key
-        elif self._t1:
-            key, size = self._t1.popitem(last=False)
+        elif len(self._t1) > 0:
+            key, size = self._t1.pop_lru()
             self._current_entries -= 1
             self._current_bytes -= size
             return key
@@ -184,7 +185,7 @@ class IntelligentCache:
         """
         self.config = config or CacheConfig()
         self._cache: dict[str, CacheEntry] = {}
-        self._access_order: OrderedDict = OrderedDict()
+        self._access_order: LRUCache = LRUCache(max_size=self.config.max_entries)
         self._frequency: dict[str, int] = defaultdict(int)
         self._arc = _ARC(self.config.max_entries, self.config.max_size_bytes)
         self._stats = CacheStats()

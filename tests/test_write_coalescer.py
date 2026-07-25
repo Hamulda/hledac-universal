@@ -151,7 +151,7 @@ async def test_coalescer_continues_after_flush_error(failing_flush_fn):
 
     # First batch fails
     await coalescer.submit([{"id": 1}])
-    await asyncio.sleep(0.6)  # Allow loop to process (500ms flush interval)
+    await asyncio.sleep(0.55)  # P3-04: 500ms flush interval + 50ms CI buffer
 
     assert coalescer._running is True, "Coalescer should continue after flush error"
 
@@ -175,7 +175,7 @@ async def test_on_flush_error_callback_fires(failing_flush_fn, error_callback_lo
     await coalescer.start()
 
     await coalescer.submit([{"id": 1}, {"id": 2}])
-    await asyncio.sleep(0.6)  # Allow loop to process (500ms flush interval)
+    await asyncio.sleep(0.55)  # P3-04: 500ms flush interval + 50ms CI buffer
 
     assert len(error_callback_log._calls) >= 1
     exc, findings, batch_num = error_callback_log._calls[0]
@@ -368,7 +368,7 @@ async def test_stats_flushed_findings_accurate(success_flush_fn):
     await coalescer.start()
 
     await coalescer.submit([{"id": 1}, {"id": 2}])
-    await asyncio.sleep(0.6)  # Allow loop to process (500ms flush interval)
+    await asyncio.sleep(0.55)  # P3-04: 500ms flush interval + 50ms CI buffer
 
     assert coalescer._stats["flushed_findings"] == 2
     assert coalescer._stats["flushed_batches"] == 1
@@ -445,7 +445,7 @@ async def test_batch_counter_incremented_on_each_flush(success_flush_fn):
     await coalescer.start()
 
     await coalescer.submit([{"id": 1}])
-    await asyncio.sleep(0.6)  # Allow loop to process (500ms flush interval)
+    await asyncio.sleep(0.55)  # P3-04: 500ms flush interval + 50ms CI buffer
     await coalescer.submit([{"id": 2}])
     await asyncio.sleep(0.6)
 
@@ -464,7 +464,7 @@ async def test_multiple_flush_errors_all_counted(failing_flush_fn, error_callbac
     await coalescer.start()
 
     await coalescer.submit([{"id": 1}])
-    await asyncio.sleep(0.6)  # Allow loop to process (500ms flush interval)
+    await asyncio.sleep(0.55)  # P3-04: 500ms flush interval + 50ms CI buffer
     await coalescer.submit([{"id": 2}])
     await asyncio.sleep(0.6)
 

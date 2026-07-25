@@ -14,7 +14,7 @@ except ImportError:
     MLX_AVAILABLE = False
     mx = None
     np = None
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from hledac.universal.runtime.scheduler_result import SprintSchedulerResult
 _KNOWN_LANES = ('PUBLIC', 'CT', 'WAYBACK', 'DOH', 'PASSIVE_DNS')

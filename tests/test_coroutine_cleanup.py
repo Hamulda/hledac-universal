@@ -84,7 +84,7 @@ class TestCoroutineCleanup:
         # Consume only first few items, then break
         count = 0
         async for item in gen:
-            tracker.track(gen.aclose.__self__ if hasattr(gen, "aclose") else gen)
+            tracker.track(gen)  # Track the generator itself to detect leaks
             count += 1
             if count >= 5:
                 break  # BUG: No aclose() called!
@@ -180,18 +180,23 @@ class TestWaitForTimeouts:
 
         This test demonstrates the BUGGY pattern - without timeout protection,
         a coroutine that takes too long will block indefinitely.
+
+        P3-04 FIX: Reduced from 3600s to 0.05s - the key point is demonstrating
+        the BUG pattern (no timeout), not waiting for actual timeout.
         """
         tracker = LeakTracker()
 
         async def never_completes() -> int:
-            await asyncio.sleep(3600)  # 1 hour!
+            # P3-04: Was 3600s (1 hour) - reduced for CI speed
+            # The BUG pattern is the same regardless of sleep duration
+            await asyncio.sleep(0.05)
             return 42
 
         # BUG: No timeout protection - this would hang in production
         task = asyncio.create_task(never_completes())
         tracker.track(task)
 
-        # In test, cancel immediately to cleanup
+        # In test, cancel immediately to cleanup (P3-04: was blocking for 3600s)
         task.cancel()
         try:
             await task
@@ -437,6 +442,7 @@ class TestF271BCompliance:
         assert len(result) == 2
 
     @pytest.mark.asyncio
+    @pytest.mark.slow  # F271B: Test runs ~25s (40s op with 25s timeout)
     async def test_discovery_timeout_fires(self) -> None:
         """F271B: Verify 35 second timeout fires on slow operation."""
 

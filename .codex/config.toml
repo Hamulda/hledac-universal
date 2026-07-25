@@ -1,0 +1,13 @@
+[mcp_servers.brv]
+command = "brv"
+args = ["mcp"]
+
+[mcp_servers.context-mode]
+command = "node"
+args = ["/Users/vojtechhamada/.claude/plugins/marketplaces/context-mode/start.mjs"]
+
+[mcp_servers.pmb]
+url = "http://127.0.0.1:8765/mcp"
+
+[mcp_servers.pmb.http_headers]
+Authorization = "Bearer OJhz7DVyCYehojghJxxOFnUbRRF9-K2DCmBmBfG3ueM"

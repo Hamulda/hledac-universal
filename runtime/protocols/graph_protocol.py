@@ -11,7 +11,7 @@ GHOST_INVARIANTS:
 
 
 
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Iterator, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -81,8 +81,8 @@ class GraphProtocol(Protocol):
         """Return top N nodes by degree. Returns [] on error."""
         ...
 
-    def export_edge_list(self) -> list[tuple[str, str, str, float]]:
-        """Export all edges as (src, dst, rel_type, weight) tuples. Returns [] on error."""
+    def export_edge_list(self) -> Iterator[tuple[str, str, str, float]]:
+        """Yield edges as (src, dst, rel_type, weight) tuples. Yields nothing on error."""
         ...
 
     def stats(self) -> dict[str, Any]:

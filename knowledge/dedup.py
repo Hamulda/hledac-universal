@@ -22,7 +22,7 @@ CANONICAL WRITE PATH (unchanged):
 LMDB NAMESPACE:
     dedup:{fingerprint_hex}  → finding_id (UTF-8 bytes)
 """
-from collections import OrderedDict
+from utils.lru_cache import LRUCache
 from typing import Any
 import psutil
 __all__ = ['DedupManager', 'RotatingBloomFilter']
@@ -32,7 +32,6 @@ import msgspec.json as _json
 import os
 import threading
 import weakref
-from pathlib import Path
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     pass
@@ -194,9 +193,10 @@ class RotatingBloomFilter:
         """
         if self._init_done and self._filter is not None:
             return self._filter
-        path_a = str(Path(self._base_dir) / 'bloom_active.mmap')
-        path_b = str(Path(self._base_dir) / 'bloom_previous.mmap')
-        lock_path = str(Path(self._base_dir) / 'bloom.lock')
+        # P3-06: os.path.join instead of pathlib — _base_dir is already str from get_dedup_paths()
+        path_a = os.path.join(self._base_dir, 'bloom_active.mmap')
+        path_b = os.path.join(self._base_dir, 'bloom_previous.mmap')
+        lock_path = os.path.join(self._base_dir, 'bloom.lock')
         try:
             lock_fd = open(lock_path, 'w')
             try:
@@ -375,7 +375,7 @@ class DedupManager:
         self._dedup_lmdb_last_error: str | None = None
         self._dedup_lmdb_boot_error: str | None = None
         self._dedup_hot_cache: dict[str, str] = {}
-        self._dedup_hot_cache_order: OrderedDict = OrderedDict()
+        self._dedup_hot_cache_order: LRUCache = LRUCache(max_size=_DEDUP_HOT_CACHE_MAX)
         self._semantic_dedup_cache: Any | None = None
         self._semantic_dedup_boot_error: str | None = None
         self._bloom_filter: Any | None = None
@@ -497,11 +497,11 @@ class DedupManager:
             from hledac.universal.paths import get_dedup_paths
             _paths = get_dedup_paths()
             _bd = _paths['bloom_dir']
-            _bd.mkdir(parents=True, exist_ok=True)
-            active_path = str(_bd / 'dedup_bloom_active.mmap')
-            previous_path = str(_bd / 'dedup_bloom_previous.mmap')
+            os.makedirs(_bd, exist_ok=True)
+            active_path = os.path.join(_bd, 'dedup_bloom_active.mmap')
+            previous_path = os.path.join(_bd, 'dedup_bloom_previous.mmap')
             self._bloom_filter = MmapBloomFilter(active_path, 100000, 0.001, force_new=False)
-            if _bd.exists():
+            if os.path.exists(_bd):
                 self._bloom_previous = MmapBloomFilter(previous_path, 100000, 0.001, force_new=False)
             else:
                 self._bloom_previous = MmapBloomFilter(previous_path, 100000, 0.001, force_new=True)
@@ -532,8 +532,8 @@ class DedupManager:
             from hledac.universal.paths import get_dedup_paths
             _paths = get_dedup_paths()
             _bd = _paths['bloom_dir']
-            _bd.mkdir(parents=True, exist_ok=True)
-            ioc_path = str(_bd / 'ioc_dedup.mmap')
+            os.makedirs(_bd, exist_ok=True)
+            ioc_path = os.path.join(_bd, 'ioc_dedup.mmap')
         except Exception as e:
             self._ioc_dedup_store = None
             self._ioc_dedup_store_error = f'path resolution failed: {e}'
@@ -801,7 +801,7 @@ class DedupManager:
             self._dedup_hot_cache_order.move_to_end(fp)
             return
         if len(self._dedup_hot_cache) >= max_cap:
-            oldest, _ = self._dedup_hot_cache_order.popitem(last=False)
+            oldest, _ = self._dedup_hot_cache_order.pop_lru()
             self._dedup_hot_cache.pop(oldest, None)
         self._dedup_hot_cache[fp] = finding_id
         self._dedup_hot_cache_order[fp] = None

@@ -27,36 +27,31 @@ from dataclasses import dataclass
 import msgspec
 from enum import StrEnum
 from typing import Any
-
 from hledac.universal.core.system_metrics import get_system_snapshot
 from hledac.universal.utils.async_helpers import safe_create_task
 from .base import DecisionResponse, MemoryPressureLevel, OperationResult, OperationType, UniversalCoordinator
 logger = logging.getLogger(__name__)
 
-
-# ---------------------------------------------------------------------------
-# Stub implementations for optional dependencies that are imported lazily
-# inside try/except ImportError blocks.  These exist solely to satisfy the
-# static type-checker; all actual usage is guarded by try/except at runtime.
-# ---------------------------------------------------------------------------
-
 class _SecurityAuditorStub:
     """Minimal stub — prevents type-checker errors when SecurityAuditor is absent."""
     project_root: str | None
+    __slots__ = tuple(('project_root',))
 
-    def __init__(self, project_root: str | None = None, **_: Any) -> None:
+    def __init__(self, project_root: str | None=None, **_: Any) -> None:
         self.project_root = project_root
 
     async def audit_directory(self, path: str, **kwargs: Any) -> dict[str, Any]:
         return {'findings': {}, 'total_issues': 0, 'critical_count': 0, 'high_risk_count': 0, 'security_score': 0, 'issues': [], 'recommendations': []}
 
-
 class _SyntaxVerifierStub:
     """Minimal stub — prevents type-checker errors when SyntaxVerifier is absent."""
-    def __init__(self, config: Any | None = None, **_: Any) -> None:
+    __slots__ = tuple(('config',))
+
+    def __init__(self, config: Any | None=None, **_: Any) -> None:
         self.config = config
 
     def verify_directory(self, path: str, **_: Any) -> Any:
+
         class _Result:
             all_valid: bool = True
             files_checked: list[str] = []
@@ -66,10 +61,11 @@ class _SyntaxVerifierStub:
             errors: list[Any] = []
         return _Result()
 
-
 class _CodebaseIntegrityValidatorStub:
     """Minimal stub — prevents type-checker errors when validator is absent."""
-    def __init__(self, config: Any | None = None, **_: Any) -> None:
+    __slots__ = tuple(('config',))
+
+    def __init__(self, config: Any | None=None, **_: Any) -> None:
         self.config = config
 
     def validate_directory(self, path: str, **_: Any) -> dict[str, Any]:
@@ -159,10 +155,9 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
 
     async def _do_initialize(self) -> bool:
         """Initialize monitoring subsystems with graceful degradation."""
-        # AdvancedMonitoring — loaded lazily; stub keeps type-checker happy
         _AdvancedMonitoringImpl: type | None = None
         try:
-            from hledac.monitoring.advanced_monitoring import AdvancedMonitoring as _AM  # type: ignore[unresolved-import]
+            from hledac.monitoring.advanced_monitoring import AdvancedMonitoring as _AM
             _AdvancedMonitoringImpl = _AM
         except ImportError:
             logger.warning('MonitoringCoordinator: AdvancedMonitoring not available')
@@ -175,11 +170,9 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             self._advanced_monitoring = impl
             self._advanced_available = True
             logger.info('MonitoringCoordinator: AdvancedMonitoring initialized')
-
-        # Watchdog — loaded lazily via compat shim
         _WatchdogImpl: type | None = None
         try:
-            from compat.core_watchdog import Watchdog as _WD  # type: ignore[attr-defined]
+            from compat.core_watchdog import Watchdog as _WD
             _WatchdogImpl = _WD
         except ImportError:
             logger.warning('MonitoringCoordinator: Watchdog not available')
@@ -192,7 +185,6 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             self._watchdog = impl
             self._watchdog_available = True
             logger.info('MonitoringCoordinator: Watchdog initialized')
-
         self._start_background_collection()
         return True
 
@@ -296,12 +288,8 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
         start_time = time.time()
         try:
             snap = get_system_snapshot()
-            # Disk/net only fetched here (30s background loop — not hot path)
             import psutil as _ps
-
             disk = _ps.disk_usage('/')
-            # E3: cpu_percent set to 0 — mach provides no non-blocking CPU% without syscalls.
-            # The 30s background loop can afford a rare psutil call if CPU is needed.
             metrics = SystemMetrics(timestamp=time.time(), cpu_percent=0.0, memory_percent=snap.memory_percent, memory_used_mb=snap.rss_mb, memory_available_mb=snap.memory_available_gb * 1024, disk_percent=disk.percent, network_connections=len(_ps.net_connections()), load_average=snap.load_average, processes=len(_ps.pids()))
             self._current_metrics = metrics
             self._metrics_history.append(metrics)
@@ -657,13 +645,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             else:
                 components = ['memory', 'system', 'network', 'storage']
                 from hledac.universal.utils.async_helpers import chunked_taskgroup
-                results = await chunked_taskgroup(
-                    components,
-                    engine.run_manual_diagnostic,
-                    batch_size=20,
-                    concurrency=20,
-                    ctx="monitoring.diagnostics",
-                )
+                results = await chunked_taskgroup(components, engine.run_manual_diagnostic, batch_size=20, concurrency=20, ctx='monitoring.diagnostics')
                 for comp_issues in results:
                     issues.extend(comp_issues)
             issues_dict = [{'issue_id': issue.issue_id, 'component': issue.component, 'severity': issue.severity.value, 'description': issue.description, 'recommendations': issue.recommendations, 'resolved': issue.resolved, 'timestamp': issue.timestamp} for issue in issues]

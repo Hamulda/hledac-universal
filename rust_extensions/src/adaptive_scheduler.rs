@@ -24,6 +24,7 @@
 //! Falls back to NORMAL_THRESHOLD (32) if MLX/Python probe is unavailable.
 
 use pyo3::prelude::*;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
@@ -43,6 +44,18 @@ const METAL_CACHE_TTL_MS: u64 = 100;
 thread_local! {
     static METAL_CACHE: (Instant, u8, u64) = (Instant::now(), 1, 0);
 }
+
+/// Explicit memory-pressure signal — set by Python tests / production code.
+///
+/// Value: 0=idle, 1=normal, 2=pressure.
+/// When set to a non-default value, mixed_threshold() uses this directly
+/// and bypasses MLX Metal probing (tests don't have MLX).
+///
+/// Default: 1 (normal) — MLX Metal probing is the source of truth in production.
+static MEMORY_PRESSURE: AtomicU8 = AtomicU8::new(1);
+
+/// Sentinel value meaning "not explicitly set" — must match default of MEMORY_PRESSURE.
+const PRESSURE_UNSET: u8 = 1;
 
 // ---------------------------------------------------------------------------
 // Constants — match lib.rs MIXED_THRESHOLD
@@ -114,10 +127,10 @@ fn fraction_to_level(limit_bytes: u64, active: u64) -> u8 {
     let fraction = active as f64 / limit_bytes as f64;
     if fraction < 0.60 {
         0 // idle
-    } else if fraction < 0.85 {
-        1 // normal
+    } else if fraction <= 0.85 {
+        1 // normal — inclusive boundary (0.60–0.85 → normal per documented fractions)
     } else {
-        2 // pressure
+        2 // pressure (> 0.85)
     }
 }
 
@@ -128,11 +141,20 @@ fn fraction_to_level(limit_bytes: u64, active: u64) -> u8 {
 /// Returns the cached metal level (0=idle, 1=normal, 2=pressure) or
 /// re-probes via GIL if the thread-local cache entry is stale.
 ///
-/// Callers: mixed_threshold(), recommended_cpu_threads(), recommended_io_threads().
+/// If MEMORY_PRESSURE was explicitly set to a non-default value
+/// (i.e., not PRESSURE_UNSET), that value is returned immediately
+/// and no MLX probing occurs. This allows tests to control the
+/// threshold without MLX being available.
 #[inline]
 fn get_metal_level_cached() -> u8 {
+    // Fast path: if memory pressure was explicitly set, use it directly.
+    let pressure = MEMORY_PRESSURE.load(Ordering::Acquire);
+    if pressure != PRESSURE_UNSET {
+        return pressure;
+    }
+
     let now = Instant::now();
-    let cached @ (instant, level, _limit_bytes): (Instant, u8, u64) =
+    let (instant, level, _limit_bytes): (Instant, u8, u64) =
         METAL_CACHE.with(|cell| *cell.get());
     if now.duration_since(instant) < Duration::from_millis(METAL_CACHE_TTL_MS) {
         return level;
@@ -150,8 +172,10 @@ fn get_metal_level_cached() -> u8 {
 /// MIXED_THRESHOLD — fully MLX Metal-aware.
 ///
 /// Uses a thread-local cache (TTL = 100 ms) to skip GIL on the
-/// common case.  At 1000+ calls / sprint the cache hit rate is
-/// > 99 % and the GIL is never touched.
+/// common case (pressure == PRESSURE_UNSET).  When an explicit pressure
+/// is set via update_memory_pressure(), the atomic is checked first
+/// and the cache is bypassed entirely — so the hot path for production
+/// MLX use is one atomic load with zero GIL overhead.
 ///
 /// | MLX GPU fraction of cache limit | Threshold | Rationale                |
 /// |--------------------------------|-----------|--------------------------|
@@ -190,7 +214,16 @@ pub fn mixed_threshold_via_metal(py: Python<'_>) -> usize {
 /// Recommended thread count for CPU-bound workloads (cpu_pool ceiling).
 #[inline]
 pub fn recommended_cpu_threads() -> usize {
-    // Uses thread-local cache — no GIL on cache hit.
+    // Check explicit pressure first (tests, no-MLX path).
+    let pressure = MEMORY_PRESSURE.load(Ordering::Acquire);
+    if pressure != PRESSURE_UNSET {
+        return match pressure {
+            2 => 1,   // pressure: sequential
+            1 => 2,   // normal: 2 P-cores
+            _ => 4,   // idle: all P-cores
+        };
+    }
+    // Production: use thread-local metal cache.
     match get_metal_level_cached() {
         2 => 1,   // pressure: sequential
         1 => 2,   // normal: 2 P-cores
@@ -201,7 +234,15 @@ pub fn recommended_cpu_threads() -> usize {
 /// Recommended thread count for I/O-bound workloads (io_pool ceiling).
 #[inline]
 pub fn recommended_io_threads() -> usize {
-    // Uses thread-local cache — no GIL on cache hit.
+    // Check explicit pressure first (tests, no-MLX path).
+    let pressure = MEMORY_PRESSURE.load(Ordering::Acquire);
+    if pressure != PRESSURE_UNSET {
+        return match pressure {
+            2 => 1,  // pressure: minimal
+            _ => 2,  // idle/normal: 2 threads
+        };
+    }
+    // Production: use thread-local metal cache.
     match get_metal_level_cached() {
         2 => 1,  // pressure: minimal
         _ => 2,  // idle/normal: 2 threads
@@ -221,12 +262,26 @@ pub fn update_cpu_saturation(_pct: u8) {
     // No-op: CPU_SATURATION atomic removed; MLX Metal probing is the source of truth.
 }
 
-/// No-op function for test compatibility.
-/// MLX-aware paths use direct Metal probing via mixed_threshold().
-/// This function exists solely for backward compatibility with tests.
+/// Update the explicit memory-pressure signal.
+///
+/// When set to a non-default value (≠ PRESSURE_UNSET), mixed_threshold()
+/// uses this pressure directly and bypasses MLX Metal probing.
+/// This allows Python tests to control the threshold without MLX being available.
+///
+/// Value: 0=idle (→16), 1=normal (→32), 2=pressure (→64).
+///
+/// Note: The thread-local metal cache is NOT consulted when pressure ≠ PRESSURE_UNSET;
+/// the atomic value short-circuits the cache entirely. The cached entry is kept
+/// for the reset path (pressure == PRESSURE_UNSET) where it stores the MLX-probed
+/// level so that re-probing is not needed on every call.
 #[allow(dead_code)]
-pub fn update_memory_pressure(_pressure: u8) {
-    // No-op: Metal probing is now inline in mixed_threshold()
+pub fn update_memory_pressure(pressure: u8) {
+    MEMORY_PRESSURE.store(pressure, Ordering::Release);
+    // Invalidate the thread-local cache so the next MLX probe (if pressure == PRESSURE_UNSET)
+    // starts fresh.  When pressure != PRESSURE_UNSET the cache is bypassed entirely, so
+    // the entry value is immaterial — we store PRESSURE_UNSET (=1) to document the reset path.
+    let now = Instant::now();
+    METAL_CACHE.with(|cell| *cell.get() = (now, PRESSURE_UNSET, 0));
 }
 
 // ---------------------------------------------------------------------------
@@ -334,5 +389,62 @@ mod tests {
         // Verify threshold constants match the documented levels.
         // idle (level 0) → IDLE_THRESHOLD = 16
         assert_eq!(mixed_threshold(), NORMAL_THRESHOLD); // default fallback = normal
+    }
+
+    #[test]
+    fn test_update_memory_pressure_idle() {
+        // Explicit pressure=0 (idle) must bypass MLX probe and return 16.
+        update_memory_pressure(0);
+        assert_eq!(mixed_threshold(), IDLE_THRESHOLD); // 16
+        // Reset to default.
+        update_memory_pressure(1);
+    }
+
+    #[test]
+    fn test_update_memory_pressure_normal() {
+        // Explicit pressure=1 equals PRESSURE_UNSET → falls through to MLX.
+        // Without MLX, get_metal_level_cached() probes GIL, which in a
+        // #[cfg(test)] binary has no Python interpreter, so it returns
+        // the fallback level 1 (NORMAL_THRESHOLD = 32).
+        update_memory_pressure(1);
+        assert_eq!(mixed_threshold(), NORMAL_THRESHOLD); // 32
+    }
+
+    #[test]
+    fn test_update_memory_pressure_pressure() {
+        // Explicit pressure=2 (pressure) must bypass MLX probe and return 64.
+        update_memory_pressure(2);
+        assert_eq!(mixed_threshold(), PRESSURE_THRESHOLD); // 64
+        // Reset to default.
+        update_memory_pressure(1);
+    }
+
+    #[test]
+    fn test_recommended_cpu_threads_explicit_pressure() {
+        // Idle → 4 P-cores available.
+        update_memory_pressure(0);
+        assert_eq!(recommended_cpu_threads(), 4);
+        // Normal → 2 P-cores.
+        update_memory_pressure(1);
+        assert_eq!(recommended_cpu_threads(), 2);
+        // Pressure → 1 (sequential).
+        update_memory_pressure(2);
+        assert_eq!(recommended_cpu_threads(), 1);
+        // Reset.
+        update_memory_pressure(1);
+    }
+
+    #[test]
+    fn test_recommended_io_threads_explicit_pressure() {
+        // Idle/normal → 2 I/O threads.
+        update_memory_pressure(0);
+        assert_eq!(recommended_io_threads(), 2);
+        update_memory_pressure(1);
+        assert_eq!(recommended_io_threads(), 2);
+        // Pressure → 1 (minimal).
+        update_memory_pressure(2);
+        assert_eq!(recommended_io_threads(), 1);
+        // Reset.
+        update_memory_pressure(1);
     }
 }

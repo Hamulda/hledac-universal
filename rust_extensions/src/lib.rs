@@ -103,8 +103,7 @@ pub mod claims_extraction; // ISSUE-27: CPU-bound claims extraction (polarity, c
 pub mod sprint_policies;
 pub mod tls_metadata;    // Issue B5: TLS cert metadata — single Rust call replacing 5-level Python fallback
 pub mod gil;            // F5.2: GIL management — std::thread + rayon pools (ne pyo3-async)
-pub mod pool_run;      // Rayon pool runners — Python-callable cpu/io/mixed pool execute (legacy thread::spawn)
-pub mod rayon_dispatch; // ISSUE-2.3: Channel-based dispatch — eliminates double-thread overhead
+pub mod pool_run;      // R2: Rayon pool runners — GIL wrappers + channel-based dispatch (consolidated)
 pub mod mlx_bridge;    // ISSUE #015: MLX async token streaming bridge + adaptive buffering
 pub mod collections;    // Bounded ring buffers — recent_iocs ring, M1 8GB safe
 #[cfg(feature = "data")]
@@ -764,12 +763,10 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Enables 100GB+ IOC history reads without OOM on M1 8GB.
     parquet_reader::register(m)?;
 
-    // R4.1: Rayon pool runners — Python-callable wrappers for CPU/IO pools.
+    // R4.1 + R2: Rayon pool runners — GIL wrappers (cpu/io/mixed_pool_run)
+    // + channel-based dispatch (rayon_submit_channel/join_channel/abort_channel).
+    // Consolidated: rayon_dispatch.rs merged into pool_run.rs.
     pool_run::register_functions(m)?;
-
-    // ISSUE-2.3: Channel-based dispatch to rayon pools — replaces thread::spawn per-task.
-    // Eliminates double-thread overhead in UnifiedExecutor (asyncio.to_thread + rayon_submit).
-    rayon_dispatch::register_functions(m)?;
 
     // ISSUE-23: Rust-backed FederatedQTable with rayon parallel batch updates.
     #[cfg(feature = "advanced")]

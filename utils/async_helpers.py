@@ -36,11 +36,12 @@ import threading
 import traceback
 import uuid
 import warnings
-from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast, overload
 
 import msgspec
+
+from utils.lru_cache import LRUCache
 
 T = TypeVar("T", default=Any)
 
@@ -2503,7 +2504,7 @@ class BoundedPerHostGate:
     def __init__(self, max_hosts: int = 512, per_host_limit: int = 4) -> None:
         self._max_hosts = max_hosts
         self._per_host_limit = per_host_limit
-        self._gates: OrderedDict[str, asyncio.Semaphore] = OrderedDict()
+        self._gates: LRUCache[str, asyncio.Semaphore] = LRUCache(max_size=max_hosts)
         self._stats: dict[str, int] = {"evicted": 0, "hits": 0, "misses": 0}
 
     # ------------------------------------------------------------------
@@ -2535,16 +2536,13 @@ class BoundedPerHostGate:
         The caller MUST pass the returned semaphore to ``release()`` —
         NOT self._gates[host], which may have been evicted and replaced.
         """
-        if host in self._gates:
-            sem = self._gates[host]
+        if (sem := self._gates.get(host, None)) is not None:
             self._gates.move_to_end(host)  # O(1) LRU: mark as most-recently-used
-            self._stats["hits"] += 1
             op_id = "hit"
         else:
             self._evict_idle()
             sem = asyncio.Semaphore(self._per_host_limit)
             self._gates[host] = sem
-            self._stats["misses"] += 1
             op_id = "miss"
 
         await sem.acquire()
@@ -2566,8 +2564,11 @@ class BoundedPerHostGate:
     # ------------------------------------------------------------------
     def get_stats(self) -> dict[str, Any]:
         """Return telemetry snapshot."""
+        cache_stats = self._gates.stats
         return {
-            **self._stats,
+            "evicted": self._stats["evicted"],
+            "hits": cache_stats["hits"],
+            "misses": cache_stats["misses"],
             "active_hosts": len(self._gates),
             "max_hosts": self._max_hosts,
         }

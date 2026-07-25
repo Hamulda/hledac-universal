@@ -62,7 +62,7 @@ import logging
 import sys
 import time
 import weakref
-from collections import OrderedDict, deque
+from collections import deque
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, is_dataclass
 from enum import Enum, IntEnum
@@ -70,6 +70,7 @@ from pathlib import Path
 from typing import Any
 from core.psutil_shim import psutil
 from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
+from hledac.universal.utils.lru_cache import LRUCache
 try:
     import numpy as np
     from numpy.typing import NDArray
@@ -212,7 +213,7 @@ class UniversalMemoryCoordinator:
         self.memory_limit_mb = memory_limit_mb
         self.memory_limit_bytes = memory_limit_mb * 1024 * 1024
         self.allocations: dict[str, MemoryAllocation] = {}
-        self.zone_allocations: dict[MemoryZone, OrderedDict] = {zone: OrderedDict() for zone in MemoryZone}
+        self.zone_allocations: dict[MemoryZone, LRUCache] = {zone: LRUCache() for zone in MemoryZone}
         self.statistics = MemoryStatistics(total_memory_mb=psutil.virtual_memory().total / (1024 * 1024), used_memory_mb=0, available_memory_mb=0, peak_usage_mb=0, current_level=MemoryPressureLevel.NORMAL, cleanup_count=0, last_cleanup_time=0)
         self.callbacks: list[Callable] = []
         # ISSUE-5 OPTIMIZATION: Reduced from 6 to 3 asyncio.Lock instances.
@@ -1513,7 +1514,7 @@ class MultiLevelContextCache:
         self.embedder = None
         self.embedding_dim = 384
         self._initialize_embedder()
-        self.l1_cache: OrderedDict[str, CacheEntry] = OrderedDict()
+        self.l1_cache: LRUCache[str, CacheEntry] = LRUCache()
         self.l2_cache: dict[str, CacheEntry] = {}
         self._l1_freq: dict[str, int] = {}
         self._l2_freq: dict[str, int] = {}
@@ -1622,8 +1623,8 @@ class MultiLevelContextCache:
     _embedding_cache: dict[str, Any] = {}
     _embedding_cache_lock: asyncio.Lock | None = None
 
-    def _get_embedding(self, text: str) -> Any | None:
-        """Get embedding for text using MLXEmbedder or FastEmbed.
+    async def _get_embedding_async(self, text: str) -> Any | None:
+        """Get embedding for text using MLXEmbedder or FastEmbed (async).
 
         F320-Issue2: Results are cached by NFC-normalized text to avoid
         re-encoding the same string across cycles."""
@@ -1640,30 +1641,32 @@ class MultiLevelContextCache:
         if self.embedder:
             try:
                 if hasattr(self.embedder, 'encode_batch'):
-                    import asyncio
-                    try:
-                        loop = asyncio.get_running_loop()
-                    except RuntimeError:
-                        loop = asyncio.new_event_loop()
-                        _loop_owned = True
-                    else:
-                        _loop_owned = False
-                    try:
-                        result = loop.run_until_complete(self.embedder.encode_batch([text]))
-                    finally:
-                        if _loop_owned:
-                            loop.close()
-                            # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
-                            try:
-                                gc.collect()
-                            except Exception:
-                                pass
+                    # C7-FIX: Use asyncio.Runner() instead of new_event_loop/run_until_complete.
+                    # Runner handles loop lifecycle automatically and is the modern Python 3.11+ pattern.
+                    result = await self.embedder.encode_batch([text])
                     return result[0] if result else None
             except Exception as e:
                 logger.debug(f'Embedding failed: {e}')
         result = None
         self._embedding_cache[normalized] = result
         return result
+
+    def _get_embedding(self, text: str) -> Any | None:
+        """Get embedding for text using MLXEmbedder or FastEmbed (sync wrapper).
+
+        C7-FIX: Uses run_sync_async() from sync_bridge for M1 safety.
+        Prefer async _get_embedding_async() when called from async context.
+        """
+        from utils.sync_bridge import run_sync_async
+        import unicodedata
+        normalized = unicodedata.normalize('NFC', text)
+        cached = self._embedding_cache.get(normalized)
+        if cached is not None:
+            return cached
+        try:
+            return run_sync_async(self._get_embedding_async(text))
+        except Exception:
+            return None
 
     async def get(self, input_data: Any, cache_type: CacheType=CacheType.COMPUTATION, threshold: float | None=None) -> Any | None:
         """
@@ -1697,7 +1700,7 @@ class MultiLevelContextCache:
             return await self._find_similar_entry_hnsw(input_text, threshold)
         if not self.faiss_available or self.semantic_index is None:
             return None
-        input_embedding = self._get_embedding(input_text)
+        input_embedding = await self._get_embedding_async(input_text)
         if input_embedding is None:
             return None
         try:
@@ -1719,7 +1722,7 @@ class MultiLevelContextCache:
 
     async def _find_similar_entry_hnsw(self, input_text: str, threshold: float) -> CacheEntry | None:
         """Find semantically similar cache entry using usearch (Sprint 26)."""
-        input_embedding = self._get_embedding(input_text)
+        input_embedding = await self._get_embedding_async(input_text)
         if input_embedding is None:
             return None
         try:
@@ -1750,7 +1753,7 @@ class MultiLevelContextCache:
         if cache_id in self.l1_cache or cache_id in self.l2_cache:
             return
         input_text = str(input_data)
-        embedding = self._get_embedding(input_text)
+        embedding = await self._get_embedding_async(input_text)
         cache_entry = CacheEntry(cache_id=cache_id, content=content, embedding=embedding, access_count=1, last_accessed=time.time(), created_at=time.time(), size_bytes=sys.getsizeof(content), cache_type=cache_type, metadata={})
         async with self._lock:
             if embedding is not None and self.faiss_available:

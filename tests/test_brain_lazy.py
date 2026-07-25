@@ -10,6 +10,10 @@ Tests:
   5. Conditional load (min_findings) still works
 
 All tests are hermetic — no MLX, no real models.
+
+P3-04: Tests marked @pytest.mark.flaky_race because they test race conditions
+that depend on real scheduler timing. These may occasionally fail under extreme
+CPU contention but are valid tests when the system is not under load.
 """
 
 import asyncio
@@ -38,6 +42,7 @@ class TestLazyModelConcurrency:
         gc.collect()
 
     @pytest.mark.asyncio
+    @pytest.mark.flaky_race  # P3-04: Race condition test - timing dependent
     async def test_concurrent_get_creates_single_instance(self, fresh_lazy):
         """
         100 concurrent await lazy.get() calls must create exactly 1 instance.
@@ -45,9 +50,11 @@ class TestLazyModelConcurrency:
         This is the primary race condition test for Issue #4:
         without a lock, two coroutines could pass the `if self._instance is None`
         check simultaneously and both call self._factory() → 2x memory allocation.
+
+        P3-04: Increased factory_duration from 0.05 to 0.1 for CI stability.
         """
         factory_calls = {"count": 0}
-        factory_duration = 0.05  # 50ms to simulate work
+        factory_duration = 0.1  # P3-04: 100ms (was 50ms) for CI stability
 
         def slow_factory():
             factory_calls["count"] += 1

@@ -384,8 +384,17 @@ ignore = ["E501", "F821", "B027"]  # BLE001: P1-01 audit in progress — see Iss
 # (shield requires wait_for's timeout-interrupt behavior; safe_wait_for uses asyncio.timeout
 # which doesn't guarantee shield protection). Each shield site has inline noqa: F911.
 # TPL001: threading.Lock() must be registered in core/locks.py LockCategory registry.
-# CI: grep -rn 'threading\.Lock()' --include='*.py' . | grep -v 'test' | grep -v 'probe' | grep -v '_LOCK_REGISTRY\|register_lock\|core/locks' | grep -v '# noqa' — expect 0 matches for unregistered locks.
-# All threading.Lock / threading.RLock instances must call register_lock(LockCategory.XXX, lock, "module._name"). See core/locks.py.
+# CI: grep -rn 'threading\.Lock()' --include='*.py' . \
+#   | grep -v '.venv' | grep -v 'test' | grep -v 'probe' \
+#   | grep -v 'register_lock\|core/locks' \
+#   | grep -v '# noqa' \
+#   | grep -v 'self\._lock\|cls\._lock\|_thread_lock\|_factory_lock\|_init_lock\|_lock_factory\|\.lock = threading' \
+#   | grep -v '# .*threading\.Lock()' — expect 0 matches for unregistered GLOBAL module-level locks.
+# Per-instance locks (self._lock), class locks (cls._lock), and DCLP pattern locks
+# (_*_lock for async Lock init) are exempt — see core/locks.py NOTE: "registrace se
+# DOPORUČUJE pro audit, ale není kritická. Kritická je pouze pro global/module-level locks."
+# All GLOBAL threading.Lock / threading.RLock instances must call
+# register_lock(LockCategory.XXX, lock, "module._name"). See core/locks.py.
 
 [tool.ruff.lint.per-file-ignores]
 # stubs/ – Apple/CoreML framework .pyi binding files; preserve original names

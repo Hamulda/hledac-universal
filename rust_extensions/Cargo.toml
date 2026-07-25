@@ -25,6 +25,7 @@ ahash = "0.8"
 parking_lot = "0.12"
 memchr = "2.7"
 memmap2 = "0.9"
+num_cpus = "1.17"
 blake2 = "0.10"
 blake3 = "0.1"
 unicode-normalization = "0.1"
@@ -161,14 +162,14 @@ unused_imports = "warn"
 # Target-specific flags
 # ---------------------------------------------------------------------------
 # ISSUE E6: SIMD NEON on Apple Silicon M1/M2/M3
+# CRITICAL: Without +neon, core::arch::aarch64 intrinsics compile but emit
+# NO actual SIMD ops — performance degrades to scalar (4-8× slower).
+# +crypto: ARMv8 crypto extensions (AES, SHA1, SHA2 — used by sha2 crate)
+#
 # All Apple Silicon chips (M1+) support NEON and crypto extensions.
 # These flags ensure the compiler emits NEON instructions rather than
 # falling back to scalar code even when #[cfg(target_arch = "aarch64")]
-# guards are present. Without these, core::arch::aarch64 intrinsics compile
-# but emit no actual SIMD ops — performance degrades to scalar.
-#
-# +neon  : ARM SIMD instruction set (4× f32 in parallel)
-# +crypto: ARMv8 crypto extensions (AES, SHA1, SHA2 — used by sha2 crate)
+# guards are present.
 [target.'cfg(target_arch = "aarch64")']
 rustflags = ["-C", "target-feature=+neon,+crypto"]
 

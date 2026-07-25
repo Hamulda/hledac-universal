@@ -134,9 +134,10 @@ class PrewarmDaemon:
 
                 # mlx_lm.load() returns (model, tokenizer, *rest) in mlx_lm 0.17+
                 # Slice to 2 to handle extended return tuples gracefully.
+                # C2-FIX: mlx_lm.load() is blocking I/O. Wrapped in asyncio.to_thread() to avoid blocking event loop.
                 local_path = os.path.expanduser(model_path)
                 if os.path.isdir(local_path):
-                    loaded = mlx_lm.load(local_path)
+                    loaded = await asyncio.to_thread(mlx_lm.load, local_path)
                     model_obj, tokenizer_obj = loaded[0], loaded[1]
                     logger.info("[PREENABLE] Hermes loaded via mlx_lm.load(local_path)")
                 else:
@@ -144,7 +145,7 @@ class PrewarmDaemon:
                         "[PREENABLE] Hermes local path missing — treating as HF repo: %s",
                         model_path,
                     )
-                    loaded = mlx_lm.load(model_path)
+                    loaded = await asyncio.to_thread(mlx_lm.load, model_path)
                     model_obj, tokenizer_obj = loaded[0], loaded[1]
 
                 # Store in singleton cache (thread-safe via HermesModelCache RLock)

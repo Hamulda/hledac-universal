@@ -111,9 +111,11 @@ async def run_windup(
         graph = getattr(scheduler, "get_graph", lambda: None)()
         if graph is not None:
             edge_list = getattr(graph, "export_edge_list", lambda: [])()
-            if edge_list:
-                gnn_predictions = predict_from_edge_list(edge_list, top_k=10)
-                anomalies = get_anomaly_scores(edge_list)
+            if edge_list is not None:
+                edges = list(edge_list)  # materialize generator for multi-pass
+                if edges:
+                    gnn_predictions = predict_from_edge_list(edges, top_k=10)
+                    anomalies = get_anomaly_scores(edges)
                 logger.info(
                     f"[GNN] {len(gnn_predictions)} predicted links, "
                     f"{len(anomalies)} anomalies"
@@ -181,35 +183,50 @@ async def run_windup(
         from brain.model_lifecycle import ModelLifecycle
         from brain.synthesis_runner import SynthesisRunner
 
-        runner = SynthesisRunner(ModelLifecycle())
-        # F234: Enable MLX-first context compression for M1 8GB safety
-        runner.set_compression_threshold(4000)
-        graph = getattr(scheduler, "get_graph", lambda: None)()
-        if graph is not None:
-            runner.inject_graph(graph)
-        # Sprint 8VL: Inject lifecycle adapter — PREFERRED truth path for windup gate
-        if hasattr(scheduler, "_lc_adapter") and scheduler._lc_adapter is not None:
-            runner.inject_lifecycle_adapter(scheduler._lc_adapter)
+        # P2-02: Use try/finally to guarantee runner.close() even on exception.
+        # Previously close() was only on success path — synthesize_findings()
+        # exception left model loaded (Hermes3 ~2GB on M1 8GB = significant leak).
+        runner: SynthesisRunner | None = None
+        try:
+            runner = SynthesisRunner(ModelLifecycle())
+            # F234: Enable MLX-first context compression for M1 8GB safety
+            runner.set_compression_threshold(4000)
+            graph = getattr(scheduler, "get_graph", lambda: None)()
+            if graph is not None:
+                runner.inject_graph(graph)
+            # Sprint 8VL: Inject lifecycle adapter — PREFERRED truth path for windup gate
+            if hasattr(scheduler, "_lc_adapter") and scheduler._lc_adapter is not None:
+                runner.inject_lifecycle_adapter(scheduler._lc_adapter)
 
-        # Extract finding texts for synthesis
-        finding_texts = []
-        for f in (deduped or []):
-            text = f.get("text") or f.get("snippet") or f.get("title") or str(f)
-            finding_texts.append(text[:500])
+            # Extract finding texts for synthesis
+            finding_texts = []
+            for f in (deduped or []):
+                text = f.get("text") or f.get("snippet") or f.get("title") or str(f)
+                finding_texts.append(text[:500])
 
-        await runner.synthesize_findings(
-            query=sprint_query,
-            findings=[{"text": t, "ioc": f.get("ioc", ""), "source": f.get("source", "")}
-                      for t, f in zip(finding_texts, deduped or [], strict=False)],
-            force_synthesis=True,
-        )
-        synthesis_meta = runner.last_synthesis_meta
+            await runner.synthesize_findings(
+                query=sprint_query,
+                findings=[{"text": t, "ioc": f.get("ioc", ""), "source": f.get("source", "")}
+                          for t, f in zip(finding_texts, deduped or [], strict=False)],
+                force_synthesis=True,
+            )
+            synthesis_meta = runner.last_synthesis_meta
 
-        # Sprint F234: Bandit update already handled by synthesis_runner.synthesize_findings()
-        # windup_engine.py is DORMANT — this path never executes in production.
-        # See DSPY_OPTIMIZATION_MAP.md for architecture context.
-
-        await runner.close()
+            # Sprint F234: Bandit update already handled by synthesis_runner.synthesize_findings()
+            # windup_engine.py is DORMANT — this path never executes in production.
+            # See DSPY_OPTIMIZATION_MAP.md for architecture context.
+        except Exception as e:
+            logger.warning(f"[WINDUP] Synthesis: {e}")
+            synthesis_engine_used = "failed"
+            scheduler._synthesis_engine = "failed"
+        finally:
+            # P2-02: ALWAYS close runner — finally guarantees execution even on exception.
+            # This fixes the ~2GB Hermes3 model leak when synthesize_findings() raises.
+            if runner is not None:
+                try:
+                    await runner.close()
+                except Exception:  # noqa: BLE001 — best-effort; cleanup must not raise
+                    pass
     except Exception as e:
         logger.warning(f"[WINDUP] Synthesis: {e}")
         synthesis_engine_used = "failed"

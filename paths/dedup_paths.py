@@ -23,28 +23,31 @@ P1-14 invariants:
   - Single source of truth: one function resolves all dedup paths
   - Backward compat: DedupManager/dedup_lmdb_path takes precedence over env if provided
   - Thread-safe: singleton initialized once, read-only thereafter
+
+P3-06 fix: Returns str paths instead of pathlib.Path for hot-path performance.
+pathlib.Path is 5-10× slower than os.path on M1. Type hints keep Path for
+compatibility, but internal resolution uses os.path.join.
 """
 
 import os
 import threading
-from pathlib import Path
-from typing import Final, Union, cast
+from typing import Final, cast
 
 # Default base under ~/.hledac/ — co-located with LMDB_STORE_ROOT
 _LMDB_STORE_DEFAULT: Final[str] = "~/.hledac/lmdb_store"
 
 # Hard fallback if both env + LMDB_STORE_ROOT unavailable
-_LMDB_ROOT_FALLBACK: Final[Path] = Path("~/.hledac/lmdb_store").expanduser()
+_LMDB_ROOT_FALLBACK_STR: Final[str] = os.path.expanduser("~/.hledac/lmdb_store")
 
 # P1-14: Sentinel for "not yet resolved"
 _UNRESOLVED: Final[object] = object()
 
 # Module-level singleton (thread-safe via GIL, immutable after init)
-_DEFAULT_PATHS: Union[dict[str, Path], object]  # type: ignore[valid-type]
+_DEFAULT_PATHS: dict[str, str] | object  # type: ignore[valid-type]
 _DEFAULT_PATHS_LOCK: Final[threading.Lock] = threading.Lock()
 
 
-def resolve_dedup_paths(env_prefix: str = "HLEDAC_DEDUP") -> dict[str, Path]:
+def resolve_dedup_paths(env_prefix: str = "HLEDAC_DEDUP") -> dict[str, str]:
     """
     Resolve all dedup storage paths.
 
@@ -59,51 +62,47 @@ def resolve_dedup_paths(env_prefix: str = "HLEDAC_DEDUP") -> dict[str, Path]:
 
     Returns:
         dict with keys: lmdb_root, dedup_lmdb, bloom_dir, bloom_active,
-                        bloom_previous, bloom_lock
+                        bloom_previous, bloom_lock (all as str for os.path speed)
     """
     # LMDB root resolution (mirrors paths.py LMDB_STORE_ROOT logic)
     env_lmdb_override = os.environ.get(f"{env_prefix}_LMDB_PATH")
     env_store_root = os.environ.get("HLEDAC_LMDB_STORE")
 
     if env_lmdb_override:
-        lmdb_root = Path(env_lmdb_override)
+        lmdb_root = os.path.expanduser(env_lmdb_override)
     elif env_store_root:
-        lmdb_root = Path(env_store_root)
+        lmdb_root = os.path.expanduser(env_store_root)
     else:
-        default = Path(_LMDB_STORE_DEFAULT).expanduser()
-        # Expanduser resolves ~ at import time; safe for Path
-        lmdb_root = default
+        lmdb_root = os.path.expanduser(_LMDB_STORE_DEFAULT)
 
     # Bloom directory — co-located under lmdb_root by default
-    bloom_dir = Path(
-        os.environ.get(f"{env_prefix}_BLOOM_DIR", str(lmdb_root / "bloom"))
-    )
+    bloom_dir = os.environ.get(f"{env_prefix}_BLOOM_DIR") or os.path.join(lmdb_root, "bloom")
 
     # Ensure directories exist
     try:
-        lmdb_root.mkdir(parents=True, exist_ok=True)
+        os.makedirs(lmdb_root, exist_ok=True)
     except Exception:
-        lmdb_root = _LMDB_ROOT_FALLBACK
-        lmdb_root.mkdir(parents=True, exist_ok=True)
+        lmdb_root = _LMDB_ROOT_FALLBACK_STR
+        os.makedirs(lmdb_root, exist_ok=True)
 
     try:
-        bloom_dir.mkdir(parents=True, exist_ok=True)
+        os.makedirs(bloom_dir, exist_ok=True)
     except Exception:
         # Fall back to lmdb_root/BLOOM if bloom_dir is inaccessible
-        bloom_dir = lmdb_root / "bloom"
-        bloom_dir.mkdir(parents=True, exist_ok=True)
+        bloom_dir = os.path.join(lmdb_root, "bloom")
+        os.makedirs(bloom_dir, exist_ok=True)
 
     return {
         "lmdb_root": lmdb_root,
-        "dedup_lmdb": lmdb_root / "dedup.lmdb",
+        "dedup_lmdb": os.path.join(lmdb_root, "dedup.lmdb"),
         "bloom_dir": bloom_dir,
-        "bloom_active": bloom_dir / "bloom_active.mmap",
-        "bloom_previous": bloom_dir / "bloom_previous.mmap",
-        "bloom_lock": bloom_dir / "bloom.lock",
+        "bloom_active": os.path.join(bloom_dir, "bloom_active.mmap"),
+        "bloom_previous": os.path.join(bloom_dir, "bloom_previous.mmap"),
+        "bloom_lock": os.path.join(bloom_dir, "bloom.lock"),
     }
 
 
-def get_dedup_paths() -> dict[str, Path]:  # type: ignore[return-value]
+def get_dedup_paths() -> dict[str, str]:
     """
     Thread-safe singleton accessor for default dedup paths.
 
@@ -116,7 +115,7 @@ def get_dedup_paths() -> dict[str, Path]:  # type: ignore[return-value]
             # Double-check after acquiring lock
             if _DEFAULT_PATHS is _UNRESOLVED:
                 _DEFAULT_PATHS = resolve_dedup_paths()
-    return cast(dict[str, Path], _DEFAULT_PATHS)
+    return cast(dict[str, str], _DEFAULT_PATHS)
 
 
 def reset_dedup_paths() -> None:

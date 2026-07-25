@@ -158,7 +158,7 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
             steps.append(step)
             if step.confidence < min_confidence:
                 break
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0)
         chain.steps = steps
         chain.final_conclusion = steps[-1].conclusion if steps else 'No conclusion'
         chain.overall_confidence = sum((s.confidence for s in steps)) / len(steps) if steps else 0

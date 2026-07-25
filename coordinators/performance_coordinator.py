@@ -79,7 +79,7 @@ class AgentPool:
     Maintains pools of initialized agents for reuse, reducing initialization
     overhead and memory churn for 8GB constraint systems.
     """
-    __slots__ = tuple(('_cleanup_task', '_metrics', '_pool_locks', '_pools', '_weak_refs', 'config'))
+    __slots__ = tuple(('_cleanup_event', '_cleanup_task', '_metrics', '_pool_locks', '_pools', '_weak_refs', 'config'))
 
     def __init__(self, config: LoadBalancingConfig):
         self.config = config
@@ -87,10 +87,12 @@ class AgentPool:
         self._pool_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._metrics: dict[str, AgentMetrics] = {}
         self._weak_refs: dict[str, set[ref]] = defaultdict(set)
+        self._cleanup_event: asyncio.Event = asyncio.Event()
         self._cleanup_task: asyncio.Task | None = None
 
     async def initialize(self) -> None:
         """Initialize the agent pool system."""
+        self._cleanup_event.clear()
         self._cleanup_task = safe_create_task(self._periodic_cleanup(), name='performance_coordinator:cleanup')
         logger.info('Agent pool initialized with strategy: %s', self.config.load_balance_strategy)
 
@@ -102,6 +104,7 @@ class AgentPool:
                 await self._cleanup_task
             except asyncio.CancelledError:
                 pass
+        self._cleanup_event.set()
         for pool in self._pools.values():
             pool.clear()
         self._pools.clear()
@@ -199,21 +202,33 @@ class AgentPool:
                 self._weak_refs[agent_name].discard(ref)
 
     async def _periodic_cleanup(self) -> None:
-        """Periodic cleanup of expired agents and weak references."""
+        """Periodic cleanup of expired agents and weak references.
+
+        Uses asyncio.wait_for(self._cleanup_event.wait(), timeout=300) instead of
+        asyncio.sleep(300) to allow faster shutdown via _cleanup_event.set().
+        """
+        cleanup_interval = 300.0
         while True:
             try:
-                await asyncio.sleep(300)
-                for agent_name in list(self._weak_refs.keys()):
-                    self._cleanup_weak_refs(agent_name)
-                for _agent_name, pool in self._pools.items():
-                    current_time = time.time()
-                    while pool and current_time - getattr(pool[0], '_created_time', 0) > 600:
-                        pool.popleft()
-                gc.collect()
+                await asyncio.wait_for(self._cleanup_event.wait(), timeout=cleanup_interval)
+                # Shutdown requested via event
+                break
+            except asyncio.TimeoutError:
+                # Timeout elapsed, run cleanup
+                try:
+                    for agent_name in list(self._weak_refs.keys()):
+                        self._cleanup_weak_refs(agent_name)
+                    for _agent_name, pool in self._pools.items():
+                        current_time = time.time()
+                        while pool and current_time - getattr(pool[0], '_created_time', 0) > 600:
+                            pool.popleft()
+                    gc.collect()
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    logger.error(f'Periodic cleanup failed: {e}')
             except asyncio.CancelledError:
                 break
-            except Exception as e:
-                logger.error(f'Periodic cleanup failed: {e}')
 
     async def _emergency_cleanup(self) -> None:
         """Emergency cleanup when memory pressure is high."""
@@ -493,31 +508,34 @@ class AgentPerformanceOptimizer:
         Returns:
             Optimization report with results
         """
-        report = OptimizationReport()
         try:
             memory_before = get_memory_usage_mb()
             bottlenecks = await self._identify_bottlenecks()
-            report.bottlenecks_identified = bottlenecks
+            optimizations: list[str] = []
             for bottleneck in bottlenecks:
                 if bottleneck == 'high_memory':
                     await self._optimize_memory_usage()
-                    report.optimizations_applied.append('memory_optimization')
+                    optimizations.append('memory_optimization')
                 elif bottleneck == 'slow_agents':
                     await self._optimize_slow_agents()
-                    report.optimizations_applied.append('slow_agent_optimization')
+                    optimizations.append('slow_agent_optimization')
                 elif bottleneck == 'circuit_breakers':
                     await self._reset_circuit_breakers()
-                    report.optimizations_applied.append('circuit_breaker_reset')
+                    optimizations.append('circuit_breaker_reset')
             memory_after = get_memory_usage_mb()
-            report.memory_freed_mb = max(0, memory_before - memory_after)
-            report.agent_pool_stats = self.agent_pool.get_pool_stats()
-            report.performance_improvement = 15.0
             self._last_optimization = time.time()
+            report = OptimizationReport(
+                bottlenecks_identified=bottlenecks,
+                optimizations_applied=optimizations,
+                memory_freed_mb=max(0, memory_before - memory_after),
+                agent_pool_stats=self.agent_pool.get_pool_stats(),
+                performance_improvement=15.0,
+            )
             logger.info(f'Performance optimization completed: {report}')
         except Exception as e:
             logger.error(f'Performance optimization failed: {e}')
-            report.optimizations_applied.append('optimization_failed')
-            return report
+            return OptimizationReport(optimizations_applied=['optimization_failed'])
+        return report
 
     async def _maybe_optimize(self) -> None:
         """Check if optimization is needed and perform it."""

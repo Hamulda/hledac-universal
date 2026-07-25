@@ -37,6 +37,7 @@ import uuid
 
 import asyncio
 import contextlib
+import functools
 import logging
 import os
 import pathlib
@@ -44,7 +45,7 @@ import signal
 import sys
 import time
 import traceback
-from collections import OrderedDict, deque
+from collections import deque
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Annotated, Any
 
@@ -270,16 +271,11 @@ _BOOT_RECORD_BUF_MAX: int = 1000  # ~100 KB max, 1000 records
 
 
 def _boot_record_buf_flush() -> None:
-    """
-    Flush buffered boot records to boot.jsonl. Registered via atexit.
-
-    Design (E4 + E4-FIX):
-      - writelines() snapshot: safe against concurrent appends because
-        writelines() reads list reference once; clear() happens AFTER write
-      - Double-snapshot pattern: swap buffer with empty list, THEN write
-      - Fail-soft: any error silently drops the record (best-effort telemetry)
-      - Bound: buffer capped at _BOOT_RECORD_BUF_MAX to prevent OOM
-    """
+    """Flush buffered boot records to boot.jsonl via atexit."""
+    # E4-FIX: double-snapshot — swap buffer first, then write (no lock needed)
+    # writelines() reads list ref once; clear() happens AFTER write
+    # fail-soft: any error silently drops the record (best-effort telemetry)
+    # bound: buffer capped at _BOOT_RECORD_BUF_MAX to prevent OOM
     global _BOOT_RECORD_BUF
     if not _BOOT_RECORD_BUF:
         return
@@ -312,7 +308,7 @@ class _BootTelemetryDrainer:
     - Fail-soft: any error drops to pass, never raises
     """
 
-    __slots__ = ("_queue", "_task", "_log_path", "_compact", "_started", "_stopped")
+    __slots__ = ("_queue", "_task", "_log_path", "_compact", "_started", "_stopped", "_logger")
 
     def __init__(self) -> None:
         self._queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue(maxsize=512)
@@ -321,6 +317,12 @@ class _BootTelemetryDrainer:
         self._compact: Callable[[dict[str, Any]], str] | None = None
         self._started: bool = False
         self._stopped: bool = False
+        self._logger: logging.Logger = logging.getLogger(f"{__name__}._BootTelemetryDrainer")
+
+    # F350M-R ISSUE P2-06 fix #3: Bounded flush — drain queue in chunks of drain_count
+    # instead of unbounded local batch list. Queue IS the buffer; drain_count is
+    # the batch-window for each flush cycle.
+    _DRAIN_CHUNK: int = 100  # max items per flush cycle
 
     def _get_compact(self) -> Callable[[dict[str, Any]], str]:
         """Lazy-load orjson or rust json.compact (called from worker thread)."""
@@ -344,20 +346,42 @@ class _BootTelemetryDrainer:
             name="boot_telemetry_drain",
             eager_start=True,  # F350M-R: fire immediately — queue worker is hot path
         )
+        # P2-06 fix #1: done_callback — log task outcome so failures are visible
+        self._task.add_done_callback(self._drain_done)
+
+    def _drain_done(self, task: asyncio.Task[None]) -> None:
+        """Callback invoked when _drain_loop task completes."""
+        if task.cancelled():
+            self._logger.warning("boot_telemetry_drain task was cancelled")
+        else:
+            exc = task.exception()
+            if exc is not None:
+                self._logger.error("boot_telemetry_drain task raised: %s", exc, exc_info=exc)
 
     async def stop(self) -> None:
         """
         Graceful stop: enqueue sentinel, wait for drainer to process it.
 
-        ISSUE #2 fix: replaces the broken queue.join() which required task_done()
-        callbacks that were never called — stop() would hang forever.
+        ISSUE #2 + P2-06 fix #2: bounded wait — max 5s timeout prevents
+        indefinite hang if _drain_loop is stuck. After timeout, task is
+        cancelled and remaining records are dropped (telemetry is best-effort).
         """
         if not self._started or self._task is None:
             return
         self._stopped = True
         self._enqueue_stop_sentinel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await self._task
+        try:
+            async with asyncio.timeout(5.0):  # P2-06 fix #2: hard cap
+                await self._task
+        except asyncio.CancelledError:
+            self._logger.warning("boot_telemetry_drain stop: task was cancelled")
+        except asyncio.TimeoutError:
+            self._logger.warning(
+                "boot_telemetry_drain stop: timeout exceeded — cancelling task"
+            )
+            self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task
 
     async def record(self, step: str, status: str, **kw: Any) -> None:
         """
@@ -377,68 +401,96 @@ class _BootTelemetryDrainer:
             self._queue.put_nowait(None)
 
     async def _drain_loop(self) -> None:
-        """Background worker: batch-flush queue to disk every 2s or 100 records."""
-        batch: list[dict[str, Any]] = []
-        drain_count = _BOOT_TELEMETRY_MAX // 2  # 100
+        """Background worker: drain queue to disk in bounded chunks."""
+        # P2-06 fix #3: queue IS the buffer (no manual batch list)
+        # Drains up to _DRAIN_CHUNK per cycle, timeout-based flush every 2s
+        # All remaining items drained on CancelledError before exit
         compact = self._get_compact()
 
         while True:
+            batch: list[dict[str, Any]] = []
             try:
-                async with asyncio.timeout(2.0):
-                    item = await self._queue.get()
-                # Sentinel None = stop signal from stop()
-                if item is None or self._stopped:
+                # Bounded drain: collect up to _DRAIN_CHUNK items
+                # Non-blocking drain of already-queued items first
+                while len(batch) < self._DRAIN_CHUNK:
+                    try:
+                        item = self._queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                    if item is None or self._stopped:
+                        self._queue.task_done()
+                        # Flush pending batch before exiting
+                        if batch:
+                            await self._flush_batch(batch, compact)
+                        return
+                    batch.append(item)
                     self._queue.task_done()
-                    break
-                batch.append(item)
-                self._queue.task_done()  # ISSUE #2 fix: was missing — join() would hang forever
-            except asyncio.CancelledError:
-                # Graceful shutdown: flush remaining and exit
-                if batch:
-                    await self._flush_batch(batch, compact)
-                raise
-            except asyncio.TimeoutError:
+
+                # Flush if we collected anything
                 if batch:
                     await self._flush_batch(batch, compact)
                     batch.clear()
-                continue
 
-            if len(batch) >= drain_count:
-                await self._flush_batch(batch, compact)
-                batch.clear()
+                # Wait for next item or timeout-triggered flush
+                try:
+                    async with asyncio.timeout(2.0):
+                        item = await self._queue.get()
+                    if item is None or self._stopped:
+                        self._queue.task_done()
+                        break
+                    self._queue.task_done()
+                    # Item will be picked up in next cycle's bounded drain
+                except asyncio.TimeoutError:
+                    # 2s idle — cycle back to bounded drain (may flush empty = no-op)
+                    continue
+
+            except asyncio.CancelledError:
+                # Graceful shutdown: drain all remaining items and flush
+                while not self._queue.empty():
+                    try:
+                        item = self._queue.get_nowait()
+                        if item is not None:
+                            batch.append(item)
+                            self._queue.task_done()
+                    except asyncio.QueueEmpty:
+                        break
+                if batch:
+                    await self._flush_batch(batch, compact)
+                raise
 
     async def _flush_batch(
         self,
         batch: list[dict[str, Any]],
         compact: Callable[[dict[str, Any]], str],
     ) -> None:
-        """Write a batch of records to boot.jsonl using aiofiles + atomic rename."""
-        try:
-            import aiofiles, tempfile, os
+        """
+        Write a batch of records to boot.jsonl using atomic append.
 
-            # Build payload in memory — encode lines individually then join
+        Uses os.O_APPEND — POSIX-atomic for single write(2) calls,
+        no tempfile/rename needed. Safe for concurrent writers.
+        """
+        try:
+            import os
+
+            # Encode each record as a JSON line
             lines_out: list[bytes] = []
             for rec in batch:
                 encoded = compact(rec)
                 line_bytes = encoded.encode() if isinstance(encoded, str) else encoded
                 lines_out.append(line_bytes + b"\n")
             payload = b"".join(lines_out)
-            # Atomic write: tempfile + rename
-            tmp = tempfile.NamedTemporaryFile(
-                mode="wb", dir=self._log_path.parent, delete=False, suffix=".tmp"
+
+            # Atomic append: O_APPEND flag makes write(2) POSIX-atomic
+            # O_CREAT — create if missing, O_WRONLY — write only
+            fd = os.open(
+                self._log_path,
+                os.O_WRONLY | os.O_CREAT | os.O_APPEND,
+                0o644,
             )
             try:
-                tmp.write(payload)
-                tmp.close()
-                with contextlib.suppress(FileNotFoundError, OSError):
-                    os.replace(tmp.name, self._log_path)
-            except Exception:
-                raise
+                os.write(fd, payload)
             finally:
-                try:
-                    os.unlink(tmp.name)
-                except FileNotFoundError:
-                    pass
+                os.close(fd)
         except Exception:
             pass  # fail-soft: telemetry is best-effort
 
@@ -455,33 +507,19 @@ def _get_boot_drainer() -> _BootTelemetryDrainer:
 
 
 async def _boot_record_async(step: str, status: str, **kw: Any) -> None:
-    """
-    Append a boot telemetry entry via the async drainer.
-
-    F350M-R ISSUE #5 fix: this replaces the old sync _boot_record() which
-    performed blocking disk I/O from inside the event loop.
-
-    The drainer singleton starts automatically on first call.
-    """
+    """Append a boot telemetry entry via the async drainer."""
+    # F350M-R ISSUE #5 fix: replaces blocking sync _boot_record() from event loop
+    # drainer singleton starts automatically on first call
     d = _get_boot_drainer()
     await d.start()  # idempotent
     await d.record(step, status, **kw)
 
 
 def _boot_record_sync(step: str, status: str, **kw: Any) -> None:
-    """
-    Append a boot telemetry entry to the atexit flush buffer.
-
-    ISSUE E4 fix: Replaces per-call sync I/O with buffered batch write.
-    Records are accumulated in _BOOT_RECORD_BUF and flushed once at
-    interpreter shutdown via atexit — one syscall instead of N.
-
-    Design:
-      - Append to buffer (list of raw bytes) — O(1), no syscalls
-      - orjson serialization (sync path, no thread needed)
-      - atexit handler does single batch write: writelines() — 1 syscall
-      - Fail-soft: any error silently drops the record
-    """
+    """Append a boot telemetry entry to the atexit flush buffer."""
+    # ISSUE E4 fix: buffered batch write — one syscall at shutdown instead of N
+    # E4-FIX bound: prevent unbounded growth — M1 8GB RAM invariant
+    # fail-soft: any error silently drops the record (best-effort telemetry)
     try:
         record = {"step": step, "status": status, "ms": time.time(), **kw}
         raw = _orjson.dumps(record)
@@ -547,18 +585,9 @@ def get_runtime_status() -> dict[str, Any]:
 
 
 def _run_boot_guard(lmdb_root: pathlib.Path | None = None) -> tuple[int, str]:
-    """
-    Run LMDB boot guard (8AG) synchronously.
-
-    This is the FIRST boot step, before any runtime acquisition.
-    Must be called:
-      - BEFORE asyncio.run() in sync boot context, OR
-      - via asyncio.to_thread() inside async context
-
-    Returns (removed_count, reason).
-
-    On unsafe state (live lock holder detected), raises BootGuardError.
-    """
+    """Run LMDB boot guard (8AG) synchronously. FIRST boot step before any runtime acquisition."""
+    # Must be called BEFORE asyncio.run() in sync boot context, OR via asyncio.to_thread()
+    # Returns (removed_count, reason); raises BootGuardError on unsafe stale-lock state
     if lmdb_root is None:
         # Try to derive from paths if available
         try:
@@ -622,22 +651,9 @@ async def _run_public_passive_once(
     owned_session: bool = True,
     owned_store: bool = True,
 ) -> None:
-    """
-    F162C NON-CANONICAL: This path is NOT the canonical sprint owner.
-    Owned resources are acquired and registered in AsyncExitStack for LIFO cleanup.
-    Delegation: async_run_live_public_pipeline() + async_run_default_feed_batch().
-
-    Cleanup order (LIFO):
-      1. Orphan task drain (already done in _cancel_orphan_tasks before this)
-      2. Session close (last registered → first cleaned)
-      3. Store close (first registered → last cleaned)
-
-    Args:
-        shutdown_event: asyncio.Event set when shutdown signal received.
-            Replaces the old stop_flag() callable pattern.
-        owned_session: If True, acquire and own the shared aiohttp session.
-        owned_store: If True, create and own a DuckDBShadowStore instance.
-    """
+    """F162C NON-CANONICAL: Owned resources via AsyncExitStack LIFO cleanup."""
+    # Cleanup order (LIFO): orphan drain → session close → store close
+    # Args: shutdown_event (replaces stop_flag()), owned_session, owned_store
     global _owned_resources
 
     await _boot_record_async("public_passive_once", "entered")
@@ -864,7 +880,7 @@ class BoundedReportCache:
     M1 8GB-safe bounded LRU cache for ObservedRunReport.
 
     Bounded: max _MAX_OBSERVED_RUN_REPORTS entries retained.
-    True LRU: OrderedDict + move_to_end() on every access.
+    Uses utils.lru_cache.LRUCache (dict + list hybrid, Python 3.14+ compatible).
     Collision-free keys: uuid.uuid4().hex (32-char string, no timestamp collisions).
     Thread-safe via threading.Lock — safe for asyncio.to_thread callers.
     No asyncio.Lock overhead when only sync put() is used.
@@ -873,15 +889,10 @@ class BoundedReportCache:
     __slots__ = ("_cache", "_lock", "_max_size")
 
     def __init__(self, max_size: int = _MAX_OBSERVED_RUN_REPORTS) -> None:
-        self._cache: OrderedDict[str, ObservedRunReport] = OrderedDict()
+        from utils.lru_cache import LRUCache
+        self._cache: LRUCache[str, ObservedRunReport] = LRUCache(max_size=max_size)
         self._lock: threading.Lock = threading.Lock()
         self._max_size = max_size
-
-    def _evict_lru(self) -> None:
-        """Evict least-recently-used entry when cache is full — O(1)."""
-        # OrderedDict maintains insertion order; popitem(last=False) removes oldest
-        if self._cache:
-            self._cache.popitem(last=False)
 
     def get_last(self) -> ObservedRunReport | None:
         """Return most recent report by started_ts — alias for get_latest()."""
@@ -893,9 +904,8 @@ class BoundedReportCache:
         key = uuid.uuid4().hex
         with self._lock:
             if len(self._cache) >= self._max_size:
-                self._evict_lru()
+                self._cache.pop_lru()
             self._cache[key] = report
-            self._cache.move_to_end(key)
 
     async def put_async(self, report: ObservedRunReport) -> None:
         """Async-safe put — runs sync put() in a thread to reuse threading.Lock."""
@@ -906,11 +916,6 @@ class BoundedReportCache:
         if not self._cache:
             return None
         result = max(self._cache.values(), key=lambda r: r.started_ts)
-        # touch LRU: move accessed entry to end so it won't be evicted next
-        for k, v in self._cache.items():
-            if v is result:
-                self._cache.move_to_end(k)
-                break
         return result
 
 
@@ -937,14 +942,10 @@ del _sys
 
 
 def _record_runtime_truth() -> None:
-    """
-    Record python3 interpreter truth at module load time.
-
-    ISSUE C3 FIX: ahocorasick and pattern_matcher probes are now LAZY —
-    only executed when runtime_probe results are first accessed, not at
-    module import time. This prevents spurious ImportError cascades when
-    tests or tooling do `import hledac.universal.__main__`.
-    """
+    """Record python3 interpreter truth at module load time."""
+    # ISSUE C3 FIX: ahocorasick and pattern_matcher probes are now LAZY
+    # Only executed when runtime_probe results are first accessed (not at import)
+    # Prevents spurious ImportError cascades from `import hledac.universal.__main__`
     # Set globals FIRST so that after this call completes,
     # globals()[name] returns the real value (not the sentinel).
     # If we don't set them here, __getattr__ returns nothing and
@@ -1113,20 +1114,10 @@ class ObservedRunReport(msgspec.Struct, frozen=True, kw_only=True):
 # ISSUE-50: Validated ObservedRunReport construction
 # Use this factory function for strict annotated-types validation
 def validate_observed_run_report(data: dict) -> ObservedRunReport:
-    """
-    Construct ObservedRunReport with strict annotated-types validation.
-
-    Performs two-stage validation:
-    1. msgspec.convert with strict=True — enforces Annotated[...] constraints
-    2. Cross-field validation — finished_ts > started_ts
-
-    Raises:
-        msgspec.ValidationError: If annotated-types constraints violated
-        ValueError: If cross-field validation fails
-
-    Usage:
-        report = validate_observed_run_report(raw_dict)
-    """
+    """Construct ObservedRunReport with strict annotated-types validation."""
+    # Two-stage: (1) msgspec.convert strict=True (Annotated constraints),
+    # (2) cross-field validation (finished_ts > started_ts)
+    # Raises: msgspec.ValidationError or ValueError
     # Stage 1: annotated-types validation via msgspec strict mode
     # This enforces Gt(0), Ge(0), Interval(ge=0.0, le=1.0) constraints
     try:
@@ -1161,21 +1152,10 @@ def _compute_recommended_next_sprint(
     in_memory_duplicate_rejected_count_delta: int = 0,
     persistent_duplicate_rejected_count_delta: int = 0,
 ) -> str:
-    """
-    Map live run result to recommended next sprint tag.
-
-    C.6 enhanced mapping rules:
-    - accepted_present                                          -> "8BK_scheduler_entry_hash_v1"
-    - total_pattern_hits>0, accepted=0, duplicate dominates       -> "8BK_scheduler_entry_hash_v1"
-    - total_pattern_hits>0, accepted=0, low_info dominates      -> "8BL_quality_profile_rss"
-    - total_pattern_hits=0, teaser_only_content                 -> "8BM_article_fallback_v2"
-    - total_pattern_hits=0, temporal/pack gap                   -> "8BN_feed_source_expansion"
-    - network_variance                                          -> "repeat_live_run_no_code_change"
-
-    Dominance = largest delta among the three rejection categories.
-    Cannot distinguish temporal_mismatch from pattern_pack_gap without
-    enriched text analysis — both route to 8BN.
-    """
+    """Map live run result to recommended next sprint tag."""
+    # C.6 enhanced mapping: accepted_present→8BK, low_info→8BL, teaser→8BM,
+    # temporal/pack gap→8BN, network_variance→repeat_live_run_no_code_change
+    # Dominance = largest delta among three rejection categories
     if is_network_variance:
         return "repeat_live_run_no_code_change"
     if accepted_count_delta > 0 or accepted_feed_names:
@@ -1232,19 +1212,9 @@ _SPRINT_8AO_BASELINE = SprintBaseline()
 
 
 def compare_observed_run_to_baseline(report: dict) -> dict:
-    """
-    Sprint 8AS C.0: Compare current observed run to 8AO baseline.
-
-    Returns a delta dict with keys:
-      - total_sources_delta, completed_sources_delta, fetched_entries_delta,
-        accepted_findings_delta, stored_findings_delta, elapsed_ms_delta,
-        failed_source_count_delta, findings_delta,
-      - completed_sources: current value
-      - failed_source_count: current value
-      - findings_delta: accepted_findings delta vs baseline
-      - status: "improved" | "regressed" | "stable" | "network_variance" | "insufficient_data"
-      - blocker: str | None description if findings are 0
-    """
+    """Sprint 8AS C.0: Compare current observed run to 8AO baseline."""
+    # Returns delta dict: *_delta fields, completed_sources, failed_source_count,
+    # findings_delta, status (improved/regressed/stable/network_variance), blocker
     current_completed = report.get("completed_sources", 0)
     current_failed = report.get("total_sources", 0) - current_completed
     current_accepted = report.get("accepted_findings", 0)
@@ -1302,21 +1272,11 @@ def diagnose_end_to_end_live_run(
     persistent_duplicate_rejected_count_delta: int,
     other_rejected_count_delta: int = 0,
 ) -> str:
-    """
-    Sprint 8AW C.1: Canonical root-cause diagnosis for a zero-findings live run.
-
-    Returns exactly one of:
-      empty_registry
-      no_new_entries
-      network_variance
-      no_pattern_hits
-      no_pattern_hits_possible_morphology_gap
-      pattern_hits_but_no_findings_built
-      low_information_rejection_dominant
-      duplicate_rejection_dominant
-      accepted_present
-      unknown
-    """
+    """Sprint 8AW C.1: Canonical root-cause diagnosis for a zero-findings live run."""
+    # Returns: empty_registry, no_new_entries, network_variance, no_pattern_hits,
+    # no_pattern_hits_possible_morphology_gap, pattern_hits_but_no_findings_built,
+    # low_information_rejection_dominant, duplicate_rejection_dominant,
+    # accepted_present, unknown
     # Order matters — most specific first
     if completed_sources == 0 and entries_seen == 0:
         return "network_variance"
@@ -1465,15 +1425,9 @@ def _get_pattern_status() -> tuple[int, bool]:
 
 
 def _ensure_runtime_patterns_configured_for_live_validation() -> tuple[int, bool]:
-    """
-    Sprint 8AQ C.3: Ensure patterns are configured before live validation.
-
-    Applies bootstrap OSINT pack if registry is empty.
-    Does NOT overwrite existing patterns.
-
-    Returns:
-        Tuple of (patterns_configured, bootstrap_applied) after ensure.
-    """
+    """Sprint 8AQ C.3: Ensure patterns are configured before live validation."""
+    # Applies bootstrap OSINT pack if registry is empty; does NOT overwrite existing
+    # Returns: (patterns_configured, bootstrap_applied)
     try:
         from hledac.universal.utils.patterns.pattern_matcher import (
             configure_default_bootstrap_patterns_if_empty,
@@ -1496,9 +1450,6 @@ def _ensure_runtime_patterns_configured_for_live_validation() -> tuple[int, bool
 # Sprint 8PC: sprint_mode entrypoint
 # =============================================================================
 
-# Sprint 8PC: module-level flag for EMERGENCY state (stops new frontier work)
-_sprint_frontier_stopped: bool = False
-
 # Sprint 8TA B.2: Phase timing (bounded — ISSUE #12)
 # deque(maxlen=256) auto-evicts oldest entry when full (~18KB max for 256 entries)
 _phase_times: deque[tuple[str, float]] = deque(maxlen=256)
@@ -1508,20 +1459,18 @@ _analyst_brief_for_markdown: str | None = None
 
 
 def _mark_phase(name: str) -> None:
-    """Mark phase start time. Called at the beginning of each phase."""
+    """Mark phase start time. Called at the beginning of each phase.
+
+    P2-03: logger.debug instead of logger.info — phase_change is hot-path
+    (12× per sprint), info level blocks event loop with sync I/O.
+    """
     _phase_times.append((name, time.monotonic()))
-    logger.info("phase_change", phase=name)
+    logger.debug("phase_change", phase=name)
 
 
 def _compute_sprint_report_path(sprint_id: str) -> Path:
-    """
-    Sprint 8VY §C: Delegates to canonical path owner.
-
-    Canonical owner: paths.get_sprint_report_path()
-    Shell no longer holds path computation authority.
-
-    Removal condition: NIKDY — thin delegation seam, not dead code
-    """
+    """Sprint 8VY §C: Delegates to paths.get_sprint_report_path() (canonical owner)."""
+    # Thin delegation seam — NIKDY remove
     from hledac.universal.paths import get_sprint_report_path as _get_path
 
     return _get_path(sprint_id)
@@ -1548,15 +1497,8 @@ def _export_markdown_report(
     scorecard: dict,
     sprint_id: str,
 ) -> Path:
-    """
-    Sprint 8TC B.4 (refactored 8VY §C): Deleguje rendering na _render_sprint_report_markdown.
-
-    Path computation delegated to paths.get_sprint_report_path() (canonical owner).
-    File write stays in shell — orchestration concern.
-
-    Canonical owner: paths.get_sprint_report_path()
-    Shell role: orchestration + file write only
-    """
+    """Sprint 8TC B.4: Export markdown report (delegates to _render_sprint_report_markdown)."""
+    # Path: paths.get_sprint_report_path(); shell role: orchestration + file write only
     path = _compute_sprint_report_path(sprint_id)
     content = _render_sprint_report_markdown(report, scorecard, sprint_id)
     path.write_text(content, encoding="utf-8")
@@ -1569,18 +1511,10 @@ async def _print_scorecard_report(
     store: Any,
     sprint_report: Any = None,
 ) -> None:
-    """
-    Sprint P2-01: ScorecardBuilder refaktorace.
-    Přímá delegace na telemetry/scorecard.py::ScorecardBuilder místo 11-fázové špagety.
-
-    Phase structure:
-      Phase 1 (collect):  5 paralelních I/O úloh v asyncio.TaskGroup
-      Phase 2 (persist):  DuckDB writes + markdown export paralelně
-      Print:              Console output mezi Phase 1 a Phase 2
-      ExportHandoff:      Canonical path (unaffected, stays here)
-
-    Žádné nested closures, žádný enclosing-scope race, plně testovatelné.
-    """
+    """Sprint P2-01: ScorecardBuilder refaktorace — přímá delegace."""
+    # Phase 1 (collect): 5 paralelních I/O v TaskGroup
+    # Phase 2 (persist): DuckDB writes + markdown export paralelně
+    # Žádné nested closures, žádný enclosing-scope race, plně testovatelné
     # Lazy import – ScorecardBuilder pouze když je scorecard aktivní
     from hledac.universal.runtime.scorecard import ScorecardBuilder
 
@@ -1607,38 +1541,51 @@ async def _print_scorecard_report(
     scorecard_data = builder.build_data(result)
 
     # Phase 2 print (depends on Phase 1)
+    # P3-07: async output — to_thread moves print off event loop (sync I/O).
+    # Guards: (1) sys.stderr.isatty() — non-interactive CI/JSON módy,
+    #         (2) HLEDAC_SCORECARD_QUIET=1 — explicit suppression.
     elapsed = result.elapsed
-    print("\n" + "=" * 60)
-    print("SPRINT 8VD SCORECARD")
-    print("=" * 60)
-    print(f"  Sprint ID:       {sprint_id}")
-    print(f"  Target:           {target[:60]}")
-    print(f"  Elapsed:          {elapsed:.1f}s")
-    print(f"  Accepted:         {result.accepted}")
-    print(f"  Findings/min:     {result.findings_per_minute:.2f}")
-    print(f"  IOC density:      {result.ioc_density:.3f}")
-    print(f"  Semantic novelty: {result.semantic_novelty:.3f}")
-    print(f"  Outlines used:    {result.outlines_used}")
-    print(f"  Peak RSS (MB):    {result.peak_rss_mb:.1f}")
-    print(f"  Phase timings:    {phase_timings}")
-    arrow_m = result.arrow_metrics
-    if arrow_m and isinstance(arrow_m, dict) and any(
-        (v or 0) > 0 for v in arrow_m.values() if isinstance(v, (int, float))
-    ):
-        arrow_sel = arrow_m.get("arrow_selected", 0)
-        arrow_ok = arrow_m.get("arrow_success_count", 0)
-        arrow_fb = {k: v for k, v in arrow_m.items() if "fallback" in k or "error" in k}
-        print(f"  Arrow ingest:     selected={arrow_sel} ok={arrow_ok}")
-        if arrow_fb:
-            print(f"  Arrow fallback:   {arrow_fb}")
-    print("=" * 60 + "\n")
+    if sys.stderr.isatty() and not os.environ.get("HLEDAC_SCORECARD_QUIET"):
 
-    # Phase 3: persist (DuckDB writes + markdown export in parallel)
-    md_path = await builder.persist(
-        export_fn=_export_markdown_report,
-        sprint_report=sprint_report,
-    )
-    print(f"Report saved: {md_path}")
+        def _sync_print_scorecard() -> str:
+            out: list[str] = []
+            # Capture into list to avoid per-line stdout syscall overhead
+            _add = out.append
+            _add("\n" + "=" * 60)
+            _add("SPRINT 8VD SCORECARD")
+            _add("=" * 60)
+            _add(f"  Sprint ID:       {sprint_id}")
+            _add(f"  Target:           {target[:60]}")
+            _add(f"  Elapsed:          {elapsed:.1f}s")
+            _add(f"  Accepted:         {result.accepted}")
+            _add(f"  Findings/min:     {result.findings_per_minute:.2f}")
+            _add(f"  IOC density:      {result.ioc_density:.3f}")
+            _add(f"  Semantic novelty: {result.semantic_novelty:.3f}")
+            _add(f"  Outlines used:    {result.outlines_used}")
+            _add(f"  Peak RSS (MB):    {result.peak_rss_mb:.1f}")
+            _add(f"  Phase timings:    {phase_timings}")
+            arrow_m = result.arrow_metrics
+            if arrow_m and isinstance(arrow_m, dict) and any(
+                (v or 0) > 0 for v in arrow_m.values() if isinstance(v, (int, float))
+            ):
+                arrow_sel = arrow_m.get("arrow_selected", 0)
+                arrow_ok = arrow_m.get("arrow_success_count", 0)
+                arrow_fb = {k: v for k, v in arrow_m.items() if "fallback" in k or "error" in k}
+                _add(f"  Arrow ingest:     selected={arrow_sel} ok={arrow_ok}")
+                if arrow_fb:
+                    _add(f"  Arrow fallback:   {arrow_fb}")
+            _add("=" * 60 + "\n")
+            return "\n".join(out)
+
+        # Phase 3: persist (DuckDB writes + markdown export in parallel)
+        md_path = await builder.persist(
+            export_fn=_export_markdown_report,
+            sprint_report=sprint_report,
+        )
+
+        # All output in one thread-pool call — zero event-loop blocking
+        await asyncio.to_thread(print, _sync_print_scorecard())
+        await asyncio.to_thread(print, f"Report saved: {md_path}")
 
     # Sprint 8VZ §B: Canonical ExportHandoff path (unchanged)
     try:
@@ -1674,108 +1621,115 @@ async def _windup_synthesis(
     store: Any,
     lifecycle: SprintLifecycleManager,
 ) -> Any:
-    """
-    Sprint 8QC E2E: Synthesis in WINDUP phase.
-
-    1. Creates SynthesisRunner with ModelLifecycle
-    2. Injects graph (if available from IOCGraph)
-    3. Gets top findings from DuckDB store
-    4. Calls synthesize_findings (WINDUP-only, force=False)
-    5. Exports report to ~/.hledac/reports/{ts}_{slug}_report.json
-    6. Closes runner
-    """
+    """Sprint 8QC E2E: Synthesis in WINDUP phase."""
+    # Creates SynthesisRunner → injects graph → gets top findings → synthesize_findings
+    # (WINDUP-only, force=False) → exports to ~/.hledac/reports/{ts}_{slug}_report.json
     from hledac.universal.brain.model_lifecycle import ModelLifecycle
     from hledac.universal.brain.synthesis_runner import SynthesisRunner, export_report
 
-    runner = SynthesisRunner(ModelLifecycle())
-    # F234: Enable MLX-first context compression for M1 8GB safety
-    runner.set_compression_threshold(4000)
-
-    # Sprint 8VQ: Priority 1 — dedicated STIX truth-store graph (IOCGraph/Kuzu)
-    # Created in _run_sprint_mode WINDUP block and injected via store.inject_stix_graph()
+    runner: SynthesisRunner | None = None
+    _hyp_engine = None
     try:
-        stix_graph = store.get_stix_graph() if hasattr(store, "get_stix_graph") else None
-        if stix_graph is not None:
-            runner.inject_stix_graph(stix_graph)
-        else:
-            # Sprint 8VY: Priority 2 — analytics/donor graph via explicit seam
-            # Previously: elif hasattr(store, "_ioc_graph") and store._ioc_graph: runner.inject_graph(store._ioc_graph)
-            analytics_graph = (
-                store.get_analytics_graph_for_synthesis()
-                if hasattr(store, "get_analytics_graph_for_synthesis")
-                else None
-            )  # noqa: E501
-            if analytics_graph is not None:
-                runner.inject_graph(analytics_graph)
-    except (ImportError, AttributeError, RuntimeError):
-        pass
+        runner = SynthesisRunner(ModelLifecycle())
+        # F234: Enable MLX-first context compression for M1 8GB safety
+        runner.set_compression_threshold(4000)
 
-    # Sprint 8UC B.2: Inject DuckDB store for episode recall
-    runner._duckdb_store = store
-
-    # Sprint 8WD: Inject runtime lifecycle — PREFERRED truth for windup gate
-    # runtime/_windup_synthesis() ACTIVE path: lifecycle param is the canonical runtime manager
-    if lifecycle is not None:
-        runner.inject_lifecycle_adapter(lifecycle)
-
-    # Get top findings from store
-    findings: list[dict] = []
-    try:
-        if hasattr(store, "get_top_findings"):
-            findings = await store.get_top_findings(limit=15)
-        elif hasattr(store, "get_recent_findings"):
-            findings = await store.get_recent_findings(limit=15)
-    except (AttributeError, RuntimeError) as e:
-        logger.warning("windup_fetch_findings_failed", error=str(e))
-
-    if not findings:
-        logger.info("windup_no_findings")
-        await runner.close()
-        return None
-
-    # Run synthesis (WINDUP phase check is inside synthesize_findings)
-    report = await runner.synthesize_findings(
-        query=query,
-        findings=findings,
-        force_synthesis=True,  # B.7: explicit force for programmatic call
-    )
-
-    # Sprint 8VA D: HypothesisEngine closed loop — generate hypotheses from findings
-    if findings and findings:
+        # Sprint 8VQ: Priority 1 — dedicated STIX truth-store graph (IOCGraph/Kuzu)
+        # Created in _run_sprint_mode WINDUP block and injected via store.inject_stix_graph()
         try:
-            from hledac.universal.brain.research_hypothesis_engine import HypothesisEngine
+            stix_graph = store.get_stix_graph() if hasattr(store, "get_stix_graph") else None
+            if stix_graph is not None:
+                runner.inject_stix_graph(stix_graph)
+            else:
+                # Sprint 8VY: Priority 2 — analytics/donor graph via explicit seam
+                # Previously: elif hasattr(store, "_ioc_graph") and store._ioc_graph: runner.inject_graph(store._ioc_graph)
+                analytics_graph = (
+                    store.get_analytics_graph_for_synthesis()
+                    if hasattr(store, "get_analytics_graph_for_synthesis")
+                    else None
+                )  # noqa: E501
+                if analytics_graph is not None:
+                    runner.inject_graph(analytics_graph)
+        except (ImportError, AttributeError, RuntimeError):
+            pass
 
-            _hyp_engine = HypothesisEngine()
-            finding_texts = [f.get("text", "")[:200] for f in findings[:10]]
-            hypotheses = await _hyp_engine.generate_sprint_hypotheses(
-                findings=finding_texts,
-                ioc_graph=None,
-                max_hypotheses=3,
-            )
-            # Sprint 8VA D.2: Každá hypotéza → logged (pivot_queue requires SprintScheduler access)
-            for i, hyp in enumerate(hypotheses or [], 1):
-                hyp_text = hyp if isinstance(hyp, str) else str(hyp)
-                logger.info("hypothesis_generated", index=i, hyp_text=hyp_text[:80])
-        except (ImportError, AttributeError, RuntimeError) as e:
-            logger.debug("hypothesis_engine_skipped", error=str(e))
+        # Sprint 8UC B.2: Inject DuckDB store for episode recall
+        runner._duckdb_store = store
 
-    # Sprint 8UC B.2.4: Capture synthesis engine for scorecard
-    getattr(runner, "_last_synthesis_engine", "unknown")
+        # Sprint 8WD: Inject runtime lifecycle — PREFERRED truth for windup gate
+        # runtime/_windup_synthesis() ACTIVE path: lifecycle param is the canonical runtime manager
+        if lifecycle is not None:
+            runner.inject_lifecycle_adapter(lifecycle)
 
-    await runner.close()
+        # Get top findings from store
+        findings: list[dict] = []
+        try:
+            if hasattr(store, "get_top_findings"):
+                findings = await store.get_top_findings(limit=15)
+            elif hasattr(store, "get_recent_findings"):
+                findings = await store.get_recent_findings(limit=15)
+        except (AttributeError, RuntimeError) as e:
+            logger.warning("windup_fetch_findings_failed", error=str(e))
 
-    if report is not None:
-        # Export to JSON
-        await export_report(report, query)
-        logger.info(
-            "windup_synthesis_complete",
-            ioc_count=len(report.ioc_entities),
-            threat_actor_count=len(report.threat_actors),
+        if not findings:
+            logger.info("windup_no_findings")
+            return None
+
+        # Run synthesis (WINDUP phase check is inside synthesize_findings)
+        report = await runner.synthesize_findings(
+            query=query,
+            findings=findings,
+            force_synthesis=True,  # B.7: explicit force for programmatic call
         )
-    else:
-        logger.info("windup_synthesis_returned_none")
 
-    return report
+        # Sprint 8VA D: HypothesisEngine closed loop — generate hypotheses from findings
+        if findings:
+            try:
+                from hledac.universal.brain.research_hypothesis_engine import HypothesisEngine
+
+                _hyp_engine = HypothesisEngine()
+                finding_texts = [f.get("text", "")[:200] for f in findings[:10]]
+                hypotheses = await _hyp_engine.generate_sprint_hypotheses(
+                    findings=finding_texts,
+                    ioc_graph=None,
+                    max_hypotheses=3,
+                )
+                # Sprint 8VA D.2: Každá hypotéza → logged (pivot_queue requires SprintScheduler access)
+                for i, hyp in enumerate(hypotheses or [], 1):
+                    hyp_text = hyp if isinstance(hyp, str) else str(hyp)
+                    logger.info("hypothesis_generated", index=i, hyp_text=hyp_text[:80])
+            except (ImportError, AttributeError, RuntimeError) as e:
+                logger.debug("hypothesis_engine_skipped", error=str(e))
+
+        # Sprint 8UC B.2.4: Capture synthesis engine for scorecard
+        _synthesis_engine = getattr(runner, "_last_synthesis_engine", "unknown")
+
+        if report is not None:
+            # Export to JSON
+            await export_report(report, query)
+            logger.info(
+                "windup_synthesis_complete",
+                ioc_count=len(report.ioc_entities),
+                threat_actor_count=len(report.threat_actors),
+            )
+        else:
+            logger.info("windup_synthesis_returned_none")
+
+        return report
+    finally:
+        # P2-02: ALWAYS close runners — finally guarantees execution even on exception.
+        # Previously runner.close() was only on success path — synthesize_findings()
+        # exception left Hermes3 model (~2GB on M1 8GB = significant leak).
+        if runner is not None:
+            try:
+                await runner.close()
+            except Exception:  # noqa: BLE001
+                pass
+        # P2-02: HypothesisEngine cleanup — gc.collect() after heavy inference.
+        # Note: HypothesisEngine has no close() method; relies on gc for resource release.
+        if _hyp_engine is not None:
+            import gc
+            gc.collect()
 
 
 # =============================================================================
@@ -1784,37 +1738,17 @@ async def _windup_synthesis(
 
 
 def _fatal(exc: BaseException, code: int = 1) -> None:
-    """
-    Structured fatal-error handler. Logs _MAIN_FATAL with full traceback,
-    then exits with a structured exit code.
-
-    Exit code convention (Sprint F350M-R Exit Codes):
-        0   = clean success
-        1   = runtime error (unexpected)
-        2   = config/validation error (e.g. windup_lead guard)
-        3   = programmer error / regression (NameError, ImportError, AttributeError)
-        130 = SIGINT (KeyboardInterrupt)
-    """
+    """Structured fatal-error handler. Logs _MAIN_FATAL with full traceback, exits."""
+    # Exit codes: 0=success, 1=runtime error, 2=config/validation, 3=programmer error,
+    # 130=SIGINT (KeyboardInterrupt)
     logger.critical("_MAIN_FATAL [exit=%d]: %s\n%s", code, exc, traceback.format_exc())
     sys.exit(code)
 
 
 def main() -> None:
-    """
-    Synchronous CLI entry point — delegates to cli.parser.dispatch_async().
-
-    Boot flow:
-        1. Pre-boot: dotenv, logging, setproctitle, OPSEC guard
-        2. Parse args via cli.parser.build_parser()
-        3. --list-presets short-circuit
-        4. --preset application + flag validation
-        5. LMDB boot guard (sequential, before event loop)
-        6. asyncio.Runner() → dispatch_async() → async subcommand handler (sprint | pivot | ct)
-
-    P0-03: Boot guard runs sequential in main() (before Runner) to ensure
-    BootGuardError aborts before event loop creation. Command execution is
-    fully async via dispatch_async() to avoid blocking the event loop.
-    """
+    """Synchronous CLI entry point — delegates to cli.parser.dispatch_async()."""
+    # Boot: dotenv → logging → args → presets → LMDB boot guard → asyncio.Runner
+    # P0-03: boot guard runs sequential in main() (before Runner) to abort early
     # F265ENV: Load .env file before any ENV access
     load_dotenv()
 

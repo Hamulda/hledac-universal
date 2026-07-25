@@ -40,7 +40,6 @@ import ast
 import re
 import sys
 from pathlib import Path
-from typing import List, Tuple
 
 import pytest
 
@@ -78,7 +77,7 @@ class GatherCallAnalyzer(ast.NodeVisitor):
 
     def __init__(self, filename: str):
         self.filename = filename
-        self.violations: List[Tuple[int, str]] = []
+        self.violations: list[tuple[int, str]] = []
         self.safe_calls = 0
         self.raw_calls = 0
 
@@ -123,7 +122,7 @@ class BareExceptAnalyzer(ast.NodeVisitor):
 
     def __init__(self, filename: str):
         self.filename = filename
-        self.violations: List[Tuple[int, str]] = []
+        self.violations: list[tuple[int, str]] = []
 
     def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
         if node.type is None:  # bare except:
@@ -136,7 +135,7 @@ class AsyncioRunInExecutorAnalyzer(ast.NodeVisitor):
 
     def __init__(self, filename: str):
         self.filename = filename
-        self.violations: List[Tuple[int, str]] = []
+        self.violations: list[tuple[int, str]] = []
 
     def visit_Call(self, node: ast.Call) -> None:
         is_asyncio_run = (
@@ -156,7 +155,7 @@ class AsyncioRunInExecutorAnalyzer(ast.NodeVisitor):
 # Helpers
 # -----------------------------------------------------------------------
 
-def _check_file_gather(filepath: Path) -> Tuple[List, int, int]:
+def _check_file_gather(filepath: Path) -> tuple[list, int, int]:
     try:
         content = filepath.read_text(errors="ignore")
         tree = ast.parse(content, filename=str(filepath))
@@ -168,7 +167,7 @@ def _check_file_gather(filepath: Path) -> Tuple[List, int, int]:
     return visitor.violations, visitor.raw_calls, visitor.safe_calls
 
 
-def _check_file_bare_except(filepath: Path) -> List:
+def _check_file_bare_except(filepath: Path) -> list:
     try:
         content = filepath.read_text(errors="ignore")
         tree = ast.parse(content, filename=str(filepath))
@@ -185,7 +184,7 @@ class _AsyncioRunInExecutorVisitor(ast.NodeVisitor):
 
     def __init__(self, filename: str):
         self.filename = filename
-        self.violations: List[Tuple[int, str]] = []
+        self.violations: list[tuple[int, str]] = []
 
     def visit_Call(self, node: ast.Call) -> None:
         is_run_in_executor = (
@@ -203,7 +202,7 @@ class _AsyncioRunInExecutorVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-def _find_asyncio_run_in_executor() -> List:
+def _find_asyncio_run_in_executor() -> list:
     """Find asyncio.run() calls passed as argument to run_in_executor()."""
     violations = []
     for f in _iter_python_files(SRC_DIRS):
@@ -219,7 +218,7 @@ def _find_asyncio_run_in_executor() -> List:
     return violations
 
 
-def _find_mx_clear_cache_without_eval() -> List:
+def _find_mx_clear_cache_without_eval() -> list:
     """Find mx.metal.clear_cache() calls without preceding mx.eval([])."""
     violations = []
     clear_cache_re = re.compile(r'mx\.metal\.clear_cache\s*\(\s*\)')
@@ -240,7 +239,7 @@ def _find_mx_clear_cache_without_eval() -> List:
     return violations
 
 
-def _find_socket_getaddrinfo() -> List:
+def _find_socket_getaddrinfo() -> list:
     """Find socket.getaddrinfo calls in source files."""
     violations = []
     pattern = re.compile(r'socket\.getaddrinfo\s*\(')
@@ -258,7 +257,7 @@ def _find_socket_getaddrinfo() -> List:
     return violations
 
 
-def _find_time_time_for_intervals() -> List:
+def _find_time_time_for_intervals() -> list:
     """Find time.time() calls used for interval calculations."""
     violations = []
     pattern = re.compile(r'time\.time\s*\(')
@@ -281,7 +280,7 @@ def _find_time_time_for_intervals() -> List:
     return violations
 
 
-def _find_lmdb_per_item_write() -> List:
+def _find_lmdb_per_item_write() -> list:
     """Find per-item LMDB write loops."""
     violations = []
     for f in _iter_python_files(SRC_DIRS):
@@ -369,7 +368,7 @@ class TestI5BareExceptForbidden:
     """
 
     @pytest.fixture(scope="class")
-    def bare_except_results(self) -> List:
+    def bare_except_results(self) -> list:
         all_violations = []
         for f in _iter_python_files(SRC_DIRS):
             violations = _check_file_bare_except(f)
@@ -396,7 +395,7 @@ class TestI7AsyncioRunInThreadPool:
     """
 
     @pytest.fixture(scope="class")
-    def asyncio_run_violations(self) -> List:
+    def asyncio_run_violations(self) -> list:
         return _find_asyncio_run_in_executor()
 
     def test_no_asyncio_run_in_executor_context(self, asyncio_run_violations):
@@ -418,7 +417,7 @@ class TestI8MXEvalBeforeClearCache:
     """
 
     @pytest.fixture(scope="class")
-    def clear_cache_violations(self) -> List:
+    def clear_cache_violations(self) -> list:
         return _find_mx_clear_cache_without_eval()
 
     def test_mx_eval_before_clear_cache(self, clear_cache_violations):
@@ -440,7 +439,7 @@ class TestI3AsyncGetAddrInfo:
     """
 
     @pytest.fixture(scope="class")
-    def socket_getaddrinfo_violations(self) -> List:
+    def socket_getaddrinfo_violations(self) -> list:
         return _find_socket_getaddrinfo()
 
     def test_no_blocking_socket_getaddrinfo(self, socket_getaddrinfo_violations):
@@ -462,7 +461,7 @@ class TestI4TimeMonotonic:
     """
 
     @pytest.fixture(scope="class")
-    def time_time_violations(self) -> List:
+    def time_time_violations(self) -> list:
         return _find_time_time_for_intervals()
 
     def test_no_time_time_for_intervals(self, time_time_violations):
@@ -484,7 +483,7 @@ class TestI10LMDBBulkWrite:
     """
 
     @pytest.fixture(scope="class")
-    def lmdb_violations(self) -> List:
+    def lmdb_violations(self) -> list:
         return _find_lmdb_per_item_write()
 
     def test_no_lmdb_per_item_write_loop(self, lmdb_violations):
@@ -507,7 +506,7 @@ class TestI9DuckDBWriteOnlyViaPool:
     """
 
     @pytest.fixture(scope="class")
-    def duckdb_connect_violations(self) -> List:
+    def duckdb_connect_violations(self) -> list:
         """Find direct duckdb.connect() calls in non-pool, non-read-only contexts."""
         violations = []
         pattern = re.compile(r'(?<!# )(?<!\w)duckdb\.connect\s*\(')

@@ -15,6 +15,7 @@ import time
 import msgspec
 from dataclasses import dataclass
 from enum import Enum, auto
+from msgspec import field
 
 # ── Phase enum ───────────────────────────────────────────────────────────────
 
@@ -80,7 +81,7 @@ class SprintLifecycleManager(msgspec.Struct):
     _started_at: float | None = None
     _current_phase: SprintPhase = SprintPhase.BOOT
     _entered_phase_at: float | None = None
-    _phase_history: dict = {}
+    _phase_history: dict = field(default_factory=dict)
     _export_started: bool = False
     _teardown_started: bool = False
     _abort_requested: bool = False
@@ -105,7 +106,7 @@ class SprintLifecycleManager(msgspec.Struct):
     # Issue 1.2 — Phase TaskGroup callbacks
     # Invoked synchronously after _transition_to_unlocked() updates phase.
     # Fail-safe: each callback wrapped in try/except Exception.
-    _on_phase_exit_callbacks: list[collections.abc.Callable[[SprintPhase, SprintPhase], None]] = []
+    _on_phase_exit_callbacks: list = field(default_factory=list)
 
     # ── Phase exit callbacks (Issue 1.2) ───────────────────────────────────────
 
